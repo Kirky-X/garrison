@@ -47,6 +47,9 @@ pub struct GarrisonLogicFactoryContext {
     pub permission_checker: Option<Arc<dyn PermissionChecker>>,
     /// 封禁库（None 表示不注入，check_disable 返回 Ok 向后兼容 0.6.4 之前）。
     pub disable_repository: Option<Arc<dyn DisableRepository>>,
+    /// 三级缓存服务（仅 `three-tier-cache` feature 下存在；None 表示不注入）。
+    #[cfg(feature = "three-tier-cache")]
+    pub user_cache_service: Option<Arc<crate::cache::UserCacheService>>,
 }
 
 /// 工厂函数签名：接收 session/config/firewall + factory context，返回 `Arc<GarrisonLogicDefault>`。
@@ -87,7 +90,7 @@ inventory::collect!(GarrisonLogicFactoryEntry);
 /// 默认工厂函数：构造 `GarrisonLogicDefault`，使用 builder 链注入 context 中的 4 个 manager。
 ///
 /// 此函数通过 `inventory::submit!` 在编译期注册到全局工厂列表，
-/// `GarrisonManager::init()` 会找到它并调用以构造 `Arc<GarrisonLogicDefault>`。
+/// `GarrisonManager::builder()` 会找到它并调用以构造 `Arc<GarrisonLogicDefault>`。
 ///
 /// # 参数
 /// - `session`: 会话管理器。
@@ -122,6 +125,10 @@ pub fn garrison_logic_factory_default(
     }
     if let Some(dr) = ctx.disable_repository.clone() {
         builder = builder.with_disable_repository(dr);
+    }
+    #[cfg(feature = "three-tier-cache")]
+    if let Some(ucs) = ctx.user_cache_service.clone() {
+        builder = builder.with_user_cache_service(ucs);
     }
     Ok(Arc::new(builder))
 }

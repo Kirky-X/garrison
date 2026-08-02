@@ -10,10 +10,17 @@
 //!
 //! | 维度 | `GarrisonManager` | `Manager` |
 //! |:---|:---|:---|
-//! | 依赖注入 | 全局单例，`init()` 静态注入 | 实例化，`new(logic)` 构造注入 |
-//! | 生命周期 | 进程级，`Lazy` 懒加载 | 实例级，Drop 时释放 `Arc` |
+//! | 依赖注入 | 全局单例，`builder().build()` 静态注入 | 实例化，`new(logic)` 或 `builder().build_explicit()` 构造 |
+//! | 生命周期 | 进程级，`Lazy` 懒加载 | 实例级，Drop 时释放 `Arc` 并 abort 后台 task |
 //! | API 风格 | 静态方法（`GarrisonUtil::login`） | 实例方法（`manager.authorize`） |
-//! | 适用场景 | 生产单例（向后兼容） | 测试隔离 / 多实例 / 显式 DI |
+//! | 适用场景 | 生产单例 | 测试隔离 / 多实例 / 显式 DI |
+//!
+//! # 后台 task 生命周期
+//!
+//! `Manager` 持有 [`TaskHandles`](crate::manager::builder::TaskHandles)：
+//! - `Manager::new(logic)`：不启动任何后台 task，`task_handles` 为空。
+//! - `GarrisonManager::builder().build_explicit().await`：完整构造 logic + 启动
+//!   cleanup_task / anomalous_analyzer_task，`task_handles` 非空，`Manager` Drop 时 abort。
 //!
 //! # `PermissionLogic` trait 与 `Manager` API 的差异
 //!
@@ -30,18 +37,20 @@ use std::sync::Arc;
 
 use crate::core::permission::{AuthRequest, Decision, DecisionReason};
 use crate::error::{GarrisonError, GarrisonResult};
+use crate::manager::builder::TaskHandles;
 use crate::stp::{GarrisonLogicDefault, PermissionLogic};
 
 /// 显式依赖注入入口。
 ///
 /// 与 [`GarrisonManager`](crate::manager::GarrisonManager) 的区别：
-/// - `GarrisonManager`：全局单例，通过 `init()` 初始化，静态 API
+/// - `GarrisonManager`：全局单例，通过 `builder().build()` 初始化，静态 API
 /// - `Manager`：实例化注入，构造时传入 `Arc<GarrisonLogicDefault>`，便于测试与多实例
 ///
 /// # 生命周期独立
 ///
 /// `Manager` 持有 `Arc<GarrisonLogicDefault>` 的引用计数副本，Drop 时仅减少引用计数，
 /// 不影响 `GarrisonManager` 全局单例（两者共享同一 `GarrisonLogicDefault` 实例时互不干扰）。
+/// 同时 Drop 时 abort 持有的后台 task handle（`builder().build_explicit()` 路径）。
 ///
 /// # 鉴权上下文
 ///
@@ -49,7 +58,9 @@ use crate::stp::{GarrisonLogicDefault, PermissionLogic};
 /// 该方法基于 task_local token 上下文获取当前 `login_id`（与 `GarrisonUtil` 一致）。
 /// 调用前需通过 web 中间件或 [`with_current_token`](crate::stp::with_current_token) 设置 task_local。
 pub struct Manager {
-    logic: Arc<GarrisonLogicDefault>,
+    pub(crate) logic: Arc<GarrisonLogicDefault>,
+    /// 后台 task handle 集合（`Manager::new` 路径为空；`build_explicit` 路径非空，Drop 时 abort）。
+    task_handles: TaskHandles,
 }
 
 impl Manager {
@@ -69,7 +80,23 @@ impl Manager {
     /// let manager = Manager::new(logic);
     /// ```
     pub fn new(logic: Arc<GarrisonLogicDefault>) -> Self {
-        Self { logic }
+        Self {
+            logic,
+            task_handles: TaskHandles::empty(),
+        }
+    }
+
+    /// 构造 Manager 实例并持有后台 task handle 集合（仅供 `builder().build_explicit()` 使用）。
+    ///
+    /// `task_handles` 非空时，`Manager` Drop 会 abort 对应后台 task。
+    pub(crate) fn with_task_handles(
+        logic: Arc<GarrisonLogicDefault>,
+        task_handles: TaskHandles,
+    ) -> Self {
+        Self {
+            logic,
+            task_handles,
+        }
     }
 
     /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]。
@@ -136,6 +163,23 @@ impl Manager {
             Ok(()) => Ok(true),
             Err(GarrisonError::NotPermission(_)) => Ok(false),
             Err(e) => Err(e),
+        }
+    }
+}
+
+impl Drop for Manager {
+    fn drop(&mut self) {
+        // Drop 时 abort 后台 task，避免后台线程在实例销毁后残留
+        if let Some(handle) = self.task_handles.cleanup.take() {
+            handle.abort();
+        }
+        #[cfg(feature = "anomalous-detector-dual")]
+        {
+            if let Some(handle) = self.task_handles.anomalous.take() {
+                handle.abort();
+            }
+            // 清空 shutdown_tx（drop 后 shutdown_rx.changed() 返回 Err，task 退出）
+            self.task_handles.anomalous_shutdown.take();
         }
     }
 }
@@ -407,7 +451,13 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-        GarrisonManager::init(dao, config, interface).unwrap();
+        GarrisonManager::builder()
+            .dao(dao)
+            .config(config)
+            .interface(interface)
+            .build()
+            .await
+            .unwrap();
         assert!(GarrisonManager::is_initialized());
 
         // 从全局单例获取 logic，构造 Manager
@@ -438,5 +488,62 @@ mod tests {
         assert!(!token.is_empty(), "全局单例 login 仍应正常工作");
 
         GarrisonManager::reset_for_test();
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试 7：build_explicit 路径 Manager Drop 后 task 被 abort
+    // ------------------------------------------------------------------------
+
+    /// T014: `GarrisonManager::builder().build_explicit().await` 返回的 Manager
+    /// Drop 后，cleanup_task 与 anomalous_analyzer_task 的 JoinHandle::is_finished() 为 true。
+    ///
+    /// 与 `manager_drop_does_not_affect_global_singleton` 互补：该测试覆盖 `Manager::new`
+    /// 路径（不启动 task），本测试覆盖 `build_explicit` 路径（启动 task + Drop abort）。
+    #[tokio::test]
+    #[cfg(feature = "anomalous-detector-dual")]
+    async fn build_explicit_drop_aborts_tasks() {
+        let mut config = make_config();
+        config.token_map_cleanup_interval_secs = 1;
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
+
+        let manager = GarrisonManager::builder()
+            .dao(dao)
+            .config(Arc::new(config))
+            .interface(interface)
+            .build_explicit()
+            .await
+            .expect("build_explicit ok");
+
+        // 抓取 task handle（Arc<JoinHandle> 可共享，Drop 后仍可查询 is_finished）
+        let cleanup_handle = manager
+            .task_handles
+            .cleanup
+            .clone()
+            .expect("cleanup handle");
+        let anomalous_handle = manager
+            .task_handles
+            .anomalous
+            .clone()
+            .expect("anomalous handle");
+
+        drop(manager);
+
+        // 等待 abort 生效（任务在下一个 await 点被取消）
+        for _ in 0..100 {
+            if cleanup_handle.is_finished() && anomalous_handle.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            cleanup_handle.is_finished(),
+            "build_explicit 路径 Manager Drop 后 cleanup task 应被 abort"
+        );
+        assert!(
+            anomalous_handle.is_finished(),
+            "build_explicit 路径 Manager Drop 后 anomalous task 应被 abort"
+        );
     }
 }

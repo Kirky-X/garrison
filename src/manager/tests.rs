@@ -76,7 +76,12 @@ async fn init_sets_initialized_flag() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    let result = GarrisonManager::init(dao, config, interface);
+    let result = GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await;
     assert!(result.is_ok(), "init 应成功: {:?}", result.map(|_| ()));
     assert!(GarrisonManager::is_initialized());
     GarrisonManager::reset_for_test();
@@ -92,7 +97,12 @@ async fn init_rejects_invalid_config() {
     config.timeout = 0; // 非法
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    let result = GarrisonManager::init(dao, config, interface);
+    let result = GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await;
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
@@ -110,7 +120,12 @@ async fn init_handles_negative_active_timeout() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config()); // active_timeout = -1
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    let result = GarrisonManager::init(dao, config, interface);
+    let result = GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await;
     assert!(result.is_ok(), "active_timeout=-1 应使用 timeout 兜底");
     assert!(GarrisonManager::is_initialized());
     GarrisonManager::reset_for_test();
@@ -128,7 +143,13 @@ async fn end_to_end_login_check_logout() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
     assert!(GarrisonManager::is_initialized());
 
     // login
@@ -167,7 +188,13 @@ async fn end_to_end_check_permission() {
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> =
         Arc::new(MockInterface::new().with_permission("1001", &["user:read", "user:write"]));
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
@@ -205,7 +232,13 @@ async fn end_to_end_check_role() {
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> =
         Arc::new(MockInterface::new().with_role("1001", &["admin"]));
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
@@ -255,11 +288,22 @@ async fn init_overwrites_existing() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao.clone(), config.clone(), interface.clone()).unwrap();
+    GarrisonManager::builder()
+        .dao(dao.clone())
+        .config(config.clone())
+        .interface(interface.clone())
+        .build()
+        .await
+        .unwrap();
     assert!(GarrisonManager::is_initialized());
 
     // 重复 init 应覆盖式更新，不抛错
-    let result = GarrisonManager::init(dao, config, interface);
+    let result = GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await;
     assert!(
         result.is_ok(),
         "重复 init 应覆盖式更新: {:?}",
@@ -304,6 +348,8 @@ async fn default_factory_builds_working_logic() {
         auth_logic: None,
         permission_checker: None,
         disable_repository: None,
+        #[cfg(feature = "three-tier-cache")]
+        user_cache_service: None,
     };
     #[cfg(not(feature = "listener"))]
     let ctx = GarrisonLogicFactoryContext {
@@ -311,6 +357,8 @@ async fn default_factory_builds_working_logic() {
         auth_logic: None,
         permission_checker: None,
         disable_repository: None,
+        #[cfg(feature = "three-tier-cache")]
+        user_cache_service: None,
     };
     let logic = garrison_logic_factory_default(session, config, firewall, &ctx).unwrap();
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
@@ -321,9 +369,9 @@ async fn default_factory_builds_working_logic() {
 // init 配置分支补充测试
 // ------------------------------------------------------------------------
 
-/// 验证 init 处理 active_timeout > 0 的非负值（else 分支）。
+/// 验证 builder 处理 active_timeout > 0 的非负值。
 ///
-/// 覆盖 `init_with_factory_selector` 中 `else { u64::try_from(active_timeout)... }` 分支：
+/// 覆盖 `build_logic` 中 `else { u64::try_from(active_timeout)... }` 分支：
 /// 当 active_timeout >= 0 时，直接转换为 u64，不使用 timeout 兜底。
 #[tokio::test]
 #[serial]
@@ -336,7 +384,12 @@ async fn init_with_positive_active_timeout() {
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
-    let result = GarrisonManager::init(dao, config, interface);
+    let result = GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await;
     assert!(
         result.is_ok(),
         "active_timeout=1800 应走 else 分支并成功: {:?}",
@@ -351,9 +404,9 @@ async fn init_with_positive_active_timeout() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 init 处理 active_timeout = 0 的边界值（else 分支）。
+/// 验证 builder 处理 active_timeout = 0 的边界值。
 ///
-/// 覆盖 `init_with_factory_selector` 中 `else` 分支的边界值 0。
+/// 覆盖 `build_logic` 中 `else` 分支的边界值 0。
 #[tokio::test]
 #[serial]
 async fn init_with_zero_active_timeout() {
@@ -365,16 +418,21 @@ async fn init_with_zero_active_timeout() {
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
-    let result = GarrisonManager::init(dao, config, interface);
+    let result = GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await;
     assert!(result.is_ok(), "active_timeout=0 应走 else 分支并成功");
     assert!(GarrisonManager::is_initialized());
 
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 init 校验配置：非法 token_style 抛 Config 错误。
+/// 验证 builder 校验配置：非法 token_style 抛 Config 错误。
 ///
-/// 覆盖 `init_with_factory_selector` 中 `config.validate()?` 的另一种错误分支
+/// 覆盖 `build_logic` 中 `config.validate()?` 的错误分支
 /// （非法 token_style，区别于 timeout 非法）。
 #[tokio::test]
 #[serial]
@@ -386,7 +444,12 @@ async fn init_rejects_invalid_token_style() {
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
-    let result = GarrisonManager::init(dao, config, interface);
+    let result = GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await;
     assert!(result.is_err());
     assert!(
         matches!(result.unwrap_err(), GarrisonError::Config(ref msg) if msg.contains("unknown token_style")),
@@ -398,29 +461,34 @@ async fn init_rejects_invalid_token_style() {
 }
 
 // ------------------------------------------------------------------------
-// init_with_factory_selector 兜底路径测试
+// builder 兜底路径测试
 // ------------------------------------------------------------------------
 
-/// 验证 init_with_factory_selector 在无 factory 注册时走兜底路径。
+/// 验证 builder 构建成功且后续 login 可正常工作。
 ///
-/// 覆盖 init_with_factory_selector 中 `match factory_selector() { None => { ... } }` 分支：
-/// 当 factory_selector 返回 None 时，直接通过 builder 链构造 GarrisonLogicDefault。
+/// 兜底路径（无 factory 注册时通过 builder 链直接构造 GarrisonLogicDefault）由
+/// builder.rs 中的 T035b `build_logic_via_builder_chain` 单测覆盖，此处验证
+/// 通过公开 builder API 构建后的端到端可用性。
 #[tokio::test]
 #[serial]
-async fn init_fallback_when_no_factory_registered() {
+async fn builder_build_succeeds_and_login_works() {
     GarrisonManager::reset_for_test();
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
-    // 使用返回 None 的 selector，触发兜底路径
-    let result = GarrisonManager::init_with_factory_selector(
-        dao,
-        config,
-        interface,
-        || None, // selector 返回 None，跳过 inventory factory
+    // 通过 builder 链构建
+    let result = GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await;
+    assert!(
+        result.is_ok(),
+        "builder 构建应成功: {:?}",
+        result.map(|_| ())
     );
-    assert!(result.is_ok(), "兜底路径应成功: {:?}", result.map(|_| ()));
     assert!(GarrisonManager::is_initialized());
 
     // 验证 login 仍可正常工作
@@ -481,7 +549,13 @@ async fn strategy_available_after_init() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let strategy = GarrisonManager::strategy();
     assert!(strategy.is_ok(), "init 后应能获取 strategy");
@@ -499,7 +573,13 @@ async fn with_strategy_replaces_registry() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // 获取原 logic 并构造自定义 Strategy
     let logic = GarrisonManager::logic().unwrap();
@@ -539,7 +619,13 @@ async fn runtime_strategy_replacement_takes_effect_immediately() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // 替换前：默认策略生成 token（先 clone Arc 再 await，避免跨 await 持锁）
     let strategy = GarrisonManager::strategy().unwrap();
@@ -591,7 +677,13 @@ async fn test_manager_registers_disable_repository() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // init 后返回 Some
     let repo = GarrisonManager::disable_repository();
@@ -608,7 +700,13 @@ async fn test_disable_then_check_disable_errors() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // login 获取 token
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
@@ -643,7 +741,13 @@ async fn test_untie_disable_then_check_disable_ok() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let token = GarrisonUtil::login_simple("1002").await.unwrap();
 
@@ -673,7 +777,13 @@ async fn test_manager_disable_repository_persists() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let repo1 = GarrisonManager::disable_repository().expect("init 后应返回 Some");
     let repo2 = GarrisonManager::disable_repository().expect("init 后应返回 Some");
@@ -687,7 +797,7 @@ async fn test_manager_disable_repository_persists() {
 }
 
 // ------------------------------------------------------------------------
-// T030: spawn_cleanup_task 集成到 GarrisonManager::init
+// T030: spawn_cleanup_task 集成到 GarrisonManager::builder()
 // ------------------------------------------------------------------------
 
 /// 验证 interval > 0 时 init 后 cleanup task 启动。
@@ -704,7 +814,13 @@ async fn manager_init_positive_interval_starts_cleanup_task() {
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     assert!(
         GARRISON_MANAGER.cleanup_task_handle.read().is_some(),
@@ -728,7 +844,13 @@ async fn manager_init_negative_interval_no_cleanup_task() {
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     assert!(
         GARRISON_MANAGER.cleanup_task_handle.read().is_none(),
@@ -754,7 +876,13 @@ async fn manager_init_cleanup_task_runs_after_init() {
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // login 创建 token
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
@@ -825,7 +953,7 @@ async fn manager_drop_cancels_cleanup_task() {
 
     // 创建局部 manager 并存入 handle
     let manager = GarrisonManager::new();
-    *manager.cleanup_task_handle.write() = Some(handle);
+    *manager.cleanup_task_handle.write() = Some(Arc::new(handle));
 
     // 等待 2 个 cleanup 周期（tokio::time::interval 首次 tick 立即返回，第二次在 1 秒后）
     tokio::time::sleep(Duration::from_millis(1500)).await;

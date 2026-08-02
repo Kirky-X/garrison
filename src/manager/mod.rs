@@ -10,7 +10,7 @@
 //!
 //! - `GarrisonManager` 持有 `Arc<GarrisonLogicDefault>` 全局单例（基于 `parking_lot::RwLock` 支持重复 init）
 //! - `GarrisonLogicFactory` trait 通过 `inventory::submit!` 编译期注册
-//! - 业务方调用 `GarrisonManager::init(dao, config, interface)` 注入依赖
+//! - 业务方调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await` 注入依赖
 //! - `GarrisonUtil::login(id)` 等静态方法委托到 `GARRISON_MANAGER` 单例
 //!
 //! ## 初始化流程
@@ -25,7 +25,13 @@
 //! let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 //!
 //! // 2. 初始化全局管理器
-//! GarrisonManager::init(dao, config, interface).unwrap();
+//! GarrisonManager::builder()
+//!     .dao(dao)
+//!     .config(config)
+//!     .interface(interface)
+//!     .build()
+//!     .await
+//!     .unwrap();
 //!
 //! // 3. 使用静态 API（task_local 上下文由 middleware 设置）
 //! let token = GarrisonUtil::login_simple("1001").await.unwrap();
@@ -47,11 +53,15 @@ pub mod explicit;
 
 // 工厂子系统（GarrisonLogicFactoryContext / GarrisonLogicFactoryEntry / garrison_logic_factory_default）。
 pub mod factory;
-// GarrisonManager 实现块（含 Drop impl）与 factory selector 辅助函数。
+// GarrisonManager 实现块（含 Drop impl）。
 pub mod impls;
+// 可组合的初始化 builder（GarrisonManagerBuilder / TaskHandles / build / build_explicit）。
+pub mod builder;
 
 // Re-export factory 公共 API（保持原 mod.rs 路径兼容，如 crate::manager::GarrisonLogicFactoryEntry）。
 pub use factory::*;
+// Re-export builder 公共 API（crate::manager::GarrisonManagerBuilder）。
+pub use builder::GarrisonManagerBuilder;
 
 /// 全局管理器，统筹 `GarrisonLogicDefault` 的生命周期。
 ///
@@ -60,8 +70,8 @@ pub use factory::*;
 ///
 /// # 初始化
 ///
-/// 业务方启动时调用 `GarrisonManager::init(dao, config, interface)` 注入依赖。
-/// 未初始化时调用 `GarrisonUtil::login(id)` 等返回 `GarrisonError::Session`。
+/// 业务方启动时调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`
+/// 注入依赖。未初始化时调用 `GarrisonUtil::login(id)` 等返回 `GarrisonError::Session`。
 pub struct GarrisonManager {
     /// 全局 `GarrisonLogicDefault` 引用（RwLock 支持测试时重复 init 与 reset）。
     logic: RwLock<Option<Arc<GarrisonLogicDefault>>>,
@@ -72,15 +82,15 @@ pub struct GarrisonManager {
     strategy: RwLock<Option<Arc<RwLock<Strategy>>>>,
     /// 后台 cleanup task 的 JoinHandle（T030）。
     ///
-    /// `init` 时若 `config.token_map_cleanup_interval_secs > 0` 则启动 task 并保存 handle。
+    /// `builder().build()` 时若 `config.token_map_cleanup_interval_secs > 0` 则启动 task 并保存 handle。
     /// `reset_for_test` / `Drop` 时 abort task，避免后台线程在测试间或程序退出后残留。
-    cleanup_task_handle: RwLock<Option<JoinHandle<()>>>,
+    cleanup_task_handle: RwLock<Option<Arc<JoinHandle<()>>>>,
     /// 异常登录分析器 task 的 JoinHandle（anomalous-detector-dual feature）。
     ///
-    /// `init` 时若 `anomalous-detector-dual` feature 启用则启动 analyzer task 并保存 handle。
+    /// `builder().build()` 时若 `anomalous-detector-dual` feature 启用则启动 analyzer task 并保存 handle。
     /// `reset_for_test` / `Drop` 时 abort task，避免后台线程在测试间或程序退出后残留。
     #[cfg(feature = "anomalous-detector-dual")]
-    anomalous_analyzer_handle: RwLock<Option<JoinHandle<()>>>,
+    anomalous_analyzer_handle: RwLock<Option<Arc<JoinHandle<()>>>>,
     /// 异常登录分析器 shutdown 信号发送端（anomalous-detector-dual feature）。
     ///
     /// 保存 `shutdown_tx` 使其生命周期与 `GarrisonManager` 一致，

@@ -1,33 +1,21 @@
 //! Copyright (c) 2024-2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `GarrisonManager` 的实现块（含 `Drop` impl）与 factory selector 辅助函数。
+//! `GarrisonManager` 的实现块（含 `Drop` impl）。
 //!
 //! 本文件从 `mod.rs` 迁移而来，遵循 mod-crate-hardening（规则 25）：
 //! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
+//!
+//! 初始化职责已迁移至 [`crate::manager::builder`]（`GarrisonManager::builder()`），
+//! 本文件仅保留单例状态读取与测试重置相关方法。
 
-use crate::account::disable::{DefaultDisableRepository, DisableRepository};
-use crate::config::GarrisonConfig;
-use crate::core::auth::{AuthLogic, AuthLogicDefault};
-use crate::core::permission::{PermissionChecker, PermissionCheckerDefault};
-use crate::core::token::TokenStyleFactory;
-use crate::dao::GarrisonDao;
+use crate::account::disable::DisableRepository;
 use crate::error::{GarrisonError, GarrisonResult};
-#[cfg(feature = "listener")]
-use crate::listener::GarrisonListenerManager;
-use crate::plugin::GarrisonPluginManager;
-use crate::session::GarrisonSession;
-use crate::stp::util::spawn_cleanup_task;
-use crate::stp::{GarrisonInterface, GarrisonLogicDefault};
-#[cfg(feature = "anomalous-detector-dual")]
-use crate::strategy::firewall::{AnomalousAnalyzerConfig, AnomalousLoginAnalyzer};
-use crate::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault, Strategy};
+use crate::stp::GarrisonLogicDefault;
+use crate::strategy::Strategy;
 use parking_lot::RwLock;
 use std::sync::Arc;
-#[cfg(feature = "anomalous-detector-dual")]
-use tokio::sync::watch;
 
-use super::factory::{GarrisonLogicFactoryContext, GarrisonLogicFactoryEntry};
 use super::{GarrisonManager, GARRISON_MANAGER};
 
 impl GarrisonManager {
@@ -42,221 +30,6 @@ impl GarrisonManager {
             #[cfg(feature = "anomalous-detector-dual")]
             anomalous_analyzer_shutdown_tx: RwLock::new(None),
         }
-    }
-
-    /// 初始化全局管理器：注入 dao/config/interface 依赖，构造默认 `GarrisonLogicDefault` 实例。
-    ///
-    /// # 参数
-    /// - `dao`: DAO 引用（oxcache / dbnexus）
-    /// - `config`: 全局配置
-    /// - `interface`: 权限数据回调（由业务方实现）
-    ///
-    /// # 行为
-    /// 1. 校验配置合法性
-    /// 2. 构造 `GarrisonSession::new(dao, timeout, active_timeout)`
-    /// 3. 构造 `GarrisonPermissionStrategyDefault::new(interface)`
-    /// 4. 通过 `inventory::iter::<GarrisonLogicFactoryEntry>()` 找到注册的 factory
-    /// 5. 调用 `factory.build(session, config, firewall)` 生成 `Arc<GarrisonLogicDefault>`
-    /// 6. 若无 factory 注册，使用默认 `GarrisonLogicFactoryDefault` 构造 `GarrisonLogicDefault`
-    /// 7. 覆盖式更新全局单例（允许重复 init，便于测试）
-    ///
-    /// # 返回
-    /// 成功返回 `Ok(())`。
-    ///
-    /// # 错误
-    /// - 配置非法（timeout ≤ 0 等）：`GarrisonError::Config`
-    /// - timeout/active_timeout 溢出 u64：`GarrisonError::Config`
-    /// - factory 构造失败：透传 factory 返回的 `GarrisonError`
-    pub fn init(
-        dao: Arc<dyn GarrisonDao>,
-        config: Arc<GarrisonConfig>,
-        interface: Arc<dyn GarrisonInterface>,
-    ) -> GarrisonResult<()> {
-        Self::init_with_factory_selector(dao, config, interface, default_factory_selector)
-    }
-
-    /// 内部初始化方法，允许注入自定义 factory selector（便于测试 mock factory）。
-    pub(super) fn init_with_factory_selector(
-        dao: Arc<dyn GarrisonDao>,
-        config: Arc<GarrisonConfig>,
-        interface: Arc<dyn GarrisonInterface>,
-        factory_selector: fn() -> Option<&'static GarrisonLogicFactoryEntry>,
-    ) -> GarrisonResult<()> {
-        // 1. 校验配置
-        config.validate()?;
-
-        // 2. 构造 session（处理 active_timeout = -1 的兜底语义）
-        let timeout = u64::try_from(config.timeout).map_err(|_| {
-            GarrisonError::Config(format!("manager-timeout-overflow::{}", config.timeout))
-        })?;
-        let active_timeout = if config.active_timeout < 0 {
-            // -1 表示不启用 activity 超时，使用 timeout 兜底（保留 既有语义）
-            timeout
-        } else {
-            u64::try_from(config.active_timeout).map_err(|_| {
-                GarrisonError::Config(format!(
-                    "manager-active-timeout-overflow::{}",
-                    config.active_timeout
-                ))
-            })?
-        };
-        let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, active_timeout));
-
-        // T030: 先 abort 旧 cleanup task 再 spawn 新 task，避免短暂重叠窗口
-        if let Some(old) = GARRISON_MANAGER.cleanup_task_handle.write().take() {
-            old.abort();
-        }
-
-        // T030: 启动后台 cleanup task（interval_secs <= 0 时返回 None，不启动）
-        let cleanup_handle =
-            spawn_cleanup_task(session.clone(), config.token_map_cleanup_interval_secs);
-
-        // 3. auto-wire: 构造 4 个 manager（gap）
-        // 3.1 PermissionChecker（委托 interface 查询权限/角色数据）
-        let permission_checker: Arc<dyn PermissionChecker> =
-            Arc::new(PermissionCheckerDefault::new(interface.clone()));
-        // 3.2 PluginManager（通过 inventory 收集编译期注册的插件）
-        let plugin_manager = Arc::new(GarrisonPluginManager::new());
-        // 3.3 ListenerManager（通过 inventory 收集编译期注册的监听器，需 listener feature）
-        #[cfg(feature = "listener")]
-        let listener_manager = Arc::new(GarrisonListenerManager::new());
-        // 3.4 AuthLogic（委托 session + token_handler 实现登录/校验）
-        //     token_handler 由 TokenStyleFactory 依据 config.token_style 创建
-        let token_handler: Arc<dyn crate::core::token::Token> = Arc::from(TokenStyleFactory::new(
-            &config.token_style,
-            config.jwt_secret.as_str(),
-        )?);
-        let auth_logic: Arc<dyn AuthLogic> = Arc::new(AuthLogicDefault::new(
-            session.clone(),
-            token_handler,
-            config.timeout,
-        ));
-
-        // 4. 构造 firewall，注入 permission_checker + plugin_manager
-        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
-            GarrisonPermissionStrategyDefault::new(interface)
-                .with_permission_checker(permission_checker.clone())
-                .with_plugin_manager(plugin_manager.clone()),
-        );
-
-        // 4.5 构造 disable_repository（T020）：委托同一 DAO 实例持久化封禁条目
-        let disable_repo: Arc<dyn DisableRepository> =
-            Arc::new(DefaultDisableRepository::new(dao.clone()));
-
-        // 5. 构造 factory context（持有 5 个 manager 引用）
-        #[cfg(feature = "listener")]
-        let factory_ctx = GarrisonLogicFactoryContext {
-            plugin_manager: Some(plugin_manager.clone()),
-            listener_manager: Some(listener_manager.clone()),
-            auth_logic: Some(auth_logic.clone()),
-            permission_checker: Some(permission_checker.clone()),
-            disable_repository: Some(disable_repo.clone()),
-        };
-        #[cfg(not(feature = "listener"))]
-        let factory_ctx = GarrisonLogicFactoryContext {
-            plugin_manager: Some(plugin_manager.clone()),
-            auth_logic: Some(auth_logic.clone()),
-            permission_checker: Some(permission_checker.clone()),
-            disable_repository: Some(disable_repo.clone()),
-        };
-
-        // T023: clone listener_manager 和 dao 给 analyzer，读取 config 值（均在 move 之前）
-        #[cfg(feature = "anomalous-detector-dual")]
-        let (
-            analyzer_listener_manager,
-            analyzer_dao,
-            analyzer_interval_secs,
-            analyzer_burst_threshold,
-        ) = (
-            listener_manager.clone(),
-            dao.clone(),
-            config.anomalous_analyzer_interval_secs,
-            config.anomalous_analyzer_burst_threshold,
-        );
-
-        // 6. 通过 factory 构造 logic（传递 context 以便 factory 使用 builder 链）
-        // T014: three-tier-cache feature 启用时构造 UserCacheService（复用 dao + firewall）
-        #[cfg(feature = "three-tier-cache")]
-        let user_cache_service = Arc::new(crate::cache::UserCacheService::new(
-            dao.clone(),
-            firewall.clone(),
-            config.l1_cache_ttl_secs,
-            config.l2_cache_ttl_secs,
-            config.l1_cache_capacity,
-        )?);
-        let logic: Arc<GarrisonLogicDefault> = match factory_selector() {
-            Some(entry) => (entry.factory)(session, config, firewall, &factory_ctx)?,
-            None => {
-                // 兜底路径：直接通过 builder 链构造 GarrisonLogicDefault
-                // `mut` 仅在 `listener`/`three-tier-cache` feature 启用时需要（下方 cfg 块会 reassign）
-                #[cfg_attr(
-                    not(any(feature = "listener", feature = "three-tier-cache")),
-                    allow(unused_mut)
-                )]
-                let mut builder = GarrisonLogicDefault::new(session, config, firewall)
-                    .with_plugin_manager(plugin_manager)
-                    .with_auth_logic(auth_logic)
-                    .with_permission_checker(permission_checker)
-                    .with_disable_repository(disable_repo);
-                #[cfg(feature = "listener")]
-                {
-                    builder = builder.with_listener_manager(listener_manager);
-                }
-                #[cfg(feature = "three-tier-cache")]
-                {
-                    builder = builder.with_user_cache_service(user_cache_service);
-                }
-                Arc::new(builder)
-            },
-        };
-
-        // 7. 覆盖式更新全局单例（允许重复 init，便于测试）
-        // 同时构造 Strategy 注册表
-        let strategy = Arc::new(RwLock::new(Strategy::new(logic.clone())));
-        *GARRISON_MANAGER.logic.write() = Some(logic);
-        *GARRISON_MANAGER.strategy.write() = Some(strategy);
-
-        // T030: 保存新 cleanup task handle（旧 task 已在上方 abort）
-        *GARRISON_MANAGER.cleanup_task_handle.write() = cleanup_handle;
-
-        // T023: 启动异常登录分析器 task（anomalous-detector-dual feature）
-        #[cfg(feature = "anomalous-detector-dual")]
-        {
-            // 先 abort 旧 analyzer task
-            if let Some(old) = GARRISON_MANAGER.anomalous_analyzer_handle.write().take() {
-                old.abort();
-            }
-            // 清空旧 shutdown_tx（drop 后 shutdown_rx.changed() 返回 Err，task 退出）
-            GARRISON_MANAGER
-                .anomalous_analyzer_shutdown_tx
-                .write()
-                .take();
-
-            // 创建 shutdown channel
-            let (shutdown_tx, shutdown_rx) = watch::channel(false);
-
-            // 从 GarrisonConfig 构造 analyzer config
-            let analyzer_config = AnomalousAnalyzerConfig {
-                interval_secs: analyzer_interval_secs,
-                burst_threshold: analyzer_burst_threshold,
-                ..AnomalousAnalyzerConfig::default()
-            };
-
-            // 构造 analyzer 并 spawn task
-            let analyzer = AnomalousLoginAnalyzer::new(
-                analyzer_dao,
-                analyzer_config,
-                shutdown_rx,
-                Some(analyzer_listener_manager),
-            );
-            let analyzer_handle = analyzer.start();
-
-            // 保存 handle 和 shutdown_tx
-            *GARRISON_MANAGER.anomalous_analyzer_handle.write() = Some(analyzer_handle);
-            *GARRISON_MANAGER.anomalous_analyzer_shutdown_tx.write() = Some(shutdown_tx);
-        }
-
-        Ok(())
     }
 
     /// 获取全局 `GarrisonLogicDefault` 引用。
@@ -294,13 +67,13 @@ impl GarrisonManager {
 
     /// 获取全局 `DisableRepository` 引用（v0.6.5 T020）。
     ///
-    /// `init` 时自动创建 `DefaultDisableRepository` 并注入到 `GarrisonLogicDefault`，
+    /// `builder().build()` 时自动创建 `DefaultDisableRepository` 并注入到 `GarrisonLogicDefault`，
     /// 此方法从 logic 中读取封禁库实例，供业务方调用 `disable` / `untie_disable` /
     /// `is_disable` / `get_disable_time` / `get_disable_level`。
     ///
     /// # 返回
-    /// - `Some(Arc<dyn DisableRepository>)`: 已 init 且 disable_repository 已注册。
-    /// - `None`: 未 init 或未注册（向后兼容场景）。
+    /// - `Some(Arc<dyn DisableRepository>)`: 已初始化且 disable_repository 已注册。
+    /// - `None`: 未初始化或未注册（向后兼容场景）。
     ///
     /// # 示例
     /// ```ignore
@@ -334,7 +107,7 @@ impl GarrisonManager {
     /// 检查管理器是否已初始化。
     ///
     /// # 返回
-    /// - `true`: 已调用 `init` 且全局单例持有 `GarrisonLogicDefault`。
+    /// - `true`: 已通过 `builder().build()` 初始化且全局单例持有 `GarrisonLogicDefault`。
     /// - `false`: 未初始化或已 `reset_for_test`。
     pub fn is_initialized() -> bool {
         GARRISON_MANAGER.logic.read().is_some()
@@ -381,12 +154,4 @@ impl Drop for GarrisonManager {
             self.anomalous_analyzer_shutdown_tx.write().take();
         }
     }
-}
-
-/// 默认 factory selector：从 inventory 中找到第一个注册的 `GarrisonLogicFactoryEntry`。
-///
-/// 若无 entry 注册，返回 `None`，由 `init()` 兜底使用 `GarrisonLogicDefault`。
-fn default_factory_selector() -> Option<&'static GarrisonLogicFactoryEntry> {
-    use std::iter::Iterator;
-    inventory::iter::<GarrisonLogicFactoryEntry>().next()
 }
