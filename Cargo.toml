@@ -78,7 +78,7 @@ garrison-macros = { path = "garrison-macros", version = "0.8", optional = true }
 # rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem"] }
 unicode-security = { version = "0.1", optional = true, default-features = false }
-maxminddb = { version = "0.29", optional = true, default-features = false }
+maxminddb = { version = "0.30", optional = true, default-features = false }
 quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
