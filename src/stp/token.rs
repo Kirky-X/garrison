@@ -14,6 +14,7 @@
 use super::GarrisonLogicDefault;
 use crate::core::token::TokenStyleFactory;
 use crate::error::{GarrisonError, GarrisonResult};
+use crate::loc;
 // GarrisonEvent 仅在 refresh_token（protocol-jwt feature）中使用，故 import 同时门控两个 feature
 // 避免 listener 启用但 protocol-jwt 关闭时出现 unused import 警告
 #[cfg(all(feature = "listener", feature = "protocol-jwt"))]
@@ -36,7 +37,29 @@ use async_trait::async_trait;
 ///   [`refresh_token`](Self::refresh_token)：默认返回 `NotImplemented`，
 ///   由 `GarrisonLogicDefault` 的 impl 覆写为委托 `core-token::Token::verify` /
 ///   `JwtHandler::refresh`。
+///
+/// 私有辅助函数：统一 token 类型校验语义（DEEP-01 DRY 重构）。
+///
+/// `check_access_token` / `check_client_token` / `check_temp_token` 三个默认实现
+/// 的语义完全相同：委托 `SessionLogic::check_login`，已登录返回 `Ok(())`，
+/// 未登录统一返回 `NotLogin`（**不区分 token 类型**，防止类型信息泄露到错误消息）。
+/// 提取为单一实现，避免三处重复代码。
+async fn ensure_valid_token_session(session: &dyn SessionLogic) -> GarrisonResult<()> {
+    let valid = session.check_login().await?;
+    if valid {
+        Ok(())
+    } else {
+        Err(GarrisonError::NotLogin(
+            "stp-token-invalid-or-not-login::".to_string(),
+        ))
+    }
+}
+
 #[async_trait]
+/// TokenLogic trait — Token 类型校验与刷新契约。
+///
+/// 提供 token 类型校验（access / client / temp）、显式 token 验证与 token 刷新能力。
+/// super-trait 为 [`SessionLogic`]（token 校验依赖会话状态）。
 pub trait TokenLogic: SessionLogic {
     /// 校验 access_token 类型会话。
     ///
@@ -48,17 +71,12 @@ pub trait TokenLogic: SessionLogic {
     ///
     /// # 错误
     /// - 未登录：`GarrisonError::NotLogin`。
-    async fn check_access_token(&self) -> GarrisonResult<()> {
-        let valid = self.check_login().await?;
-        if valid {
-            Ok(())
-        } else {
-            Err(GarrisonError::NotLogin(
-                "stp-token-invalid-or-not-login::".to_string(),
-            ))
-        }
+    async fn check_access_token(&self) -> GarrisonResult<()>
+    where
+        Self: Sized,
+    {
+        ensure_valid_token_session(self).await
     }
-
     /// 校验 client_token 类型会话。
     ///
     /// 语义别名：默认实现委托 [`check_login`](SessionLogic::check_login)。
@@ -68,15 +86,11 @@ pub trait TokenLogic: SessionLogic {
     ///
     /// # 错误
     /// - 未登录：`GarrisonError::NotLogin`。
-    async fn check_client_token(&self) -> GarrisonResult<()> {
-        let valid = self.check_login().await?;
-        if valid {
-            Ok(())
-        } else {
-            Err(GarrisonError::NotLogin(
-                "stp-token-invalid-or-not-login::".to_string(),
-            ))
-        }
+    async fn check_client_token(&self) -> GarrisonResult<()>
+    where
+        Self: Sized,
+    {
+        ensure_valid_token_session(self).await
     }
 
     /// 校验 temp_token 类型会话。
@@ -88,15 +102,11 @@ pub trait TokenLogic: SessionLogic {
     ///
     /// # 错误
     /// - 未登录：`GarrisonError::NotLogin`。
-    async fn check_temp_token(&self) -> GarrisonResult<()> {
-        let valid = self.check_login().await?;
-        if valid {
-            Ok(())
-        } else {
-            Err(GarrisonError::NotLogin(
-                "stp-token-invalid-or-not-login::".to_string(),
-            ))
-        }
+    async fn check_temp_token(&self) -> GarrisonResult<()>
+    where
+        Self: Sized,
+    {
+        ensure_valid_token_session(self).await
     }
 
     /// 验证显式传入的 token 并返回关联的 `String`。
@@ -115,9 +125,10 @@ pub trait TokenLogic: SessionLogic {
     /// - `GarrisonError::InvalidToken`: token 无效或不包含 login_id。
     /// - `GarrisonError::NotImplemented`: 默认实现未委托 Token trait。
     async fn verify_token(&self, _token: &str) -> GarrisonResult<String> {
-        Err(GarrisonError::NotImplemented(
-            "verify_token 需子类 override 委托 core-token::Token::verify".to_string(),
-        ))
+        Err(GarrisonError::NotImplemented(loc!(
+            "stp-verify-token-not-implemented",
+            ""
+        )))
     }
 
     /// 刷新 token。
@@ -134,9 +145,10 @@ pub trait TokenLogic: SessionLogic {
     /// - `GarrisonError::NotImplemented`: 未启用 protocol-jwt feature。
     /// - `GarrisonError::InvalidToken`: token 已过期或无效。
     async fn refresh_token(&self, _token: &str) -> GarrisonResult<String> {
-        Err(GarrisonError::NotImplemented(
-            "refresh_token 需启用 protocol-jwt feature".to_string(),
-        ))
+        Err(GarrisonError::NotImplemented(loc!(
+            "stp-refresh-token-not-implemented",
+            ""
+        )))
     }
 }
 
@@ -166,9 +178,10 @@ impl TokenLogic for GarrisonLogicDefault {
     async fn refresh_token(&self, token: &str) -> GarrisonResult<String> {
         // 启用 protocol-jwt 时委托 JwtHandler::refresh
         if self.config.token_style != "jwt" {
-            return Err(GarrisonError::NotImplemented(
-                "refresh_token 仅在 token_style=jwt 时可用".to_string(),
-            ));
+            return Err(GarrisonError::NotImplemented(loc!(
+                "stp-refresh-token-jwt-only",
+                ""
+            )));
         }
         // 获取 login_id（用于 plugin/listener 回调）
         let login_id = self.verify_token(token).await?;
@@ -335,6 +348,57 @@ mod tests {
             "未登录时应返回 NotLogin 包含 'temp_token'，实际: {:?}",
             result
         );
+    }
+
+    /// 验证共享 token 类型校验辅助函数（DEEP-01 DRY 重构）。
+    ///
+    /// 已登录返回 `Ok(())`，未登录统一返回 `NotLogin`（不区分 token 类型，
+    /// 防止类型信息泄露到错误消息）。`check_access_token` / `check_client_token` /
+    /// `check_temp_token` 三个默认实现均委托此辅助函数。
+    #[tokio::test]
+    async fn ensure_valid_token_session_helper_ok_when_logged_in() {
+        let mock = MockToken {
+            config: Arc::new(GarrisonConfig::default()),
+            logged_in: true,
+        };
+        ensure_valid_token_session(&mock).await.unwrap();
+    }
+
+    /// 验证共享辅助函数在未登录时返回统一 `NotLogin` 错误。
+    #[tokio::test]
+    async fn ensure_valid_token_session_helper_denies_when_not_logged_in() {
+        let mock = MockToken {
+            config: Arc::new(GarrisonConfig::default()),
+            logged_in: false,
+        };
+        let result = ensure_valid_token_session(&mock).await;
+        assert!(
+            matches!(result, Err(GarrisonError::NotLogin(ref msg)) if msg.contains("stp-token-invalid-or-not-login")),
+            "未登录时应返回 NotLogin 统一错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证三个 token 类型校验默认实现的错误消息完全一致（DRY 重构后仍保持
+    /// 单一语义：不泄露具体 token 类型）。
+    #[tokio::test]
+    async fn all_token_type_checks_share_identical_error_semantics() {
+        let mock = MockToken {
+            config: Arc::new(GarrisonConfig::default()),
+            logged_in: false,
+        };
+        let access = mock.check_access_token().await;
+        let client = mock.check_client_token().await;
+        let temp = mock.check_temp_token().await;
+        for result in [access, client, temp] {
+            let msg = result.err().expect("未登录时应返回 Err");
+            let debug = format!("{:?}", msg);
+            assert!(
+                debug.contains("stp-token-invalid-or-not-login"),
+                "token 类型校验错误消息应统一包含 stp-token-invalid-or-not-login，实际: {}",
+                debug
+            );
+        }
     }
 
     #[tokio::test]
