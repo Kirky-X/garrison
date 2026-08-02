@@ -103,7 +103,13 @@ pub async fn setup_backend() -> BackendEmbedded {
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
     BackendEmbedded::new()
 }
 
@@ -119,7 +125,13 @@ pub async fn setup_backend_with_dao() -> (BackendEmbedded, Arc<dyn GarrisonDao>)
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao.clone(), Arc::new(config), interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao.clone())
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
     (BackendEmbedded::new(), dao)
 }
 
@@ -449,7 +461,13 @@ pub async fn setup_backend_no_concurrent() -> BackendEmbedded {
     config.throw_on_not_login = false;
     config.is_concurrent = false;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, Arc::new(config), interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
     BackendEmbedded::new()
 }
 

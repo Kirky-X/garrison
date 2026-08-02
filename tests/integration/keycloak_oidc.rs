@@ -8,13 +8,18 @@
 //!
 //! 运行：
 //! ```bash
-//! cargo test --features "keycloak-oidc db-sqlite" --test keycloak_oidc_integration
+//! cargo test --features "keycloak-oidc db-sqlite cache-memory" --test integration
 //! ```
 
-#[cfg(all(feature = "keycloak-oidc", feature = "db-sqlite"))]
+#[cfg(all(
+    feature = "keycloak-oidc",
+    feature = "db-sqlite",
+    feature = "cache-memory"
+))]
 mod keycloak_e2e {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
+    use garrison::dao::GarrisonDaoOxcache;
     use garrison::{KeycloakConfig, KeycloakProvider};
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
     use rand::rngs::OsRng;
@@ -22,6 +27,7 @@ mod keycloak_e2e {
     use rsa::traits::PublicKeyParts;
     use rsa::RsaPrivateKey;
     use serde::Serialize;
+    use std::sync::Arc;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -48,7 +54,10 @@ mod keycloak_e2e {
     /// 1. `discover()` 返回正确的 OIDC discovery metadata
     /// 2. `exchange_code("auth_code")` 返回 KeycloakTokenSet 含三个 token
     /// 3. `verify_id_token(id_token)` 返回 KeycloakClaims 含 sub/realm_access.roles
-    #[tokio::test]
+    // multi_thread flavor 必需：oxcache memory 后端的 sync API 通过
+    // `block_in_place` 复用 runtime，current-thread runtime 下会 panic
+    //（"Cannot start a runtime from within a runtime"）。
+    #[tokio::test(flavor = "multi_thread")]
     async fn keycloak_oidc_rp_full_flow_e2e() {
         let server = MockServer::start().await;
 
@@ -146,7 +155,13 @@ mod keycloak_e2e {
             redirect_uri: "https://app.example.com/cb".into(),
             expected_iss: server.uri(),
         };
-        let provider = KeycloakProvider::new(config).expect("KeycloakProvider::new 应成功");
+        let provider = KeycloakProvider::new(config)
+            .expect("KeycloakProvider::new 应成功")
+            .with_dao(Arc::new(
+                GarrisonDaoOxcache::new()
+                    .await
+                    .expect("构造 GarrisonDaoOxcache 应成功"),
+            ));
 
         // Step 1: discover
         let metadata = provider.discover().await.expect("discover 应成功");

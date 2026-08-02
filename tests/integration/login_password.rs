@@ -405,10 +405,8 @@ async fn login_with_password_fails_without_user_repository() {
 // 3. 备注：GarrisonUtil::login_with_password 通过 GarrisonManager 注入的集成测试
 // ============================================================================
 
-// 注：GarrisonManager::init_with_factory_selector 当前为 pub(crate) 可见性，
-// 集成测试无法注入自定义 factory 来预置 password_hasher + user_repository。
+// 注：GarrisonManager::builder() 的 `with_factory` 依赖 `&'static GarrisonLogicFactoryEntry`，
+// 集成测试无法便捷注入自定义 factory 来预置 password_hasher + user_repository。
 // 此场景由 src/stp/mod.rs 的单元测试 login_with_password_succeeds（行 2785+）覆盖，
 // 该测试通过 GarrisonLogicDefault::new(...).with_password_hasher(...).with_user_repository(...)
 // 直接构造 logic 实例验证。
-//
-// 后续 v0.5.0+ 可暴露 init_with_factory_selector 为 pub，支持集成测试自定义 factory。

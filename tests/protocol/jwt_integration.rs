@@ -13,6 +13,9 @@
 //! 依据 spec protocol-jwt + core-auth-api。
 
 #![cfg(feature = "protocol-jwt")]
+// jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
+// 类型为 Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
+#![allow(clippy::useless_conversion)]
 
 use async_trait::async_trait;
 use garrison::config::GarrisonConfig;
@@ -125,7 +128,7 @@ impl GarrisonInterface for MockInterface {
 // ============================================================================
 
 /// 初始化 GarrisonManager（token_style=jwt，jwt_secret ≥ 32 字节）。
-fn init_jwt_manager() {
+async fn init_jwt_manager() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
@@ -135,7 +138,13 @@ fn init_jwt_manager() {
     config.throw_on_not_login = false;
     let config = Arc::new(config);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 // ============================================================================
@@ -146,7 +155,7 @@ fn init_jwt_manager() {
 #[tokio::test]
 #[serial]
 async fn jwt_end_to_end_login_verify_refresh_logout() {
-    init_jwt_manager();
+    init_jwt_manager().await;
 
     // 1. 登录：生成 JWT token 并写入会话
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
@@ -204,7 +213,7 @@ async fn jwt_end_to_end_login_verify_refresh_logout() {
 #[tokio::test]
 #[serial]
 async fn verify_token_rejects_invalid_jwt() {
-    init_jwt_manager();
+    init_jwt_manager().await;
 
     let result = GarrisonUtil::verify_token("not.a.valid.jwt").await;
     assert!(result.is_err(), "无效 JWT 应校验失败");
@@ -215,7 +224,7 @@ async fn verify_token_rejects_invalid_jwt() {
 #[tokio::test]
 #[serial]
 async fn verify_token_rejects_empty_string() {
-    init_jwt_manager();
+    init_jwt_manager().await;
 
     let result = GarrisonUtil::verify_token("").await;
     assert!(result.is_err(), "空 token 应校验失败");
@@ -225,7 +234,7 @@ async fn verify_token_rejects_empty_string() {
 #[tokio::test]
 #[serial]
 async fn refresh_token_rejects_invalid_token() {
-    init_jwt_manager();
+    init_jwt_manager().await;
 
     let result = GarrisonUtil::refresh_token("invalid-token").await;
     assert!(result.is_err(), "无效 token 刷新应失败");

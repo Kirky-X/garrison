@@ -218,26 +218,27 @@ impl GarrisonInterface for MockInterface {
 
 /// 初始化全局 GarrisonManager，返回 MockDao 引用（用于验证 DAO 内部状态）。
 ///
-/// 注意：`GarrisonManager::init` 是覆盖式更新（line 199 注释），允许重复 init，
+/// 注意：`GarrisonManager::builder()` 是覆盖式更新（line 199 注释），允许重复 init，
 /// 因此 integration tests 不需要 `reset_for_test()`（该函数仅 `#[cfg(test)]` 可见）。
-fn init_manager(permissions: Vec<String>, roles: Vec<String>) -> Arc<MockDao> {
+async fn init_manager(permissions: Vec<String>, roles: Vec<String>) -> Arc<MockDao> {
     let dao = Arc::new(MockDao::new());
     let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = true;
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface { permissions, roles });
-    GarrisonManager::init(
-        dao.clone() as Arc<dyn GarrisonDao>,
-        Arc::new(config),
-        interface,
-    )
-    .expect("GarrisonManager::init 应成功");
+    GarrisonManager::builder()
+        .dao(dao.clone() as Arc<dyn GarrisonDao>)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .expect("GarrisonManager::builder() 应成功");
     dao
 }
 
 /// 初始化全局 GarrisonManager 并注入 FailingDao（用于 BW-AC-008 故障降级测试）。
-fn init_manager_failing() {
+async fn init_manager_failing() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
     let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
@@ -246,7 +247,13 @@ fn init_manager_failing() {
         permissions: vec![],
         roles: vec![],
     });
-    GarrisonManager::init(dao, Arc::new(config), interface).expect("GarrisonManager::init 应成功");
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .expect("GarrisonManager::builder() 应成功");
 }
 
 // ============================================================================
@@ -275,7 +282,7 @@ fn init_manager_failing() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_001_oidc_login_creates_account_and_token() {
-    let dao = init_manager(vec![], vec![]);
+    let dao = init_manager(vec![], vec![]).await;
 
     // When: 用户完成 OIDC 登录
     let token = GarrisonUtil::login_simple("oidc-user-001")
@@ -473,7 +480,7 @@ async fn bw_ac_003_concurrent_login_kicks_earliest_session() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_004_role_check_returns_403() {
-    let _dao = init_manager(vec![], vec!["user".to_string()]);
+    let _dao = init_manager(vec![], vec!["user".to_string()]).await;
     let token = GarrisonUtil::login_simple("user-004")
         .await
         .expect("login 应成功");
@@ -511,7 +518,7 @@ async fn bw_ac_004_role_check_returns_403() {
 #[serial]
 async fn bw_ac_005_permission_check_returns_403() {
     with_default_tenant(async {
-        let _dao = init_manager(vec!["order:read".to_string()], vec![]);
+        let _dao = init_manager(vec!["order:read".to_string()], vec![]).await;
         let token = GarrisonUtil::login_simple("user-005")
             .await
             .expect("login 应成功");
@@ -559,7 +566,8 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
         let _dao = init_manager(
             vec!["bench:read".to_string()],
             vec!["bench-user".to_string()],
-        );
+        )
+        .await;
 
         // When: 执行登录 → 鉴权 → 登出完整流程
         let token = GarrisonUtil::login_simple("user-006")
@@ -744,7 +752,7 @@ async fn bw_ac_007_dbnexus_sqlite_backend_works() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_008_oxcache_failure_degrades_to_jwt_stateless() {
-    init_manager_failing();
+    init_manager_failing().await;
 
     // When: 用户尝试登录（FailingDao 的 set 返回 Err）
     let result = GarrisonUtil::login_simple("user-008").await;
@@ -791,7 +799,7 @@ async fn bw_ac_008_oxcache_failure_degrades_to_jwt_stateless() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_009_logout_invalidates_token() {
-    let dao = init_manager(vec![], vec![]);
+    let dao = init_manager(vec![], vec![]).await;
 
     // Given: 用户登录
     let token = GarrisonUtil::login_simple("user-009")

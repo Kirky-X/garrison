@@ -152,6 +152,17 @@ async fn session_creator_can_be_implemented_externally() {
 }
 
 /// 验证 `FirewallStrategy` trait 可被外部实现并调用。
+///
+/// `check_login_hooks` 与 `FirewallLoginContext` 仅在该组 feature 下可用，
+/// cfg gate 与 `src/strategy/registry.rs` 中 trait 方法的 gate 保持一致。
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
+))]
 #[tokio::test(flavor = "multi_thread")]
 async fn firewall_strategy_can_be_implemented_externally() {
     use garrison::strategy::FirewallLoginContext;
@@ -203,6 +214,17 @@ async fn default_login_handler_generates_token_via_logic() {
 }
 
 /// 验证默认防火墙策略为 no-op（返回 Ok）。
+///
+/// `check_login_hooks` 与 `FirewallLoginContext` 仅在该组 feature 下可用，
+/// cfg gate 与 `src/strategy/registry.rs` 中 trait 方法的 gate 保持一致。
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
+))]
 #[tokio::test(flavor = "multi_thread")]
 async fn default_firewall_strategy_is_noop() {
     use garrison::strategy::FirewallLoginContext;
@@ -324,6 +346,14 @@ async fn all_six_strategies_support_register_get_remove() {
     struct CustomFirewall;
     #[async_trait]
     impl FirewallStrategy for CustomFirewall {
+        #[cfg(any(
+            feature = "sms-rate-limit",
+            feature = "firewall-ratelimit",
+            feature = "firewall-bruteforce",
+            feature = "firewall-ddos",
+            feature = "firewall",
+            feature = "oauth2-server"
+        ))]
         async fn check_login_hooks(
             &self,
             _: &str,
@@ -444,7 +474,7 @@ async fn replace_drops_old_handler_no_leak() {
 // R-strategy-registry-003 集成: GarrisonManager 全局访问
 // ============================================================================
 
-/// 验证 `GarrisonManager::init` 后 `strategy()` 返回 `Arc<RwLock<Strategy>>`。
+/// 验证 `GarrisonManager::builder()` 后 `strategy()` 返回 `Arc<RwLock<Strategy>>`。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn manager_init_makes_strategy_available() {
@@ -453,7 +483,13 @@ async fn manager_init_makes_strategy_available() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let strategy = GarrisonManager::strategy();
     assert!(strategy.is_ok(), "init 后应能获取 strategy");
@@ -474,7 +510,13 @@ async fn manager_with_strategy_replaces_registry() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // 获取原 logic 并构造自定义 Strategy
     let logic = GarrisonManager::logic().unwrap();
@@ -511,7 +553,13 @@ async fn runtime_register_takes_effect_immediately() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // 替换前：默认策略生成 token（先 clone Arc 再 await，避免跨 await 持锁）
     let strategy = GarrisonManager::strategy().unwrap();
@@ -546,7 +594,13 @@ async fn runtime_register_then_remove_restores_default() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let strategy = GarrisonManager::strategy().unwrap();
 

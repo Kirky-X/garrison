@@ -12,11 +12,11 @@
 //!
 //! ## auto-wire 集成（0.2.1 修复）
 //!
-//! 0.2.1 起 `GarrisonManager::init` 自动注入 `GarrisonPluginManager` / `GarrisonListenerManager`
+//! 0.2.1 起 `GarrisonManager::builder()` 自动注入 `GarrisonPluginManager` / `GarrisonListenerManager`
 //! 到 `GarrisonLogicDefault`，`GarrisonUtil::login` 会自动触发 `on_login` 钩子与 `Login` 事件。
 //! 本文件包含两组测试：
 //! 1. 扩展点本身行为（直接调用 plugin/listener 方法）
-//! 2. auto-wire 端到端（通过 `GarrisonManager::init` + `GarrisonUtil::login` 验证自动触发）
+//! 2. auto-wire 端到端（通过 `GarrisonManager::builder()` + `GarrisonUtil::login` 验证自动触发）
 //!
 //! 依据 spec plugin-system + listener-system。
 
@@ -362,7 +362,7 @@ async fn permission_check_event_only_goes_to_listener() {
 
 // ============================================================================
 // auto-wire 集成测试（0.2.1 新增）
-// 验证 GarrisonManager::init 自动注入 plugin/listener 后，
+// 验证 GarrisonManager::builder() 自动注入 plugin/listener 后，
 // GarrisonUtil::login 会自动触发 on_login 钩子与 Login 事件。
 // ============================================================================
 
@@ -451,7 +451,7 @@ mod auto_wire_helpers {
     }
 }
 
-/// auto-wire: `GarrisonManager::init` + `GarrisonUtil::login` 自动触发 plugin on_login 钩子。
+/// auto-wire: `GarrisonManager::builder()` + `GarrisonUtil::login` 自动触发 plugin on_login 钩子。
 ///
 /// 验证 0.2.1 修复：init 阶段注入 PluginManager 后，
 /// `GarrisonUtil::login(1001)` 会自动调用编译期注册的 CountingPlugin.on_login。
@@ -482,7 +482,13 @@ async fn auto_wire_login_triggers_plugin_on_login() {
     let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 
     // init 自动构造 PluginManager 并注入到 GarrisonLogicDefault（覆盖式更新全局单例）
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // login 应自动触发 CountingPlugin.on_login（编译期通过 inventory 注册）
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
@@ -497,7 +503,7 @@ async fn auto_wire_login_triggers_plugin_on_login() {
     );
 }
 
-/// auto-wire: `GarrisonManager::init` + `GarrisonUtil::login` 自动广播 Login 事件到 listener。
+/// auto-wire: `GarrisonManager::builder()` + `GarrisonUtil::login` 自动广播 Login 事件到 listener。
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_login_broadcasts_listener_login_event() {
@@ -523,7 +529,13 @@ async fn auto_wire_login_broadcasts_listener_login_event() {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     let token = GarrisonUtil::login_simple("2002").await.unwrap();
     assert!(!token.is_empty());
@@ -537,7 +549,7 @@ async fn auto_wire_login_broadcasts_listener_login_event() {
     );
 }
 
-/// auto-wire: `GarrisonManager::init` + `with_current_token` + `GarrisonUtil::logout` 自动触发 on_logout + Logout 事件。
+/// auto-wire: `GarrisonManager::builder()` + `with_current_token` + `GarrisonUtil::logout` 自动触发 on_logout + Logout 事件。
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_logout_triggers_hooks() {
@@ -563,7 +575,13 @@ async fn auto_wire_logout_triggers_hooks() {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 
     // login（触发 on_login + Login 事件）
     let token = GarrisonUtil::login_simple("3003").await.unwrap();

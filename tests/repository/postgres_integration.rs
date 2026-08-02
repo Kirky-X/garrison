@@ -107,6 +107,8 @@ async fn setup_db() -> dbnexus::DbPool {
 // ============================================================================
 
 /// 验证 init_dbnexus 能连接到 PostgreSQL 16 容器。
+// 需手动验证：cargo test --features production -- --ignored db_postgres
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn postgres_connects_to_database() {
@@ -131,6 +133,8 @@ async fn postgres_connects_to_database() {
 ///
 /// 10 张表：app_user / app_role / app_permission / app_user_role / app_role_permission
 /// / app_auth_method / app_session / app_login_log / app_user_ext / app_user_device
+// 需手动验证：cargo test --features production -- --ignored db_postgres
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn postgres_migrate_creates_all_core_tables() {
@@ -181,6 +185,8 @@ async fn postgres_migrate_creates_all_core_tables() {
 // ============================================================================
 
 /// UserRepository：create → find_by_id → update → list → delete（PostgreSQL 后端）。
+// 需手动验证：cargo test --features production -- --ignored db_postgres
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn postgres_user_repository_crud() {
@@ -254,6 +260,8 @@ async fn postgres_user_repository_crud() {
 // ============================================================================
 
 /// RoleRepository：create → find_by_code → list → assign（UserRoleRepository 集成）（PostgreSQL 后端）。
+// 需手动验证：cargo test --features production -- --ignored db_postgres
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn postgres_role_repository_crud() {
@@ -329,6 +337,8 @@ async fn postgres_role_repository_crud() {
 // ============================================================================
 
 /// PermissionRepository：create → find_by_code → find_by_id → list → delete（PostgreSQL 后端）。
+// 需手动验证：cargo test --features production -- --ignored db_postgres
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn postgres_permission_repository_crud() {
@@ -404,12 +414,14 @@ async fn postgres_permission_repository_crud() {
 /// UserDeviceRepository：register → list → block → unblock → count（PostgreSQL 后端）。
 ///
 /// 验证 PostgreSQL BIGINT 0/1 → bool 转换（is_blocked 字段）+ epoch seconds 时间字段。
+// 需手动验证：cargo test --features production -- --ignored db_postgres
+#[ignore]
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn postgres_user_device_repository_crud() {
     let pool = setup_db().await;
     let repo = DbnexusPostgresUserDeviceRepository::new(pool);
-    let login_id: i64 = 5001;
+    let login_id = "5001";
     let ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0";
 
     // register

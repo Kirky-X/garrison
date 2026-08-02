@@ -179,7 +179,7 @@ fn make_config() -> GarrisonConfig {
 }
 
 /// 初始化 GarrisonManager（带权限/角色数据）。
-fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
+async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let config = Arc::new(make_config());
     let mut interface = MockInterface::new();
@@ -190,7 +190,13 @@ fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
         interface = interface.with_role(id, roles);
     }
     let interface: Arc<dyn GarrisonInterface> = Arc::new(interface);
-    GarrisonManager::init(dao, config, interface).unwrap();
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 /// 构建 axum app：包含 /protected（CheckLogin）、/admin（CheckRole<AdminRole>）、
@@ -240,7 +246,7 @@ where
 #[tokio::test]
 #[serial]
 async fn protected_with_valid_token_returns_200() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
@@ -255,7 +261,7 @@ async fn protected_with_valid_token_returns_200() {
 #[tokio::test]
 #[serial]
 async fn protected_without_token_returns_401() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = make_app();
     let response = app.oneshot(make_request("/protected", None)).await.unwrap();
@@ -275,7 +281,7 @@ async fn protected_without_token_returns_401() {
 #[tokio::test]
 #[serial]
 async fn protected_with_invalid_token_returns_401() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = make_app();
     let response = app
@@ -289,7 +295,7 @@ async fn protected_with_invalid_token_returns_401() {
 #[tokio::test]
 #[serial]
 async fn admin_with_admin_role_returns_200() {
-    init_manager(&[], &[("1001", &["admin"])]);
+    init_manager(&[], &[("1001", &["admin"])]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
@@ -304,7 +310,7 @@ async fn admin_with_admin_role_returns_200() {
 #[tokio::test]
 #[serial]
 async fn admin_without_admin_role_returns_403() {
-    init_manager(&[], &[]); // 无角色数据
+    init_manager(&[], &[]).await; // 无角色数据
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_app();
@@ -320,7 +326,7 @@ async fn admin_without_admin_role_returns_403() {
 #[serial]
 async fn users_with_user_read_permission_returns_200() {
     with_default_tenant(async {
-        init_manager(&[("1001", &["user:read"])], &[]);
+        init_manager(&[("1001", &["user:read"])], &[]).await;
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let app = make_app();
@@ -338,7 +344,7 @@ async fn users_with_user_read_permission_returns_200() {
 #[serial]
 async fn users_without_user_read_permission_returns_403() {
     with_default_tenant(async {
-        init_manager(&[], &[]); // 无权限数据
+        init_manager(&[], &[]).await; // 无权限数据
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let app = make_app();
@@ -355,7 +361,7 @@ async fn users_without_user_read_permission_returns_403() {
 #[tokio::test]
 #[serial]
 async fn public_without_token_returns_200() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = make_app();
     let response = app.oneshot(make_request("/public", None)).await.unwrap();
@@ -366,7 +372,7 @@ async fn public_without_token_returns_200() {
 #[tokio::test]
 #[serial]
 async fn unauthorized_response_body_contains_error_json() {
-    init_manager(&[], &[]);
+    init_manager(&[], &[]).await;
 
     let app = make_app();
     let response = app.oneshot(make_request("/protected", None)).await.unwrap();
