@@ -9,6 +9,19 @@
 
 ### Changed
 
+- **审查发现修复（v0.8.1 全面深度审查报告，2026-08-02）**：
+  - **I18N-01/SEC-02**：补齐 `invalid-response-msg` i18n key（`locales/en.ftl` / `locales/zh.ftl`），消除 `GarrisonError::InvalidResponse` 在 `response_parts_i18n()` 下的翻译失败路径（此前回退硬编码中文）。
+  - **遗留编译修复**（前序 i18n 工作遗留的构建阻断，本变更一并修复）：
+    - `src/stp/session.rs` / `src/account/authflow/executor.rs` 使用 `loc!` 但缺 `use crate::loc;` import，导致 `--features full` 编译失败；已补 import（session.rs 按 `listener`、util.rs 按 `backend-*` 门控，避免 `--no-default-features` 下 unused import）。
+    - executor.rs / config/impls.rs 中 `loc!` 参数误写 `&**&str`/`&**&str` 解引用（E0614），已规范为 `&str` 直传 / `.as_str()`。
+    - `TokenLogic` trait 缺文档注释导致 `missing_docs` warning，已补 doc。
+  - **DOC-01**：`src/lib.rs` 使用示例版本号 `"0.7"` 更新为 `"0.8"`。
+  - **TEST-01/CI-02**：CI 覆盖率门禁从 80% 提升至 85%（当前行覆盖率 ~95.8%）。
+  - **ARCH-01/DEP-03**：移除 DEPRECATED 的 `all-defaults` 聚合 feature（与 `development` 完全重复），同步更新 README/docs/mdbook 引用。
+  - **DEEP-01**：`TokenLogic::check_access_token` / `check_client_token` / `check_temp_token` 三个相同默认实现 DRY 重构为共享 `ensure_valid_token_session` 辅助函数（统一 `NotLogin` 语义，不泄露 token 类型）。
+  - **DEEP-02**：移除 `src/secure/sign/signer.rs::constant_time_eq_manual` 死代码（`secure-sign` 强制启用 `dep:subtle`，`not(subtle)` 分支永远不可达）。
+  - **API-02**：`RoleHierarchyService` re-export 与实现扩展为 `any(db-sqlite, db-postgres, db-mysql)`（SQL 占位符/INSERT 语法按后端自适应）。
+
 - **web-actix 中间件内置租户提取（tenant-isolation 生产场景修复）**：
   - `GarrisonRouter` 新增 `with_tenant_resolver(resolver)` / `with_header_tenant()` 方法，`GarrisonMiddleware` 在每个请求前调用 `TenantResolver::resolve` 解析租户并进入 `TENANT.scope` 再执行鉴权。此前 `tenant-isolation` 下 web_actix 中间件鉴权（`check_permission` / `check_role`）因无租户上下文而 fail-closed 报 `ctx-tenant-context-missing`（HTTP 500）。
   - 未配置 resolver 时行为与旧版完全一致（不提取租户）；`TenantResolver`（Header / Subdomain / Claim）复用既有 trait，无新增依赖。
