@@ -219,10 +219,10 @@ async fn role_denied_returns_403() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
-    let response = app
-        .oneshot(make_request("/admin", Some(&token)))
-        .await
-        .unwrap();
+    let response =
+        with_default_tenant(async { app.oneshot(make_request("/admin", Some(&token))).await })
+            .await
+            .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     GarrisonManager::reset_for_test();
@@ -236,10 +236,10 @@ async fn role_granted_returns_200() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let app = make_router().build();
-    let response = app
-        .oneshot(make_request("/admin", Some(&token)))
-        .await
-        .unwrap();
+    let response =
+        with_default_tenant(async { app.oneshot(make_request("/admin", Some(&token))).await })
+            .await
+            .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
     GarrisonManager::reset_for_test();
@@ -384,7 +384,9 @@ async fn default_interceptor_check_role_held_ok() {
     let interceptor = DefaultGarrisonInterceptor;
     let result = crate::stp::with_current_token(
         token,
-        interceptor.pre_handle("/x", &Annotation::CheckRole("admin".to_string())),
+        with_default_tenant(
+            interceptor.pre_handle("/x", &Annotation::CheckRole("admin".to_string())),
+        ),
     )
     .await;
     assert!(result.is_ok(), "持有角色 pre_handle(CheckRole) 应返回 Ok");
@@ -1040,10 +1042,10 @@ async fn group_non_ignore_annotation_preserves_route_annotation() {
         .build();
 
     // 已登录但无 admin 角色 → 403（CheckRole 保留，未被 CheckLogin 覆盖）
-    let response = app
-        .oneshot(make_request("/api/admin", Some(&token)))
-        .await
-        .unwrap();
+    let response =
+        with_default_tenant(async { app.oneshot(make_request("/api/admin", Some(&token))).await })
+            .await
+            .unwrap();
     assert_eq!(
         response.status(),
         StatusCode::FORBIDDEN,

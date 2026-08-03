@@ -47,7 +47,6 @@ impl DecisionCombinator {
         }
         let mut first_deny: Option<&Decision> = None;
         for d in decisions {
-            #[cfg(feature = "safe-defaults")]
             if d.is_forbid() {
                 return d.clone();
             }
@@ -205,6 +204,29 @@ mod tests {
             result.reason,
             DecisionReason::NoMatchingPermission,
             "应返回 Deny 的 reason（NoMatchingPermission）"
+        );
+    }
+
+    /// CRITICAL-11: Deny 在前、Forbid 在后时仍返回 Forbid（Forbid 始终最高优先级）。
+    ///
+    /// 验证移除 `is_forbid()` 的 `safe-defaults` feature-gate 后，
+    /// 无论 Forbid 在列表中的位置如何，combine 始终优先返回 Forbid。
+    /// 回归测试：防止 feature-gate 被重新引入导致 Forbid 降级为 Deny。
+    #[test]
+    fn combine_deny_before_forbid_still_returns_forbid() {
+        let decisions = vec![
+            Decision::deny(DecisionReason::NoMatchingPermission),
+            Decision::forbid("restricted-resource"),
+        ];
+        let result = DecisionCombinator::combine(&decisions);
+        assert!(
+            result.is_forbid(),
+            "Deny 在前、Forbid 在后时仍应返回 Forbid（Forbid 最高优先级）"
+        );
+        assert_eq!(
+            result.reason,
+            DecisionReason::Forbid("restricted-resource".to_string()),
+            "应返回 Forbid 的 reason"
         );
     }
 }

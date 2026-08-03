@@ -713,6 +713,7 @@ async fn extractor_check_role_returns_403_without_role() {
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(config))
+            .app_data(web::Data::new(super::RequiredRole("admin".to_string())))
             .route("/role", web::get().to(check_role_handler)),
     )
     .await;
@@ -720,36 +721,66 @@ async fn extractor_check_role_returns_403_without_role() {
     let req = test::TestRequest::get()
         .uri("/role")
         .insert_header(("Authorization", format!("Bearer {}", token)))
-        .insert_header(("X-Garrison-Role", "admin"))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = with_default_tenant(async { test::call_service(&app, req).await }).await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckRole extractor 通过 query param 传递角色。
+/// 验证 CheckRole extractor 通过 `web::Data<RequiredRole>` 服务端配置角色。
 ///
-/// 覆盖 `CheckRole::from_request` 中 query param 解析分支。
+/// CRITICAL-12 修复：角色不再从客户端 header/query 读取，必须通过服务端配置。
 #[tokio::test]
 #[serial]
-async fn extractor_check_role_reads_role_from_query_param() {
+async fn extractor_check_role_reads_role_from_server_config() {
     init_manager(&[], &[("1001", &["admin"])]).await; // 注入 admin 角色
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let config = Arc::new(make_config());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(config))
+            .app_data(web::Data::new(super::RequiredRole("admin".to_string())))
             .route("/role", web::get().to(check_role_handler)),
     )
     .await;
 
     let req = test::TestRequest::get()
-        .uri("/role?role=admin")
+        .uri("/role")
         .insert_header(("Authorization", format!("Bearer {}", token)))
         .to_request();
-    let resp = test::call_service(&app, req).await;
+    let resp = with_default_tenant(async { test::call_service(&app, req).await }).await;
     assert_eq!(resp.status(), StatusCode::OK);
+
+    GarrisonManager::reset_for_test();
+}
+
+/// CRITICAL-12 安全回归：客户端 `X-Garrison-Role` header 不应影响角色检查。
+///
+/// 攻击者发送 `X-Garrison-Role: admin` 不应绕过服务端配置的角色检查。
+#[tokio::test]
+#[serial]
+async fn extractor_check_role_ignores_client_role_header() {
+    init_manager(&[], &[]).await; // 无角色数据
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let config = Arc::new(make_config());
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(config))
+            .app_data(web::Data::new(super::RequiredRole("admin".to_string())))
+            .route("/role", web::get().to(check_role_handler)),
+    )
+    .await;
+
+    // 攻击者尝试通过 header 指定角色 — 应被忽略，仍按服务端配置检查
+    let req = test::TestRequest::get()
+        .uri("/role")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .insert_header(("X-Garrison-Role", "admin"))
+        .to_request();
+    let resp = with_default_tenant(async { test::call_service(&app, req).await }).await;
+    // 无角色数据 → 403（即使客户端发送 X-Garrison-Role: admin）
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     GarrisonManager::reset_for_test();
 }
@@ -788,6 +819,9 @@ async fn extractor_check_permission_returns_403_without_permission() {
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(config))
+            .app_data(web::Data::new(super::RequiredPermission(
+                "user:read".to_string(),
+            )))
             .route("/perm", web::get().to(check_permission_handler)),
     )
     .await;
@@ -795,7 +829,6 @@ async fn extractor_check_permission_returns_403_without_permission() {
     let req = test::TestRequest::get()
         .uri("/perm")
         .insert_header(("Authorization", format!("Bearer {}", token)))
-        .insert_header(("X-Garrison-Permission", "user:read"))
         .to_request();
     let resp = with_default_tenant(async { test::call_service(&app, req).await }).await;
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
@@ -803,28 +836,62 @@ async fn extractor_check_permission_returns_403_without_permission() {
     GarrisonManager::reset_for_test();
 }
 
-/// 验证 CheckPermission extractor 通过 query param 传递权限并放行。
+/// 验证 CheckPermission extractor 通过 `web::Data<RequiredPermission>` 服务端配置权限。
 ///
-/// 覆盖 `CheckPermission::from_request` 中 query param 解析 + 成功分支。
+/// CRITICAL-12 修复：权限不再从客户端 header/query 读取，必须通过服务端配置。
 #[tokio::test]
 #[serial]
-async fn extractor_check_permission_reads_from_query_param() {
+async fn extractor_check_permission_reads_from_server_config() {
     init_manager(&[("1001", &["user:read"])], &[]).await; // 注入权限
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let config = Arc::new(make_config());
     let app = test::init_service(
         App::new()
             .app_data(web::Data::new(config))
+            .app_data(web::Data::new(super::RequiredPermission(
+                "user:read".to_string(),
+            )))
             .route("/perm", web::get().to(check_permission_handler)),
     )
     .await;
 
     let req = test::TestRequest::get()
-        .uri("/perm?permission=user:read")
+        .uri("/perm")
         .insert_header(("Authorization", format!("Bearer {}", token)))
         .to_request();
     let resp = with_default_tenant(async { test::call_service(&app, req).await }).await;
     assert_eq!(resp.status(), StatusCode::OK);
+
+    GarrisonManager::reset_for_test();
+}
+
+/// CRITICAL-12 安全回归：客户端 `?permission=` query param 不应影响权限检查。
+///
+/// 攻击者发送 `?permission=user:read` 不应绕过服务端配置的权限检查。
+#[tokio::test]
+#[serial]
+async fn extractor_check_permission_ignores_client_query_param() {
+    init_manager(&[], &[]).await; // 无权限数据
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let config = Arc::new(make_config());
+    let app = test::init_service(
+        App::new()
+            .app_data(web::Data::new(config))
+            .app_data(web::Data::new(super::RequiredPermission(
+                "admin:write".to_string(),
+            )))
+            .route("/perm", web::get().to(check_permission_handler)),
+    )
+    .await;
+
+    // 攻击者尝试通过 query param 指定权限 — 应被忽略
+    let req = test::TestRequest::get()
+        .uri("/perm?permission=admin:write")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .to_request();
+    let resp = with_default_tenant(async { test::call_service(&app, req).await }).await;
+    // 无权限数据 → 403（即使客户端发送 ?permission=admin:write）
+    assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 
     GarrisonManager::reset_for_test();
 }

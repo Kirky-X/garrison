@@ -154,6 +154,10 @@ fn parse_tag(rest: &str) -> Option<(&str, bool, &str, &str)> {
 /// 扫描属性字符串，识别 `on` 开头后跟字母数字再跟 `=` 的属性名，移除整个
 /// `name=value` 片段。支持三种值形式：双引号、单引号、无引号（到空白为止）。
 ///
+/// 防绕过场景：
+/// - 属性名与 `=` 之间的空白：`onclick =alert(1)`
+/// - 属性间无空格：`href="x"onclick="..."`
+///
 /// 不引入 regex crate，使用字节扫描实现。
 fn strip_event_handlers(attrs: &str) -> String {
     let bytes = attrs.as_bytes();
@@ -162,7 +166,12 @@ fn strip_event_handlers(attrs: &str) -> String {
     let mut last_copy = 0;
 
     while i < bytes.len() {
-        let is_attr_start = i == 0 || bytes[i - 1].is_ascii_whitespace();
+        // 属性起始：位置 0、前一字符为空白、或前一字符为 `"`/`'`（处理属性间无空格场景，
+        // 如 `href="x"onclick="..."`）
+        let is_attr_start = i == 0
+            || bytes[i - 1].is_ascii_whitespace()
+            || bytes[i - 1] == b'"'
+            || bytes[i - 1] == b'\'';
         if is_attr_start
             && i + 2 <= bytes.len()
             && bytes[i].eq_ignore_ascii_case(&b'o')
@@ -172,7 +181,13 @@ fn strip_event_handlers(attrs: &str) -> String {
             while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
                 j += 1;
             }
-            if j < bytes.len() && bytes[j] == b'=' {
+            // 允许属性名与 `=` 之间的空白（防 `onclick =alert(1)` 绕过）
+            let mut k = j;
+            while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+                k += 1;
+            }
+            if k < bytes.len() && bytes[k] == b'=' {
+                j = k; // 推进到 `=` 位置
                 out.push_str(&attrs[last_copy..i]);
                 j += 1;
                 if j < bytes.len() {
@@ -878,6 +893,58 @@ mod tests {
         assert!(
             !result.to_lowercase().contains("javascript"),
             "xlink:href 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    // ========================================================================
+    // XSS 绕过回归测试（CRITICAL 修复验证）
+    // ========================================================================
+
+    /// 绕过 #1: `onclick =alert(1)` — 属性名与 `=` 之间有空格。
+    #[test]
+    fn bypass_strips_event_handler_with_space_before_equals() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a onclick =alert(1)>click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("onclick"),
+            "onclick 前有空格时应被移除，实际: {}",
+            result
+        );
+    }
+
+    /// 绕过 #2: `href="x"onclick="..."` — 属性间无空格，`"` 后直接跟 on*。
+    #[test]
+    fn bypass_strips_event_handler_after_quoted_attr_no_space() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="x"onclick="alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("onclick"),
+            r#"href="x"onclick 无空格时 onclick 应被移除，实际: {}"#,
+            result
+        );
+    }
+
+    /// 绕过 #3: `ONCLICK = alert(1)` — 大小写 + 多空格绕过。
+    #[test]
+    fn bypass_strips_event_handler_uppercase_multi_space() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["div"]));
+        let result = protector.sanitize(r#"<div ONCLICK = alert(1)>text</div>"#);
+        assert!(
+            !result.to_lowercase().contains("onclick"),
+            "ONCLICK 多空格绕过应被移除，实际: {}",
+            result
+        );
+    }
+
+    /// 绕过 #4: 单引号属性后无空格 `href='x'onload='...'`。
+    #[test]
+    fn bypass_strips_event_handler_after_single_quoted_attr() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["img"]));
+        let result = protector.sanitize(r#"<img src='x'onerror='alert(1)'>"#);
+        assert!(
+            !result.to_lowercase().contains("onerror"),
+            "单引号属性后无空格 onerror 应被移除，实际: {}",
             result
         );
     }

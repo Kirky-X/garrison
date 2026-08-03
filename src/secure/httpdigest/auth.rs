@@ -356,6 +356,10 @@ impl HttpDigestAuth {
                 if !self.validate_nc(&resp.nonce, &resp.nc) {
                     return false;
                 }
+                // RFC 7616 §3.4.6: 校验客户端 uri 与实际请求 URI 一致（常量时间比较，防跨 URI 重放）
+                if !constant_time_eq(resp.uri.as_bytes(), uri.as_bytes()) {
+                    return false;
+                }
                 let qop = resp.qop.as_deref();
                 // 根据 qop 计算 HA2
                 let ha2 = match qop {
@@ -409,11 +413,13 @@ impl HttpDigestAuth {
         let mut qop = None;
         let mut nc = None;
         let mut cnonce = None;
+        let mut uri = None;
 
         for (key, value) in parse_digest_params(params) {
             match key.as_str() {
                 // username/realm/uri 由 RFC 7616 要求存在，但 validate() 不使用，仅校验存在性
-                "username" | "realm" | "uri" => {},
+                "username" | "realm" => {},
+                "uri" => uri = Some(value),
                 "nonce" => nonce = Some(value),
                 "response" => response = Some(value),
                 "qop" => qop = Some(value),
@@ -437,6 +443,9 @@ impl HttpDigestAuth {
             cnonce: cnonce.ok_or_else(|| {
                 GarrisonError::Internal("secure-http-digest-missing-cnonce::".to_string())
             })?,
+            uri: uri.ok_or_else(|| {
+                GarrisonError::Internal("secure-http-digest-missing-uri::".to_string())
+            })?,
         })
     }
 }
@@ -452,6 +461,8 @@ struct DigestResponse {
     qop: Option<String>,
     nc: String,
     cnonce: String,
+    /// RFC 7616 要求服务端校验客户端 uri 与实际请求 URI 一致，防止 digest 跨 URI 重放。
+    uri: String,
 }
 
 /// 解析 Digest 参数串（key=value 或 key="quoted value" 形式，依据 RFC 7616）。

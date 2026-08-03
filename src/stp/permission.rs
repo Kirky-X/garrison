@@ -273,6 +273,12 @@ impl PermissionLogic for GarrisonLogicDefault {
                 };
             },
         };
+        // 租户隔离：与 check_permission 对齐，防止跨租户角色检查绕过
+        #[cfg(not(feature = "tenant-isolation"))]
+        #[allow(deprecated)]
+        let _tenant_id = current_tenant_id();
+        #[cfg(feature = "tenant-isolation")]
+        let _tenant_id = current_tenant_id_or_error()?;
         // 委托 GarrisonPermissionStrategy 做角色校验
         let has_role = self.firewall.check_role(&login_id, role).await?;
         // emit metrics：角色查询结果
@@ -758,7 +764,11 @@ mod tests {
                 .login("role-user-001", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result = with_current_token(token, async { logic.check_role("admin").await }).await;
+            let result = with_current_token(
+                token,
+                with_default_tenant(async { logic.check_role("admin").await }),
+            )
+            .await;
             assert!(
                 result.is_ok(),
                 "已登录 + has_role=true 应返回 Ok，实际: {:?}",
@@ -774,7 +784,11 @@ mod tests {
                 .login("role-user-002", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result = with_current_token(token, async { logic.check_role("admin").await }).await;
+            let result = with_current_token(
+                token,
+                with_default_tenant(async { logic.check_role("admin").await }),
+            )
+            .await;
             assert!(
                 matches!(result, Err(GarrisonError::NotRole(_))),
                 "已登录 + has_role=false 应返回 NotRole，实际: {:?}",
@@ -857,9 +871,34 @@ mod tests {
                 .login("has-role-001", &crate::stp::LoginParams::default())
                 .await
                 .unwrap();
-            let result = with_current_token(token, async { logic.has_role("admin").await }).await;
+            let result = with_current_token(
+                token,
+                with_default_tenant(async { logic.has_role("admin").await }),
+            )
+            .await;
             assert!(result.is_ok(), "应返回 Ok，实际: {:?}", result);
             assert!(!result.unwrap(), "has_role=false 应返回 false");
+        }
+
+        /// CRITICAL-7: 无租户上下文时 check_role 应 fail-closed 返回 Err(Config)。
+        ///
+        /// 验证 `tenant-isolation` feature 启用后，`check_role` 与 `check_permission` 一致，
+        /// 在无 `TENANT.scope` 时拒绝执行（防止跨租户角色检查绕过）。
+        #[tokio::test]
+        #[cfg(feature = "tenant-isolation")]
+        async fn check_role_without_tenant_context_returns_error() {
+            let logic = make_logic(false, true, true);
+            let token = logic
+                .login("tenant-role-001", &crate::stp::LoginParams::default())
+                .await
+                .unwrap();
+            // 故意不包裹 with_default_tenant，验证 fail-closed 语义
+            let result = with_current_token(token, async { logic.check_role("admin").await }).await;
+            assert!(
+                matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("tenant")),
+                "无租户上下文时 check_role 应返回 Err(Config)，实际: {:?}",
+                result
+            );
         }
     }
 

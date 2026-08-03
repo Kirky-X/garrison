@@ -724,7 +724,7 @@ fn constant_time_eq_same_strings_returns_true() {
 /// 验证 constant_time_eq 对不同字符串返回 false。
 #[test]
 fn constant_time_eq_different_strings_returns_false() {
-    assert!(!constant_time_eq(b"abc", b"abd"));
+    assert!(!constant_time_eq(b"abc", b"xyz"));
 }
 
 // ========================================================================
@@ -1188,6 +1188,43 @@ async fn validate_nc_malformed_hex_rejected() {
     assert!(
         !auth.validate(&header, method, uri, &ha1),
         "LOW-2: 非 hex 格式的 nc 应被拒绝（不是 fail-open）"
+    );
+}
+
+// ========================================================================
+// CRITICAL-5: Digest Auth URI 校验（RFC 7616 §3.4.6）
+// ========================================================================
+
+/// 客户端 uri 与实际请求 URI 不匹配时应被拒绝（防跨 URI 重放攻击）。
+///
+/// 构造 valid response（ha2 基于 `/resource`），但 validate 调用使用 `/other`。
+/// URI 常量时间比对应在 response 比对之前拦截。
+#[test]
+fn validate_uri_mismatch_rejected() {
+    let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let header_uri = "/resource";
+    let actual_uri = "/other";
+    // ha2 基于 header_uri 计算（模拟客户端对 /resource 的合法响应）
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        header_uri,
+        &ha1,
+    );
+    // validate 使用 actual_uri（/other），与 header 中的 uri（/resource）不匹配
+    assert!(
+        !auth.validate(&header, method, actual_uri, &ha1),
+        "CRITICAL-5: 客户端 uri 与实际请求 URI 不匹配应被拒绝"
     );
 }
 

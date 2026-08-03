@@ -128,10 +128,44 @@ pub struct GarrisonMiddlewareService<S> {
 pub struct CheckLogin;
 
 /// CheckRole extractor：验证用户持有指定角色。
+///
+/// 角色名通过 `web::Data<RequiredRole>` 服务端配置（CRITICAL-12 修复）。
 pub struct CheckRole(pub String);
 
 /// CheckPermission extractor：验证用户持有指定权限。
+///
+/// 权限名通过 `web::Data<RequiredPermission>` 服务端配置（CRITICAL-12 修复）。
 pub struct CheckPermission(pub String);
+
+/// CheckRole 服务端配置：路由注册时声明所需角色（CRITICAL-12 修复）。
+///
+/// 通过 `web::Data::new(RequiredRole("admin".into()))` 注入 `App`，
+/// `CheckRole` extractor 从此配置读取角色名，禁止客户端控制。
+///
+/// # 使用
+///
+/// ```ignore
+/// use garrison::web_actix::RequiredRole;
+/// App::new()
+///     .app_data(web::Data::new(RequiredRole("admin".to_string())))
+///     .route("/admin", web::get().to(admin_handler))
+/// ```
+pub struct RequiredRole(pub String);
+
+/// CheckPermission 服务端配置：路由注册时声明所需权限（CRITICAL-12 修复）。
+///
+/// 通过 `web::Data::new(RequiredPermission("user:read".into()))` 注入 `App`，
+/// `CheckPermission` extractor 从此配置读取权限名，禁止客户端控制。
+///
+/// # 使用
+///
+/// ```ignore
+/// use garrison::web_actix::RequiredPermission;
+/// App::new()
+///     .app_data(web::Data::new(RequiredPermission("user:read".to_string())))
+///     .route("/data", web::get().to(data_handler))
+/// ```
+pub struct RequiredPermission(pub String);
 
 #[cfg(test)]
 mod mock;

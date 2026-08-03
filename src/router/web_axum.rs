@@ -189,6 +189,34 @@ impl GarrisonRouter {
     }
 }
 
+/// 路由模式匹配：支持精确匹配和 `:param` 参数段。
+///
+/// `pattern` 为注册时的路径模式（如 `/api/users/:id`），
+/// `path` 为实际请求路径（如 `/api/users/42`）。
+/// 每段按 `/` 分割后比对：`:xxx` 段匹配任意非空值，其余段精确匹配。
+fn route_matches(pattern: &str, path: &str) -> bool {
+    let pattern_segments = pattern.split('/');
+    let path_segments = path.split('/');
+    let mut pi = pattern_segments.peekable();
+    let mut ri = path_segments.peekable();
+    loop {
+        match (pi.next(), ri.next()) {
+            (None, None) => return true,
+            (Some(p), Some(r)) => {
+                if p.starts_with(':') {
+                    // 参数段：匹配任意非空值
+                    if r.is_empty() {
+                        return false;
+                    }
+                } else if p != r {
+                    return false;
+                }
+            },
+            _ => return false,
+        }
+    }
+}
+
 /// 实现 `Default`：使用 `GarrisonConfig::default_config()` 创建路由器，拦截器为 `DefaultGarrisonInterceptor`。
 impl Default for GarrisonRouter {
     fn default() -> Self {
@@ -208,7 +236,13 @@ async fn garrison_middleware(
     next: Next,
 ) -> Response {
     let path = req.uri().path().to_string();
-    let rule = state.rules.iter().find(|r| r.path == path).cloned();
+    // 路由规则匹配：支持精确匹配和参数化路由（`:param` 段匹配任意值）。
+    // 修复前使用 `r.path == path` 精确匹配，`:id` 参数路由完全跳过鉴权。
+    let rule = state
+        .rules
+        .iter()
+        .find(|r| route_matches(&r.path, &path))
+        .cloned();
 
     let token = AxumRequest::new(&req)
         .get_token(&state.config)
@@ -312,4 +346,42 @@ pub async fn tenant_resolution_middleware(
         .await
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     Ok(TENANT.scope(ctx, next.run(req)).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// CRITICAL-6: 精确路径匹配 — 静态路径应仅匹配完全相同的路径。
+    #[test]
+    fn route_matches_exact_static_path() {
+        assert!(route_matches("/admin", "/admin"));
+        assert!(!route_matches("/admin", "/other"));
+    }
+
+    /// CRITICAL-6: 参数化路由 `:id` 应匹配任意非空段。
+    #[test]
+    fn route_matches_param_segment() {
+        assert!(route_matches("/users/:id", "/users/123"));
+        assert!(route_matches("/users/:id", "/users/abc"));
+        assert!(!route_matches("/users/:id", "/users/")); // 空段不匹配
+    }
+
+    /// CRITICAL-6: 参数化路由应匹配多段路径中的中间参数。
+    #[test]
+    fn route_matches_mixed_static_and_param() {
+        assert!(route_matches("/api/:version/users/:id", "/api/v1/users/42"));
+        assert!(!route_matches("/api/:version/users/:id", "/api/v1/users/"));
+        assert!(!route_matches(
+            "/api/:version/users/:id",
+            "/api/v1/items/42"
+        ));
+    }
+
+    /// CRITICAL-6: 段数不匹配时应返回 false。
+    #[test]
+    fn route_matches_segment_count_mismatch() {
+        assert!(!route_matches("/users/:id", "/users/123/extra"));
+        assert!(!route_matches("/users/:id/extra", "/users/123"));
+    }
 }

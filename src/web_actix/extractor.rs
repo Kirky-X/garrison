@@ -122,6 +122,22 @@ impl actix_web::FromRequest for super::CheckLogin {
 }
 
 /// CheckRole extractor：验证用户持有指定角色。
+///
+/// # 安全设计（CRITICAL-12 修复）
+///
+/// 角色名**必须**通过 `web::Data<RequiredRole>` 在路由注册时服务端配置，
+/// **禁止**从客户端可控的 header / query param 读取（攻击者可通过 `?role=admin` 绕过鉴权）。
+///
+/// # 使用
+///
+/// ```ignore
+/// use garrison::web_actix::RequiredRole;
+/// use actix_web::web;
+///
+/// App::new()
+///     .app_data(web::Data::new(RequiredRole("admin".to_string())))
+///     .route("/admin", web::get().to(admin_handler))
+/// ```
 impl actix_web::FromRequest for super::CheckRole {
     type Error = crate::error::GarrisonError;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
@@ -135,24 +151,11 @@ impl actix_web::FromRequest for super::CheckRole {
                 || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
             );
 
-        // 角色从 header X-Garrison-Role 或 query param role 获取
+        // CRITICAL-12 修复：角色必须通过 web::Data<RequiredRole> 服务端配置，
+        // 禁止从客户端可控的 header/query param 读取（防 `?role=admin` 绕过）。
         let role = req
-            .headers()
-            .get("x-garrison-role")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                req.uri().query().and_then(|q| {
-                    q.split('&').find_map(|kv| {
-                        let mut parts = kv.splitn(2, '=');
-                        if parts.next() == Some("role") {
-                            parts.next().map(|s| s.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                })
-            })
+            .app_data::<actix_web::web::Data<super::RequiredRole>>()
+            .map(|d| d.0.clone())
             .unwrap_or_default();
 
         Box::pin(async move {
@@ -172,6 +175,22 @@ impl actix_web::FromRequest for super::CheckRole {
 }
 
 /// CheckPermission extractor：验证用户持有指定权限。
+///
+/// # 安全设计（CRITICAL-12 修复）
+///
+/// 权限名**必须**通过 `web::Data<RequiredPermission>` 在路由注册时服务端配置，
+/// **禁止**从客户端可控的 header / query param 读取（攻击者可通过 `?permission=user:read` 绕过鉴权）。
+///
+/// # 使用
+///
+/// ```ignore
+/// use garrison::web_actix::RequiredPermission;
+/// use actix_web::web;
+///
+/// App::new()
+///     .app_data(web::Data::new(RequiredPermission("user:read".to_string())))
+///     .route("/data", web::get().to(data_handler))
+/// ```
 impl actix_web::FromRequest for super::CheckPermission {
     type Error = crate::error::GarrisonError;
     type Future = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self, Self::Error>>>>;
@@ -185,24 +204,11 @@ impl actix_web::FromRequest for super::CheckPermission {
                 || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
             );
 
-        // 权限从 header X-Garrison-Permission 或 query param permission 获取
+        // CRITICAL-12 修复：权限必须通过 web::Data<RequiredPermission> 服务端配置，
+        // 禁止从客户端可控的 header/query param 读取（防 `?permission=xxx` 绕过）。
         let permission = req
-            .headers()
-            .get("x-garrison-permission")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_string())
-            .or_else(|| {
-                req.uri().query().and_then(|q| {
-                    q.split('&').find_map(|kv| {
-                        let mut parts = kv.splitn(2, '=');
-                        if parts.next() == Some("permission") {
-                            parts.next().map(|s| s.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                })
-            })
+            .app_data::<actix_web::web::Data<super::RequiredPermission>>()
+            .map(|d| d.0.clone())
             .unwrap_or_default();
 
         Box::pin(async move {

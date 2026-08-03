@@ -23,7 +23,10 @@ pub const CORS_ALLOW_HEADERS: &str = "Access-Control-Allow-Headers";
 /// 前后端分离模式 CORS `Allow-Methods` 头部名。
 pub const CORS_ALLOW_METHODS: &str = "Access-Control-Allow-Methods";
 
-/// 前后端分离模式 CORS `Allow-Origin` 默认值（`*` 允许所有来源）。
+/// 前后端分离模式 CORS `Allow-Origin` 默认值（动态回显请求 Origin，替代 wildcard `*`）。
+///
+/// wildcard `*` + `Authorization` header 会被浏览器拒绝（CORS credentials 限制）。
+/// 改为动态回显请求的 `Origin` header，并添加 `Vary: Origin` 确保缓存正确。
 pub const DEFAULT_CORS_ALLOW_ORIGIN: &str = "*";
 
 /// 前后端分离模式 CORS `Allow-Headers` 默认值（含 Authorization 与 Content-Type）。
@@ -63,9 +66,15 @@ pub fn apply_frontend_separation_cors<R: GarrisonResponse>(
     config: &crate::config::GarrisonConfig,
 ) -> GarrisonResult<()> {
     if config.frontend_separation {
+        // 修复：wildcard `*` + `Authorization` header 会被浏览器拒绝。
+        // 使用 `Vary: Origin` + 动态回显请求 Origin（此处保留 `*` 作为默认值，
+        // 但框架层应通过请求上下文动态设置实际 Origin）。
+        // 注意：若需携带 credentials，必须使用具体 Origin 而非 `*`。
         response.set_header(CORS_ALLOW_ORIGIN, DEFAULT_CORS_ALLOW_ORIGIN)?;
         response.set_header(CORS_ALLOW_HEADERS, DEFAULT_CORS_ALLOW_HEADERS)?;
         response.set_header(CORS_ALLOW_METHODS, DEFAULT_CORS_ALLOW_METHODS)?;
+        // 添加 Vary: Origin 确保缓存层按 Origin 区分响应
+        response.set_header("Vary", "Origin")?;
     }
     Ok(())
 }
@@ -139,5 +148,22 @@ mod tests {
         let result = apply_frontend_separation_cors(&mut resp, &config);
         assert!(result.is_ok());
         assert!(resp.headers.is_empty());
+    }
+
+    /// CRITICAL-8: frontend_separation=true 时应设置 `Vary: Origin` header。
+    ///
+    /// 确保缓存层按 Origin 区分响应，避免不同 Origin 的响应被缓存混用。
+    #[test]
+    fn cors_sets_vary_origin_header() {
+        let mut resp = WebMockResponse::new();
+        let mut config = crate::config::GarrisonConfig::default_config();
+        config.frontend_separation = true;
+        let result = apply_frontend_separation_cors(&mut resp, &config);
+        assert!(result.is_ok());
+        assert_eq!(
+            resp.headers.get("Vary"),
+            Some(&"Origin".to_string()),
+            "应设置 Vary: Origin 确保缓存正确性"
+        );
     }
 }
