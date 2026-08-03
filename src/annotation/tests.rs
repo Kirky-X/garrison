@@ -183,9 +183,12 @@ async fn check_role_held_returns_ok() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
-    let result = with_current_token(token, async {
-        CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await
-    })
+    let result = with_current_token(
+        token,
+        with_default_tenant(async {
+            CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await
+        }),
+    )
     .await;
     assert!(result.is_ok(), "持有角色应返回 Ok");
 
@@ -200,9 +203,12 @@ async fn check_role_not_held_returns_not_role() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts();
-    let result = with_current_token(token, async {
-        CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await
-    })
+    let result = with_current_token(
+        token,
+        with_default_tenant(async {
+            CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await
+        }),
+    )
     .await;
     assert!(
         matches!(result, Err(GarrisonError::NotRole(_))),
@@ -615,7 +621,10 @@ async fn check_role_extracts_token_from_header() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let mut parts = make_parts_with_bearer(&token);
-    let result = CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await;
+    let result = with_default_tenant(async {
+        CheckRole::<AdminRole>::from_request_parts(&mut parts, &()).await
+    })
+    .await;
     assert!(result.is_ok(), "持有角色时通过 header token 校验应通过");
 
     GarrisonManager::reset_for_test();

@@ -669,7 +669,7 @@ async fn check_permission_not_login_throws_not_permission_when_silent() {
 async fn check_role_held_returns_ok() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
-    let result = with_token(&token, logic.check_role("admin")).await;
+    let result = with_token(&token, with_default_tenant(logic.check_role("admin"))).await;
     assert!(result.is_ok(), "持有角色应返回 Ok");
 }
 
@@ -678,7 +678,7 @@ async fn check_role_held_returns_ok() {
 async fn check_role_not_held_throws_not_role() {
     let logic = make_logic(3600, 86400, true, "uuid", true, false);
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
-    let result = with_token(&token, logic.check_role("admin")).await;
+    let result = with_token(&token, with_default_tenant(logic.check_role("admin"))).await;
     assert!(
         matches!(result, Err(GarrisonError::NotRole(_))),
         "未持有角色应抛 NotRole"
@@ -937,7 +937,7 @@ async fn util_has_role_returns_true_when_granted() {
     )
     .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, GarrisonUtil::has_role("admin")).await;
+    let result = with_token(&token, with_default_tenant(GarrisonUtil::has_role("admin"))).await;
     assert!(result.unwrap(), "持有角色应返回 true");
 }
 
@@ -947,7 +947,7 @@ async fn util_has_role_returns_true_when_granted() {
 async fn util_has_role_returns_false_when_not_granted() {
     init_global_manager_with_perms(false, vec![], vec![]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
-    let result = with_token(&token, GarrisonUtil::has_role("admin")).await;
+    let result = with_token(&token, with_default_tenant(GarrisonUtil::has_role("admin"))).await;
     assert!(!result.unwrap(), "未持有角色应返回 false");
 }
 
@@ -2494,7 +2494,11 @@ async fn check_permission_with_checker_emits_metric() {
         with_default_tenant(async {
             // check_permission 持有权限 → Ok(()) + emit allow metric
             let result = logic.check_permission("user:read").await;
-            assert!(result.is_ok());
+            assert_eq!(
+                result.unwrap(),
+                (),
+                "持有权限时 check_permission 应返回 Ok(())"
+            );
         })
         .await
     })
@@ -2551,8 +2555,9 @@ async fn check_role_logged_in_emits_metric() {
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
     with_current_token(token, async {
         // check_role（MockFirewall.has_role=true → Ok(())）
-        let result = logic.check_role("admin").await;
-        assert!(result.is_ok());
+        // 需要 with_default_tenant 支持 tenant-isolation feature
+        let result = with_default_tenant(logic.check_role("admin")).await;
+        assert!(result.is_ok(), "check_role 应返回 Ok，实际: {:?}", result);
     })
     .await;
 
@@ -2648,7 +2653,11 @@ async fn check_temp_token_not_logged_in_returns_not_login() {
 async fn util_check_access_token_delegates_to_logic() {
     init_global_manager(false).await;
     let result = GarrisonUtil::check_access_token().await;
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(GarrisonError::NotLogin(_))),
+        "无 token 时 check_access_token 应返回 NotLogin，实际: {:?}",
+        result
+    );
 }
 
 /// GarrisonUtil::check_client_token 全局函数委托到 logic（覆盖行 1500-1503）。
@@ -2657,7 +2666,11 @@ async fn util_check_access_token_delegates_to_logic() {
 async fn util_check_client_token_delegates_to_logic() {
     init_global_manager(false).await;
     let result = GarrisonUtil::check_client_token().await;
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(GarrisonError::NotLogin(_))),
+        "无 token 时 check_client_token 应返回 NotLogin，实际: {:?}",
+        result
+    );
 }
 
 /// GarrisonUtil::check_temp_token 全局函数委托到 logic（覆盖行 1516-1519）。
@@ -2666,7 +2679,11 @@ async fn util_check_client_token_delegates_to_logic() {
 async fn util_check_temp_token_delegates_to_logic() {
     init_global_manager(false).await;
     let result = GarrisonUtil::check_temp_token().await;
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(GarrisonError::NotLogin(_))),
+        "无 token 时 check_temp_token 应返回 NotLogin，实际: {:?}",
+        result
+    );
 }
 
 // ============================================================================
@@ -2771,14 +2788,17 @@ async fn sync_check_role_held_returns_ok() {
     .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    with_current_token(token, async {
-        let result = GarrisonUtil::check_role_sync("admin");
-        assert!(
-            result.is_ok(),
-            "持有角色时 check_role_sync 应返回 Ok，实际: {:?}",
-            result
-        );
-    })
+    with_current_token(
+        token,
+        with_default_tenant(async {
+            let result = GarrisonUtil::check_role_sync("admin");
+            assert!(
+                result.is_ok(),
+                "持有角色时 check_role_sync 应返回 Ok，实际: {:?}",
+                result
+            );
+        }),
+    )
     .await;
 
     GarrisonManager::reset_for_test();

@@ -158,10 +158,14 @@ async fn revoke_success() {
     let handler = make_handler();
     let key = handler.generate("1001", vec![], 3600).await.unwrap();
     let result = handler.revoke(&key).await;
-    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), (), "撤销存在的 API key 应返回 Ok(())");
     // 再次 verify 应失败
     let verify_result = handler.verify(&key).await;
-    assert!(verify_result.is_err());
+    assert!(
+        matches!(verify_result, Err(GarrisonError::InvalidToken(_))),
+        "已吊销 key verify 应返回 InvalidToken，实际: {:?}",
+        verify_result
+    );
 }
 
 /// 吊销不存在的 key 返回错误（spec Scenario）。

@@ -456,10 +456,13 @@ async fn check_role_filter_rejects_without_role() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let filter = check_role(Arc::new(make_config()), "admin".to_string());
 
-    let result = warp::test::request()
-        .header("authorization", format!("Bearer {}", token))
-        .filter(&filter)
-        .await;
+    let result = with_default_tenant(async {
+        warp::test::request()
+            .header("authorization", format!("Bearer {}", token))
+            .filter(&filter)
+            .await
+    })
+    .await;
     assert!(result.is_err());
     assert!(result.unwrap_err().find::<GarrisonRejection>().is_some());
 
@@ -474,10 +477,13 @@ async fn check_role_filter_passes_with_valid_role() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     let filter = check_role(Arc::new(make_config()), "admin".to_string());
 
-    let result = warp::test::request()
-        .header("authorization", format!("Bearer {}", token))
-        .filter(&filter)
-        .await;
+    let result = with_default_tenant(async {
+        warp::test::request()
+            .header("authorization", format!("Bearer {}", token))
+            .filter(&filter)
+            .await
+    })
+    .await;
     assert!(result.is_ok());
 
     GarrisonManager::reset_for_test();

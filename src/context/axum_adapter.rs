@@ -779,7 +779,11 @@ mod tests {
         let mut resp = AxumResponse::new();
         // header name 不能包含空格
         let result = resp.set_header("invalid header", "value");
-        assert!(result.is_err());
+        assert!(
+            matches!(result, Err(GarrisonError::Context(_))),
+            "无效 header name 应返回 Context 错误，实际: {:?}",
+            result
+        );
     }
 
     // ========================================================================

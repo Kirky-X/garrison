@@ -185,7 +185,7 @@ async fn revoke_existing_returns_ok() {
     let handler = make_handler();
     let key = handler.issue("invite", "data", 60).await.unwrap();
     let result = handler.revoke(&key).await;
-    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), (), "撤销存在的临时令牌应返回 Ok(())");
     // 再次 get 应为 None
     let value = handler.get(&key).await.unwrap();
     assert_eq!(value, None);
@@ -196,7 +196,11 @@ async fn revoke_existing_returns_ok() {
 async fn revoke_nonexistent_returns_ok() {
     let handler = make_handler();
     let result = handler.revoke("garrison:temp:invite:nonexistent").await;
-    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        (),
+        "撤销不存在的临时令牌应返回 Ok(())（幂等）"
+    );
 }
 
 // ========================================================================

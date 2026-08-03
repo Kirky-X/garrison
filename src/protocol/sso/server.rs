@@ -362,7 +362,7 @@ mod tests {
     async fn noop_channel_push_returns_ok() {
         let channel = NoopSsoChannel;
         let result = channel.push("topic", "msg").await;
-        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), (), "NoopSsoChannel::push 应返回 Ok(())");
     }
 
     /// NoopSsoChannel::subscribe 返回 Ok。
@@ -371,7 +371,11 @@ mod tests {
         let channel = NoopSsoChannel;
         let handler: Box<dyn Fn(String) + Send + Sync> = Box::new(|_msg: String| {});
         let result = channel.subscribe("topic", handler).await;
-        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            (),
+            "NoopSsoChannel::subscribe 应返回 Ok(())"
+        );
     }
 
     // ========================================================================
@@ -409,8 +413,11 @@ mod tests {
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let first = server.validate_ticket(&ticket, 2001).await;
         let second = server.validate_ticket(&ticket, 2001).await;
-        assert!(first.is_ok());
-        assert!(second.is_err());
+        assert_eq!(first.unwrap(), "1001", "第一次校验应返回 login_id");
+        assert!(
+            matches!(second, Err(GarrisonError::InvalidToken(_))),
+            "第二次校验应返回 InvalidToken"
+        );
     }
 
     /// validate_ticket client_id 不匹配返回 InvalidToken 错误（M5 修复）。
@@ -451,13 +458,13 @@ mod tests {
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         // 销毁不存在的票据
         let result = server.destroy_ticket("nonexistent-ticket").await;
-        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), (), "销毁不存在的票据应返回 Ok(())（幂等）");
         // 销毁存在的票据
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let result1 = server.destroy_ticket(&ticket).await;
         let result2 = server.destroy_ticket(&ticket).await;
-        assert!(result1.is_ok());
-        assert!(result2.is_ok(), "destroy_ticket 应幂等");
+        assert_eq!(result1.unwrap(), (), "销毁存在的票据应返回 Ok(())");
+        assert_eq!(result2.unwrap(), (), "重复销毁应返回 Ok(())（幂等）");
     }
 
     // ========================================================================
@@ -498,7 +505,11 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
         let result = server.push_message("1001", "hello").await;
-        assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap(),
+            (),
+            "未注入 channel 时 push_message 应返回 Ok(())（noop）"
+        );
     }
 
     /// push_message 注入 channel 后委托 channel.push。

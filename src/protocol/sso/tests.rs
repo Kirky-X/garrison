@@ -96,7 +96,11 @@ async fn validate_ticket_deletes_after_success() {
     let _ = client.validate_ticket(&ticket, 2001).await.unwrap();
     // 第二次校验应失败
     let result = client.validate_ticket(&ticket, 2001).await;
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
+        "第二次校验应返回 InvalidToken，实际: {:?}",
+        result
+    );
 }
 
 /// client_id 不匹配返回 InvalidToken 错误（spec Scenario，M5）。
@@ -131,8 +135,12 @@ async fn validate_ticket_one_time_use_second_fails() {
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     let first = client.validate_ticket(&ticket, 2001).await;
     let second = client.validate_ticket(&ticket, 2001).await;
-    assert!(first.is_ok());
-    assert!(second.is_err());
+    assert_eq!(first.unwrap(), "1001", "第一次校验应返回 login_id");
+    assert!(
+        matches!(second, Err(GarrisonError::InvalidToken(_))),
+        "第二次校验应返回 InvalidToken，实际: {:?}",
+        second
+    );
 }
 
 // ========================================================================
@@ -145,10 +153,14 @@ async fn destroy_ticket_existing() {
     let client = make_client();
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     let result = client.destroy_ticket(&ticket).await;
-    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), (), "销毁存在的票据应返回 Ok(())");
     // 验证已删除
     let validate_result = client.validate_ticket(&ticket, 2001).await;
-    assert!(validate_result.is_err());
+    assert!(
+        matches!(validate_result, Err(GarrisonError::InvalidToken(_))),
+        "已销毁票据 validate 应返回 InvalidToken，实际: {:?}",
+        validate_result
+    );
 }
 
 /// 销毁不存在的票据返回 Ok（幂等，spec Scenario）。
@@ -156,7 +168,7 @@ async fn destroy_ticket_existing() {
 async fn destroy_ticket_nonexistent_returns_ok() {
     let client = make_client();
     let result = client.destroy_ticket("nonexistent-ticket").await;
-    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), (), "销毁不存在的票据应返回 Ok(())（幂等）");
 }
 
 // ========================================================================

@@ -243,9 +243,10 @@ async fn end_to_end_check_role() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     // 持有角色
-    let check_result = with_token(token.clone(), async {
-        GarrisonUtil::check_role("admin").await
-    })
+    let check_result = with_token(
+        token.clone(),
+        with_default_tenant(async { GarrisonUtil::check_role("admin").await }),
+    )
     .await;
     assert!(
         check_result.is_ok(),
@@ -254,9 +255,10 @@ async fn end_to_end_check_role() {
     );
 
     // 未持有角色
-    let check_result = with_token(token.clone(), async {
-        GarrisonUtil::check_role("superadmin").await
-    })
+    let check_result = with_token(
+        token.clone(),
+        with_default_tenant(async { GarrisonUtil::check_role("superadmin").await }),
+    )
     .await;
     assert!(check_result.is_err());
     assert!(matches!(
@@ -517,7 +519,11 @@ async fn mock_dao_expire_and_delete_work() {
 
     // 测试 expire 不存在的键
     let result = dao.expire("missing", 3600).await;
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-key-missing")),
+        "expire 不存在的键应返回 Dao(dao-key-missing)，实际: {:?}",
+        result
+    );
 
     // 测试 delete
     dao.delete("key1").await.unwrap();

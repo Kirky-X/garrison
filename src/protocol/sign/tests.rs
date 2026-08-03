@@ -75,7 +75,7 @@ fn new_app_secret_exactly_32_bytes_passes() {
     let secret_32 = "0123456789abcdef0123456789abcdef";
     assert_eq!(secret_32.len(), 32);
     let result = SignHandler::new("app-001", secret_32, dao);
-    assert!(result.is_ok());
+    let _handler = result.expect("32 字节 secret 应通过校验");
 }
 
 /// 自定义时间窗口（spec Scenario）。
@@ -151,7 +151,7 @@ async fn validate_success() {
     let result = handler
         .validate("POST", "/api/v1/users", ts, "nonce-1", "body-sha256", &sig)
         .await;
-    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), (), "签名校验应返回 Ok(())");
 }
 
 /// 校验成功后 nonce 存入 dao（spec Scenario）。

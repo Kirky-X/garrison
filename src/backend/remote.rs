@@ -705,7 +705,7 @@ mod tests {
         let result = BackendRemoteBuilder::new("https://localhost:8443", "key")
             .with_ca_cert(cert.cert.pem().as_bytes().to_vec())
             .build();
-        assert!(result.is_ok());
+        let _remote = result.expect("有效 CA 证书构建应成功");
     }
 
     #[tokio::test]

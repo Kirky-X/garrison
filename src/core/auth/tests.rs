@@ -77,7 +77,11 @@ async fn logout_idempotent_for_invalid_token() {
     let auth = make_auth_logic(3600, 86400);
     // 不存在的 token 应返回 Ok(())
     let result = auth.logout("non-existent-token").await;
-    assert!(result.is_ok());
+    assert_eq!(
+        result.unwrap(),
+        (),
+        "不存在的 token logout 应返回 Ok(())（幂等）"
+    );
 }
 
 /// logout 不影响同账号的其他 token（spec Scenario）。
