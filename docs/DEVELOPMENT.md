@@ -79,7 +79,7 @@ cargo build --features full
 # 全量编译
 cargo build --features full
 
-# 全量测试（3776+ 个 lib 测试 + 65 E2E 应全部通过）
+# 全量测试（3967+ 个 lib 测试 + 68 E2E 应全部通过）
 cargo test --features full
 
 # Lint（零警告）
@@ -307,7 +307,7 @@ Garrison 要求测试覆盖率 **≥ 95%**（当前 95%+）：
 | 协议/安全插件 | ≥ 90% |
 | Web 适配层 | 集成测试覆盖主要中间件路径即可 |
 
-- 3841+ 个测试通过（3776 lib + 65 E2E）+ doc-tests
+- 3967+ 个测试通过（3899 lib + 68 E2E）+ doc-tests
 - 不追求 100% 覆盖率，但每个分支必须有对应测试用例
 - 禁止通过「不写测试」来提高覆盖率的行为
 

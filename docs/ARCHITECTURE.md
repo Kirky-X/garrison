@@ -2,7 +2,7 @@
 
 > Garrison 是面向 Rust 生态的身份认证鉴权框架。
 >
-> - 版本：0.7.0（微服务架构 + ABAC/Cedar + OAuth2 Server + 架构加固 + 依赖优化：backend-remote / Auth Server / ABAC 引擎 / OAuth2 Server 4 端点 / secure-sanitize / 错误类型统一 / mod.rs 加固）
+> - 版本：0.8.1（安全加固 + 发布前审查修复 + 文档一致性修复）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
 > - 存储：dbnexus 0.4（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
@@ -26,7 +26,7 @@ Garrison 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 
 ### 1.2 全局单例
 
-- `GarrisonManager` 通过 `parking_lot::RwLock` 持有 `Arc<GarrisonLogicDefault>`（v0.5.2 起 `GarrisonLogic` trait 拆分为 `GarrisonCore` base trait + 5 个子 trait：`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），启动时调用 `GarrisonManager::builder().build().await` 一次性注入 dao / config / interface。
+- `GarrisonManager` 通过 `arc_swap::ArcSwapOption` 持有 `Arc<GarrisonLogicDefault>`（读路径无锁，v0.8.1 从 `parking_lot::RwLock` 迁移；v0.5.2 起 `GarrisonLogic` trait 拆分为 `GarrisonCore` base trait + 5 个子 trait：`SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），启动时调用 `GarrisonManager::builder().build().await` 一次性注入 dao / config / interface。
 - `GarrisonLogicFactoryEntry` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取默认实现。
 - `GarrisonUtil` 暴露静态方法（`login` / `check_login` / `logout` 等），内部全部委托 `GARRISON_MANAGER` 单例，业务侧零状态调用。
 
@@ -357,7 +357,7 @@ sequenceDiagram
 **方案**：
 
 - 13 个特性域独立编译，通过 `#[cfg(feature = "...")]` 在编译期裁剪。
-- 默认 `default = []`（空），仅核心模块总是编译。
+- 默认 `default = ["backend-embedded"]`（仅启用嵌入式后端），`development` 可一键启用常用组合（cache-memory + db-sqlite + web-axum）。
 - 聚合特性 `full` / `production` / `development` 一键启用一组特性。
 
 ---

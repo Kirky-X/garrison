@@ -44,9 +44,9 @@
 //!
 //! | 类别 | Feature | 说明 |
 //! |:---|:---|:---|
-//! | 默认 | `default` | 空（按需启用所需 feature；`development` 可一键启用常用组合） |
+//! | 默认 | `default` | `backend-embedded`（仅启用进程内认证后端；`development` 可一键启用常用组合） |
 //! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.3 的 L1(内存) + L2(redis)，均启用 oxcache（语义别名） |
-//! | 数据库 | `db-sqlite` | 基于 dbnexus 0.2 + auto-migrate |
+//! | 数据库 | `db-sqlite` | 基于 dbnexus 0.4 + auto-migrate |
 //! | Web 框架 | `web-axum` / `web-actix` / `web-warp` | 路由拦截器与 extractor 适配 |
 //! | 协议层 | `protocol-jwt` / `protocol-oauth2` / `protocol-sso` / `protocol-sign` / `protocol-apikey` / `protocol-temp` | 鉴权协议插件 |
 //! | 安全模块 | `secure-totp` / `secure-sign` / `secure-httpbasic` / `secure-httpdigest` | TOTP / 签名 / Basic / Digest |

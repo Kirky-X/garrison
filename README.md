@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/github/license/Kirky-X/garrison?label=license" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
   <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-4116%2B%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-3967%2B%20passed-success" alt="tests" />
   <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
 </p>
 
@@ -79,7 +79,7 @@
 | 🔧 **可插拔扩展**   | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务                             |
 | 🎯 **Feature 门控** | 40+ 个特性域独立 feature flag，按需编译减小体积                                                   |
 | 📊 **高可观测**     | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选）                                  |
-| 🧪 **高覆盖**       | 4116+ 个测试通过（4051 lib + 65 E2E），95%+ 行覆盖率，clippy 零警告                               |
+| 🧪 **高覆盖**       | 3967+ 个测试通过（3899 lib + 68 E2E），95%+ 行覆盖率，clippy 零警告                             |
 | 🌐 **Web 框架适配** | axum/actix/warp 三框架注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission` + 过程宏） |
 
 ### 特性域覆盖（0.4.0~0.6.0 协议层与生产能力补齐）
@@ -314,7 +314,7 @@ async fn main() -> GarrisonResult<()> {
 | `is_share`           | `false`            | 同账号多端共享会话                                    |
 | `is_concurrent`      | `true`             | 允许同账号并发登录                                    |
 | `token_name`         | `garrison_token`   | Cookie / Header 名                                    |
-| `token_style`        | `random_64`        | Token 风格（`uuid` / `random_64` / `simple` / `jwt`） |
+| `token_style`        | `uuid`        | Token 风格（`uuid` / `random_64` / `simple` / `jwt`） |
 | `throw_on_not_login` | `true`             | 未登录时抛异常而非返回 false                          |
 
 支持通过 `tokio::sync::watch` 实现配置热更新，详见 [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)。
@@ -460,7 +460,7 @@ async fn main() -> GarrisonResult<()> {
 
 ### 测试
 
-Garrison 提供三层测试体系：单元测试（3787+ 个 lib）+ E2E 测试（65+ 个，含 API 矩阵 / 性能基线 / 渗透测试）+ doc-tests。
+Garrison 提供三层测试体系：单元测试（3899+ 个 lib）+ E2E 测试（68+ 个，含 API 矩阵 / 性能基线 / 渗透测试）+ doc-tests。
 
 ```bash
 # 单元测试 + 集成测试

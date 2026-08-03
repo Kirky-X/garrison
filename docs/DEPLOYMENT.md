@@ -163,7 +163,9 @@ GarrisonMigration::new(pool).run_all().await?;  // 等价于 migrate_core + migr
 
 ### 3.2 核心表结构
 
-dbnexus 自动创建以下 **9 张核心表**（含 `app_user_ext` 扩展表与 `app_user_device` 设备表）：
+dbnexus 自动创建以下核心表（按迁移顺序）：
+
+**001_init.sql（9 张基础表）**：
 
 | 表名 | 用途 |
 |------|------|
@@ -176,7 +178,16 @@ dbnexus 自动创建以下 **9 张核心表**（含 `app_user_ext` 扩展表与 
 | `app_session` | 会话表（可选 DB 持久化，默认存 oxcache） |
 | `app_login_log` | 登录日志（login / logout / refresh / kickout / kicked） |
 | `app_user_ext` | 用户扩展字段表（KV 设计，保持核心表稳定） |
-| `app_user_device` | 用户设备表（设备指纹 / 信任设备 / 异地登录检测） |
+
+**002–006（扩展表）**：
+
+| 迁移 | 表名 | 用途 |
+|------|------|------|
+| 002 | `role_hierarchy` | 角色层级表（parent/child 关系） |
+| 003 | `refresh_tokens` | Token Rotation 刷新令牌表（hash 链 + 重用检测） |
+| 004 | `audit_logs` | 审计日志表（自动脱敏 + 复合条件查询） |
+| 005 | `social_bindings` | 社交登录绑定表（微信/支付宝/Keycloak） |
+| 006 | `app_user_device` | 用户设备表（设备指纹 / 信任设备 / 异地登录检测） |
 
 > 首次启动时通过 `migrations/sqlite/core/001_init.sql` 自动创建，后续版本升级时通过 `dbnexus_migrations` 历史表的 schema version 检测增量迁移。
 

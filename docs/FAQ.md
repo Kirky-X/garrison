@@ -3,7 +3,7 @@
 本文件汇总 Garrison 框架在设计、使用与部署过程中最常被问到的问题。如果你是初次接触 Garrison，建议先阅读本文件再查阅 API 文档。
 
 > 项目仓库：<https://github.com/Kirky-X/garrison>
-> 当前版本：0.7.0（2026-07-13 发布）｜下一版本：1.0.0（规划中）
+> 当前版本：0.8.1（2026-07-24 发布）｜下一版本：1.0.0（规划中）
 
 ---
 
@@ -33,7 +33,7 @@ A: 现有 crate 各有局限：`moka` 不支持 per-entry TTL，`cached` 抽象�
 
 - **统一抽象层**：`GarrisonDao` trait 屏蔽底层差异，业务代码只面向 trait；
 - **per-entry TTL**：不同 Token / Session 有不同过期时间，必须支持单条级别过期；
-- **与框架设计一致**：`oxcache` 0.3.3 提供 per-entry TTL 与 layer 抽象，`dbnexus` 0.3 提供 SQLite / PostgreSQL / MySQL 多后端统一接口，二者组合正好覆盖 Garrison 的"内存 + 持久化"两级缓存需求，无需再自行造轮子。
+- **与框架设计一致**：`oxcache` 0.3.3 提供 per-entry TTL 与 layer 抽象，`dbnexus` 0.4 提供 SQLite / PostgreSQL / MySQL 多后端统一接口，二者组合正好覆盖 Garrison 的“内存 + 持久化”两级缓存需求，无需再自行造轮子。
 
 ### Q: 为什么不直接用 `jsonwebtoken` 而要包装 `JwtHandler`？
 
@@ -237,7 +237,7 @@ features = ["production", "protocol-oauth2", "oauth2-server"]
 
 ### Q: 是否支持 PostgreSQL / MySQL？
 
-A: **支持。** 0.5.0 起 `dbnexus` 0.3+ 提供 SQLite / PostgreSQL / MySQL 三种后端统一抽象，通过 `db-sqlite` / `db-postgres` / `db-mysql` feature 选择。`production` 聚合 feature 默认使用 `db-postgres`。
+A: **支持。** 0.5.0 起 `dbnexus` 0.4+ 提供 SQLite / PostgreSQL / MySQL 三种后端统一抽象，通过 `db-sqlite` / `db-postgres` / `db-mysql` feature 选择。`production` 聚合 feature 默认使用 `db-postgres`。
 
 - 0.5.0 起 PostgreSQL 后端可用（`db-postgres` feature）
 - 0.5.3 起 MySQL 后端可用（`db-mysql` feature）

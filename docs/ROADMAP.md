@@ -34,6 +34,10 @@
 | 0.6.7 | ✅ 已完成 | 2026-07-13 | 安全与性能增强（forbid 优先语义 / WAF 级防火墙 / 三层缓存架构 / SMS 验证码渐进式限速 / AnomalousLoginDetector 双引擎） |
 | 0.7.0 | ✅ 已完成 | 2026-07-17 | 微服务架构 + ABAC/Cedar + OAuth2 Server + 依赖优化 + 架构加固（7 个能力域 / 252 TDD 任务 / 2968 测试通过） |
 | 0.7.1 | ✅ 已完成 | 2026-07-21 | 安全修复 + 架构加固：21 项安全修复（secure-simple-token / SimpleTokenStyle 防伪造 / OIDC aud 数组兼容 / switch_to 账户会话清理 / session corrupt-json 健壮性等）+ crate 重命名 bulwark → garrison |
+| 0.7.2 | ✅ 已完成 | 2026-07-21 | Windows CI 修复 + 配置文件安全加固（7 项防护：遍历检测/TOCTOU/文件大小限制等）+ gitleaks 密钥扫描 + .env.example 修正 |
+| 0.7.3 | ✅ 已完成 | 2026-07-22 | `#[check_disable]` 过程宏 + `check_disable_sync()` 同步 API + `dao_session!` 宏消除 53 处样板 + garrison-macros 版本对齐 |
+| 0.8.0 | ✅ 已完成 | 2026-07-24 | 安全加固版：常量时间比较公共原语 + JWT 弱密钥拒绝 + CSPRNG 统一 + API Key 安全迁移（CWE-916 哈希存储 + IP 级暴力破解防护 + IDOR 多租户隔离）+ tech-review 修复批次（健康检查真实探测 / singleflight 锁清理 / SQL 占位符转换）+ CodeQL 误报清理 |
+| 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532）：6 类事件 live token 截断 + TokenRefresh 内置黑名单 + TempCredential 仅记 value_len + SAML 64KB 输入上限 |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ---
@@ -59,7 +63,7 @@
 #### 已知限制（0.1.0）
 
 - oxcache 0.3 `Cache<K,V>::update` 无法保留 per-entry TTL
-- dbnexus 0.2 仅支持 SQLite（PostgreSQL/MySQL 待 0.2.0+）
+- dbnexus 0.2 仅支持 SQLite（PostgreSQL 待 0.3+、MySQL 待 0.4+）
 - `GarrisonRouter::route_protected` 仅支持 GET 方法
 
 ---

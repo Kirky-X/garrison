@@ -10,7 +10,7 @@
 
 ## Cargo.toml 依赖配置
 
-Garrison 默认不启用任何 feature，需按需选择：
+Garrison 默认启用 `backend-embedded` feature（嵌入式后端模式），可按需选择额外 feature：
 
 ```toml
 [dependencies]

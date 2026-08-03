@@ -22,7 +22,12 @@
 | 0.6.0 | ✅ 已完成 | 2026-07-09 | 账号安全引擎版（account/ 模块 + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL + i18n 社交登录异常 + AccountMetrics） |
 | 0.6.1 | ✅ 已完成 | 2026-07-10 | gap-closure-remaining（remember_me / Redis 部署模式 / switch_to / Token 置换 / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel — 11 项全部补齐） |
 | 0.6.7 | ✅ 已完成 | 2026-07-13 | 安全与性能增强（forbid 优先语义 / WAF 级防火墙 / 三层缓存架构 / SMS 验证码渐进式限速 / AnomalousLoginDetector 双引擎） |
-| 0.7.0 | ✅ 已完成 | 2026-07-13 | 微服务架构 + ABAC/Cedar + OAuth2 Server + 依赖优化 + 架构加固（7 个能力域 / 252 TDD 任务 / 2968 测试通过） |
+| 0.7.0 | ✅ 已完成 | 2026-07-17 | 微服务架构 + ABAC/Cedar + OAuth2 Server + 依赖优化 + 架构加固（7 个能力域 / 252 TDD 任务 / 2968 测试通过） |
+| 0.7.1 | ✅ 已完成 | 2026-07-21 | 安全修复 + crate 重命名 bulwark → garrison（21 项安全漏洞修复） |
+| 0.7.2 | ✅ 已完成 | 2026-07-21 | Windows CI 修复 + 配置文件安全加固 + gitleaks 密钥扫描 |
+| 0.7.3 | ✅ 已完成 | 2026-07-22 | `#[check_disable]` 过程宏 + `dao_session!` 宏 + garrison-macros 版本对齐 |
+| 0.8.0 | ✅ 已完成 | 2026-07-24 | 安全加固：常量时间比较原语 + JWT 弱密钥拒绝 + API Key 安全迁移 + tech-review 修复批次 |
+| 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ## v0.1.0 核心基础设施（已完成）

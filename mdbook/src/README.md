@@ -9,7 +9,7 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架，目标是提�
 
 - 仓库：<https://github.com/Kirky-X/garrison>
 - License：Apache-2.0
-- 当前版本：0.7.0（2026-07-13 发布）
+- 当前版本：0.8.1（2026-07-24 发布）
 - MSRV：Rust 1.85+（部分依赖如 `inventory 0.3` 要求 edition 2024）
 
 ## 框架定位
@@ -40,14 +40,14 @@ Garrison 采用 **双抽象层 + 全局单例** 的架构：
 
 - **dbnexus**：数据库抽象层（SQLite / PostgreSQL / MySQL），由 `GarrisonDao` trait 屏蔽后端差异
 - **oxcache**：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session 双向映射
-- **GarrisonManager**：全局单例，持有 `Arc<GarrisonLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式 `init`）；自 0.5.2 起 `GarrisonLogic` 上帝 trait 已拆分为 6 个职责子 trait（GarrisonCore / SessionLogic / PermissionLogic / TokenLogic / MfaLogic / PasswordLogic），Manager 持有具体类型而非 trait 对象
+- **GarrisonManager**：全局单例，持有 `Arc<GarrisonLogicDefault>`（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持重复 init）；自 0.5.2 起 `GarrisonLogic` 上帝 trait 已拆分为 6 个职责子 trait（GarrisonCore / SessionLogic / PermissionLogic / TokenLogic / MfaLogic / PasswordLogic），Manager 持有具体类型而非 trait 对象
 - **inventory 编译期注册**：`PermissionRegistration`（权限注册表）/ `StrategyRegistration`（Firewall 策略）等通过 `inventory::submit!` 注册，运行时由 `inventory::iter` 收集
 
 逻辑层分为三层：`GarrisonLogicDefault`（默认实现，组合 6 个子 trait）/ `GarrisonInterface`（业务方实现的回调）/ `GarrisonUtil`（面向使用者的静态 API）。
 
 ## 版本演进
 
-Garrison 自 0.1.0 起逐步演进至当前 0.7.0，主要能力域落地节奏如下：
+Garrison 自 0.1.0 起逐步演进至当前 0.8.1，主要能力域落地节奏如下：
 
 - **0.2.0**：协议层（JWT / OAuth2 / SSO / Sign / APIKey / Temp）与安全模块（TOTP / HMAC / HTTP Basic / HTTP Digest）
 - **0.3.0**：可观测性（Prometheus 指标 + 结构化 JSON 日志 + OpenTelemetry OTLP）、gRPC 鉴权拦截器（`GarrisonGrpcInterceptor` 实现 `tonic::Interceptor`）、异常消息 i18n（fluent-rs 中英文切换）、防火墙安全钩子（`GarrisonFirewallCheckHook` 5 个登录流程检查点）、多框架适配（`web-actix` / `web-warp` feature 与 axum 对齐）
@@ -57,6 +57,9 @@ Garrison 自 0.1.0 起逐步演进至当前 0.7.0，主要能力域落地节奏�
 - **0.6.0 / 0.6.1**：账号安全引擎版（account/ 模块 + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL + i18n 社交登录异常 + AccountMetrics）+ gap-closure-remaining 11 项能力（remember_me / Redis 部署模式 / switch_to / Token 置换 / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel）
 - **0.6.7**：安全与性能增强（forbid 优先语义 / WAF 级防火墙 / 三层缓存架构 / SMS 验证码渐进式限速 / AnomalousLoginDetector 双引擎）
 - **0.7.0**：微服务架构（`backend-remote` + Auth Server + `auth_server` 二进制）+ ABAC/Cedar DSL 策略引擎 + OAuth2 Server（authorize / token / revoke / introspect + PKCE）+ 依赖优化与架构加固
+- **0.7.1**：安全修复 + crate 重命名 bulwark → garrison（21 项安全漏洞修复）
+- **0.7.2~0.7.3**：Windows CI 修复 + 配置文件安全加固 + `#[check_disable]` 过程宏 + `dao_session!` 宏
+- **0.8.0~0.8.1**：安全加固（常量时间比较原语 + JWT 弱密钥拒绝 + API Key 安全迁移 + 审计日志 token 泄漏修复）
 
 详细演进历史与里程碑意义见 [版本路线图](./roadmap.md)。
 

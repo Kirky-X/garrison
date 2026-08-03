@@ -21,7 +21,7 @@
   <img src="https://img.shields.io/github/license/Kirky-X/garrison?label=license" alt="license" />
   <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
   <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-4116%2B%20passed-success" alt="tests" />
+  <img src="https://img.shields.io/badge/tests-3967%2B%20passed-success" alt="tests" />
   <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
 </p>
 
@@ -87,7 +87,7 @@ The framework uses a **dual-abstraction-layer + global singleton** architecture:
 | 🔧 **Pluggable Extensions**      | trait + Default pattern — replace any component (DAO / Strategy / Logic) without touching business code    |
 | 🎯 **Feature Gating**            | 40+ feature domains with independent flags — compile only what you need                                    |
 | 📊 **High Observability**        | `tracing` logging + `listener` event subscriptions + `prometheus` metrics (optional)                       |
-| 🧪 **High Coverage**             | 4116+ tests passing (4051 lib + 65 E2E), 95%+ line coverage, clippy zero warnings                          |
+| 🧪 **High Coverage**             | 3967+ tests passing (3899 lib + 68 E2E), 95%+ line coverage, clippy zero warnings                          |
 | 🌐 **Web Framework Adapters**    | axum/actix/warp annotation-style extractors (`CheckLogin` / `CheckRole` / `CheckPermission` + proc macros) |
 
 ### Feature Domain Coverage (v0.4.0–v0.6.0 Protocol Layer & Production Capabilities)
@@ -330,7 +330,7 @@ Core configuration fields:
 | `is_share`           | `false`             | Share session across multiple devices for the same account  |
 | `is_concurrent`      | `true`              | Allow concurrent logins for the same account                |
 | `token_name`         | `garrison_token`    | Cookie / Header name                                        |
-| `token_style`        | `random_64`         | Token style (`uuid` / `random_64` / `simple` / `jwt`)       |
+| `token_style`        | `uuid`              | Token style (`uuid` / `random_64` / `simple` / `jwt`)       |
 | `throw_on_not_login` | `true`              | Throw exception on not-logged-in instead of returning false |
 
 Hot-reload is supported via `tokio::sync::watch`. See [docs/CONFIGURATION.md](./docs/CONFIGURATION.md).
@@ -485,8 +485,8 @@ All forms of contribution are welcome! Please read the
 
 ### Testing
 
-Garrison provides a three-tier testing system: unit tests (3787+ lib) + E2E tests
-(65+, covering API matrix / performance baselines / penetration testing) + doc-tests.
+Garrison provides a three-tier testing system: unit tests (3899+ lib) + E2E tests
+(68+, covering API matrix / performance baselines / penetration testing) + doc-tests.
 
 ```bash
 # Unit + integration tests

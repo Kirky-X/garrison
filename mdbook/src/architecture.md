@@ -23,7 +23,7 @@ Garrison 采用 **双抽象层 + 全局单例** 架构，采用双抽象层设�
 
 ## GarrisonManager 单例
 
-`GarrisonManager` 持有全局 `Arc<GarrisonLogicDefault>`（基于 `parking_lot::RwLock`），支持覆盖式 `init`：
+`GarrisonManager` 持有全局 `Arc<GarrisonLogicDefault>`（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持重复 init），支持覆盖式 `init`：
 
 - 业务方启动时调用 `GarrisonManager::builder()
     .dao(dao)
