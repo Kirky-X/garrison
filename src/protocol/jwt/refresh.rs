@@ -445,7 +445,13 @@ mod service {
                     let user_id: Option<i64> = row.try_get("", "user_id").ok().flatten();
 
                     // login_id 在 SQL 表中是 TEXT，需转为 i64
-                    let login_id_i64: i64 = login_id.parse().unwrap_or(0);
+                    // parse 失败显性化（fail-fast）：脏数据不应静默关联到 user 0
+                    let login_id_i64: i64 = login_id.parse().map_err(|e| {
+                        GarrisonError::Dao(format!(
+                            "jwt-refresh-login-id-parse-failed::{}::{}",
+                            login_id, e
+                        ))
+                    })?;
 
                     Ok(Some(RefreshTokenRecord {
                         token_hash,

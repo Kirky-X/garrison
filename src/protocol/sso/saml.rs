@@ -919,6 +919,15 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
         },
     };
 
+    // C14N 运行时警告：提醒运维人员当前签名验证未执行 XML Canonicalization，
+    // 标准 IdP（如 Keycloak、ADFS）对 canonicalized 形式签名时验证将失败。
+    // 生产环境应启用 `secure-saml-c14n` feature 或替换为完整 C14N 实现。
+    tracing::warn!(
+        "SAML signature verification performed without XML Canonicalization (C14N). \
+         If your IdP signs canonicalized XML (standard behavior), verification may fail. \
+         See extract_signed_info_xml documentation for details."
+    );
+
     // 5. 解析 IdP RSA 公钥并验证签名（PKCS#1 v1.5 + SHA-256）
     use rsa::pkcs1v15::{Signature, VerifyingKey};
     use rsa::sha2::Sha256;

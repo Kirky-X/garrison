@@ -156,6 +156,19 @@ impl BackupCodeCredential {
     /// - `Ok(true)`: 校验通过且备份码已消费。
     /// - `Ok(false)`: 校验失败（备份码不匹配或已使用）。
     /// - `Err(_)`: `secret_data` 解析失败或 DAO 读写失败。
+    ///
+    /// # ⚠️ 并发安全警告（TOCTOU）
+    ///
+    /// 当前实现为 get → verify → set 三步操作，**存在 TOCTOU 竞态**：
+    /// 并发调用同一备份码时，多个调用可能基于同一未更新状态均校验通过，
+    /// 导致备份码被重复消费（双花）。
+    ///
+    /// **生产部署须注意**：
+    /// - `GarrisonDao` trait 当前无通用字符串 CAS 操作，无法在应用层实现原子消费
+    /// - Redis 后端应使用 Lua 脚本（GET + COMPARE + SET 原子执行）
+    /// - 关系型数据库后端应使用 `UPDATE ... WHERE secret_data LIKE %hash% RETURNING`
+    /// - `MockDao` / `GarrisonDaoOxcache` 的 Mutex 保护仅保证进程内原子
+    #[tracing::instrument(skip(self, input, dao), fields(user_id = %self.model.user_id))]
     pub async fn verify_and_consume(
         &self,
         input: &str,
@@ -189,6 +202,11 @@ impl BackupCodeCredential {
             let updated_json = serde_json::to_string(&updated_model)
                 .map_err(|e| GarrisonError::Internal(format!("account-cred-serialize::{}", e)))?;
             dao.set_permanent(&key, &updated_json).await?;
+            tracing::info!(
+                user_id = %self.model.user_id,
+                remaining = data.codes.len(),
+                "backup code consumed (TOCTOU: non-atomic get-verify-set, see doc)"
+            );
             Ok(true)
         } else {
             Ok(false)
@@ -450,5 +468,43 @@ mod tests {
             .await
             .expect("verify_and_consume 应成功");
         assert!(!result, "全部消费后应返回 false");
+    }
+
+    /// CRITICAL-9: 并发双花防护 — MockDao（Mutex 保护）下同一备份码并发消费仅一次成功。
+    ///
+    /// 验证 `verify_and_consume` 在 MockDao 的进程内原子保护下，
+    /// 两个并发调用同一备份码时仅一个成功（另一个发现已消费）。
+    /// 注意：此测试仅验证 MockDao 场景；生产后端必须重写 DAO 原子操作。
+    #[tokio::test]
+    async fn concurrent_consume_same_code_only_one_succeeds() {
+        use std::sync::Arc;
+        let (cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
+        let mock_dao = MockDao::new();
+        store_in_dao(&cred, &mock_dao).await;
+        let dao: Arc<dyn GarrisonDao> = Arc::new(mock_dao);
+
+        let code = codes[0].clone();
+        let cred1 = BackupCodeCredential::new(cred.to_model());
+        let cred2 = BackupCodeCredential::new(cred.to_model());
+        let dao1 = dao.clone();
+        let dao2 = dao.clone();
+        let code1 = code.clone();
+        let code2 = code.clone();
+
+        // 并发消费同一备份码
+        let (r1, r2) = tokio::join!(
+            cred1.verify_and_consume(&code1, dao1.as_ref()),
+            cred2.verify_and_consume(&code2, dao2.as_ref()),
+        );
+
+        let ok1 = r1.expect("调用 1 不应报错");
+        let ok2 = r2.expect("调用 2 不应报错");
+        // MockDao 的 Mutex 保护下，仅一个应成功
+        assert!(
+            ok1 ^ ok2,
+            "并发消费同一备份码应仅一个成功（XOR），实际: ok1={}, ok2={}",
+            ok1,
+            ok2
+        );
     }
 }

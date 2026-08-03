@@ -1230,6 +1230,8 @@ impl TokenHandler {
             #[cfg(feature = "db-sqlite")]
             {
                 if let Some(rotation) = &self.refresh_rotation {
+                    // client_credentials 场景 user_id=None，login_id=0 表示“无关联用户”
+                    // （设计决策，非缺陷——综合审查 §7 已确认）
                     let login_id = user_id.unwrap_or(0);
                     let rt = rotation
                         .issue(
