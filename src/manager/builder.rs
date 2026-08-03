@@ -9,11 +9,10 @@
 //!
 //! - [`build`](GarrisonManagerBuilder::build)：构造 logic + 注入全局单例 + 启动后台 task
 //!   （task handle 归单例，`GarrisonUtil` 静态 API 可用）。
-//! - [`build_explicit`](GarrisonManagerBuilder::build_explicit)：构造 logic + 包装为
-//!   [`Manager`](crate::manager::explicit::Manager) + 启动后台 task（task handle 归
-//!   `Manager`，Drop 时 abort，不触碰全局单例）。
+//! - `build_explicit`（`manager-explicit` feature）：构造 logic + 包装为 `Manager` +
+//!   启动后台 task（task handle 归 `Manager`，Drop 时 abort，不触碰全局单例）。
 //!
-//! 后台 task handle 由 [`TaskHandles`] 统一持有，归属构造方（`build` → 单例，
+//! 后台 task handle 由 `TaskHandles` 统一持有，归属构造方（`build` → 单例，
 //! `build_explicit` → `Manager`），Drop 时自动 abort，无单例泄漏。
 
 use crate::account::disable::{DefaultDisableRepository, DisableRepository};
@@ -77,8 +76,7 @@ impl TaskHandles {
 ///
 /// 通过 [`GarrisonManager::builder`] 获取新实例，链式注入必填字段
 /// （`dao` / `config` / `interface`）与可选 manager，最后调用
-/// [`build`](GarrisonManagerBuilder::build) 或
-/// [`build_explicit`](GarrisonManagerBuilder::build_explicit) 完成构造。
+/// [`build`](GarrisonManagerBuilder::build) 或 `build_explicit` 完成构造。
 pub struct GarrisonManagerBuilder {
     // 必填
     dao: Option<Arc<dyn GarrisonDao>>,
@@ -492,8 +490,7 @@ impl GarrisonManager {
     /// 获取可组合的初始化 builder。
     ///
     /// 返回所有字段为 None 的新 builder，通过链式 setter 注入依赖后调用
-    /// [`build`](GarrisonManagerBuilder::build) 或
-    /// [`build_explicit`](GarrisonManagerBuilder::build_explicit) 完成构造。
+    /// [`build`](GarrisonManagerBuilder::build) 或 `build_explicit` 完成构造。
     pub fn builder() -> GarrisonManagerBuilder {
         GarrisonManagerBuilder::new()
     }

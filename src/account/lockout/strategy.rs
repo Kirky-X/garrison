@@ -136,11 +136,12 @@ impl UserLockoutStrategy {
             },
         }
 
-        state.failure_count += 1;
+        state.failure_count = state.failure_count.saturating_add(1);
 
         if state.failure_count >= self.config.max_failure_factor {
             if self.config.permanent_lockout
-                && state.temporary_lockout_count + 1 > self.config.max_temporary_lockouts
+                && state.temporary_lockout_count.saturating_add(1)
+                    > self.config.max_temporary_lockouts
             {
                 // 永久锁定
                 state.permanent_locked = true;
@@ -150,7 +151,7 @@ impl UserLockoutStrategy {
                 }
             } else {
                 // 临时锁定
-                state.temporary_lockout_count += 1;
+                state.temporary_lockout_count = state.temporary_lockout_count.saturating_add(1);
                 let lock_seconds = calculate_lock_seconds(
                     &self.config.wait_strategy,
                     state.temporary_lockout_count,
