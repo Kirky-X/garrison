@@ -52,6 +52,10 @@ pub struct GarrisonMetrics {
     pub(crate) permission_query_total: prometheus::CounterVec,
     /// 角色查询总数 Counter（标签：result=allow|deny）
     pub(crate) role_query_total: prometheus::CounterVec,
+    /// 实例级 registry 引用（`gather()` 从此 registry 收集，而非全局 default registry）。
+    ///
+    /// 修复 CRITICAL-6：`gather()` 读全局 registry 导致自定义 registry 场景返回空数据。
+    pub(crate) registry: prometheus::Registry,
 }
 
 /// impl 块子模块（`GarrisonMetrics::new` / `register_to` / `record_*` 等）。

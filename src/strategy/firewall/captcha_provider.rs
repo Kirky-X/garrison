@@ -127,23 +127,41 @@ impl MathCaptchaProvider {
         if matched {
             self.dao.delete(&key).await?;
             let attempts_key = format!("{}attempts:{}", DaoKeyPrefix::Captcha, challenge_id);
-            let _ = self.dao.delete(&attempts_key).await;
+            let _ = self.dao.delete(&attempts_key).await.map_err(|e| {
+                tracing::warn!(
+                    challenge_id,
+                    error = %e,
+                    "CAPTCHA attempts key 删除失败（非致命，TTL 将自动清理）"
+                );
+            });
             return Ok(true);
         }
 
         // 错误答案：递增尝试计数器
         let attempts_key = format!("{}attempts:{}", DaoKeyPrefix::Captcha, challenge_id);
-        let current: u32 = self
-            .dao
-            .get(&attempts_key)
-            .await?
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        let new_count = current + 1;
+        let current: u32 = match self.dao.get(&attempts_key).await? {
+            Some(s) => s.parse().unwrap_or_else(|e| {
+                tracing::warn!(
+                    challenge_id,
+                    raw = %s,
+                    error = %e,
+                    "CAPTCHA attempts 数据损坏，重置计数器为 0"
+                );
+                0
+            }),
+            None => 0,
+        };
+        let new_count = current.saturating_add(1);
 
         if new_count >= self.max_attempts {
             self.dao.delete(&key).await?;
-            let _ = self.dao.delete(&attempts_key).await;
+            let _ = self.dao.delete(&attempts_key).await.map_err(|e| {
+                tracing::warn!(
+                    challenge_id,
+                    error = %e,
+                    "CAPTCHA attempts key 删除失败（非致命，TTL 将自动清理）"
+                );
+            });
             tracing::warn!(
                 challenge_id,
                 attempts = new_count,

@@ -962,12 +962,19 @@ impl AuthExecutor {
             });
         }
 
-        // 从 ctx.extras 取 client_id（解析为 i64，缺失或解析失败则默认 0）
-        let client_id: i64 = ctx
-            .extras
-            .get("client_id")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
+        // 从 ctx.extras 取 client_id（解析为 i64，缺失默认 0——设计决策；解析失败记录 warn）
+        let client_id: i64 = match ctx.extras.get("client_id") {
+            Some(s) => s.parse().unwrap_or_else(|e| {
+                tracing::warn!(
+                    server_id,
+                    raw = %s,
+                    error = %e,
+                    "SSO client_id 解析失败，回退默认值 0"
+                );
+                0
+            }),
+            None => 0,
+        };
 
         // 调用 resolver 验证 ticket 取得 login_id（内部委托 SsoServer::validate_ticket）
         let login_id = match resolver

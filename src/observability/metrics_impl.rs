@@ -62,6 +62,7 @@ impl GarrisonMetrics {
             token_validation_duration,
             permission_query_total,
             role_query_total,
+            registry: registry.clone(),
         })
     }
 
@@ -110,8 +111,8 @@ impl GarrisonMetrics {
         use prometheus::Encoder;
         let mut buffer = Vec::new();
         let encoder = prometheus::TextEncoder::new();
-        // 收集 default registry（包含 GarrisonMetrics 注册的所有指标）
-        let metric_families = prometheus::gather();
+        // 从实例级 registry 收集（而非全局 default registry），保证自定义 registry 场景正确
+        let metric_families = self.registry.gather();
         // Rule 12：编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）
         if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
             tracing::warn!(error = %e, "GarrisonMetrics::gather prometheus encode failed");

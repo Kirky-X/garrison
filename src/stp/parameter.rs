@@ -127,8 +127,13 @@ impl ParameterQueryBuilder {
                 }
             })
             .await;
-            // 清理临时会话（忽略清理失败，不影响校验结果）
-            let _ = GarrisonUtil::kickout_by_token(&token_for_cleanup).await;
+            // 清理临时会话（非致命，失败不影响校验结果）
+            if let Err(e) = GarrisonUtil::kickout_by_token(&token_for_cleanup).await {
+                tracing::warn!(
+                    error = %e,
+                    "ParameterQuery 临时会话清理失败（非致命，TTL 将自动清理）"
+                );
+            }
             result
         } else {
             Err(GarrisonError::Internal(
@@ -509,10 +514,13 @@ mod tests {
         roles.insert("1001".to_string(), vec!["admin".to_string()]);
         init_manager_with_perms(false, HashMap::new(), roles).await;
 
-        let result = ParameterQueryBuilder::new()
-            .with_login_id("1001".to_string())
-            .check_role("admin")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_login_id("1001".to_string())
+                .check_role("admin")
+                .await
+        })
+        .await;
         assert!(result.is_ok(), "持有角色应返回 Ok，实际: {:?}", result);
 
         GarrisonManager::reset_for_test();
@@ -525,10 +533,13 @@ mod tests {
         let roles: HashMap<String, Vec<String>> = HashMap::new();
         init_manager_with_perms(false, HashMap::new(), roles).await;
 
-        let result = ParameterQueryBuilder::new()
-            .with_login_id("1001".to_string())
-            .check_role("superadmin")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_login_id("1001".to_string())
+                .check_role("superadmin")
+                .await
+        })
+        .await;
         assert!(
             matches!(result, Err(GarrisonError::NotRole(ref role)) if role == "superadmin"),
             "未持有角色应返回 NotRole，实际: {:?}",
@@ -548,10 +559,13 @@ mod tests {
 
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-        let result = ParameterQueryBuilder::new()
-            .with_token(&token)
-            .check_role("admin")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_token(&token)
+                .check_role("admin")
+                .await
+        })
+        .await;
         assert!(
             result.is_ok(),
             "token 上下文持有角色应返回 Ok，实际: {:?}",
@@ -570,10 +584,13 @@ mod tests {
 
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-        let result = ParameterQueryBuilder::new()
-            .with_token(&token)
-            .check_role("superadmin")
-            .await;
+        let result = with_default_tenant(async {
+            ParameterQueryBuilder::new()
+                .with_token(&token)
+                .check_role("superadmin")
+                .await
+        })
+        .await;
         assert!(
             matches!(result, Err(GarrisonError::NotRole(_))),
             "token 上下文未持有角色应返回 NotRole，实际: {:?}",
