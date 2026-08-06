@@ -11,30 +11,7 @@ use crate::constants::DaoKeyPrefix;
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use oxcache::Cache;
-use std::collections::{HashMap, HashSet};
 use std::time::Duration;
-
-/// 原子操作状态追踪器（配合 `parking_lot::Mutex` 使用）。
-///
-/// **设计动机**：`moka::future::Cache::insert().await` 将写操作入 channel，
-/// housekeeper 线程异步消费后才提交到底层 HashMap。跨线程 `get().await` 在
-/// housekeeper 消费前执行 → 写后读不一致（实测并发 10 路 set_if_absent 有 2 路成功）。
-/// `invalidate().await` 不受此影响（同步删除，已由 `oxcache_get_and_delete_concurrent`
-/// 测试验证通过）。
-///
-/// **解决方案**：`AtomicTracker` 在 `parking_lot::Mutex` 保护下提供同步立即可见的
-/// 权威状态，绕过 Moka channel 延迟。`claims` 跟踪 `set_if_absent` 已声明的 key，
-/// `counters` 维护 `incr` 的权威计数值。
-#[derive(Default)]
-struct AtomicTracker {
-    /// `set_if_absent` 已声明的 key 集合。
-    /// 提供跨线程立即可见的"key 已存在"语义，确保并发 `set_if_absent` 同 key
-    /// 时仅第一个返回 `true`。
-    claims: HashSet<String>,
-    /// `incr` 维护的权威计数器（key → 当前值）。
-    /// 提供跨线程立即可见的计数器值，确保并发 `incr` 同 key 时正确递增。
-    counters: HashMap<String, u64>,
-}
 
 /// 根据租户上下文返回实际存储 key。
 ///
@@ -127,24 +104,14 @@ fn strip_prefix(prefixed: &str) -> String {
 /// **后续跟进**：若未来引入 Redis/分布式 backend，需改用 async API（`_sync` 在网络 I/O 场景下会阻塞 tokio worker 线程）。
 pub struct GarrisonDaoOxcache {
     cache: Cache<String, String>,
-    /// 原子操作互斥锁 + 状态追踪器。
-    ///
-    /// 双重职责：
-    /// 1. **互斥锁**：保证 `set_if_absent` / `get_and_delete` / `incr` 的串行化
-    /// 2. **状态追踪**：`AtomicTracker.claims` 提供 `set_if_absent` 的跨线程立即可见性，
-    ///    `AtomicTracker.counters` 提供 `incr` 的权威计数值
-    ///
-    /// **为何需要状态追踪**：`moka::future::Cache::insert().await` 将 op 入 channel，
-    /// housekeeper 线程异步消费，跨线程 `get().await` 可能在 housekeeper 消费前执行 →
-    /// 写后读不一致。`AtomicTracker` 在 Mutex 保护下提供同步立即可见的权威状态，
-    /// 绕过 Moka channel 延迟（详见 `AtomicTracker` 文档注释）。
+    /// 原子操作互斥锁，保证 `set_if_absent` / `get_and_delete` / `incr` 等的串行化。
     ///
     /// **为何用 `parking_lot::Mutex` 而非 `tokio::sync::Mutex`**（H3 修复）：
     /// 原实现用 `tokio::sync::Mutex` + async cache API（`cache.get().await`），
     /// 跨 await 持锁序列化所有原子操作。改为 `parking_lot::Mutex` + `_sync` API
     /// （`cache.get_sync()`），锁内全同步操作（<1μs），不让出 tokio task，
     /// 与 `get`/`set` 方法的 `_sync` 模式对齐（文件 L118-127 设计结论）。
-    atomic_state: parking_lot::Mutex<AtomicTracker>,
+    atomic_mutex: parking_lot::Mutex<()>,
     /// Redis 部署模式配置（仅在 `cache-redis` feature 启用时存在）。
     ///
     /// 通过 [`with_redis_config`] builder 方法设置。未设置时为 `None`，
@@ -177,7 +144,7 @@ impl GarrisonDaoOxcache {
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-init::{}", e)))?;
         Ok(Self {
             cache,
-            atomic_state: parking_lot::Mutex::new(AtomicTracker::default()),
+            atomic_mutex: parking_lot::Mutex::new(()),
             #[cfg(feature = "cache-redis")]
             redis_config: None,
             #[cfg(feature = "dao-key-index")]
@@ -321,16 +288,14 @@ impl GarrisonDao for GarrisonDaoOxcache {
         }
     }
 
+    /// delete 用 `delete_sync` 删除 key。
+    ///
+    /// 跨进程限制：多进程共享 Redis L2 时，仍需确保删除传播一致性。
     async fn delete(&self, key: &str) -> GarrisonResult<()> {
         let actual_key = prefixed_key(key);
         self.cache
             .delete_sync(&actual_key)
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
-        // H1 修复：清理 AtomicTracker 状态（与 get_and_delete 保持一致）。
-        // 未清理会导致 set_if_absent 误判（claims 仍含已删除 key）+ counters 内存泄漏。
-        let mut guard = self.atomic_state.lock();
-        guard.claims.remove(&actual_key);
-        guard.counters.remove(&actual_key);
         #[cfg(feature = "dao-key-index")]
         self.key_index.write().remove(&actual_key);
         Ok(())
@@ -390,14 +355,12 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// 进程内原子：同一进程内并发调用同一 key 仅一个返回 `Some`。
     /// `delete_sync` 是同步删除（已由 `oxcache_get_and_delete_concurrent`
     /// 测试验证），无需额外状态追踪。
-    /// 同时清理 `AtomicTracker` 中该 key 的 claims/counters 状态，确保后续
-    /// `set_if_absent` / `incr` 可重新声明。
     /// 跨进程限制：多进程共享 Redis L2 时，仍存在 TOCTOU 竞态
     /// （需 Redis Lua 脚本 `redis.call('GET',K[1]);redis.call('DEL',K[1])` 修复，待引入 Redis L2 后端）。
     async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
         #[cfg(feature = "cache-redis")]
         self.check_redis_compat()?;
-        let mut guard = self.atomic_state.lock();
+        let _guard = self.atomic_mutex.lock();
         let actual_key = prefixed_key(key);
         let value = self
             .cache
@@ -408,34 +371,17 @@ impl GarrisonDao for GarrisonDaoOxcache {
                 .delete_sync(&actual_key)
                 .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
         }
-        // 清理 AtomicTracker 状态：key 已被消费，移除声明和计数器
-        guard.claims.remove(&actual_key);
-        guard.counters.remove(&actual_key);
         Ok(value)
     }
 
-    /// set_if_absent 用 `parking_lot::Mutex` + `AtomicTracker.claims` 保护原子性（进程内原子）。
+    /// set_if_absent 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子）。
     ///
-    /// **三阶段检查**（H3 修复后）：
-    /// 1. 权威检查 `claims`（同步立即可见）：若 key 已声明 → **惰性检查 cache 是否已 TTL 过期**
-    ///    （M5 修复：过期则清理 claims 孤儿条目，继续走阶段 2/3）；未过期 → 返回 `false`
-    /// 2. 缓存检查 `cache.get_sync()`（处理 `set()` 写入的 key）：若缓存命中 → 同步到 `claims`，返回 `false`
-    /// 3. 写入缓存 + 声明到 `claims` → 返回 `true`
+    /// **流程**：Mutex 内通过 `exists_sync` 检查 key 是否存在，不存在则 `set_with_ttl_sync` 写入。
+    /// oxcache `_sync` API 直接操作底层 HashMap（绕过 Moka channel 延迟），
+    /// `exists_sync` + `set_with_ttl_sync` 在 Mutex 串行化下提供原子语义。
     ///
-    /// **为何需要 `claims`**：`moka::future::Cache::insert().await` 将 op 入 channel，
-    /// housekeeper 线程异步消费。跨线程 `get().await` 可能在 housekeeper 消费前执行 →
-    /// 写后读不一致（实测并发 10 路有 2 路成功）。`claims` 在 Mutex 保护下同步更新，
-    /// 提供跨线程立即可见的"key 已声明"语义。
-    ///
-    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API（`cache.get().await`），
-    /// 跨 await 持锁序列化所有原子操作。改为 `parking_lot::Mutex` + `_sync` API
-    /// （`cache.get_sync()`），锁内全同步操作（<1μs），不让出 tokio task。
-    ///
-    /// **M5 修复**：`claims` 命中时额外用 `cache.exists_sync()` 检查 cache 是否已 TTL 过期，
-    /// 过期则清理 claims 孤儿条目，避免 set_if_absent 永远返回 false（用户被永久锁死）。
-    ///
-    /// **已知限制**：`set()` + `set_if_absent()` 竞态不保证（`set()` 不更新 `claims`）。
-    /// 社交绑定场景无此竞态（绑定 key 仅通过 `set_if_absent` 写入）。
+    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
     /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
     /// （需 Redis `SET key value NX EX ttl` 修复，待引入 Redis L2 后端）。
@@ -447,39 +393,17 @@ impl GarrisonDao for GarrisonDaoOxcache {
     ) -> GarrisonResult<bool> {
         #[cfg(feature = "cache-redis")]
         self.check_redis_compat()?;
-        let mut guard = self.atomic_state.lock();
+        let _guard = self.atomic_mutex.lock();
         let actual_key = prefixed_key(key);
 
-        // 阶段 1：权威检查 claims（同步立即可见，绕过 Moka channel 延迟）
-        if guard.claims.contains(&actual_key) {
-            // M5 惰性清理：claims 命中但 cache 可能已 TTL 过期（孤儿条目）。
-            // exists_sync 是无锁读（<100ns），可接受。
-            let exists = self
-                .cache
-                .exists_sync(&actual_key)
-                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?;
-            if !exists {
-                // cache 已过期，清理 claims 孤儿条目，继续走阶段 2/3
-                guard.claims.remove(&actual_key);
-            } else {
-                return Ok(false);
-            }
-        }
-
-        // 阶段 2：缓存检查（仅需存在性判断，用 exists_sync 避免 value 反序列化/拷贝；
-        // 同步绕过 Moka channel 延迟，处理 set() 写入的 key）
         if self
             .cache
             .exists_sync(&actual_key)
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?
         {
-            // 缓存命中：同步到 claims，后续 set_if_absent 走阶段 1 快速路径。
-            // 阶段 2 命中后直接 return，actual_key 不再需要，用 move 避免 clone。
-            guard.claims.insert(actual_key);
             return Ok(false);
         }
 
-        // 阶段 3：写入缓存（供非原子 get() 使用）+ 声明到 claims（立即可见）
         let ttl = if ttl_seconds == 0 {
             None
         } else {
@@ -488,71 +412,27 @@ impl GarrisonDao for GarrisonDaoOxcache {
         self.cache
             .set_with_ttl_sync(&actual_key, &value.to_string(), ttl)
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
-        guard.claims.insert(actual_key.clone());
         #[cfg(feature = "dao-key-index")]
         self.key_index.write().insert(actual_key);
         Ok(true)
     }
 
-    /// incr 用 `parking_lot::Mutex` + `AtomicTracker.counters` 保护原子性（进程内原子）。
+    /// incr 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子）。
     ///
-    /// **权威计数器**：`counters` HashMap 在 Mutex 保护下同步更新，提供跨线程立即可见
-    /// 的计数值，绕过 Moka channel 延迟。
+    /// **流程**：Mutex 内通过 `get_sync` 读取当前值，递增后用 `set_with_ttl_sync` 写回。
+    /// key 不存在时初始化为 1。key 已存在时通过 `ttl_sync` 读取剩余 TTL 并保留。
     ///
-    /// **流程**（H2 修复后）：
-    /// - key 在 `counters` 中 → **先检查 cache 是否已 TTL 过期**（H2 修复）：
-    ///   - 过期 → 清理 counters，走 None 分支重新初始化为 1
-    ///   - 未过期 → 直接递增权威值，同步到缓存
-    /// - key 不在 `counters` 但在缓存中 → 从缓存读取初值，递增，写入 `counters` + 缓存
-    /// - key 不存在 → 初始化为 1，写入 `counters` + 缓存
+    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
-    /// key 已存在时通过 `ttl_sync` 读取剩余 TTL 并保留（不重置过期时间）。
     /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
     /// （需 Redis `INCR` 原子命令修复，待引入 Redis L2 后端）。
     async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
         #[cfg(feature = "cache-redis")]
         self.check_redis_compat()?;
-        let mut guard = self.atomic_state.lock();
+        let _guard = self.atomic_mutex.lock();
         let actual_key = prefixed_key(key);
 
-        // 权威路径：counters 已有该 key（跨线程立即可见）
-        if let Some(cur_val) = guard.counters.get(&actual_key).copied() {
-            // H2 修复：检查 cache 是否已 TTL 过期。
-            // 未检查时 counters 保留旧值，incr 基于过期值递增，且新值被永久写入（TTL 丢失），
-            // 导致限速器 TTL 窗口失效（用户被永久限速）。
-            let exists = self
-                .cache
-                .exists_sync(&actual_key)
-                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?;
-            if !exists {
-                // cache 已过期，清理 counters 孤儿条目，重新初始化为 1
-                guard.counters.remove(&actual_key);
-                let ttl = if ttl_seconds == 0 {
-                    None
-                } else {
-                    Some(Duration::from_secs(ttl_seconds))
-                };
-                self.cache
-                    .set_with_ttl_sync(&actual_key, &"1".to_string(), ttl)
-                    .map_err(|e| {
-                        GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
-                    })?;
-                guard.counters.insert(actual_key, 1);
-                return Ok(1);
-            }
-            let new_val = cur_val + 1;
-            let remaining_ttl = self
-                .cache
-                .ttl_sync(&actual_key)
-                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
-            self.cache
-                .set_with_ttl_sync(&actual_key, &new_val.to_string(), remaining_ttl)
-                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
-            guard.counters.insert(actual_key, new_val);
-            return Ok(new_val);
-        }
-
-        // 缓存路径：key 不在 counters 但可能在缓存中（set() 写入或上次 incr 后 Moka 已提交）
         match self
             .cache
             .get_sync(&actual_key)
@@ -576,7 +456,6 @@ impl GarrisonDao for GarrisonDaoOxcache {
                     .map_err(|e| {
                         GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                     })?;
-                guard.counters.insert(actual_key, new_val);
                 Ok(new_val)
             },
             None => {
@@ -590,81 +469,30 @@ impl GarrisonDao for GarrisonDaoOxcache {
                     .map_err(|e| {
                         GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                     })?;
-                guard.counters.insert(actual_key, 1);
                 Ok(1)
             },
         }
     }
 
-    /// decr 用 `parking_lot::Mutex` + `AtomicTracker.counters` 保护原子性（进程内原子，与 `incr` 对称）。
+    /// decr 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子，与 `incr` 对称）。
     ///
     /// **语义**（与 trait 默认实现 + `MockDao::decr` 一致）：
     /// - key 不存在或已过期：返回 0（不创建 key）
     /// - cur_val == 0：返回 0（不递减为负，不删除 key）
-    /// - cur_val > 0：递减 1；new_val == 0 时 `delete` 删除 key；
+    /// - cur_val > 0：递减 1；new_val == 0 时 `delete_sync` 删除 key；
     ///   new_val > 0 时用 `ttl_sync` 读取剩余 TTL 并 `set_with_ttl_sync` 保留（不重置窗口）
     ///
-    /// **权威计数器**：与 `incr` 对称，优先从 `counters` 读取当前值（跨线程立即可见），
-    /// 命中则同步递增；未命中则回退到缓存。递减结果同步写回 `counters`，确保后续
-    /// 并发 `incr` / `decr` 立即可见。
-    ///
-    /// **H2 修复**：权威路径命中 counters 时检查 cache 是否已 TTL 过期，
-    /// 过期则清理 counters + 返回 0（key 不存在），避免基于过期值递减。
-    ///
-    /// 修复 `concurrent_send_does_not_exceed_limit` flaky test 的 TOCTOU 竞态：
-    /// 原 `SmsRateLimiter::decrement_counter` 用 `dao.get → parse → dao.update/delete`
-    /// 三步组合，跨越 await 间隙允许其他 task 的 `incr` 插入，导致 update 基于过时 get 值
-    /// 覆盖 incr 结果，产生"跨越式递减"（实际递减量大于 1）。
+    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
     /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
     /// （需 Redis `DECR` 原子命令修复，待引入 Redis L2 后端）。
     async fn decr(&self, key: &str) -> GarrisonResult<u64> {
         #[cfg(feature = "cache-redis")]
         self.check_redis_compat()?;
-        let mut guard = self.atomic_state.lock();
+        let _guard = self.atomic_mutex.lock();
         let actual_key = prefixed_key(key);
 
-        // 权威路径：counters 已有该 key（跨线程立即可见）
-        if let Some(cur_val) = guard.counters.get(&actual_key).copied() {
-            // H2 修复：检查 cache 是否已 TTL 过期（与 incr 对称）
-            let exists = self
-                .cache
-                .exists_sync(&actual_key)
-                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?;
-            if !exists {
-                // cache 已过期，清理 counters 孤儿条目，返回 0（key 不存在）
-                guard.counters.remove(&actual_key);
-                return Ok(0);
-            }
-            if cur_val == 0 {
-                return Ok(0);
-            }
-            let new_val = cur_val - 1;
-            if new_val == 0 {
-                // 递减到 0：删除 key（与 trait 默认实现 + MockDao::decr 一致）
-                self.cache
-                    .delete_sync(&actual_key)
-                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
-                #[cfg(feature = "dao-key-index")]
-                self.key_index.write().remove(&actual_key);
-                guard.counters.remove(&actual_key);
-            } else {
-                // 保留原 TTL（不重置窗口）：用 ttl_sync 读取剩余 TTL
-                let remaining_ttl = self
-                    .cache
-                    .ttl_sync(&actual_key)
-                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
-                self.cache
-                    .set_with_ttl_sync(&actual_key, &new_val.to_string(), remaining_ttl)
-                    .map_err(|e| {
-                        GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
-                    })?;
-                guard.counters.insert(actual_key, new_val);
-            }
-            return Ok(new_val);
-        }
-
-        // 缓存路径：key 不在 counters 但可能在缓存中（set() 写入或上次 incr 后 Moka 已提交）
         match self
             .cache
             .get_sync(&actual_key)
@@ -679,8 +507,6 @@ impl GarrisonDao for GarrisonDaoOxcache {
                     ))
                 })?;
                 if cur_val == 0 {
-                    // 同步到 counters，后续 decr 走权威路径
-                    guard.counters.insert(actual_key, 0);
                     return Ok(0);
                 }
                 let new_val = cur_val - 1;
@@ -690,7 +516,6 @@ impl GarrisonDao for GarrisonDaoOxcache {
                     })?;
                     #[cfg(feature = "dao-key-index")]
                     self.key_index.write().remove(&actual_key);
-                    guard.counters.remove(&actual_key);
                 } else {
                     let remaining_ttl = self
                         .cache
@@ -701,7 +526,6 @@ impl GarrisonDao for GarrisonDaoOxcache {
                         .map_err(|e| {
                             GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                         })?;
-                    guard.counters.insert(actual_key, new_val);
                 }
                 Ok(new_val)
             },
@@ -709,17 +533,15 @@ impl GarrisonDao for GarrisonDaoOxcache {
         }
     }
 
-    /// compare_and_update_if_greater 用 `tokio::sync::Mutex` + `AtomicTracker.counters` 保护原子性（进程内原子）。
+    /// compare_and_update_if_greater 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子）。
     ///
     /// **语义**：
     /// - key 不存在或已过期：current_val = 0，new_value > 0 时初始化并设置 TTL
-    /// - key 已存在且 new_value > current_val：用 `ttl` 读取剩余 TTL 保留（不重置）
+    /// - key 已存在且 new_value > current_val：用 `ttl_sync` 读取剩余 TTL 保留（不重置）
     /// - key 已存在但 new_value <= current_val：不修改，返回 false
     ///
-    /// **权威计数器**：与 `incr` / `decr` 对称，优先从 `counters` 读取当前值
-    /// （跨线程立即可见），命中则直接比较；未命中则回退到缓存。比较成功后同步写回
-    /// `counters`，确保后续并发 `incr` / `decr` / `compare_and_update_if_greater`
-    /// 立即可见。
+    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
     /// 用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6），消除 get→compare→set TOCTOU 竞态。
     /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
@@ -732,38 +554,28 @@ impl GarrisonDao for GarrisonDaoOxcache {
     ) -> GarrisonResult<bool> {
         #[cfg(feature = "cache-redis")]
         self.check_redis_compat()?;
-        let mut guard = self.atomic_state.lock();
+        let _guard = self.atomic_mutex.lock();
         let actual_key = prefixed_key(key);
 
-        // 权威路径：counters 已有该 key（跨线程立即可见）
-        let current_val: u64 = if let Some(v) = guard.counters.get(&actual_key).copied() {
-            v
-        } else {
-            // 缓存路径：key 不在 counters 但可能在缓存中（用 _sync API 避免跨 await 持锁）
-            match self
-                .cache
-                .get_sync(&actual_key)
-                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
-            {
-                Some(v) => {
-                    // M1 修复：parse 失败必须显式报错（与 incr 方法一致，Rule 12 错误显性化），
-                    // 禁止 unwrap_or(0) 静默返回 0 导致 nc 计数器被错误重置
-                    let parsed: u64 = v.parse().map_err(|_| {
-                        GarrisonError::Dao(format!(
-                            "dao-compare-and-update-parse-u64::{}::{}",
-                            actual_key, v
-                        ))
-                    })?;
-                    // 同步到 counters，后续 compare_and_update_if_greater 走权威路径
-                    guard.counters.insert(actual_key.clone(), parsed);
-                    parsed
-                },
-                None => 0,
-            }
+        let current_val: u64 = match self
+            .cache
+            .get_sync(&actual_key)
+            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
+        {
+            Some(v) => {
+                // M1 修复：parse 失败必须显式报错（与 incr 方法一致，Rule 12 错误显性化），
+                // 禁止 unwrap_or(0) 静默返回 0 导致 nc 计数器被错误重置
+                v.parse().map_err(|_| {
+                    GarrisonError::Dao(format!(
+                        "dao-compare-and-update-parse-u64::{}::{}",
+                        actual_key, v
+                    ))
+                })?
+            },
+            None => 0,
         };
 
         if new_value > current_val {
-            // 保留原 TTL：若键已存在，读取剩余 TTL；新键用传入的 ttl_seconds
             let ttl = if ttl_seconds == 0 {
                 None
             } else {
@@ -777,8 +589,49 @@ impl GarrisonDao for GarrisonDaoOxcache {
                 .set_with_ttl_sync(&actual_key, &new_value.to_string(), ttl)
                 .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
             #[cfg(feature = "dao-key-index")]
-            self.key_index.write().insert(actual_key.clone());
-            guard.counters.insert(actual_key, new_value);
+            self.key_index.write().insert(actual_key);
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// compare_and_swap 用 `parking_lot::Mutex` + `_sync` API 保护原子性（进程内原子）。
+    ///
+    /// 在单个 `lock()` 作用域内完成 get → compare → set，消除 TOCTOU 竞态。
+    /// 用于备份码消费等需要原子 CAS 语义的场景。
+    ///
+    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
+    ///
+    /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
+    /// （需 Redis Lua 脚本修复，待引入 Redis L2 后端）。
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        new_value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        #[cfg(feature = "cache-redis")]
+        self.check_redis_compat()?;
+        let _guard = self.atomic_mutex.lock();
+        let actual_key = prefixed_key(key);
+
+        let current = self
+            .cache
+            .get_sync(&actual_key)
+            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-cas-get-sync::{}", e)))?;
+
+        if current.as_deref() == expected {
+            let ttl = if ttl_seconds == 0 {
+                None
+            } else {
+                Some(Duration::from_secs(ttl_seconds))
+            };
+            self.cache
+                .set_with_ttl_sync(&actual_key, &new_value.to_string(), ttl)
+                .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-cas-set-sync::{}", e)))?;
             Ok(true)
         } else {
             Ok(false)

@@ -354,6 +354,40 @@ impl GarrisonDao for MockDao {
         }
     }
 
+    /// compare_and_swap 用 Mutex 保护原子性（进程内原子）。
+    ///
+    /// 在单个 `lock()` 作用域内完成 get → compare → set，消除 TOCTOU 竞态。
+    /// 用于备份码消费等需要原子 CAS 语义的场景。
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        new_value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        let mut store = self.store.lock();
+        let now = Instant::now();
+        let current = match store.get(key) {
+            Some((v, Some(deadline))) if *deadline <= now => {
+                store.remove(key);
+                None
+            },
+            Some((v, _)) => Some(v.as_str()),
+            None => None,
+        };
+        if current == expected {
+            let expire_at = if ttl_seconds == 0 {
+                None
+            } else {
+                Some(Instant::now() + Duration::from_secs(ttl_seconds))
+            };
+            store.insert(key.to_string(), (new_value.to_string(), expire_at));
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     /// eval_lua 内存模拟实现（识别两类脚本模式）。
     ///
     /// MockDao 不支持真正的 Lua 脚本，但用 `parking_lot::Mutex` 保证进程内原子性。

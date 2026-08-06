@@ -39,6 +39,7 @@ pub(crate) use macros::dao_session;
 /// | `set_if_absent` | get→set 两步，并发可重复插入 |
 /// | `get_and_delete` | get→delete 两步，并发可重复消费（SSO ticket 回放风险） |
 /// | `incr` / `decr` | get→parse→update 三步，并发丢失更新 |
+/// | `compare_and_swap` | get→set 两步，并发可覆盖中间值 |
 ///
 /// **生产后端必须重写这些方法**，使用数据库事务或 CAS 操作保证原子性。
 /// 默认实现已标注 `/// 默认实现：非原子`，但不会在运行时检测或警告。
@@ -432,21 +433,20 @@ pub trait GarrisonDao: Send + Sync {
     /// - `provider_user_id`: 第三方平台用户唯一 ID（微信 openid / 支付宝 user_id）。
     ///
     /// # 返回
-    /// - `Ok(Some(login_id))`: 绑定关系存在，返回关联的 login_id。
+    /// - `Ok(Some(login_id))`: 绑定关系存在，返回关联的 login_id（String，UUID）。
     /// - `Ok(None)`: 绑定关系不存在（首次登录）。
     ///
     /// # 默认实现
     /// 返回 `GarrisonError::NotImplemented`（GarrisonDao 是 KV 缓存抽象，不支持 SQL SELECT）。
-    /// `SocialBindingService` 实际用 `DbPool` 查 SQL，不调用此方法。
-    /// 此方法仅为满足 spec trait 契约，供未来纯 KV 后端实现重写。
+    /// `GarrisonDaoDbnexus` 重写此方法通过 `DbPool` 实现 SQL 查询。
     async fn find_social_binding(
         &self,
         _tenant_id: i64,
         _provider: &str,
         _provider_user_id: &str,
-    ) -> GarrisonResult<Option<i64>> {
+    ) -> GarrisonResult<Option<String>> {
         Err(GarrisonError::NotImplemented(format!(
-            "find_social_binding 未实现：{} 后端不支持 SQL 查询（SocialBindingService 用 DbPool）",
+            "find_social_binding 未实现：{} 后端不支持 SQL 查询",
             std::any::type_name::<Self>()
         )))
     }
@@ -457,7 +457,7 @@ pub trait GarrisonDao: Send + Sync {
     ///
     /// # 参数
     /// - `tenant_id`: 租户 ID（0=默认租户）。
-    /// - `login_id`: Garrison 内部用户 ID（INTEGER，由 `SocialBindingService::find_or_create` 生成）。
+    /// - `login_id`: Garrison 内部用户 ID（String，UUID，由调用方生成）。
     /// - `provider`: 社交平台标识（`"wechat"` / `"alipay"` / `"wechat_mini_app"`）。
     /// - `provider_user_id`: 第三方平台用户唯一 ID。
     /// - `union_id`: 跨应用统一 ID（微信 unionid，可空）。
@@ -465,19 +465,90 @@ pub trait GarrisonDao: Send + Sync {
     ///
     /// # 默认实现
     /// 返回 `GarrisonError::NotImplemented`（GarrisonDao 是 KV 缓存抽象，不支持 SQL INSERT）。
-    /// `SocialBindingService` 实际用 `DbPool` 执行 INSERT，不调用此方法。
-    /// 此方法仅为满足 spec trait 契约，供未来纯 KV 后端实现重写。
+    /// `GarrisonDaoDbnexus` 重写此方法通过 `DbPool` 实现 SQL 插入。
     async fn insert_social_binding(
         &self,
         _tenant_id: i64,
-        _login_id: i64,
+        _login_id: &str,
         _provider: &str,
         _provider_user_id: &str,
         _union_id: Option<&str>,
         _created_at: i64,
     ) -> GarrisonResult<()> {
         Err(GarrisonError::NotImplemented(format!(
-            "insert_social_binding 未实现：{} 后端不支持 SQL 插入（SocialBindingService 用 DbPool）",
+            "insert_social_binding 未实现：{} 后端不支持 SQL 插入",
+            std::any::type_name::<Self>()
+        )))
+    }
+
+    /// 查询指定租户的所有角色层级边（child_role → parent_role）。
+    ///
+    /// 返回 `Vec<(child_role, parent_role)>`，对应 `role_hierarchy` 表中
+    /// `tenant_id` 匹配的所有记录。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 租户 ID（0=默认租户）。
+    ///
+    /// # 默认实现
+    /// 返回 `GarrisonError::NotImplemented`（仅 `GarrisonDaoDbnexus` 支持 SQL 查询）。
+    /// `RoleHierarchyService` 实际用 `DbPool` 查 SQL，不调用此方法。
+    /// 此方法为满足 spec trait 契约，供 `GarrisonDaoDbnexus` 重写。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    async fn query_role_hierarchy_edges(
+        &self,
+        _tenant_id: i64,
+    ) -> GarrisonResult<Vec<(String, String)>> {
+        Err(GarrisonError::NotImplemented(format!(
+            "query_role_hierarchy_edges 未实现：{} 后端不支持 SQL 查询",
+            std::any::type_name::<Self>()
+        )))
+    }
+
+    /// 插入角色层级边（child_role → parent_role）。
+    ///
+    /// 幂等：重复插入相同边不报错（后端自适应：SQLite `INSERT OR IGNORE`，
+    /// PostgreSQL `ON CONFLICT DO NOTHING`，MySQL `INSERT IGNORE`）。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 租户 ID（0=默认租户）。
+    /// - `child_role`: 子角色编码（继承方）。
+    /// - `parent_role`: 父角色编码（被继承方）。
+    ///
+    /// # 默认实现
+    /// 返回 `GarrisonError::NotImplemented`（仅 `GarrisonDaoDbnexus` 支持 SQL 插入）。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    async fn insert_role_hierarchy_edge(
+        &self,
+        _tenant_id: i64,
+        _child_role: &str,
+        _parent_role: &str,
+    ) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(format!(
+            "insert_role_hierarchy_edge 未实现：{} 后端不支持 SQL 插入",
+            std::any::type_name::<Self>()
+        )))
+    }
+
+    /// 删除角色层级边（child_role → parent_role）。
+    ///
+    /// 幂等：删除不存在的边不报错。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 租户 ID（0=默认租户）。
+    /// - `child_role`: 子角色编码（继承方）。
+    /// - `parent_role`: 父角色编码（被继承方）。
+    ///
+    /// # 默认实现
+    /// 返回 `GarrisonError::NotImplemented`（仅 `GarrisonDaoDbnexus` 支持 SQL 删除）。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    async fn delete_role_hierarchy_edge(
+        &self,
+        _tenant_id: i64,
+        _child_role: &str,
+        _parent_role: &str,
+    ) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(format!(
+            "delete_role_hierarchy_edge 未实现：{} 后端不支持 SQL 删除",
             std::any::type_name::<Self>()
         )))
     }
@@ -513,6 +584,48 @@ pub trait GarrisonDao: Send + Sync {
             "eval_lua 未实现：{} 后端不支持 Lua 脚本（仅 Redis 后端支持）",
             std::any::type_name::<Self>()
         )))
+    }
+
+    /// 原子比较并交换（Compare-And-Swap）。
+    ///
+    /// 当 key 的当前值等于 `expected` 时，原子替换为 `new_value`。
+    /// 用于备份码消费（消除 get→verify→set TOCTOU 双花竞态）等场景。
+    ///
+    /// # 参数
+    /// - `key`: 存储键。
+    /// - `expected`: 期望的当前值（`None` 表示期望 key 不存在）。
+    /// - `new_value`: 新值。
+    /// - `ttl_seconds`: TTL 秒数（0 表示永久驻留）。
+    ///
+    /// # 返回
+    /// - `Ok(true)`: CAS 成功（当前值匹配 expected，已写入 new_value）。
+    /// - `Ok(false)`: CAS 失败（当前值不匹配 expected，未写入）。
+    ///
+    /// # 默认实现（非原子）
+    /// 默认实现为 get + compare + set 三步操作，存在 TOCTOU 竞态。
+    /// **生产后端必须重写此方法**，使用后端原生 CAS / Lua 脚本：
+    /// - `GarrisonDaoOxcache`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
+    /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
+    /// - Redis 后端：应重写为 Lua 脚本（GET + COMPARE + SET 原子执行）
+    /// - dbnexus 后端：应重写为 `UPDATE ... WHERE value = expected`
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        new_value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        let current = self.get(key).await?;
+        if current.as_deref() == expected {
+            if ttl_seconds == 0 {
+                self.set_permanent(key, new_value).await?;
+            } else {
+                self.set(key, new_value, ttl_seconds).await?;
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
     }
 }
 
@@ -608,6 +721,13 @@ mod dbnexus_impl;
 
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub use dbnexus_impl::{init_dbnexus, GarrisonMigration};
+
+/// 统一 KV + SQL 的 `GarrisonDao` 实现（包装 `DbPool` + KV 委托）。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+mod dbnexus_dao;
+
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+pub use dbnexus_dao::GarrisonDaoDbnexus;
 
 // ============================================================================
 // Repository 层
@@ -1893,7 +2013,7 @@ pub mod tests {
     async fn default_insert_social_binding_returns_not_implemented() {
         let dao = MinimalDao::new();
         let result = dao
-            .insert_social_binding(0, 1001, "wechat", "wx_openid", None, 1700000000)
+            .insert_social_binding(0, "1001", "wechat", "wx_openid", None, 1700000000)
             .await;
         assert!(
             matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("insert_social_binding")),
@@ -2203,5 +2323,108 @@ pub mod tests {
         dao.set("k", "v", 60).await.unwrap();
         let got = dao.get("k").await.unwrap();
         assert_eq!(got.as_deref(), Some("v"));
+    }
+
+    // ========================================================================
+    // compare_and_swap 契约测试（MockDao）
+    // ========================================================================
+
+    /// CAS：key 存在且值匹配时，原子替换成功。
+    #[tokio::test]
+    async fn cas_match_replaces_value() {
+        let dao = MockDao::new();
+        dao.set("k", "old", 60).await.unwrap();
+        let ok = dao
+            .compare_and_swap("k", Some("old"), "new", 60)
+            .await
+            .unwrap();
+        assert!(ok, "值匹配时 CAS 应返回 true");
+        assert_eq!(dao.get("k").await.unwrap().as_deref(), Some("new"));
+    }
+
+    /// CAS：key 存在但值不匹配时，替换失败。
+    #[tokio::test]
+    async fn cas_mismatch_returns_false() {
+        let dao = MockDao::new();
+        dao.set("k", "actual", 60).await.unwrap();
+        let ok = dao
+            .compare_and_swap("k", Some("expected"), "new", 60)
+            .await
+            .unwrap();
+        assert!(!ok, "值不匹配时 CAS 应返回 false");
+        assert_eq!(
+            dao.get("k").await.unwrap().as_deref(),
+            Some("actual"),
+            "值不应被修改"
+        );
+    }
+
+    /// CAS：expected=None 且 key 不存在时，初始化成功。
+    #[tokio::test]
+    async fn cas_none_expected_key_absent_creates() {
+        let dao = MockDao::new();
+        let ok = dao
+            .compare_and_swap("k", None, "initial", 60)
+            .await
+            .unwrap();
+        assert!(ok, "key 不存在 + expected=None 时 CAS 应成功");
+        assert_eq!(dao.get("k").await.unwrap().as_deref(), Some("initial"));
+    }
+
+    /// CAS：expected=None 但 key 已存在时，替换失败。
+    #[tokio::test]
+    async fn cas_none_expected_key_exists_returns_false() {
+        let dao = MockDao::new();
+        dao.set("k", "existing", 60).await.unwrap();
+        let ok = dao.compare_and_swap("k", None, "new", 60).await.unwrap();
+        assert!(!ok, "key 已存在 + expected=None 时 CAS 应返回 false");
+        assert_eq!(dao.get("k").await.unwrap().as_deref(), Some("existing"));
+    }
+
+    /// CAS：expected=Some 但 key 不存在时，替换失败。
+    #[tokio::test]
+    async fn cas_some_expected_key_absent_returns_false() {
+        let dao = MockDao::new();
+        let ok = dao
+            .compare_and_swap("k", Some("old"), "new", 60)
+            .await
+            .unwrap();
+        assert!(!ok, "key 不存在 + expected=Some 时 CAS 应返回 false");
+        assert!(dao.get("k").await.unwrap().is_none(), "不应创建 key");
+    }
+
+    /// CAS：ttl_seconds=0 时永久驻留。
+    #[tokio::test]
+    async fn cas_permanent_ttl() {
+        let dao = MockDao::new();
+        let ok = dao
+            .compare_and_swap("k", None, "permanent", 0)
+            .await
+            .unwrap();
+        assert!(ok);
+        assert_eq!(dao.get("k").await.unwrap().as_deref(), Some("permanent"));
+    }
+
+    /// CAS：并发竞争下仅一个成功（XOR）。
+    #[tokio::test]
+    async fn cas_concurrent_only_one_succeeds() {
+        let mock = MockDao::new();
+        mock.set("k", "v1", 60).await.unwrap();
+        let dao = Arc::new(mock);
+
+        let dao1 = dao.clone();
+        let dao2 = dao.clone();
+        let (r1, r2) = tokio::join!(
+            dao1.compare_and_swap("k", Some("v1"), "from-task-1", 60),
+            dao2.compare_and_swap("k", Some("v1"), "from-task-2", 60),
+        );
+        let ok1 = r1.unwrap();
+        let ok2 = r2.unwrap();
+        assert!(
+            ok1 ^ ok2,
+            "并发 CAS 同一值应仅一个成功（XOR），实际: ok1={}, ok2={}",
+            ok1,
+            ok2
+        );
     }
 }

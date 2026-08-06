@@ -1037,7 +1037,7 @@ async fn default_find_social_binding_returns_not_implemented() {
 async fn default_insert_social_binding_returns_not_implemented() {
     let dao = MinimalDao::new();
     let result = dao
-        .insert_social_binding(0, 1001, "wechat", "wx_openid", None, 1700000000)
+        .insert_social_binding(0, "1001", "wechat", "wx_openid", None, 1700000000)
         .await;
     assert!(
         matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("insert_social_binding")),

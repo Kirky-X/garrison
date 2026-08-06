@@ -110,6 +110,22 @@ impl GarrisonDao for AloneCache {
     async fn decr(&self, key: &str) -> GarrisonResult<u64> {
         self.inner.decr(&self.prefixed_key(key)).await
     }
+
+    /// compare_and_swap 委托内部 dao（消除 TOCTOU 竞态）。
+    ///
+    /// 与 `compare_and_update_if_greater` 对称：AloneCache 必须显式 forward
+    /// 到 inner dao，保证装饰器透明委托语义，使内部 dao 的原子 CAS 实现得以复用。
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        new_value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        self.inner
+            .compare_and_swap(&self.prefixed_key(key), expected, new_value, ttl_seconds)
+            .await
+    }
 }
 
 /// AloneCacheManager 管理多个 AloneCache 实例，支持多 Redis 实例路由。

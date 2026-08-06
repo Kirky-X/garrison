@@ -157,60 +157,84 @@ impl BackupCodeCredential {
     /// - `Ok(false)`: 校验失败（备份码不匹配或已使用）。
     /// - `Err(_)`: `secret_data` 解析失败或 DAO 读写失败。
     ///
-    /// # ⚠️ 并发安全警告（TOCTOU）
+    /// # 并发安全（CAS 原子消费）
     ///
-    /// 当前实现为 get → verify → set 三步操作，**存在 TOCTOU 竞态**：
-    /// 并发调用同一备份码时，多个调用可能基于同一未更新状态均校验通过，
-    /// 导致备份码被重复消费（双花）。
+    /// 使用 `compare_and_swap` 实现原子 get→verify→set，消除 TOCTOU 双花竞态。
+    /// CAS 失败时自动重试（最多 `MAX_CAS_RETRIES` 次），应对并发冲突。
     ///
-    /// **生产部署须注意**：
-    /// - `GarrisonDao` trait 当前无通用字符串 CAS 操作，无法在应用层实现原子消费
-    /// - Redis 后端应使用 Lua 脚本（GET + COMPARE + SET 原子执行）
-    /// - 关系型数据库后端应使用 `UPDATE ... WHERE secret_data LIKE %hash% RETURNING`
-    /// - `MockDao` / `GarrisonDaoOxcache` 的 Mutex 保护仅保证进程内原子
+    /// **生产后端要求**：
+    /// - `MockDao` / `GarrisonDaoOxcache`：Mutex 保护，进程内原子 ✅
+    /// - Redis 后端：应重写为 Lua 脚本（GET + COMPARE + SET 原子执行）
+    /// - dbnexus 后端：应重写为 `UPDATE ... WHERE value = expected`
     #[tracing::instrument(skip(self, input, dao), fields(user_id = %self.model.user_id))]
     pub async fn verify_and_consume(
         &self,
         input: &str,
         dao: &dyn GarrisonDao,
     ) -> GarrisonResult<bool> {
+        const MAX_CAS_RETRIES: u32 = 5;
         let key = format!(
             "{}{}:{}",
             DaoKeyPrefix::Cred,
             self.model.user_id,
             self.model.id
         );
-        let json = match dao.get(&key).await? {
-            Some(j) => j,
-            None => {
-                return Err(GarrisonError::InvalidParam(format!(
-                    "backup_code credential not found in DAO: {}",
-                    key
-                )))
-            },
-        };
-        let model: CredentialModel = serde_json::from_str(&json)
-            .map_err(|e| GarrisonError::Internal(format!("account-cred-deserialize::{}", e)))?;
-        let mut data = BackupCodeSecretData::from_json(&model.secret_data)?;
         let input_hash = sha256_hex(&normalize(input));
-        if let Some(idx) = data.codes.iter().position(|h| *h == input_hash) {
-            data.codes.remove(idx);
-            let new_secret = serde_json::to_string(&data)
-                .map_err(|e| GarrisonError::Internal(format!("account-backup-serialize::{}", e)))?;
-            let mut updated_model = model.clone();
-            updated_model.secret_data = new_secret;
-            let updated_json = serde_json::to_string(&updated_model)
-                .map_err(|e| GarrisonError::Internal(format!("account-cred-serialize::{}", e)))?;
-            dao.set_permanent(&key, &updated_json).await?;
-            tracing::info!(
-                user_id = %self.model.user_id,
-                remaining = data.codes.len(),
-                "backup code consumed (TOCTOU: non-atomic get-verify-set, see doc)"
-            );
-            Ok(true)
-        } else {
-            Ok(false)
+
+        for attempt in 0..MAX_CAS_RETRIES {
+            // 1. 读取当前状态
+            let old_json = match dao.get(&key).await? {
+                Some(j) => j,
+                None => {
+                    return Err(GarrisonError::InvalidParam(format!(
+                        "backup_code credential not found in DAO: {}",
+                        key
+                    )))
+                },
+            };
+            let model: CredentialModel = serde_json::from_str(&old_json)
+                .map_err(|e| GarrisonError::Internal(format!("account-cred-deserialize::{}", e)))?;
+            let mut data = BackupCodeSecretData::from_json(&model.secret_data)?;
+
+            // 2. 查找并消费备份码
+            if let Some(idx) = data.codes.iter().position(|h| *h == input_hash) {
+                data.codes.remove(idx);
+                let new_secret = serde_json::to_string(&data).map_err(|e| {
+                    GarrisonError::Internal(format!("account-backup-serialize::{}", e))
+                })?;
+                let mut updated_model = model.clone();
+                updated_model.secret_data = new_secret;
+                let updated_json = serde_json::to_string(&updated_model).map_err(|e| {
+                    GarrisonError::Internal(format!("account-cred-serialize::{}", e))
+                })?;
+
+                // 3. 原子 CAS：仅当 DAO 值未被并发修改时写入
+                if dao
+                    .compare_and_swap(&key, Some(&old_json), &updated_json, 0)
+                    .await?
+                {
+                    tracing::info!(
+                        user_id = %self.model.user_id,
+                        remaining = data.codes.len(),
+                        attempt = attempt + 1,
+                        "backup code consumed via atomic CAS"
+                    );
+                    return Ok(true);
+                }
+                // CAS 失败：并发修改，重试
+                tracing::debug!(
+                    attempt = attempt + 1,
+                    max_retries = MAX_CAS_RETRIES,
+                    "CAS conflict on backup code consume, retrying"
+                );
+            } else {
+                return Ok(false);
+            }
         }
+        Err(GarrisonError::Internal(format!(
+            "backup_code CAS retry exhausted after {} attempts: {}",
+            MAX_CAS_RETRIES, key
+        )))
     }
 }
 
@@ -470,11 +494,11 @@ mod tests {
         assert!(!result, "全部消费后应返回 false");
     }
 
-    /// CRITICAL-9: 并发双花防护 — MockDao（Mutex 保护）下同一备份码并发消费仅一次成功。
+    /// CRITICAL-9: 并发双花防护 — CAS 原子消费保证同一备份码并发仅一次成功。
     ///
-    /// 验证 `verify_and_consume` 在 MockDao 的进程内原子保护下，
-    /// 两个并发调用同一备份码时仅一个成功（另一个发现已消费）。
-    /// 注意：此测试仅验证 MockDao 场景；生产后端必须重写 DAO 原子操作。
+    /// 验证 `verify_and_consume` 使用 `compare_and_swap` 原子操作，
+    /// 两个并发调用同一备份码时仅一个成功（另一个 CAS 冲突后重试，发现码已消费）。
+    /// MockDao 的 Mutex 保证 CAS 进程内原子。
     #[tokio::test]
     async fn concurrent_consume_same_code_only_one_succeeds() {
         use std::sync::Arc;
