@@ -30,3 +30,12 @@ pub use crate::stp::{
 };
 /// 防火墙策略（[GarrisonPermissionStrategy]、[GarrisonPermissionStrategyDefault]）。
 pub use crate::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
+
+#[cfg(all(feature = "credit-metering", feature = "listener"))]
+pub use crate::credit::CreditMeteringListener;
+#[cfg(feature = "credit-metering")]
+pub use crate::credit::{
+    CreditAlertConfig, CreditConfig, CreditConsumeResult, CreditConsumptionRecord, CreditCycle,
+    CreditError, CreditMeter, CreditMeterStorage, CreditMetrics, CreditResult, CreditSchedule,
+    CreditUsage,
+};

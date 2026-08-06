@@ -290,6 +290,10 @@ pub mod web;
 #[cfg(feature = "listener")]
 pub mod listener;
 
+/// Credit 计量模块（多租户配额消费统计、告警、周期重置）。
+#[cfg(feature = "credit-metering")]
+pub mod credit;
+
 /// 安全模块，提供 TOTP / 签名 / Basic / Digest / Unicode 同形异义字检测 / 敏感数据脱敏 验证。
 ///
 /// 密码哈希能力已迁移到 `account::credential::password`（v0.6.0）。

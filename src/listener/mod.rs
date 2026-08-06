@@ -285,6 +285,42 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent，T004 新增）。
         request_context: Option<RequestContext>,
     },
+    /// Credit 消费事件（多租户配额计量）。
+    ///
+    /// 在 `CreditMeter::consume_credit` 成功消费后广播。
+    #[cfg(feature = "credit-metering")]
+    CreditConsumed {
+        /// 租户 ID。
+        tenant_id: i64,
+        /// 消费的资源类型。
+        resource: String,
+        /// 消费成本（原始 cost）。
+        cost: u64,
+        /// 消耗的 credit 数（cost * weight）。
+        credits: u64,
+        /// 消费后累计消费总量。
+        total_consumed: u64,
+        /// 请求上下文（IP + User-Agent）。
+        request_context: Option<RequestContext>,
+    },
+    /// Credit 告警事件（配额阈值触发）。
+    ///
+    /// 在 `CreditMeter::consume_credit` 检测到 usage_percent >= alert_threshold 时广播。
+    #[cfg(feature = "credit-metering")]
+    CreditAlert {
+        /// 租户 ID。
+        tenant_id: i64,
+        /// 触发的告警阈值（百分比，如 80 / 90 / 100）。
+        threshold: u8,
+        /// 当前使用百分比。
+        usage_percent: f64,
+        /// 当前累计消费量。
+        total_consumed: u64,
+        /// 配额上限。
+        credit_limit: u64,
+        /// 请求上下文（IP + User-Agent）。
+        request_context: Option<RequestContext>,
+    },
 }
 
 /// 监听器 trait，提供事件订阅抽象。

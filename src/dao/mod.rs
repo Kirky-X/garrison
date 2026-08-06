@@ -627,6 +627,43 @@ pub trait GarrisonDao: Send + Sync {
             Ok(false)
         }
     }
+
+    /// 插入 credit 消费流水记录（SQL）。
+    ///
+    /// 用于 credit 消费历史的异步持久化（`persist_history = true` 时调用）。
+    /// 默认实现返回 `NotImplemented`，SQL 后端（sqlite/postgres/mysql）覆盖实现。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    async fn insert_credit_consumption(
+        &self,
+        _tenant_id: i64,
+        _resource: &str,
+        _cost: u64,
+        _credits: u64,
+        _total_consumed: u64,
+        _cycle_start: i64,
+    ) -> GarrisonResult<()> {
+        Err(GarrisonError::NotImplemented(format!(
+            "insert_credit_consumption 未实现：{} 后端不支持 SQL 插入",
+            std::any::type_name::<Self>()
+        )))
+    }
+
+    /// 查询 credit 消费流水（SQL）。
+    ///
+    /// 返回指定时间范围内的消费记录列表。
+    /// 默认实现返回 `NotImplemented`，SQL 后端覆盖实现。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    async fn query_credit_consumption(
+        &self,
+        _tenant_id: i64,
+        _from_ts: i64,
+        _to_ts: i64,
+    ) -> GarrisonResult<Vec<(i64, String, u64, u64, u64, i64, i64)>> {
+        Err(GarrisonError::NotImplemented(format!(
+            "query_credit_consumption 未实现：{} 后端不支持 SQL 查询",
+            std::any::type_name::<Self>()
+        )))
+    }
 }
 
 // ============================================================================
