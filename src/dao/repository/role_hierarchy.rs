@@ -53,38 +53,33 @@ pub struct RoleHierarchyRecord {
 mod service {
     use super::RoleHierarchyRecord;
     use crate::constants::DaoKeyPrefix;
-    use crate::dao::repository::make_statement;
     use crate::dao::GarrisonDao;
     use crate::error::{GarrisonError, GarrisonResult};
-    use dbnexus::DbPool;
-    use sea_orm::{ConnectionTrait, DbBackend, Value};
     use std::collections::{HashMap, HashSet};
     use std::sync::Arc;
 
     /// 角色层级服务（TC 预计算 + 缓存 + 增量失效）。
     ///
-    /// 完整实现在 T045-T050 逐步构建：
-    /// - T045-`compute_closure` DFS 遍历计算传递闭包（当前已实现）
-    /// - T047-`get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
-    /// - T049-`add_edge` + `invalidate_cache` 增量失效
+    /// 完整实现：
+    /// - `compute_closure` DFS 遍历计算传递闭包
+    /// - `get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
+    /// - `add_edge` + `invalidate_cache` 增量失效
     ///
     /// 自 v0.8.2 起（API-02 修复）：支持全部 db 后端
     /// （`db-sqlite` / `db-postgres` / `db-mysql`），SQL 方言按连接后端自适应。
     ///
     /// # 字段
     ///
-    /// - `pool`: 数据库连接池（查 `role_hierarchy` 表）
-    /// - `dao`: 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）
+    /// - `dao`: 统一数据访问层（KV 缓存 + SQL 方法，要求 `GarrisonDaoDbnexus` 实现）
     ///
-    /// # Rule 7 冲突暴露
+    /// # 设计决策（data-access-unification）
     ///
-    /// tasks.md T046 原描述 `pub dao: Arc<dyn GarrisonDao>` 不够——
-    /// `compute_closure` 需查 SQL，GarrisonDao trait 是缓存层抽象不支持 SQL 查询。
-    /// 决策：struct 同时持有 `pool: DbPool`（查 SQL）+ `dao: Arc<dyn GarrisonDao>`（查缓存）。
+    /// 原 struct 同时持有 `pool: DbPool` + `dao: Arc<dyn GarrisonDao>`。
+    /// 统一后仅持有 `dao`，SQL 查询通过 `dao.query_role_hierarchy_edges()` 等方法，
+    /// KV 缓存通过 `dao.get()` / `dao.set()` / `dao.delete()` 等方法。
+    /// 调用方应传入 `GarrisonDaoDbnexus` 实例（同时支持 KV + SQL）。
     pub struct RoleHierarchyService {
-        /// 数据库连接池（查 `role_hierarchy` 表）。
-        pub pool: DbPool,
-        /// 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）。
+        /// 统一数据访问层（KV 缓存 + SQL 方法）。
         pub dao: Arc<dyn GarrisonDao>,
     }
 
@@ -92,52 +87,27 @@ mod service {
         /// 创建 RoleHierarchyService 实例。
         ///
         /// # 参数
-        /// - `pool`: 数据库连接池（用于查 `role_hierarchy` 表）
-        /// - `dao`: 缓存层抽象（T047+ 用于 oxcache 缓存闭包结果）
-        pub fn new(pool: DbPool, dao: Arc<dyn GarrisonDao>) -> Self {
-            Self { pool, dao }
+        /// - `dao`: 统一数据访问层（应传入 `GarrisonDaoDbnexus` 实例，支持 KV + SQL）
+        pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
+            Self { dao }
         }
 
         /// 查询指定租户的所有 role_hierarchy 记录。
         ///
-        /// 返回 `Vec<RoleHierarchyRecord>`（child_role → parent_role 边集合）。
+        /// 委托 `dao.query_role_hierarchy_edges()` 实现（要求 dao 为 `GarrisonDaoDbnexus`）。
         async fn query_all_edges(
             &self,
             tenant_id: i64,
         ) -> GarrisonResult<Vec<RoleHierarchyRecord>> {
-            let session =
-                self.pool.get_session("admin").await.map_err(|e| {
-                    GarrisonError::Dao(format!("dao-role-hierarchy-session::{}", e))
-                })?;
-            let conn = session
-                .connection()
-                .map_err(|e| GarrisonError::Dao(format!("dao-role-hierarchy-connection::{}", e)))?;
-            let stmt = make_statement(
-                conn,
-                "SELECT child_role, parent_role FROM role_hierarchy WHERE tenant_id = ?",
-                vec![Value::BigInt(Some(tenant_id))],
-            );
-            let rows = conn
-                .query_all_raw(stmt)
-                .await
-                .map_err(|e| GarrisonError::Dao(format!("dao-role-hierarchy-query::{}", e)))?;
-            let records = rows
+            let edges = self.dao.query_role_hierarchy_edges(tenant_id).await?;
+            Ok(edges
                 .into_iter()
-                .map(|row| {
-                    let child_role = row
-                        .try_get::<String>("", "child_role")
-                        .map_err(|e| GarrisonError::Dao(format!("dao-child-role-read::{}", e)))?;
-                    let parent_role = row
-                        .try_get::<String>("", "parent_role")
-                        .map_err(|e| GarrisonError::Dao(format!("dao-parent-role-read::{}", e)))?;
-                    Ok::<_, GarrisonError>(RoleHierarchyRecord {
-                        child_role,
-                        parent_role,
-                        tenant_id,
-                    })
+                .map(|(child_role, parent_role)| RoleHierarchyRecord {
+                    child_role,
+                    parent_role,
+                    tenant_id,
                 })
-                .collect::<Result<_, _>>()?;
-            Ok(records)
+                .collect())
         }
 
         /// 计算指定租户的角色层级传递闭包（T045-T046）。
@@ -257,65 +227,19 @@ mod service {
             Ok(closure.get(role).cloned().unwrap_or_default())
         }
 
-        /// T050 Green: 添加角色继承边（后端自适应幂等 INSERT）并失效该租户的闭包缓存。
+        /// T050 Green: 添加角色继承边（幂等 INSERT）并失效该租户的闭包缓存。
         ///
-        /// 幂等：SQLite 用 `INSERT OR IGNORE`，PostgreSQL 用 `ON CONFLICT DO NOTHING`，
-        /// MySQL 用 `INSERT IGNORE`，重复插入相同边不报错。
-        /// 缓存失效：插入成功后立即删除 `tenant:{tenant_id}:role_closure`，
-        /// 下次 `get_ancestors` 会重新计算闭包并写入缓存。
-        ///
-        /// # 参数
-        /// - `child`: 子角色编码（继承方）
-        /// - `parent`: 父角色编码（被继承方）
-        /// - `tenant_id`: 租户 ID
-        ///
-        /// # 错误
-        /// - `GarrisonError::Dao`：SQL 执行或缓存删除失败。
+        /// 委托 `dao.insert_role_hierarchy_edge()` 实现（幂等，后端自适应）。
+        /// 缓存失效：插入成功后立即删除 `tenant:{tenant_id}:role_closure`。
         pub async fn add_edge(
             &self,
             child: &str,
             parent: &str,
             tenant_id: i64,
         ) -> GarrisonResult<()> {
-            let session = self.pool.get_session("admin").await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-role-hierarchy-add-edge-session::{}", e))
-            })?;
-            let conn = session.connection().map_err(|e| {
-                GarrisonError::Dao(format!("dao-role-hierarchy-add-edge-connection::{}", e))
-            })?;
-            // 幂等 INSERT 方言按连接后端自适应：
-            // - SQLite: INSERT OR IGNORE
-            // - PostgreSQL: ON CONFLICT (PK) DO NOTHING
-            // - MySQL: INSERT IGNORE（MySQL 不支持 ON CONFLICT 语法）
-            let backend = conn.get_database_backend();
-            let insert_sql = match backend {
-                DbBackend::Postgres => {
-                    "INSERT INTO role_hierarchy (tenant_id, child_role, parent_role) \
-                     VALUES (?, ?, ?) \
-                     ON CONFLICT (tenant_id, child_role, parent_role) DO NOTHING"
-                },
-                DbBackend::MySql => {
-                    "INSERT IGNORE INTO role_hierarchy (tenant_id, child_role, parent_role) \
-                     VALUES (?, ?, ?)"
-                },
-                _ => {
-                    "INSERT OR IGNORE INTO role_hierarchy (tenant_id, child_role, parent_role) \
-                     VALUES (?, ?, ?)"
-                },
-            };
-            let stmt = make_statement(
-                conn,
-                insert_sql,
-                vec![
-                    Value::BigInt(Some(tenant_id)),
-                    Value::String(Some(child.to_string())),
-                    Value::String(Some(parent.to_string())),
-                ],
-            );
-            conn.execute_raw(stmt).await.map_err(|e| {
-                GarrisonError::Dao(format!("dao-role-hierarchy-add-edge-insert::{}", e))
-            })?;
-
+            self.dao
+                .insert_role_hierarchy_edge(tenant_id, child, parent)
+                .await?;
             self.invalidate_cache(tenant_id).await
         }
 
@@ -482,7 +406,7 @@ mod tests {
 #[cfg(all(test, feature = "db-sqlite"))]
 mod db_sqlite_tests {
     use super::*;
-    use crate::dao::{init_dbnexus, GarrisonDao, GarrisonMigration};
+    use crate::dao::{init_dbnexus, GarrisonDao, GarrisonDaoDbnexus, GarrisonMigration};
     use dbnexus::DbPool;
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
@@ -507,9 +431,18 @@ mod db_sqlite_tests {
         pool
     }
 
-    /// 构造 MockDao 作为 GarrisonDao 实现（T047+ 用于 oxcache 缓存测试）。
+    /// 构造 MockDao 作为 KV 层（用于 oxcache 缓存测试）。
     fn mock_dao() -> Arc<dyn GarrisonDao> {
         Arc::new(crate::dao::tests::MockDao::new())
+    }
+
+    /// 构造 GarrisonDaoDbnexus（KV + SQL 统一 DAO）。
+    ///
+    /// 用 MockDao 作为 KV 层 + pool 作为 SQL 层。
+    /// RoleHierarchyService 的 SQL 方法通过 dao 委托到 pool。
+    async fn setup_dao(pool: DbPool) -> Arc<dyn GarrisonDao> {
+        let kv = mock_dao();
+        Arc::new(GarrisonDaoDbnexus::new(pool, kv))
     }
 
     /// 向 role_hierarchy 表插入一条边。
@@ -574,7 +507,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "user", "admin").await;
         insert_edge(&pool, 0, "admin", "super_admin").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         let closure = svc
             .compute_closure(0)
             .await
@@ -603,7 +536,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn compute_closure_empty_table_returns_empty_map() {
         let pool = setup_db().await;
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         let closure = svc
             .compute_closure(0)
             .await
@@ -621,7 +554,7 @@ mod db_sqlite_tests {
         // tenant 1: user -> super_admin
         insert_edge(&pool, 1, "user", "super_admin").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
         // 查 tenant 0：user 的祖先应含 admin，不含 super_admin
         let closure_0 = svc
@@ -651,7 +584,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "A", "B").await;
         insert_edge(&pool, 0, "B", "A").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         // 不应 stack overflow 或 hang
         let closure = svc
             .compute_closure(0)
@@ -678,13 +611,13 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn get_ancestors_returns_cached_closure() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
         // 先 insert_edge（pool 在 move 到 svc 之前完成借用）
         insert_edge(&pool, 0, "user", "admin").await;
         insert_edge(&pool, 0, "admin", "super_admin").await;
 
-        let svc = RoleHierarchyService::new(pool, dao.clone());
+        let svc = RoleHierarchyService::new(dao.clone());
 
         // 首次调用：触发 compute_closure + 缓存写入
         let ancestors = svc
@@ -718,11 +651,11 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn add_edge_invalidates_cache() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
         // 先插入初始边并触发缓存写入
         insert_edge(&pool, 0, "user", "admin").await;
-        let svc = RoleHierarchyService::new(pool, dao.clone());
+        let svc = RoleHierarchyService::new(dao.clone());
         let _ = svc
             .get_ancestors("user", 0)
             .await
@@ -755,10 +688,10 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn add_edge_reflects_in_subsequent_get_ancestors() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
         insert_edge(&pool, 0, "user", "admin").await;
-        let svc = RoleHierarchyService::new(pool, dao.clone());
+        let svc = RoleHierarchyService::new(dao.clone());
 
         // 首次：ancestors = {admin}
         let ancestors1 = svc
@@ -795,10 +728,10 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn get_ancestors_cache_hit_does_not_query_db() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
         insert_edge(&pool, 0, "user", "admin").await;
-        let svc = RoleHierarchyService::new(pool.clone(), dao.clone());
+        let svc = RoleHierarchyService::new(dao.clone());
 
         // 首次调用：触发 compute_closure + 缓存写入
         let ancestors1 = svc
@@ -836,10 +769,10 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn get_ancestors_corrupt_cache_falls_back_to_recompute() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
         insert_edge(&pool, 0, "user", "admin").await;
-        let svc = RoleHierarchyService::new(pool, dao.clone());
+        let svc = RoleHierarchyService::new(dao.clone());
 
         // 向 oxcache 注入损坏的闭包 JSON
         dao.set("tenant:0:role_closure", "{invalid json", 3600)
@@ -869,10 +802,10 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn get_ancestors_for_nonexistent_role_returns_empty() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
         insert_edge(&pool, 0, "user", "admin").await;
-        let svc = RoleHierarchyService::new(pool, dao);
+        let svc = RoleHierarchyService::new(dao.clone());
 
         // 查询不存在的角色
         let ancestors = svc
@@ -886,9 +819,9 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn invalidate_cache_is_idempotent() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
-        let svc = RoleHierarchyService::new(pool, dao);
+        let svc = RoleHierarchyService::new(dao.clone());
 
         // 对从未缓存过的租户调用 invalidate_cache
         let result = svc.invalidate_cache(999).await;
@@ -915,7 +848,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "user", "admin").await;
         insert_edge(&pool, 0, "admin", "super_admin").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
         // super_admin 的后代应含 admin（直接子角色）和 user（间接后代）
         let descendants = svc
@@ -957,7 +890,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn get_descendants_empty_table_returns_empty() {
         let pool = setup_db().await;
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
         let descendants = svc
             .get_descendants("any_role", 0)
@@ -975,7 +908,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "A", "B").await;
         insert_edge(&pool, 0, "B", "A").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
         // 不应 stack overflow 或 hang
         let descendants_a = svc
@@ -1002,7 +935,7 @@ mod db_sqlite_tests {
         // tenant 1: user -> super_admin
         insert_edge(&pool, 1, "user", "super_admin").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
         // tenant 0：admin 的后代应含 user，不含 super_admin
         let desc_0 = svc
@@ -1036,7 +969,7 @@ mod db_sqlite_tests {
         let pool = setup_db().await;
 
         insert_edge(&pool, 0, "user", "admin").await;
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
         let descendants = svc
             .get_descendants("nonexistent_role", 0)
@@ -1060,7 +993,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "D", "C").await;
         insert_edge(&pool, 0, "C", "A").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
         // A 的后代应含 B, C, D
         let descendants = svc
@@ -1088,9 +1021,9 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn add_edge_is_idempotent() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
-        let svc = RoleHierarchyService::new(pool.clone(), dao);
+        let svc = RoleHierarchyService::new(dao);
 
         // 第一次插入
         svc.add_edge("user", "admin", 0)
@@ -1135,7 +1068,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "D", "C").await;
         insert_edge(&pool, 0, "C", "A").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         let closure = svc
             .compute_closure(0)
             .await
@@ -1173,7 +1106,7 @@ mod db_sqlite_tests {
         // 自环：A -> A
         insert_edge(&pool, 0, "A", "A").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         let closure = svc
             .compute_closure(0)
             .await
@@ -1203,7 +1136,7 @@ mod db_sqlite_tests {
         // 分量 2: C -> D
         insert_edge(&pool, 0, "C", "D").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         let closure = svc
             .compute_closure(0)
             .await
@@ -1234,7 +1167,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "L2", "L3").await;
         insert_edge(&pool, 0, "L3", "L4").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         let closure = svc
             .compute_closure(0)
             .await
@@ -1275,12 +1208,12 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn get_ancestors_second_role_hits_cached_closure() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
         insert_edge(&pool, 0, "user", "admin").await;
         insert_edge(&pool, 0, "reader", "viewer").await;
 
-        let svc = RoleHierarchyService::new(pool.clone(), dao.clone());
+        let svc = RoleHierarchyService::new(dao.clone());
 
         // 首次调用 user：触发 compute_closure + 缓存写入
         let user_ancestors = svc
@@ -1324,12 +1257,12 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn add_edge_invalidates_only_same_tenant_cache() {
         let pool = setup_db().await;
-        let dao = mock_dao();
+        let dao = setup_dao(pool.clone()).await;
 
         insert_edge(&pool, 0, "user0", "admin0").await;
         insert_edge(&pool, 1, "user1", "admin1").await;
 
-        let svc = RoleHierarchyService::new(pool, dao.clone());
+        let svc = RoleHierarchyService::new(dao.clone());
 
         // 两个租户各自触发缓存写入
         svc.get_ancestors("user0", 0)
@@ -1379,7 +1312,7 @@ mod db_sqlite_tests {
         // 自环：A -> A（A 继承 A）
         insert_edge(&pool, 0, "A", "A").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         // 不应 stack overflow 或 hang
         let descendants = svc
             .get_descendants("A", 0)
@@ -1406,7 +1339,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "user", "admin").await;
         insert_edge(&pool, 0, "user", "manager").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
         // admin 的后代应含 user
         let admin_desc = svc
@@ -1448,7 +1381,7 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "user", "admin").await;
         insert_edge(&pool, 0, "user", "super_admin").await;
 
-        let svc = RoleHierarchyService::new(pool, mock_dao());
+        let svc = RoleHierarchyService::new(setup_dao(pool).await);
         let closure = svc
             .compute_closure(0)
             .await

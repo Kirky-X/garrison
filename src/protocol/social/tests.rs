@@ -113,12 +113,12 @@ async fn social_bindings_table_exists_after_migration() {
 /// T107 Red: `SocialBindingService::find_or_create` 创建新绑定
 ///
 /// Red 阶段：`SocialBindingService` 类型不存在 → 编译失败。
-/// Green 阶段（T108）：定义 `SocialBindingService { pool, dao }` + `find_or_create` 后测试通过。
+/// Green 阶段（T108）：定义 `SocialBindingService { dao }` + `find_or_create` 后测试通过。
 ///
 /// # 测试流程
 ///
 /// 1. 创建 SQLite in-memory DB + 迁移（含 005_social_bindings.sql）
-/// 2. 构造 `SocialBindingService::new(pool, dao)`（Decision Matrix 方案 A：pool + dao）
+/// 2. 构造 `SocialBindingService::new(dao)`（dao 为 `GarrisonDaoDbnexus`）
 /// 3. 构造 `SocialUserInfo { provider: Wechat, provider_user_id: "openid1", ... }`
 /// 4. 调用 `find_or_create(&user, tenant_id=0).await?`
 /// 5. 断言返回 `login_id` 为新生成的 String（UUID，非空）
@@ -134,7 +134,7 @@ async fn social_bindings_table_exists_after_migration() {
 #[tokio::test(flavor = "multi_thread")]
 async fn social_binding_service_find_or_create_creates_new_binding() {
     use super::*;
-    use crate::dao::{tests::MockDao, GarrisonMigration};
+    use crate::dao::{tests::MockDao, GarrisonDaoDbnexus, GarrisonMigration};
     use dbnexus::{DbConfig, DbPool};
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
@@ -158,9 +158,10 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
     migration.migrate_core().await.expect("migrate_core 应成功");
     let pool = migration.pool().clone();
 
-    // 2. 构造 SocialBindingService（Decision Matrix 方案 A：pool + dao）
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(MockDao::new());
-    let svc = SocialBindingService::new(pool.clone(), dao);
+    // 2. 构造 SocialBindingService（dao 为 GarrisonDaoDbnexus）
+    let kv: Arc<dyn crate::dao::GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(GarrisonDaoDbnexus::new(pool.clone(), kv));
+    let svc = SocialBindingService::new(dao);
 
     // 3. 构造 SocialUserInfo（模拟微信登录返回）
     let user = SocialUserInfo {

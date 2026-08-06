@@ -107,16 +107,11 @@ pub mod validation;
 /// 提供 `find_or_create` 语义：首次社交登录时自动创建绑定关系并生成新 `login_id`，
 /// 后续登录返回已有 `login_id`（幂等）。
 ///
-/// # 设计决策（Decision Matrix 方案 A）
+/// # 设计
 ///
-/// struct 同时持有：
-/// - `pool: DbPool`：执行 SQL 查询/插入（`social_bindings` 表）
-/// - `dao: Arc<dyn GarrisonDao>`：缓存层抽象（保留扩展点，当前未使用）
-///
-/// 与 `RoleHierarchyService` 模式一致：GarrisonDao 是 KV 缓存抽象，
-/// 不支持 SQL SELECT/INSERT，故 `find_or_create` 实际用 `pool` 查 SQL。
-/// `GarrisonDao` trait 的 `find_social_binding` / `insert_social_binding`
-/// 默认方法返回 `NotImplemented`，仅为满足 spec trait 契约。
+/// struct 仅持有 `dao: Arc<dyn GarrisonDao>`，SQL 操作通过
+/// `GarrisonDaoDbnexus`（KV + SQL 统一实现）委托执行，
+/// 业务层不再直接持有 `DbPool`。
 ///
 /// # 表结构
 ///
@@ -124,7 +119,7 @@ pub mod validation;
 /// CREATE TABLE social_bindings (
 ///     id               INTEGER PRIMARY KEY AUTOINCREMENT,
 ///     tenant_id        INTEGER NOT NULL DEFAULT 0,
-///     login_id         INTEGER NOT NULL,
+///     login_id         TEXT    NOT NULL,
 ///     provider         TEXT    NOT NULL,
 ///     provider_user_id TEXT    NOT NULL,
 ///     union_id         TEXT,
@@ -136,9 +131,7 @@ pub mod validation;
 /// `UNIQUE(tenant_id, provider, provider_user_id)` 保证同一租户下同一社交账号仅绑定一个 login_id。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub struct SocialBindingService {
-    /// 数据库连接池（查 `social_bindings` 表，支持 SQLite/PostgreSQL/MySQL 任意后端）。
-    pub pool: dbnexus::DbPool,
-    /// 缓存层抽象（保留扩展点，当前未使用）。
+    /// 数据访问抽象（通过 `GarrisonDaoDbnexus` 实现 SQL 操作）。
     pub dao: std::sync::Arc<dyn crate::dao::GarrisonDao>,
 }
 
