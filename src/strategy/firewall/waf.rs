@@ -131,52 +131,70 @@ impl WafHookChain {
         let all_enabled = enabled.is_empty();
         let is_enabled = |name: &str| all_enabled || enabled.contains(name);
 
-        // 路径类 Hook（需配置非空）
-        if is_enabled("white_path") && !config.waf_white_paths.is_empty() {
-            chain.register(Box::new(super::waf_hooks::WhitePathHook::new(
-                config.waf_white_paths.clone(),
-            )));
-        }
-        if is_enabled("black_path") && !config.waf_black_paths.is_empty() {
-            chain.register(Box::new(super::waf_hooks::BlackPathHook::new(
-                config.waf_black_paths.clone(),
-            )));
-        }
-
-        // 字符检测类 Hook（无需配置）
-        if is_enabled("danger_char") {
-            chain.register(Box::new(super::waf_hooks::DangerCharacterHook::new()));
-        }
-        if is_enabled("banned_char") {
-            chain.register(Box::new(super::waf_hooks::BannedCharacterHook::new()));
-        }
-        if is_enabled("dir_traversal") {
-            chain.register(Box::new(super::waf_hooks::DirectoryTraversalHook::new()));
-        }
-
-        // 主机/方法/头/参数类 Hook（需配置非空）
-        if is_enabled("host") && !config.waf_allowed_hosts.is_empty() {
-            chain.register(Box::new(super::waf_hooks::HostHook::new(
-                config.waf_allowed_hosts.clone(),
-            )));
-        }
-        if is_enabled("http_method") && !config.waf_allowed_methods.is_empty() {
-            chain.register(Box::new(super::waf_hooks::HttpMethodHook::new(
-                config.waf_allowed_methods.clone(),
-            )));
-        }
-        if is_enabled("header") && !config.waf_banned_headers.is_empty() {
-            chain.register(Box::new(super::waf_hooks::HeaderHook::new(
-                config.waf_banned_headers.clone(),
-            )));
-        }
-        if is_enabled("parameter") && !config.waf_banned_params.is_empty() {
-            chain.register(Box::new(super::waf_hooks::ParameterHook::new(
-                config.waf_banned_params.clone(),
-            )));
-        }
+        Self::register_config_gated_hooks(&mut chain, config, &is_enabled);
+        Self::register_unconditional_hooks(&mut chain, &is_enabled);
 
         chain
+    }
+
+    /// 注册需要配置非空前置条件的 Hook（路径/主机/方法/头/参数）。
+    fn register_config_gated_hooks(
+        chain: &mut Self,
+        config: &GarrisonConfig,
+        is_enabled: &dyn Fn(&str) -> bool,
+    ) {
+        type GatedHook = (&'static str, fn(Vec<String>) -> Box<dyn WafHook>);
+        let gated: &[GatedHook] = &[
+            ("white_path", |v| {
+                Box::new(super::waf_hooks::WhitePathHook::new(v))
+            }),
+            ("black_path", |v| {
+                Box::new(super::waf_hooks::BlackPathHook::new(v))
+            }),
+            ("host", |v| Box::new(super::waf_hooks::HostHook::new(v))),
+            ("http_method", |v| {
+                Box::new(super::waf_hooks::HttpMethodHook::new(v))
+            }),
+            ("header", |v| Box::new(super::waf_hooks::HeaderHook::new(v))),
+            ("parameter", |v| {
+                Box::new(super::waf_hooks::ParameterHook::new(v))
+            }),
+        ];
+        let config_slices: &[(&str, &[String])] = &[
+            ("white_path", &config.waf_white_paths),
+            ("black_path", &config.waf_black_paths),
+            ("host", &config.waf_allowed_hosts),
+            ("http_method", &config.waf_allowed_methods),
+            ("header", &config.waf_banned_headers),
+            ("parameter", &config.waf_banned_params),
+        ];
+        for (name, items) in config_slices {
+            if is_enabled(name) && !items.is_empty() {
+                let ctor = gated.iter().find(|(n, _)| n == name).unwrap().1;
+                chain.register(ctor(items.to_vec()));
+            }
+        }
+    }
+
+    /// 注册无需配置前置条件的 Hook（字符检测类）。
+    fn register_unconditional_hooks(chain: &mut Self, is_enabled: &dyn Fn(&str) -> bool) {
+        type UncondHook = (&'static str, fn() -> Box<dyn WafHook>);
+        let unconditional: &[UncondHook] = &[
+            ("danger_char", || {
+                Box::new(super::waf_hooks::DangerCharacterHook::new())
+            }),
+            ("banned_char", || {
+                Box::new(super::waf_hooks::BannedCharacterHook::new())
+            }),
+            ("dir_traversal", || {
+                Box::new(super::waf_hooks::DirectoryTraversalHook::new())
+            }),
+        ];
+        for &(name, ctor) in unconditional {
+            if is_enabled(name) {
+                chain.register(ctor());
+            }
+        }
     }
 }
 
