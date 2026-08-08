@@ -17,3 +17,4 @@ pub mod macro_annotations;
 pub mod manager_lifecycle;
 #[cfg(feature = "cache-memory")]
 pub mod session_management;
+pub mod state_machine;

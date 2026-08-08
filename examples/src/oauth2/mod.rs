@@ -7,6 +7,8 @@
 pub mod oauth2_flow;
 #[cfg(feature = "protocol-oauth2")]
 pub mod oauth2_pkce;
+#[cfg(feature = "oauth2-server")]
+pub mod oauth2_server_flow;
 #[cfg(feature = "protocol-oidc")]
 pub mod oidc_handler;
 #[cfg(feature = "oauth2-scope-handler")]

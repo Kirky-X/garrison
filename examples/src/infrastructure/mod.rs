@@ -15,6 +15,8 @@ pub mod config_loader;
 #[cfg(feature = "cache-memory")]
 pub mod dao_operations;
 pub mod exception_handling;
+#[cfg(all(feature = "cache-memory", feature = "db-sqlite"))]
+pub mod health_check;
 pub mod i18n_usage;
 pub mod json_template;
 #[cfg(all(feature = "metrics-prometheus", feature = "observability-otlp"))]
