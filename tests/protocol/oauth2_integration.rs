@@ -13,7 +13,7 @@
 #![cfg(feature = "protocol-oauth2")]
 
 use garrison::protocol::oauth2::OAuth2Client;
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ============================================================================
@@ -30,95 +30,6 @@ fn client_for(server: &MockServer) -> OAuth2Client {
         server.uri().as_str(),
     )
     .expect("OAuth2Client 构造失败")
-}
-
-/// 标准 token 响应 JSON（含全部字段）。
-fn full_token_response_json() -> serde_json::Value {
-    serde_json::json!({
-        "access_token": "abc123access",
-        "token_type": "Bearer",
-        "expires_in": 3600,
-        "refresh_token": "def456refresh",
-        "scope": "read write"
-    })
-}
-
-// ============================================================================
-// 集成测试：Authorization Code 流程
-// ============================================================================
-
-/// exchange_code 成功返回完整 TokenResponse（spec Scenario）。
-#[tokio::test]
-#[allow(deprecated)]
-async fn exchange_code_returns_full_token_response() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .and(header("content-type", "application/x-www-form-urlencoded"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(full_token_response_json()))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
-    let resp = client
-        .exchange_code("auth-code-123", "state-abc")
-        .await
-        .expect("exchange_code 应成功");
-
-    assert_eq!(resp.access_token, "abc123access");
-    assert_eq!(resp.token_type, "Bearer");
-    assert_eq!(resp.expires_in, Some(3600));
-    assert_eq!(resp.refresh_token, Some("def456refresh".to_string()));
-    assert_eq!(resp.scope, Some("read write".to_string()));
-}
-
-/// exchange_code 仅返回必填字段（access_token + token_type），可选字段为 None。
-#[tokio::test]
-#[allow(deprecated)]
-async fn exchange_code_handles_minimal_response() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "min-token",
-            "token_type": "Bearer"
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
-    let resp = client
-        .exchange_code("code", "state")
-        .await
-        .expect("exchange_code 应成功");
-
-    assert_eq!(resp.access_token, "min-token");
-    assert_eq!(resp.token_type, "Bearer");
-    assert_eq!(resp.expires_in, None);
-    assert_eq!(resp.refresh_token, None);
-    assert_eq!(resp.scope, None);
-}
-
-/// 授权服务器返回 4xx 错误时 exchange_code 返回 Err。
-#[tokio::test]
-#[allow(deprecated)]
-async fn exchange_code_returns_error_on_4xx() {
-    let server = MockServer::start().await;
-
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "error": "invalid_grant",
-            "error_description": "The authorization code is invalid."
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
-    let result = client.exchange_code("bad-code", "state").await;
-    assert!(result.is_err(), "4xx 响应应返回错误");
 }
 
 // ============================================================================
@@ -201,14 +112,16 @@ async fn new_rejects_empty_client_id() {
     assert!(result.is_err(), "空 client_id 应构造失败");
 }
 
-/// get_auth_url 正确拼接查询参数（spec Scenario）。
+/// get_auth_url_with_pkce 正确拼接查询参数（spec Scenario）。
 #[tokio::test]
-#[allow(deprecated)]
-async fn get_auth_url_includes_required_params() {
+async fn get_auth_url_with_pkce_includes_required_params() {
     let server = MockServer::start().await;
     let client = client_for(&server);
 
-    let url = client.get_auth_url("xyz-state");
+    let verifier = "a".repeat(43);
+    let (url, _challenge) = client
+        .get_auth_url_with_pkce("xyz-state", &verifier)
+        .expect("get_auth_url_with_pkce 应成功");
     assert!(
         url.contains("response_type=code"),
         "URL 应含 response_type=code"
@@ -221,5 +134,10 @@ async fn get_auth_url_includes_required_params() {
     assert!(
         url.contains("redirect_uri="),
         "URL 应含 redirect_uri（URL 编码）"
+    );
+    assert!(url.contains("code_challenge="), "URL 应含 code_challenge");
+    assert!(
+        url.contains("code_challenge_method=S256"),
+        "URL 应含 code_challenge_method=S256"
     );
 }

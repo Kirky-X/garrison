@@ -129,52 +129,48 @@ impl WafHookChain {
             .map(|s| s.as_str())
             .collect();
         let all_enabled = enabled.is_empty();
+        let is_enabled = |name: &str| all_enabled || enabled.contains(name);
 
-        if (all_enabled || enabled.contains("white_path")) && !config.waf_white_paths.is_empty() {
+        // 路径类 Hook（需配置非空）
+        if is_enabled("white_path") && !config.waf_white_paths.is_empty() {
             chain.register(Box::new(super::waf_hooks::WhitePathHook::new(
                 config.waf_white_paths.clone(),
             )));
         }
-
-        if (all_enabled || enabled.contains("black_path")) && !config.waf_black_paths.is_empty() {
+        if is_enabled("black_path") && !config.waf_black_paths.is_empty() {
             chain.register(Box::new(super::waf_hooks::BlackPathHook::new(
                 config.waf_black_paths.clone(),
             )));
         }
 
-        if all_enabled || enabled.contains("danger_char") {
+        // 字符检测类 Hook（无需配置）
+        if is_enabled("danger_char") {
             chain.register(Box::new(super::waf_hooks::DangerCharacterHook::new()));
         }
-
-        if all_enabled || enabled.contains("banned_char") {
+        if is_enabled("banned_char") {
             chain.register(Box::new(super::waf_hooks::BannedCharacterHook::new()));
         }
-
-        if all_enabled || enabled.contains("dir_traversal") {
+        if is_enabled("dir_traversal") {
             chain.register(Box::new(super::waf_hooks::DirectoryTraversalHook::new()));
         }
 
-        if (all_enabled || enabled.contains("host")) && !config.waf_allowed_hosts.is_empty() {
+        // 主机/方法/头/参数类 Hook（需配置非空）
+        if is_enabled("host") && !config.waf_allowed_hosts.is_empty() {
             chain.register(Box::new(super::waf_hooks::HostHook::new(
                 config.waf_allowed_hosts.clone(),
             )));
         }
-
-        if (all_enabled || enabled.contains("http_method"))
-            && !config.waf_allowed_methods.is_empty()
-        {
+        if is_enabled("http_method") && !config.waf_allowed_methods.is_empty() {
             chain.register(Box::new(super::waf_hooks::HttpMethodHook::new(
                 config.waf_allowed_methods.clone(),
             )));
         }
-
-        if (all_enabled || enabled.contains("header")) && !config.waf_banned_headers.is_empty() {
+        if is_enabled("header") && !config.waf_banned_headers.is_empty() {
             chain.register(Box::new(super::waf_hooks::HeaderHook::new(
                 config.waf_banned_headers.clone(),
             )));
         }
-
-        if (all_enabled || enabled.contains("parameter")) && !config.waf_banned_params.is_empty() {
+        if is_enabled("parameter") && !config.waf_banned_params.is_empty() {
             chain.register(Box::new(super::waf_hooks::ParameterHook::new(
                 config.waf_banned_params.clone(),
             )));

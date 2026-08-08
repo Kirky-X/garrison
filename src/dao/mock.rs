@@ -415,122 +415,12 @@ impl GarrisonDao for MockDao {
     ) -> GarrisonResult<Vec<String>> {
         // 模式 1：INCR + EXPIRE（limiteron BruteForceStrategy）
         if script.contains("INCR") && script.contains("EXPIRE") {
-            let key = keys.first().ok_or_else(|| {
-                GarrisonError::InvalidParam("dao-eval-lua-missing-keys-1".to_string())
-            })?;
-            // ARGV[2] 是 TTL（ARGV[1] 是 threshold，由调用方处理）
-            let ttl: u64 = args
-                .get(1)
-                .ok_or_else(|| {
-                    GarrisonError::InvalidParam("dao-eval-lua-missing-argv-2-ttl".to_string())
-                })?
-                .parse()
-                .map_err(|e| {
-                    GarrisonError::InvalidParam(format!("dao-eval-lua-argv-2-parse-failed::{}", e))
-                })?;
-            let count = self.incr(key, ttl).await?;
-            return Ok(vec![count.to_string()]);
+            return self.eval_lua_incr_mode(&keys, &args).await;
         }
 
         // 模式 2：rate_limit_sliding_window（RateLimitStrategy vuln-0009 修复）
-        // 在单次 lock() 内原子执行 read-filter-check-write，消除 TOCTOU。
         if script.contains("rate_limit_sliding_window") {
-            let key = keys.first().ok_or_else(|| {
-                GarrisonError::InvalidParam("dao-eval-lua-rl-missing-keys-1".to_string())
-            })?;
-            let now_ms: u64 = args
-                .first()
-                .ok_or_else(|| {
-                    GarrisonError::InvalidParam("dao-eval-lua-rl-missing-argv-1-now-ms".to_string())
-                })?
-                .parse()
-                .map_err(|e| {
-                    GarrisonError::InvalidParam(format!(
-                        "dao-eval-lua-rl-argv-1-parse-failed::{}",
-                        e
-                    ))
-                })?;
-            let window_start_ms: u64 = args
-                .get(1)
-                .ok_or_else(|| {
-                    GarrisonError::InvalidParam(
-                        "dao-eval-lua-rl-missing-argv-2-window-start".to_string(),
-                    )
-                })?
-                .parse()
-                .map_err(|e| {
-                    GarrisonError::InvalidParam(format!(
-                        "dao-eval-lua-rl-argv-2-parse-failed::{}",
-                        e
-                    ))
-                })?;
-            let threshold: usize = args
-                .get(2)
-                .ok_or_else(|| {
-                    GarrisonError::InvalidParam(
-                        "dao-eval-lua-rl-missing-argv-3-threshold".to_string(),
-                    )
-                })?
-                .parse()
-                .map_err(|e| {
-                    GarrisonError::InvalidParam(format!(
-                        "dao-eval-lua-rl-argv-3-parse-failed::{}",
-                        e
-                    ))
-                })?;
-            let ttl_seconds: u64 = args
-                .get(3)
-                .ok_or_else(|| {
-                    GarrisonError::InvalidParam("dao-eval-lua-rl-missing-argv-4-ttl".to_string())
-                })?
-                .parse()
-                .map_err(|e| {
-                    GarrisonError::InvalidParam(format!(
-                        "dao-eval-lua-rl-argv-4-parse-failed::{}",
-                        e
-                    ))
-                })?;
-
-            // 原子 read-filter-check-write（单次 lock 作用域内）
-            let mut store = self.store.lock();
-            let now = Instant::now();
-            // 读取并过滤过期时间戳，收集到 Vec
-            let mut timestamps: Vec<u64> = match store.get(key) {
-                Some((raw, Some(deadline))) if *deadline > now => raw
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .filter_map(|s| s.parse::<u64>().ok())
-                    .filter(|&t| t > window_start_ms)
-                    .collect(),
-                Some((raw, None)) => raw
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .filter_map(|s| s.parse::<u64>().ok())
-                    .filter(|&t| t > window_start_ms)
-                    .collect(),
-                // 已过期或不存在：空列表
-                _ => Vec::new(),
-            };
-
-            // 阈值检查
-            if timestamps.len() >= threshold {
-                return Ok(vec!["0".to_string()]);
-            }
-
-            // 追加当前时间戳并回写
-            timestamps.push(now_ms);
-            let new_raw = timestamps
-                .iter()
-                .map(|t| t.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
-            let expire_at = if ttl_seconds == 0 {
-                None
-            } else {
-                Some(now + Duration::from_secs(ttl_seconds))
-            };
-            store.insert(key.to_string(), (new_raw, expire_at));
-            return Ok(vec!["1".to_string()]);
+            return self.eval_lua_sliding_window_mode(&keys, &args).await;
         }
 
         Err(GarrisonError::NotImplemented(format!(
@@ -538,6 +428,96 @@ impl GarrisonDao for MockDao {
             script
         )))
     }
+}
+
+impl MockDao {
+    /// INCR + EXPIRE 模式：原子递增 + TTL。
+    async fn eval_lua_incr_mode(
+        &self,
+        keys: &[String],
+        args: &[String],
+    ) -> GarrisonResult<Vec<String>> {
+        let key = keys.first().ok_or_else(|| {
+            GarrisonError::InvalidParam("dao-eval-lua-missing-keys-1".to_string())
+        })?;
+        let ttl: u64 = parse_lua_arg(args, 1, "dao-eval-lua-argv-2-ttl")?;
+        let count = self.incr(key, ttl).await?;
+        Ok(vec![count.to_string()])
+    }
+
+    /// rate_limit_sliding_window 模式：原子 read-filter-check-write。
+    async fn eval_lua_sliding_window_mode(
+        &self,
+        keys: &[String],
+        args: &[String],
+    ) -> GarrisonResult<Vec<String>> {
+        let key = keys.first().ok_or_else(|| {
+            GarrisonError::InvalidParam("dao-eval-lua-rl-missing-keys-1".to_string())
+        })?;
+        let now_ms: u64 = parse_lua_arg(args, 0, "dao-eval-lua-rl-argv-1-now-ms")?;
+        let window_start_ms: u64 = parse_lua_arg(args, 1, "dao-eval-lua-rl-argv-2-window-start")?;
+        let threshold: usize = parse_lua_arg(args, 2, "dao-eval-lua-rl-argv-3-threshold")?;
+        let ttl_seconds: u64 = parse_lua_arg(args, 3, "dao-eval-lua-rl-argv-4-ttl")?;
+
+        // 原子 read-filter-check-write（单次 lock 作用域内）
+        let mut store = self.store.lock();
+        let now = Instant::now();
+        let mut timestamps: Vec<u64> = match store.get(key) {
+            Some((raw, Some(deadline))) if *deadline > now => {
+                parse_timestamps(raw, window_start_ms)
+            },
+            Some((raw, None)) => parse_timestamps(raw, window_start_ms),
+            _ => Vec::new(),
+        };
+
+        if timestamps.len() >= threshold {
+            return Ok(vec!["0".to_string()]);
+        }
+
+        timestamps.push(now_ms);
+        let new_raw = timestamps
+            .iter()
+            .map(|t| t.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let expire_at = if ttl_seconds == 0 {
+            None
+        } else {
+            Some(now + Duration::from_secs(ttl_seconds))
+        };
+        store.insert(key.to_string(), (new_raw, expire_at));
+        Ok(vec!["1".to_string()])
+    }
+}
+
+// ------------------------------------------------------------------------
+// eval_lua 辅助函数
+// ------------------------------------------------------------------------
+
+/// 解析 Lua 脚本参数（消除重复的 missing/parse 错误处理）。
+fn parse_lua_arg<T: std::str::FromStr>(
+    args: &[String],
+    index: usize,
+    name: &str,
+) -> GarrisonResult<T>
+where
+    T::Err: std::fmt::Display,
+{
+    let val = args
+        .get(index)
+        .ok_or_else(|| GarrisonError::InvalidParam(format!("dao-eval-lua-missing-{}", name)))?;
+    val.parse().map_err(|e: T::Err| {
+        GarrisonError::InvalidParam(format!("dao-eval-lua-{}-parse-failed::{}", name, e))
+    })
+}
+
+/// 从逗号分隔的字符串中解析时间戳并过滤过期项。
+fn parse_timestamps(raw: &str, window_start_ms: u64) -> Vec<u64> {
+    raw.split(',')
+        .filter(|s| !s.is_empty())
+        .filter_map(|s| s.parse::<u64>().ok())
+        .filter(|&t| t > window_start_ms)
+        .collect()
 }
 
 // ------------------------------------------------------------------------

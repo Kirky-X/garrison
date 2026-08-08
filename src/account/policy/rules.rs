@@ -2,7 +2,7 @@
 //! See LICENSE for full license text.
 
 //! 密码策略规则实现。
-//! 提供 12 条可插拔密码策略规则（v0.6.0 一次性交付）。
+//! 提供 9 条可插拔密码策略规则（v0.6.0 一次性交付，v0.8.1 移除 3 条 NIST 不推荐规则）。
 //! T008 实现 6 条核心规则（R-005），T009 实现 6 条扩展规则（R-006）。
 //!
 //! # 核心规则（R-005）
@@ -10,7 +10,6 @@
 //! | 规则 | `name()` | 说明 |
 //! |:---|:---|:---|
 //! | `LengthRule` | `"length"` | 长度规则（min/max，含边界） |
-//! | `ComplexityRule` | `"complexity"` | 复杂度规则（大写/小写/数字/特殊字符各需 N 个） |
 //! | `HistoryRule` | `"history"` | 密码历史规则（最近 N 条 hash 比对） |
 //! | `BlacklistRule` | `"blacklist"` | 黑名单规则（精确匹配） |
 //! | `NotUsernameRule` | `"not_username"` | 用户名相似规则（大小写不敏感子串） |
@@ -22,8 +21,6 @@
 //! |:---|:---|:---|
 //! | `MaxAgeRule` | `"max_age"` | 密码过期规则（v0.6.0 stub，v0.6.5 启用） |
 //! | `DictionaryRule` | `"dictionary"` | 字典规则（精确匹配） |
-//! | `NotRepeatCharRule` | `"not_repeat_char"` | 重复字符规则（连续 N+1 个相同字符） |
-//! | `NotSequenceRule` | `"not_sequence"` | 序列规则（正向/反向连续序列） |
 //! | `NotEmailRule` | `"not_email"` | 邮箱规则（大小写不敏感子串检测邮箱前缀） |
 //! | `RegexRule` | `"regex"` | 自定义正则规则（匹配即报错） |
 
@@ -85,109 +82,6 @@ impl PasswordPolicyRule for LengthRule {
             return Err(PolicyError::new(
                 "length",
                 format!("密码长度 {} 超过最大限制 {}", len, self.max),
-            ));
-        }
-        Ok(())
-    }
-}
-
-// ============================================================================
-// ComplexityRule
-// ============================================================================
-
-/// 复杂度规则。
-///
-/// 校验密码中大写字母、小写字母、数字、特殊字符各需至少 N 个。
-///
-/// # 特殊字符定义
-///
-/// 非 ASCII 字母数字字符（即 `char::is_alphanumeric()` 为 false 的字符，
-/// 如 `!@#$%^&*` 等）。
-///
-/// # 已弃用
-///
-/// NIST SP 800-63B §5.1.1.2 不推荐强制复杂度规则（用户倾向使用可预测的
-/// 替换模式如 `P@ssw0rd`）。请使用 [`NistComplianceRule`] 替代。
-#[deprecated(note = "NIST SP 800-63B 不推荐强制复杂度，使用 NistComplianceRule")]
-pub struct ComplexityRule {
-    /// 大写字母最少数量。
-    upper: u32,
-    /// 小写字母最少数量。
-    lower: u32,
-    /// 数字最少数量。
-    digit: u32,
-    /// 特殊字符最少数量。
-    special: u32,
-}
-
-#[allow(deprecated)]
-impl ComplexityRule {
-    /// 创建复杂度规则。
-    ///
-    /// # 参数
-    /// - `upper`: 大写字母最少数量
-    /// - `lower`: 小写字母最少数量
-    /// - `digit`: 数字最少数量
-    /// - `special`: 特殊字符最少数量
-    pub fn new(upper: u32, lower: u32, digit: u32, special: u32) -> Self {
-        Self {
-            upper,
-            lower,
-            digit,
-            special,
-        }
-    }
-}
-
-#[allow(deprecated)]
-impl PasswordPolicyRule for ComplexityRule {
-    fn name(&self) -> &'static str {
-        "complexity"
-    }
-
-    fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
-        let mut upper_count = 0u32;
-        let mut lower_count = 0u32;
-        let mut digit_count = 0u32;
-        let mut special_count = 0u32;
-
-        for c in password.chars() {
-            if c.is_uppercase() {
-                upper_count += 1;
-            } else if c.is_lowercase() {
-                lower_count += 1;
-            } else if c.is_ascii_digit() {
-                digit_count += 1;
-            } else {
-                special_count += 1;
-            }
-        }
-
-        if upper_count < self.upper {
-            return Err(PolicyError::new(
-                "complexity",
-                format!("大写字母 {} 个，少于要求的 {} 个", upper_count, self.upper),
-            ));
-        }
-        if lower_count < self.lower {
-            return Err(PolicyError::new(
-                "complexity",
-                format!("小写字母 {} 个，少于要求的 {} 个", lower_count, self.lower),
-            ));
-        }
-        if digit_count < self.digit {
-            return Err(PolicyError::new(
-                "complexity",
-                format!("数字 {} 个，少于要求的 {} 个", digit_count, self.digit),
-            ));
-        }
-        if special_count < self.special {
-            return Err(PolicyError::new(
-                "complexity",
-                format!(
-                    "特殊字符 {} 个，少于要求的 {} 个",
-                    special_count, self.special
-                ),
             ));
         }
         Ok(())
@@ -458,168 +352,6 @@ impl PasswordPolicyRule for DictionaryRule {
 }
 
 // ============================================================================
-// NotRepeatCharRule
-// ============================================================================
-
-/// 重复字符规则。
-///
-/// 校验密码不含连续 `max_consecutive + 1` 个相同字符。
-///
-/// # 示例
-///
-/// - `max_consecutive = 2`：`"aa"` 通过（2 个，≤ 2），`"aaa"` 失败（3 = 2+1）
-/// - `max_consecutive = 1`：`"a"` 通过，`"aa"` 失败（2 = 1+1）
-///
-/// # 已弃用
-///
-/// NIST SP 800-63B 不推荐此类字符模式校验规则。请使用 [`NistComplianceRule`] 替代。
-#[deprecated(note = "NIST SP 800-63B 不推荐强制复杂度，使用 NistComplianceRule")]
-pub struct NotRepeatCharRule {
-    /// 允许的最大连续相同字符数（超过此数即触发错误）。
-    max_consecutive: u32,
-}
-
-#[allow(deprecated)]
-impl NotRepeatCharRule {
-    /// 创建重复字符规则。
-    ///
-    /// # 参数
-    /// - `max_consecutive`: 允许的最大连续相同字符数（`max_consecutive + 1` 个触发错误）
-    pub fn new(max_consecutive: u32) -> Self {
-        Self { max_consecutive }
-    }
-}
-
-#[allow(deprecated)]
-impl PasswordPolicyRule for NotRepeatCharRule {
-    fn name(&self) -> &'static str {
-        "not_repeat_char"
-    }
-
-    fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
-        let chars: Vec<char> = password.chars().collect();
-        if chars.len() <= 1 {
-            return Ok(());
-        }
-        let max_allowed = self.max_consecutive as usize;
-        let mut current_run = 1usize;
-        for i in 1..chars.len() {
-            if chars[i] == chars[i - 1] {
-                current_run += 1;
-                if current_run > max_allowed {
-                    return Err(PolicyError::new(
-                        "not_repeat_char",
-                        format!(
-                            "密码包含 {} 个连续相同字符 '{}'，超过最大允许 {}",
-                            current_run, chars[i], max_allowed
-                        ),
-                    ));
-                }
-            } else {
-                current_run = 1;
-            }
-        }
-        Ok(())
-    }
-}
-
-// ============================================================================
-// NotSequenceRule
-// ============================================================================
-
-/// 序列规则。
-///
-/// 校验密码不含长度 `> max_sequence` 的连续序列（正向/反向）。
-///
-/// # 序列定义
-///
-/// 连续序列指 ASCII 码值依次 +1（正向，如 `abc`/`123`）或 -1（反向，
-/// 如 `cba`/`321`/`zyx`）的字符序列。序列长度为字符数（非步数）。
-///
-/// # 示例
-///
-/// - `max_sequence = 3`：`"abc"` 通过（长度 3，不 > 3），`"abcd"` 失败（长度 4 > 3）
-/// - `max_sequence = 2`：`"ab"` 通过，`"abc"` 失败，`"321"` 失败（反向长度 3 > 2）
-///
-/// # 已弃用
-///
-/// NIST SP 800-63B 不推荐此类字符模式校验规则。请使用 [`NistComplianceRule`] 替代。
-#[deprecated(note = "NIST SP 800-63B 不推荐强制复杂度，使用 NistComplianceRule")]
-pub struct NotSequenceRule {
-    /// 允许的最大连续序列长度（超过此长度即触发错误）。
-    max_sequence: u32,
-}
-
-#[allow(deprecated)]
-impl NotSequenceRule {
-    /// 创建序列规则。
-    ///
-    /// # 参数
-    /// - `max_sequence`: 允许的最大连续序列长度（长度 `> max_sequence` 触发错误）
-    pub fn new(max_sequence: u32) -> Self {
-        Self { max_sequence }
-    }
-}
-
-#[allow(deprecated)]
-impl PasswordPolicyRule for NotSequenceRule {
-    fn name(&self) -> &'static str {
-        "not_sequence"
-    }
-
-    fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
-        let chars: Vec<char> = password.chars().collect();
-        if chars.len() <= 1 {
-            return Ok(());
-        }
-        let max_seq = self.max_sequence as usize;
-        let mut max_found = 1usize;
-        let mut current_len = 1usize;
-        // direction: 1 = 正向（+1），-1 = 反向（-1），0 = 无序列
-        let mut direction = 0i32;
-
-        for i in 1..chars.len() {
-            let diff = chars[i] as i32 - chars[i - 1] as i32;
-            let new_direction = if diff == 1 {
-                1
-            } else if diff == -1 {
-                -1
-            } else {
-                0
-            };
-
-            if new_direction != 0 && new_direction == direction {
-                // 继续当前序列
-                current_len += 1;
-            } else if new_direction != 0 {
-                // 方向改变或新序列开始（含前一个字符作为序列起点）
-                current_len = 2;
-                direction = new_direction;
-            } else {
-                // 序列中断
-                current_len = 1;
-                direction = 0;
-            }
-
-            if current_len > max_found {
-                max_found = current_len;
-            }
-        }
-
-        if max_found > max_seq {
-            return Err(PolicyError::new(
-                "not_sequence",
-                format!(
-                    "密码包含长度 {} 的连续序列，超过最大允许 {}",
-                    max_found, max_seq
-                ),
-            ));
-        }
-        Ok(())
-    }
-}
-
-// ============================================================================
 // NotEmailRule
 // ============================================================================
 
@@ -747,7 +479,7 @@ impl PasswordPolicyRule for RegexRule {
 ///
 /// # 替代关系
 ///
-/// `NistComplianceRule` 替代 [`ComplexityRule`]（已 `#[deprecated]`）。
+/// `NistComplianceRule` 替代已移除的 `ComplexityRule`（NIST SP 800-63B 不推荐强制复杂度）。
 /// 不需要替代 [`LengthRule`]（NIST 规则内部就是长度校验）。
 ///
 /// # 示例
@@ -832,7 +564,6 @@ impl PasswordPolicyRule for NistComplianceRule {
 }
 
 #[cfg(test)]
-#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::account::credential::Argon2Hasher;
@@ -896,51 +627,6 @@ mod tests {
     fn length_rule_name_returns_length() {
         let rule = LengthRule::new(8, 128);
         assert_eq!(rule.name(), "length");
-    }
-
-    // ========================================================================
-    // ComplexityRule 测试
-    // ========================================================================
-
-    /// R-005.2: 4 类字符均满足 → 通过。
-    #[test]
-    fn complexity_rule_passes_all_met() {
-        let rule = ComplexityRule::new(1, 1, 1, 1);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "Aa1!").is_ok());
-    }
-
-    /// R-005.2: 缺少大写字母 → 失败。
-    #[test]
-    fn complexity_rule_fails_missing_upper() {
-        let rule = ComplexityRule::new(1, 1, 1, 1);
-        let ctx = make_ctx(None, vec![]);
-        let result = rule.validate(&ctx, "aa1!");
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().rule_name, "complexity");
-    }
-
-    /// R-005.2: 缺少数字 → 失败。
-    #[test]
-    fn complexity_rule_fails_missing_digit() {
-        let rule = ComplexityRule::new(1, 1, 1, 1);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "Aa!b").is_err());
-    }
-
-    /// R-005.2: 每类字符恰好达到要求 → 通过（边界）。
-    #[test]
-    fn complexity_rule_boundary_exact_counts() {
-        let rule = ComplexityRule::new(2, 2, 2, 2);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "AAaa11!!").is_ok());
-    }
-
-    /// R-005.2: `name()` 返回 `"complexity"`。
-    #[test]
-    fn complexity_rule_name_returns_complexity() {
-        let rule = ComplexityRule::new(1, 1, 1, 1);
-        assert_eq!(rule.name(), "complexity");
     }
 
     // ========================================================================
@@ -1241,109 +927,6 @@ mod tests {
     }
 
     // ========================================================================
-    // NotRepeatCharRule 测试
-    // ========================================================================
-
-    /// R-006.9: 无连续重复字符 → 通过。
-    #[test]
-    fn not_repeat_char_rule_passes_no_repeats() {
-        let rule = NotRepeatCharRule::new(2);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "abac").is_ok());
-    }
-
-    /// R-006.9: 连续重复超过限制 → 失败。
-    #[test]
-    fn not_repeat_char_rule_fails_consecutive_repeats() {
-        let rule = NotRepeatCharRule::new(2);
-        let ctx = make_ctx(None, vec![]);
-        let result = rule.validate(&ctx, "aaa");
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().rule_name, "not_repeat_char");
-    }
-
-    /// R-006.9: 边界 — 恰好 max_consecutive 个连续 → 通过。
-    #[test]
-    fn not_repeat_char_rule_boundary_exact_max() {
-        let rule = NotRepeatCharRule::new(2);
-        let ctx = make_ctx(None, vec![]);
-        assert!(
-            rule.validate(&ctx, "aa").is_ok(),
-            "2 个连续（== max）应通过"
-        );
-    }
-
-    /// R-006.9: max_consecutive=1 时 "aa" 失败。
-    #[test]
-    fn not_repeat_char_rule_max_one_fails_pair() {
-        let rule = NotRepeatCharRule::new(1);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "aa").is_err());
-        assert!(rule.validate(&ctx, "ab").is_ok());
-    }
-
-    /// R-006.9: `name()` 返回 `"not_repeat_char"`。
-    #[test]
-    fn not_repeat_char_rule_name_returns_not_repeat_char() {
-        let rule = NotRepeatCharRule::new(2);
-        assert_eq!(rule.name(), "not_repeat_char");
-    }
-
-    // ========================================================================
-    // NotSequenceRule 测试
-    // ========================================================================
-
-    /// R-006.10: 无序列 → 通过。
-    #[test]
-    fn not_sequence_rule_passes_no_sequence() {
-        let rule = NotSequenceRule::new(3);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "a1b2").is_ok());
-    }
-
-    /// R-006.10: 正向序列超长 → 失败。
-    #[test]
-    fn not_sequence_rule_fails_forward_sequence() {
-        let rule = NotSequenceRule::new(3);
-        let ctx = make_ctx(None, vec![]);
-        let result = rule.validate(&ctx, "abcd");
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err().rule_name, "not_sequence");
-    }
-
-    /// R-006.10: 反向序列超长 → 失败。
-    #[test]
-    fn not_sequence_rule_fails_reverse_sequence() {
-        let rule = NotSequenceRule::new(2);
-        let ctx = make_ctx(None, vec![]);
-        // 321 → 反向序列长度 3 > 2
-        assert!(rule.validate(&ctx, "321").is_err());
-    }
-
-    /// R-006.10: 边界 — 序列长度恰好 == max_sequence → 通过。
-    #[test]
-    fn not_sequence_rule_boundary_exact_max() {
-        let rule = NotSequenceRule::new(3);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "abc").is_ok(), "长度 3 == max，应通过");
-    }
-
-    /// R-006.10: 字母反向序列 zyx → 失败。
-    #[test]
-    fn not_sequence_rule_fails_alpha_reverse() {
-        let rule = NotSequenceRule::new(2);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "zyx").is_err());
-    }
-
-    /// R-006.10: `name()` 返回 `"not_sequence"`。
-    #[test]
-    fn not_sequence_rule_name_returns_not_sequence() {
-        let rule = NotSequenceRule::new(3);
-        assert_eq!(rule.name(), "not_sequence");
-    }
-
-    // ========================================================================
     // NotEmailRule 测试
     // ========================================================================
 
@@ -1471,41 +1054,35 @@ mod tests {
     }
 
     // ========================================================================
-    // 全部 12 个规则可作 Box<dyn PasswordPolicyRule> 使用（对象安全验证）
+    // 全部 9 个规则可作 Box<dyn PasswordPolicyRule> 使用（对象安全验证）
     // ========================================================================
 
-    /// R-005/R-006: 12 个规则均可作 `Box<dyn PasswordPolicyRule>` 使用。
+    /// R-005/R-006: 9 个规则均可作 `Box<dyn PasswordPolicyRule>` 使用。
     #[test]
     fn all_rules_usable_as_dyn_trait_object() {
         let rules: Vec<Box<dyn PasswordPolicyRule>> = vec![
             Box::new(LengthRule::new(8, 128)),
-            Box::new(ComplexityRule::new(1, 1, 1, 1)),
             Box::new(HistoryRule::new(3)),
             Box::new(BlacklistRule::new(vec![])),
             Box::new(NotUsernameRule::new()),
             Box::new(NotCommonPasswordRule::new(vec![])),
             Box::new(MaxAgeRule::new(90)),
             Box::new(DictionaryRule::new(vec![])),
-            Box::new(NotRepeatCharRule::new(2)),
-            Box::new(NotSequenceRule::new(3)),
             Box::new(NotEmailRule::new()),
             Box::new(RegexRule::new(
                 regex::Regex::new(r".").unwrap(),
                 "test".to_string(),
             )),
         ];
-        assert_eq!(rules.len(), 12);
+        assert_eq!(rules.len(), 9);
         assert_eq!(rules[0].name(), "length");
-        assert_eq!(rules[1].name(), "complexity");
-        assert_eq!(rules[2].name(), "history");
-        assert_eq!(rules[3].name(), "blacklist");
-        assert_eq!(rules[4].name(), "not_username");
-        assert_eq!(rules[5].name(), "not_common_password");
-        assert_eq!(rules[6].name(), "max_age");
-        assert_eq!(rules[7].name(), "dictionary");
-        assert_eq!(rules[8].name(), "not_repeat_char");
-        assert_eq!(rules[9].name(), "not_sequence");
-        assert_eq!(rules[10].name(), "not_email");
-        assert_eq!(rules[11].name(), "regex");
+        assert_eq!(rules[1].name(), "history");
+        assert_eq!(rules[2].name(), "blacklist");
+        assert_eq!(rules[3].name(), "not_username");
+        assert_eq!(rules[4].name(), "not_common_password");
+        assert_eq!(rules[5].name(), "max_age");
+        assert_eq!(rules[6].name(), "dictionary");
+        assert_eq!(rules[7].name(), "not_email");
+        assert_eq!(rules[8].name(), "regex");
     }
 }

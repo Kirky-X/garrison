@@ -135,7 +135,7 @@ async fn social_bindings_table_exists_after_migration() {
 async fn social_binding_service_find_or_create_creates_new_binding() {
     use super::*;
     use crate::dao::{tests::MockDao, GarrisonDaoDbnexus, GarrisonMigration};
-    use dbnexus::{DbConfig, DbPool};
+    use dbnexus::{DbConfig, DbPool, PoolConfig};
     use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -145,8 +145,11 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
     //    避免 :memory: 的 per-connection 独立内存数据库问题
     let config = DbConfig {
         url: "sqlite::memory:".to_string(),
-        max_connections: 1,
-        min_connections: 1,
+        pool_config: PoolConfig {
+            max_connections: 1,
+            min_connections: 1,
+            ..Default::default()
+        },
         ..Default::default()
     };
     let pool = DbPool::with_config(config)

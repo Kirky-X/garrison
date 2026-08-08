@@ -725,7 +725,7 @@ fn evict_oldest_fallback_entries(
 /// - `issue_tokens` 委托 `RefreshTokenRotation::issue`（hash chain + INSERT）
 /// - `handle_refresh_token` 委托 `RefreshTokenRotation::rotate`（reuse detection + 链式撤销）
 ///
-/// 未注入时退化为 DAO 键值存储（`DaoKeyPrefix::OAuth2RefreshToken`），
+/// 未注入时退化为 DAO 键值存储（`oauth2:rtoken:` 前缀），
 /// 无 reuse detection，文档明确标注安全风险。
 pub struct TokenHandler {
     store: Arc<dyn OAuth2ClientStore>,
@@ -796,7 +796,7 @@ impl TokenHandler {
     /// - `issue_tokens` 在 `with_refresh=true` 时委托 `rotation.issue()`
     /// - `handle_refresh_token` 委托 `rotation.rotate()` 获得轮换 + hash chain
     ///
-    /// 未注入时退化为 DAO 路径（`DaoKeyPrefix::OAuth2RefreshToken`，无 reuse detection）。
+    /// 未注入时退化为 DAO 路径（`oauth2:rtoken:` 前缀，无 reuse detection）。
     #[cfg(feature = "db-sqlite")]
     pub fn with_refresh_rotation(mut self, rotation: Arc<RefreshTokenRotation>) -> Self {
         self.refresh_rotation = Some(rotation);
@@ -966,7 +966,7 @@ impl TokenHandler {
     /// - 返回新 refresh_token（轮换，旧 token revoked=1）
     ///
     /// 未注入时退化为 DAO 路径（轮换 + 删除旧 token）：
-    /// - 查找 `DaoKeyPrefix::OAuth2RefreshToken` 记录
+    /// - 查找 `oauth2:rtoken:` 前缀记录
     /// - 校验 client_id 一致性
     /// - 删除旧 refresh_token（防止重放）
     /// - 签发新 access_token + 新 refresh_token（with_refresh=true 轮换）
@@ -1201,7 +1201,7 @@ impl TokenHandler {
     ///
     /// `with_refresh=true` 时：
     /// - 启用 `db-sqlite` 且注入 `RefreshTokenRotation` → 委托 `rotation.issue()`
-    /// - 否则 → DAO 路径（`DaoKeyPrefix::OAuth2RefreshToken`，无 reuse detection）
+    /// - 否则 → DAO 路径（`oauth2:rtoken:` 前缀，无 reuse detection）
     async fn issue_tokens(
         &self,
         client_id: &str,
@@ -1289,7 +1289,7 @@ impl TokenHandler {
     /// DAO fallback 路径签发 refresh_token（无 reuse detection）。
     ///
     /// 当 `RefreshTokenRotation` 未注入或 `db-sqlite` feature 未启用时使用。
-    /// refresh_token 存储在 DAO 中（`DaoKeyPrefix::OAuth2RefreshToken`），
+    /// refresh_token 存储在 DAO 中（`oauth2:rtoken:` 前缀），
     /// 无 hash chain、无 reuse detection、无链式撤销。
     async fn issue_refresh_via_dao(
         &self,
@@ -1313,8 +1313,7 @@ impl TokenHandler {
             jti: Some(rt_jti),
             username: username.map(|s| s.to_string()),
         };
-        #[allow(deprecated)]
-        let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(&rt);
+        let rt_key = format!("oauth2:rtoken:{}", rt);
         let rt_json = serde_json::to_string(&rt_record).map_err(|e| {
             GarrisonError::Internal(format!("oauth2-server-token-serialize::{}", e))
         })?;
@@ -1348,8 +1347,7 @@ impl TokenHandler {
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(token);
         self.dao.delete(&at_key).await?;
         // 尝试删除 refresh_token（同一 token 值不会同时是两种类型）
-        #[allow(deprecated)]
-        let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(token);
+        let rt_key = format!("oauth2:rtoken:{}", token);
         self.dao.delete(&rt_key).await?;
         Ok(())
     }

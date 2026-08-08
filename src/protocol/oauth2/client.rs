@@ -368,26 +368,9 @@ impl OAuth2Client {
         Ok(URL_SAFE_NO_PAD.encode(digest))
     }
 
-    /// 构造 Authorization Code 流程的授权 URL。
-    ///
-    /// URL 拼接 `response_type=code`、`client_id`、`redirect_uri`（URL 编码）、`state` 参数。
-    ///
-    /// # 弃用
-    /// OAuth 2.1 要求所有 Authorization Code 流程使用 PKCE。请改用 [`get_auth_url_with_pkce`](Self::get_auth_url_with_pkce)。
-    #[deprecated(note = "use get_auth_url_with_pkce for OAuth 2.1 compliance")]
-    pub fn get_auth_url(&self, state: &str) -> String {
-        format!(
-            "{}?response_type=code&client_id={}&redirect_uri={}&state={}",
-            self.auth_url,
-            url_encode(&self.client_id),
-            url_encode(&self.redirect_uri),
-            url_encode(state),
-        )
-    }
-
     /// 构造带 PKCE 的授权 URL。
     ///
-    /// 在 [`get_auth_url`](Self::get_auth_url) 基础上追加 `code_challenge` 与 `code_challenge_method=S256` 参数。
+    /// 在 [`get_auth_url_with_pkce`](Self::get_auth_url_with_pkce) 基础上追加 `code_challenge` 与 `code_challenge_method=S256` 参数。
     ///
     /// # 参数
     /// - `state`: CSRF 防护随机串。
@@ -415,28 +398,9 @@ impl OAuth2Client {
         Ok((url, code_challenge))
     }
 
-    /// 使用授权码换取令牌。
-    ///
-    /// POST 请求 `token_url`，以 `application/x-www-form-urlencoded` 格式提交
-    /// `grant_type=authorization_code`、`code`、`redirect_uri`、`client_id`、`client_secret`。
-    ///
-    /// # 弃用
-    /// OAuth 2.1 要求所有 Authorization Code 流程使用 PKCE。请改用 [`exchange_code_with_pkce`](Self::exchange_code_with_pkce)。
-    #[deprecated(note = "use exchange_code_with_pkce for OAuth 2.1 compliance")]
-    pub async fn exchange_code(&self, code: &str, _state: &str) -> GarrisonResult<TokenResponse> {
-        let params = [
-            ("grant_type", "authorization_code"),
-            ("code", code),
-            ("redirect_uri", &self.redirect_uri),
-            ("client_id", &self.client_id),
-            ("client_secret", &self.client_secret),
-        ];
-        self.post_token_request(&params).await
-    }
-
     /// 使用授权码 + PKCE 换取令牌。
     ///
-    /// 在 [`exchange_code`](Self::exchange_code) 基础上，POST 请求体追加 `code_verifier` 字段。
+    /// 在 `exchange_code_with_pkce` 基础上，POST 请求体追加 `code_verifier` 字段。
     /// 授权服务器重新计算 `SHA256(code_verifier)` 并与授权请求中的 `code_challenge` 比对，验证客户端身份。
     ///
     /// # CSRF 防护（state 校验）
@@ -886,11 +850,10 @@ mod tests {
 
     /// E2 集成测试：OAuth2Client::post_token_request 拒绝超大 token 响应。
     ///
-    /// 端到端验证：wiremock 返回 5 MiB JSON，OAuth2Client::exchange_code 返回 Err。
+    /// 端到端验证：wiremock 返回 5 MiB JSON，OAuth2Client::exchange_code_with_pkce 返回 Err。
     #[tokio::test]
-    #[allow(deprecated)]
     async fn e2_oauth2_client_rejects_oversized_token_response() {
-        use wiremock::matchers::{body_string, method, path};
+        use wiremock::matchers::{body_string_contains, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
@@ -899,7 +862,7 @@ mod tests {
         let huge_json = format!(r#"{{"access_token":"{}"}}"#, huge_value);
         Mock::given(method("POST"))
             .and(path("/token"))
-            .and(body_string("grant_type=authorization_code"))
+            .and(body_string_contains("grant_type=authorization_code"))
             .respond_with(ResponseTemplate::new(200).set_body_string(huge_json))
             .mount(&server)
             .await;
@@ -913,7 +876,11 @@ mod tests {
         )
         .expect("client 构建成功");
 
-        let result = client.exchange_code("code123", "state").await;
+        // 使用合法 code_verifier（43 字符）
+        let verifier = "a".repeat(43);
+        let result = client
+            .exchange_code_with_pkce("code123", "state", "state", &verifier)
+            .await;
         assert!(result.is_err(), "超大 token 响应必须被拒绝");
     }
 }

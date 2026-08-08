@@ -337,6 +337,19 @@ fn error_to_key_args(err: &GarrisonError) -> (&'static str, Vec<(&'static str, S
         GarrisonError::SmsVerifyMaxAttempts => ("sms-verify-max-attempts", vec![]),
         GarrisonError::SmsCodeNotFound => ("sms-code-not-found", vec![]),
         GarrisonError::SmsChannelRecycled => ("sms-channel-recycled", vec![]),
+        #[cfg(feature = "credit-metering")]
+        GarrisonError::CreditInsufficient {
+            tenant_id,
+            requested,
+            remaining,
+        } => (
+            "credit-insufficient",
+            vec![
+                ("tenant_id", tenant_id.to_string()),
+                ("requested", requested.to_string()),
+                ("remaining", remaining.to_string()),
+            ],
+        ),
         GarrisonError::Exception(ex) => (
             "exception",
             vec![
@@ -381,6 +394,17 @@ fn fallback_display(err: &GarrisonError) -> String {
         GarrisonError::SmsVerifyMaxAttempts => "SMS 验证码尝试次数超限".to_string(),
         GarrisonError::SmsCodeNotFound => "SMS 验证码不存在".to_string(),
         GarrisonError::SmsChannelRecycled => "SMS 通道已回收".to_string(),
+        #[cfg(feature = "credit-metering")]
+        GarrisonError::CreditInsufficient {
+            tenant_id,
+            requested,
+            remaining,
+        } => {
+            format!(
+                "Credit 不足：tenant={}, requested={}, remaining={}",
+                tenant_id, requested, remaining
+            )
+        },
         GarrisonError::Exception(ex) => format!("业务异常[{}]: {}", ex.code, ex.message),
     }
 }

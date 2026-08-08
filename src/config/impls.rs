@@ -109,6 +109,8 @@ impl GarrisonConfig {
             anomalous_analyzer_interval_secs: DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS,
             #[cfg(feature = "anomalous-detector-dual")]
             anomalous_analyzer_burst_threshold: DEFAULT_ANOMALOUS_BURST_THRESHOLD,
+            #[cfg(feature = "credit-metering")]
+            credit: None,
             watcher: None,
         };
         config.with_watcher()
@@ -461,18 +463,29 @@ impl GarrisonConfig {
 
     /// 校验配置字段合法性。
     ///
-    /// 配置校验：
-    /// - `token_style` 必须是 `TOKEN_STYLES` 中的合法值
-    /// - `timeout` 必须 > 0（-1 抛错 "timeout must be positive"）
+    /// 配置校验分组：
+    ///
+    /// - `validate_core`：`token_style` / `timeout` / `cookie_same_site`
+    /// - `validate_jwt_secret`：JWT 密钥强度与算法白名单
+    /// - `validate_session_config`：`remember_me` / `auto_renewal` / `is_share`
+    /// - `validate_device_binding`：`device_binding_mode`
+    /// - feature-gated 校验：`anonymous-session` / `three-tier-cache` / `rate-limit-redis` 等
     ///
     /// # 返回
     /// 校验通过返回 `Ok(())`。
     ///
     /// # 错误
-    /// - `GarrisonError::Config`：`token_style` 非法（消息含 "unknown token_style"）。
-    /// - `GarrisonError::Config`：`timeout` 非正（消息 "timeout must be positive"）。
-    /// - `GarrisonError::Config`：`token_style=jwt` 但 `jwt_secret` 为空。
+    /// - `GarrisonError::Config`：各字段校验失败时返回对应错误消息。
     pub fn validate(&self) -> GarrisonResult<()> {
+        self.validate_core()?;
+        self.validate_jwt_secret()?;
+        self.validate_session_config()?;
+        self.validate_device_binding()?;
+        self.validate_feature_gated()
+    }
+
+    /// 核心字段校验：`token_style` / `timeout` / `cookie_same_site`。
+    fn validate_core(&self) -> GarrisonResult<()> {
         if !TOKEN_STYLES.contains(&self.token_style.as_str()) {
             return Err(GarrisonError::Config(format!(
                 "unknown token_style: {}",
@@ -490,12 +503,13 @@ impl GarrisonConfig {
                 self.cookie_same_site
             )));
         }
-        // jwt_secret 强度校验（仅当 token_style=jwt，即密钥用于 JWT 签名时）：
-        // 防止弱密钥被离线爆破。HS256 需 ≥32 字节、HS384 需 ≥48 字节、HS512 需 ≥64 字节
-        // （RFC 7518 §3.2）。jwt_algorithm 必须在白名单内，否则 reject（防拼写错误静默走 32 字节分支）。
-        // 注意：jwt_secret 在 simple 风格下被复用为 HMAC 密钥、在 refresh 轮换时也走 jwt 分支，
-        // 但仅 token_style=jwt 会用它做可离线爆破的 JWT 签名，故长度校验限定在此分支，
-        // 避免误伤 simple 等其他风格。simple 风格下的弱密钥在下面单独 warn。
+        Ok(())
+    }
+
+    /// JWT 密钥强度校验（仅当 `token_style=jwt` 时强制校验，`simple` 时 warn）。
+    ///
+    /// HS256 需 ≥32 字节、HS384 需 ≥48 字节、HS512 需 ≥64 字节（RFC 7518 §3.2）。
+    fn validate_jwt_secret(&self) -> GarrisonResult<()> {
         if self.token_style == "jwt" {
             let secret_len = self.jwt_secret.as_str().len();
             if secret_len == 0 {
@@ -521,14 +535,17 @@ impl GarrisonConfig {
                 )));
             }
         } else if self.token_style == "simple" && self.jwt_secret.as_str().len() < 32 {
-            // simple 风格下 jwt_secret 被复用为 HMAC 密钥，攻击者拿到一条 HMAC 输出
-            // 即可离线爆破短密钥。不强制 reject（避免误伤存量配置），但 warn 提示强化。
             tracing::warn!(
                 "jwt_secret 长度 {} < 32 字节，token_style={} 不强制校验，但建议强化以防 HMAC 爆破",
                 self.jwt_secret.as_str().len(),
                 self.token_style
             );
         }
+        Ok(())
+    }
+
+    /// 会话配置一致性校验：`remember_me` / `auto_renewal` / `is_share` / `frontend_separation`。
+    fn validate_session_config(&self) -> GarrisonResult<()> {
         if self.remember_me_enabled && self.remember_me_timeout <= self.timeout {
             return Err(GarrisonError::Config(format!(
                 "remember_me_timeout ({}) must be greater than timeout ({}) when remember_me_enabled is true",
@@ -557,12 +574,22 @@ impl GarrisonConfig {
                 "is_share=true requires is_concurrent=true".to_string(),
             ));
         }
+        Ok(())
+    }
+
+    /// 设备绑定模式校验。
+    fn validate_device_binding(&self) -> GarrisonResult<()> {
         if !DEVICE_BINDING_MODES.contains(&self.device_binding_mode.as_str()) {
             return Err(GarrisonError::Config(format!(
                 "unknown device_binding_mode: {} (expected strict/loose/disabled)",
                 self.device_binding_mode
             )));
         }
+        Ok(())
+    }
+
+    /// feature-gated 校验：`anonymous-session` / `three-tier-cache` / `rate-limit-redis` / `firewall-waf` / `sms-rate-limit` / `anomalous-detector-dual`。
+    fn validate_feature_gated(&self) -> GarrisonResult<()> {
         #[cfg(feature = "anonymous-session")]
         if self.anon_session_timeout == 0 {
             return Err(GarrisonError::Config(

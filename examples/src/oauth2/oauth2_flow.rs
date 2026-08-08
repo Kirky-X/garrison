@@ -11,10 +11,10 @@
 //! 本示例演示：
 //! 1. 构造 `OAuth2Client`
 //! 2. 生成授权 URL（引导用户跳转到授权服务器）
-//! 3. 使用授权码换取令牌（`exchange_code`，需要真实授权服务器，此处仅展示调用方式）
+//! 3. 使用授权码换取令牌（`exchange_code_with_pkce`，需要真实授权服务器，此处仅展示调用方式）
 //! 4. `refresh_access_token` 刷新令牌（仅展示调用方式，不实际发起 HTTP 请求）
 //!
-//! `exchange_code` / `get_client_credentials_token` / `get_password_token` /
+//! `exchange_code_with_pkce` / `get_client_credentials_token` / `get_password_token` /
 //! `refresh_access_token` 会发起真实 HTTP 请求，本示例不实际调用以避免依赖外部服务；
 //! 如需端到端测试参见 `tests/protocol_oauth2_integration.rs`（使用 wiremock mock server）。
 
@@ -22,9 +22,8 @@ use garrison::protocol::oauth2::OAuth2Client;
 
 /// 运行 OAuth2 流程示例。
 ///
-/// 构造 OAuth2Client、生成授权 URL，并展示 exchange_code 的调用方式。
+/// 构造 OAuth2Client、生成授权 URL，并展示 exchange_code_with_pkce 的调用方式。
 /// 不实际发起 HTTP 请求（避免依赖外部授权服务器）。
-#[allow(deprecated)]
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison OAuth2 Authorization Code 流程示例 ===\n");
 
@@ -44,8 +43,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 2. 生成授权 URL（引导用户浏览器跳转至此 URL 完成授权）
     let state = "random-csrf-state-12345";
-    let auth_url = client.get_auth_url(state);
+    let code_verifier = "x".repeat(64); // PKCE code_verifier（43-128 字符）
+    let (auth_url, code_challenge) = client.get_auth_url_with_pkce(state, &code_verifier)?;
     println!("\n[授权 URL]\n{}", auth_url);
+    println!("[Code Challenge] {}", code_challenge);
     assert!(auth_url.contains("client_id=my-client-id"));
     assert!(auth_url.contains("response_type=code"));
     assert!(auth_url.contains("state=random-csrf-state-12345"));
@@ -53,12 +54,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "\n（用户在授权服务器登录并同意授权后，会被重定向到 redirect_uri，附带 code 与 state）"
     );
 
-    println!("\n[说明] exchange_code 需真实授权服务器，本示例不实际调用。");
+    println!("\n[说明] exchange_code_with_pkce 需真实授权服务器，本示例不实际调用。");
     println!("       端到端测试见 tests/protocol_oauth2_integration.rs。");
 
     // 3. 演示 refresh_access_token 的调用方式（access_token 过期后用 refresh_token 刷新）
     //
-    // 与 exchange_code 一样，refresh_access_token 会发起真实 HTTP 请求，
+    // 与 exchange_code_with_pkce 一样，refresh_access_token 会发起真实 HTTP 请求，
     // 本示例不实际调用，仅展示调用方式与返回值结构。
     println!("\n[刷新令牌] refresh_access_token 调用方式:");
     println!("    // access_token 过期后，使用 refresh_token 换取新的 access_token");

@@ -349,11 +349,13 @@ impl AuditLogListener {
     fn to_audit_entry(&self, event: &GarrisonEvent) -> GarrisonResult<AuditEntry> {
         let now = Utc::now().timestamp();
         // 从 TENANT task_local 读取当前租户 ID
-        // - tenant-isolation feature 关闭：current_tenant_id() 无上下文时返回 0（向后兼容）
+        // - tenant-isolation feature 关闭：TENANT.try_get() 无上下文时返回 0（向后兼容）
         // - tenant-isolation feature 启用：current_tenant_id_or_error() 无上下文时返回 Err（Rule 12 失败显性化）
         #[cfg(not(feature = "tenant-isolation"))]
-        #[allow(deprecated)]
-        let tenant_id = crate::context::tenant::current_tenant_id();
+        let tenant_id = crate::context::tenant::TENANT
+            .try_get()
+            .map(|ctx| ctx.tenant_id)
+            .unwrap_or(0);
         #[cfg(feature = "tenant-isolation")]
         let tenant_id = crate::context::tenant::current_tenant_id_or_error()?;
         let mut entry = match event {

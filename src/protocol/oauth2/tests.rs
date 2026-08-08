@@ -107,40 +107,6 @@ fn redirect_uri_rejects_http_in_production() {
 }
 
 // ========================================================================
-// get_auth_url 测试
-// ========================================================================
-
-/// 构造标准授权 URL（spec Scenario）。
-#[test]
-#[allow(deprecated)]
-fn get_auth_url_contains_required_params() {
-    let client = OAuth2Client::new(
-        "my-client",
-        "secret",
-        "https://example.com/callback",
-        "https://auth.example.com/authorize",
-        "https://token.example.com/token",
-    )
-    .unwrap();
-    let url = client.get_auth_url("xyz-state");
-    assert!(url.starts_with("https://auth.example.com/authorize?"));
-    assert!(url.contains("response_type=code"));
-    assert!(url.contains("client_id=my-client"));
-    assert!(url.contains("state=xyz-state"));
-    assert!(url.contains("redirect_uri=https%3A%2F%2Fexample.com%2Fcallback"));
-}
-
-/// state 为空时仍包含 state 参数（spec Scenario）。
-#[test]
-#[allow(deprecated)]
-fn get_auth_url_empty_state_still_includes_state() {
-    let client =
-        OAuth2Client::new("cid", "secret", "https://example.com/cb", "auth", "token").unwrap();
-    let url = client.get_auth_url("");
-    assert!(url.contains("state="));
-}
-
-// ========================================================================
 // TokenResponse 解析测试
 // ========================================================================
 
@@ -173,59 +139,6 @@ fn token_response_missing_required_field_errors() {
     let json = r#"{"token_type":"Bearer"}"#;
     let result: Result<TokenResponse, _> = serde_json::from_str(json);
     assert!(result.is_err());
-}
-
-// ========================================================================
-// exchange_code 集成测试
-// ========================================================================
-
-/// 成功换取令牌（spec Scenario）。
-#[tokio::test]
-#[allow(deprecated)]
-async fn exchange_code_success() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "abc123",
-            "token_type": "Bearer",
-            "expires_in": 3600,
-            "refresh_token": "r1",
-            "scope": "read"
-        })))
-        .mount(&server)
-        .await;
-
-    let client = make_client(&server).await;
-    let token = client.exchange_code("valid-code", "state").await.unwrap();
-    assert_eq!(token.access_token, "abc123");
-    assert_eq!(token.token_type, "Bearer");
-    assert_eq!(token.expires_in, Some(3600));
-    assert_eq!(token.refresh_token, Some("r1".to_string()));
-    assert_eq!(token.scope, Some("read".to_string()));
-}
-
-/// code 无效返回 OAuth2 错误（spec Scenario）。
-#[tokio::test]
-#[allow(deprecated)]
-async fn exchange_code_invalid_code_returns_oauth2_error() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/token"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "error": "invalid_grant",
-            "error_description": "Invalid authorization code"
-        })))
-        .mount(&server)
-        .await;
-
-    let client = make_client(&server).await;
-    let result = client.exchange_code("invalid-code", "state").await;
-    assert!(result.is_err());
-    match result.err() {
-        Some(GarrisonError::OAuth2(_)) => {},
-        other => panic!("期望 OAuth2 错误，实际: {:?}", other),
-    }
 }
 
 // ========================================================================
@@ -628,24 +541,6 @@ async fn exchange_code_with_pkce_state_mismatch_returns_error() {
     // 确保未发送 HTTP 请求（CSRF 校验在 HTTP 调用前拦截）
     let received = server.received_requests().await.expect("应可获取请求");
     assert_eq!(received.len(), 0, "state 不匹配时不应发送 HTTP 请求");
-}
-
-/// 旧 get_auth_url 标记 deprecated 后仍可工作（向后兼容，spec R-oauth-2-1-003）。
-#[test]
-#[allow(deprecated)]
-fn deprecated_get_auth_url_still_works() {
-    let client = OAuth2Client::new(
-        "cid",
-        "secret",
-        "https://example.com/cb",
-        "https://auth.example.com/authorize",
-        "https://token.example.com/token",
-    )
-    .unwrap();
-    let url = client.get_auth_url("state");
-    assert!(url.contains("response_type=code"));
-    assert!(url.contains("client_id=cid"));
-    assert!(url.contains("state=state"));
 }
 
 // ========================================================================

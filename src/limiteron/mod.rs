@@ -22,13 +22,29 @@
 //! - `QuotaStorage::consume` 通过循环 `dao.incr` 实现，cost > 1 时非原子
 //! - `BanStorage::list_bans` / `cleanup_expired_bans` 无法实现（GarrisonDao 无 iter API），返回空/0
 
+#[cfg(feature = "firewall-ddos")]
+pub mod adaptive;
 pub mod ban;
+#[cfg(feature = "backend-remote")]
+pub mod circuit;
 pub mod distributed;
 pub mod errors;
+#[cfg(feature = "backend-remote")]
+pub mod fallback;
+#[cfg(feature = "firewall-ddos")]
+pub mod priority;
 pub mod quota;
 pub mod storage;
 
+#[cfg(feature = "firewall-ddos")]
+pub use adaptive::AdaptiveThresholdProvider;
 pub use ban::GarrisonDaoBanStorage;
+#[cfg(feature = "backend-remote")]
+pub use circuit::CircuitBreakerWrapper;
 pub use distributed::GarrisonDaoDistributedLimiter;
+#[cfg(feature = "backend-remote")]
+pub use fallback::{FallbackDecision, FallbackPolicy};
+#[cfg(feature = "firewall-ddos")]
+pub use priority::PriorityAdmissionController;
 pub use quota::GarrisonDaoQuotaStorage;
 pub use storage::GarrisonDaoStorage;

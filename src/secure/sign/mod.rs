@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 签名工具模块，提供 HMAC-SHA256/SHA512、Base64、MD5 签名与编码工具。
+//! 签名工具模块，提供 HMAC-SHA256/SHA512、Base64 签名与编码工具。
 //!
 //! 对应 `SaSign` 工具类，
 //! 提供微服务网关签名认证所需的加密原语。
@@ -23,7 +23,7 @@
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Signer;
 
-/// `Signer` 实现块（HMAC / Base64 / MD5）。
+/// `Signer` 实现块（HMAC / Base64）。
 pub mod signer;
 
 #[cfg(test)]

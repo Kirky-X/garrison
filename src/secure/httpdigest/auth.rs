@@ -471,57 +471,89 @@ fn parse_digest_params(s: &str) -> Vec<(String, String)> {
     let mut chars = s.chars().peekable();
 
     while chars.peek().is_some() {
-        while matches!(chars.peek(), Some(c) if c.is_whitespace() || *c == ',') {
-            chars.next();
-        }
+        skip_whitespace_and_commas(&mut chars);
         if chars.peek().is_none() {
             break;
         }
-        let mut key = String::new();
-        while let Some(c) = chars.peek() {
-            if c.is_whitespace() || *c == '=' {
-                break;
-            }
-            key.push(chars.next().unwrap());
-        }
-        while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
-            chars.next();
-        }
+        let key = parse_param_key(&mut chars);
+        skip_whitespace_chars(&mut chars);
         if chars.peek() != Some(&'=') {
             break;
         }
         chars.next();
-        while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
-            chars.next();
-        }
-        let mut value = String::new();
-        if chars.peek() == Some(&'"') {
-            chars.next();
-            while let Some(c) = chars.next() {
-                if c == '"' {
-                    break;
-                }
-                if c == '\\' {
-                    if let Some(escaped) = chars.next() {
-                        value.push(escaped);
-                    }
-                } else {
-                    value.push(c);
-                }
-            }
-        } else {
-            while let Some(c) = chars.peek() {
-                if c.is_whitespace() || *c == ',' {
-                    break;
-                }
-                value.push(chars.next().unwrap());
-            }
-        }
+        skip_whitespace_chars(&mut chars);
+        let value = parse_param_value(&mut chars);
         if !key.is_empty() {
             result.push((key, value));
         }
     }
     result
+}
+
+/// 跳过空白和逗号分隔符。
+fn skip_whitespace_and_commas(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    while matches!(chars.peek(), Some(c) if c.is_whitespace() || *c == ',') {
+        chars.next();
+    }
+}
+
+/// 跳过空白字符。
+fn skip_whitespace_chars(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    while matches!(chars.peek(), Some(c) if c.is_whitespace()) {
+        chars.next();
+    }
+}
+
+/// 解析参数键名（到空白或 `=` 为止）。
+fn parse_param_key(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    let mut key = String::new();
+    while let Some(c) = chars.peek() {
+        if c.is_whitespace() || *c == '=' {
+            break;
+        }
+        key.push(chars.next().unwrap());
+    }
+    key
+}
+
+/// 解析参数值：引号值（支持反斜杠转义）或非引号值。
+fn parse_param_value(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    if chars.peek() == Some(&'"') {
+        parse_quoted_value(chars)
+    } else {
+        parse_unquoted_value(chars)
+    }
+}
+
+/// 解析引号包裹的值（支持 `\` 转义）。
+fn parse_quoted_value(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    chars.next(); // consume opening quote
+    let mut value = String::new();
+    while let Some(c) = chars.next() {
+        if c == '"' {
+            break;
+        }
+        if c == '\\' {
+            if let Some(escaped) = chars.next() {
+                value.push(escaped);
+            }
+        } else {
+            value.push(c);
+        }
+    }
+    value
+}
+
+/// 解析非引号值（到空白或逗号为止）。
+fn parse_unquoted_value(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+    let mut value = String::new();
+    while let Some(c) = chars.peek() {
+        if c.is_whitespace() || *c == ',' {
+            break;
+        }
+        value.push(chars.next().unwrap());
+    }
+    value
 }
 
 /// 常量时间字符串比较，避免时序攻击（L1 修复）。

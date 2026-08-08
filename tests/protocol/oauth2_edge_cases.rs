@@ -40,11 +40,10 @@ fn client_for(server: &MockServer) -> OAuth2Client {
 
 /// 6.2 refresh_token_invalid_returns_error
 ///
-/// OAuth2 模块按设计决策（见 oauth2/mod.rs 文档："仅实现三种授权流程，不实现 Refresh Token"）
-/// 未提供 `refresh_token` 方法。此测试用 `exchange_code` + 无效 code 验证等价的错误返回边界：
+/// OAuth2 模块按设计决策（见 oauth2/mod.rs 文档：“仅实现三种授权流程，不实现 Refresh Token”）
+/// 未提供 `refresh_token` 方法。此测试用 `exchange_code_with_pkce` + 无效 code 验证等价的错误返回边界：
 /// 当授权服务器返回 4xx 错误时，客户端应返回 `GarrisonError::OAuth2`。
 #[tokio::test]
-#[allow(deprecated)]
 async fn refresh_token_invalid_returns_error() {
     let server = MockServer::start().await;
 
@@ -58,8 +57,9 @@ async fn refresh_token_invalid_returns_error() {
         .await;
 
     let client = client_for(&server);
+    let verifier = "a".repeat(43);
     let result = client
-        .exchange_code("invalid-or-expired-code", "state")
+        .exchange_code_with_pkce("invalid-or-expired-code", "state", "state", &verifier)
         .await;
     assert!(result.is_err(), "无效/过期的 code 应返回错误");
     match result.err() {
@@ -142,7 +142,6 @@ async fn scope_empty_string_vs_none_behavior_differs() {
 /// - 第一次请求返回 200（成功）
 /// - 第二次请求返回 400（invalid_grant，code 已被使用）
 #[tokio::test]
-#[allow(deprecated)]
 async fn authorization_code_replay_rejected() {
     let server = MockServer::start().await;
 
@@ -170,14 +169,19 @@ async fn authorization_code_replay_rejected() {
 
     let client = client_for(&server);
     let code = "same-auth-code";
+    let verifier = "a".repeat(43);
 
     // 第一次使用 code：成功
-    let first = client.exchange_code(code, "state").await;
+    let first = client
+        .exchange_code_with_pkce(code, "state", "state", &verifier)
+        .await;
     assert!(first.is_ok(), "首次使用 code 应成功");
     assert_eq!(first.unwrap().access_token, "first-token");
 
     // 第二次使用同一 code：被拒绝
-    let second = client.exchange_code(code, "state").await;
+    let second = client
+        .exchange_code_with_pkce(code, "state", "state", &verifier)
+        .await;
     assert!(second.is_err(), "重放同一 code 应被拒绝");
     match second.err() {
         Some(GarrisonError::OAuth2(msg)) => {

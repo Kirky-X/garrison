@@ -196,60 +196,20 @@ fn strip_event_handlers(attrs: &str) -> String {
     let mut last_copy = 0;
 
     while i < bytes.len() {
-        // 属性起始：位置 0、前一字符为空白、或前一字符为 `"`/`'`（处理属性间无空格场景，
-        // 如 `href="x"onclick="..."`）
-        let is_attr_start = i == 0
-            || bytes[i - 1].is_ascii_whitespace()
-            || bytes[i - 1] == b'"'
-            || bytes[i - 1] == b'\'';
-        if is_attr_start
-            && i + 2 <= bytes.len()
-            && bytes[i].eq_ignore_ascii_case(&b'o')
-            && bytes[i + 1].eq_ignore_ascii_case(&b'n')
-        {
-            let mut j = i + 2;
-            while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
-                j += 1;
-            }
-            // 允许属性名与 `=` 之间的空白（防 `onclick =alert(1)` 绕过）
-            let mut k = j;
-            while k < bytes.len() && bytes[k].is_ascii_whitespace() {
-                k += 1;
-            }
-            if k < bytes.len() && bytes[k] == b'=' {
-                j = k; // 推进到 `=` 位置
-                out.push_str(&attrs[last_copy..i]);
-                j += 1;
-                if j < bytes.len() {
-                    match bytes[j] {
-                        b'"' => {
-                            j += 1;
-                            while j < bytes.len() && bytes[j] != b'"' {
-                                j += 1;
-                            }
-                            if j < bytes.len() {
-                                j += 1;
-                            }
-                        },
-                        b'\'' => {
-                            j += 1;
-                            while j < bytes.len() && bytes[j] != b'\'' {
-                                j += 1;
-                            }
-                            if j < bytes.len() {
-                                j += 1;
-                            }
-                        },
-                        _ => {
-                            while j < bytes.len() && !bytes[j].is_ascii_whitespace() {
-                                j += 1;
-                            }
-                        },
-                    }
+        if is_attr_start_pos(bytes, i) {
+            if let Some(name_end) = match_event_handler_prefix(bytes, i) {
+                // 允许属性名与 `=` 之间的空白（防 `onclick =alert(1)` 绕过）
+                let mut k = name_end;
+                while k < bytes.len() && bytes[k].is_ascii_whitespace() {
+                    k += 1;
                 }
-                last_copy = j;
-                i = j;
-                continue;
+                if k < bytes.len() && bytes[k] == b'=' {
+                    out.push_str(&attrs[last_copy..i]);
+                    let value_end = skip_quoted_value(bytes, k + 1);
+                    last_copy = value_end;
+                    i = value_end;
+                    continue;
+                }
             }
         }
         i += 1;
@@ -257,6 +217,72 @@ fn strip_event_handlers(attrs: &str) -> String {
 
     out.push_str(&attrs[last_copy..]);
     out
+}
+
+/// 判断位置 `i` 是否为属性起始位置。
+/// 属性起始：位置 0、前一字符为空白、或前一字符为 `"`/`'`（处理属性间无空格场景，
+/// 如 `href="x"onclick="..."`）。
+fn is_attr_start_pos(bytes: &[u8], i: usize) -> bool {
+    i == 0 || bytes[i - 1].is_ascii_whitespace() || bytes[i - 1] == b'"' || bytes[i - 1] == b'\''
+}
+
+/// 检查 `bytes[i..]` 是否匹配 `on` + 字母数字（事件处理器属性名前缀）。
+/// 匹配成功返回属性名结束位置（`on` 后的字母数字序列末尾）。
+fn match_event_handler_prefix(bytes: &[u8], i: usize) -> Option<usize> {
+    if i + 2 > bytes.len()
+        || !bytes[i].eq_ignore_ascii_case(&b'o')
+        || !bytes[i + 1].eq_ignore_ascii_case(&b'n')
+    {
+        return None;
+    }
+    let mut j = i + 2;
+    while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
+        j += 1;
+    }
+    // 至少需要 on + 1 个字母数字（如 onclick），仅 "on" 不算事件处理器
+    if j > i + 2 {
+        Some(j)
+    } else {
+        None
+    }
+}
+
+/// 从位置 `start` 开始跳过属性值（双引号/单引号/无引号），返回值结束位置。
+fn skip_quoted_value(bytes: &[u8], start: usize) -> usize {
+    if start >= bytes.len() {
+        return start;
+    }
+    match bytes[start] {
+        b'"' => {
+            let mut j = start + 1;
+            while j < bytes.len() && bytes[j] != b'"' {
+                j += 1;
+            }
+            if j < bytes.len() {
+                j + 1
+            } else {
+                j
+            }
+        },
+        b'\'' => {
+            let mut j = start + 1;
+            while j < bytes.len() && bytes[j] != b'\'' {
+                j += 1;
+            }
+            if j < bytes.len() {
+                j + 1
+            } else {
+                j
+            }
+        },
+        _ => {
+            let mut j = start;
+            while j < bytes.len() && !bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            j
+        },
+    }
 }
 
 /// 白名单模式：保留白名单内的标签（属性值仍转义），其余标签和纯文本中的特殊字符全部转义。
@@ -329,94 +355,19 @@ fn strip_dangerous_uri(attrs: &str) -> String {
     let mut i = 0;
     let mut last_copy = 0;
 
-    /// 检查从 `bytes[i..]` 开始是否匹配目标属性名（大小写不敏感），后跟 `=` 或空白+`=`。
-    /// 返回匹配后的位置（指向 `=` 之后）或 `None`。
-    fn match_attr_name(bytes: &[u8], i: usize, target: &[u8]) -> Option<usize> {
-        if i + target.len() > bytes.len() {
-            return None;
-        }
-        for (k, &c) in target.iter().enumerate() {
-            if !bytes[i + k].eq_ignore_ascii_case(&c) {
-                return None;
-            }
-        }
-        // target 匹配后，跳过空白，然后期望 `=`
-        let mut j = i + target.len();
-        while j < bytes.len() && bytes[j].is_ascii_whitespace() {
-            j += 1;
-        }
-        if j < bytes.len() && bytes[j] == b'=' {
-            Some(j + 1) // 指向 `=` 之后
-        } else {
-            None
-        }
-    }
-
-    /// 判断 URI scheme 是否安全（白名单内）。
-    /// `value` 是 strip 前导空白和控制字符后的属性值。
-    fn is_safe_uri(value: &str) -> bool {
-        let lower = value.to_ascii_lowercase();
-        // 锚点、绝对路径、相对路径
-        if lower.starts_with('#')
-            || lower.starts_with('/')
-            || lower.starts_with("./")
-            || lower.starts_with("../")
-        {
-            return true;
-        }
-        // 标准 scheme 白名单
-        if lower.starts_with("http://")
-            || lower.starts_with("https://")
-            || lower.starts_with("mailto:")
-        {
-            return true;
-        }
-        // 无 scheme（不含 `:`）视为相对路径，安全
-        // 注意：`javascript:`/`data:`/`vbscript:` 等含 `:` 且非白名单 scheme → 不安全
-        if let Some(colon_pos) = lower.find(':') {
-            // 检查 `:` 前是否有 `/`（若有 `/` 在前则是相对路径如 `/path:to`，安全）
-            if let Some(slash_pos) = lower.find('/') {
-                if slash_pos < colon_pos {
-                    return true; // `/` 在 `:` 前，相对路径
-                }
-            }
-            // `:` 在前且非白名单 scheme → 不安全
-            false
-        } else {
-            true // 无 `:`，相对路径或 fragment
-        }
-    }
-
     while i < bytes.len() {
         let is_attr_start = i == 0 || bytes[i - 1].is_ascii_whitespace();
         if is_attr_start {
-            // 尝试匹配 href= / src= / xlink:href=
-            let target_pos = match_attr_name(bytes, i, b"href")
-                .or_else(|| match_attr_name(bytes, i, b"src"))
-                .or_else(|| match_attr_name(bytes, i, b"xlink:href"));
-            if let Some(value_start) = target_pos {
-                // 找到属性值，提取值范围
+            if let Some(value_start) = match_target_attr(bytes, i) {
                 out.push_str(&attrs[last_copy..value_start]);
                 let (value_end, value_str) = extract_attr_value(bytes, value_start);
-                // strip 前导空白和控制字符（0x00-0x1F + 0x7F），再 strip 引号
-                // 注意：value_str 可能带引号（如 `"https://example.com"`），
-                // is_safe_uri 需要检查不带引号的纯 URI
                 let stripped = value_str
                     .trim_start_matches(|c: char| c.is_ascii_whitespace() || c.is_ascii_control());
                 let stripped = stripped.trim_matches(|c| c == '"' || c == '\'');
                 if is_safe_uri(stripped) {
-                    // 安全：保留原值（包含引号）
                     out.push_str(&attrs[value_start..value_end]);
                 } else {
-                    // 不安全：替换值为 `#`（保留引号形式）
-                    // 根据原始引号形式决定输出
-                    if value_start < bytes.len() && bytes[value_start] == b'"' {
-                        out.push_str("\"#\"");
-                    } else if value_start < bytes.len() && bytes[value_start] == b'\'' {
-                        out.push_str("'#'");
-                    } else {
-                        out.push('#');
-                    }
+                    write_uri_replacement(&mut out, bytes, value_start);
                 }
                 last_copy = value_end;
                 i = value_end;
@@ -428,6 +379,73 @@ fn strip_dangerous_uri(attrs: &str) -> String {
 
     out.push_str(&attrs[last_copy..]);
     out
+}
+
+/// 匹配 `bytes[i..]` 是否为 `href=`/`src=`/`xlink:href=`（大小写不敏感）。
+/// 返回 `=` 之后的位置或 `None`。
+fn match_target_attr(bytes: &[u8], i: usize) -> Option<usize> {
+    match_attr_name(bytes, i, b"href")
+        .or_else(|| match_attr_name(bytes, i, b"src"))
+        .or_else(|| match_attr_name(bytes, i, b"xlink:href"))
+}
+
+/// 检查从 `bytes[i..]` 开始是否匹配目标属性名（大小写不敏感），后跟 `=` 或空白+`=`。
+/// 返回匹配后的位置（指向 `=` 之后）或 `None`。
+fn match_attr_name(bytes: &[u8], i: usize, target: &[u8]) -> Option<usize> {
+    if i + target.len() > bytes.len() {
+        return None;
+    }
+    for (k, &c) in target.iter().enumerate() {
+        if !bytes[i + k].eq_ignore_ascii_case(&c) {
+            return None;
+        }
+    }
+    let mut j = i + target.len();
+    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+        j += 1;
+    }
+    if j < bytes.len() && bytes[j] == b'=' {
+        Some(j + 1)
+    } else {
+        None
+    }
+}
+
+/// 判断 URI scheme 是否安全（白名单内）。
+fn is_safe_uri(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    if lower.starts_with('#')
+        || lower.starts_with('/')
+        || lower.starts_with("./")
+        || lower.starts_with("../")
+    {
+        return true;
+    }
+    if lower.starts_with("http://") || lower.starts_with("https://") || lower.starts_with("mailto:")
+    {
+        return true;
+    }
+    if let Some(colon_pos) = lower.find(':') {
+        if let Some(slash_pos) = lower.find('/') {
+            if slash_pos < colon_pos {
+                return true;
+            }
+        }
+        false
+    } else {
+        true
+    }
+}
+
+/// 不安全 URI 的替换值写入 `out`：保留原始引号形式，值替换为 `#`。
+fn write_uri_replacement(out: &mut String, bytes: &[u8], value_start: usize) {
+    if value_start < bytes.len() && bytes[value_start] == b'"' {
+        out.push_str("\"#\"");
+    } else if value_start < bytes.len() && bytes[value_start] == b'\'' {
+        out.push_str("'#'");
+    } else {
+        out.push('#');
+    }
 }
 
 /// 从 `bytes[start..]` 开始提取属性值，返回 `(值结束位置, 值字符串)`。
@@ -975,6 +993,206 @@ mod tests {
         assert!(
             !result.to_lowercase().contains("onerror"),
             "单引号属性后无空格 onerror 应被移除，实际: {}",
+            result
+        );
+    }
+
+    // ========================================================================
+    // strip_event_handlers 直接单元测试（T001）
+    // ========================================================================
+
+    /// 无事件处理器的属性原样保留。
+    #[test]
+    fn strip_event_handlers_keeps_non_event_attrs() {
+        let attrs = r#"class="btn" href="https://example.com" title="click""#;
+        assert_eq!(strip_event_handlers(attrs), attrs);
+    }
+
+    /// onclick 属性被完整移除（双引号值）。
+    #[test]
+    fn strip_event_handlers_removes_onclick_quoted() {
+        let attrs = r#"class="btn" onclick="alert(1)" title="ok""#;
+        let result = strip_event_handlers(attrs);
+        assert!(
+            !result.contains("onclick"),
+            "onclick 应被移除, got: {}",
+            result
+        );
+        assert!(result.contains(r#"class="btn""#), "class 应保留");
+        assert!(result.contains(r#"title="ok""#), "title 应保留");
+    }
+
+    /// onload 属性被完整移除。
+    #[test]
+    fn strip_event_handlers_removes_onload() {
+        let attrs = r#"onload="alert(1)" class="img""#;
+        let result = strip_event_handlers(attrs);
+        assert!(
+            !result.contains("onload"),
+            "onload 应被移除, got: {}",
+            result
+        );
+        assert!(result.contains(r#"class="img""#), "class 应保留");
+    }
+
+    /// onerror 属性被完整移除。
+    #[test]
+    fn strip_event_handlers_removes_onerror() {
+        let attrs = r#"src="x" onerror="alert(1)""#;
+        let result = strip_event_handlers(attrs);
+        assert!(
+            !result.contains("onerror"),
+            "onerror 应被移除, got: {}",
+            result
+        );
+        assert!(result.contains(r#"src="x""#), "src 应保留");
+    }
+
+    /// 大小写不敏感：OnClick 也应被移除。
+    #[test]
+    fn strip_event_handlers_case_insensitive() {
+        let attrs = r#"OnClick="alert(1)" class="ok""#;
+        let result = strip_event_handlers(attrs);
+        assert!(
+            !result.to_lowercase().contains("onclick"),
+            "OnClick 应被移除, got: {}",
+            result
+        );
+        assert!(result.contains(r#"class="ok""#), "class 应保留");
+    }
+
+    /// 属性间无空格：`href="x"onclick="..."` — onclick 应被移除。
+    #[test]
+    fn strip_event_handlers_no_space_after_quote() {
+        let attrs = r#"href="x"onclick="alert(1)""#;
+        let result = strip_event_handlers(attrs);
+        assert!(
+            !result.to_lowercase().contains("onclick"),
+            "无空格 onclick 应被移除, got: {}",
+            result
+        );
+        assert!(result.contains(r#"href="x""#), "href 应保留");
+    }
+
+    /// 空白绕过：`onclick =alert(1)` — 属性名与 = 之间有空格。
+    #[test]
+    fn strip_event_handlers_space_before_equals() {
+        let attrs = r#"onclick =alert(1) class="ok""#;
+        let result = strip_event_handlers(attrs);
+        assert!(
+            !result.to_lowercase().contains("onclick"),
+            "onclick 空白绕过应被移除, got: {}",
+            result
+        );
+    }
+
+    /// 空输入返回空字符串。
+    #[test]
+    fn strip_event_handlers_empty_input() {
+        assert_eq!(strip_event_handlers(""), "");
+    }
+
+    /// 多个事件处理器同时被移除。
+    #[test]
+    fn strip_event_handlers_multiple_events() {
+        let attrs = r#"onclick="a()" class="btn" onload="b()" title="ok""#;
+        let result = strip_event_handlers(attrs);
+        assert!(!result.contains("onclick"), "onclick 应被移除");
+        assert!(!result.contains("onload"), "onload 应被移除");
+        assert!(result.contains(r#"class="btn""#), "class 应保留");
+        assert!(result.contains(r#"title="ok""#), "title 应保留");
+    }
+
+    /// 单引号事件处理器值。
+    #[test]
+    fn strip_event_handlers_single_quoted_value() {
+        let attrs = r#"onclick='alert(1)' class="ok""#;
+        let result = strip_event_handlers(attrs);
+        assert!(
+            !result.contains("onclick"),
+            "单引号 onclick 应被移除, got: {}",
+            result
+        );
+        assert!(result.contains(r#"class="ok""#), "class 应保留");
+    }
+
+    // ========================================================================
+    // strip_dangerous_uri 直接单元测试（T005）
+    // ========================================================================
+
+    /// `javascript:` 替换为 `#`。
+    #[test]
+    fn strip_dangerous_uri_replaces_javascript() {
+        let attrs = r#"href="javascript:alert(1)""#;
+        let result = strip_dangerous_uri(attrs);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "javascript: 应被替换, got: {}",
+            result
+        );
+        assert!(result.contains("#"), "应含 #");
+    }
+
+    /// `data:` 替换为 `#`。
+    #[test]
+    fn strip_dangerous_uri_replaces_data() {
+        let attrs = r#"href="data:text/html,<script>alert(1)</script>""#;
+        let result = strip_dangerous_uri(attrs);
+        assert!(
+            !result.to_lowercase().contains("data:"),
+            "data: 应被替换, got: {}",
+            result
+        );
+    }
+
+    /// `https://` 保留。
+    #[test]
+    fn strip_dangerous_uri_keeps_https() {
+        let attrs = r#"href="https://example.com""#;
+        assert_eq!(strip_dangerous_uri(attrs), attrs);
+    }
+
+    /// `/relative/path` 保留。
+    #[test]
+    fn strip_dangerous_uri_keeps_absolute_path() {
+        let attrs = r#"href="/path/to/resource""#;
+        assert_eq!(strip_dangerous_uri(attrs), attrs);
+    }
+
+    /// `#anchor` 保留。
+    #[test]
+    fn strip_dangerous_uri_keeps_anchor() {
+        let attrs = r##"href="#section""##;
+        assert_eq!(strip_dangerous_uri(attrs), attrs);
+    }
+
+    /// 前导空白+控制字符绕过：`\x01javascript:` 应被识别为不安全。
+    #[test]
+    fn strip_dangerous_uri_control_char_bypass() {
+        let attrs = "href=\"\x01javascript:alert(1)\"";
+        let result = strip_dangerous_uri(attrs);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "控制字符绕过应被替换, got: {}",
+            result
+        );
+    }
+
+    /// 非目标属性（如 class）不被处理。
+    #[test]
+    fn strip_dangerous_uri_ignores_non_target_attrs() {
+        let attrs = r#"class="javascript:alert(1)""#;
+        assert_eq!(strip_dangerous_uri(attrs), attrs);
+    }
+
+    /// `src` 属性中的危险 URI 也被替换。
+    #[test]
+    fn strip_dangerous_uri_replaces_in_src() {
+        let attrs = r#"src="javascript:alert(1)""#;
+        let result = strip_dangerous_uri(attrs);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "src 中 javascript: 应被替换, got: {}",
             result
         );
     }

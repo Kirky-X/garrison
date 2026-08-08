@@ -599,9 +599,7 @@ impl GarrisonLogicDefault {
     /// 持锁期间阻塞同 `login_id` 的其他 `login`/`logout`/`kickout` 请求（per-login_id 锁粒度）。
     /// 不同 `login_id` 的请求不受影响（DashMap 分片锁）。
     async fn login_inner(&self, login_id: &str, params: &LoginParams) -> GarrisonResult<String> {
-        // 登录前防火墙安全钩子检查
-        // 任一 hook Err 阻断登录；未注入 hook 时为 no-op（向后兼容 0.2.x）
-        // hooks 模块依赖 limiteron，仅在 limiteron 启用时编译（匹配 lib.rs 的 limiteron cfg）
+        // 1. 登录前防火墙安全钩子检查
         #[cfg(any(
             feature = "sms-rate-limit",
             feature = "firewall-ratelimit",
@@ -615,69 +613,144 @@ impl GarrisonLogicDefault {
             self.firewall.check_login_hooks(login_id, &ctx).await?;
         }
 
-        // is_share=true: 复用现有有效 token，不创建新会话
-        if self.config.is_share {
-            if let Some(existing_token) = self.session.get_token_by_login_id(login_id) {
-                // 验证 token 仍然有效（DAO 中存在且未过期）
-                if let Ok(Some(_ts)) = self.session.get_token_session(&existing_token).await {
-                    // touch 刷新活跃时间 + TTL
-                    self.session.touch(&existing_token).await?;
-                    return Ok(existing_token);
-                }
-                // token 已失效（DAO 中已过期/删除），清理 login_token_map 陈旧条目
-                self.session.remove_login_token(login_id, &existing_token);
-            }
+        // 2. is_share=true: 复用现有有效 token
+        if let Some(token) = self.try_reuse_session(login_id).await? {
+            return Ok(token);
         }
 
-        // is_concurrent=false: 根据 replaced_login_exit_mode 决定行为
-        // - OldDevice：踢出旧设备的所有会话（默认，对应 既有语义）
-        // - NewDevice：若存在有效旧会话则拒绝新登录，保留旧设备
-        // 注：is_share=true 时 is_concurrent 必为 true（T006 validate 保证），两分支互斥
-        if !self.config.is_concurrent {
-            match self.config.replaced_login_exit_mode {
-                ReplacedLoginExitMode::OldDevice => {
-                    self.kickout(login_id).await?;
-                },
-                ReplacedLoginExitMode::NewDevice => {
-                    // 检查是否存在有效旧会话（与 is_share 块一致的校验模式）
-                    if let Some(existing_token) = self.session.get_token_by_login_id(login_id) {
-                        if let Ok(Some(_)) = self.session.get_token_session(&existing_token).await {
-                            tracing::warn!(
-                                login_id,
-                                mode = "new_device",
-                                "new device login rejected: currently in NewDevice mode, valid existing session exists"
-                            );
-                            return Err(GarrisonError::NotLogin(
-                                "stp-new-device-login-rejected-not-allowed::".to_string(),
-                            ));
+        // 3. is_concurrent=false: 并发策略检查
+        self.check_concurrent_policy(login_id).await?;
+
+        // 4. 自动生成设备指纹
+        let params = self.prepare_device_fingerprint(params);
+
+        // 5. 设备绑定策略检测
+        self.check_device_binding(login_id, &params).await?;
+
+        // 6. 创建会话 + enforce 最大登录数（同一锁区内）
+        let token = self.generate_token(login_id)?;
+        let login_id_owned = login_id.to_string();
+        let token_owned = token.clone();
+        let params_owned = params.clone();
+        self.session
+            .with_login_lock(&login_id_owned, async {
+                self.session
+                    .create_token_session_inner(
+                        &login_id_owned,
+                        &token_owned,
+                        params_owned.device.as_deref(),
+                        params_owned.ip.as_deref(),
+                        params_owned.user_agent.as_deref(),
+                    )
+                    .await?;
+                if self.config.max_login_count > 0 {
+                    if let Err(e) = self
+                        .enforce_max_login_count_inner(
+                            &login_id_owned,
+                            self.config.max_login_count,
+                        )
+                        .await
+                    {
+                        tracing::error!(
+                            error = %e,
+                            "enforce_max_login_count failed, rolling back newly created session"
+                        );
+                        match self.session.get_token_session(&token_owned).await {
+                            Ok(Some(ts)) => {
+                                if let Err(logout_err) =
+                                    self.session.logout_inner(&token_owned, &ts).await
+                                {
+                                    tracing::error!(
+                                        error = %logout_err,
+                                        "rollback logout_inner failed, may produce orphan session (token still in DAO but login returned Err)"
+                                    );
+                                }
+                            },
+                            Ok(None) => {
+                                tracing::warn!(
+                                    "token session no longer exists during rollback, skipping logout_inner"
+                                );
+                            },
+                            Err(get_err) => {
+                                tracing::error!(
+                                    error = %get_err,
+                                    "rollback get_token_session failed, token may remain as orphan session"
+                                );
+                            },
                         }
+                        return Err(e);
                     }
-                    // 无有效旧会话，允许新登录
-                },
-            }
-        }
+                }
+                Ok(())
+            })
+            .await?;
 
-        // T020: 自动生成设备指纹（A10 强化：使用 `device_fingerprint_rich`）。
-        // `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值时，
-        // 调用 `device_fingerprint_rich` 生成 SHA-256 多维度指纹写入 device。
-        // 当前 LoginParams 仅含 ua/ip 两个维度，其余维度为 None（API 已就绪，
-        // 未来扩展 LoginParams 后可直接传入 Accept-Language / sec-ch-ua 等 header）。
-        // 仅在 device 模块可用时执行（feature gate 与 device 模块一致）；
-        // 未启用时 device 保持 None，不影响登录主流程。
-        // `cfg_attr` 抑制未启用 device feature 时的 `unused_mut` 警告。
-        #[cfg_attr(
-            not(any(
-                feature = "protocol-jwt",
-                feature = "account-credential",
-                feature = "protocol-oauth2",
-                feature = "protocol-sso",
-                feature = "protocol-sign",
-                feature = "secure-sign",
-                feature = "secure-httpdigest",
-                feature = "device-binding"
-            )),
-            allow(unused_mut)
-        )]
+        // 7. 事件通知（锁外执行，避免持锁跨 broadcast）
+        self.notify_login_event(login_id, &token, &params).await;
+        Ok(token)
+    }
+
+    /// is_share=true 时尝试复用现有有效 token。
+    ///
+    /// 返回 `Ok(Some(token))` 表示复用成功，`Ok(None)` 表示无可复用会话。
+    async fn try_reuse_session(&self, login_id: &str) -> GarrisonResult<Option<String>> {
+        if !self.config.is_share {
+            return Ok(None);
+        }
+        if let Some(existing_token) = self.session.get_token_by_login_id(login_id) {
+            if let Ok(Some(_ts)) = self.session.get_token_session(&existing_token).await {
+                self.session.touch(&existing_token).await?;
+                return Ok(Some(existing_token));
+            }
+            self.session.remove_login_token(login_id, &existing_token);
+        }
+        Ok(None)
+    }
+
+    /// is_concurrent=false 时根据 replaced_login_exit_mode 处理并发登录策略。
+    async fn check_concurrent_policy(&self, login_id: &str) -> GarrisonResult<()> {
+        if self.config.is_concurrent {
+            return Ok(());
+        }
+        match self.config.replaced_login_exit_mode {
+            ReplacedLoginExitMode::OldDevice => {
+                self.kickout(login_id).await?;
+            },
+            ReplacedLoginExitMode::NewDevice => {
+                if let Some(existing_token) = self.session.get_token_by_login_id(login_id) {
+                    if let Ok(Some(_)) = self.session.get_token_session(&existing_token).await {
+                        tracing::warn!(
+                            login_id,
+                            mode = "new_device",
+                            "new device login rejected: currently in NewDevice mode, valid existing session exists"
+                        );
+                        return Err(GarrisonError::NotLogin(
+                            "stp-new-device-login-rejected-not-allowed::".to_string(),
+                        ));
+                    }
+                }
+            },
+        }
+        Ok(())
+    }
+
+    /// 自动生成设备指纹（A10 强化：使用 `device_fingerprint_rich`）。
+    ///
+    /// `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值时生成 SHA-256 指纹。
+    #[cfg_attr(
+        not(any(
+            feature = "protocol-jwt",
+            feature = "account-credential",
+            feature = "protocol-oauth2",
+            feature = "protocol-sso",
+            feature = "protocol-sign",
+            feature = "secure-sign",
+            feature = "secure-httpdigest",
+            feature = "device-binding"
+        )),
+        allow(unused_mut)
+    )]
+    fn prepare_device_fingerprint(&self, params: &LoginParams) -> LoginParams {
         let mut params = params.clone();
         #[cfg(any(
             feature = "protocol-jwt",
@@ -694,12 +767,15 @@ impl GarrisonLogicDefault {
                 params.device = Some(crate::session::device::device_fingerprint_rich(&fp_input));
             }
         }
+        params
+    }
 
-        // T013: 设备绑定策略检测（device-binding feature，A10 强化：hard block）。
-        // 创建 session 前调用 `DeviceBindingPolicy::is_new_device`，若为新设备
-        // 且 `require_secondary_auth` 返回 true，直接返回 `Err(NotPermission)` 阻断登录
-        // （A10 修复：原仅设置 `params.require_mfa = true` 软提示，未真正阻断）。
-        // 未注入 policy 时跳过（向后兼容）；检测失败只 warn 不中断 login。
+    /// 设备绑定策略检测（device-binding feature，A10 强化：hard block）。
+    async fn check_device_binding(
+        &self,
+        login_id: &str,
+        params: &LoginParams,
+    ) -> GarrisonResult<()> {
         #[cfg(feature = "device-binding")]
         if let Some(policy) = &self.device_binding_policy {
             let device_id = params.device.as_deref().unwrap_or("");
@@ -730,101 +806,30 @@ impl GarrisonLogicDefault {
                 }
             }
         }
+        let _ = (login_id, params);
+        Ok(())
+    }
 
-        let token = self.generate_token(login_id)?;
-        // HIGH-1 修复（fix-refresh-race-and-test-contracts）：create + enforce 在同一
-        // `with_login_lock` 临界区内执行，消除原实现"create_token_session 返回时锁释放
-        // → plugin/listener 跨 await → enforce_max_login_count 重新获取锁"之间的 TOCTOU
-        // 竞态窗口。原实现下并发 login 时 enforce 可能基于过时 AccountSession 计算踢出数，
-        // 导致过度踢出或踢出刚 create 的 token（返回给调用方但实际已失效）。
-        //
-        // 锁内序列：
-        //   1. create_token_session_inner（无锁版本，本方法已持锁）
-        //   2. enforce_max_login_count_inner（已存在，无锁版本）
-        // 失败回滚：用 logout_inner（不重入 with_login_lock）删除刚创建的 token。
-        //
-        // plugin on_login + listener broadcast 移到锁外执行：
-        //   - 避免持锁跨 broadcast await（broadcast 串行调用 listener.on_event，阻塞同
-        //     login_id 的其他请求；listener 阻塞会导致 5-25ms 持锁时间）
-        //   - 事件时序更合理：先确保 login（含 enforce）成功，再广播 Login 事件，
-        //     避免 enforce 失败回滚后 Login 事件已广播的"幽灵登录"问题
-        let login_id_owned: String = login_id.to_string();
-        let token_owned: String = token.clone();
-        let params_owned = params.clone();
-        self.session
-            .with_login_lock(&login_id_owned, async {
-                self.session
-                    .create_token_session_inner(
-                        &login_id_owned,
-                        &token_owned,
-                        params_owned.device.as_deref(),
-                        params_owned.ip.as_deref(),
-                        params_owned.user_agent.as_deref(),
-                    )
-                    .await?;
-                // max_login_count > 0 时，强制最大登录数量（踢出最旧会话）
-                // enforce 失败时回滚（登出新创建的 token），避免孤儿会话泄漏
-                if self.config.max_login_count > 0 {
-                    if let Err(e) = self
-                        .enforce_max_login_count_inner(
-                            &login_id_owned,
-                            self.config.max_login_count,
-                        )
-                        .await
-                    {
-                        tracing::error!(
-                            error = %e,
-                            "enforce_max_login_count failed, rolling back newly created session"
-                        );
-                        // 已在 with_login_lock 内，用 logout_inner 避免重入死锁。
-                        // 先读取 token session 供 logout_inner 使用（与原 logout 流程一致）。
-                        match self.session.get_token_session(&token_owned).await {
-                            Ok(Some(ts)) => {
-                                if let Err(logout_err) =
-                                    self.session.logout_inner(&token_owned, &ts).await
-                                {
-                                    tracing::error!(
-                                        error = %logout_err,
-                                        "rollback logout_inner failed, may produce orphan session (token still in DAO but login returned Err)"
-                                    );
-                                }
-                            },
-                            Ok(None) => {
-                                tracing::warn!(
-                                    "token session no longer exists during rollback, skipping logout_inner"
-                                );
-                            },
-                            Err(get_err) => {
-                                tracing::error!(
-                                    error = %get_err,
-                                    "rollback get_token_session failed, token may remain as orphan session"
-                                );
-                            },
-                        }
-                        return Err(e);
-                    }
-                }
-                Ok(())
-            })
-            .await?;
-        // auto-wire: 触发 plugin on_login + listener Login 事件（锁外执行，避免持锁跨 broadcast）
+    /// 触发登录事件通知：plugin on_login + listener broadcast + 异常检测。
+    ///
+    /// 在锁外执行，避免持锁跨 broadcast。
+    async fn notify_login_event(&self, login_id: &str, token: &str, params: &LoginParams) {
         if let Some(pm) = &self.plugin_manager {
-            pm.on_login(login_id, &token);
+            pm.on_login(login_id, token);
         }
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&GarrisonEvent::Login {
                 login_id: login_id.to_string(),
-                token: token.clone(),
+                token: token.to_string(),
                 device: params.device.clone(),
                 request_context: None,
             })
             .await;
         }
-        // T006: 异常检测（security-alert feature，检测失败只 warn 不中断 login）
         #[cfg(feature = "security-alert")]
-        self.run_anomaly_check_on_login(login_id, &params).await;
-        Ok(token)
+        self.run_anomaly_check_on_login(login_id, params).await;
+        let _ = params; // suppress unused warning when listener/security-alert features are disabled
     }
 
     /// 强制最大登录数量：踢出最旧的会话直到数量 <= max。

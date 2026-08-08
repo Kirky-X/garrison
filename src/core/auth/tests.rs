@@ -17,12 +17,18 @@ fn make_auth_logic(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
     AuthLogicDefault::new(session, token_handler, timeout as i64)
 }
 
-/// 辅助函数：创建 AuthLogicDefault 实例，注入 AllowAllSwitchToGuard（L4 测试用）。
-/// 生产环境禁止使用此函数，应注入自定义权限 guard。
-/// `#[allow(deprecated)]` 抑制 deprecated 警告（测试专用）。
-#[allow(deprecated)]
+/// 测试用 allow-all guard：允许所有 switch_to 切换。
+struct TestAllowAllGuard;
+#[async_trait::async_trait]
+impl SwitchToGuard for TestAllowAllGuard {
+    async fn check(&self, _original: &str, _target: &str) -> GarrisonResult<()> {
+        Ok(())
+    }
+}
+
+/// 辅助函数：创建 AuthLogicDefault 实例，注入 TestAllowAllGuard（L4 测试用）。
 fn make_auth_logic_allow_switch(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
-    make_auth_logic(timeout, active_timeout).with_switch_to_guard(Arc::new(AllowAllSwitchToGuard))
+    make_auth_logic(timeout, active_timeout).with_switch_to_guard(Arc::new(TestAllowAllGuard))
 }
 
 // ========================================================================
@@ -510,7 +516,7 @@ async fn switch_to_nonexistent_target_returns_invalid_param() {
 
 /// A6: target_account_exists 校验在 guard 之前执行（target 不存在时优先返回 InvalidParam）。
 ///
-/// 即使 guard 是 AllowAllSwitchToGuard，target 不存在仍应被拒绝。
+/// 即使 guard 是 TestAllowAllGuard，target 不存在仍应被拒绝。
 #[tokio::test]
 async fn switch_to_target_check_precedes_guard() {
     let auth = make_auth_logic_allow_switch(3600, 86400);

@@ -20,6 +20,8 @@
 //! - `GarrisonConfig::watch()` 返回 `watch::Receiver<GarrisonConfig>`
 //! - `GarrisonConfig::update(f)` 闭包式修改配置并广播
 
+#[cfg(feature = "credit-metering")]
+use crate::credit::CreditConfig;
 #[cfg(feature = "rate-limit-redis")]
 use crate::strategy::rate_limiter_backend::RateLimitBackend;
 #[cfg(feature = "web-cors")]
@@ -611,6 +613,18 @@ pub struct GarrisonConfig {
     /// 仅当 `anomalous-detector-dual` feature 启用时生效。
     #[cfg(feature = "anomalous-detector-dual")]
     pub anomalous_analyzer_burst_threshold: u32,
+
+    /// Credit 计量配置段（`None` = 不启用 credit 计量）。
+    ///
+    /// 仅当 `credit-metering` feature 启用时生效。
+    /// 配置示例：
+    /// ```toml
+    /// [credit]
+    /// credit_limit = 10000
+    /// persist_history = true
+    /// ```
+    #[cfg(feature = "credit-metering")]
+    pub credit: Option<CreditConfig>,
 
     /// 配置变更广播通道（serde 跳过，反序列化后通过 `with_watcher` 重建）。
     #[serde(skip)]

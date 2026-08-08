@@ -641,3 +641,87 @@ fn temp_credential_consumed_event_carries_key_and_value() {
     let debug_str = format!("{:?}", event);
     assert!(debug_str.contains("TempCredentialConsumed"));
 }
+
+// ========================================================================
+// Credit 计量事件变体测试（credit-metering feature）
+// ========================================================================
+
+/// CreditConsumed 事件携带 tenant_id/resource/cost/credits/total_consumed，
+/// 派生 Debug/Clone/PartialEq。
+#[test]
+#[cfg(feature = "credit-metering")]
+#[serial]
+fn test_credit_consumed_event_construct_and_match() {
+    let event = GarrisonEvent::CreditConsumed {
+        tenant_id: 42,
+        resource: "sms".to_string(),
+        cost: 3,
+        credits: 15,
+        total_consumed: 100,
+        request_context: None,
+    };
+    // pattern match
+    match event.clone() {
+        GarrisonEvent::CreditConsumed {
+            tenant_id,
+            resource,
+            cost,
+            credits,
+            total_consumed,
+            ..
+        } => {
+            assert_eq!(tenant_id, 42);
+            assert_eq!(resource, "sms");
+            assert_eq!(cost, 3);
+            assert_eq!(credits, 15);
+            assert_eq!(total_consumed, 100);
+        },
+        _ => panic!("期望 CreditConsumed 事件"),
+    }
+    // PartialEq
+    let cloned = event.clone();
+    assert_eq!(event, cloned);
+    // Debug
+    let debug_str = format!("{:?}", event);
+    assert!(debug_str.contains("CreditConsumed"));
+}
+
+/// CreditAlert 事件携带 tenant_id/threshold/usage_percent/total_consumed/credit_limit，
+/// 派生 Debug/Clone/PartialEq。
+#[test]
+#[cfg(feature = "credit-metering")]
+#[serial]
+fn test_credit_alert_event_construct_and_match() {
+    let event = GarrisonEvent::CreditAlert {
+        tenant_id: 42,
+        threshold: 80,
+        usage_percent: 85.5,
+        total_consumed: 855,
+        credit_limit: 1000,
+        request_context: None,
+    };
+    // pattern match
+    match event.clone() {
+        GarrisonEvent::CreditAlert {
+            tenant_id,
+            threshold,
+            usage_percent,
+            total_consumed,
+            credit_limit,
+            ..
+        } => {
+            assert_eq!(tenant_id, 42);
+            assert_eq!(threshold, 80);
+            assert!((usage_percent - 85.5).abs() < f64::EPSILON);
+            assert_eq!(total_consumed, 855);
+            assert_eq!(credit_limit, 1000);
+        },
+        _ => panic!("期望 CreditAlert 事件"),
+    }
+    // PartialEq
+    let cloned = event.clone();
+    assert_eq!(event, cloned);
+    // Debug
+    let debug_str = format!("{:?}", event);
+    assert!(debug_str.contains("CreditAlert"));
+}

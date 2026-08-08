@@ -76,33 +76,10 @@ mod tenant_local {
 
 pub use tenant_local::TENANT;
 
-/// 读取当前 task_local 中的 tenant_id（无上下文时返回 0）。
-///
-/// 供 `GarrisonLogicDefault::check_permission`（构造 `AuthRequest`）和
-/// `AuditLogListener::to_audit_entry`（填充审计日志 tenant_id）使用。
-/// 在未进入 `TENANT.scope` 时返回 0（向后兼容单租户场景）。
-///
-/// # ⚠️ 已弃用
-///
-/// 无上下文时静默返回 0 会导致租户隔离被绕过——多租户环境下 `tenant_id=0`
-/// 可能命中默认租户的数据。新代码应使用：
-/// - [`current_tenant_id_strict`]：返回 `Option<i64>`，调用方显式处理 `None`
-/// - [`current_tenant_id_or_error`]：返回 `GarrisonResult<i64>`，无上下文时 `Err(Config)`
-///
-/// 仅在 `tenant-isolation` feature 关闭的向后兼容场景下使用本函数，
-/// 并应在调用处用 `#[allow(deprecated)]` 显式标注保留原因。
-#[deprecated(
-    since = "0.7.0",
-    note = "使用 current_tenant_id_strict() 或 current_tenant_id_or_error() 替代，避免租户隔离静默绕过"
-)]
-pub fn current_tenant_id() -> i64 {
-    TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0)
-}
-
 /// 读取当前 task_local 中的 tenant_id（无上下文时返回 `None`）。
 ///
-/// 与 [`current_tenant_id`] 的差异：后者在无上下文时返回 `0`（向后兼容单租户场景），
-/// 本函数返回 `None`，用于多租户严格隔离场景——调用方必须显式处理"无租户上下文"的情况，
+/// 与 [`current_tenant_id_or_error`] 的差异：后者在无上下文时返回 `Err(Config)`，
+/// 本函数返回 `None`，用于多租户严格隔离场景——调用方必须显式处理“无租户上下文”的情况，
 /// 避免租户隔离被静默绕过（Rule 12 失败显性化）。
 ///
 /// # 返回
@@ -446,7 +423,8 @@ mod tests {
 
     /// H2: `current_tenant_id_strict` 在未进入 `TENANT.scope` 时返回 `None`（不 panic）。
     ///
-    /// 与 `current_tenant_id` 的 `unwrap_or(0)` 不同，strict 版本要求调用方显式处理无上下文场景，
+    /// 与 `current_tenant_id_or_error` 的 `Err` 不同，strict 版本返回 `None` 而非错误，
+    /// 要求调用方显式处理无上下文场景，
     /// 避免租户隔离被静默绕过（Rule 12 失败显性化）。
     #[tokio::test]
     async fn strict_returns_none_without_scope() {
@@ -541,25 +519,6 @@ mod tests {
             .await;
         assert!(result_max.is_ok());
         assert_eq!(result_max.unwrap(), i64::MAX);
-    }
-
-    /// 旧 `current_tenant_id()` 已被 `#[deprecated]` 标注，但在 `#[allow(deprecated)]` 下仍可调用。
-    ///
-    /// 验证 deprecation 不破坏向后兼容——现有代码可用 `#[allow(deprecated)]` 显式抑制警告，
-    /// 同时新代码应迁移到 `current_tenant_id_strict` / `current_tenant_id_or_error`。
-    #[tokio::test]
-    #[allow(deprecated)]
-    async fn deprecated_current_tenant_id_still_callable_with_allow() {
-        // 无 scope 时返回 0（向后兼容行为保留）
-        assert_eq!(current_tenant_id(), 0);
-
-        // 有 scope 时返回 tenant_id
-        let ctx = TenantContext {
-            tenant_id: 42,
-            resolved_from: TenantSource::Header,
-        };
-        let result = TENANT.scope(ctx, async { current_tenant_id() }).await;
-        assert_eq!(result, 42);
     }
 
     /// R-tenant-isolation-002: SubdomainTenantResolver 从 Host 提取 subdomain 并查 mapping。

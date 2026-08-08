@@ -35,6 +35,9 @@ sms-verify-max-attempts = SMS 验证码尝试次数超限
 sms-code-not-found = SMS 验证码不存在
 sms-channel-recycled = SMS 通道已回收
 
+# Credit 计量不足（multi-tenant-credit-metering）
+credit-insufficient = Credit 不足: tenant={$tenant_id}, requested={$requested}, remaining={$remaining}
+
 # 0.6.1 缺失基础 key（I18N-KEY-01 / I18N-KEY-02）
 token-revoked = Token 已吊销: {$detail}
 firewall-blocked = 防火墙拦截: {$detail}
@@ -774,6 +777,7 @@ sms-rate-limit-exceeded-msg = 短信发送频繁
 sms-verify-max-attempts-msg = 验证码尝试次数超限
 sms-code-not-found-msg = 验证码不存在或已过期
 sms-channel-recycled-msg = 短信通道已回收
+credit-insufficient-msg = Credit 不足
 # Exception 变体依据 code 字段映射的 message
 exception-not-login-msg = 未登录
 exception-not-permission-msg = 无权限

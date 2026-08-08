@@ -356,6 +356,280 @@ fn validate_audience(actual: &str, expected: Option<&str>) -> GarrisonResult<()>
 // XML 解析辅助
 // ============================================================================
 
+/// SAML Response XML 解析上下文。
+///
+/// 收拢 `parse_saml_response_xml` 的所有解析状态变量，将手工状态机拆分为
+/// `handle_start_element` / `handle_end_element` / `handle_empty_element` / `handle_text`
+/// 四个方法，主函数简化为 loop + dispatch。
+struct SamlParseContext {
+    // Response 级字段
+    destination: String,
+    issuer: String,
+    status_code: String,
+    assertion: Option<SamlAssertion>,
+
+    // 状态标志
+    in_assertion: bool,
+    in_issuer: bool,
+    in_subject: bool,
+    in_audience: bool,
+    in_attribute: bool,
+
+    // 文本累积
+    current_attr_name: String,
+    current_text: String,
+
+    // Assertion 解析中间字段
+    assertion_issuer: String,
+    assertion_subject: String,
+    assertion_audience: String,
+    assertion_not_on_or_after: String,
+    assertion_id: String,
+    assertion_attributes: Vec<(String, String)>,
+
+    // vuln-0001: raw_xml 跟踪
+    assertion_start_pos: Option<u64>,
+    assertion_raw_xml: Option<String>,
+}
+
+impl SamlParseContext {
+    fn new() -> Self {
+        Self {
+            destination: String::new(),
+            issuer: String::new(),
+            status_code: String::new(),
+            assertion: None,
+            in_assertion: false,
+            in_issuer: false,
+            in_subject: false,
+            in_audience: false,
+            in_attribute: false,
+            current_attr_name: String::new(),
+            current_text: String::new(),
+            assertion_issuer: String::new(),
+            assertion_subject: String::new(),
+            assertion_audience: String::new(),
+            assertion_not_on_or_after: String::new(),
+            assertion_id: String::new(),
+            assertion_attributes: Vec::new(),
+            assertion_start_pos: None,
+            assertion_raw_xml: None,
+        }
+    }
+
+    /// 处理 Start 元素：设置状态标志 + 提取属性。
+    fn handle_start_element(&mut self, event: &quick_xml::events::BytesStart, pos_before: u64) {
+        if !check_saml_namespace(event.name().as_ref()) {
+            return;
+        }
+        let local_name = extract_local_name(event.name().as_ref());
+        match local_name.as_str() {
+            "Response" => {
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"Destination" {
+                        self.destination = attr_value_to_string(&attr.value);
+                    }
+                }
+            },
+            "Assertion" => {
+                self.in_assertion = true;
+                self.assertion_start_pos = Some(pos_before);
+                self.assertion_issuer.clear();
+                self.assertion_subject.clear();
+                self.assertion_audience.clear();
+                self.assertion_not_on_or_after.clear();
+                self.assertion_id.clear();
+                self.assertion_attributes.clear();
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"ID" {
+                        self.assertion_id = attr_value_to_string(&attr.value);
+                    }
+                }
+            },
+            "Issuer" => {
+                self.in_issuer = true;
+                self.current_text.clear();
+            },
+            "Subject" => self.in_subject = true,
+            "Audience" => {
+                self.in_audience = true;
+                self.current_text.clear();
+            },
+            "Attribute" => {
+                self.in_attribute = true;
+                self.current_attr_name.clear();
+                self.current_text.clear();
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"Name" {
+                        self.current_attr_name = attr_value_to_string(&attr.value);
+                    }
+                }
+            },
+            "SubjectConfirmationData" => {
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"NotOnOrAfter" {
+                        self.assertion_not_on_or_after = attr_value_to_string(&attr.value);
+                    }
+                }
+            },
+            _ => {},
+        }
+    }
+
+    /// 处理 Empty 元素（自闭合如 `<StatusCode Value="..."/>`）：仅提取属性。
+    fn handle_empty_element(&mut self, event: &quick_xml::events::BytesStart) {
+        if !check_saml_namespace(event.name().as_ref()) {
+            return;
+        }
+        let local_name = extract_local_name(event.name().as_ref());
+        match local_name.as_str() {
+            "StatusCode" => {
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"Value" {
+                        self.status_code = attr_value_to_string(&attr.value);
+                    }
+                }
+            },
+            "SubjectConfirmationData" => {
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"NotOnOrAfter" {
+                        self.assertion_not_on_or_after = attr_value_to_string(&attr.value);
+                    }
+                }
+            },
+            "AttributeValue" if self.in_attribute => {
+                if self
+                    .assertion_attributes
+                    .iter()
+                    .any(|(n, _)| n == &self.current_attr_name)
+                {
+                    tracing::warn!(
+                        attr_name = %self.current_attr_name,
+                        "SAML Assertion 包含重复属性名，可能为属性污染攻击"
+                    );
+                }
+                self.assertion_attributes
+                    .push((self.current_attr_name.clone(), String::new()));
+            },
+            _ => {},
+        }
+    }
+
+    /// 处理 End 元素：收集文本、构建 Assertion、重置状态。
+    fn handle_end_element(
+        &mut self,
+        event: &quick_xml::events::BytesEnd,
+        pos_after: u64,
+        xml: &str,
+    ) {
+        let local_name = extract_local_name(event.name().as_ref());
+        match local_name.as_str() {
+            "Assertion" => {
+                if self.in_assertion {
+                    // vuln-0001: 提取 <Assertion>...</Assertion> 原始 XML
+                    if let Some(start) = self.assertion_start_pos {
+                        let start_usize = start as usize;
+                        let pos_after_usize = pos_after as usize;
+                        if pos_after_usize >= start_usize && pos_after_usize <= xml.len() {
+                            self.assertion_raw_xml =
+                                Some(xml[start_usize..pos_after_usize].to_string());
+                        }
+                    }
+                    self.assertion = Some(SamlAssertion {
+                        id: self.assertion_id.clone(),
+                        issuer: self.assertion_issuer.clone(),
+                        subject: self.assertion_subject.clone(),
+                        audience: self.assertion_audience.clone(),
+                        not_on_or_after: self.assertion_not_on_or_after.clone(),
+                        attributes: self.assertion_attributes.clone(),
+                        raw_xml: self.assertion_raw_xml.clone(),
+                    });
+                    self.in_assertion = false;
+                }
+            },
+            "Issuer" => {
+                if self.in_issuer {
+                    if self.in_assertion {
+                        self.assertion_issuer = self.current_text.clone();
+                    } else {
+                        self.issuer = self.current_text.clone();
+                    }
+                    self.in_issuer = false;
+                    self.current_text.clear();
+                }
+            },
+            "Subject" => self.in_subject = false,
+            "Audience" => {
+                if self.in_audience {
+                    self.assertion_audience = self.current_text.clone();
+                    self.in_audience = false;
+                    self.current_text.clear();
+                }
+            },
+            "Attribute" => {
+                if self.in_attribute {
+                    if self
+                        .assertion_attributes
+                        .iter()
+                        .any(|(n, _)| n == &self.current_attr_name)
+                    {
+                        tracing::warn!(
+                            attr_name = %self.current_attr_name,
+                            "SAML Assertion 包含重复属性名，可能为属性污染攻击"
+                        );
+                    }
+                    self.assertion_attributes
+                        .push((self.current_attr_name.clone(), self.current_text.clone()));
+                    self.in_attribute = false;
+                    self.current_text.clear();
+                }
+            },
+            "NameID" => {
+                if self.in_subject {
+                    self.assertion_subject = self.current_text.clone();
+                    self.current_text.clear();
+                }
+            },
+            "AttributeValue" => {
+                // AttributeValue 文本已收集到 current_text，在 Attribute End 时处理
+            },
+            _ => {},
+        }
+    }
+
+    /// 处理 Text 事件：累积文本到 `current_text`。
+    fn handle_text(&mut self, text: &str) {
+        self.current_text.push_str(text);
+    }
+
+    /// 构建 `SamlResponse` 并校验 Assertion 过期时间。
+    fn into_response(self) -> GarrisonResult<SamlResponse> {
+        if let Some(ref assertion) = self.assertion {
+            if !assertion.not_on_or_after.is_empty() {
+                let expiry = chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after)
+                    .map_err(|e| {
+                        GarrisonError::InvalidToken(format!(
+                            "sso-saml-not-on-or-after-parse::{}",
+                            e
+                        ))
+                    })?;
+                if Utc::now().timestamp() >= expiry.timestamp() {
+                    return Err(GarrisonError::InvalidToken(format!(
+                        "sso-saml-assertion-expired::{}",
+                        assertion.not_on_or_after
+                    )));
+                }
+            }
+        }
+        Ok(SamlResponse {
+            destination: self.destination,
+            issuer: self.issuer,
+            assertion: self.assertion,
+            status_code: self.status_code,
+        })
+    }
+}
+
 /// 从 SAML Response XML 中提取关键字段。
 ///
 /// 使用 quick-xml 的 pull reader 解析 XML，提取 Destination / Issuer / StatusCode / Assertion。
@@ -369,36 +643,10 @@ fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
+    let mut ctx = SamlParseContext::new();
     let mut buf = Vec::new();
 
-    let mut destination = String::new();
-    let mut issuer = String::new();
-    let mut status_code = String::new();
-    let mut assertion: Option<SamlAssertion> = None;
-
-    // Assertion 解析状态
-    let mut in_assertion = false;
-    let mut in_issuer = false;
-    let mut in_subject = false;
-    let mut in_audience = false;
-    let mut in_attribute = false;
-    let mut current_attr_name = String::new();
-
-    let mut assertion_issuer = String::new();
-    let mut assertion_subject = String::new();
-    let mut assertion_audience = String::new();
-    let mut assertion_not_on_or_after = String::new();
-    let mut assertion_id = String::new();
-    let mut assertion_attributes: Vec<(String, String)> = Vec::new();
-    let mut current_text = String::new();
-
-    // vuln-0001: 跟踪 <Assertion> 元素的字节范围，用于提取 raw_xml
-    // quick-xml 0.41 buffer_position() 返回 u64
-    let mut assertion_start_pos: Option<u64> = None;
-    let mut assertion_raw_xml: Option<String> = None;
-
     loop {
-        // buffer_position() 在 read 之前返回上一事件结束位置 = 当前事件起始位置
         let pos_before = reader.buffer_position();
         match reader.read_event_into(&mut buf) {
             Err(e) => {
@@ -408,212 +656,22 @@ fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
                 )))
             },
             Ok(Event::Eof) => break,
-
-            // Start 元素：设置状态标志 + 提取属性
-            Ok(Event::Start(e)) => {
-                if !check_saml_namespace(e.name().as_ref()) {
-                    continue;
-                }
-                let local_name = extract_local_name(e.name().as_ref());
-                match local_name.as_str() {
-                    "Response" => {
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"Destination" {
-                                destination = attr_value_to_string(&attr.value);
-                            }
-                        }
-                    },
-                    "Assertion" => {
-                        in_assertion = true;
-                        // vuln-0001: 记录 <Assertion> 起始字节位置
-                        assertion_start_pos = Some(pos_before);
-                        assertion_issuer.clear();
-                        assertion_subject.clear();
-                        assertion_audience.clear();
-                        assertion_not_on_or_after.clear();
-                        assertion_id.clear();
-                        assertion_attributes.clear();
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"ID" {
-                                assertion_id = attr_value_to_string(&attr.value);
-                            }
-                        }
-                    },
-                    "Issuer" => {
-                        in_issuer = true;
-                        current_text.clear();
-                    },
-                    "Subject" => in_subject = true,
-                    "Audience" => {
-                        in_audience = true;
-                        current_text.clear();
-                    },
-                    "Attribute" => {
-                        in_attribute = true;
-                        current_attr_name.clear();
-                        current_text.clear();
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"Name" {
-                                current_attr_name = attr_value_to_string(&attr.value);
-                            }
-                        }
-                    },
-                    "SubjectConfirmationData" => {
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"NotOnOrAfter" {
-                                assertion_not_on_or_after = attr_value_to_string(&attr.value);
-                            }
-                        }
-                    },
-                    _ => {},
-                }
-            },
-
-            // Empty 元素（自闭合如 <StatusCode Value="..."/>）：仅提取属性
-            Ok(Event::Empty(e)) => {
-                if !check_saml_namespace(e.name().as_ref()) {
-                    continue;
-                }
-                let local_name = extract_local_name(e.name().as_ref());
-                match local_name.as_str() {
-                    "StatusCode" => {
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"Value" {
-                                status_code = attr_value_to_string(&attr.value);
-                            }
-                        }
-                    },
-                    "SubjectConfirmationData" => {
-                        for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"NotOnOrAfter" {
-                                assertion_not_on_or_after = attr_value_to_string(&attr.value);
-                            }
-                        }
-                    },
-                    "AttributeValue" if in_attribute => {
-                        if assertion_attributes
-                            .iter()
-                            .any(|(n, _)| n == &current_attr_name)
-                        {
-                            tracing::warn!(
-                                attr_name = %current_attr_name,
-                                "SAML Assertion 包含重复属性名，可能为属性污染攻击"
-                            );
-                        }
-                        assertion_attributes.push((current_attr_name.clone(), String::new()));
-                    },
-                    _ => {},
-                }
-            },
-
+            Ok(Event::Start(e)) => ctx.handle_start_element(&e, pos_before),
+            Ok(Event::Empty(e)) => ctx.handle_empty_element(&e),
             Ok(Event::End(e)) => {
-                let local_name = extract_local_name(e.name().as_ref());
-                match local_name.as_str() {
-                    "Assertion" => {
-                        if in_assertion {
-                            // vuln-0001: 提取 <Assertion>...</Assertion> 原始 XML
-                            // buffer_position() 在 read 后返回当前事件结束位置
-                            let pos_after = reader.buffer_position();
-                            if let Some(start) = assertion_start_pos {
-                                let start_usize = start as usize;
-                                let pos_after_usize = pos_after as usize;
-                                if pos_after_usize >= start_usize && pos_after_usize <= xml.len() {
-                                    assertion_raw_xml =
-                                        Some(xml[start_usize..pos_after_usize].to_string());
-                                }
-                            }
-                            assertion = Some(SamlAssertion {
-                                id: assertion_id.clone(),
-                                issuer: assertion_issuer.clone(),
-                                subject: assertion_subject.clone(),
-                                audience: assertion_audience.clone(),
-                                not_on_or_after: assertion_not_on_or_after.clone(),
-                                attributes: assertion_attributes.clone(),
-                                raw_xml: assertion_raw_xml.clone(),
-                            });
-                            in_assertion = false;
-                        }
-                    },
-                    "Issuer" => {
-                        if in_issuer {
-                            if in_assertion {
-                                assertion_issuer = current_text.clone();
-                            } else {
-                                issuer = current_text.clone();
-                            }
-                            in_issuer = false;
-                            current_text.clear();
-                        }
-                    },
-                    "Subject" => in_subject = false,
-                    "Audience" => {
-                        if in_audience {
-                            assertion_audience = current_text.clone();
-                            in_audience = false;
-                            current_text.clear();
-                        }
-                    },
-                    "Attribute" => {
-                        if in_attribute {
-                            if assertion_attributes
-                                .iter()
-                                .any(|(n, _)| n == &current_attr_name)
-                            {
-                                tracing::warn!(
-                                    attr_name = %current_attr_name,
-                                    "SAML Assertion 包含重复属性名，可能为属性污染攻击"
-                                );
-                            }
-                            assertion_attributes
-                                .push((current_attr_name.clone(), current_text.clone()));
-                            in_attribute = false;
-                            current_text.clear();
-                        }
-                    },
-                    "NameID" => {
-                        if in_subject {
-                            assertion_subject = current_text.clone();
-                            current_text.clear();
-                        }
-                    },
-                    "AttributeValue" => {
-                        // AttributeValue 文本已收集到 current_text，在 Attribute End 时处理
-                    },
-                    _ => {},
-                }
+                let pos_after = reader.buffer_position();
+                ctx.handle_end_element(&e, pos_after, xml);
             },
-
             Ok(Event::Text(e)) => {
                 let text = String::from_utf8_lossy(e.as_ref());
-                current_text.push_str(&text);
+                ctx.handle_text(&text);
             },
-
             _ => {},
         }
         buf.clear();
     }
 
-    if let Some(ref assertion) = assertion {
-        if !assertion.not_on_or_after.is_empty() {
-            let expiry =
-                chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after).map_err(|e| {
-                    GarrisonError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
-                })?;
-            if Utc::now().timestamp() >= expiry.timestamp() {
-                return Err(GarrisonError::InvalidToken(format!(
-                    "sso-saml-assertion-expired::{}",
-                    assertion.not_on_or_after
-                )));
-            }
-        }
-    }
-
-    Ok(SamlResponse {
-        destination,
-        issuer,
-        assertion,
-        status_code,
-    })
+    ctx.into_response()
 }
 
 /// 检查 SAML Assertion 是否被重放（C-3 重放防护）。
@@ -2026,5 +2084,122 @@ mod tests {
             !second,
             "同一 Assertion ID 二次消费应被拒绝（vuln-0003 重放防护）"
         );
+    }
+
+    // ========================================================================
+    // parse_saml_response_xml 结构覆盖测试（T011）
+    // ========================================================================
+
+    /// vuln-0001: `raw_xml` 应包含完整 `<Assertion>...</Assertion>` 原始 XML。
+    #[test]
+    fn parse_saml_response_xml_extracts_raw_xml() {
+        let future = Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<Response>
+  <Assertion ID="raw-xml-001">
+    <Issuer>https://idp.example.com</Issuer>
+    <Subject><NameID>user@example.com</NameID></Subject>
+    <Audience>https://sp.example.com</Audience>
+    <SubjectConfirmationData NotOnOrAfter="{}"/>
+  </Assertion>
+</Response>"#,
+            future_str
+        );
+        let result = parse_saml_response_xml(&xml).unwrap();
+        let assertion = result.assertion.expect("应解析出 Assertion");
+        let raw = assertion.raw_xml.expect("raw_xml 应被填充");
+        let trimmed = raw.trim_start();
+        assert!(
+            trimmed.starts_with("<Assertion"),
+            "raw_xml 应以 <Assertion 开头（trim 后），实际: {}",
+            &trimmed[..trimmed.len().min(50)]
+        );
+        assert!(
+            raw.contains("</Assertion>") || raw.contains("</Assertion >"),
+            "raw_xml 应包含 </Assertion> 闭合标签"
+        );
+        assert!(
+            raw.contains("ID=\"raw-xml-001\""),
+            "raw_xml 应包含 Assertion ID"
+        );
+    }
+
+    /// parse_saml_response_xml 正确提取 Assertion 内各字段。
+    #[test]
+    fn parse_saml_response_xml_extracts_assertion_fields() {
+        let future = Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<Response Destination="https://sp.example.com/acs">
+  <Issuer>https://idp.example.com</Issuer>
+  <Status><StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></Status>
+  <Assertion ID="fields-001">
+    <Issuer>https://idp-assertion.example.com</Issuer>
+    <Subject><NameID>user@example.com</NameID></Subject>
+    <Audience>https://sp.example.com</Audience>
+    <SubjectConfirmationData NotOnOrAfter="{}"/>
+    <AttributeStatement>
+      <Attribute Name="email"><AttributeValue>user@example.com</AttributeValue></Attribute>
+      <Attribute Name="role"><AttributeValue>admin</AttributeValue></Attribute>
+    </AttributeStatement>
+  </Assertion>
+</Response>"#,
+            future_str
+        );
+        let result = parse_saml_response_xml(&xml).unwrap();
+        assert_eq!(result.destination, "https://sp.example.com/acs");
+        assert_eq!(result.issuer, "https://idp.example.com");
+        assert_eq!(
+            result.status_code,
+            "urn:oasis:names:tc:SAML:2.0:status:Success"
+        );
+        let assertion = result.assertion.expect("应解析出 Assertion");
+        assert_eq!(assertion.id, "fields-001");
+        assert_eq!(assertion.issuer, "https://idp-assertion.example.com");
+        assert_eq!(assertion.subject, "user@example.com");
+        assert_eq!(assertion.audience, "https://sp.example.com");
+        assert_eq!(assertion.attributes.len(), 2);
+        assert_eq!(
+            assertion.attributes[0],
+            ("email".to_string(), "user@example.com".to_string())
+        );
+        assert_eq!(
+            assertion.attributes[1],
+            ("role".to_string(), "admin".to_string())
+        );
+    }
+
+    /// 空 Assertion 元素（无子元素）应解析为 Some 但字段均为空。
+    #[test]
+    fn parse_saml_response_xml_handles_empty_assertion() {
+        let xml = r#"<Response>
+  <Assertion ID="empty-001">
+  </Assertion>
+</Response>"#;
+        let result = parse_saml_response_xml(xml).unwrap();
+        let assertion = result.assertion.expect("空 Assertion 仍应被解析");
+        assert_eq!(assertion.id, "empty-001");
+        assert!(assertion.issuer.is_empty());
+        assert!(assertion.subject.is_empty());
+        assert!(assertion.audience.is_empty());
+        assert!(assertion.attributes.is_empty());
+    }
+
+    /// 无 Assertion 的 Response 应返回 assertion=None。
+    #[test]
+    fn parse_saml_response_xml_no_assertion() {
+        let xml = r#"<Response Destination="https://sp.example.com">
+  <Issuer>https://idp.example.com</Issuer>
+  <Status><StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Responder"/></Status>
+</Response>"#;
+        let result = parse_saml_response_xml(xml).unwrap();
+        assert!(result.assertion.is_none());
+        assert_eq!(result.destination, "https://sp.example.com");
+        assert_eq!(result.issuer, "https://idp.example.com");
     }
 }

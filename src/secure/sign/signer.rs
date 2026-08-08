@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! `Signer` 实现块，封装 HMAC-SHA256/SHA512、Base64、MD5 签名与编码方法。
+//! `Signer` 实现块，封装 HMAC-SHA256/SHA512、Base64 签名与编码方法。
 
 use super::Signer;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -109,16 +109,5 @@ impl Signer {
         STANDARD
             .decode(s)
             .map_err(|e| GarrisonError::Internal(format!("secure-base64-decode::{}", e)))
-    }
-
-    /// 计算 MD5 摘要，输出小写十六进制字符串。
-    ///
-    /// # 废弃说明
-    /// MD5 已被证明不安全（存在碰撞攻击），仅用于兼容旧版签名协议。
-    /// 新业务请使用 [`hmac_sha256`](Self::hmac_sha256) 或 [`hmac_sha512`](Self::hmac_sha512)。
-    #[deprecated(note = "MD5 已不安全，请使用 hmac_sha256 或 hmac_sha512")]
-    pub fn md5(data: &[u8]) -> String {
-        let digest = md5::compute(data);
-        hex_encode(&digest.0)
     }
 }

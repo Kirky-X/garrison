@@ -39,7 +39,7 @@ use crate::session::GarrisonSession;
 /// 3. **审计日志**：每次 switch_to 记录 `original / target / timestamp / request_context`，
 ///    便于事后追溯
 ///
-/// 推荐参考 `AdminOnlyGuard` 示例实现，而非裸用 `AllowAllSwitchToGuard`。
+/// 推荐参考 `AdminOnlyGuard` 示例实现自定义 guard。
 ///
 /// # 示例
 ///
@@ -81,29 +81,6 @@ pub trait SwitchToGuard: Send + Sync {
 /// 未通过 [`AuthLogicDefault::with_switch_to_guard`] 注入自定义 guard 时，
 /// 所有 `switch_to` 调用都被拒绝。强制调用方显式配置权限规则。
 pub struct DenyAllSwitchToGuard;
-
-/// 允许所有切换的 guard（仅用于测试，生产环境禁止使用）。
-///
-/// # Deprecated
-///
-/// 裸用此 guard 等价于关闭 switch_to 权限校验，任何身份可切换到任意
-/// 目标身份（含管理员），构成垂直越权风险。测试代码也应实现自定义 guard，参考
-/// [`AdminOnlyGuard`] doctest 示例。
-///
-/// 若必须使用（如遗留测试），需在调用处加 `#[allow(deprecated)]` 抑制警告，例如：
-///
-/// ```ignore
-/// # use garrison::core::auth::AllowAllSwitchToGuard;
-/// # use std::sync::Arc;
-/// # #[allow(deprecated)]
-/// let _guard = Arc::new(AllowAllSwitchToGuard);
-/// ```
-#[cfg(test)]
-#[deprecated(
-    since = "0.7.0",
-    note = "测试代码也应实现自定义 guard，禁止裸用 AllowAllSwitchToGuard；参考 SwitchToGuard trait 的 AdminOnlyGuard doctest 示例"
-)]
-pub struct AllowAllSwitchToGuard;
 
 /// 认证逻辑 trait，定义以 token 为入参的认证抽象。
 ///

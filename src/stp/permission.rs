@@ -7,12 +7,11 @@
 
 use super::GarrisonLogicDefault;
 // tenant-isolation feature 启用时强制 fail-closed
-// feature 关闭时保留旧 current_tenant_id() 向后兼容行为，但 #[allow(deprecated)] 显式标注
-#[cfg(not(feature = "tenant-isolation"))]
-#[allow(deprecated)]
-use crate::context::tenant::current_tenant_id;
+// feature 关闭时通过 TENANT.try_get() 保留向后兼容行为
 #[cfg(feature = "tenant-isolation")]
 use crate::context::tenant::current_tenant_id_or_error;
+#[cfg(not(feature = "tenant-isolation"))]
+use crate::context::tenant::TENANT;
 use crate::core::permission::AuthRequest;
 use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "listener")]
@@ -193,10 +192,9 @@ impl PermissionLogic for GarrisonLogicDefault {
         // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志
         if let Some(pc) = &self.permission_checker {
             // tenant-isolation feature 启用时强制 fail-closed
-            // feature 关闭时保留旧 current_tenant_id() 向后兼容行为（#[allow(deprecated)] 显式标注）
+            // feature 关闭时通过 TENANT.try_get() 保留向后兼容行为
             #[cfg(not(feature = "tenant-isolation"))]
-            #[allow(deprecated)]
-            let tenant_id = current_tenant_id();
+            let tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
             #[cfg(feature = "tenant-isolation")]
             let tenant_id = current_tenant_id_or_error()?;
             let request = AuthRequest {
@@ -235,8 +233,7 @@ impl PermissionLogic for GarrisonLogicDefault {
         // firewall 路径同样需要租户隔离校验，否则 tenant-isolation 启用 +
         // permission_checker 未注入时租户隔离被绕过
         #[cfg(not(feature = "tenant-isolation"))]
-        #[allow(deprecated)]
-        let _tenant_id = current_tenant_id();
+        let _tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
         #[cfg(feature = "tenant-isolation")]
         let _tenant_id = current_tenant_id_or_error()?;
         let has_perm = self
@@ -275,8 +272,7 @@ impl PermissionLogic for GarrisonLogicDefault {
         };
         // 租户隔离：与 check_permission 对齐，防止跨租户角色检查绕过
         #[cfg(not(feature = "tenant-isolation"))]
-        #[allow(deprecated)]
-        let _tenant_id = current_tenant_id();
+        let _tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
         #[cfg(feature = "tenant-isolation")]
         let _tenant_id = current_tenant_id_or_error()?;
         // 委托 GarrisonPermissionStrategy 做角色校验

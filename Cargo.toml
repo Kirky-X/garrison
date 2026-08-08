@@ -199,6 +199,11 @@ tenant-isolation = []
 # === 核心扩展：forbid 优先语义（safe-defaults） ===
 safe-defaults = []
 
+# === 配置增强（confers 0.5 透传） ===
+config-encryption = ["confers/encryption"]
+config-validation = ["confers/validation"]
+config-hot-reload = ["confers/watch"]
+
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 # `all-defaults` 已于 v0.8.2 移除（ARCH-01/DEP-03 修复）：
 # 与 `development` 聚合特性完全重复（均 = `["cache-memory", "db-sqlite", "web-axum"]`）。
@@ -207,6 +212,7 @@ safe-defaults = []
 # === 缓存后端（通过 oxcache） ===
 cache-memory = ["oxcache/memory", "oxcache/serialization"]
 cache-redis = ["cache-memory", "oxcache/redis", "dep:redis"]
+cache-lock = ["cache-redis", "oxcache/lock"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
 # dbnexus 禁止 embedded 与 server-side 混用。
@@ -225,6 +231,7 @@ db-base = [
 db-sqlite = ["db-base", "dbnexus/sqlite"]
 db-postgres = ["db-base", "dbnexus/postgres", "embedded-migrations"]
 db-mysql = ["db-base", "dbnexus/mysql"]
+db-retry = ["db-base", "dbnexus/retry"]
 
 # 嵌入式迁移文件：编译时用 include_dir! 嵌入 postgres 迁移 SQL，
 # 供 crates.io 消费者在运行时无需访问 garrison 源码目录即可执行迁移。
@@ -282,6 +289,10 @@ web-warp = ["warp"]
 # 依赖 auth-server（server 模块门控）
 tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 
+# === Server 增强（sdforge 0.4.7 透传） ===
+server-health-check = ["auth-server", "sdforge/health-check"]
+server-graceful-shutdown = ["auth-server", "sdforge/graceful-shutdown"]
+
 # === Web 安全中间件 ===
 web-waf = ["web-axum"]
 web-cors = ["web-axum"]
@@ -315,7 +326,8 @@ firewall-ratelimit = ["firewall", "dep:rand"]
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall"]
-firewall-ddos = ["firewall"]
+# v0.8.0：启用 limiteron adaptive-limiting，接入 AIMD 自适应限流
+firewall-ddos = ["firewall", "limiteron/adaptive-limiting", "limiteron/priority-queue"]
 firewall-waf = ["firewall", "web-axum"]
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 anomalous-detector-dual = ["firewall", "listener", "dao-key-index"]
@@ -359,7 +371,7 @@ keycloak-oidc = ["protocol-oidc"]
 
 # === v0.7.0 微服务架构 ===
 backend-embedded = []
-backend-remote = ["dep:reqwest"]
+backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallback"]
 # secure-simple-token：为 SimpleTokenStyle 启用 HMAC-SHA256 签名（A11 安全修复）
 # 格式：<login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
@@ -371,10 +383,11 @@ abac = ["dep:cedar-policy", "cache-memory"]
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
 
 # === v0.7.0 inklog 结构化审计日志 ===
-audit-inklog = []
+audit-inklog = ["inklog/fast-masking"]
 
 # === v0.7.0 trait-kit typestate DI 构建 ===
-backend-kit = ["backend-embedded"]
+backend-kit = ["backend-embedded", "trait-kit/lifecycle"]
+backend-shutdown = ["backend-kit", "trait-kit/shutdown"]
 
 # === v0.7.0 sdforge 声明式路由 ===
 # `http` feature 是 garrison 与 sdforge 之间的桥接 feature（cfg flag only）：
@@ -438,8 +451,11 @@ full = [
     "anonymous-session",
     "session-search",
     "social-wechat", "social-alipay",
-    "backend-embedded", "backend-kit", "backend-remote", "auth-server", "auth-server-sdforge", "abac", "oauth2-server",
+    "backend-embedded", "backend-kit", "backend-shutdown", "backend-remote", "auth-server", "auth-server-sdforge", "abac", "oauth2-server",
     "credit-metering",
+    "server-health-check", "server-graceful-shutdown",
+    "config-encryption", "config-validation", "config-hot-reload",
+    "db-retry", "cache-lock",
 ]
 
 # production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）

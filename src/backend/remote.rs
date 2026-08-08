@@ -14,6 +14,7 @@
 
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
+use std::sync::Arc;
 use std::time::Duration;
 
 use super::types::{
@@ -22,6 +23,8 @@ use super::types::{
     SessionData, SwitchToRequest, TokenInfo,
 };
 use super::AuthBackend;
+#[cfg(feature = "backend-remote")]
+use crate::limiteron::CircuitBreakerWrapper;
 
 /// 远程认证后端，通过 HTTP API 连接远程 Auth Server。
 ///
@@ -46,6 +49,8 @@ pub struct BackendRemote {
     client: reqwest::Client,
     base_url: String,
     api_key: String,
+    /// 可选的熔断器，保护远程调用避免级联故障。
+    circuit_breaker: Option<Arc<CircuitBreakerWrapper>>,
 }
 
 impl BackendRemote {
@@ -68,7 +73,17 @@ impl BackendRemote {
             client,
             base_url: base_url.into(),
             api_key: api_key.into(),
+            circuit_breaker: None,
         })
+    }
+
+    /// 启用熔断器保护。
+    ///
+    /// 启用后，所有 `post` 请求将通过熔断器包裹执行。
+    /// 当连续失败次数达到阈值时，熔断器打开并快速拒绝后续请求。
+    pub fn with_circuit_breaker(mut self, cb: Arc<CircuitBreakerWrapper>) -> Self {
+        self.circuit_breaker = Some(cb);
+        self
     }
 
     /// 发送 POST 请求并解析响应为 `ApiResponse<T>`。
@@ -83,11 +98,34 @@ impl BackendRemote {
         Req: serde::Serialize,
         T: serde::de::DeserializeOwned,
     {
-        let url = format!("{}{}", self.base_url, path);
-        let resp = self
-            .client
-            .post(&url)
-            .header("X-API-Key", &self.api_key)
+        // 若启用熔断器，通过熔断器包裹 HTTP 调用
+        if let Some(ref cb) = self.circuit_breaker {
+            let url = format!("{}{}", self.base_url, path);
+            let api_key = &self.api_key;
+            let client = &self.client;
+            // 借用局部变量避免闭包捕获 &self
+            let do_request = || async { Self::do_http_post(client, &url, api_key, req).await };
+            cb.execute(do_request).await
+        } else {
+            let url = format!("{}{}", self.base_url, path);
+            Self::do_http_post(&self.client, &url, &self.api_key, req).await
+        }
+    }
+
+    /// 实际 HTTP POST 执行逻辑（供熔断器包裹或直接调用）。
+    async fn do_http_post<Req, T>(
+        client: &reqwest::Client,
+        url: &str,
+        api_key: &str,
+        req: &Req,
+    ) -> GarrisonResult<ApiResponse<T>>
+    where
+        Req: serde::Serialize,
+        T: serde::de::DeserializeOwned,
+    {
+        let resp = client
+            .post(url)
+            .header("X-API-Key", api_key)
             .json(req)
             .send()
             .await
@@ -266,6 +304,7 @@ pub struct BackendRemoteBuilder {
     client_cert: Option<Vec<u8>>,
     client_key: Option<Vec<u8>>,
     ca_cert: Option<Vec<u8>>,
+    circuit_breaker: Option<Arc<CircuitBreakerWrapper>>,
 }
 
 impl BackendRemoteBuilder {
@@ -278,6 +317,7 @@ impl BackendRemoteBuilder {
             client_cert: None,
             client_key: None,
             ca_cert: None,
+            circuit_breaker: None,
         }
     }
 
@@ -297,6 +337,15 @@ impl BackendRemoteBuilder {
     /// 设置自定义 CA 证书（PEM 格式），用于自签名服务器证书。
     pub fn with_ca_cert(mut self, ca_pem: Vec<u8>) -> Self {
         self.ca_cert = Some(ca_pem);
+        self
+    }
+
+    /// 启用熔断器保护。
+    ///
+    /// 熔断器将包裹所有 HTTP 调用，连续失败达到阈值后自动打开，
+    /// 快速拒绝后续请求直到超时后探测恢复。
+    pub fn with_circuit_breaker(mut self, cb: Arc<CircuitBreakerWrapper>) -> Self {
+        self.circuit_breaker = Some(cb);
         self
     }
 
@@ -329,6 +378,7 @@ impl BackendRemoteBuilder {
             client,
             base_url: self.base_url,
             api_key: self.api_key,
+            circuit_breaker: self.circuit_breaker,
         })
     }
 }

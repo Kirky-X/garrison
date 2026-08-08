@@ -166,7 +166,8 @@ pub mod dao;
     feature = "firewall-bruteforce",
     feature = "firewall-ddos",
     feature = "firewall",
-    feature = "oauth2-server"
+    feature = "oauth2-server",
+    feature = "backend-remote"
 ))]
 pub mod limiteron;
 

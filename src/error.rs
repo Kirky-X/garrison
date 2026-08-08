@@ -133,6 +133,20 @@ pub enum GarrisonError {
 
     /// SMS 通道已回收（异常发送检测触发）。
     SmsChannelRecycled,
+
+    /// Credit 不足（多租户配额耗尽，`credit-metering` feature）。
+    ///
+    /// 对应 `CreditError::Insufficient`，HTTP 402 Payment Required。
+    /// 不泄露 credit 配置细节，仅暴露 tenant_id / requested / remaining。
+    #[cfg(feature = "credit-metering")]
+    CreditInsufficient {
+        /// 租户 ID。
+        tenant_id: i64,
+        /// 请求的 credit 数。
+        requested: u64,
+        /// 剩余 credit 数。
+        remaining: u64,
+    },
 }
 
 // ============================================================================
@@ -147,6 +161,39 @@ impl std::fmt::Display for GarrisonError {
 
 /// Garrison 框架统一 Result 类型别名。
 pub type GarrisonResult<T> = Result<T, GarrisonError>;
+
+// ============================================================================
+// From<CreditError> 实现（cfg feature = "credit-metering"）
+// ============================================================================
+
+/// `CreditError` → `GarrisonError` 转换。
+///
+/// 允许 `?` 操作符将 credit 模块错误自动提升为框架统一错误。
+/// `CreditError::Insufficient` 映射为 `CreditInsufficient`，
+/// 其余变体映射为 `GarrisonError::Config`（配置类错误）或 `Dao`/`Internal`。
+#[cfg(feature = "credit-metering")]
+impl From<crate::credit::CreditError> for GarrisonError {
+    fn from(err: crate::credit::CreditError) -> Self {
+        match err {
+            crate::credit::CreditError::Insufficient {
+                tenant_id,
+                requested,
+                remaining,
+            } => GarrisonError::CreditInsufficient {
+                tenant_id,
+                requested,
+                remaining,
+            },
+            crate::credit::CreditError::ConfigInvalid(msg) => {
+                GarrisonError::Config(format!("credit-config: {}", msg))
+            },
+            crate::credit::CreditError::Dao(msg) => GarrisonError::Dao(format!("credit: {}", msg)),
+            crate::credit::CreditError::CycleExpired => {
+                GarrisonError::Internal("credit-cycle-expired".to_string())
+            },
+        }
+    }
+}
 
 // ============================================================================
 // response_parts：框架无关的响应分片
@@ -319,6 +366,14 @@ impl GarrisonError {
                 "SMS_CHANNEL_RECYCLED",
                 "sms-channel-recycled-msg",
                 "短信通道已回收",
+                None,
+            ),
+            #[cfg(feature = "credit-metering")]
+            GarrisonError::CreditInsufficient { .. } => (
+                402,
+                "CREDIT_INSUFFICIENT",
+                "credit-insufficient-msg",
+                "Credit 不足",
                 None,
             ),
             // Exception 依据 GarrisonException.code 字段映射状态码
@@ -516,6 +571,8 @@ impl miette::Diagnostic for GarrisonError {
             GarrisonError::SmsVerifyMaxAttempts => "garrison.sms_verify_max_attempts",
             GarrisonError::SmsCodeNotFound => "garrison.sms_code_not_found",
             GarrisonError::SmsChannelRecycled => "garrison.sms_channel_recycled",
+            #[cfg(feature = "credit-metering")]
+            GarrisonError::CreditInsufficient { .. } => "garrison.credit_insufficient",
         };
         Some(Box::new(code_str))
     }

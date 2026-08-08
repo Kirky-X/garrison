@@ -755,6 +755,8 @@ fn update_without_watcher_is_noop() {
         enable_jwt_revocation: false,
         #[cfg(feature = "session-hijack-detection")]
         session_hijack_mode: crate::config::SessionHijackMode::default(),
+        #[cfg(feature = "credit-metering")]
+        credit: None,
         watcher: None,
     };
     assert!(config.update(|c| c.timeout = 999).is_ok());

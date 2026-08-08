@@ -35,6 +35,9 @@ sms-verify-max-attempts = SMS verification max attempts exceeded
 sms-code-not-found = SMS verification code not found
 sms-channel-recycled = SMS channel recycled
 
+# Credit metering insufficient (multi-tenant-credit-metering)
+credit-insufficient = Credit insufficient: tenant={$tenant_id}, requested={$requested}, remaining={$remaining}
+
 # 0.6.1 missing base keys (I18N-KEY-01 / I18N-KEY-02)
 token-revoked = Token revoked: {$detail}
 firewall-blocked = Firewall blocked: {$detail}
@@ -775,6 +778,7 @@ sms-rate-limit-exceeded-msg = SMS rate limit exceeded
 sms-verify-max-attempts-msg = Verification code attempts exceeded
 sms-code-not-found-msg = Verification code not found or expired
 sms-channel-recycled-msg = SMS channel recycled
+credit-insufficient-msg = Credit insufficient
 # Exception 变体依据 code 字段映射的 message
 exception-not-login-msg = Not logged in
 exception-not-permission-msg = Permission denied
