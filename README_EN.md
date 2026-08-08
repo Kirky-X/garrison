@@ -12,7 +12,7 @@
   <a href="#quick-start">🚀 Quick Start</a> •
   <a href="#features">📖 Features</a> •
   <a href="./docs/ARCHITECTURE.md">🏗 Architecture</a> •
-  <a href="./CHANGELOG.md">📝 Changelog</a> •
+  <a href="./docs/CHANGELOG.md">📝 Changelog</a> •
   <a href="./docs/CONTRIBUTING.md">🤝 Contributing</a>
 </p>
 
@@ -85,7 +85,7 @@ The framework uses a **dual-abstraction-layer + global singleton** architecture:
 | 🔒 **Full Auth Chain**           | Login → Permission Check → Session Management → Route Interception, out of the box                         |
 | 📦 **Multi-Backend Abstraction** | `GarrisonDao` + `oxcache` + `dbnexus` — switch storage backends with zero business code changes            |
 | 🔧 **Pluggable Extensions**      | trait + Default pattern — replace any component (DAO / Strategy / Logic) without touching business code    |
-| 🎯 **Feature Gating**            | 40+ feature domains with independent flags — compile only what you need                                    |
+| 🎯 **Feature Gating**            | 100+ feature flags — compile only what you need                                                                        |
 | 📊 **High Observability**        | `tracing` logging + `listener` event subscriptions + `prometheus` metrics (optional)                       |
 | 🧪 **High Coverage**             | 3967+ tests passing (3899 lib + 68 E2E), 95%+ line coverage, clippy zero warnings                          |
 | 🌐 **Web Framework Adapters**    | axum/actix/warp annotation-style extractors (`CheckLogin` / `CheckRole` / `CheckPermission` + proc macros) |
@@ -115,7 +115,7 @@ The framework uses a **dual-abstraction-layer + global singleton** architecture:
 | AloneCache Multi-Instance         | ✅ v0.4.0                   | `AloneCache` decorator + `AloneCacheManager`                                                                                                                                                                                             |
 | ParameterQuery                    | ✅ v0.4.0                   | `ParameterQuery` trait + Builder + async check_permission/check_role                                                                                                                                                                     |
 | ~~LoginId newtype~~               | ❌ v0.5.2 removed           | ~~`LoginId` enum (Numeric/String)~~ Full stack migrated to `String`/`&str`                                                                                                                                                               |
-| Repository Layer                  | ✅ v0.4.2                   | 9 Repository traits + SqliteRepository (tenant_id isolation)                                                                                                                                                                             |
+| Repository Layer                  | ✅ v0.4.2                   | 10 Repository traits + SqliteRepository (tenant_id isolation)                                                                                                                                                                            |
 | Password Hashing                  | ✅ v0.4.2                   | `PasswordHasher` trait + Argon2/Bcrypt + auto-detection                                                                                                                                                                                  |
 | Password Login                    | ✅ v0.4.2                   | `login_with_password` integrating Repository + PasswordHasher                                                                                                                                                                            |
 | Multi-Account login_type          | ✅ v0.4.2                   | `get_permission_list_with_type` / `get_role_list_with_type`                                                                                                                                                                              |
@@ -165,7 +165,7 @@ graph TD
     Session --> Dao["GarrisonDao trait"]
     Strategy --> Interface["GarrisonInterface Callback"]
     Dao --> Oxcache["oxcache (L1 memory + L2 redis)"]
-    Dao --> Dbnexus["dbnexus (SQLite)"]
+    Dao --> Dbnexus["dbnexus (SQLite / PostgreSQL / MySQL)"]
     Logic --> Plugin["GarrisonPlugin (inventory)"]
     Logic --> Listener["GarrisonListener (inventory)"]
     Annotation["axum annotations<br/>CheckLogin / CheckRole / CheckPermission"] --> Logic
@@ -232,10 +232,10 @@ use async_trait::async_trait;
 struct MyInterface;
 #[async_trait]
 impl GarrisonInterface for MyInterface {
-    async fn get_permission_list(&self, _login_id: i64) -> GarrisonResult<Vec<String>> {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec!["user:read".into(), "user:write".into()])
     }
-    async fn get_role_list(&self, _login_id: i64) -> GarrisonResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec!["user".into()])
     }
 }
@@ -380,6 +380,7 @@ Hot-reload is supported via `tokio::sync::watch`. See [docs/CONFIGURATION.md](./
 | `secure-xss`                  |   ❌    | 0.6.2 | XSS protection                                                                                                                                                                                                                           |
 | `secure-sanitize`             |   ❌    | 0.6.2 | General input sanitization                                                                                                                                                                                                               |
 | `secure-simple-token`         |   ❌    | 0.7.1 | SimpleTokenStyle HMAC-SHA256 signing                                                                                                                                                                                                     |
+| `secure-ct-eq`                |   ❌    | 0.8.0 | Constant-time comparison primitive (CWE-208 defense, based on `subtle`)                                                                                                                                                                    |
 | `sms-rate-limit`              |   ❌    | 0.6.2 | SMS verification code rate limiting                                                                                                                                                                                                      |
 | `account-credential`          |   ❌    | 0.6.0 | Credential model SPI (Argon2/Bcrypt)                                                                                                                                                                                                     |
 | `account-credential-zeroize`  |   ❌    | 0.6.0 | Credential model zeroize extension                                                                                                                                                                                                       |
@@ -425,6 +426,17 @@ Hot-reload is supported via `tokio::sync::watch`. See [docs/CONFIGURATION.md](./
 | `miette`                      |   ❌    | 0.5.1 | Rich error reporting with miette                                                                                                                                                                                                         |
 | `i18n`                        |   ❌    | 0.3.0 | Internationalization base layer (fluent-rs)                                                                                                                                                                                              |
 | `i18n-icu`                    |   ❌    | 0.3.0 | ICU4X enhancement (plural + date + number localization)                                                                                                                                                                                  |
+| `config-encryption`           |   ❌    | 0.8.0 | Config file encryption (confers passthrough)                                                                                                                                                                                         |
+| `config-validation`           |   ❌    | 0.8.0 | Config file validation (confers passthrough)                                                                                                                                                                                         |
+| `config-hot-reload`           |   ❌    | 0.8.0 | Config file hot-reload (confers passthrough)                                                                                                                                                                                         |
+| `config-interpolation`        |   ❌    | 0.8.0 | Config variable interpolation (confers passthrough)                                                                                                                                                                                  |
+| `config-dynamic`              |   ❌    | 0.8.0 | Dynamic config source (confers passthrough)                                                                                                                                                                                          |
+| `config-feature-toggle`       |   ❌    | 0.8.0 | Config-driven feature toggle (confers passthrough)                                                                                                                                                                                   |
+| `embedded-migrations`         |   ❌    | 0.7.0 | Embedded migration SQL (compile-time include_dir for crates.io consumers)                                                                                                                                                            |
+| `server-health-check`         |   ❌    | 0.7.0 | Server health check endpoint (sdforge passthrough)                                                                                                                                                                                   |
+| `server-graceful-shutdown`    |   ❌    | 0.7.0 | Server graceful shutdown (sdforge passthrough)                                                                                                                                                                                       |
+| `credit-metering`             |   ❌    | 0.7.0 | Credit metering (multi-tenant quota consumption / alerts / reset)                                                                                                                                                                    |
+| `api-docs`                    |   ❌    | 0.7.0 | OpenAPI documentation generation (sdforge passthrough)                                                                                                                                                                               |
 | `full`                        |   ❌    |   —   | Aggregate all features                                                                                                                                                                                                                   |
 | `production`                  |   ❌    |   —   | Recommended production combination                                                                                                                                                                                                       |
 | `development`                 |   ❌    |   —   | Development combination                                                                                                                                                                                                                  |
@@ -544,6 +556,7 @@ performance baselines (P99<200ms/1000RPS), and penetration testing
 - [x] **v0.7.2** (2026-07-21) Cross-platform fixes + security hardening: Windows confers path validation fix + gitleaks integration + GarrisonConfig::load 7 security protections
 - [x] **v0.7.3** (2026-07-22) Macro expansion + version sync: new `#[check_disable]` macro + garrison-macros version synced to 0.7.3 + new `dao_session!` internal macro_rules! macro eliminating DAO-layer boilerplate (53 call sites, ~350 lines saved) + documentation consistency fixes
 - [x] **v0.8.0** (2026-07-24) Security hardening + pre-release audit fixes: API Key security regression fixes (CWE-916 hashed storage / CWE-307 IP rate-limit / IDOR multi-tenant / legacy fail-closed) + jwt_secret weak-key rejection + constant-time-compare primitive (secure-ct-eq) + CSPRNG unified OsRng + singleflight lock cleanup (CWE-770) + SQL placeholder state machine + pre-release audit fixes (lost-revoke TOCTOU, ct_eq unification, update_last_used symmetry, sha256_hex optimization, rotate concurrency docs, etc.)
+- [x] **v0.8.1** (2026-07-25) Documentation consistency + dependency version alignment: comprehensive alignment of dependency versions (oxcache 0.4 / dbnexus 0.5 / confers 0.5 / trait-kit 0.4), API example parameter types (`i64` → `&str`), Repository trait count (9 → 10), CHANGELOG link paths, etc.
 - [ ] **v1.0.0** Stable release: API freeze + performance benchmarks + production
       case studies
 

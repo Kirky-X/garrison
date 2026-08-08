@@ -62,7 +62,7 @@ pkg-config --exists openssl && echo "openssl OK"
 
 ### 1.3 克隆仓库与本地依赖
 
-Garrison 使用 crates.io 发布的 `oxcache 0.3`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.4`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
+Garrison 使用 crates.io 发布的 `oxcache 0.4`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.5`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
 
 ```bash
 # 1. 克隆 Garrison

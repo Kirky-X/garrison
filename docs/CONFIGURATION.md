@@ -19,7 +19,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | 优先级 | 来源 | 说明 |
 |--------|------|------|
 | 高 | 环境变量 | 以 `GARRISON_` 前缀 + 字段名大写下划线形式，例如 `GARRISON_TIMEOUT`、`GARRISON_JWT_SECRET` |
-| 中 | toml 文件 | 通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.4.1，内部通过 `TomlContentSource` 注入以支持 Windows 绝对路径） |
+| 中 | toml 文件 | 通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.5，内部通过 `TomlContentSource` 注入以支持 Windows 绝对路径） |
 | 低 | 代码默认值 | `GarrisonConfig::default_config()` 内联的默认值 |
 
 > 三源合并在 `GarrisonConfig::load()` 阶段完成：先加载 toml（`None` 时使用代码默认值），再由环境变量覆盖，最后 `validate()` 校验。

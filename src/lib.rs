@@ -31,7 +31,7 @@
 //! // 3. 执行登录：生成 token 并写入会话
 //! //    注意：login / check_login 依赖 task_local 上下文中的当前 token，
 //! //    通常由 web 中间件（如 axum middleware）设置。
-//! let token = GarrisonUtil::login(1001).await.unwrap();
+//! let token = GarrisonUtil::login("1001", &LoginParams::default()).await.unwrap();
 //!
 //! // 4. 校验登录状态
 //! let logged_in = GarrisonUtil::check_login().await.unwrap();
@@ -80,21 +80,20 @@
 //!
 //! ## 特性域
 //!
-//! Garrison 采用 13 个特性域设计：
+//! Garrison 采用 100+ 个 feature flag 分域设计，涵盖：
 //!
 //! - **登录认证** - 基于 Token 的会话管理
-//! - **权限认证** - RBAC 权限模型
-//! - **Session 会话** - 会话生命周期管理
-//! - **OAuth2** - 第三方授权
-//! - **单点登录 (SSO)** - 跨系统统一登录
-//! - **JWT** - JSON Web Token 支持
-//! - **微服务网关鉴权** - 网关层签名认证
-//! - **API 接口鉴权** - API Key 认证
-//! - **TOTP 动态验证码** - 时间一次性密码
-//! - **Basic 认证** - HTTP Basic Auth
-//! - **Digest 认证** - HTTP Digest Auth
-//! - **路由拦截鉴权** - Web 框架适配
-//! - **插件化扩展** - 编译期插件注册
+//! - **权限认证** - RBAC 权限模型 + 决策溯源 + ABAC (Cedar)
+//! - **Session 会话** - 双模会话生命周期管理
+//! - **协议层** - OAuth2 / SSO / JWT / Sign / API Key / Temp / OIDC / SAML
+//! - **安全模块** - TOTP / 签名 / Basic / Digest / Unicode 检测 / 脱敏 / XSS / 常量时间比较
+//! - **账号安全引擎** - 凭证 SPI / 密码策略 / 用户锁定 / 认证流 DSL
+//! - **Web 框架适配** - axum / actix-web / warp + WAF / CORS / CSRF 中间件
+//! - **安全防护套件** - 暴力破解 / 限流 / 异常检测 / GeoIP / DDoS / WAF
+//! - **可观测性** - 事件监听 / tracing 日志 / Prometheus 指标 / OTLP 追踪 / gRPC / i18n
+//! - **服务器层** - 独立认证服务器 / OAuth2 Server / 远程后端 / TLS
+//! - **社交登录** - 微信扫码 / 支付宝 / Keycloak OIDC RP
+//! - **插件化扩展** - 编译期插件注册 + 过程宏注解
 //!
 //! ## 架构
 //!

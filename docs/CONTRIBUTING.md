@@ -54,7 +54,7 @@ rustup show  # 验证 toolchain 已就绪
 
 ### 3. 克隆本地依赖（可选）
 
-Garrison 的核心依赖 `oxcache 0.3` 与 `dbnexus 0.4` 均已发布到 crates.io，**无需额外克隆本地依赖**。正常执行 `cargo build` 即可自动拉取。
+Garrison 的核心依赖 `oxcache 0.4` 与 `dbnexus 0.5` 均已发布到 crates.io，**无需额外克隆本地依赖**。正常执行 `cargo build` 即可自动拉取。
 
 > 若需对 `oxcache` / `dbnexus` 上游做本地修改验证，可自行 `git clone` 对应仓库并改用 `path` 依赖，但不要将 `path` 配置提交到 PR。
 

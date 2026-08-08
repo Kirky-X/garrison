@@ -5,8 +5,8 @@
 > - 版本：0.8.1（安全加固 + 发布前审查修复 + 文档一致性修复）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
-> - 存储：dbnexus 0.4（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
-> - 缓存：oxcache 0.3（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
+> - 存储：dbnexus 0.5（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
+> - 缓存：oxcache 0.4（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [configuration.md](./CONFIGURATION.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。
 
@@ -101,10 +101,10 @@ graph TB
     end
 
     subgraph InfraLayer["基础设施"]
-        oxcache[oxcache 0.3<br/>L1 内存 + L2 redis]
-        dbnexus[dbnexus 0.4<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
+        oxcache[oxcache 0.4<br/>L1 内存 + L2 redis]
+        dbnexus[dbnexus 0.5<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
         sdforge[sdforge 0.4<br/>声明式路由]
-        trait-kit[trait-kit 0.3<br/>typestate DI]
+        trait-kit[trait-kit 0.4<br/>typestate DI]
     end
 
     subgraph ServerLayer["服务器层（feature 门控）"]
@@ -231,8 +231,8 @@ graph LR
     BLD --> BCtx
     BS --> BD
     BLD --> BI
-    BD --> oxcache[oxcache 0.3<br/>L1 内存 + L2 redis]
-    BD --> dbnexus[dbnexus 0.4<br/>SQLite / PostgreSQL / MySQL]
+    BD --> oxcache[oxcache 0.4<br/>L1 内存 + L2 redis]
+    BD --> dbnexus[dbnexus 0.5<br/>SQLite / PostgreSQL / MySQL]
 ```
 
 ### trait 职责说明

@@ -206,7 +206,7 @@ GARRISON_DB_URL=postgres://user:password@localhost:5432/garrison
 GARRISON_DB_URL=mysql://user:password@localhost:3306/garrison
 ```
 
-> dbnexus 0.4+ 支持 SQLite / PostgreSQL / MySQL 三种后端。注意 db-sqlite 与 db-mysql 不能同时启用（dbnexus 限制）。PostgreSQL 与 MySQL 需分别通过 `db-postgres` / `db-mysql` feature 启用。
+> dbnexus 0.5+ 支持 SQLite / PostgreSQL / MySQL 三种后端。注意 db-sqlite 与 db-mysql 不能同时启用（dbnexus 限制）。PostgreSQL 与 MySQL 需分别通过 `db-postgres` / `db-mysql` feature 启用。
 
 ---
 
@@ -259,12 +259,12 @@ GARRISON_REDIS_URL=rediss://:password@redis-host:6379/0
 
 ### 4.4 per-entry TTL
 
-oxcache 0.3 支持 per-entry TTL，Garrison 利用此特性为不同会话设置独立的过期时间：
+oxcache 0.4 支持 per-entry TTL，Garrison 利用此特性为不同会话设置独立的过期时间：
 
 - Token-Session：按 `timeout` 配置设置 TTL
 - Account-Session：按 `active_timeout` 配置设置 TTL
 
-> 已知限制：oxcache 0.3 `Cache<K,V>::update` 无法保留 per-entry TTL（详见 [roadmap.md](./ROADMAP.md)）。
+> 已知限制：oxcache 0.4 `Cache<K,V>::update` 无法保留 per-entry TTL（详见 [roadmap.md](./ROADMAP.md)）。
 
 ---
 

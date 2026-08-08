@@ -12,7 +12,7 @@
   <a href="#quick-start">🚀 快速开始</a> •
   <a href="#features">📖 特性</a> •
   <a href="./docs/ARCHITECTURE.md">🏗 架构</a> •
-  <a href="./CHANGELOG.md">📝 更新日志</a> •
+  <a href="./docs/CHANGELOG.md">📝 更新日志</a> •
   <a href="./docs/CONTRIBUTING.md">🤝 贡献</a>
 </p>
 
@@ -77,7 +77,7 @@
 | 🔒 **完整鉴权链**   | 登录认证 → 权限校验 → 会话管理 → 路由拦截，开箱即用                                               |
 | 📦 **多后端抽象**   | `GarrisonDao` + `oxcache` + `dbnexus`，切换存储后端零业务代码改动                                 |
 | 🔧 **可插拔扩展**   | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务                             |
-| 🎯 **Feature 门控** | 40+ 个特性域独立 feature flag，按需编译减小体积                                                   |
+| 🎯 **Feature 门控** | 100+ 个特性 flag，按需编译减小体积                                                                        |
 | 📊 **高可观测**     | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选）                                  |
 | 🧪 **高覆盖**       | 3967+ 个测试通过（3899 lib + 68 E2E），95%+ 行覆盖率，clippy 零警告                             |
 | 🌐 **Web 框架适配** | axum/actix/warp 三框架注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission` + 过程宏） |
@@ -107,7 +107,7 @@
 | AloneCache 多实例隔离          | ✅ 0.4.0 完成              | `AloneCache` 装饰器 + `AloneCacheManager`                                                                                                                                                                                        |
 | ParameterQuery 参数化查询      | ✅ 0.4.0 完成              | `ParameterQuery` trait + Builder + async check_permission/check_role                                                                                                                                                             |
 | ~~LoginId newtype~~            | ❌ 0.5.2 删除              | ~~`LoginId` enum（Numeric/String），公开 API 接受 `impl Into<LoginId>`~~ 全栈迁移到 `String`/`&str`                                                                                                                              |
-| Repository 层                  | ✅ 0.4.2 完成              | 9 个 Repository trait + SqliteRepository（tenant_id 隔离）                                                                                                                                                                       |
+| Repository 层                  | ✅ 0.4.2 完成              | 10 个 Repository trait + SqliteRepository（tenant_id 隔离）                                                                                                                                                                      |
 | 密码哈希                       | ✅ 0.4.2 完成              | `PasswordHasher` trait + Argon2/Bcrypt 实现 + 自动识别                                                                                                                                                                           |
 | 密码登录                       | ✅ 0.4.2 完成              | `login_with_password` 整合 Repository + PasswordHasher                                                                                                                                                                           |
 | 多账户 login_type              | ✅ 0.4.2 完成              | `get_permission_list_with_type` / `get_role_list_with_type`                                                                                                                                                                      |
@@ -157,7 +157,7 @@ graph TD
     Session --> Dao["GarrisonDao trait"]
     Strategy --> Interface["GarrisonInterface 业务回调"]
     Dao --> Oxcache["oxcache (L1 内存 + L2 redis)"]
-    Dao --> Dbnexus["dbnexus (SQLite)"]
+    Dao --> Dbnexus["dbnexus (SQLite / PostgreSQL / MySQL)"]
     Logic --> Plugin["GarrisonPlugin (inventory)"]
     Logic --> Listener["GarrisonListener (inventory)"]
     Annotation["axum 注解<br/>CheckLogin / CheckRole / CheckPermission"] --> Logic
@@ -222,10 +222,10 @@ use async_trait::async_trait;
 struct MyInterface;
 #[async_trait]
 impl GarrisonInterface for MyInterface {
-    async fn get_permission_list(&self, _login_id: i64) -> GarrisonResult<Vec<String>> {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec!["user:read".into(), "user:write".into()])
     }
-    async fn get_role_list(&self, _login_id: i64) -> GarrisonResult<Vec<String>> {
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec!["user".into()])
     }
 }
@@ -364,6 +364,7 @@ async fn main() -> GarrisonResult<()> {
 | `secure-xss`                  |  ❌  |  0.6.2   | XSS 防护                                                                                                                                                                                                                         |
 | `secure-sanitize`             |  ❌  |  0.6.2   | 通用输入消毒                                                                                                                                                                                                                     |
 | `secure-simple-token`         |  ❌  |  0.7.1   | SimpleTokenStyle HMAC-SHA256 签名                                                                                                                                                                                                |
+| `secure-ct-eq`                |  ❌  |  0.8.0   | 常量时间比较原语（CWE-208 防御，基于 `subtle`）                                                                                                                                                                                   |
 | `sms-rate-limit`              |  ❌  |  0.6.2   | SMS 验证码限速                                                                                                                                                                                                                   |
 | `account-credential`          |  ❌  |  0.6.0   | 凭证模型 SPI（Argon2/Bcrypt）                                                                                                                                                                                                    |
 | `account-credential-zeroize`  |  ❌  |  0.6.0   | 凭证模型 zeroize 扩展                                                                                                                                                                                                            |
@@ -412,6 +413,17 @@ async fn main() -> GarrisonResult<()> {
 | `miette`                      |  ❌  |  0.5.1   | miette 富错误                                                                                                                                                                                                                    |
 | `i18n`                        |  ❌  |  0.3.0   | 国际化基础层（fluent-rs）                                                                                                                                                                                                        |
 | `i18n-icu`                    |  ❌  |  0.3.0   | ICU4X 增强层（复数 + 日期 + 数字本地化）                                                                                                                                                                                         |
+| `config-encryption`           |  ❌  |  0.8.0   | 配置文件加密（confers 透传）                                                                                                                                                                                                         |
+| `config-validation`           |  ❌  |  0.8.0   | 配置文件校验（confers 透传）                                                                                                                                                                                                         |
+| `config-hot-reload`           |  ❌  |  0.8.0   | 配置文件热更新（confers 透传）                                                                                                                                                                                                       |
+| `config-interpolation`        |  ❌  |  0.8.0   | 配置变量插值（confers 透传）                                                                                                                                                                                                         |
+| `config-dynamic`              |  ❌  |  0.8.0   | 动态配置源（confers 透传）                                                                                                                                                                                                           |
+| `config-feature-toggle`       |  ❌  |  0.8.0   | 配置驱动特性开关（confers 透传）                                                                                                                                                                                                     |
+| `embedded-migrations`         |  ❌  |  0.7.0   | 嵌入式迁移 SQL（编译时 include_dir，供 crates.io 消费者使用）                                                                                                                                                                       |
+| `server-health-check`         |  ❌  |  0.7.0   | 服务器健康检查端点（sdforge 透传）                                                                                                                                                                                                   |
+| `server-graceful-shutdown`    |  ❌  |  0.7.0   | 服务器优雅停机（sdforge 透传）                                                                                                                                                                                                       |
+| `credit-metering`             |  ❌  |  0.7.0   | Credit 计量（多租户配额消费统计 / 告警 / 重置）                                                                                                                                                                                       |
+| `api-docs`                    |  ❌  |  0.7.0   | OpenAPI 文档生成（sdforge 透传）                                                                                                                                                                                                     |
 | `full`                        |  ❌  |    —     | 聚合所有特性                                                                                                                                                                                                                     |
 | `production`                  |  ❌  |    —     | 生产环境推荐组合                                                                                                                                                                                                                 |
 | `development`                 |  ❌  |    —     | 开发环境组合                                                                                                                                                                                                                     |
@@ -497,6 +509,7 @@ E2E 测试覆盖 API 接口矩阵（happy/errors/boundary/authz_boundary）、�
 - [x] **v0.7.2**（2026-07-21）跨平台修复 + 安全加固：Windows confers 路径校验修复 + gitleaks 集成 + GarrisonConfig::load 7 项安全防护
 - [x] **v0.7.3**（2026-07-22）宏拓展 + 版本同步：新增 `#[check_disable]` 宏 + garrison-macros 版本同步至 0.7.3 + 新增 `dao_session!` 内部 macro_rules! 宏消除 DAO 层样板代码（53 处调用点，节省 ~350 行） + 文档一致性修复
 - [x] **v0.8.0**（2026-07-24）安全加固 + 发布前审查修复：API Key 安全退化修复（CWE-916 哈希存储 / CWE-307 IP 限速 / IDOR 多租户 / legacy fail-closed）+ jwt_secret 弱密钥拒绝 + 常量时间比较公共原语（secure-ct-eq）+ CSPRNG 统一 OsRng + singleflight 锁清理（CWE-770）+ SQL 占位符状态机 + 发布前审查修复（lost-revoke TOCTOU、ct_eq 统一、update_last_used 对称、sha256_hex 优化、rotate 并发文档化等）
+- [x] **v0.8.1**（2026-07-25）文档一致性修复 + 依赖版本同步：全面对齐文档与代码之间的版本号（oxcache 0.4 / dbnexus 0.5 / confers 0.5 / trait-kit 0.4）、API 示例参数类型（`i64` → `&str`）、Repository trait 数量（9 → 10）、CHANGELOG 链接路径等
 - [ ] **v1.0.0** 稳定版：API 冻结 + 性能基准 + 生产案例
 
 完整规划见 [docs/ROADMAP.md](./docs/ROADMAP.md)。
