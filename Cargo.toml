@@ -14,7 +14,7 @@ keywords = ["auth", "authentication", "authorization", "jwt", "rbac"]
 categories = ["authentication", "web-programming"]
 
 [workspace]
-members = [".", "examples", "garrison-macros"]
+members = [".", "examples", "macros"]
 resolver = "2"
 
 [workspace.package]
@@ -31,7 +31,7 @@ categories = ["authentication", "web-programming"]
 
 [workspace.dependencies]
 garrison = { path = ".", default-features = false }
-garrison-macros = { path = "garrison-macros", version = "0.8" }
+garrison-macros = { path = "macros", version = "0.8" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time"] }
 async-trait = "0.1"
@@ -194,7 +194,7 @@ manager-explicit = ["authorize-api"]
 
 # === 核心扩展：多租户逻辑隔离 ===
 # Repository SQL 过滤不门控此 feature（始终生效，安全优先）。
-tenant-isolation = []
+tenant-isolation = ["limiteron/multi-tenant"]
 
 # === 核心扩展：forbid 优先语义（safe-defaults） ===
 safe-defaults = []
@@ -203,6 +203,9 @@ safe-defaults = []
 config-encryption = ["confers/encryption"]
 config-validation = ["confers/validation"]
 config-hot-reload = ["confers/watch"]
+config-interpolation = ["confers/interpolation"]
+config-dynamic = ["confers/dynamic"]
+config-feature-toggle = ["confers/feature-toggle"]
 
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 # `all-defaults` 已于 v0.8.2 移除（ARCH-01/DEP-03 修复）：
@@ -210,8 +213,8 @@ config-hot-reload = ["confers/watch"]
 # 请改用 `development`。
 
 # === 缓存后端（通过 oxcache） ===
-cache-memory = ["oxcache/memory", "oxcache/serialization"]
-cache-redis = ["cache-memory", "oxcache/redis", "dep:redis"]
+cache-memory = ["oxcache/memory", "oxcache/serialization", "oxcache/metrics", "oxcache/bloom"]
+cache-redis = ["cache-memory", "oxcache/redis", "dep:redis", "oxcache/compression"]
 cache-lock = ["cache-redis", "oxcache/lock"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
@@ -225,6 +228,12 @@ db-base = [
     "dbnexus/config-env",
     "dbnexus/with-time",
     "dbnexus/auto-migrate",
+    "dbnexus/pool-health-check",
+    "dbnexus/with-uuid",
+    "dbnexus/with-chrono",
+    "dbnexus/pool-warmup",
+    "dbnexus/failover",
+    "dbnexus/observability",
     "sea-orm",
 ]
 # db-sqlite 启用 sqlite embedded 驱动
@@ -289,9 +298,11 @@ web-warp = ["warp"]
 # 依赖 auth-server（server 模块门控）
 tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 
-# === Server 增强（sdforge 0.4.7 透传） ===
-server-health-check = ["auth-server", "sdforge/health-check"]
-server-graceful-shutdown = ["auth-server", "sdforge/graceful-shutdown"]
+# === Server 增强 ===
+# 注：sdforge 0.4.7 无 health-check / graceful-shutdown 子特性（上游从未提供），
+# 聚合特性仅保留 auth-server，避免悬空 feature 引用导致解析失败
+server-health-check = ["auth-server"]
+server-graceful-shutdown = ["auth-server"]
 
 # === Web 安全中间件 ===
 web-waf = ["web-axum"]
@@ -307,6 +318,7 @@ annotation-macros = ["dep:garrison-macros", "web-axum"]
 # === 扩展 ===
 alone-cache = []
 parameter-query = []
+api-docs = ["sdforge/openapi"]
 
 # === 审计日志 ===
 audit-log = ["listener", "dep:sha2", "hmac", "secure-masking", "secure-ct-eq"]
@@ -320,12 +332,12 @@ secure-ct-eq = ["dep:subtle"]
 # === 安全防护套件 ===
 # v0.7.2：统一使用 limiteron GarrisonDaoDistributedLimiter，禁止手写限流实现。
 firewall = []
-firewall-bruteforce = ["firewall"]
+firewall-bruteforce = ["firewall", "limiteron/ban-manager"]
 firewall-ratelimit = ["firewall", "dep:rand"]
 # 启用后可在配置中选择 Memory/Redis 限流后端（RateLimitBackend enum）
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
-firewall-geoip = ["firewall"]
+firewall-geoip = ["firewall", "limiteron/geo-matching"]
 # v0.8.0：启用 limiteron adaptive-limiting，接入 AIMD 自适应限流
 firewall-ddos = ["firewall", "limiteron/adaptive-limiting", "limiteron/priority-queue"]
 firewall-waf = ["firewall", "web-axum"]
@@ -383,10 +395,10 @@ abac = ["dep:cedar-policy", "cache-memory"]
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
 
 # === v0.7.0 inklog 结构化审计日志 ===
-audit-inklog = ["inklog/fast-masking"]
+audit-inklog = ["inklog/fast-masking", "inklog/compression"]
 
 # === v0.7.0 trait-kit typestate DI 构建 ===
-backend-kit = ["backend-embedded", "trait-kit/lifecycle"]
+backend-kit = ["backend-embedded", "trait-kit/lifecycle", "trait-kit/health", "trait-kit/observer"]
 backend-shutdown = ["backend-kit", "trait-kit/shutdown"]
 
 # === v0.7.0 sdforge 声明式路由 ===
@@ -456,6 +468,8 @@ full = [
     "server-health-check", "server-graceful-shutdown",
     "config-encryption", "config-validation", "config-hot-reload",
     "db-retry", "cache-lock",
+    "api-docs",
+    "config-interpolation", "config-dynamic", "config-feature-toggle",
 ]
 
 # production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）
@@ -471,6 +485,7 @@ production = [
     "three-tier-cache",
     "sms-rate-limit",
     "backend-embedded", "backend-kit", "auth-server", "auth-server-sdforge", "abac",
+    "api-docs",
 ]
 
 development = [
