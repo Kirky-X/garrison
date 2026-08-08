@@ -9,7 +9,7 @@
 //!
 //! - `GarrisonLocale`：支持的语言枚举（默认 `Zh`，向后兼容 0.2.x 硬编码中文行为）
 //! - thread_local 栈式 scope：`set_locale()` 返回 RAII guard，drop 时自动 pop
-//! - `OnceCell` 缓存 `FluentBundle`：首次访问时加载 .ftl 资源，后续零开销
+//! - `OnceLock` 缓存 `FluentBundle`：首次访问时加载 .ftl 资源，后续零开销
 //! - `translate_error(&GarrisonError) -> String`：依据当前 locale 查询 fluent bundle
 //!
 //! ## 使用示例
@@ -32,8 +32,8 @@
 use crate::error::GarrisonError;
 use fluent::concurrent::FluentBundle;
 use fluent::{FluentArgs, FluentResource};
-use once_cell::sync::OnceCell;
 use std::cell::RefCell;
+use std::sync::OnceLock;
 use unic_langid::LanguageIdentifier;
 
 /// 构造本地化错误文案：优先按 `key` 查 FTL 翻译，缺失时回退 `$fallback` 字符串。
@@ -123,11 +123,11 @@ impl Drop for LocaleGuard {
 }
 
 // ============================================================================
-// FluentBundle 单例缓存（OnceCell，首次访问加载 .ftl 资源）
+// FluentBundle 单例缓存（OnceLock，首次访问加载 .ftl 资源）
 // ============================================================================
 
-static ZH_BUNDLE: OnceCell<FluentBundle<FluentResource>> = OnceCell::new();
-static EN_BUNDLE: OnceCell<FluentBundle<FluentResource>> = OnceCell::new();
+static ZH_BUNDLE: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
+static EN_BUNDLE: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
 
 /// 获取指定 locale 的 FluentBundle（懒加载，首次访问时构造）。
 fn get_bundle(locale: GarrisonLocale) -> &'static FluentBundle<FluentResource> {
@@ -697,7 +697,7 @@ mod tests {
         }
     }
 
-    /// get_bundle 返回的 bundle 可重复获取（OnceCell 缓存）。
+    /// get_bundle 返回的 bundle 可重复获取（OnceLock 缓存）。
     #[test]
     fn get_bundle_returns_cached_instance() {
         let b1 = get_bundle(GarrisonLocale::Zh);

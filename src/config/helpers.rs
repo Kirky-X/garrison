@@ -24,14 +24,16 @@ pub(crate) fn default_jwt_secret() -> JwtSecret {
 
 /// 收集 `GARRISON_` 前缀的环境变量，转换为 confers MemorySource 所需的 `HashMap`。
 ///
-/// Key 映射规则（与 confers `EnvSource::with_prefix(prefix).separator("__")` 一致）：
+/// Key 映射规则：
 /// 1. 剥离前缀（如 `GARRISON_`）
 /// 2. 转小写
 /// 3. `__` → `.`（支持嵌套路径，如 `tenant_isolation.enabled`）
 ///
-/// 使用 `MemorySource` 代替 `EnvSource` 的原因：confers 0.4.1 的 `EnvSource::collect()`
-/// 未在顶层 `AnnotatedValue` 上调用 `.with_priority()`，导致优先级默认为 0，被
-/// `DefaultSource`（同为 priority 0）覆盖。`MemorySource::collect()` 正确设置了 priority。
+/// **不使用 confers `EnvSource` 的原因**（非 bug workaround，架构决策）：
+/// Garrison 的 `ConfigBuilder` 使用**扁平 key** 注册默认值（如 `.default("token_name", ...)`），
+/// 而 `EnvSource` 将 `GARRISON_TOKEN_NAME` 转为嵌套路径 `token.name`（`_` 作为分隔符 → `.`）。
+/// 扁平 key 与嵌套路径不兼容，ConfigBuilder 无法反序列化嵌套路径到扁平字段。
+/// 此函数是 ConfigBuilder 扁平 key 模型的**必要适配层**。
 pub(crate) fn collect_env_vars(prefix: &str) -> HashMap<String, ConfigValue> {
     let mut values = HashMap::new();
     for (key, value) in std::env::vars() {

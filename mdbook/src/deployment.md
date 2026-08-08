@@ -36,6 +36,7 @@ production = [
     "safe-defaults", "firewall-waf",
     "three-tier-cache", "sms-rate-limit",
     "backend-embedded", "backend-kit", "auth-server", "auth-server-sdforge", "abac",
+    "api-docs", "db-retry", "cache-lock",
 ]
 ```
 
@@ -64,7 +65,7 @@ GARRISON_REDIS_URL=redis://:password@redis-host:6379/0
 GARRISON_REDIS_URL=rediss://:password@redis-host:6379/0
 ```
 
-> oxcache L2 后端的 Redis 连接由 oxcache 自身配置接管，详见 oxcache 0.3 文档；`GARRISON_REDIS_URL` 仅用于 Garrison 内部 `rate-limit-redis` 后端。
+> oxcache L2 后端的 Redis 连接由 oxcache 自身配置接管，详见 oxcache 0.4 文档；`GARRISON_REDIS_URL` 仅用于 Garrison 内部 `rate-limit-redis` 后端。
 
 要点：
 
@@ -75,7 +76,7 @@ GARRISON_REDIS_URL=rediss://:password@redis-host:6379/0
 
 ## SQLite 初始化
 
-`db-sqlite` feature 启用 dbnexus 0.4 的 `auto-migrate`，首次启动自动建表：
+`db-sqlite` feature 启用 dbnexus 0.5 的 `auto-migrate`，首次启动自动建表：
 
 ```rust
 use garrison::dao::{init_dbnexus, GarrisonMigration};
@@ -88,7 +89,7 @@ GarrisonMigration::new(pool).run_all().await?;
 ```
 
 ```bash
-# 通过 GARRISON_DB_URL 指定数据库连接（dbnexus 0.4 config-env）
+# 通过 GARRISON_DB_URL 指定数据库连接（dbnexus 0.5 config-env）
 GARRISON_DB_URL=sqlite:///var/lib/garrison/garrison.db?mode=rwc
 
 # PostgreSQL（需启用 db-postgres feature）
@@ -102,7 +103,7 @@ GARRISON_DB_URL=mysql://user:password@localhost:3306/garrison
 
 - 迁移幂等，可安全重复执行
 - 生产环境建议将 db 文件放在持久化卷
-- dbnexus 0.4 已支持 SQLite / PostgreSQL / MySQL 三种后端；大规模或多写场景建议使用 `db-postgres`（`production` 聚合特性默认启用）
+- dbnexus 0.5 已支持 SQLite / PostgreSQL / MySQL 三种后端；大规模或多写场景建议使用 `db-postgres`（`production` 聚合特性默认启用）
 
 ## 环境变量
 

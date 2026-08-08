@@ -40,9 +40,9 @@
 use crate::stp::GarrisonLogicDefault;
 use crate::strategy::Strategy;
 use arc_swap::ArcSwapOption;
-use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use std::sync::Arc;
+use std::sync::LazyLock;
 #[cfg(feature = "anomalous-detector-dual")]
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -103,9 +103,9 @@ pub struct GarrisonManager {
 
 /// 全局管理器单例。
 ///
-/// 通过 `once_cell::sync::Lazy` 实现懒加载，
+/// 通过 `std::sync::LazyLock` 实现懒加载，
 /// 首次访问时调用 `GarrisonManager::new()`。
-pub static GARRISON_MANAGER: Lazy<GarrisonManager> = Lazy::new(GarrisonManager::new);
+pub static GARRISON_MANAGER: LazyLock<GarrisonManager> = LazyLock::new(GarrisonManager::new);
 
 #[cfg(test)]
 mod mock;

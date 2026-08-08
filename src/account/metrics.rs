@@ -73,7 +73,7 @@ impl AccountMetrics {
     /// 若指标已注册（如多次调用 `new`），返回注册错误。生产环境建议使用 [`Self::register_to`]
     /// 注册到自定义 registry。
     pub fn new() -> Self {
-        // Issue 25/112: 避免 panic，使用 once_cell 确保只注册一次
+        // Issue 25/112: 避免 panic，使用 OnceLock 确保只注册一次
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<AccountMetrics> = OnceLock::new();
         INSTANCE

@@ -10,7 +10,7 @@ Garrison 的持久化与缓存能力由两个独立抽象层提供，二者均�
 
 ## oxcache 缓存抽象层
 
-`oxcache` 0.3 提供两级缓存：
+`oxcache` 0.4 提供两级缓存：
 
 | 层级 | 实现 | 用途 |
 |:---|:---|:---|
@@ -19,14 +19,14 @@ Garrison 的持久化与缓存能力由两个独立抽象层提供，二者均�
 
 特性要点：
 
-- 支持 per-entry TTL 与 `ttl()` 查询（0.3 新增）
+- 支持 per-entry TTL 与 `ttl()` 查询
 - 通过 `cache-memory` / `cache-redis` feature 启用（语义别名，均启用 oxcache）
 - L1 用 oxcache 内存后端（oxcache 无 caffeine feature，`cache-caffeine` 已移除）
 - 承载 **Token-Session**（token → 会话）与 **Account-Session**（账号 → token 列表）双向映射
 
 ## dbnexus 数据库抽象层
 
-`dbnexus` 0.4 提供数据库抽象，默认启用 `sqlite + permission + sql-parser + macros + config-env + with-time`：
+`dbnexus` 0.5 提供数据库抽象，默认启用 `sqlite + permission + sql-parser + macros + config-env + with-time`：
 
 | 后端 | 状态 | 说明 |
 |:---|:---|:---|
@@ -85,7 +85,7 @@ pub trait GarrisonDao: Send + Sync {
 
 ## 注意事项
 
-- oxcache 0.3 的 `Cache<K,V>::update` 无法保留 per-entry TTL，重置 TTL 时需显式指定
+- oxcache 0.4 的 `Cache<K,V>::update` 无法保留 per-entry TTL，重置 TTL 时需显式指定
 - 多实例部署必须启用 `cache-redis`，否则 Token-Session 不一致
-- dbnexus 0.4 已支持 SQLite / PostgreSQL / MySQL 三种后端，通过 `db-sqlite` / `db-postgres` / `db-mysql` feature 切换
+- dbnexus 0.5 已支持 SQLite / PostgreSQL / MySQL 三种后端，通过 `db-sqlite` / `db-postgres` / `db-mysql` feature 切换
 - `keys()` 方法在 `GarrisonDaoOxcache` 上仅在启用 `anomalous-detector-dual` feature 时返回结果（依赖内部 key_index），否则返回 `NotImplemented`

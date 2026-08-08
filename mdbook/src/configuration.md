@@ -7,7 +7,7 @@ Garrison 通过 `GarrisonConfig` 定义框架运行参数，支持三源合并�
 优先级（高 → 低）：**环境变量 > toml 文件 > 代码默认值**
 
 1. **代码默认值**：`GarrisonConfig::default_config()` 返回符合 spec 的默认配置
-2. **toml 文件**：通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.4）
+2. **toml 文件**：通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.5）
 3. **环境变量**：`GARRISON_` 前缀自动收集并覆盖（`GARRISON_TOKEN_NAME` → `token_name`，`__` 转嵌套路径如 `TENANT_ISOLATION__ENABLED`）
 
 ```rust

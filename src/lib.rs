@@ -45,8 +45,8 @@
 //! | 类别 | Feature | 说明 |
 //! |:---|:---|:---|
 //! | 默认 | `default` | `backend-embedded`（仅启用进程内认证后端；`development` 可一键启用常用组合） |
-//! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.3 的 L1(内存) + L2(redis)，均启用 oxcache（语义别名） |
-//! | 数据库 | `db-sqlite` | 基于 dbnexus 0.4 + auto-migrate |
+//! | 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.4 的 L1(内存) + L2(redis)，均启用 oxcache（语义别名） |
+//! | 数据库 | `db-sqlite` | 基于 dbnexus 0.5 + auto-migrate |
 //! | Web 框架 | `web-axum` / `web-actix` / `web-warp` | 路由拦截器与 extractor 适配 |
 //! | 协议层 | `protocol-jwt` / `protocol-oauth2` / `protocol-sso` / `protocol-sign` / `protocol-apikey` / `protocol-temp` | 鉴权协议插件 |
 //! | 安全模块 | `secure-totp` / `secure-sign` / `secure-httpbasic` / `secure-httpdigest` | TOTP / 签名 / Basic / Digest |
@@ -104,7 +104,7 @@
 //!   - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`GarrisonDao`] trait 屏蔽后端差异
 //!   - `oxcache`：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session
 //! - **GarrisonManager 单例模式**
-//!   - [`GarrisonManager`] 持有全局 `Arc<GarrisonLogicDefault>`（基于 `parking_lot::RwLock`，支持覆盖式重建）
+//!   - [`GarrisonManager`] 持有全局 `Arc<GarrisonLogicDefault>`（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持覆盖式重建）
 //!   - 业务方启动时通过 [`GarrisonManager::builder`] 链式注入 dao / config / interface 依赖
 //!   - `GarrisonLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
 //!   - [`GarrisonUtil::login`] / [`GarrisonUtil::check_login`] 等静态方法委托到全局单例

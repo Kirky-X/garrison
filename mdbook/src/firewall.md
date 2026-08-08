@@ -40,7 +40,7 @@ pub trait GarrisonFirewallCheckHook: Send + Sync {
 ## LoginContext
 
 ```rust
-let ctx = LoginContext::new(1001)
+let ctx = LoginContext::new("1001")
     .with_ip("192.168.1.1")
     .with_device("dev-fp-abc")
     .with_geo("Beijing");

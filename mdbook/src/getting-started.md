@@ -22,8 +22,8 @@ tokio = { version = "1", features = ["full"] }
 
 | 类别 | Feature | 说明 |
 |:---|:---|:---|
-| 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.3 的 L1(内存) + L2(redis)，语义别名 |
-| 数据库 | `db-sqlite` / `db-postgres` / `db-mysql` | 基于 dbnexus 0.4 + auto-migrate（三后端，禁混用） |
+| 缓存 | `cache-memory` / `cache-redis` | 基于 oxcache 0.4 的 L1(内存) + L2(redis)，语义别名 |
+| 数据库 | `db-sqlite` / `db-postgres` / `db-mysql` | 基于 dbnexus 0.5 + auto-migrate（三后端，禁混用） |
 | Web 框架 | `web-axum` / `web-actix` / `web-warp` | 路由拦截器与 extractor 适配 |
 | 协议层 | `protocol-jwt` / `protocol-oauth2` / `protocol-sso` / `protocol-sign` / `protocol-apikey` / `protocol-temp` | 鉴权协议插件 |
 | 安全模块 | `secure-totp` / `secure-sign` / `secure-httpbasic` / `secure-httpdigest` | TOTP / 签名 / Basic / Digest |

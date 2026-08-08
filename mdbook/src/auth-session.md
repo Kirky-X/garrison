@@ -10,10 +10,10 @@ use garrison::stp::LoginParams;
 
 // 登录：为 login_id 生成 token 并写入会话，返回 token 字符串
 // 完整签名接收 LoginParams（device / ip / user_agent / remember_me / require_mfa）
-let token = GarrisonUtil::login(1001, &LoginParams::default()).await?;
+let token = GarrisonUtil::login("1001", &LoginParams::default()).await?;
 
 // 便捷登录：使用默认 LoginParams（向后兼容 0.6.2 前的单参数 login）
-let token = GarrisonUtil::login_simple(1001).await?;
+let token = GarrisonUtil::login_simple("1001").await?;
 
 // 校验登录状态：依赖 task_local 中的当前 token（由 web 中间件设置）
 let logged_in = GarrisonUtil::check_login().await?;  // 返回 bool
