@@ -31,14 +31,14 @@ impl Annotation {
     /// # 示例
     ///
     /// ```
-    /// use garrison::Annotation;
+    /// use garrison::annotation::Annotation;
     ///
     /// // 无数据变体：name() 与 FromStr 双向一致
     /// let a = Annotation::CheckLogin;
     /// assert_eq!(a.name().parse::<Annotation>().unwrap(), a);
     ///
     /// // 含数据变体：name() 返回裸名称，FromStr 无法解析
-    /// let p = Annotation::CheckPermission(vec!["read".into()]);
+    /// let p = Annotation::CheckPermission("read".into());
     /// assert_eq!(p.name(), "CheckPermission");
     /// assert!("CheckPermission".parse::<Annotation>().is_err());
     /// ```

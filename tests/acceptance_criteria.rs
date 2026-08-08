@@ -480,22 +480,26 @@ async fn bw_ac_003_concurrent_login_kicks_earliest_session() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_004_role_check_returns_403() {
-    let _dao = init_manager(vec![], vec!["user".to_string()]).await;
-    let token = GarrisonUtil::login_simple("user-004")
-        .await
-        .expect("login 应成功");
+    with_default_tenant(async {
+        let _dao = init_manager(vec![], vec!["user".to_string()]).await;
+        let token = GarrisonUtil::login_simple("user-004")
+            .await
+            .expect("login 应成功");
 
-    let result = with_current_token(token, async { GarrisonUtil::check_role("admin").await }).await;
+        let result =
+            with_current_token(token, async { GarrisonUtil::check_role("admin").await }).await;
 
-    assert!(
-        matches!(result, Err(GarrisonError::NotRole(_))),
-        "期望 NotRole 错误，实际: {:?}",
-        result
-    );
+        assert!(
+            matches!(result, Err(GarrisonError::NotRole(_))),
+            "期望 NotRole 错误，实际: {:?}",
+            result
+        );
 
-    let err = result.unwrap_err();
-    let (status, _, _, _) = err.response_parts();
-    assert_eq!(status, 403, "NotRole 的 HTTP status 应为 403");
+        let err = result.unwrap_err();
+        let (status, _, _, _) = err.response_parts();
+        assert_eq!(status, 403, "NotRole 的 HTTP status 应为 403");
+    })
+    .await;
 }
 
 // ============================================================================
