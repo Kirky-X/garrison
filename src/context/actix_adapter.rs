@@ -14,7 +14,7 @@
 //! - `ActixContext` 组合 `&HttpRequest + ActixResponse + ActixStorage`
 
 use crate::config::GarrisonConfig;
-use crate::context::token_extract::{is_body_token_allowed_method, strip_bearer_prefix};
+use crate::context::token_extract::extract_token_from_request_parts;
 use crate::context::{GarrisonContext, GarrisonRequest, GarrisonResponse, GarrisonStorage};
 use crate::error::{GarrisonError, GarrisonResult};
 use actix_web::http::header::{HeaderMap, HeaderName, HeaderValue};
@@ -114,49 +114,13 @@ impl<'a> GarrisonRequest for ActixRequest<'a> {
     }
 
     fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
-        // 1. 从 header 提取（Authorization: Bearer <token> 或自定义 token_name header）
-        if config.is_read_header {
-            // 先尝试 Authorization: Bearer <token>（RFC 7235 大小写不敏感）
-            if let Some(auth) = self.header("Authorization")? {
-                if let Some(token) = strip_bearer_prefix(&auth) {
-                    return Ok(Some(token.to_string()));
-                }
-            }
-            // 再尝试自定义 token_name header
-            if let Some(token) = self.header(&config.token_name)? {
-                return Ok(Some(token));
-            }
-        }
-        // 2. 从 cookie 提取
-        if config.is_read_cookie {
-            if let Some(token) = self.cookie(&config.token_name)? {
-                return Ok(Some(token));
-            }
-        }
-        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
-        if config.is_read_body && !self.body_bytes.is_empty() {
-            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token，防止 GET/HEAD 等方法的
-            // body 注入攻击（攻击者可通过 `<img src="...?token=...">` 注入恶意 token）。
-            let method = self.request.method().as_str();
-            if !is_body_token_allowed_method(method) {
-                tracing::warn!(
-                    method = method,
-                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
-                );
-                return Ok(None);
-            }
-            // 检查 Content-Type: application/json
-            let content_type = self.header("Content-Type")?.unwrap_or_default();
-            if content_type.contains("application/json") {
-                // 静默解析 JSON 并提取 token_name 字段（失败回退 None，不报错）
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&self.body_bytes) {
-                    if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
-                        return Ok(Some(token.to_string()));
-                    }
-                }
-            }
-        }
-        Ok(None)
+        extract_token_from_request_parts(
+            config,
+            &self.body_bytes,
+            self.request.method().as_str(),
+            |name| self.header(name),
+            |name| self.cookie(name),
+        )
     }
 }
 
@@ -430,44 +394,13 @@ impl GarrisonRequest for ActixRequestWrapper {
     }
 
     fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
-        if config.is_read_header {
-            if let Some(auth) = self.header("Authorization")? {
-                if let Some(token) = strip_bearer_prefix(&auth) {
-                    return Ok(Some(token.to_string()));
-                }
-            }
-            if let Some(token) = self.header(&config.token_name)? {
-                return Ok(Some(token));
-            }
-        }
-        if config.is_read_cookie {
-            if let Some(token) = self.cookie(&config.token_name)? {
-                return Ok(Some(token));
-            }
-        }
-        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
-        if config.is_read_body && !self.body_bytes.is_empty() {
-            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token（与 ActixRequest::get_token 一致）。
-            let method = self.method.as_str();
-            if !is_body_token_allowed_method(method) {
-                tracing::warn!(
-                    method = method,
-                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
-                );
-                return Ok(None);
-            }
-            // 检查 Content-Type: application/json
-            let content_type = self.header("Content-Type")?.unwrap_or_default();
-            if content_type.contains("application/json") {
-                // 静默解析 JSON 并提取 token_name 字段（失败回退 None，不报错）
-                if let Ok(value) = serde_json::from_slice::<serde_json::Value>(&self.body_bytes) {
-                    if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
-                        return Ok(Some(token.to_string()));
-                    }
-                }
-            }
-        }
-        Ok(None)
+        extract_token_from_request_parts(
+            config,
+            &self.body_bytes,
+            &self.method,
+            |name| self.header(name),
+            |name| self.cookie(name),
+        )
     }
 }
 

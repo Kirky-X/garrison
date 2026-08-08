@@ -20,7 +20,7 @@
 //! （独立类型，非 `http::HeaderMap` 的 re-export），通过 [`HeaderLookup`] trait 适配。
 
 use crate::config::GarrisonConfig;
-use crate::error::GarrisonError;
+use crate::error::{GarrisonError, GarrisonResult};
 use http::HeaderMap;
 
 // ============================================================================
@@ -141,6 +141,68 @@ pub fn extract_token_from_headers<H: HeaderLookup>(
                     if k == config.token_name {
                         return Ok(Some(v[1..].to_string()));
                     }
+                }
+            }
+        }
+    }
+    Ok(None)
+}
+
+/// 从请求三部分统一提取 token（header→cookie→body 三级优先级）。
+///
+/// 供 actix/warp/axum 适配器共用，消除 `get_token` 重复实现。
+/// 通过闭包参数适配不同框架的 header/cookie 访问方式。
+///
+/// # 提取顺序
+///
+/// 1. **Header**（`is_read_header=true` 时）：`Authorization: Bearer <token>` → 自定义 `token_name` header
+/// 2. **Cookie**（`is_read_cookie=true` 时）：按 `token_name` 查找 cookie
+/// 3. **Body**（`is_read_body=true` 时）：C7 方法限制（POST/PUT/PATCH）→ Content-Type: application/json → JSON 提取
+///
+/// # 参数
+/// - `config`: 全局配置
+/// - `body_bytes`: 预读的请求 body 字节
+/// - `method`: HTTP 方法字符串
+/// - `header_fn`: header 查找闭包（框架特定）
+/// - `cookie_fn`: cookie 查找闭包（框架特定）
+pub fn extract_token_from_request_parts(
+    config: &GarrisonConfig,
+    body_bytes: &[u8],
+    method: &str,
+    mut header_fn: impl FnMut(&str) -> GarrisonResult<Option<String>>,
+    mut cookie_fn: impl FnMut(&str) -> GarrisonResult<Option<String>>,
+) -> GarrisonResult<Option<String>> {
+    // 1. Header 提取
+    if config.is_read_header {
+        if let Some(auth) = header_fn("Authorization")? {
+            if let Some(token) = strip_bearer_prefix(&auth) {
+                return Ok(Some(token.to_string()));
+            }
+        }
+        if let Some(token) = header_fn(&config.token_name)? {
+            return Ok(Some(token));
+        }
+    }
+    // 2. Cookie 提取
+    if config.is_read_cookie {
+        if let Some(token) = cookie_fn(&config.token_name)? {
+            return Ok(Some(token));
+        }
+    }
+    // 3. Body 提取（C7: 仅 POST/PUT/PATCH 允许）
+    if config.is_read_body && !body_bytes.is_empty() {
+        if !is_body_token_allowed_method(method) {
+            tracing::warn!(
+                method = method,
+                "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
+            );
+            return Ok(None);
+        }
+        let content_type = header_fn("Content-Type")?.unwrap_or_default();
+        if content_type.contains("application/json") {
+            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
+                if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
+                    return Ok(Some(token.to_string()));
                 }
             }
         }

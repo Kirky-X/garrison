@@ -49,7 +49,8 @@ pub mod tenant;
 pub mod token_extract;
 
 pub use token_extract::{
-    extract_token_from_headers, is_body_token_allowed_method, strip_bearer_prefix, HeaderLookup,
+    extract_token_from_headers, extract_token_from_request_parts, is_body_token_allowed_method,
+    strip_bearer_prefix, HeaderLookup,
 };
 
 // ============================================================================

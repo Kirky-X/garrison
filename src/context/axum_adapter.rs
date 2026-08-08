@@ -13,7 +13,7 @@
 //! - `AxumStorage` 用 `HashMap<String, String>`，请求结束自动清理
 
 use crate::config::GarrisonConfig;
-use crate::context::token_extract::{is_body_token_allowed_method, strip_bearer_prefix};
+use crate::context::token_extract::extract_token_from_request_parts;
 use crate::context::{GarrisonContext, GarrisonRequest, GarrisonResponse, GarrisonStorage};
 use crate::error::{GarrisonError, GarrisonResult};
 use axum::body::Body;
@@ -110,46 +110,13 @@ impl<'a> GarrisonRequest for AxumRequest<'a> {
     }
 
     fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
-        // 1. 从 header 提取（Authorization: Bearer <token> 或自定义 token_name header）
-        if config.is_read_header {
-            // 先尝试 Authorization: Bearer <token>（RFC 7235 大小写不敏感）
-            if let Some(auth) = self.header("Authorization")? {
-                if let Some(token) = strip_bearer_prefix(&auth) {
-                    return Ok(Some(token.to_string()));
-                }
-            }
-            // 再尝试自定义 token_name header
-            if let Some(token) = self.header(&config.token_name)? {
-                return Ok(Some(token));
-            }
-        }
-        // 2. 从 cookie 提取
-        if config.is_read_cookie {
-            if let Some(token) = self.cookie(&config.token_name)? {
-                return Ok(Some(token));
-            }
-        }
-        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
-        if config.is_read_body {
-            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token，防止 GET/HEAD 等方法的
-            // body 注入攻击（攻击者可通过 `<img src="...?token=...">` 注入恶意 token）。
-            let method = self.request.method().as_str();
-            if !is_body_token_allowed_method(method) {
-                tracing::warn!(
-                    method = method,
-                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
-                );
-                return Ok(None);
-            }
-            if let Some(token) = extract_token_from_json_body(
-                &self.body_bytes,
-                self.request.headers(),
-                &config.token_name,
-            )? {
-                return Ok(Some(token));
-            }
-        }
-        Ok(None)
+        extract_token_from_request_parts(
+            config,
+            &self.body_bytes,
+            self.request.method().as_str(),
+            |name| self.header(name),
+            |name| self.cookie(name),
+        )
     }
 }
 
@@ -432,86 +399,14 @@ impl GarrisonRequest for AxumRequestWrapper {
     }
 
     fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {
-        if config.is_read_header {
-            if let Some(auth) = self.header("Authorization")? {
-                // RFC 7235：Bearer 大小写不敏感，与 AxumRequest::get_token 保持一致（T117 P1-2）。
-                if let Some(token) = strip_bearer_prefix(&auth) {
-                    return Ok(Some(token.to_string()));
-                }
-            }
-            if let Some(token) = self.header(&config.token_name)? {
-                return Ok(Some(token));
-            }
-        }
-        if config.is_read_cookie {
-            if let Some(token) = self.cookie(&config.token_name)? {
-                return Ok(Some(token));
-            }
-        }
-        // 3. 从 body 提取（优先级最低，仅当 is_read_body=true 且有预读 body 字节时）
-        if config.is_read_body {
-            // C7: 仅 POST/PUT/PATCH 允许从 body 提取 token（与 AxumRequest::get_token 一致）。
-            let method = self.method.as_str();
-            if !is_body_token_allowed_method(method) {
-                tracing::warn!(
-                    method = method,
-                    "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
-                );
-                return Ok(None);
-            }
-            if let Some(token) =
-                extract_token_from_json_body(&self.body_bytes, &self.headers, &config.token_name)?
-            {
-                return Ok(Some(token));
-            }
-        }
-        Ok(None)
+        extract_token_from_request_parts(
+            config,
+            &self.body_bytes,
+            &self.method,
+            |name| self.header(name),
+            |name| self.cookie(name),
+        )
     }
-}
-
-// ============================================================================
-// body 读取辅助函数（T006）
-// ============================================================================
-
-/// 从预读的 JSON body 字节中提取 token。
-///
-/// # 行为
-/// 1. 若 `body_bytes` 为空，返回 `Ok(None)`（未预读 body，静默跳过）。
-/// 2. 若 `Content-Type` header 不包含 `application/json`，返回 `Ok(None)`（静默跳过）。
-/// 3. 若 body 不是合法 JSON，返回 `Ok(None)`（静默回退，不影响主流程）。
-/// 4. 若 JSON 中无 `token_name` 字段或字段值非 string，返回 `Ok(None)`。
-/// 5. 若 JSON 中有 `token_name` 字段且为 string，返回 `Ok(Some(token))`。
-///
-/// # 参数
-/// - `body_bytes`: 预读的 body 字节。
-/// - `headers`: 请求头（用于检查 `Content-Type`）。
-/// - `token_name`: token 字段名（来自 `GarrisonConfig::token_name`）。
-fn extract_token_from_json_body(
-    body_bytes: &[u8],
-    headers: &HeaderMap,
-    token_name: &str,
-) -> GarrisonResult<Option<String>> {
-    if body_bytes.is_empty() {
-        return Ok(None);
-    }
-    // 检查 Content-Type 是否为 application/json
-    let content_type = headers
-        .get(axum::http::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
-    if !content_type.contains("application/json") {
-        return Ok(None);
-    }
-    // 解析 JSON，失败时静默回退（不报错）
-    let json: serde_json::Value = match serde_json::from_slice(body_bytes) {
-        Ok(v) => v,
-        Err(_) => return Ok(None),
-    };
-    // 从 JSON 中提取 token_name 字段
-    if let Some(token) = json.get(token_name).and_then(|v| v.as_str()) {
-        return Ok(Some(token.to_string()));
-    }
-    Ok(None)
 }
 
 #[cfg(test)]
