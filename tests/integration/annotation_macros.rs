@@ -443,55 +443,69 @@ async fn check_permission_and_all_returns_200() {
 #[tokio::test]
 #[serial]
 async fn check_role_with_role_returns_200() {
-    init_manager(make_config_strict(), &[], &[("1001", &["admin"])]).await;
-    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[], &[("1001", &["admin"])]).await;
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response = garrison::stp::with_current_token(token, async { role_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    assert_eq!(body, "role_ok");
+        let response =
+            garrison::stp::with_current_token(token, async { role_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "role_ok");
+    })
+    .await
 }
 
 /// 无角色 → 403。
 #[tokio::test]
 #[serial]
 async fn check_role_without_role_returns_403() {
-    init_manager(make_config_strict(), &[], &[]).await; // 无角色数据
-    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[], &[]).await; // 无角色数据
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response = garrison::stp::with_current_token(token, async { role_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response =
+            garrison::stp::with_current_token(token, async { role_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// AND 语义：仅持有部分角色 → 403。
 #[tokio::test]
 #[serial]
 async fn check_role_and_partial_returns_403() {
-    init_manager(make_config_strict(), &[], &[("1001", &["admin"])]).await; // 缺 superadmin
-    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[], &[("1001", &["admin"])]).await; // 缺 superadmin
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response =
-        garrison::stp::with_current_token(token, async { role_and_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response =
+            garrison::stp::with_current_token(token, async { role_and_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// AND 语义：持有全部角色 → 200。
 #[tokio::test]
 #[serial]
 async fn check_role_and_all_returns_200() {
-    init_manager(
-        make_config_strict(),
-        &[],
-        &[("1001", &["admin", "superadmin"])],
-    )
-    .await;
-    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(
+            make_config_strict(),
+            &[],
+            &[("1001", &["admin", "superadmin"])],
+        )
+        .await;
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response =
-        garrison::stp::with_current_token(token, async { role_and_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    assert_eq!(body, "role_and_ok");
+        let response =
+            garrison::stp::with_current_token(token, async { role_and_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "role_and_ok");
+    })
+    .await
 }
 
 // ============================================================================

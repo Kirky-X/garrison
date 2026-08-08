@@ -313,30 +313,36 @@ async fn check_permission_with_permission_returns_200() {
 #[tokio::test]
 #[serial]
 async fn check_role_without_role_returns_403() {
-    init_manager(&[], &[]).await; // 无角色数据
-    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(&[], &[]).await; // 无角色数据
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let app = make_app();
-    let response = app
-        .oneshot(make_request("/api/admin", Some(&token)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let app = make_app();
+        let response = app
+            .oneshot(make_request("/api/admin", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// CheckRole 注解 + 持有角色 → 200。
 #[tokio::test]
 #[serial]
 async fn check_role_with_role_returns_200() {
-    init_manager(&[], &[("1001", &["admin"])]).await;
-    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(&[], &[("1001", &["admin"])]).await;
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let app = make_app();
-    let response = app
-        .oneshot(make_request("/api/admin", Some(&token)))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+        let app = make_app();
+        let response = app
+            .oneshot(make_request("/api/admin", Some(&token)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    })
+    .await
 }
 
 /// Ignore 注解允许匿名访问 /api/public → 200。
