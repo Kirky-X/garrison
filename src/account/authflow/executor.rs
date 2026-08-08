@@ -472,47 +472,16 @@ impl AuthExecutor {
                 )
                 .await?;
 
-            match outcome {
-                StepOutcome::Success { token: step_token } => {
-                    ctx.completed_steps.push(index);
-                    if let Some(t) = step_token {
-                        token = Some(t);
-                    }
-                    // 检查 pause_after_step 标记
-                    if let Some(pause_str) = ctx.extras.get("pause_after_step") {
-                        if pause_str.parse::<usize>().ok() == Some(index)
-                            && index + 1 < flow.steps.len()
-                        {
-                            let challenge = self.step_challenge(&flow.steps[index + 1]);
-                            early_result = Some(Ok(AuthResult::Pending {
-                                completed_step: index,
-                                next_step: index + 1,
-                                challenge,
-                            }));
-                            break;
-                        }
-                    }
-                },
-                StepOutcome::Failed(reason) => {
-                    if flow.allow_skip {
-                        continue;
-                    }
-                    early_result = Some(Ok(AuthResult::Failed {
-                        reason,
-                        step: index,
-                    }));
-                    break;
-                },
-                StepOutcome::ChallengeRequired {
-                    challenge_type,
-                    message,
-                } => {
-                    early_result = Some(Ok(AuthResult::ChallengeRequired {
-                        challenge_type,
-                        message,
-                    }));
-                    break;
-                },
+            if let Some(result) = self.handle_step_outcome(
+                outcome,
+                index,
+                &flow.steps,
+                flow.allow_skip,
+                ctx,
+                &mut token,
+            ) {
+                early_result = Some(result);
+                break;
             }
         }
 
@@ -530,6 +499,54 @@ impl AuthExecutor {
             login_id: ctx.user_id.clone().unwrap_or_default(),
             token: token.unwrap_or_default(),
         })
+    }
+
+    /// 处理单个步骤的执行结果，返回 `Some(result)` 表示流程中断，`None` 表示继续。
+    fn handle_step_outcome(
+        &self,
+        outcome: StepOutcome,
+        index: usize,
+        steps: &[AuthStep],
+        allow_skip: bool,
+        ctx: &mut AuthContext,
+        token: &mut Option<String>,
+    ) -> Option<GarrisonResult<AuthResult>> {
+        match outcome {
+            StepOutcome::Success { token: step_token } => {
+                ctx.completed_steps.push(index);
+                if let Some(t) = step_token {
+                    *token = Some(t);
+                }
+                // 检查 pause_after_step 标记
+                if let Some(pause_str) = ctx.extras.get("pause_after_step") {
+                    if pause_str.parse::<usize>().ok() == Some(index) && index + 1 < steps.len() {
+                        let challenge = self.step_challenge(&steps[index + 1]);
+                        return Some(Ok(AuthResult::Pending {
+                            completed_step: index,
+                            next_step: index + 1,
+                            challenge,
+                        }));
+                    }
+                }
+                None
+            },
+            StepOutcome::Failed(reason) => {
+                if allow_skip {
+                    return None;
+                }
+                Some(Ok(AuthResult::Failed {
+                    reason,
+                    step: index,
+                }))
+            },
+            StepOutcome::ChallengeRequired {
+                challenge_type,
+                message,
+            } => Some(Ok(AuthResult::ChallengeRequired {
+                challenge_type,
+                message,
+            })),
+        }
     }
 
     /// 执行单个认证步骤（内部方法）。
@@ -626,19 +643,9 @@ impl AuthExecutor {
         #[cfg(not(feature = "metrics-prometheus"))]
         let _ = metrics;
 
-        // 锁定检查（Login 前检查用户是否被锁定）
-        if let Some(lockout) = &self.lockout {
-            if let Some(user_id) = &ctx.user_id {
-                let fw_ctx = FirewallContext::new(&ctx.ip).with_login_id(user_id.clone());
-                if let Err(e) = lockout.check(&fw_ctx).await {
-                    let err_str = e.to_string();
-                    return Ok(StepOutcome::Failed(loc!(
-                        "authflow-user-locked",
-                        "",
-                        ("arg0", &err_str)
-                    )));
-                }
-            }
+        // 锁定检查
+        if let Some(result) = self.check_login_lockout(ctx).await? {
+            return Ok(result);
         }
 
         // 需要 CredentialBuilder
@@ -686,12 +693,37 @@ impl AuthExecutor {
             m.observe_credential_verify(credential_type, verify_start.elapsed());
         }
 
+        self.handle_login_result(verified, &user_id).await
+    }
+
+    /// 检查用户是否被锁定，返回 `Some(Failed)` 表示被锁定，`None` 表示通过。
+    async fn check_login_lockout(&self, ctx: &AuthContext) -> GarrisonResult<Option<StepOutcome>> {
+        if let Some(lockout) = &self.lockout {
+            if let Some(user_id) = &ctx.user_id {
+                let fw_ctx = FirewallContext::new(&ctx.ip).with_login_id(user_id.clone());
+                if let Err(e) = lockout.check(&fw_ctx).await {
+                    let err_str = e.to_string();
+                    return Ok(Some(StepOutcome::Failed(loc!(
+                        "authflow-user-locked",
+                        "",
+                        ("arg0", &err_str)
+                    ))));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    /// 处理凭证校验结果：成功则创建会话，失败则记录失败。
+    async fn handle_login_result(
+        &self,
+        verified: bool,
+        user_id: &str,
+    ) -> GarrisonResult<StepOutcome> {
         if verified {
-            // 创建会话
-            let session_token = self.logic.login(&user_id, &LoginParams::default()).await?;
-            // 记录登录成功（重置失败计数）
+            let session_token = self.logic.login(user_id, &LoginParams::default()).await?;
             if let Some(lockout) = &self.lockout {
-                if let Err(e) = lockout.record_success(&user_id).await {
+                if let Err(e) = lockout.record_success(user_id).await {
                     tracing::warn!(user_id = %user_id, error = %e, "lockout record_success failed");
                 }
             }
@@ -699,9 +731,8 @@ impl AuthExecutor {
                 token: Some(session_token),
             })
         } else {
-            // 记录登录失败（增加失败计数）
             if let Some(lockout) = &self.lockout {
-                if let Err(e) = lockout.record_failure(&user_id).await {
+                if let Err(e) = lockout.record_failure(user_id).await {
                     tracing::warn!(user_id = %user_id, error = %e, "lockout record_failure failed");
                 }
             }
