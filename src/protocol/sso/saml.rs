@@ -787,12 +787,12 @@ fn attr_value_to_string(value: &[u8]) -> String {
 // ============================================================================
 
 /// SAML 签名算法标识 URI（XML-DSig 标准）。
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 const SIG_ALG_RSA_SHA256: &str = "http://www.w3.org/2001/04/xmldsig-more#rsa-sha256";
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 const SIG_ALG_ECDSA_SHA256: &str = "http://www.w3.org/2001/04/xmldsig-more#ecdsa-sha256";
 /// 弱算法：rsa-1_5（PKCS#1 v1.5 无摘要，存在 Bleichenbacher 攻击风险）。
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 const SIG_ALG_RSA_1_5: &str = "http://www.w3.org/2000/09/xmldsig#rsa-1_5";
 
 /// 检查签名算法是否在白名单内（vuln-0001 安全要求）。
@@ -800,7 +800,7 @@ const SIG_ALG_RSA_1_5: &str = "http://www.w3.org/2000/09/xmldsig#rsa-1_5";
 /// 仅允许 RSA-SHA256 / ECDSA-SHA256，禁止 rsa-1_5 等弱算法。
 /// 注意：当前实现仅支持 RSA-SHA256 验证（依赖 `rsa` crate），
 /// ECDSA-SHA256 在算法白名单中通过但实际验证会返回 `Ok(false)`（待引入 ECDSA 库）。
-#[cfg(all(feature = "secure-saml", test))]
+#[cfg(all(feature = "protocol-saml", test))]
 fn is_signature_algorithm_allowed(algorithm: &str) -> bool {
     matches!(algorithm, SIG_ALG_RSA_SHA256 | SIG_ALG_ECDSA_SHA256)
 }
@@ -809,7 +809,7 @@ fn is_signature_algorithm_allowed(algorithm: &str) -> bool {
 ///
 /// 在 signature_xml 中查找 `<SignatureMethod` 元素并提取 `Algorithm` 属性。
 /// 找不到返回 None。
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 fn extract_signature_method_algorithm(signature_xml: &str) -> Option<String> {
     // 简化实现：字符串查找 SignatureMethod 元素的 Algorithm 属性
     let method_start = signature_xml.find("<")?;
@@ -826,7 +826,7 @@ fn extract_signature_method_algorithm(signature_xml: &str) -> Option<String> {
 /// 提取 `<ds:SignatureValue>...</ds:SignatureValue>` 的 base64 文本内容。
 ///
 /// 找不到返回 None。
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 fn extract_signature_value(signature_xml: &str) -> Option<String> {
     let start_tag_options = ["<ds:SignatureValue>", "<SignatureValue>"];
     let end_tag_options = ["</ds:SignatureValue>", "</SignatureValue>"];
@@ -850,7 +850,7 @@ fn extract_signature_value(signature_xml: &str) -> Option<String> {
 /// **C14N 限制**：本实现不执行 XML Canonicalization (C14N)，
 /// 直接使用原始 XML 字符串作为签名验证输入。若 IdP 对 canonicalized
 /// 形式签名（标准做法），验证可能失败。生产环境应替换为完整 C14N 实现。
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 fn extract_signed_info_xml(assertion_xml: &str) -> Option<String> {
     let start_tag_options = ["<ds:SignedInfo>", "<SignedInfo>"];
     let end_tag_options = ["</ds:SignedInfo>", "</SignedInfo>"];
@@ -869,7 +869,7 @@ fn extract_signed_info_xml(assertion_xml: &str) -> Option<String> {
 /// 提取 `<ds:Signature>...</ds:Signature>` 的原始 XML。
 ///
 /// 支持有无命名空间前缀两种形式。找不到返回 None。
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 fn extract_signature_xml(assertion_xml: &str) -> Option<String> {
     let start_tag_options = [
         "<ds:Signature>",
@@ -909,7 +909,7 @@ fn extract_signature_xml(assertion_xml: &str) -> Option<String> {
 /// - `Ok(true)`: 签名验证通过
 /// - `Ok(false)`: 签名缺失 / 算法不在白名单 / 签名不匹配
 /// - `Err(_)`: 公钥解析失败 / base64 解码失败 / 内部错误
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> GarrisonResult<bool> {
     use rsa::pkcs1::DecodeRsaPublicKey;
     use rsa::pkcs8::DecodePublicKey;
@@ -1047,7 +1047,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
 ///
 /// 当前仅实现 RSA-SHA256 验证。ECDSA-SHA256 在算法白名单内但实际验证返回 `Ok(false)`，
 /// 待引入 ECDSA 库后补全。
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 pub struct XmlSecSamlProvider {
     /// IdP RSA 公钥 PEM（PKCS#8 或 PKCS#1 格式），用于验证 Assertion 签名。
     idp_public_key_pem: String,
@@ -1057,7 +1057,7 @@ pub struct XmlSecSamlProvider {
     expected_audience: Option<String>,
 }
 
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 impl XmlSecSamlProvider {
     /// 创建 `XmlSecSamlProvider` 实例。
     ///
@@ -1092,7 +1092,7 @@ impl XmlSecSamlProvider {
 }
 
 /// 解析 RSA 公钥 PEM（PKCS#8 优先，回退 PKCS#1）。供 `XmlSecSamlProvider::new` fail-fast 校验。
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 fn parse_rsa_public_key(pem: &str) -> GarrisonResult<rsa::RsaPublicKey> {
     use rsa::pkcs1::DecodeRsaPublicKey;
     use rsa::pkcs8::DecodePublicKey;
@@ -1110,7 +1110,7 @@ fn parse_rsa_public_key(pem: &str) -> GarrisonResult<rsa::RsaPublicKey> {
     }
 }
 
-#[cfg(feature = "secure-saml")]
+#[cfg(feature = "protocol-saml")]
 #[async_trait]
 impl SamlProvider for XmlSecSamlProvider {
     async fn build_authn_request(
@@ -1812,7 +1812,7 @@ mod tests {
     // vuln-0001: 签名算法白名单测试（仅 secure-saml feature 下编译）
     // ========================================================================
 
-    #[cfg(feature = "secure-saml")]
+    #[cfg(feature = "protocol-saml")]
     mod signature_tests {
         use super::*;
 

@@ -62,7 +62,7 @@ default = []
 # 必须显式列出所有转发特性，否则 tests/<name>.rs 中的 #![cfg(feature = "...")] 不会生效
 full = [
     "garrison/full", "dep:axum",
-    "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-totp",
+    "secure-sign", "protocol-httpbasic", "protocol-httpdigest", "secure-totp",
     "secure-masking", "secure-xss", "secure-sanitize", "secure-confusable",
     "protocol-sign", "protocol-apikey", "protocol-temp",
     "protocol-jwt", "protocol-oauth2", "protocol-sso",
@@ -70,20 +70,20 @@ full = [
     "alone-cache", "parameter-query",
     "listener", "web-axum", "cache-memory", "db-sqlite",
     "web-actix", "web-warp", "grpc",
-    "metrics-prometheus", "observability-otlp", "cache-redis",
+    "metrics-prometheus", "otlp", "cache-redis",
     "annotation-macros", "account-credential",
-    "tenant-isolation", "audit-log", "decision-trace", "keycloak-oidc",
+    "tenant-isolation", "audit-log", "core-advanced", "keycloak-oidc",
     "social-wechat",
     "abac", "backend-embedded", "backend-remote", "auth-server",
     "firewall-bruteforce", "firewall-ratelimit", "firewall-ddos",
-    "oauth2-server", "web-waf", "web-cors", "web-csrf",
+    "oauth2-server", "web-cors", "web-csrf",
 ]
 
 # 单特性转发到 garrison（保持与 garrison feature 名一致）
 secure-sign = ["garrison/secure-sign"]
 account-credential = ["garrison/account-credential"]
-secure-httpbasic = ["garrison/secure-httpbasic"]
-secure-httpdigest = ["garrison/secure-httpdigest"]
+protocol-httpbasic = ["garrison/protocol-httpbasic"]
+protocol-httpdigest = ["garrison/protocol-httpdigest"]
 secure-totp = ["garrison/secure-totp"]
 protocol-sign = ["garrison/protocol-sign"]
 protocol-apikey = ["garrison/protocol-apikey"]
@@ -106,7 +106,7 @@ web-actix = ["garrison/web-actix", "dep:actix-web"]
 web-warp = ["garrison/web-warp", "dep:warp"]
 grpc = ["garrison/grpc", "dep:tonic"]
 metrics-prometheus = ["garrison/metrics-prometheus", "dep:tracing-subscriber"]
-observability-otlp = ["garrison/observability-otlp", "dep:tracing-subscriber"]
+otlp = ["garrison/otlp", "dep:tracing-subscriber"]
 cache-redis = ["garrison/cache-redis", "dep:oxcache", "oxcache/redis"]
 
 # 0.4.2 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]）
@@ -115,7 +115,7 @@ annotation-macros = ["garrison/annotation-macros"]
 # 0.5.0 新增：多租户隔离 / 审计日志 / 决策溯源 / Keycloak OIDC RP / 微信社交登录
 tenant-isolation = ["garrison/tenant-isolation"]
 audit-log = ["garrison/audit-log"]
-decision-trace = ["garrison/decision-trace"]
+core-advanced = ["garrison/core-advanced"]
 keycloak-oidc = ["garrison/keycloak-oidc"]
 social-wechat = ["garrison/social-wechat"]
 
@@ -134,7 +134,6 @@ firewall-bruteforce = ["garrison/firewall-bruteforce"]
 firewall-ratelimit = ["garrison/firewall-ratelimit"]
 firewall-ddos = ["garrison/firewall-ddos"]
 oauth2-server = ["garrison/oauth2-server"]
-web-waf = ["garrison/web-waf"]
 web-cors = ["garrison/web-cors"]
 web-csrf = ["garrison/web-csrf"]
 
@@ -150,12 +149,12 @@ path = "src/bin/sign_utils.rs"
 
 [[bin]]
 name = "httpbasic_login"
-required-features = ["secure-httpbasic"]
+required-features = ["protocol-httpbasic"]
 path = "src/bin/httpbasic_login.rs"
 
 [[bin]]
 name = "httpdigest_login"
-required-features = ["secure-httpdigest"]
+required-features = ["protocol-httpdigest"]
 path = "src/bin/httpdigest_login.rs"
 
 [[bin]]
@@ -279,7 +278,7 @@ path = "src/bin/i18n_usage.rs"
 
 [[bin]]
 name = "observability_setup"
-required-features = ["metrics-prometheus", "observability-otlp"]
+required-features = ["metrics-prometheus", "otlp"]
 path = "src/bin/observability_setup.rs"
 
 [[bin]]
@@ -384,7 +383,7 @@ path = "src/bin/oauth2_server_flow.rs"
 
 [[bin]]
 name = "web_security"
-required-features = ["web-waf", "web-cors", "web-csrf", "web-axum"]
+required-features = ["web-cors", "web-csrf", "web-axum"]
 path = "src/bin/web_security.rs"
 
 [[bin]]

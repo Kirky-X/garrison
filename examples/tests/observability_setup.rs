@@ -12,7 +12,7 @@
 //! 注：`init_otlp_tracing` 为全局一次性操作，且需要 OTLP collector，
 //! 此处不实际调用（避免污染全局 tracer provider）。
 
-#![cfg(all(feature = "metrics-prometheus", feature = "observability-otlp"))]
+#![cfg(all(feature = "metrics-prometheus", feature = "otlp"))]
 
 use garrison::observability::prometheus::Encoder;
 use garrison::observability::GarrisonMetrics;

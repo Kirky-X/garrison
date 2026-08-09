@@ -1442,7 +1442,7 @@ mod tests {
     ///
     /// 仅在 safe-auth 禁用时有效：safe-auth 启用时 check_safe 调用 inherent is_safe
     /// 检查 safe_services 标记，未 open_safe 时返回 NotSafe 错误。
-    #[cfg(not(feature = "safe-auth"))]
+    #[cfg(not(feature = "security-extra"))]
     #[tokio::test]
     async fn mfa_check_safe_success() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
@@ -1654,7 +1654,7 @@ mod tests {
     ///
     /// 仅在 safe-auth 禁用时有效：safe-auth 启用时 Mfa(None) 步骤的 check_safe
     /// 检查 safe_services 标记，未 open_safe 时返回 NotSafe 错误。
-    #[cfg(not(feature = "safe-auth"))]
+    #[cfg(not(feature = "security-extra"))]
     #[tokio::test]
     async fn multi_step_flow_success() {
         let repo = make_repo_with_password("alice").await;

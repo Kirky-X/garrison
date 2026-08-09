@@ -60,9 +60,9 @@ impl GarrisonConfig {
             l2_cache_ttl_secs: DEFAULT_L2_CACHE_TTL_SECS,
             #[cfg(feature = "three-tier-cache")]
             l1_cache_capacity: DEFAULT_L1_CACHE_CAPACITY,
-            #[cfg(feature = "login-token-map-persistence")]
+            #[cfg(feature = "session-extra")]
             login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
-            #[cfg(feature = "anonymous-session")]
+            #[cfg(feature = "session-extra")]
             anon_session_timeout: DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             is_concurrent: DEFAULT_IS_CONCURRENT,
             is_share: DEFAULT_IS_SHARE,
@@ -75,8 +75,6 @@ impl GarrisonConfig {
             enable_jwt_revocation: false,
             audit_mask_mode: AuditMaskMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
-            #[cfg(feature = "web-waf")]
-            waf_config: WafConfig::default(),
             #[cfg(feature = "web-cors")]
             cors_config: CorsConfig::default(),
             #[cfg(feature = "web-csrf")]
@@ -222,7 +220,7 @@ impl GarrisonConfig {
             )
             .default("audit_mask_mode", ConfigValue::string("partial"));
 
-        #[cfg(feature = "login-token-map-persistence")]
+        #[cfg(feature = "session-extra")]
         {
             builder = builder.default(
                 "login_token_map_persist_interval_secs",
@@ -247,7 +245,7 @@ impl GarrisonConfig {
                 );
         }
 
-        #[cfg(feature = "anonymous-session")]
+        #[cfg(feature = "session-extra")]
         {
             builder = builder.default(
                 "anon_session_timeout",
@@ -590,7 +588,7 @@ impl GarrisonConfig {
 
     /// feature-gated 校验：`anonymous-session` / `three-tier-cache` / `rate-limit-redis` / `firewall-waf` / `sms-rate-limit` / `anomalous-detector-dual`。
     fn validate_feature_gated(&self) -> GarrisonResult<()> {
-        #[cfg(feature = "anonymous-session")]
+        #[cfg(feature = "session-extra")]
         if self.anon_session_timeout == 0 {
             return Err(GarrisonError::Config(
                 "anon_session_timeout 必须 > 0".to_string(),

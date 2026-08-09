@@ -32,7 +32,7 @@ pub mod algorithm;
 /// # 示例
 ///
 /// ```
-/// #[cfg(feature = "secure-httpdigest")]
+/// #[cfg(feature = "protocol-httpdigest")]
 /// # {
 /// use garrison::secure::httpdigest::HttpDigestAuth;
 ///

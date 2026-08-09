@@ -52,7 +52,7 @@ pub mod mfa;
 pub mod password;
 pub mod permission;
 // safe-auth feature-gated
-#[cfg(feature = "safe-auth")]
+#[cfg(feature = "security-extra")]
 pub mod safe;
 pub mod session;
 pub mod token;
@@ -262,12 +262,12 @@ pub struct GarrisonLogicDefault {
     ///
     /// 需启用 `security-alert` feature。未注入时为 no-op（向后兼容）。
     /// 检测失败只 `tracing::warn!` 不中断主流程。
-    #[cfg(feature = "security-alert")]
+    #[cfg(feature = "security-extra")]
     pub(crate) anomaly_detectors: Option<Vec<Arc<dyn crate::strategy::alert::AnomalyDetector>>>,
     /// 告警监听器管理器（可选，注入后广播异常检测产生的事件）。
     ///
     /// 需启用 `security-alert` feature。未注入时异常事件不广播（向后兼容）。
-    #[cfg(feature = "security-alert")]
+    #[cfg(feature = "security-extra")]
     pub(crate) alert_listener_manager: Option<Arc<crate::strategy::alert::AlertListenerManager>>,
     /// 设备绑定策略（可选，注入后 login 流程检测新设备并设置 `require_mfa` 标记）。
     ///

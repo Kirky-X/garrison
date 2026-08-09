@@ -3,12 +3,7 @@
 
 //! Web 安全中间件示例集成测试。
 
-#![cfg(all(
-    feature = "web-waf",
-    feature = "web-cors",
-    feature = "web-csrf",
-    feature = "web-axum"
-))]
+#![cfg(all(feature = "web-cors", feature = "web-csrf", feature = "web-axum"))]
 
 #[tokio::test]
 async fn web_security_runs_successfully() {

@@ -6,7 +6,7 @@
 //! trace context 经 OpenTelemetry 自身的 `Context` 传播（task_local），
 //! 通过全局 tracer provider 导出 OTLP span。
 
-#[cfg(feature = "observability-otlp")]
+#[cfg(feature = "otlp")]
 use super::GarrisonOtelError;
 
 /// 初始化 OpenTelemetry OTLP gRPC 追踪导出。
@@ -29,7 +29,7 @@ use super::GarrisonOtelError;
 /// init_otlp_tracing("http://localhost:4317").expect("OTLP 初始化失败");
 /// // 后续 tracing::info_span!("garrison.login") 会自动导出到 OTLP endpoint
 /// ```
-#[cfg(feature = "observability-otlp")]
+#[cfg(feature = "otlp")]
 pub fn init_otlp_tracing(endpoint: &str) -> Result<(), GarrisonOtelError> {
     use opentelemetry_otlp::{SpanExporter, WithExportConfig};
     use opentelemetry_sdk::Resource;

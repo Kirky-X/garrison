@@ -28,8 +28,6 @@ use crate::strategy::rate_limiter_backend::RateLimitBackend;
 use crate::web::cors::CorsConfig;
 #[cfg(feature = "web-csrf")]
 use crate::web::csrf::CsrfConfig;
-#[cfg(feature = "web-waf")]
-use crate::web::waf::WafConfig;
 use confers::types::ConfigValue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -434,14 +432,14 @@ pub struct GarrisonConfig {
     /// 仅当 `login-token-map-persistence` feature 启用时生效。
     /// - `0`：每次变更同步写入 DAO（强一致，性能较低）
     /// - `>0`：后台 task 按此间隔批量写入 DAO（最终一致，性能更高）
-    #[cfg(feature = "login-token-map-persistence")]
+    #[cfg(feature = "session-extra")]
     pub login_token_map_persist_interval_secs: u64,
 
     /// 匿名 Session 超时秒数（默认 1800 = 30 分钟）。
     ///
     /// 仅当 `anonymous-session` feature 启用时生效。
     /// 匿名 Session 不关联 login_id，超时后自动销毁。
-    #[cfg(feature = "anonymous-session")]
+    #[cfg(feature = "session-extra")]
     pub anon_session_timeout: u64,
 
     /// 是否允许并发登录（true = 同一账号可同时在多设备登录）。
@@ -514,13 +512,6 @@ pub struct GarrisonConfig {
     /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
     /// + `tenant_resolution_middleware` 才能生效。
     pub tenant_isolation: TenantIsolationConfig,
-
-    /// WAF 请求内容校验配置段。
-    ///
-    /// 默认 `enabled: false`（向后兼容）。启用后需配合 `web-waf` Cargo feature
-    /// + `garrison_waf_middleware` 才能生效。
-    #[cfg(feature = "web-waf")]
-    pub waf_config: WafConfig,
 
     /// CORS 跨域资源共享配置段。
     ///

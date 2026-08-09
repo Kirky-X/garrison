@@ -706,9 +706,9 @@ fn update_without_watcher_is_noop() {
         l2_cache_ttl_secs: DEFAULT_L2_CACHE_TTL_SECS,
         #[cfg(feature = "three-tier-cache")]
         l1_cache_capacity: DEFAULT_L1_CACHE_CAPACITY,
-        #[cfg(feature = "login-token-map-persistence")]
+        #[cfg(feature = "session-extra")]
         login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
-        #[cfg(feature = "anonymous-session")]
+        #[cfg(feature = "session-extra")]
         anon_session_timeout: DEFAULT_ANON_SESSION_TIMEOUT_SECS,
         is_concurrent: DEFAULT_IS_CONCURRENT,
         is_share: DEFAULT_IS_SHARE,
@@ -718,8 +718,6 @@ fn update_without_watcher_is_noop() {
         overflow_logout_mode: OverflowLogoutMode::default(),
         audit_mask_mode: AuditMaskMode::default(),
         tenant_isolation: TenantIsolationConfig::default(),
-        #[cfg(feature = "web-waf")]
-        waf_config: crate::web::waf::WafConfig::default(),
         #[cfg(feature = "web-cors")]
         cors_config: crate::web::cors::CorsConfig::default(),
         #[cfg(feature = "web-csrf")]
@@ -1153,7 +1151,7 @@ fn token_map_cleanup_interval_env_var_overrides() {
 // ========================================================================
 
 /// T013: `default_config()` 的 `login_token_map_persist_interval_secs` 为 0（同步写入）。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[test]
 fn login_token_map_persist_interval_default_is_zero() {
     let config = GarrisonConfig::default_config();
@@ -1168,7 +1166,7 @@ fn login_token_map_persist_interval_default_is_zero() {
 }
 
 /// T013: `GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS=10` 环境变量覆盖默认值。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[test]
 #[serial]
 fn login_token_map_persist_interval_env_var_overrides() {
@@ -1186,7 +1184,7 @@ fn login_token_map_persist_interval_env_var_overrides() {
 // ========================================================================
 
 /// T018: `default_config()` 的 `anon_session_timeout` 为 1800（30 分钟）。
-#[cfg(feature = "anonymous-session")]
+#[cfg(feature = "session-extra")]
 #[test]
 fn anon_session_timeout_default_is_1800() {
     let config = GarrisonConfig::default_config();
@@ -1201,7 +1199,7 @@ fn anon_session_timeout_default_is_1800() {
 }
 
 /// T018: `GARRISON_ANON_SESSION_TIMEOUT=3600` 环境变量覆盖默认值。
-#[cfg(feature = "anonymous-session")]
+#[cfg(feature = "session-extra")]
 #[test]
 #[serial]
 fn anon_session_timeout_env_var_overrides() {

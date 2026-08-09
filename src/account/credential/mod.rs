@@ -116,7 +116,7 @@ pub trait Credential: Send + Sync {
 /// | `priority` | `i32` | 优先级（多凭证时排序，小值优先） |
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(
-    feature = "account-credential-zeroize",
+    feature = "credential-zeroize",
     derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)
 )]
 pub struct CredentialModel {

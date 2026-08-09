@@ -307,7 +307,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(feature = "safe-auth")]
+    #[cfg(feature = "security-extra")]
     #[tokio::test]
     #[serial]
     async fn test_check_safe_default_returns_false() {

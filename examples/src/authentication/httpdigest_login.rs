@@ -3,11 +3,11 @@
 
 //! HTTP Digest 认证示例：演示 RFC 7616 质询生成、HA1 预计算与响应校验。
 //!
-//! 对应模块：`src/secure/httpdigest/mod.rs`（feature: secure-httpdigest）。
+//! 对应模块：`src/secure/httpdigest/mod.rs`（feature: protocol-httpdigest）。
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p garrison-examples --bin httpdigest_login --features secure-httpdigest
+//! cargo run -p garrison-examples --bin httpdigest_login --features protocol-httpdigest
 //! ```
 
 use garrison::error::GarrisonResult;

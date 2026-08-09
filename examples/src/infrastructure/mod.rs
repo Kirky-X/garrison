@@ -19,7 +19,7 @@ pub mod exception_handling;
 pub mod health_check;
 pub mod i18n_usage;
 pub mod json_template;
-#[cfg(all(feature = "metrics-prometheus", feature = "observability-otlp"))]
+#[cfg(all(feature = "metrics-prometheus", feature = "otlp"))]
 pub mod observability_setup;
 #[cfg(feature = "parameter-query")]
 pub mod parameter_query;

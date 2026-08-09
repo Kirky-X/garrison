@@ -5,7 +5,7 @@
 //!
 //! 验证 run() 完整执行（内部已包含 HA2/Response 摘要断言）。
 
-#![cfg(feature = "secure-httpdigest")]
+#![cfg(feature = "protocol-httpdigest")]
 
 use garrison_examples::authentication::httpdigest_login;
 

@@ -22,7 +22,7 @@ pub struct Credential {
 /// 所有方法为关联函数，无需实例化即可调用：
 ///
 /// ```
-/// #[cfg(feature = "secure-httpbasic")]
+/// #[cfg(feature = "protocol-httpbasic")]
 /// # {
 /// use garrison::secure::httpbasic::HttpBasicAuth;
 /// let encoded = HttpBasicAuth::encode("alice", "secret");

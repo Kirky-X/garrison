@@ -347,11 +347,11 @@ impl AuthLogic for AuthLogicDefault {
                 ip: old_ts.ip.clone(),
                 user_agent: old_ts.user_agent.clone(),
                 safe_services: old_ts.safe_services.clone(),
-                #[cfg(feature = "dynamic-active-timeout")]
+                #[cfg(feature = "session-extra")]
                 dynamic_active_timeout: old_ts.dynamic_active_timeout,
                 // 匿名 token 不可达此路径（get_token_session 读 token:session:{token}，
                 // 匿名 session 在 token:session:anon:{token}，入口即返回 NotLogin）
-                #[cfg(feature = "anonymous-session")]
+                #[cfg(feature = "session-extra")]
                 is_anon: false,
             };
 

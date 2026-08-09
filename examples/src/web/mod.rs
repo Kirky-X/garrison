@@ -11,12 +11,7 @@ pub mod context_request;
 pub mod grpc_interceptor;
 #[cfg(feature = "web-actix")]
 pub mod web_actix_example;
-#[cfg(all(
-    feature = "web-waf",
-    feature = "web-cors",
-    feature = "web-csrf",
-    feature = "web-axum"
-))]
+#[cfg(all(feature = "web-cors", feature = "web-csrf", feature = "web-axum"))]
 pub mod web_security;
 #[cfg(feature = "web-warp")]
 pub mod web_warp_example;

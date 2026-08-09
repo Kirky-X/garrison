@@ -41,9 +41,9 @@ impl GarrisonLogicDefault {
             refresh_token_rotation: None,
             renewal_locks: DashMap::new(),
             clock: Arc::new(SystemClock::new()),
-            #[cfg(feature = "security-alert")]
+            #[cfg(feature = "security-extra")]
             anomaly_detectors: None,
-            #[cfg(feature = "security-alert")]
+            #[cfg(feature = "security-extra")]
             alert_listener_manager: None,
             #[cfg(feature = "device-binding")]
             device_binding_policy: None,
@@ -193,7 +193,7 @@ impl GarrisonLogicDefault {
     ///
     /// 可链式调用注入多个检测器，`login` / `check_login` 时按注入顺序依次调用。
     /// 未注入时跳过异常检测（向后兼容）。检测失败只 `tracing::warn!` 不中断主流程。
-    #[cfg(feature = "security-alert")]
+    #[cfg(feature = "security-extra")]
     pub fn with_anomaly_detector(
         mut self,
         detector: Arc<dyn crate::strategy::alert::AnomalyDetector>,
@@ -208,7 +208,7 @@ impl GarrisonLogicDefault {
     ///
     /// 注入后异常检测产生的事件通过 `AlertListenerManager::broadcast_alert` 广播。
     /// 未注入时异常事件不广播（向后兼容）。
-    #[cfg(feature = "security-alert")]
+    #[cfg(feature = "security-extra")]
     pub fn with_alert_listener_manager(
         mut self,
         manager: Arc<crate::strategy::alert::AlertListenerManager>,

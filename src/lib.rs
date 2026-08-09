@@ -214,11 +214,11 @@ pub mod plugin;
 
 /// 可观测性模块，提供 Prometheus 指标 / 结构化 JSON 日志 / OpenTelemetry 分布式追踪。
 ///
-/// 启用 `metrics-prometheus` feature 启用指标采集；启用 `observability-otlp` 启用 OTLP 追踪导出。
+/// 启用 `metrics-prometheus` feature 启用指标采集；启用 `otlp` 启用 OTLP 追踪导出。
 /// 未启用任一 feature 时模块仍可导入但 API 为 no-op，保证向后兼容。
 #[cfg(any(
     feature = "metrics-prometheus",
-    feature = "observability-otlp",
+    feature = "otlp",
     feature = "tracing-log"
 ))]
 pub mod observability;
@@ -269,7 +269,6 @@ pub mod web_warp;
 /// Web 安全中间件模块，提供 WAF / CORS / CSRF / 安全响应头等能力。
 ///
 /// 各子模块独立 feature-gated：
-/// - `web-waf`：WAF 请求内容校验
 /// - `web-cors`：CORS 跨域资源共享
 /// - `web-csrf`：CSRF 跨站请求伪造防护
 /// - `web-security-headers`：HTTP 安全响应头中间件
@@ -300,8 +299,8 @@ pub mod credit;
 #[cfg(any(
     feature = "secure-totp",
     feature = "secure-sign",
-    feature = "secure-httpbasic",
-    feature = "secure-httpdigest",
+    feature = "protocol-httpbasic",
+    feature = "protocol-httpdigest",
     feature = "secure-confusable",
     feature = "secure-masking",
     feature = "secure-xss",

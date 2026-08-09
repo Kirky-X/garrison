@@ -86,7 +86,7 @@ impl TotpSecretData {
 /// // let ok = cred.verify("123456").await?;
 /// ```
 #[cfg_attr(
-    feature = "account-credential-zeroize",
+    feature = "credential-zeroize",
     derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)
 )]
 pub struct TotpCredential {

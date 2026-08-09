@@ -1524,13 +1524,13 @@ impl GarrisonDao for FailingGetDao {
 ///
 /// 用于测试 `add_login_token_persistent` / `remove_login_token_persistent`
 /// 在 DAO update 失败时不写入内存层（保证双层一致性）。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 struct FailingUpdateDao {
     inner: Arc<MockDao>,
     fail_update_key: String,
 }
 
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[async_trait]
 impl GarrisonDao for FailingUpdateDao {
     async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
@@ -1594,14 +1594,14 @@ async fn cleanup_expired_tokens_dao_failure_skips_token_without_aborting() {
 }
 
 // ------------------------------------------------------------------------
-// dynamic_active_timeout 字段默认值（feature = "dynamic-active-timeout"）
+// dynamic_active_timeout 字段默认值（feature = "session-extra"）
 // ------------------------------------------------------------------------
 
 /// 验证 `TokenSession` 创建后 `dynamic_active_timeout` 默认为 `None`。
 ///
 /// 启用 `dynamic-active-timeout` feature 后，新创建的 TokenSession
 /// 的 `dynamic_active_timeout` 字段应为 `None`（未设置自定义活跃超时）。
-#[cfg(feature = "dynamic-active-timeout")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn token_session_dynamic_active_timeout_defaults_to_none() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1622,7 +1622,7 @@ async fn token_session_dynamic_active_timeout_defaults_to_none() {
 ///
 /// 创建 token session 后调用 `set_active_timeout(token, 600)`，
 /// 验证 `get_token_session` 返回的 `dynamic_active_timeout` 为 `Some(600)`。
-#[cfg(feature = "dynamic-active-timeout")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn set_active_timeout_sets_dynamic_timeout() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1647,7 +1647,7 @@ async fn set_active_timeout_sets_dynamic_timeout() {
 /// 验证 `set_active_timeout` 对不存在的 token 返回错误。
 ///
 /// 对不存在的 token 调用 `set_active_timeout`，验证返回 `Err`。
-#[cfg(feature = "dynamic-active-timeout")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn set_active_timeout_returns_error_for_nonexistent_token() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1666,7 +1666,7 @@ async fn set_active_timeout_returns_error_for_nonexistent_token() {
 /// 验证 `set_active_timeout` 拒绝 `timeout_secs=0`（Spec 定义 0 非法）。
 ///
 /// 0 既不是有效超时也不是 -1（永不过期），应返回 `InvalidParam`。
-#[cfg(feature = "dynamic-active-timeout")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn set_active_timeout_zero_returns_invalid_param() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1684,7 +1684,7 @@ async fn set_active_timeout_zero_returns_invalid_param() {
 /// 即使 `last_active_at` 为当前时间，-1 也不应触发过期。
 /// 修复前：`last_active_at + (-1) < now` 几乎总成立，token 被立即判过期。
 /// 修复后：`effective_active_timeout < 0` 时跳过活跃超时检查。
-#[cfg(feature = "dynamic-active-timeout")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn set_active_timeout_negative_one_means_never_expire() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1702,11 +1702,11 @@ async fn set_active_timeout_negative_one_means_never_expire() {
 }
 
 // ------------------------------------------------------------------------
-// rebuild_login_token_map：从 DAO 重建内存索引（feature = "login-token-map-persistence"）
+// rebuild_login_token_map：从 DAO 重建内存索引（feature = "session-extra"）
 // ------------------------------------------------------------------------
 
 /// 验证空 DAO（无 Account-Session）重建后 `login_token_map` 为空。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn rebuild_login_token_map_empty_dao_produces_empty_map() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1718,7 +1718,7 @@ async fn rebuild_login_token_map_empty_dao_produces_empty_map() {
 }
 
 /// 验证 3 个 AccountSession（各有 2 个 token）重建后 `login_token_map` 包含全部 6 个 token。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn rebuild_login_token_map_with_3_sessions_populates_all_tokens() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1761,14 +1761,14 @@ async fn rebuild_login_token_map_with_3_sessions_populates_all_tokens() {
 }
 
 // ------------------------------------------------------------------------
-// add_login_token_persistent / remove_login_token_persistent（feature = "login-token-map-persistence"）
+// add_login_token_persistent / remove_login_token_persistent（feature = "session-extra"）
 // ------------------------------------------------------------------------
 
 /// 验证 `add_login_token_persistent` 同时写入 DAO AccountSession.tokens 和内存 login_token_map。
 ///
 /// 场景：已存在 AccountSession（含 T1，内存已有 T1），调用 persistent 添加 T2，
 /// 验证 DAO 与内存两层都包含 T1 和 T2。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn add_login_token_persistent_adds_to_both_layers() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1803,7 +1803,7 @@ async fn add_login_token_persistent_adds_to_both_layers() {
 ///
 /// 场景：AccountSession 含 T1 和 T2，调用 persistent 移除 T1，
 /// 验证 DAO 与内存两层都只剩 T2。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn remove_login_token_persistent_removes_from_both_layers() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1839,7 +1839,7 @@ async fn remove_login_token_persistent_removes_from_both_layers() {
 ///
 /// 场景：使用 FailingUpdateDao 让 account:session:user1 的 update 失败，
 /// 调用 add_login_token_persistent 应返回 Err，且内存 login_token_map 未被写入。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn add_login_token_persistent_dao_failure_skips_memory_write() {
     let inner = Arc::new(MockDao::new());
@@ -1872,7 +1872,7 @@ async fn add_login_token_persistent_dao_failure_skips_memory_write() {
 }
 
 // ------------------------------------------------------------------------
-// create / logout 端到端双层一致性（feature = "login-token-map-persistence"）
+// create / logout 端到端双层一致性（feature = "session-extra"）
 // ------------------------------------------------------------------------
 
 /// 验证 login → logout 后 DAO AccountSession.tokens 与内存 login_token_map 一致。
@@ -1880,7 +1880,7 @@ async fn add_login_token_persistent_dao_failure_skips_memory_write() {
 /// 场景：create(user1, T1) 后 DAO 与内存两层都包含 T1；
 /// logout(T1) 后 DAO AccountSession.tokens 为空、内存 login_token_map 不包含 T1。
 /// 这验证了 create_inner/logout_inner 现有双写逻辑在 persistent 特性下的一致性。
-#[cfg(feature = "login-token-map-persistence")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn login_logout_persistent_consistency() {
     let (_dao, session) = make_session(3600, 86400);

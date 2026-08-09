@@ -1227,7 +1227,7 @@ async fn util_check_safe_returns_ok_by_default() {
 
     let result = GarrisonUtil::check_safe().await;
 
-    #[cfg(feature = "safe-auth")]
+    #[cfg(feature = "security-extra")]
     {
         assert!(
             matches!(result, Err(GarrisonError::NotSafe { .. })),
@@ -1235,7 +1235,7 @@ async fn util_check_safe_returns_ok_by_default() {
             result
         );
     }
-    #[cfg(not(feature = "safe-auth"))]
+    #[cfg(not(feature = "security-extra"))]
     {
         assert!(
             result.is_ok(),
@@ -4056,7 +4056,7 @@ async fn refresh_access_token_returns_not_implemented_without_db_sqlite() {
     feature = "protocol-sso",
     feature = "protocol-sign",
     feature = "secure-sign",
-    feature = "secure-httpdigest"
+    feature = "protocol-httpdigest"
 ))]
 #[tokio::test]
 async fn login_auto_generates_device_fingerprint() {
@@ -4265,7 +4265,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
 ///
 /// 不设置 per-token 时全局 active_timeout=3600 不会导致过期；
 /// 设置 per-token=1 后，token 级检查使用 1 秒超时，2 秒后 token 过期。
-#[cfg(feature = "dynamic-active-timeout")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn per_token_active_timeout_takes_effect() {
     // 全局 active_timeout=3600（长），per-token 会设置为 1（短）
@@ -4301,7 +4301,7 @@ async fn per_token_active_timeout_takes_effect() {
 /// 验证 token 已过期——证明 token 级检查使用了全局 active_timeout 作为回退值。
 ///
 /// 若未实现 per-token 检查，token 不会过期（Account-Session 仍有效），测试失败。
-#[cfg(feature = "dynamic-active-timeout")]
+#[cfg(feature = "session-extra")]
 #[tokio::test]
 async fn per_token_active_timeout_none_falls_back_to_global() {
     use crate::session::TokenSession;

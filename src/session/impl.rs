@@ -20,7 +20,7 @@ impl GarrisonSession {
             dao,
             timeout,
             active_timeout,
-            #[cfg(feature = "anonymous-session")]
+            #[cfg(feature = "session-extra")]
             anon_session_timeout: crate::config::DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             login_locks: DashMap::new(),
             token_session_locks: DashMap::new(),
@@ -71,7 +71,7 @@ impl GarrisonSession {
     ///
     /// # 参数
     /// - `timeout`: 匿名 Session 超时秒数。
-    #[cfg(feature = "anonymous-session")]
+    #[cfg(feature = "session-extra")]
     pub fn with_anon_session_timeout(mut self, timeout: u64) -> Self {
         self.anon_session_timeout = timeout;
         self
@@ -308,9 +308,9 @@ impl GarrisonSession {
             ip: ip.map(|s| s.to_string()),
             user_agent: user_agent.map(|s| s.to_string()),
             safe_services: HashMap::new(),
-            #[cfg(feature = "dynamic-active-timeout")]
+            #[cfg(feature = "session-extra")]
             dynamic_active_timeout: None,
-            #[cfg(feature = "anonymous-session")]
+            #[cfg(feature = "session-extra")]
             is_anon: false,
         };
         let token_json = serde_json::to_string(&token_session)
@@ -619,7 +619,7 @@ impl GarrisonSession {
     /// # key 格式异常处理
     /// 若 key 不符合 `account:session:{login_id}` 模式（`strip_prefix` 返回 `None`），
     /// 记录 `tracing::warn!` 并跳过该 key（不中断重建流程）。
-    #[cfg(feature = "login-token-map-persistence")]
+    #[cfg(feature = "session-extra")]
     pub async fn rebuild_login_token_map(&self) -> GarrisonResult<()> {
         // 1. 清空现有内存 map（避免与重建数据重叠）
         self.login_token_map.clear();
@@ -670,7 +670,7 @@ impl GarrisonSession {
     /// - AccountSession 不存在：`GarrisonError::Session`
     /// - 序列化失败：`GarrisonError::Session`
     /// - DAO update 失败：透传 `GarrisonError`
-    #[cfg(feature = "login-token-map-persistence")]
+    #[cfg(feature = "session-extra")]
     pub async fn add_login_token_persistent(
         &self,
         login_id: &str,
@@ -721,7 +721,7 @@ impl GarrisonSession {
     /// - AccountSession 不存在：`GarrisonError::Session`
     /// - 序列化失败：`GarrisonError::Session`
     /// - DAO update 失败：透传 `GarrisonError`
-    #[cfg(feature = "login-token-map-persistence")]
+    #[cfg(feature = "session-extra")]
     pub async fn remove_login_token_persistent(
         &self,
         login_id: &str,
@@ -1072,7 +1072,7 @@ impl GarrisonSession {
     /// - token 不存在：`GarrisonError::InvalidToken`。
     /// - 序列化失败：`GarrisonError::Session`。
     /// - DAO 更新失败：透传 `GarrisonError`。
-    #[cfg(feature = "dynamic-active-timeout")]
+    #[cfg(feature = "session-extra")]
     pub async fn set_active_timeout(&self, token: &str, timeout_secs: i64) -> GarrisonResult<()> {
         if timeout_secs == 0 {
             return Err(GarrisonError::InvalidParam(
@@ -1118,7 +1118,7 @@ impl GarrisonSession {
         };
         // T011: per-token 动态活跃超时检查
         // 优先使用 token_session.dynamic_active_timeout，None 时回退到全局 active_timeout
-        #[cfg(feature = "dynamic-active-timeout")]
+        #[cfg(feature = "session-extra")]
         {
             let effective_active_timeout = ts
                 .dynamic_active_timeout
@@ -1234,7 +1234,7 @@ impl GarrisonSession {
     pub async fn logout(&self, token: &str) -> GarrisonResult<()> {
         // 匿名 token 路由到 logout_anon（key 空间隔离）
         // InvalidParam（空 token / 超长 token）降级为非匿名，保持 logout 幂等契约
-        #[cfg(feature = "anonymous-session")]
+        #[cfg(feature = "session-extra")]
         {
             let is_anon = match self.is_anon(token).await {
                 Ok(v) => v,
@@ -1423,7 +1423,7 @@ impl GarrisonSession {
 // 匿名 Session 委托方法（anonymous-session feature）
 // ============================================================================
 
-#[cfg(feature = "anonymous-session")]
+#[cfg(feature = "session-extra")]
 impl GarrisonSession {
     /// 获取匿名 Token-Session，不存在则创建。
     ///
@@ -1466,7 +1466,7 @@ impl GarrisonSession {
 // 会话搜索委托方法（session-search feature）
 // ============================================================================
 
-#[cfg(feature = "session-search")]
+#[cfg(feature = "session-extra")]
 impl GarrisonSession {
     /// 按 token 值搜索 Token-Session。
     ///
@@ -1733,9 +1733,9 @@ mod tests {
             ip: None,
             user_agent: None,
             safe_services: HashMap::new(),
-            #[cfg(feature = "dynamic-active-timeout")]
+            #[cfg(feature = "session-extra")]
             dynamic_active_timeout: None,
-            #[cfg(feature = "anonymous-session")]
+            #[cfg(feature = "session-extra")]
             is_anon: false,
         };
         session
@@ -1780,7 +1780,7 @@ mod tests {
     /// 且 `new` 默认使用 `DEFAULT_ANON_SESSION_TIMEOUT_SECS`。
     ///
     /// 覆盖 anonymous-session feature 下的 builder 方法与默认值。
-    #[cfg(feature = "anonymous-session")]
+    #[cfg(feature = "session-extra")]
     #[test]
     fn with_anon_session_timeout_sets_field() {
         use crate::config::DEFAULT_ANON_SESSION_TIMEOUT_SECS;

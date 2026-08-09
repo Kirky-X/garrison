@@ -476,7 +476,7 @@ async fn default_interceptor_check_safe_returns_ok_by_default() {
     let interceptor = DefaultGarrisonInterceptor;
     let result = interceptor.pre_handle("/x", &Annotation::CheckSafe).await;
 
-    #[cfg(feature = "safe-auth")]
+    #[cfg(feature = "security-extra")]
     {
         assert!(
             matches!(result, Err(GarrisonError::NotSafe { .. })),
@@ -484,7 +484,7 @@ async fn default_interceptor_check_safe_returns_ok_by_default() {
             result
         );
     }
-    #[cfg(not(feature = "safe-auth"))]
+    #[cfg(not(feature = "security-extra"))]
     {
         assert!(
             result.is_ok(),

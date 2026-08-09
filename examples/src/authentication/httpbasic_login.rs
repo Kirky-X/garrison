@@ -3,11 +3,11 @@
 
 //! HTTP Basic 认证示例：演示 RFC 7617 编解码与 Authorization Header 解析。
 //!
-//! 对应模块：`src/secure/httpbasic/mod.rs`（feature: secure-httpbasic）。
+//! 对应模块：`src/secure/httpbasic/mod.rs`（feature: protocol-httpbasic）。
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p garrison-examples --bin httpbasic_login --features secure-httpbasic
+//! cargo run -p garrison-examples --bin httpbasic_login --features protocol-httpbasic
 //! ```
 
 use garrison::error::GarrisonResult;

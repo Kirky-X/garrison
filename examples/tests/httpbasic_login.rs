@@ -5,7 +5,7 @@
 //!
 //! 验证 run() 完整执行（内部已包含 encode/decode 断言）。
 
-#![cfg(feature = "secure-httpbasic")]
+#![cfg(feature = "protocol-httpbasic")]
 
 use garrison_examples::authentication::httpbasic_login;
 

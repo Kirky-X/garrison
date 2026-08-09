@@ -671,7 +671,7 @@ async fn check_mfa_with_valid_token_returns_200() {
 
     // 开启 "default" service 的二级认证标记（check_safe 检查此 service）
     // 仅 safe-auth feature 启用时需要：无 safe-auth 时 is_safe 默认返回 Ok(true)，check_safe 直接通过
-    #[cfg(feature = "safe-auth")]
+    #[cfg(feature = "security-extra")]
     {
         let logic = GarrisonManager::logic().expect("logic init");
         garrison::stp::with_current_token(token.clone(), async {
@@ -690,7 +690,7 @@ async fn check_mfa_with_valid_token_returns_200() {
 ///
 /// 仅 `safe-auth` feature 启用时有效：无 `safe-auth` 时 `is_safe` 默认返回 `Ok(true)`，
 /// `check_safe` 为 no-op，MFA 不拦截。
-#[cfg(feature = "safe-auth")]
+#[cfg(feature = "security-extra")]
 #[tokio::test]
 #[serial]
 async fn check_mfa_without_token_forwards_error() {

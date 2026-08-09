@@ -12,7 +12,7 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p garrison-examples --bin v0_5_0_demo --features "tenant-isolation audit-log decision-trace keycloak-oidc social-wechat db-sqlite cache-memory"
+//! cargo run -p garrison-examples --bin v0_5_0_demo --features "tenant-isolation audit-log core-advanced keycloak-oidc social-wechat db-sqlite cache-memory"
 //! ```
 //!
 //! 本示例使用内存 SQLite + oxcache 内存 DAO，无需外部依赖即可运行。

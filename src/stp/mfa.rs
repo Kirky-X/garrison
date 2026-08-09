@@ -837,7 +837,7 @@ mod tests {
     /// （open_safe / is_safe / close_safe）的交互。
     ///
     /// 仅在 `safe-auth` feature 启用时编译，因为测试需要 inherent method 支持。
-    #[cfg(feature = "safe-auth")]
+    #[cfg(feature = "security-extra")]
     mod t025_check_safe_integration {
         use super::*;
         use crate::config::GarrisonConfig;

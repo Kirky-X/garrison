@@ -512,7 +512,7 @@ impl SessionLogic for GarrisonLogicDefault {
             JwtMode::Simple => self.check_login_simple(&token).await,
         };
         // T006: 异常检测（仅 valid 时，检测失败不中断主流程）
-        #[cfg(feature = "security-alert")]
+        #[cfg(feature = "security-extra")]
         if let Ok(true) = &result {
             if let Ok(Some(ts)) = self.session.get_token_session(&token).await {
                 self.run_anomaly_check_on_check_login(&ts.login_id, &token)
@@ -745,7 +745,7 @@ impl GarrisonLogicDefault {
             feature = "protocol-sso",
             feature = "protocol-sign",
             feature = "secure-sign",
-            feature = "secure-httpdigest",
+            feature = "protocol-httpdigest",
             feature = "device-binding"
         )),
         allow(unused_mut)
@@ -759,7 +759,7 @@ impl GarrisonLogicDefault {
             feature = "protocol-sso",
             feature = "protocol-sign",
             feature = "secure-sign",
-            feature = "secure-httpdigest"
+            feature = "protocol-httpdigest"
         ))]
         if params.device.is_none() {
             if let (Some(ua), Some(ip)) = (&params.user_agent, &params.ip) {
@@ -827,7 +827,7 @@ impl GarrisonLogicDefault {
             })
             .await;
         }
-        #[cfg(feature = "security-alert")]
+        #[cfg(feature = "security-extra")]
         self.run_anomaly_check_on_login(login_id, params).await;
         let _ = params; // suppress unused warning when listener/security-alert features are disabled
     }
@@ -1238,7 +1238,7 @@ impl GarrisonLogicDefault {
 // GarrisonLogicDefault 私有方法：异常检测集成（security-alert feature）
 // ============================================================================
 
-#[cfg(feature = "security-alert")]
+#[cfg(feature = "security-extra")]
 impl GarrisonLogicDefault {
     /// login 路径异常检测：遍历所有检测器，广播事件，失败只 warn。
     async fn run_anomaly_check_on_login(&self, login_id: &str, params: &LoginParams) {
@@ -1521,7 +1521,7 @@ mod tests {
     // T006: AnomalyDetector 集成测试（security-alert feature）
     // ========================================================================
 
-    #[cfg(feature = "security-alert")]
+    #[cfg(feature = "security-extra")]
     mod anomaly_integration {
         use super::*;
         use crate::dao::GarrisonDao;

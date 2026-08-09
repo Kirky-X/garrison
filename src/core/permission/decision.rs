@@ -50,7 +50,7 @@ pub enum DecisionReason {
     ///
     /// 仅在 `safe-defaults` feature 启用时可用。组合多个决策时优先级最高：
     /// 任一 Forbid 决策存在则最终结果为 Forbid。
-    #[cfg(feature = "safe-defaults")]
+    #[cfg(feature = "core-advanced")]
     Forbid(String),
 }
 
@@ -117,7 +117,7 @@ impl Decision {
     ///
     /// 仅在 `safe-defaults` feature 启用时可用。Forbid 决策 `allowed: false`，
     /// `reason: DecisionReason::Forbid(reason)`，组合时优先级最高。
-    #[cfg(feature = "safe-defaults")]
+    #[cfg(feature = "core-advanced")]
     pub fn forbid(reason: impl Into<String>) -> Self {
         Self {
             allowed: false,
@@ -132,7 +132,7 @@ impl Decision {
     /// 判断是否为 Forbid 决策。
     ///
     /// 仅在 `safe-defaults` feature 启用时可用。
-    #[cfg(feature = "safe-defaults")]
+    #[cfg(feature = "core-advanced")]
     pub fn is_forbid(&self) -> bool {
         matches!(self.reason, DecisionReason::Forbid(_))
     }
@@ -319,7 +319,7 @@ mod tests {
     // 启用 decision-trace feature 时，PermissionChecker::authorize 默认实现
     // 应自动生成 UUID v7（时间有序）作为 trace_id。
     // ========================================================================
-    #[cfg(feature = "decision-trace")]
+    #[cfg(feature = "core-advanced")]
     mod trace_id_tests {
         use super::AuthRequest;
         use crate::core::permission::{PermissionChecker, PermissionCheckerDefault};
@@ -432,7 +432,7 @@ mod tests {
     // 启用 safe-defaults feature 时，DecisionReason 新增 Forbid(String) 变体，
     // Decision 新增 forbid() / is_forbid() 方法。
     // ========================================================================
-    #[cfg(feature = "safe-defaults")]
+    #[cfg(feature = "core-advanced")]
     mod safe_defaults_tests {
         use super::*;
 

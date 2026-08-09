@@ -79,11 +79,11 @@ pub mod totp;
 pub mod sign;
 
 /// HTTP Basic 认证子模块。
-#[cfg(feature = "secure-httpbasic")]
+#[cfg(feature = "protocol-httpbasic")]
 pub mod httpbasic;
 
 /// HTTP Digest 认证子模块。
-#[cfg(feature = "secure-httpdigest")]
+#[cfg(feature = "protocol-httpdigest")]
 pub mod httpdigest;
 
 /// Unicode 同形异义字检测子模块。

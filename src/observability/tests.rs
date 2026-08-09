@@ -382,10 +382,10 @@ mod tests_metrics {
 }
 
 // ============================================================================
-// OpenTelemetry OTLP 追踪测试（feature = "observability-otlp"）
+// OpenTelemetry OTLP 追踪测试（feature = "otlp"）
 // ============================================================================
 
-#[cfg(all(test, feature = "observability-otlp"))]
+#[cfg(all(test, feature = "otlp"))]
 mod tests_otlp {
     use super::super::*;
 

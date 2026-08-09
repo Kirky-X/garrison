@@ -41,7 +41,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// 安全告警系统模块（feature-gated: `security-alert`）。
-#[cfg(feature = "security-alert")]
+#[cfg(feature = "security-extra")]
 pub mod alert;
 /// 设备绑定策略模块（feature-gated: `device-binding`，依赖 `security-alert`）。
 #[cfg(feature = "device-binding")]

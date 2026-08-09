@@ -874,7 +874,7 @@ mod tests {
     ///
     /// 验证 feature gate 配置：safe-auth 启用 → safe.rs 编译 → inherent methods 可调用。
     /// 本测试在 `--features safe-auth` 或 `--features full` 下编译并运行。
-    #[cfg(feature = "safe-auth")]
+    #[cfg(feature = "security-extra")]
     #[tokio::test]
     async fn t026_safe_auth_feature_compiles_when_enabled() {
         let (logic, _dao) = make_logic();
@@ -906,12 +906,12 @@ mod tests {
     /// T026: safe-auth feature 禁用时，GarrisonLogicDefault 没有 open_safe inherent method，
     /// 调用解析到 MfaLogic trait default（open_safe=Ok(()), is_safe=Ok(true), close_safe=Ok(())）。
     ///
-    /// 注意：本测试位于 safe.rs（`#[cfg(feature = "safe-auth")]` 门控）内部，
-    /// `#[cfg(not(feature = "safe-auth"))]` 使其在任何配置下都不会编译。
+    /// 注意：本测试位于 safe.rs（`#[cfg(feature = "security-extra")]` 门控）内部，
+    /// `#[cfg(not(feature = "security-extra"))]` 使其在任何配置下都不会编译。
     /// 此测试作为 feature gate 配置正确性的文档化验证：
     /// 若将本测试移至非 feature-gated 模块并在 `--lib`（无 safe-auth）下运行，
     /// 应验证 trait default 行为（open_safe=Ok, is_safe=Ok(true), close_safe=Ok）。
-    #[cfg(not(feature = "safe-auth"))]
+    #[cfg(not(feature = "security-extra"))]
     #[tokio::test]
     async fn t026_safe_auth_not_in_scope_when_disabled() {
         let (logic, _dao) = make_logic();
@@ -945,7 +945,7 @@ mod tests {
     ///
     /// 验证 Cargo.toml 配置正确性：full → safe-auth 依赖关系。
     /// 本测试在 `--features full` 下编译并运行（full 隐含 safe-auth）。
-    #[cfg(all(feature = "full", feature = "safe-auth"))]
+    #[cfg(all(feature = "full", feature = "security-extra"))]
     #[tokio::test]
     async fn t026_full_feature_includes_safe_auth() {
         let (logic, _dao) = make_logic();

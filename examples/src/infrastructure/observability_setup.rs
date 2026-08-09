@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! observability_setup 示例（metrics-prometheus + observability-otlp feature）。
+//! observability_setup 示例（metrics-prometheus + otlp feature）。
 //!
 //! 演示可观测性三层栈配置：
 //! 1. `GarrisonMetrics::new()` / `register_to(&registry)` Prometheus 指标注册
@@ -12,7 +12,7 @@
 //!
 //! 运行方式：
 //! ```sh
-//! cargo run -p garrison-examples --bin observability_setup --features "metrics-prometheus observability-otlp"
+//! cargo run -p garrison-examples --bin observability_setup --features "metrics-prometheus otlp"
 //! ```
 
 use garrison::observability::GarrisonMetrics;

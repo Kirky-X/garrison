@@ -67,11 +67,11 @@ mod metrics_impl;
 pub mod inklog;
 
 /// OpenTelemetry OTLP 追踪导出初始化（`init_otlp_tracing`）。
-#[cfg(feature = "observability-otlp")]
+#[cfg(feature = "otlp")]
 pub mod otlp;
 
 /// `GarrisonOtelError` 转换实现子模块。
-#[cfg(feature = "observability-otlp")]
+#[cfg(feature = "otlp")]
 pub mod errors;
 
 // ============================================================================
@@ -81,7 +81,7 @@ pub mod errors;
 #[cfg(feature = "audit-inklog")]
 pub use inklog::{init_inklog_logging, init_inklog_logging_with_fallback};
 
-#[cfg(feature = "observability-otlp")]
+#[cfg(feature = "otlp")]
 pub use otlp::init_otlp_tracing;
 
 /// inklog 初始化结果 — 包含可选的 LoggerManager guard 和降级状态。
@@ -97,7 +97,7 @@ pub struct InklogInit {
 }
 
 /// OpenTelemetry 初始化错误。
-#[cfg(feature = "observability-otlp")]
+#[cfg(feature = "otlp")]
 #[derive(Debug, thiserror::Error)]
 pub enum GarrisonOtelError {
     /// OTLP exporter 构造失败

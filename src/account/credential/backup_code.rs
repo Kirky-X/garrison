@@ -87,7 +87,7 @@ fn format_code(base32_str: &str) -> String {
 /// // 将 cred.to_model() 持久化到 DAO 后，可用 verify_and_consume 校验
 /// ```
 #[cfg_attr(
-    feature = "account-credential-zeroize",
+    feature = "credential-zeroize",
     derive(zeroize::Zeroize, zeroize::ZeroizeOnDrop)
 )]
 pub struct BackupCodeCredential {

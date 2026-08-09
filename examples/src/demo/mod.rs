@@ -6,7 +6,7 @@
 #[cfg(all(
     feature = "tenant-isolation",
     feature = "audit-log",
-    feature = "decision-trace",
+    feature = "core-advanced",
     feature = "keycloak-oidc",
     feature = "social-wechat",
     feature = "db-sqlite",

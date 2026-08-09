@@ -655,9 +655,9 @@ mod tests {
                 ip: Some("192.168.1.1".to_string()),
                 user_agent: Some("Mozilla/5.0".to_string()),
                 safe_services: std::collections::HashMap::new(),
-                #[cfg(feature = "dynamic-active-timeout")]
+                #[cfg(feature = "session-extra")]
                 dynamic_active_timeout: None,
-                #[cfg(feature = "anonymous-session")]
+                #[cfg(feature = "session-extra")]
                 is_anon: false,
             })
         }

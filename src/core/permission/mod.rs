@@ -22,10 +22,10 @@ use crate::stp::GarrisonInterface;
 pub use decision::{AuthRequest, Decision, DecisionReason};
 
 /// 权限注册表模块。
-#[cfg(feature = "permission-registry")]
+#[cfg(feature = "core-advanced")]
 pub mod registry;
 
-#[cfg(feature = "permission-registry")]
+#[cfg(feature = "core-advanced")]
 pub use registry::{PermissionRegistration, PermissionRegistry, PermissionSpec};
 
 /// 请求对象式授权器模块。
@@ -36,10 +36,10 @@ pub mod authorize;
 pub use authorize::Authorizer;
 
 /// 决策组合器模块（forbid 优先语义）。
-#[cfg(feature = "safe-defaults")]
+#[cfg(feature = "core-advanced")]
 pub mod decision_combinator;
 
-#[cfg(feature = "safe-defaults")]
+#[cfg(feature = "core-advanced")]
 pub use decision_combinator::DecisionCombinator;
 
 /// 权限校验 trait，定义以 login_id 为入参的权限与角色校验抽象。
@@ -79,9 +79,9 @@ pub trait PermissionChecker: Send + Sync {
     async fn authorize(&self, request: &AuthRequest) -> GarrisonResult<Decision> {
         // D5（v0.5.1）：decision-trace feature 启用时自动生成 UUID v7 作为 trace_id
         // （时间有序，便于跨服务追踪与日志关联）；不启用时为 None，避免性能开销。
-        #[cfg(feature = "decision-trace")]
+        #[cfg(feature = "core-advanced")]
         let trace_id = Some(uuid::Uuid::now_v7().to_string());
-        #[cfg(not(feature = "decision-trace"))]
+        #[cfg(not(feature = "core-advanced"))]
         let trace_id: Option<String> = None;
 
         let allowed = self

@@ -118,11 +118,11 @@ impl PasswordHasher for Argon2Hasher {
         // P2.1: account-credential-zeroize feature 启用时，将 password 字节拷贝到
         // Zeroizing<Vec<u8>> wrapper；函数返回时 wrapper Drop 清零内部字节。
         // &str 是不可变借用，无法清零调用方持有的 String，故内部拷贝后清零。
-        #[cfg(feature = "account-credential-zeroize")]
+        #[cfg(feature = "credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
-        #[cfg(feature = "account-credential-zeroize")]
+        #[cfg(feature = "credential-zeroize")]
         let password_ref: &[u8] = &password_bytes;
-        #[cfg(not(feature = "account-credential-zeroize"))]
+        #[cfg(not(feature = "credential-zeroize"))]
         let password_ref: &[u8] = password.as_bytes();
 
         let salt = SaltString::generate(&mut OsRng);
@@ -140,11 +140,11 @@ impl PasswordHasher for Argon2Hasher {
 
     fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool> {
         // P2.1: 同 hash，verify 后清零内部 password 字节副本
-        #[cfg(feature = "account-credential-zeroize")]
+        #[cfg(feature = "credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.as_bytes().to_vec());
-        #[cfg(feature = "account-credential-zeroize")]
+        #[cfg(feature = "credential-zeroize")]
         let password_ref: &[u8] = &password_bytes;
-        #[cfg(not(feature = "account-credential-zeroize"))]
+        #[cfg(not(feature = "credential-zeroize"))]
         let password_ref: &[u8] = password.as_bytes();
 
         let parsed = PasswordHash::new(hash)
@@ -290,7 +290,7 @@ pub struct PasswordCredential {
 /// `hasher` 不含敏感数据（仅算法标识与参数），无需 zeroize。
 /// 因 `Box<dyn PasswordHasher>` 未实现 `Zeroize`，无法派生 `ZeroizeOnDrop`，
 /// 改为手动实现 `Drop` 调用 `model.zeroize()`。
-#[cfg(feature = "account-credential-zeroize")]
+#[cfg(feature = "credential-zeroize")]
 impl Drop for PasswordCredential {
     fn drop(&mut self) {
         use zeroize::Zeroize;
@@ -526,8 +526,8 @@ mod tests {
         feature = "protocol-sso",
         feature = "protocol-sign",
         feature = "secure-sign",
-        feature = "secure-httpbasic",
-        feature = "secure-httpdigest",
+        feature = "protocol-httpbasic",
+        feature = "protocol-httpdigest",
         feature = "social-alipay",
         feature = "web-csrf"
     ))]
@@ -573,7 +573,7 @@ mod tests {
     /// 2. Zeroizing<Vec<u8>> 包装的 password 字节在 .zeroize() 后被清零
     ///    （这是 hash 内部使用的清零机制）
     /// 3. Zeroizing<String> wrapper 可与 hash 配合使用（通过 Deref<Target=str>）
-    #[cfg(feature = "account-credential-zeroize")]
+    #[cfg(feature = "credential-zeroize")]
     #[test]
     fn password_param_zeroed_after_hash() {
         use zeroize::{Zeroize, Zeroizing};
@@ -734,7 +734,7 @@ mod tests {
     }
 
     /// R-004: `PasswordCredential` 在 `account-credential-zeroize` feature 启用时仍正确工作。
-    #[cfg(feature = "account-credential-zeroize")]
+    #[cfg(feature = "credential-zeroize")]
     #[tokio::test]
     async fn password_credential_zeroize_integration() {
         let (cred, password) = make_password_cred("c1", "alice", "zeroize-secret");

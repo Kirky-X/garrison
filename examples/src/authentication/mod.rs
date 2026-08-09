@@ -5,9 +5,9 @@
 
 #[cfg(all(feature = "cache-memory", feature = "web-axum"))]
 pub mod basic_login;
-#[cfg(feature = "secure-httpbasic")]
+#[cfg(feature = "protocol-httpbasic")]
 pub mod httpbasic_login;
-#[cfg(feature = "secure-httpdigest")]
+#[cfg(feature = "protocol-httpdigest")]
 pub mod httpdigest_login;
 #[cfg(feature = "protocol-jwt")]
 pub mod jwt_login;

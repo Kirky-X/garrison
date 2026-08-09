@@ -179,14 +179,12 @@ default = ["backend-embedded"]
 # core / stp / annotation / router / dao / strategy / session / config / context / json / exception / manager / plugin
 # 这些模块无 feature flag，总是编译
 
-# === 核心扩展：决策溯源 ===
-decision-trace = []
-
-# === 核心扩展：权限注册表 ===
-permission-registry = []
+# === 核心扩展：决策溯源 / 权限注册表 / forbid 优先语义 ===
+# [v0.9.0] 合并 decision-trace + permission-registry + safe-defaults → core-advanced
+core-advanced = []
 
 # === 核心扩展：请求对象式授权 API ===
-authorize-api = ["decision-trace"]
+authorize-api = ["core-advanced"]
 
 # === 核心扩展：显式 Manager API ===
 manager-explicit = ["authorize-api"]
@@ -195,16 +193,15 @@ manager-explicit = ["authorize-api"]
 # Repository SQL 过滤不门控此 feature（始终生效，安全优先）。
 tenant-isolation = ["limiteron/multi-tenant"]
 
-# === 核心扩展：forbid 优先语义（safe-defaults） ===
-safe-defaults = []
-
 # === 配置增强（confers 0.5 透传） ===
 config-encryption = ["confers/encryption"]
 config-validation = ["confers/validation"]
 config-hot-reload = ["confers/watch"]
 config-interpolation = ["confers/interpolation"]
 config-dynamic = ["confers/dynamic"]
-config-feature-toggle = ["confers/feature-toggle"]
+config-toggle = ["confers/feature-toggle"]
+# 一键启用全部配置增强
+config-full = ["config-encryption", "config-validation", "config-hot-reload", "config-interpolation", "config-dynamic", "config-toggle"]
 
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 # `all-defaults` 已于 v0.8.2 移除（ARCH-01/DEP-03 修复）：
@@ -217,7 +214,7 @@ cache-redis = ["cache-memory", "oxcache/redis", "dep:redis", "oxcache/compressio
 cache-lock = ["cache-redis", "oxcache/lock"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
-# dbnexus 禁止 embedded 与 server-side 混用。
+# [INTERNAL] dbnexus 禁止 embedded 与 server-side 混用。
 db-base = [
     "dbnexus",
     "dbnexus/runtime-tokio-rustls",
@@ -265,14 +262,16 @@ protocol-oidc = ["protocol-jwt", "protocol-oauth2", "dep:subtle"]
 oauth2-scope-handler = ["protocol-oauth2"]
 # SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
 protocol-sso-server = ["protocol-sso"]
-# secure-saml：启用 XmlSecSamlProvider（vuln-0001 修复），使用 rsa crate 验证 SAML Assertion XML 签名
-secure-saml = ["protocol-sso", "rsa", "dep:base64"]
+# protocol-saml：启用 XmlSecSamlProvider（vuln-0001 修复），使用 rsa crate 验证 SAML Assertion XML 签名
+protocol-saml = ["protocol-sso", "rsa", "dep:base64"]
 
 # === 安全模块 ===
 secure-totp = ["totp-rs", "dep:base32"]
 secure-sign = ["dep:sha2", "hmac", "dep:base64", "md5", "dep:subtle"]
-secure-httpbasic = ["dep:base64"]
-secure-httpdigest = ["dep:sha2", "dep:base64", "md5", "dep:subtle"]
+# [v0.9.0] secure-httpbasic → protocol-httpbasic（域统一到协议层）
+protocol-httpbasic = ["dep:base64"]
+# [v0.9.0] secure-httpdigest → protocol-httpdigest（域统一到协议层）
+protocol-httpdigest = ["dep:sha2", "dep:base64", "md5", "dep:subtle"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
 # 依赖 regex：Custom mask 真实脱敏（vuln-0010 D6 修复，原 placeholder 实现静默泄露敏感数据）
@@ -283,7 +282,8 @@ sms-rate-limit = ["dep:rand"]
 
 # === 账号安全引擎 ===
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:sha2", "dep:base32"]
-account-credential-zeroize = ["account-credential", "zeroize"]
+# [v0.9.0] account-credential-zeroize → credential-zeroize（缩短名称）
+credential-zeroize = ["account-credential", "zeroize"]
 account-policy = ["account-credential", "dep:regex"]
 account-lockout = ["firewall"]
 account-authflow = ["account-credential", "account-policy", "account-lockout"]
@@ -304,11 +304,13 @@ server-health-check = ["auth-server"]
 server-graceful-shutdown = ["auth-server"]
 
 # === Web 安全中间件 ===
-web-waf = ["web-axum"]
+# [v0.9.0] web-waf 已废弃（与 firewall-waf 功能 100% 重叠），统一使用 firewall-waf
 web-cors = ["web-axum"]
 web-csrf = ["web-axum", "dep:rand", "dep:base64", "dep:subtle"]
 # HTTP 安全响应头中间件（X-Content-Type-Options / X-Frame-Options / HSTS / Cache-Control）
 web-security-headers = ["web-axum"]
+# Web 安全中间件聚合（CORS + CSRF + 安全响应头）
+web-security = ["web-cors", "web-csrf", "web-security-headers"]
 
 # === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
 # 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）
@@ -342,11 +344,13 @@ firewall-ddos = ["firewall", "limiteron/adaptive-limiting", "limiteron/priority-
 firewall-waf = ["firewall", "web-axum"]
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 anomalous-detector-dual = ["firewall", "listener", "dao-key-index"]
-# dao-key-index：内部 feature，为 GarrisonDaoOxcache 维护 key 索引以提供 keys() 生产实现
+# [INTERNAL] dao-key-index：为 GarrisonDaoOxcache 维护 key 索引以提供 keys() 生产实现
 # （oxcache 0.3.3 无原生 iter/keys API）。由 protocol-apikey / anomalous-detector-dual 传递启用。
 dao-key-index = []
 
 # === 安全告警系统 ===
+# [v0.9.0] security-extra 为 stp 模块 safe-auth 相关门控的聚合特性
+security-extra = []
 security-alert = []
 device-binding = ["security-alert"]
 # 会话劫持检测：check_login 路径中对比当前请求 IP 与会话创建时存储的 IP，
@@ -354,23 +358,12 @@ device-binding = ["security-alert"]
 # 依赖 security-alert（复用 AnomalyDetector trait + AlertListenerManager 广播链路）。
 session-hijack-detection = ["security-alert"]
 
-# === 二级认证瞬态标记 ===
-safe-auth = []
-
-# === 动态活跃超时 ===
-dynamic-active-timeout = []
+# === Session 增强 ===
+# [v0.9.0] 合并 anonymous-session + session-search + dynamic-active-timeout + login-token-map-persistence → session-extra
+session-extra = []
 
 # === 三层缓存架构 ===
 three-tier-cache = []
-
-# === login_token_map 持久化 ===
-login-token-map-persistence = []
-
-# === 匿名 Session ===
-anonymous-session = []
-
-# === 会话搜索 ===
-session-search = []
 
 # === 社交登录 ===
 social-wechat = ["protocol-oauth2"]
@@ -401,7 +394,7 @@ backend-kit = ["backend-embedded", "trait-kit/lifecycle", "trait-kit/health", "t
 backend-shutdown = ["backend-kit", "trait-kit/shutdown"]
 
 # === v0.7.0 sdforge 声明式路由 ===
-# `http` feature 是 garrison 与 sdforge 之间的桥接 feature（cfg flag only）：
+# [INTERNAL] `http` feature 是 garrison 与 sdforge 之间的桥接 feature（cfg flag only）：
 # `#[forge]` 宏生成的 `inventory::submit!(RouteRegistration::new(...))` 被
 # `#[cfg(feature = "http")]` 保护，此 cfg 在 **garrison 上下文** 求值（不是 sdforge）。
 # 若 garrison 不暴露 `http` feature，submit 调用会被 cfg 剥离，
@@ -416,8 +409,8 @@ listener = []
 credit-metering = ["listener"]
 tracing-log = ["tracing/log", "tracing-subscriber"]
 metrics-prometheus = ["prometheus", "tracing-subscriber"]
-# OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
-observability-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
+# [INTERNAL] OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
+otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
 grpc = ["tonic", "dep:tonic-health"]
 # 0.7.x：基础层已无条件编译，此 feature 仅门控 i18n 相关测试代码，不改变运行时行为。
 i18n = []
@@ -437,38 +430,34 @@ full = [
     "cache-memory", "cache-redis",
     "db-sqlite",
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-zeroize",
-    "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server", "secure-saml",
-    "secure-totp", "secure-sign", "secure-httpbasic", "secure-httpdigest", "secure-masking",
+    "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server", "protocol-saml",
+    "secure-totp", "secure-sign", "protocol-httpbasic", "protocol-httpdigest", "secure-masking",
     "secure-xss", "secure-sanitize", "sms-rate-limit",
-    "account-credential", "account-credential-zeroize", "account-policy", "account-lockout", "account-authflow",
+    "account-credential", "credential-zeroize", "account-policy", "account-lockout", "account-authflow",
     "web-axum", "web-actix", "web-warp",
-    "web-waf", "web-cors", "web-csrf",
+    "web-security",
     "alone-cache", "parameter-query",
-    "listener", "metrics-prometheus", "observability-otlp", "grpc", "i18n-icu",
+    "listener", "metrics-prometheus", "otlp", "grpc", "i18n-icu",
     "audit-inklog",
     "annotation-macros",
-    "decision-trace", "tenant-isolation", "safe-defaults",
+    "core-advanced", "tenant-isolation",
     "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-anomalous",
     "firewall-geoip", "firewall-ddos", "firewall-maxminddb", "firewall-waf",
     "rate-limit-redis",
     "anomalous-detector-dual",
     "security-alert",
     "session-hijack-detection",
+    "security-extra",
     "device-binding",
-    "safe-auth",
-    "dynamic-active-timeout",
+    "session-extra",
     "three-tier-cache",
-    "login-token-map-persistence",
-    "anonymous-session",
-    "session-search",
     "social-wechat", "social-alipay",
     "backend-embedded", "backend-kit", "backend-shutdown", "backend-remote", "auth-server", "auth-server-sdforge", "abac", "oauth2-server",
     "credit-metering",
     "server-health-check", "server-graceful-shutdown",
-    "config-encryption", "config-validation", "config-hot-reload",
+    "config-full",
     "db-retry", "cache-lock",
     "api-docs",
-    "config-interpolation", "config-dynamic", "config-feature-toggle",
 ]
 
 # production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）
@@ -478,8 +467,9 @@ production = [
     "listener", "tracing-log", "metrics-prometheus",
     "audit-inklog",
     "tenant-isolation",
-    "security-alert", "session-hijack-detection", "device-binding",
+    "security-alert", "session-hijack-detection", "security-extra", "device-binding",
     "safe-defaults",
+    "core-advanced",
     "firewall-waf",
     "three-tier-cache",
     "sms-rate-limit",

@@ -87,7 +87,7 @@ pub async fn get_anon_token_session(
                 ip: None,
                 user_agent: None,
                 safe_services: HashMap::new(),
-                #[cfg(feature = "dynamic-active-timeout")]
+                #[cfg(feature = "session-extra")]
                 dynamic_active_timeout: None,
                 is_anon: true,
             };
