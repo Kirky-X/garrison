@@ -150,6 +150,7 @@ include_dir = { version = "0.7", optional = true }
 tempfile = { version = "3.27", optional = true }
 
 [dev-dependencies]
+once_cell = "1.0"
 toml = "1.0"
 tokio-test = "0.4"
 mockall = "0.15"
