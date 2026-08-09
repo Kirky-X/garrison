@@ -194,7 +194,7 @@ impl BanStorage for GarrisonDaoBanStorage {
                         "limiteron-ban-history-parse-ban-times::{}::{}::{}",
                         key, parts[0], e
                     ),
-                    source: None,
+                    source: Some(Box::new(e)),
                 })?;
                 let last_banned_at_ts: i64 =
                     parts[1].parse().map_err(|e| StorageError::QueryError {
@@ -202,7 +202,7 @@ impl BanStorage for GarrisonDaoBanStorage {
                             "limiteron-ban-history-parse-last-banned::{}::{}::{}",
                             key, parts[1], e
                         ),
-                        source: None,
+                        source: Some(Box::new(e)),
                     })?;
                 let last_banned_at =
                     DateTime::from_timestamp(last_banned_at_ts, 0).unwrap_or_else(Utc::now);
@@ -227,7 +227,7 @@ impl BanStorage for GarrisonDaoBanStorage {
             // M-3: parse 失败显性化 — 脏数据返回错误而非静默用 0
             Some(val) => val.parse::<u64>().map_err(|e| StorageError::QueryError {
                 msg: format!("limiteron-ban-times-parse-failed::{}::{}::{}", key, val, e),
-                source: None,
+                source: Some(Box::new(e)),
             }),
         }
     }
