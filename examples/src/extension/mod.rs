@@ -3,6 +3,12 @@
 
 //! 扩展能力示例模块（plugin / listener / macro / manager / session）。
 
+#[cfg(all(
+    feature = "account-policy",
+    feature = "account-lockout",
+    feature = "account-authflow",
+))]
+pub mod account_security;
 pub mod auth_logic_impl;
 pub mod custom_plugin;
 #[cfg(feature = "listener")]

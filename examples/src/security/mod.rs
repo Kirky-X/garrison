@@ -3,6 +3,8 @@
 
 //! 安全模块示例。
 
+#[cfg(feature = "secure-ct-eq")]
+pub mod constant_time_eq;
 #[cfg(any(
     feature = "secure-masking",
     feature = "secure-xss",

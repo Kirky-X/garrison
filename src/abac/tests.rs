@@ -9,7 +9,7 @@ use std::sync::Arc;
 /// 全局引擎未初始化时 check_abac_with_policy fail-closed 返回 Err(Config)。
 #[tokio::test]
 #[serial_test::serial]
-async fn check_abac_with_policy_no_engine_returns_ok() {
+async fn check_abac_with_policy_no_engine_returns_err() {
     reset_abac_for_test();
     let result = check_abac_with_policy("test:read", r#"Resource::"default""#, "1 == 1").await;
     assert!(

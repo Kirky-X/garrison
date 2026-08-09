@@ -12,6 +12,8 @@ pub mod backend_remote;
 #[cfg(feature = "cache-redis")]
 pub mod cache_redis;
 pub mod config_loader;
+#[cfg(all(feature = "credit-metering", feature = "cache-memory"))]
+pub mod credit_metering;
 #[cfg(feature = "cache-memory")]
 pub mod dao_operations;
 pub mod exception_handling;
@@ -23,3 +25,7 @@ pub mod json_template;
 pub mod observability_setup;
 #[cfg(feature = "parameter-query")]
 pub mod parameter_query;
+#[cfg(feature = "sms-rate-limit")]
+pub mod sms_rate_limit;
+#[cfg(feature = "three-tier-cache")]
+pub mod three_tier_cache;

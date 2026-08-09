@@ -6,6 +6,14 @@
 #[cfg(feature = "abac")]
 pub mod abac_policy;
 #[cfg(all(
+    feature = "firewall-anomalous",
+    feature = "firewall-geoip",
+    feature = "firewall-waf",
+    feature = "cache-memory",
+    feature = "web-axum",
+))]
+pub mod firewall_advanced;
+#[cfg(all(
     feature = "firewall-bruteforce",
     feature = "firewall-ratelimit",
     feature = "firewall-ddos",

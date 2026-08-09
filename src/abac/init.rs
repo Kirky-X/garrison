@@ -71,9 +71,10 @@ pub(crate) fn get_abac_engine() -> GarrisonResult<Option<Arc<AbacEngine>>> {
 #[cfg(feature = "abac")]
 #[cfg(any(test, feature = "testing"))]
 pub fn reset_abac_for_test() {
-    if let Ok(mut guard) = CURRENT_ENGINE.lock() {
-        *guard = None;
-    }
+    let mut guard = CURRENT_ENGINE
+        .lock()
+        .expect("CURRENT_ENGINE mutex poisoned during test reset");
+    *guard = None;
 }
 
 // ============================================================================
@@ -110,7 +111,7 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     if trimmed.is_empty() {
         return Err(GarrisonError::InvalidParam("abac-expr-empty".to_string()));
     }
-    if expr.len() > ABAC_EXPR_MAX_LEN {
+    if trimmed.len() > ABAC_EXPR_MAX_LEN {
         return Err(GarrisonError::InvalidParam(format!(
             "abac_expr 长度超过 {} 字符（DoS 防御）",
             ABAC_EXPR_MAX_LEN
@@ -129,7 +130,8 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
         ));
     }
     // 要求至少含 principal/resource/action 之一，拒绝纯字面量
-    let lower = expr.to_lowercase();
+    // 使用 to_ascii_lowercase 避免 to_lowercase 的 UTF-8 多字节开销
+    let lower = expr.to_ascii_lowercase();
     if !lower.contains("principal") && !lower.contains("resource") && !lower.contains("action") {
         return Err(GarrisonError::InvalidParam(
             "abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）".to_string(),
@@ -203,9 +205,11 @@ pub async fn check_abac_with_policy(
     }
     let sanitized_login_id = login_id.replace('\\', "\\\\").replace('"', "\\\"");
     let principal = format!(r#"User::"{sanitized_login_id}""#);
-    let action_uid = format!(r#"Action::"{action}""#);
+    // 对 action 应用与 login_id 相同的转义，防止 Cedar 策略注入
+    let sanitized_action = action.replace('\\', "\\\\").replace('"', "\\\"");
+    let action_uid = format!(r#"Action::"{sanitized_action}""#);
     let policy_src = format!(
-        r#"permit(principal, action == Action::"{action}", resource) when {{ {abac_expr} }};"#
+        r#"permit(principal, action == Action::"{sanitized_action}", resource) when {{ {abac_expr} }};"#
     );
     // resource 由调用方显式传入，移除硬编码 Resource::"default"。
     // 非法 resource 字符串（含注入尝试）由 evaluate_with_temp_policy 内部 EntityUid::parse 拒绝。

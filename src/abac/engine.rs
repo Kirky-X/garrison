@@ -134,17 +134,21 @@ impl AbacEngine {
         context_json: Option<&str>,
     ) -> GarrisonResult<Decision> {
         // 缓存查询：命中则直接返回（不调用 Cedar）
+        // 缓存读失败时降级到 Cedar 求值（fall-through），不因瞬态故障中断求值
         let cache_key = DecisionKey(
             principal.to_string(),
             action.to_string(),
             resource.to_string(),
         );
-        if let Some(cached) =
-            self.cache.get(&cache_key).await.map_err(|e| {
-                GarrisonError::InvalidParam(format!("abac-decision-cache-read::{}", e))
-            })?
-        {
-            return Ok(cached);
+        match self.cache.get(&cache_key).await {
+            Ok(Some(cached)) => return Ok(cached),
+            Ok(None) => {}, // 缓存未命中，继续 Cedar 求值
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "abac-decision-cache-read: 缓存读失败，降级到 Cedar 求值"
+                );
+            },
         }
 
         // 缓存未命中，调用 Cedar 求值
@@ -194,13 +198,26 @@ impl AbacEngine {
 
         let decision = match response.decision() {
             cedar_policy::Decision::Allow => Decision::allow(),
-            cedar_policy::Decision::Deny => Decision::deny(DecisionReason::NoMatchingPermission),
+            cedar_policy::Decision::Deny => {
+                // 区分显式 forbid 策略匹配与隐式 deny（无策略匹配）
+                // diagnostics.reasons() 返回匹配的 policy ID；有匹配说明是 forbid 策略生效
+                let has_matching_policy = response.diagnostics().reason().next().is_some();
+                if has_matching_policy {
+                    Decision::deny(DecisionReason::ExplicitDeny)
+                } else {
+                    Decision::deny(DecisionReason::NoMatchingPermission)
+                }
+            },
         };
 
         // 写入缓存（仅在求值成功后）
-        self.cache.set(&cache_key, &decision).await.map_err(|e| {
-            GarrisonError::InvalidParam(format!("abac-decision-cache-write::{}", e))
-        })?;
+        // 缓存写失败不影响求值结果——决策本身是正确的，仅记录警告
+        if let Err(e) = self.cache.set(&cache_key, &decision).await {
+            tracing::warn!(
+                error = %e,
+                "abac-decision-cache-write: 缓存写失败，决策仍返回"
+            );
+        }
 
         Ok(decision)
     }
@@ -337,10 +354,27 @@ impl AbacEngine {
         let response = self
             .authorizer
             .is_authorized(&request, &temp_set, &entities);
+
+        // 记录 Cedar 诊断错误（与 evaluate 保持一致）
+        for error in response.diagnostics().errors() {
+            tracing::warn!(
+                principal = %principal,
+                action = %action,
+                resource = %resource,
+                error = %error,
+                "Cedar temp-policy evaluation diagnostic error"
+            );
+        }
+
         match response.decision() {
             cedar_policy::Decision::Allow => Ok(Decision::allow()),
             cedar_policy::Decision::Deny => {
-                Ok(Decision::deny(DecisionReason::NoMatchingPermission))
+                let has_matching_policy = response.diagnostics().reason().next().is_some();
+                if has_matching_policy {
+                    Ok(Decision::deny(DecisionReason::ExplicitDeny))
+                } else {
+                    Ok(Decision::deny(DecisionReason::NoMatchingPermission))
+                }
             },
         }
     }
@@ -583,6 +617,11 @@ mod tests {
             .await
             .expect("evaluate");
         assert!(!decision.allowed, "forbid 应覆盖 permit");
+        assert_eq!(
+            decision.reason,
+            DecisionReason::ExplicitDeny,
+            "forbid 策略匹配应映射为 ExplicitDeny"
+        );
     }
 
     /// T125: evaluate 带 context JSON 不报错。
