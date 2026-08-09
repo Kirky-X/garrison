@@ -220,6 +220,8 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&super::RequestConte
         } => request_context.as_ref(),
         // anomalous-detector-dual feature 关闭时，无 AnomalousLoginDetected 变体，
         // 上述 match 已穷尽所有变体，此分支不可达。
+        // credit-metering 事件无请求上下文
+        GarrisonEvent::CreditConsumed { .. } | GarrisonEvent::CreditAlert { .. } => None,
         #[cfg(feature = "anomalous-detector-dual")]
         GarrisonEvent::AnomalousLoginDetected {
             request_context, ..
