@@ -211,7 +211,7 @@ config-full = ["config-encryption", "config-validation", "config-hot-reload", "c
 
 # === 缓存后端（通过 oxcache） ===
 cache-memory = ["oxcache/memory", "oxcache/serialization", "oxcache/metrics", "oxcache/bloom"]
-cache-redis = ["cache-memory", "oxcache/redis", "dep:redis", "oxcache/compression"]
+cache-redis = ["cache-memory", "oxcache/redis", "oxcache/lua", "dep:redis", "oxcache/compression"]
 cache-lock = ["cache-redis", "oxcache/lock"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===

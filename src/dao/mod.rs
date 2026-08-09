@@ -569,7 +569,7 @@ pub trait GarrisonDao: Send + Sync {
     /// # 默认实现
     /// 返回 `GarrisonError::NotImplemented`（仅 Redis 后端支持 Lua 脚本）。
     /// `MockDao` 重写为内存模拟（识别 INCR + EXPIRE 模式，委托 `incr` 实现）。
-    /// `GarrisonDaoOxcache` 使用默认实现（oxcache 未暴露 Redis Lua API）。
+    /// `GarrisonDaoOxcache` 在 `cache-redis` feature 启用时重写，委托 `Cache::eval_lua`。
     ///
     /// # 降级策略
     /// 调用方应在 `eval_lua` 返回 `NotImplemented` 时降级到非原子路径

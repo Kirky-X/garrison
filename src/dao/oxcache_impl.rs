@@ -682,4 +682,66 @@ impl GarrisonDao for GarrisonDaoOxcache {
 
         Ok(result)
     }
+
+    /// eval_lua 委托 oxcache 的 `Cache::eval_lua` 执行 Redis Lua 脚本。
+    ///
+    /// 仅在 `cache-redis` feature 启用时可用（启用 `oxcache/lua` → 编译 `Cache::eval_lua`）。
+    /// 将 `redis::Value` 递归转换为 `Vec<String>`，与 `GarrisonDao::eval_lua` 签名对齐。
+    ///
+    /// 非 Redis 后端（内存模式）调用时返回 `Operation` 错误（oxcache 语义），
+    /// 调用方应据此降级到非原子路径。
+    #[cfg(feature = "cache-redis")]
+    async fn eval_lua(
+        &self,
+        script: &str,
+        keys: Vec<String>,
+        args: Vec<String>,
+    ) -> GarrisonResult<Vec<String>> {
+        let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        let value = self
+            .cache
+            .eval_lua(script, &key_refs, &arg_refs)
+            .await
+            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-eval-lua::{}", e)))?;
+        Ok(redis_value_to_strings(value))
+    }
+}
+
+/// 将 `redis::Value` 递归转换为 `Vec<String>`。
+///
+/// 匹配 redis 1.5 的 `Value` 枚举变体：
+/// - `Nil` → 空
+/// - `Int(i)` → `[i.to_string()]`
+/// - `BulkString(v)` → `[UTF-8 lossy]`
+/// - `SimpleString(s)` → `[s]`
+/// - `Okay` → `["OK"]`
+/// - `Double(d)` → `[d.to_string()]`
+/// - `Array/Set` → 递归展平
+/// - `Map` → 递归展平 key-value 对
+/// - `Attribute` → 递归转换 data 部分
+#[cfg(feature = "cache-redis")]
+fn redis_value_to_strings(value: redis::Value) -> Vec<String> {
+    match value {
+        redis::Value::Nil => vec![],
+        redis::Value::Int(i) => vec![i.to_string()],
+        redis::Value::BulkString(v) => {
+            vec![String::from_utf8_lossy(&v).to_string()]
+        },
+        redis::Value::SimpleString(s) => vec![s],
+        redis::Value::Okay => vec!["OK".to_string()],
+        redis::Value::Double(d) => vec![d.to_string()],
+        redis::Value::Array(items) => items.into_iter().flat_map(redis_value_to_strings).collect(),
+        redis::Value::Set(items) => items.into_iter().flat_map(redis_value_to_strings).collect(),
+        redis::Value::Map(pairs) => {
+            let mut result = Vec::new();
+            for (k, v) in pairs {
+                result.extend(redis_value_to_strings(k));
+                result.extend(redis_value_to_strings(v));
+            }
+            result
+        },
+        redis::Value::Attribute { data, .. } => redis_value_to_strings(*data),
+        _ => vec!["[unsupported redis value type]".to_string()],
+    }
 }
