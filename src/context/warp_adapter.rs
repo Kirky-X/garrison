@@ -14,7 +14,7 @@
 //! - `WarpContext` 组合 `WarpRequest + WarpResponse + WarpStorage`
 
 use crate::config::GarrisonConfig;
-use crate::context::token_extract::extract_token_from_request_parts;
+use crate::context::token_extract::{extract_token_from_request_parts, parse_cookie_value};
 use crate::context::{GarrisonContext, GarrisonRequest, GarrisonResponse, GarrisonStorage};
 use crate::error::{GarrisonError, GarrisonResult};
 use std::collections::HashMap;
@@ -113,21 +113,7 @@ impl GarrisonRequest for WarpRequest {
             .get("cookie")
             .and_then(|v| v.to_str().ok())
             .unwrap_or("");
-        if cookie_header.is_empty() {
-            return Ok(None);
-        }
-        // 解析 Cookie: name1=value1; name2=value2
-        // Issue 41: 使用 get(1..) 防止空值 panic（如 "name="）
-        for cookie in cookie_header.split(';') {
-            let cookie = cookie.trim();
-            if let Some(eq_pos) = cookie.find('=') {
-                let (k, v) = cookie.split_at(eq_pos);
-                if k == name {
-                    return Ok(Some(v.get(1..).unwrap_or("").to_string()));
-                }
-            }
-        }
-        Ok(None)
+        Ok(parse_cookie_value(cookie_header, name))
     }
 
     fn get_token(&self, config: &GarrisonConfig) -> GarrisonResult<Option<String>> {

@@ -11,6 +11,7 @@
 //! ## 设计
 //!
 //! - `strip_bearer_prefix`：大小写不敏感地剥离 `Bearer ` 前缀（RFC 7235）
+//! - `parse_cookie_value`：从 Cookie header 值中按名称提取单个 cookie
 //! - `extract_token_from_headers`：依据 `GarrisonConfig` 从 `http::HeaderMap` 提取 token
 //!   （Authorization: Bearer → 自定义 token_name header → cookie）
 //!
@@ -74,6 +75,38 @@ pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     }
 }
 
+/// 从 Cookie header 值中按名称提取单个 cookie 值。
+///
+/// 解析 `Cookie: name1=value1; name2=value2` 格式的字符串，
+/// 返回第一个匹配 `name` 的 cookie 值。
+///
+/// # 参数
+/// - `cookie_header`: Cookie header 的完整字符串值（如 `"session=abc; token=xyz"`）。
+/// - `name`: 要查找的 cookie 名称。
+///
+/// # 返回
+/// - `Some(value)`: 找到匹配的 cookie。
+/// - `None`: 未找到或 header 为空。
+///
+/// # 安全性
+///
+/// 使用 `get(1..)` 而非 `&v[1..]` 防止空值 panic（如 `"name="`，Issue 38/41/42）。
+pub fn parse_cookie_value(cookie_header: &str, name: &str) -> Option<String> {
+    if cookie_header.is_empty() {
+        return None;
+    }
+    for cookie in cookie_header.split(';') {
+        let cookie = cookie.trim();
+        if let Some(eq_pos) = cookie.find('=') {
+            let (k, v) = cookie.split_at(eq_pos);
+            if k == name {
+                return v.get(1..).map(|s| s.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// C7: 检查 HTTP 方法是否允许从 body 提取 token。
 ///
 /// 仅 `POST` / `PUT` / `PATCH` 允许从 body 提取 token。`GET` / `HEAD` / `DELETE` /
@@ -132,17 +165,11 @@ pub fn extract_token_from_headers<H: HeaderLookup>(
     }
     if config.is_read_cookie {
         // 3. Cookie: token_name=<token>
-        let cookie_header = headers.get_header("cookie").unwrap_or("");
-        if !cookie_header.is_empty() {
-            for cookie in cookie_header.split(';') {
-                let cookie = cookie.trim();
-                if let Some(eq_pos) = cookie.find('=') {
-                    let (k, v) = cookie.split_at(eq_pos);
-                    if k == config.token_name {
-                        return Ok(Some(v[1..].to_string()));
-                    }
-                }
-            }
+        if let Some(token) = parse_cookie_value(
+            headers.get_header("cookie").unwrap_or(""),
+            &config.token_name,
+        ) {
+            return Ok(Some(token));
         }
     }
     Ok(None)
@@ -281,6 +308,46 @@ mod tests {
     #[test]
     fn strip_bearer_prefix_only_prefix() {
         assert_eq!(strip_bearer_prefix("Bearer "), Some(""));
+    }
+
+    // ========================================================================
+    // parse_cookie_value 测试
+    // ========================================================================
+
+    /// 从单 cookie 提取值。
+    #[test]
+    fn parse_cookie_value_single() {
+        assert_eq!(
+            parse_cookie_value("token=abc123", "token"),
+            Some("abc123".to_string())
+        );
+    }
+
+    /// 从多 cookie 提取目标值。
+    #[test]
+    fn parse_cookie_value_multiple() {
+        assert_eq!(
+            parse_cookie_value("session=xyz; token=target_tok; other=val", "token"),
+            Some("target_tok".to_string())
+        );
+    }
+
+    /// 未找到返回 None。
+    #[test]
+    fn parse_cookie_value_not_found() {
+        assert_eq!(parse_cookie_value("session=abc", "token"), None);
+    }
+
+    /// 空 header 返回 None。
+    #[test]
+    fn parse_cookie_value_empty_header() {
+        assert_eq!(parse_cookie_value("", "token"), None);
+    }
+
+    /// 空值 cookie（如 "name="）返回空字符串而非 panic。
+    #[test]
+    fn parse_cookie_value_empty_value_no_panic() {
+        assert_eq!(parse_cookie_value("name=", "name"), Some("".to_string()));
     }
 
     // ========================================================================
