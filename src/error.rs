@@ -540,41 +540,18 @@ impl miette::Diagnostic for GarrisonError {
     /// 返回稳定的错误代码标识符（dotted kebab-case，miette 渲染惯例）。
     ///
     /// 形如 `garrison.not_login` / `garrison.config` / `garrison.firewall_blocked`。
+    /// 从 `parts_and_msg_key()` 的 error_code 派生（单一数据源，新增变体无需同步修改）：
+    /// `garrison.` + lowercase(error_code) + 去除尾部 `_error` 后缀。
+    ///
     /// 与 `response_parts().1` 返回的 UPPER_SNAKE_CASE error_code 解耦：
     /// - `response_parts` 的 error_code → 面向 HTTP 响应体（与 既有惯例一致）
     /// - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
     fn code(&self) -> Option<Box<dyn std::fmt::Display + '_>> {
-        let code_str: &'static str = match self {
-            GarrisonError::NotLogin(_) => "garrison.not_login",
-            GarrisonError::NotPermission(_) => "garrison.not_permission",
-            GarrisonError::NotRole(_) => "garrison.not_role",
-            GarrisonError::InvalidToken(_) => "garrison.invalid_token",
-            GarrisonError::TokenRevoked(_) => "garrison.token_revoked",
-            GarrisonError::ExpiredToken(_) => "garrison.expired_token",
-            GarrisonError::Dao(_) => "garrison.dao",
-            GarrisonError::Config(_) => "garrison.config",
-            GarrisonError::Internal(_) => "garrison.internal",
-            GarrisonError::Session(_) => "garrison.session",
-            GarrisonError::Annotation(_) => "garrison.annotation",
-            GarrisonError::Context(_) => "garrison.context",
-            GarrisonError::Exception(_) => "garrison.exception",
-            GarrisonError::OAuth2(_) => "garrison.oauth2",
-            GarrisonError::Network(_) => "garrison.network",
-            GarrisonError::InvalidResponse(_) => "garrison.invalid_response",
-            GarrisonError::InvalidParam(_) => "garrison.invalid_param",
-            GarrisonError::NotImplemented(_) => "garrison.not_implemented",
-            GarrisonError::FirewallBlocked(_) => "garrison.firewall_blocked",
-            GarrisonError::DisableService { .. } => "garrison.disable_service",
-            GarrisonError::NotSafe { .. } => "garrison.not_safe",
-            GarrisonError::InvalidStateTransition { .. } => "garrison.invalid_state_transition",
-            GarrisonError::SmsRateLimitExceeded { .. } => "garrison.sms_rate_limit_exceeded",
-            GarrisonError::SmsVerifyMaxAttempts => "garrison.sms_verify_max_attempts",
-            GarrisonError::SmsCodeNotFound => "garrison.sms_code_not_found",
-            GarrisonError::SmsChannelRecycled => "garrison.sms_channel_recycled",
-            #[cfg(feature = "credit-metering")]
-            GarrisonError::CreditInsufficient { .. } => "garrison.credit_insufficient",
-        };
-        Some(Box::new(code_str))
+        let (_, error_code, _, _, _) = self.parts_and_msg_key();
+        // 派生规则：garrison. + lowercase(error_code) + 去除尾部 "_error"
+        let lower = error_code.to_ascii_lowercase();
+        let stem = lower.strip_suffix("_error").unwrap_or(&lower);
+        Some(Box::new(format!("garrison.{stem}") as String))
     }
 
     /// 返回错误严重级别。
@@ -598,25 +575,72 @@ impl miette::Diagnostic for GarrisonError {
 mod tests {
     use super::*;
 
-    /// 验证 Session 变体的 Display 输出包含原始消息。
+    /// 验证各 String 变体的 Display 输出包含原始消息（参数化）。
     #[test]
-    fn session_variant_display_includes_message() {
-        let err = GarrisonError::Session("会话已过期".to_string());
-        assert_eq!(err.to_string(), "会话错误: 会话已过期");
-    }
-
-    /// 验证 Annotation 变体的 Display 输出包含原始消息。
-    #[test]
-    fn annotation_variant_display_includes_message() {
-        let err = GarrisonError::Annotation("注解校验失败".to_string());
-        assert_eq!(err.to_string(), "注解错误: 注解校验失败");
-    }
-
-    /// 验证 Context 变体的 Display 输出包含原始消息。
-    #[test]
-    fn context_variant_display_includes_message() {
-        let err = GarrisonError::Context("上下文缺失".to_string());
-        assert_eq!(err.to_string(), "上下文错误: 上下文缺失");
+    fn string_variants_display_includes_message() {
+        let cases: [(GarrisonError, &str); 16] = [
+            (
+                GarrisonError::Session("会话已过期".into()),
+                "会话错误: 会话已过期",
+            ),
+            (
+                GarrisonError::Annotation("注解校验失败".into()),
+                "注解错误: 注解校验失败",
+            ),
+            (
+                GarrisonError::Context("上下文缺失".into()),
+                "上下文错误: 上下文缺失",
+            ),
+            (GarrisonError::Dao("连接失败".into()), "DAO 错误: 连接失败"),
+            (
+                GarrisonError::Config("配置非法".into()),
+                "配置错误: 配置非法",
+            ),
+            (
+                GarrisonError::InvalidToken("格式错误".into()),
+                "Token 无效: 格式错误",
+            ),
+            (
+                GarrisonError::ExpiredToken("已过期".into()),
+                "Token 已过期: 已过期",
+            ),
+            (
+                GarrisonError::NotPermission("无权限".into()),
+                "无权限: 无权限",
+            ),
+            (GarrisonError::NotRole("无角色".into()), "无角色: 无角色"),
+            (
+                GarrisonError::NotLogin("请先登录".into()),
+                "未登录: 请先登录",
+            ),
+            (
+                GarrisonError::Internal("内部错误".into()),
+                "内部错误: 内部错误",
+            ),
+            (
+                GarrisonError::OAuth2("授权码无效".into()),
+                "OAuth2 错误: 授权码无效",
+            ),
+            (
+                GarrisonError::Network("DNS 解析失败".into()),
+                "网络错误: DNS 解析失败",
+            ),
+            (
+                GarrisonError::InvalidParam("client_id 为空".into()),
+                "参数无效: client_id 为空",
+            ),
+            (
+                GarrisonError::NotImplemented("refresh_token 未实现".into()),
+                "未实现: refresh_token 未实现",
+            ),
+            (
+                GarrisonError::FirewallBlocked("IP 1.2.3.4 被拦截".into()),
+                "防火墙拦截: IP 1.2.3.4 被拦截",
+            ),
+        ];
+        for (err, expected) in cases {
+            assert_eq!(err.to_string(), expected);
+        }
     }
 
     /// 验证新增变体可通过 GarrisonResult 传播。
@@ -671,175 +695,86 @@ mod tests {
         assert!(matches!(outer(), Err(GarrisonError::Dao(_))));
     }
 
-    /// 验证 Dao 变体的 Display 输出包含原始消息。
-    #[test]
-    fn dao_variant_display_includes_message() {
-        let err = GarrisonError::Dao("连接失败".to_string());
-        assert_eq!(err.to_string(), "DAO 错误: 连接失败");
-    }
-
-    /// 验证 Config 变体的 Display 输出包含原始消息。
-    #[test]
-    fn config_variant_display_includes_message() {
-        let err = GarrisonError::Config("配置非法".to_string());
-        assert_eq!(err.to_string(), "配置错误: 配置非法");
-    }
-
-    /// 验证 InvalidToken 变体的 Display 输出包含原始消息。
-    #[test]
-    fn invalid_token_variant_display_includes_message() {
-        let err = GarrisonError::InvalidToken("格式错误".to_string());
-        assert_eq!(err.to_string(), "Token 无效: 格式错误");
-    }
-
-    /// 验证 ExpiredToken 变体的 Display 输出包含原始消息。
-    #[test]
-    fn expired_token_variant_display_includes_message() {
-        let err = GarrisonError::ExpiredToken("已过期".to_string());
-        assert_eq!(err.to_string(), "Token 已过期: 已过期");
-    }
-
-    /// 验证 NotPermission 变体的 Display 输出包含原始消息。
-    #[test]
-    fn not_permission_variant_display_includes_message() {
-        let err = GarrisonError::NotPermission("无权限".to_string());
-        assert_eq!(err.to_string(), "无权限: 无权限");
-    }
-
-    /// 验证 NotRole 变体的 Display 输出包含原始消息。
-    #[test]
-    fn not_role_variant_display_includes_message() {
-        let err = GarrisonError::NotRole("无角色".to_string());
-        assert_eq!(err.to_string(), "无角色: 无角色");
-    }
-
-    /// 验证 NotLogin 变体的 Display 输出包含原始消息。
-    #[test]
-    fn not_login_variant_display_includes_message() {
-        let err = GarrisonError::NotLogin("请先登录".to_string());
-        assert_eq!(err.to_string(), "未登录: 请先登录");
-    }
-
-    /// 验证 Internal 变体的 Display 输出包含原始消息。
-    #[test]
-    fn internal_variant_display_includes_message() {
-        let err = GarrisonError::Internal("内部错误".to_string());
-        assert_eq!(err.to_string(), "内部错误: 内部错误");
-    }
-
     // ========================================================================
-    // IntoResponse 实现测试（cfg feature = "web-axum"）
+    // IntoResponse 状态码映射测试（参数化，cfg feature = "web-axum"）
     // ========================================================================
 
-    /// 验证 Dao 错误映射为 500 Internal Server Error。
-    ///
-    /// 覆盖 `IntoResponse for GarrisonError` 的 `_ =>` 分支（Dao 变体）。
+    /// 验证各变体通过 IntoResponse 映射为正确的 HTTP 状态码。
     #[cfg(feature = "web-axum")]
     #[test]
-    fn dao_error_returns_500() {
+    fn into_response_status_codes() {
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = GarrisonError::Dao("db down".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
 
-    /// 验证 Config 错误映射为 500 Internal Server Error。
-    ///
-    /// 覆盖 `IntoResponse for GarrisonError` 的 `_ =>` 分支（Config 变体）。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn config_error_returns_500() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::Config("invalid".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    /// 验证 Annotation 错误映射为 500 Internal Server Error。
-    ///
-    /// 覆盖 `IntoResponse for GarrisonError` 的 `_ =>` 分支（Annotation 变体）。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn annotation_error_returns_500() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::Annotation("conflict".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    /// 验证 Context 错误映射为 500 Internal Server Error。
-    ///
-    /// 覆盖 `IntoResponse for GarrisonError` 的 `_ =>` 分支（Context 变体）。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn context_error_returns_500() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::Context("missing".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    // ========================================================================
-    // 鉴权错误状态码映射测试
-    // ========================================================================
-
-    /// 验证 NotLogin 错误映射为 401 Unauthorized。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn not_login_error_returns_401() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::NotLogin("请先登录".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    /// 验证 NotPermission 错误映射为 403 Forbidden。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn not_permission_error_returns_403() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::NotPermission("无权限".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    }
-
-    /// 验证 InvalidToken 错误映射为 401 Unauthorized。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn invalid_token_returns_401() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::InvalidToken("格式错误".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    /// 验证 ExpiredToken 错误映射为 401 Unauthorized。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn expired_token_returns_401() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::ExpiredToken("已过期".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    }
-
-    /// 验证 NotRole 错误映射为 403 Forbidden。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn not_role_returns_403() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::NotRole("无角色".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let cases: [(GarrisonError, StatusCode); 16] = [
+            (
+                GarrisonError::NotLogin("x".into()),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                GarrisonError::NotPermission("x".into()),
+                StatusCode::FORBIDDEN,
+            ),
+            (GarrisonError::NotRole("x".into()), StatusCode::FORBIDDEN),
+            (
+                GarrisonError::InvalidToken("x".into()),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                GarrisonError::TokenRevoked("x".into()),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                GarrisonError::ExpiredToken("x".into()),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                GarrisonError::Dao("x".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                GarrisonError::Config("x".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                GarrisonError::Internal("x".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                GarrisonError::Session("x".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                GarrisonError::Annotation("x".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                GarrisonError::Context("x".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                GarrisonError::OAuth2("x".into()),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+            (
+                GarrisonError::InvalidParam("x".into()),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                GarrisonError::NotImplemented("x".into()),
+                StatusCode::NOT_IMPLEMENTED,
+            ),
+            (GarrisonError::Network("x".into()), StatusCode::BAD_GATEWAY),
+        ];
+        for (err, expected_status) in cases {
+            let debug_name = format!("{:?}", err);
+            let response = err.into_response();
+            assert_eq!(
+                response.status(),
+                expected_status,
+                "{debug_name} 状态码不匹配"
+            );
+        }
     }
 
     // ========================================================================
@@ -888,104 +823,6 @@ mod tests {
         let err = GarrisonError::Exception(GarrisonException::new(500, "业务异常"));
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    // ========================================================================
-    // 补充测试：覆盖剩余 IntoResponse 分支 + Display 变体（0.2.1 覆盖率提升）
-    // ========================================================================
-
-    /// 验证 Internal 错误映射为 500 Internal Server Error。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn internal_error_returns_500() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::Internal("内部错误".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    /// 验证 Session 错误映射为 500 Internal Server Error。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn session_error_returns_500() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::Session("会话过期".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    /// 验证 OAuth2 错误映射为 500 Internal Server Error。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn oauth2_error_returns_500() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::OAuth2("授权失败".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    /// 验证 Network 错误映射为 502 Bad Gateway。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn network_error_returns_502() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::Network("连接超时".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    }
-
-    /// 验证 InvalidParam 错误映射为 400 Bad Request。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn invalid_param_returns_400() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::InvalidParam("参数缺失".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-
-    /// 验证 NotImplemented 错误映射为 501 Not Implemented。
-    #[cfg(feature = "web-axum")]
-    #[test]
-    fn not_implemented_returns_501() {
-        use axum::http::StatusCode;
-        use axum::response::IntoResponse;
-        let err = GarrisonError::NotImplemented("功能未实现".to_string());
-        let response = err.into_response();
-        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
-    }
-
-    /// 验证 OAuth2 变体的 Display 输出包含原始消息。
-    #[test]
-    fn oauth2_variant_display_includes_message() {
-        let err = GarrisonError::OAuth2("授权码无效".to_string());
-        assert_eq!(err.to_string(), "OAuth2 错误: 授权码无效");
-    }
-
-    /// 验证 Network 变体的 Display 输出包含原始消息。
-    #[test]
-    fn network_variant_display_includes_message() {
-        let err = GarrisonError::Network("DNS 解析失败".to_string());
-        assert_eq!(err.to_string(), "网络错误: DNS 解析失败");
-    }
-
-    /// 验证 InvalidParam 变体的 Display 输出包含原始消息。
-    #[test]
-    fn invalid_param_variant_display_includes_message() {
-        let err = GarrisonError::InvalidParam("client_id 为空".to_string());
-        assert_eq!(err.to_string(), "参数无效: client_id 为空");
-    }
-
-    /// 验证 NotImplemented 变体的 Display 输出包含原始消息。
-    #[test]
-    fn not_implemented_variant_display_includes_message() {
-        let err = GarrisonError::NotImplemented("refresh_token 未实现".to_string());
-        assert_eq!(err.to_string(), "未实现: refresh_token 未实现");
     }
 
     // ========================================================================
@@ -1534,27 +1371,12 @@ mod tests {
     // BW-ERR 错误码常量测试
     // ========================================================================
 
-    /// 验证 BW_ERR_009 常量值为 409001（并发登录冲突，FRD §3.4）。
+    /// 验证 BW_ERR 常量值与 FRD §3.4 定义一致。
     #[test]
-    fn bw_err_009_constant_value() {
-        assert_eq!(GarrisonError::BW_ERR_009, 409001);
-    }
-
-    /// 验证 BW_ERR_010 常量值为 403003（账号被封禁，FRD §3.4）。
-    #[test]
-    fn bw_err_010_constant_value() {
-        assert_eq!(GarrisonError::BW_ERR_010, 403003);
-    }
-
-    /// 验证 BW_ERR_011 常量值为 401004（多账号体系冲突，FRD §3.4）。
-    #[test]
-    fn bw_err_011_constant_value() {
-        assert_eq!(GarrisonError::BW_ERR_011, 401004);
-    }
-
-    /// 验证 BW_ERR_012 常量值为 400001（第三方登录失败，FRD §3.4）。
-    #[test]
-    fn bw_err_012_constant_value() {
-        assert_eq!(GarrisonError::BW_ERR_012, 400001);
+    fn bw_err_constants_match_frd_spec() {
+        assert_eq!(GarrisonError::BW_ERR_009, 409001); // 并发登录冲突
+        assert_eq!(GarrisonError::BW_ERR_010, 403003); // 账号被封禁
+        assert_eq!(GarrisonError::BW_ERR_011, 401004); // 多账号体系冲突
+        assert_eq!(GarrisonError::BW_ERR_012, 400001); // 第三方登录失败
     }
 }
