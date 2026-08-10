@@ -84,7 +84,7 @@ impl SessionSecurityListener {
         self.dao.set(&key, ip, IP_RECORD_TTL).await?;
         tracing::info!(
             "记录登录 IP (token={}, login_id={}, ip={})",
-            token,
+            mask_token(token),
             login_id,
             ip
         );
@@ -108,16 +108,25 @@ impl SessionSecurityListener {
     /// - `Ok(Some(warning))`: 跨网段，warning 为告警消息。
     ///
     /// # 错误
-    /// - DAO 读取失败：透传 `GarrisonError`。
+    /// - DAO 读取失败：降级为 `Ok(None)`（不阻断认证主流程），同时记录 `tracing::warn!`。
     pub async fn check_ip_change(
         &self,
         token: &str,
         current_ip: &str,
     ) -> GarrisonResult<Option<String>> {
         let key = format!("{}ip:{}", DaoKeyPrefix::Session, token);
-        let recorded_ip = match self.dao.get(&key).await? {
-            Some(ip) => ip,
-            None => return Ok(None), // 首次访问无记录，不告警
+        let recorded_ip = match self.dao.get(&key).await {
+            Ok(Some(ip)) => ip,
+            Ok(None) => return Ok(None), // 首次访问无记录，不告警
+            Err(e) => {
+                // DAO 错误降级：不阻断认证主流程，仅记录警告
+                tracing::warn!(
+                    "check_ip_change DAO 读取失败，降级为不告警 (token={}): {}",
+                    mask_token(token),
+                    e
+                );
+                return Ok(None);
+            },
         };
 
         match (
@@ -128,9 +137,10 @@ impl SessionSecurityListener {
                 if recorded_subnet == current_subnet {
                     Ok(None)
                 } else {
+                    let masked = mask_token(token);
                     let warning = format!(
                         "IP 网段变更检测：token={} 初始 IP={} 当前 IP={}（网段 {} -> {}）",
-                        token, recorded_ip, current_ip, recorded_subnet, current_subnet
+                        masked, recorded_ip, current_ip, recorded_subnet, current_subnet
                     );
                     tracing::warn!("{}", warning);
                     Ok(Some(warning))
@@ -140,6 +150,17 @@ impl SessionSecurityListener {
             (None, _) | (_, None) => Ok(None),
         }
     }
+}
+
+/// 脱敏 token：仅输出前 8 字符 + `***`，防止敏感信息泄露到日志。
+///
+/// # 参数
+/// - `token`: token 字符串。
+///
+/// # 返回
+/// 脱敏后的 token 字符串切片（前 8 字符或完整 token，取较短者）。
+fn mask_token(token: &str) -> &str {
+    token.get(..8).unwrap_or(token)
 }
 
 /// 提取 IPv4 地址的 /24 网段标识（前 3 段）。

@@ -392,11 +392,15 @@ mod tests {
         let temp = mock.check_temp_token().await;
         for result in [access, client, temp] {
             let msg = result.err().expect("未登录时应返回 Err");
-            let debug = format!("{:?}", msg);
+            // 通过模式匹配提取内部消息（Debug 已脱敏，不直接输出内部 key）
+            let inner = match &msg {
+                GarrisonError::NotLogin(s) => s.clone(),
+                other => format!("{:?}", other),
+            };
             assert!(
-                debug.contains("stp-token-invalid-or-not-login"),
+                inner.contains("stp-token-invalid-or-not-login"),
                 "token 类型校验错误消息应统一包含 stp-token-invalid-or-not-login，实际: {}",
-                debug
+                inner
             );
         }
     }

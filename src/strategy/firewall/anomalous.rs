@@ -228,8 +228,8 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let geo: Arc<dyn GeoLookup> = Arc::new(
             MockGeoLookup::new()
-                .with("1.1.1.1", GeoCoord::new(39.9042, 116.4074)) // 北京
-                .with("2.2.2.2", GeoCoord::new(40.7128, -74.0060)), // 纽约
+                .with("1.1.1.1", GeoCoord::new(39.9042, 116.4074).unwrap()) // 北京
+                .with("2.2.2.2", GeoCoord::new(40.7128, -74.0060).unwrap()), // 纽约
         );
         let config = AnomalousConfig {
             known_geo_threshold: 500,
@@ -258,8 +258,9 @@ mod tests {
     #[tokio::test]
     async fn anomalous_first_login_passes_and_writes_geo() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let geo: Arc<dyn GeoLookup> =
-            Arc::new(MockGeoLookup::new().with("1.1.1.1", GeoCoord::new(39.9042, 116.4074)));
+        let geo: Arc<dyn GeoLookup> = Arc::new(
+            MockGeoLookup::new().with("1.1.1.1", GeoCoord::new(39.9042, 116.4074).unwrap()),
+        );
         let config = AnomalousConfig {
             known_geo_threshold: 500,
         };
@@ -284,8 +285,8 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let geo: Arc<dyn GeoLookup> = Arc::new(
             MockGeoLookup::new()
-                .with("1.1.1.1", GeoCoord::new(39.9042, 116.4074))
-                .with("1.1.1.2", GeoCoord::new(39.9100, 116.4000)), // 同城
+                .with("1.1.1.1", GeoCoord::new(39.9042, 116.4074).unwrap())
+                .with("1.1.1.2", GeoCoord::new(39.9100, 116.4000).unwrap()), // 同城
         );
         let config = AnomalousConfig {
             known_geo_threshold: 500,
@@ -330,7 +331,7 @@ mod tests {
     #[tokio::test]
     async fn check_updates_historic_coord_on_first_login() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let current_coord = GeoCoord::new(39.9042, 116.4074); // 北京
+        let current_coord = GeoCoord::new(39.9042, 116.4074).unwrap(); // 北京
         let expected_csv = current_coord.to_csv();
         let geo: Arc<dyn GeoLookup> = Arc::new(MockGeoLookup::new().with("1.1.1.1", current_coord));
         let config = AnomalousConfig {

@@ -30,6 +30,21 @@ use crate::oauth2_server::introspect::{IntrospectHandler, IntrospectRequest};
 use crate::oauth2_server::revoke::{RevokeHandler, RevokeRequest};
 use crate::oauth2_server::token::{TokenHandler, TokenRequest};
 
+/// 为响应添加 RFC 6749 §5.1 要求的缓存禁止头。
+///
+/// 设置 `Cache-Control: no-store` + `Pragma: no-cache`，
+/// 防止中间代理缓存 OAuth2 token 响应（含错误）。
+fn add_no_cache_headers(response: &mut Response) {
+    response.headers_mut().insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("no-store"),
+    );
+    response.headers_mut().insert(
+        HeaderName::from_static("pragma"),
+        HeaderValue::from_static("no-cache"),
+    );
+}
+
 /// OAuth2 路由共享状态。
 ///
 /// 持有所有 OAuth2 handler，通过 `Arc<OAuth2State>` 注入到 axum Router。
@@ -131,14 +146,7 @@ async fn token_endpoint(
         Ok(resp) => {
             // RFC 6749 §5.1 — token 响应必须含 Cache-Control: no-store + Pragma: no-cache
             let mut response = (StatusCode::OK, Json(resp)).into_response();
-            response.headers_mut().insert(
-                HeaderName::from_static("cache-control"),
-                HeaderValue::from_static("no-store"),
-            );
-            response.headers_mut().insert(
-                HeaderName::from_static("pragma"),
-                HeaderValue::from_static("no-cache"),
-            );
+            add_no_cache_headers(&mut response);
             response
         },
         Err(e) => {
@@ -160,11 +168,14 @@ async fn token_endpoint(
             } else {
                 error_code
             };
-            (
+            // RFC 6749 §5.1 — token 响应（含错误）必须含 Cache-Control: no-store + Pragma: no-cache
+            let mut response = (
                 status,
                 Json(json!({ "error": body_error, "message": message })),
             )
-                .into_response()
+                .into_response();
+            add_no_cache_headers(&mut response);
+            response
         },
     }
 }

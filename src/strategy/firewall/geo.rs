@@ -12,7 +12,7 @@
 //! 生产实现可用 maxminddb 读取 MaxMind GeoIP2 数据库（City.mmdb 含坐标，Country.mmdb 含国家码），
 //! 测试可用 mock 实现（避免依赖真实数据库文件）。
 
-use crate::error::GarrisonResult;
+use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 
 /// MaxMindDb 生产后端（由 `firewall-maxminddb` feature 启用）。
@@ -29,9 +29,24 @@ pub struct GeoCoord {
 }
 
 impl GeoCoord {
-    /// 创建地理坐标。
-    pub fn new(lat: f64, lon: f64) -> Self {
-        Self { lat, lon }
+    /// 创建地理坐标，校验 lat ∈ [-90.0, 90.0]、lon ∈ [-180.0, 180.0]。
+    ///
+    /// # 错误
+    /// - 坐标越界时返回 `GarrisonError::InvalidParam`。
+    pub fn new(lat: f64, lon: f64) -> Result<Self, GarrisonError> {
+        if !(-90.0..=90.0).contains(&lat) {
+            return Err(GarrisonError::InvalidParam(format!(
+                "GeoCoord: lat {} 越界 [-90, 90]",
+                lat
+            )));
+        }
+        if !(-180.0..=180.0).contains(&lon) {
+            return Err(GarrisonError::InvalidParam(format!(
+                "GeoCoord: lon {} 越界 [-180, 180]",
+                lon
+            )));
+        }
+        Ok(Self { lat, lon })
     }
 
     /// 序列化为 "lat,lon" 字符串（用于 oxcache 存储）。
@@ -46,9 +61,9 @@ impl GeoCoord {
     /// - `None`: 格式错误或字段缺失。
     pub fn from_csv(s: &str) -> Option<Self> {
         let mut parts = s.splitn(2, ',');
-        let lat = parts.next()?.trim().parse().ok()?;
-        let lon = parts.next()?.trim().parse().ok()?;
-        Some(Self { lat, lon })
+        let lat: f64 = parts.next()?.trim().parse().ok()?;
+        let lon: f64 = parts.next()?.trim().parse().ok()?;
+        Self::new(lat, lon).ok()
     }
 }
 
@@ -91,7 +106,7 @@ mod tests {
 
     #[test]
     fn geo_coord_csv_roundtrip() {
-        let coord = GeoCoord::new(39.9042, 116.4074);
+        let coord = GeoCoord::new(39.9042, 116.4074).unwrap();
         let csv = coord.to_csv();
         let parsed = GeoCoord::from_csv(&csv).unwrap();
         assert_eq!(coord, parsed);

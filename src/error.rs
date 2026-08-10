@@ -16,7 +16,7 @@ use thiserror::Error;
 ///
 /// - 未启用 `i18n` feature：硬编码中文（与 0.2.x 行为一致）
 /// - 启用 `i18n` feature：依据线程本地 locale 切换中英文（详见 [`crate::i18n`]）
-#[derive(Debug, Error)]
+#[derive(Error)]
 pub enum GarrisonError {
     /// 未登录异常（对应 NotLoginException）。
     NotLogin(String),
@@ -147,6 +147,50 @@ pub enum GarrisonError {
         /// 剩余 credit 数。
         remaining: u64,
     },
+}
+
+// 手动 Debug 实现：仅输出变体名 + Display 消息摘要（截断至 200 字符），
+// 防止内部路径/堆栈/OAuth2 detail 泄露到日志。
+impl std::fmt::Debug for GarrisonError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let display = self.to_string();
+        let truncated = if display.len() > 200 {
+            format!("{}...", &display[..197])
+        } else {
+            display
+        };
+        let variant = match self {
+            Self::NotLogin(_) => "NotLogin",
+            Self::NotPermission(_) => "NotPermission",
+            Self::NotRole(_) => "NotRole",
+            Self::InvalidToken(_) => "InvalidToken",
+            Self::TokenRevoked(_) => "TokenRevoked",
+            Self::ExpiredToken(_) => "ExpiredToken",
+            Self::Dao(_) => "Dao",
+            Self::Config(_) => "Config",
+            Self::Internal(_) => "Internal",
+            Self::Session(_) => "Session",
+            Self::Annotation(_) => "Annotation",
+            Self::Context(_) => "Context",
+            Self::Exception(_) => "Exception",
+            Self::OAuth2(_) => "OAuth2",
+            Self::Network(_) => "Network",
+            Self::InvalidResponse(_) => "InvalidResponse",
+            Self::InvalidParam(_) => "InvalidParam",
+            Self::NotImplemented(_) => "NotImplemented",
+            Self::FirewallBlocked(_) => "FirewallBlocked",
+            Self::DisableService { .. } => "DisableService",
+            Self::NotSafe { .. } => "NotSafe",
+            Self::InvalidStateTransition { .. } => "InvalidStateTransition",
+            Self::SmsRateLimitExceeded { .. } => "SmsRateLimitExceeded",
+            Self::SmsVerifyMaxAttempts => "SmsVerifyMaxAttempts",
+            Self::SmsCodeNotFound => "SmsCodeNotFound",
+            Self::SmsChannelRecycled => "SmsChannelRecycled",
+            #[cfg(feature = "credit-metering")]
+            Self::CreditInsufficient { .. } => "CreditInsufficient",
+        };
+        write!(f, "{}({})", variant, truncated)
+    }
 }
 
 // ============================================================================

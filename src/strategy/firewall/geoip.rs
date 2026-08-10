@@ -80,6 +80,29 @@ impl GeoIPStrategy {
     }
 }
 
+/// IP 地址脱敏：IPv4 保留前 2 段 + `.*.*`，IPv6 保留前 3 组 + `:*`。
+///
+/// 用于错误消息中避免泄露完整 IP 地址（PII）。
+fn mask_ip(ip: &str) -> String {
+    if ip.contains(':') {
+        // IPv6：保留前 3 组
+        let parts: Vec<&str> = ip.split(':').collect();
+        if parts.len() >= 3 {
+            format!("{}:{}:{}:*", parts[0], parts[1], parts[2])
+        } else {
+            "*:*:*".to_string()
+        }
+    } else {
+        // IPv4：保留前 2 段
+        let parts: Vec<&str> = ip.split('.').collect();
+        if parts.len() >= 2 {
+            format!("{}.{}.*.*", parts[0], parts[1])
+        } else {
+            "*.*.*.*".to_string()
+        }
+    }
+}
+
 #[async_trait]
 impl GarrisonFirewallStrategy for GeoIPStrategy {
     async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
@@ -91,11 +114,14 @@ impl GarrisonFirewallStrategy for GeoIPStrategy {
                 Some(c) if Self::is_in_list(c, &self.config.allowed_countries) => Ok(()),
                 Some(c) => Err(GarrisonError::FirewallBlocked(format!(
                     "geoip: IP {} 国家码 {} 不在白名单 {:?}",
-                    ctx.ip, c, self.config.allowed_countries
+                    mask_ip(&ctx.ip),
+                    c,
+                    self.config.allowed_countries
                 ))),
                 None => Err(GarrisonError::FirewallBlocked(format!(
                     "geoip: IP {} 无法定位国家，不在白名单 {:?} 内",
-                    ctx.ip, self.config.allowed_countries
+                    mask_ip(&ctx.ip),
+                    self.config.allowed_countries
                 ))),
             }
         } else if !self.config.blocked_countries.is_empty() {
@@ -104,7 +130,9 @@ impl GarrisonFirewallStrategy for GeoIPStrategy {
                 Some(c) if Self::is_in_list(c, &self.config.blocked_countries) => {
                     Err(GarrisonError::FirewallBlocked(format!(
                         "geoip: IP {} 国家码 {} 在黑名单 {:?} 内",
-                        ctx.ip, c, self.config.blocked_countries
+                        mask_ip(&ctx.ip),
+                        c,
+                        self.config.blocked_countries
                     )))
                 },
                 _ => Ok(()),

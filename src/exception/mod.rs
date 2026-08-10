@@ -33,14 +33,9 @@ pub struct NotLoginException {
 ///
 /// # ⚠️ 安全说明（Issues 64, 68）
 ///
-/// `GarrisonException` derive `Debug`，默认 `Debug` 实现会输出 `token_value`、
-/// `login_id`、`extras` 等敏感字段。若实例被 `{:?}` 格式化（如 `tracing::error!`
-/// 的 `?self`、`panic!`、日志框架），敏感信息将泄露到日志/错误报告中。
-///
-/// **当前状态**：`impls.rs` 的 `Drop` / 日志调用已手动过滤敏感字段。
-/// 若新增日志点，请确认不使用 `?exception` 直接格式化整个实例。
-/// 未来版本可能改为手动 `Debug` 实现以默认脱敏。
-#[derive(Debug, Clone)]
+/// `GarrisonException` 使用手动 `Debug` 实现，对 `token_value` 默认脱敏
+/// （仅输出前 8 字符 + `***`）。避免敏感信息通过 `{:?}` 格式化泄露到日志。
+#[derive(Clone)]
 pub struct GarrisonException {
     /// 业务错误码（如 -1 表示未登录）。
     pub code: i32,

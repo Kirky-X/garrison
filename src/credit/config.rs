@@ -39,6 +39,38 @@ impl Default for CreditConfig {
     }
 }
 
+impl CreditConfig {
+    /// 校验配置合法性。
+    ///
+    /// # 校验规则
+    /// - `alert_thresholds` 非空
+    /// - 每个值 ∈ [0, 100]（百分比语义）
+    /// - 严格升序排列
+    ///
+    /// # 错误
+    /// - 违反以上任一规则时返回描述性错误消息。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.alert_thresholds.is_empty() {
+            return Err("alert_thresholds 不能为空".to_string());
+        }
+        for (i, &t) in self.alert_thresholds.iter().enumerate() {
+            if t > 100 {
+                return Err(format!("alert_thresholds[{}] = {} 超出范围 [0, 100]", i, t));
+            }
+            if i > 0 && t <= self.alert_thresholds[i - 1] {
+                return Err(format!(
+                    "alert_thresholds 必须严格升序: [{}] = {} <= [{}] = {}",
+                    i,
+                    t,
+                    i - 1,
+                    self.alert_thresholds[i - 1]
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Credit 告警配置。
 ///
 /// 独立于 `CreditConfig`，允许复用告警策略。

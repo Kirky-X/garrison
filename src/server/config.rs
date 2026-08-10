@@ -3,6 +3,23 @@
 
 use super::AuthServerConfig;
 
+impl AuthServerConfig {
+    /// 校验配置合法性。
+    ///
+    /// 在 server 启动时调用，确保关键配置项已正确设置。
+    ///
+    /// # 错误
+    /// - `internal_api_key` 为空时返回错误，防止 fail-open 风险。
+    pub fn validate(&self) -> Result<(), String> {
+        if self.internal_api_key.is_empty() {
+            return Err("internal_api_key 未配置，内网 API 将拒绝所有请求。\
+                 请通过 with_internal_api_key() 设置非空值"
+                .to_string());
+        }
+        Ok(())
+    }
+}
+
 impl Default for AuthServerConfig {
     fn default() -> Self {
         Self {

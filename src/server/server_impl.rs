@@ -386,6 +386,9 @@ impl GarrisonAuthServer {
     /// 启用 `tls` feature 且调用 `with_tls()` 后，两个端口均使用
     /// `axum_server::bind_rustls` 替代 `axum::serve`，实现 HTTPS/TLS 终止。
     pub async fn listen(self) -> GarrisonResult<()> {
+        // 启动前校验配置合法性
+        self.config.validate().map_err(GarrisonError::Config)?;
+
         let external_addr = format!("0.0.0.0:{}", self.config.external_port);
         let internal_addr = format!("0.0.0.0:{}", self.config.internal_port);
 

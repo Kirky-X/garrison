@@ -96,7 +96,7 @@ impl GarrisonSession {
         for listener in &self.expiry_listeners {
             if let Err(e) = listener.on_session_expired(login_id, token).await {
                 // 脱敏：只打印 token 前 8 字符，避免完整 token 泄露到日志
-                let token_preview = if token.len() > 8 { &token[..8] } else { token };
+                let token_preview = token.get(..8).unwrap_or(token);
                 tracing::warn!(
                     "SessionExpiryListener callback failed (login_id={}, token={}...): {}",
                     login_id,
@@ -371,12 +371,12 @@ impl GarrisonSession {
                 })?;
                 // R-session-lifecycle-003: 检查 session 级过期（last_active_at + timeout < now）
                 let now = Utc::now().timestamp();
-                if ts.last_active_at + (self.timeout as i64) < now {
+                if ts.last_active_at + (self.timeout.min(i64::MAX as u64) as i64) < now {
                     // 触发过期回调
                     self.trigger_expiry_listeners(&ts.login_id, token).await;
                     // 从 DAO 删除过期 session（清理）
                     if let Err(e) = self.dao.delete(&token_key(token)).await {
-                        let token_preview = if token.len() > 8 { &token[..8] } else { token };
+                        let token_preview = token.get(..8).unwrap_or(token);
                         tracing::warn!(
                             "failed to delete expired Token-Session (token={}...): {}",
                             token_preview,
@@ -418,12 +418,12 @@ impl GarrisonSession {
                 })?;
                 // R-session-lifecycle-003: 检查 session 级过期（last_active_at + timeout < now）
                 let now = Utc::now().timestamp();
-                if ts.last_active_at + (self.timeout as i64) < now {
+                if ts.last_active_at + (self.timeout.min(i64::MAX as u64) as i64) < now {
                     // 触发过期回调
                     self.trigger_expiry_listeners(&ts.login_id, token).await;
                     // 从 DAO 删除过期 session（清理）
                     if let Err(e) = self.dao.delete(&key).await {
-                        let token_preview = if token.len() > 8 { &token[..8] } else { token };
+                        let token_preview = token.get(..8).unwrap_or(token);
                         tracing::warn!(
                             "failed to delete expired Token-Session (token={}...): {}",
                             token_preview,
@@ -462,7 +462,7 @@ impl GarrisonSession {
                 })?;
                 // R-session-lifecycle-003: 检查 session 级过期（last_active_at + active_timeout < now）
                 let now = Utc::now().timestamp();
-                if as_.last_active_at + (self.active_timeout as i64) < now {
+                if as_.last_active_at + (self.active_timeout.min(i64::MAX as u64) as i64) < now {
                     // 触发过期回调（Account-Session 级过期，token 为空字符串）
                     self.trigger_expiry_listeners(&login_id, "").await;
                     // 从 DAO 删除过期 session（清理）
@@ -1122,7 +1122,7 @@ impl GarrisonSession {
         {
             let effective_active_timeout = ts
                 .dynamic_active_timeout
-                .unwrap_or(self.active_timeout as i64);
+                .unwrap_or(self.active_timeout.min(i64::MAX as u64) as i64);
             // -1 表示永不过期（与全局 active_timeout 语义一致），负值跳过活跃超时检查
             let now = Utc::now().timestamp();
             if effective_active_timeout >= 0 && ts.last_active_at + effective_active_timeout < now {

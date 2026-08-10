@@ -116,6 +116,27 @@ impl std::fmt::Display for GarrisonException {
     }
 }
 
+impl std::fmt::Debug for GarrisonException {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 脱敏：token_value 仅输出前 8 字符，防止敏感信息泄露到日志
+        let masked_token = match &self.token_value {
+            Some(t) => {
+                let preview = t.get(..8).unwrap_or(t);
+                format!("Some(\"{}***\")", preview)
+            },
+            None => "None".to_string(),
+        };
+        f.debug_struct("GarrisonException")
+            .field("code", &self.code)
+            .field("message", &self.message)
+            .field("login_type", &self.login_type)
+            .field("token_value", &masked_token)
+            .field("login_id", &self.login_id)
+            .field("extras", &self.extras)
+            .finish()
+    }
+}
+
 // ============================================================================
 // IntoResponse 实现（cfg feature = "web-axum"）
 // ============================================================================

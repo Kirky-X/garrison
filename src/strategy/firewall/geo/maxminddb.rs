@@ -104,7 +104,7 @@ impl GeoLookup for MaxMindDbGeoLookup {
                 let lat = city.location.latitude;
                 let lon = city.location.longitude;
                 match (lat, lon) {
-                    (Some(lat), Some(lon)) => Ok(Some(GeoCoord::new(lat, lon))),
+                    (Some(lat), Some(lon)) => GeoCoord::new(lat, lon).map(Some),
                     _ => Ok(None),
                 }
             },

@@ -29,6 +29,11 @@ use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 
+/// CSRF cookie 默认有效期（秒）。
+///
+/// 通过 `Max-Age` 属性限制 CSRF token 的生命周期，防止 XSS/日志泄露的 token 被无限 replay。
+const CSRF_TOKEN_TTL_SECS: i64 = 3600;
+
 /// CSRF 防护配置。
 ///
 /// 控制 CSRF 防护的启用、Cookie/Header 名称、排除路径与受保护方法。
@@ -205,8 +210,8 @@ fn build_set_cookie(
         .map(|d| format!("; Domain={}", d))
         .unwrap_or_default();
     format!(
-        "{}={}; HttpOnly; SameSite=Lax; Path=/{}{}",
-        cookie_name, token, secure_flag, domain_attr
+        "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}{}{}",
+        cookie_name, token, CSRF_TOKEN_TTL_SECS, secure_flag, domain_attr
     )
 }
 
