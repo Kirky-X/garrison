@@ -3,25 +3,26 @@
 
 [package]
 name = "garrison-macros"
-version = "0.8.1"
-edition = "2021"
-rust-version = "1.85"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+documentation.workspace = true
 description = "Procedural macros for Garrison auth framework"
-license = "Apache-2.0"
-repository = "https://github.com/Kirky-X/garrison"
-documentation = "https://docs.rs/garrison-macros"
 publish = true
 
 [lib]
 proc-macro = true
 
 [dependencies]
-syn = { version = "3", features = ["full"] }
-quote = "1"
-proc-macro2 = "1"
+syn = { version = "3.0", features = ["full"] }
+quote = "1.0"
+proc-macro2 = "1.0"
 
 [dev-dependencies]
-trybuild = "1"
+trybuild = "1.0"
 garrison = { path = "..", features = ["annotation-macros"] }
 axum = { version = "0.8", default-features = false }
-tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
+tokio = { version = "1.0", features = ["rt", "rt-multi-thread"] }

@@ -10,7 +10,7 @@
 //! # 路径约定
 //!
 //! `#[forge]` 宏自动将 path 前缀化为 `/api/{version}{path}`。
-//! 因此 path 参数只需写 `/auth/login`，version="v1" → 实际路由 `/api/v1/auth/login`。
+//! 因此 path 参数只需写 `/auth/login`，version="1" → 实际路由 `/api/v1/auth/login`（v 前缀由宏生成）。
 //! 使用 `no_prefix = true` 可禁用自动前缀化（本模块未使用）。
 //!
 //! # State 注入
@@ -231,7 +231,7 @@ async fn can_kickout(
 
 #[forge(
     name = "auth_login",
-    version = "v1",
+    version = "1",
     path = "/auth/login",
     method = "POST",
     tool_name = "auth_login",
@@ -247,7 +247,7 @@ async fn login(
 
 #[forge(
     name = "auth_logout",
-    version = "v1",
+    version = "1",
     path = "/auth/logout",
     method = "POST",
     tool_name = "auth_logout",
@@ -263,7 +263,7 @@ async fn logout(
 
 #[forge(
     name = "auth_refresh",
-    version = "v1",
+    version = "1",
     path = "/auth/refresh",
     method = "POST",
     tool_name = "auth_refresh",
@@ -283,7 +283,7 @@ async fn refresh(
 
 #[forge(
     name = "auth_check_login",
-    version = "v1",
+    version = "1",
     path = "/auth/check-login",
     method = "POST",
     tool_name = "auth_check_login",
@@ -299,7 +299,7 @@ async fn check_login(
 
 #[forge(
     name = "auth_check_permission",
-    version = "v1",
+    version = "1",
     path = "/auth/check-permission",
     method = "POST",
     tool_name = "auth_check_permission",
@@ -315,7 +315,7 @@ async fn check_permission(
 
 #[forge(
     name = "auth_check_role",
-    version = "v1",
+    version = "1",
     path = "/auth/check-role",
     method = "POST",
     tool_name = "auth_check_role",
@@ -331,7 +331,7 @@ async fn check_role(
 
 #[forge(
     name = "auth_check_safe",
-    version = "v1",
+    version = "1",
     path = "/auth/check-safe",
     method = "POST",
     tool_name = "auth_check_safe",
@@ -347,7 +347,7 @@ async fn check_safe(
 
 #[forge(
     name = "auth_check_disable",
-    version = "v1",
+    version = "1",
     path = "/auth/check-disable",
     method = "POST",
     tool_name = "auth_check_disable",
@@ -363,7 +363,7 @@ async fn check_disable(
 
 #[forge(
     name = "auth_check_api_key",
-    version = "v1",
+    version = "1",
     path = "/auth/check-api-key",
     method = "POST",
     tool_name = "auth_check_api_key",
@@ -379,7 +379,7 @@ async fn check_api_key(
 
 #[forge(
     name = "auth_get_token_info",
-    version = "v1",
+    version = "1",
     path = "/auth/get-token-info",
     method = "POST",
     tool_name = "auth_get_token_info",
@@ -395,7 +395,7 @@ async fn get_token_info(
 
 #[forge(
     name = "auth_get_session",
-    version = "v1",
+    version = "1",
     path = "/auth/get-session",
     method = "POST",
     tool_name = "auth_get_session",
@@ -429,7 +429,7 @@ async fn get_session(
 
 #[forge(
     name = "auth_kickout",
-    version = "v1",
+    version = "1",
     path = "/auth/kickout",
     method = "POST",
     tool_name = "auth_kickout",
@@ -459,7 +459,7 @@ async fn kickout(
 
 #[forge(
     name = "auth_switch_to",
-    version = "v1",
+    version = "1",
     path = "/auth/switch-to",
     method = "POST",
     tool_name = "auth_switch_to",
@@ -496,7 +496,7 @@ async fn switch_to(
 
 #[forge(
     name = "auth_renew_to_equivalent",
-    version = "v1",
+    version = "1",
     path = "/auth/renew-to-equivalent",
     method = "POST",
     tool_name = "auth_renew_to_equivalent",
@@ -512,7 +512,7 @@ async fn renew_to_equivalent(
 
 #[forge(
     name = "auth_health",
-    version = "v1",
+    version = "1",
     path = "/auth/health",
     method = "GET",
     tool_name = "auth_health",
@@ -548,7 +548,7 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
 #[cfg(feature = "metrics-prometheus")]
 #[forge(
     name = "auth_metrics",
-    version = "v1",
+    version = "1",
     path = "/metrics",
     method = "GET",
     tool_name = "auth_metrics",

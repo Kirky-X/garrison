@@ -10,6 +10,8 @@
 docs/archive/
 # 文档原始草稿
 docs/origin/
+# 安全研究分析文档
+docs/research/
 # OpenSpec 规划工件（change/archive/specs）
 openspec/
 # 第三方参考源码（早期领域建模参考）——锚定根目录，避免误匹配 tests/protocol/temp_edge_cases.rs

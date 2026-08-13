@@ -6,18 +6,20 @@
 
 [package]
 name = "garrison-examples"
-version = "0.5.0"
-edition = "2021"
-rust-version = "1.85"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
 publish = false
 description = "Garrison 官方示例集（workspace member，不发布到 crates.io）"
 
 [dependencies]
-garrison = { path = "..", default-features = false }
-tokio = { version = "1", features = ["full"] }
+garrison = { default-features = false, workspace = true }
+tokio = { version = "1.0", features = ["full"] }
 async-trait = "0.1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 # 直接被 httpdigest_login 使用（计算 HA2/Response 摘要）
 md5 = "0.7"
 # httpdigest_login 现使用 SHA256 作为默认算法
@@ -27,26 +29,26 @@ parking_lot = "0.12"
 # 直接被 custom_plugin / event_listener 使用（inventory::submit! 编译时注册插件/监听器）
 inventory = "0.3"
 # 直接被 context_request / axum_integration 使用（仅 web-axum feature 启用时编译）
-axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1"], optional = true }
+axum = { default-features = false, features = ["json", "tokio", "http1"], optional = true, workspace = true }
 # 直接被 web_actix_example 使用（actix-web 集成，HttpServer 默认支持 HTTP/1.1）
-actix-web = { version = "4", default-features = false, optional = true }
+actix-web = { default-features = false, optional = true, workspace = true }
 # 直接被 web_warp_example 使用（warp 集成，test 供 warp::test 模块）
-warp = { version = "0.4", default-features = false, features = ["test"], optional = true }
+warp = { default-features = false, features = ["test"], optional = true, workspace = true }
 # 直接被 grpc_interceptor 使用（tonic Interceptor + MetadataMap）
 # 与主 crate 保持 0.14 一致，避免双版本共存导致 MetadataMap 类型不匹配
-tonic = { version = "0.14", default-features = false, features = ["transport"], optional = true }
+tonic = { default-features = false, features = ["transport"], optional = true, workspace = true }
 # 直接被 cache_redis 使用（RedisBackend L2 后端配置）
-oxcache = { version = "0.3", optional = true }
+oxcache = { optional = true, workspace = true }
 # 直接被 v0_5_0_demo 使用（DbPool 类型签名，与 garrison 同版本 0.4）
-dbnexus = { version = "0.4", default-features = false, optional = true }
+dbnexus = { default-features = false, optional = true, workspace = true }
 # 直接被 oauth2_flow / scope_handler 使用（mock OAuth2 token / refresh 端点）
-wiremock = "0.6"
+wiremock = { workspace = true }
 # 直接被 macro_annotations 使用（读取 axum Response body）
-http-body-util = "0.1"
+http-body-util = { workspace = true }
 # 直接被 config_loader 使用（安全临时文件：唯一随机名 + drop 自动清理）
-tempfile = "3.27"
+tempfile = { workspace = true }
 # 直接被 observability_setup 使用（内联 JSON 日志初始化，与 garrison 的 metrics-prometheus feature 门控一致）
-tracing-subscriber = { version = "0.3", optional = true, features = ["fmt", "json", "env-filter"] }
+tracing-subscriber = { optional = true, features = ["fmt", "json", "env-filter"], workspace = true }
 
 [dev-dependencies]
 serial_test = "4"
