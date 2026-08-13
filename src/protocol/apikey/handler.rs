@@ -134,6 +134,7 @@ impl ApiKeyHandler {
             listener_manager: None,
             allowed_scopes: None,
             track_last_used: false,
+            max_age_secs: None,
         }
     }
 
@@ -167,6 +168,16 @@ impl ApiKeyHandler {
     /// 默认关闭以保持 `verify` 只读语义。
     pub fn with_last_used_tracking(mut self, enabled: bool) -> Self {
         self.track_last_used = enabled;
+        self
+    }
+
+    /// 设置 API Key 最大生命周期（秒）。
+    ///
+    /// 设置后 `verify` 检查 `created_at + secs >= now`，超期返回 `TokenExpired`。
+    /// 未设置时不检查（仅依赖 `expire_at`）。
+    /// `created_at` 为 `None` 的旧 key 跳过检查（向后兼容）。
+    pub fn with_max_age(mut self, secs: i64) -> Self {
+        self.max_age_secs = Some(secs);
         self
     }
 
@@ -286,6 +297,7 @@ impl ApiKeyHandler {
             owner_id: owner_id.or(Some(login_id)),
             last_used_at: None,
             rate_limit,
+            created_at: Some(now),
         };
         let value = serde_json::to_string(&info)
             .map_err(|e| GarrisonError::Internal(format!("apikey-serialize::{}", e)))?;
@@ -313,6 +325,7 @@ impl ApiKeyHandler {
     pub async fn verify(&self, key: &str) -> GarrisonResult<ApiKeyInfo> {
         let (dao_key, value, secret) = self.lookup(key).await?;
         let info = self.decode_and_check(&value, secret.as_deref())?;
+        self.check_max_age(&info)?;
         self.maybe_touch_last_used(&dao_key, &info).await;
         Ok(info)
     }
@@ -359,6 +372,7 @@ impl ApiKeyHandler {
                 namespace, info.namespace
             )));
         }
+        self.check_max_age(&info)?;
         self.maybe_touch_last_used(&dao_key, &info).await;
         Ok(info)
     }
@@ -435,6 +449,24 @@ impl ApiKeyHandler {
             ));
         }
         Ok(info)
+    }
+
+    /// 检查 API Key 是否超过最大生命周期。
+    ///
+    /// 仅当 `max_age_secs` 已设置且 `info.created_at` 存在时检查。
+    /// 超期返回 `GarrisonError::TokenExpired`。
+    fn check_max_age(&self, info: &ApiKeyInfo) -> GarrisonResult<()> {
+        if let Some(max_age) = self.max_age_secs {
+            if let Some(created_at) = info.created_at {
+                let now = current_ts()?;
+                if created_at + max_age < now {
+                    return Err(GarrisonError::ExpiredToken(
+                        "apikey-max-age-exceeded".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     /// 节流更新 `last_used_at`（仅在启用追踪且距上次记录超过阈值时写回）。

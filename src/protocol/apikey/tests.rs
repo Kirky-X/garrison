@@ -1136,3 +1136,81 @@ async fn get_keys_older_than_filters_by_last_used() {
     assert_eq!(stale.len(), 1, "仅 k1（从未使用）应被视为陈旧");
     assert_eq!(stale[0].login_id, "1001");
 }
+
+// ========================================================================
+// max_age 生命周期策略测试
+// ========================================================================
+
+/// 未设置 max_age 时，verify 正常通过（不检查生命周期）。
+#[tokio::test]
+async fn verify_passes_without_max_age() {
+    let handler = make_handler();
+    let token = handler.generate("user1", vec![], 3600).await.unwrap();
+    let info = handler.verify(&token).await.unwrap();
+    assert!(info.created_at.is_some(), "新生成的 key 应有 created_at");
+}
+
+/// 未过期 key（created_at + max_age > now）通过 verify。
+#[tokio::test]
+async fn verify_passes_with_valid_max_age() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao).with_max_age(7200); // 2 小时
+    let token = handler.generate("user1", vec![], 3600).await.unwrap();
+    // key 刚创建，max_age=7200 远未到期
+    let info = handler.verify(&token).await.unwrap();
+    assert!(info.created_at.is_some());
+}
+
+/// 超期 key（created_at + max_age < now）被拒绝。
+#[tokio::test]
+async fn verify_rejects_expired_max_age() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone()).with_max_age(10); // 10 秒
+    let token = handler.generate("user1", vec![], 3600).await.unwrap();
+
+    // 手动将 created_at 设为 100 秒前（超过 max_age=10）
+    let key_id = key_id_of(&token);
+    let dao_key = format!("garrison:apikey:default:{}", key_id);
+    let mut info: ApiKeyInfo =
+        serde_json::from_str(&dao.get(&dao_key).await.unwrap().unwrap()).unwrap();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    info.created_at = Some(now - 100); // 100 秒前创建，max_age=10，已超期
+    dao.set(&dao_key, &serde_json::to_string(&info).unwrap(), 3600)
+        .await
+        .unwrap();
+
+    let err = handler.verify(&token).await.unwrap_err();
+    assert!(
+        matches!(err, GarrisonError::ExpiredToken(ref msg) if msg.contains("max-age")),
+        "超期 key 应返回 ExpiredToken(max-age)，got: {:?}",
+        err
+    );
+}
+
+/// created_at 为 None 的旧 key 跳过 max_age 检查（向后兼容）。
+#[tokio::test]
+async fn verify_skips_max_age_for_legacy_key_without_created_at() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone()).with_max_age(10);
+    let token = handler.generate("user1", vec![], 3600).await.unwrap();
+
+    // 手动将 created_at 设为 None（模拟旧数据）
+    let key_id = key_id_of(&token);
+    let dao_key = format!("garrison:apikey:default:{}", key_id);
+    let mut info: ApiKeyInfo =
+        serde_json::from_str(&dao.get(&dao_key).await.unwrap().unwrap()).unwrap();
+    info.created_at = None;
+    dao.set(&dao_key, &serde_json::to_string(&info).unwrap(), 3600)
+        .await
+        .unwrap();
+
+    // 即使 max_age=10，created_at=None 时应跳过检查
+    let result = handler.verify(&token).await;
+    assert!(
+        result.is_ok(),
+        "created_at=None 的旧 key 应跳过 max_age 检查"
+    );
+}

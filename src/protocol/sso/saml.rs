@@ -45,6 +45,8 @@
 //! - **Assertion 重放防护**：[`check_assertion_replay`] 函数通过 DAO 记录已消费的
 //!   Assertion ID（key = `saml:replay:{assertion_id}`），TTL 由 `not_on_or_after` 决定。
 //! - **fail-closed 剥离**：未验证的 Assertion 一律剥离，不会泄漏给调用方。
+//! - **XXE 防护**：底层 XML 解析器为 `quick-xml`（纯 Rust 实现），默认不解析外部实体
+//!   （无 `libxml2` 依赖），不存在 XML External Entity (XXE) 注入风险。
 
 use crate::constants::DaoKeyPrefix;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -247,6 +249,7 @@ impl SamlProvider for DefaultSamlProvider {
     }
 
     async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse> {
+        // SAFETY: quick-xml 不解析外部实体，XXE 安全
         // LOW-2: SAML response 大小上限（防超大 payload 内存 DoS，真实 SAML Response 极少超 64KB）
         const SAML_RESPONSE_MAX_SIZE: usize = 64 * 1024;
         if response_xml.len() > SAML_RESPONSE_MAX_SIZE {
@@ -1068,6 +1071,7 @@ impl SamlProvider for XmlSecSamlProvider {
     }
 
     async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse> {
+        // SAFETY: quick-xml 不解析外部实体，XXE 安全
         // LOW-2: SAML response 大小上限（防超大 payload 内存 DoS，真实 SAML Response 极少超 64KB）
         const SAML_RESPONSE_MAX_SIZE: usize = 64 * 1024;
         if response_xml.len() > SAML_RESPONSE_MAX_SIZE {

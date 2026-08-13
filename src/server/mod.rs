@@ -49,8 +49,8 @@ pub mod oauth2_routes;
 mod server_impl;
 
 pub use middleware::{
-    api_key_auth_middleware, audit_log_middleware, external_path_filter, internal_path_filter,
-    rate_limit_middleware,
+    api_key_auth_middleware, audit_log_middleware, external_path_filter, inject_client_ip,
+    inject_login_client_ip, internal_path_filter, rate_limit_middleware, ClientIp, TrustedProxies,
 };
 pub use server_impl::to_api_response;
 

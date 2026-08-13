@@ -3,8 +3,9 @@
 
 //! Auth Server 中间件栈。
 //!
-//! 提供三个中间件：
+//! 提供四个中间件：
 //! - `rate_limit_middleware`：基于 IP 的令牌桶限速，超限返回 429
+//! - `inject_client_ip`：从请求提取真实客户端 IP，存入 `Extension<ClientIp>`
 //! - `api_key_auth_middleware`：验证 X-API-Key 头，不匹配返回 401
 //! - `audit_log_middleware`：tracing::info! 记录请求方法+路径+状态码
 //!
@@ -105,7 +106,7 @@ impl RateLimitState {
 /// - 若连接 IP 在 `trusted_proxies` 中：采用 X-Forwarded-For 最左值（原始客户端）。
 /// - 若连接 IP 不在 `trusted_proxies` 中：使用连接 IP 本身，忽略 XFF（防伪造）。
 /// - 若无 `ConnectInfo`（如 oneshot 测试）：返回 "unknown"（fail-closed，不信任 XFF）。
-fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> String {
+pub fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> String {
     let connect_ip = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
@@ -344,6 +345,99 @@ pub async fn internal_path_filter(req: Request, next: Next) -> Response {
     } else {
         next.run(req).await
     }
+}
+
+// ============================================================================
+// 客户端 IP 注入中间件（fix-security-gaps: IP 自动提取）
+// ============================================================================
+
+/// 客户端 IP 包装结构体。
+///
+/// `inject_client_ip` middleware 从 HTTP 请求提取真实客户端 IP 后
+/// 存入 `Extension<ClientIp>`，下游 handler 通过 `req.extensions().get::<ClientIp>()`
+/// 读取。login handler 在 `LoginParams.ip.is_none()` 时自动填充。
+#[derive(Debug, Clone)]
+pub struct ClientIp(pub String);
+
+/// 可信代理 IP 列表包装结构体。
+///
+/// 通过 `Extension<TrustedProxies>` 注入到 router，供 `inject_client_ip`
+/// middleware 读取。复用 `AuthServerConfig.rate_limit_trusted_proxies` 配置。
+#[derive(Debug, Clone)]
+pub struct TrustedProxies(pub Vec<IpAddr>);
+
+/// 客户端 IP 自动注入中间件。
+///
+/// 从 `ConnectInfo<SocketAddr>` + `X-Forwarded-For`（仅信任 `TrustedProxies` 中的代理）
+/// 提取真实客户端 IP，存入 `Extension<ClientIp>`。
+///
+/// # 挂载位置
+///
+/// 仅挂载到外网 router（`external_router()`），内网路由不需要。
+/// 应在 `rate_limit_middleware` 之后、`external_path_filter` 之前。
+pub async fn inject_client_ip(mut req: Request, next: Next) -> Response {
+    let trusted_proxies = req
+        .extensions()
+        .get::<TrustedProxies>()
+        .map(|tp| tp.0.as_slice())
+        .unwrap_or_default();
+
+    let ip = extract_client_ip(&req, trusted_proxies);
+    req.extensions_mut().insert(ClientIp(ip));
+    next.run(req).await
+}
+
+/// 登录端点 IP 自动填充中间件。
+///
+/// 仅挂载到 `POST /api/v1/auth/login` 端点。读取 `Extension<ClientIp>`，
+/// 当请求体 JSON 中 `params.ip` 为 null 或缺失时，自动填充客户端 IP。
+///
+/// # 向后兼容
+///
+/// 调用方显式传入 `params.ip` 时不覆盖（保留手动指定能力）。
+/// 非 login 路径不应挂载此中间件（避免不必要的 body 解析开销）。
+pub async fn inject_login_client_ip(mut req: Request, next: Next) -> Response {
+    // 仅处理 login 端点，其余路径直接放行（避免不必要的 body 解析）
+    if req.uri().path() != "/api/v1/auth/login" {
+        return next.run(req).await;
+    }
+
+    let client_ip = req.extensions().get::<ClientIp>().map(|c| c.0.clone());
+
+    if let Some(ip) = client_ip {
+        if ip != "unknown" {
+            let (parts, body) = req.into_parts();
+            let bytes = match axum::body::to_bytes(body, 256 * 1024).await {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::warn!(error = %e, "inject_login_client_ip: body read failed");
+                    return next
+                        .run(Request::from_parts(parts, axum::body::Body::empty()))
+                        .await;
+                },
+            };
+
+            let mut json: serde_json::Value =
+                serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+
+            let should_inject = json
+                .get("params")
+                .and_then(|p| p.get("ip"))
+                .is_none_or(|v| v.is_null());
+
+            if should_inject {
+                if let Some(params) = json.get_mut("params").and_then(|p| p.as_object_mut()) {
+                    params.insert("ip".to_string(), serde_json::Value::String(ip));
+                }
+            }
+
+            let new_body =
+                axum::body::Body::from(serde_json::to_vec(&json).unwrap_or(bytes.to_vec()));
+            req = Request::from_parts(parts, new_body);
+        }
+    }
+
+    next.run(req).await
 }
 
 /// Principal 注入中间件 — 从 Authorization header 提取 Bearer token，
@@ -680,7 +774,7 @@ mod tests {
     #[test]
     fn test_constant_time_eq() {
         assert!(constant_time_eq("abc", "abc"));
-        assert!(!constant_time_eq("abc", "abd"));
+        assert!(!constant_time_eq("abc", "abx"));
         assert!(!constant_time_eq("abc", "ab"));
         assert!(!constant_time_eq("abc", "abcd"));
         assert!(constant_time_eq("", ""));
@@ -1093,5 +1187,302 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
+    }
+
+    // ========================================================================
+    // inject_client_ip middleware 测试
+    // ========================================================================
+
+    /// 直连（非可信代理）：使用 ConnectInfo 中的连接 IP。
+    #[tokio::test]
+    async fn test_inject_client_ip_direct_connection() {
+        let app = Router::new()
+            .route(
+                "/ip",
+                get(|req: super::Request| async move {
+                    req.extensions()
+                        .get::<ClientIp>()
+                        .map(|c| c.0.clone())
+                        .unwrap_or_default()
+                }),
+            )
+            .layer(axum::middleware::from_fn(inject_client_ip))
+            .layer(Extension(TrustedProxies(vec![])));
+
+        let req = Request::builder()
+            .uri("/ip")
+            .extension(ConnectInfo::<SocketAddr>(
+                "203.0.113.1:12345".parse().unwrap(),
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&body).unwrap(), "203.0.113.1");
+    }
+
+    /// 经可信代理（XFF 有效）：取 XFF 最左值（原始客户端 IP）。
+    #[tokio::test]
+    async fn test_inject_client_ip_trusted_proxy_with_xff() {
+        let trusted = vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+        let app = Router::new()
+            .route(
+                "/ip",
+                get(|req: super::Request| async move {
+                    req.extensions()
+                        .get::<ClientIp>()
+                        .map(|c| c.0.clone())
+                        .unwrap_or_default()
+                }),
+            )
+            .layer(axum::middleware::from_fn(inject_client_ip))
+            .layer(Extension(TrustedProxies(trusted)));
+
+        let req = Request::builder()
+            .uri("/ip")
+            .header("x-forwarded-for", "198.51.100.5, 10.0.0.1")
+            .extension(ConnectInfo::<SocketAddr>("10.0.0.1:8080".parse().unwrap()))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "198.51.100.5",
+            "可信代理场景应取 XFF 最左值"
+        );
+    }
+
+    /// 非可信代理伪造 XFF：忽略 XFF，使用连接 IP。
+    #[tokio::test]
+    async fn test_inject_client_ip_untrusted_proxy_ignores_xff() {
+        let trusted = vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+        let app = Router::new()
+            .route(
+                "/ip",
+                get(|req: super::Request| async move {
+                    req.extensions()
+                        .get::<ClientIp>()
+                        .map(|c| c.0.clone())
+                        .unwrap_or_default()
+                }),
+            )
+            .layer(axum::middleware::from_fn(inject_client_ip))
+            .layer(Extension(TrustedProxies(trusted)));
+
+        let req = Request::builder()
+            .uri("/ip")
+            .header("x-forwarded-for", "198.51.100.5")
+            .extension(ConnectInfo::<SocketAddr>(
+                "203.0.113.50:9999".parse().unwrap(),
+            ))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "203.0.113.50",
+            "非可信代理的 XFF 应被忽略"
+        );
+    }
+
+    /// 无 ConnectInfo（如 oneshot 测试）：返回 "unknown"。
+    #[tokio::test]
+    async fn test_inject_client_ip_no_connect_info() {
+        let app = Router::new()
+            .route(
+                "/ip",
+                get(|req: super::Request| async move {
+                    req.extensions()
+                        .get::<ClientIp>()
+                        .map(|c| c.0.clone())
+                        .unwrap_or_default()
+                }),
+            )
+            .layer(axum::middleware::from_fn(inject_client_ip))
+            .layer(Extension(TrustedProxies(vec![])));
+
+        let req = Request::builder().uri("/ip").body(Body::empty()).unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(std::str::from_utf8(&body).unwrap(), "unknown");
+    }
+
+    // ========================================================================
+    // inject_login_client_ip middleware 测试
+    // ========================================================================
+
+    /// login 端点 + params.ip 为 null：自动填充 ClientIp。
+    #[tokio::test]
+    async fn test_inject_login_client_ip_fills_null_ip() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/login",
+                post(|body: axum::Json<serde_json::Value>| async move { axum::Json(body.0) }),
+            )
+            .layer(axum::middleware::from_fn(inject_login_client_ip))
+            .layer(Extension(ClientIp("203.0.113.1".to_string())));
+
+        let req = Request::builder()
+            .uri("/api/v1/auth/login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "login_id": "user1",
+                    "params": { "ip": null, "ua": "test" }
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["params"]["ip"].as_str().unwrap(),
+            "203.0.113.1",
+            "null ip 应被自动填充"
+        );
+    }
+
+    /// login 端点 + params 无 ip 字段：自动填充。
+    #[tokio::test]
+    async fn test_inject_login_client_ip_fills_missing_ip() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/login",
+                post(|body: axum::Json<serde_json::Value>| async move { axum::Json(body.0) }),
+            )
+            .layer(axum::middleware::from_fn(inject_login_client_ip))
+            .layer(Extension(ClientIp("10.0.0.5".to_string())));
+
+        let req = Request::builder()
+            .uri("/api/v1/auth/login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "login_id": "user1",
+                    "params": { "ua": "test" }
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["params"]["ip"].as_str().unwrap(),
+            "10.0.0.5",
+            "缺失 ip 字段应被自动填充"
+        );
+    }
+
+    /// login 端点 + params.ip 已有值：不覆盖。
+    #[tokio::test]
+    async fn test_inject_login_client_ip_does_not_override_existing() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/login",
+                post(|body: axum::Json<serde_json::Value>| async move { axum::Json(body.0) }),
+            )
+            .layer(axum::middleware::from_fn(inject_login_client_ip))
+            .layer(Extension(ClientIp("203.0.113.1".to_string())));
+
+        let req = Request::builder()
+            .uri("/api/v1/auth/login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "login_id": "user1",
+                    "params": { "ip": "192.168.1.100" }
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["params"]["ip"].as_str().unwrap(),
+            "192.168.1.100",
+            "已有 ip 值不应被覆盖"
+        );
+    }
+
+    /// 非 login 端点：直接放行，不修改 body。
+    #[tokio::test]
+    async fn test_inject_login_client_ip_skips_non_login_path() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/logout",
+                post(|body: axum::Json<serde_json::Value>| async move { axum::Json(body.0) }),
+            )
+            .layer(axum::middleware::from_fn(inject_login_client_ip))
+            .layer(Extension(ClientIp("203.0.113.1".to_string())));
+
+        let req = Request::builder()
+            .uri("/api/v1/auth/logout")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({ "token": "abc" })).unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json.get("params").is_none(), "非 login 路径不应注入 params");
+    }
+
+    /// ClientIp 为 "unknown" 时不注入。
+    #[tokio::test]
+    async fn test_inject_login_client_ip_unknown_skipped() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/login",
+                post(|body: axum::Json<serde_json::Value>| async move { axum::Json(body.0) }),
+            )
+            .layer(axum::middleware::from_fn(inject_login_client_ip))
+            .layer(Extension(ClientIp("unknown".to_string())));
+
+        let req = Request::builder()
+            .uri("/api/v1/auth/login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::to_string(&serde_json::json!({
+                    "login_id": "user1",
+                    "params": { "ua": "test" }
+                }))
+                .unwrap(),
+            ))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(json["params"].get("ip").is_none(), "unknown IP 不应被注入");
     }
 }

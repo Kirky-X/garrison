@@ -101,7 +101,32 @@ impl GarrisonLogicDefault {
         };
         let now = chrono::Utc::now().timestamp();
         match ts.safe_services.get(service) {
-            Some(expire_at) => Ok(*expire_at > now),
+            Some(expire_at) if *expire_at > now => Ok(true),
+            Some(_) => {
+                // 惰性清理过期条目：移除并持久化，避免过期数据永久残留
+                drop(ts);
+                let service_owned = service.to_string();
+                let _ = self
+                    .session
+                    .with_token_session_lock(&token, async {
+                        let mut ts = match self.session.get_token_session(&token).await? {
+                            Some(ts) => ts,
+                            None => return Ok(()),
+                        };
+                        let now = chrono::Utc::now().timestamp();
+                        if ts
+                            .safe_services
+                            .get(&service_owned)
+                            .is_some_and(|e| *e <= now)
+                        {
+                            ts.safe_services.remove(&service_owned);
+                            self.session.save_token_session(&token, &ts).await?;
+                        }
+                        Ok::<(), GarrisonError>(())
+                    })
+                    .await;
+                Ok(false)
+            },
             None => Ok(false),
         }
     }
@@ -1107,6 +1132,55 @@ mod tests {
             0,
             "并发 close_safe 后 safe_services 应为空（修复前 lost update 导致残留 1 个），实际: {:?}",
             ts.safe_services
+        );
+    }
+
+    /// 惰性清理过期条目：写入过期条目 → 调用 is_safe → 返回 false 且条目已删除。
+    #[tokio::test]
+    async fn t023_is_safe_lazy_removes_expired_entry() {
+        let (logic, _dao) = make_logic();
+        let token = logic
+            .login("user-lazy-001", &LoginParams::default())
+            .await
+            .unwrap();
+
+        // 写入一个已过期的条目
+        let now = chrono::Utc::now().timestamp();
+        let mut ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .unwrap();
+        ts.safe_services
+            .insert("expired-service".to_string(), now - 3600);
+        ts.safe_services
+            .insert("valid-service".to_string(), now + 3600);
+        logic.session.save_token_session(&token, &ts).await.unwrap();
+
+        // 调用 is_safe 应返回 false 并惰性删除过期条目
+        let result = with_current_token(token.clone(), async {
+            logic.is_safe("expired-service").await.unwrap()
+        })
+        .await;
+        assert!(!result, "过期条目 is_safe 应返回 false");
+
+        // 验证过期条目已从 safe_services 中删除
+        let ts_after = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            ts_after.safe_services.get("expired-service").is_none(),
+            "过期条目应被惰性删除，实际: {:?}",
+            ts_after.safe_services
+        );
+        // 验证未过期条目未受影响
+        assert!(
+            ts_after.safe_services.get("valid-service").is_some(),
+            "未过期条目不应被删除"
         );
     }
 }

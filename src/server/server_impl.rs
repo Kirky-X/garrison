@@ -228,9 +228,18 @@ impl GarrisonAuthServer {
             self.config.rate_limit_max_entries,
             self.config.rate_limit_trusted_proxies.clone(),
         ));
+        // fix-security-gaps: 可信代理列表注入 Extension，供 inject_client_ip middleware 读取
+        let trusted_proxies =
+            middleware::TrustedProxies(self.config.rate_limit_trusted_proxies.clone());
         let router = sdforge::http::build()
             .layer(Extension(self.backend.clone()))
             .layer(axum::middleware::from_fn(middleware::external_path_filter))
+            // fix-security-gaps: IP 自动注入 middleware（path_filter 之后、rate_limit 之前）
+            .layer(axum::middleware::from_fn(
+                middleware::inject_login_client_ip,
+            ))
+            .layer(axum::middleware::from_fn(middleware::inject_client_ip))
+            .layer(Extension(trusted_proxies))
             .layer(axum::middleware::from_fn_with_state(
                 rate_limit_state,
                 rate_limit_middleware,

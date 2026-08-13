@@ -8,3 +8,5 @@
 04421207ad65120ef9b3925f76c1c18730831888:src/protocol/sso/oidc.rs:generic-api-key:496
 # totp.rs:138 —— RFC 6238 标准公开测试密钥 "12345678901234567890" 的 Base32 编码
 e395763cec4dcad25a26ef359512412862e11a57:src/account/credential/totp.rs:generic-api-key:138
+# README_EN.md:292 —— 文档示例输出中的占位符 token 值，非真实凭证（entropy=3.59）
+README_EN.md:generic-api-key:292

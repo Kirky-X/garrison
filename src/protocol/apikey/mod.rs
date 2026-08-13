@@ -80,6 +80,12 @@ pub struct ApiKeyInfo {
     /// 由 `limiteron` quota 在请求路径按 `key_id` 实施。
     #[serde(default)]
     pub rate_limit: Option<u32>,
+    /// 创建时间戳（秒）。
+    ///
+    /// 用于 `max_age_secs` 生命周期策略：`created_at + max_age_secs < now` 时拒绝。
+    /// 旧 JSON（无此字段）反序列化为 `None`，此时跳过 max_age 检查（向后兼容）。
+    #[serde(default)]
+    pub created_at: Option<i64>,
 }
 
 /// API Key 作用域枚举（类型安全的常见作用域）。
@@ -132,6 +138,11 @@ pub struct ApiKeyHandler {
     ///
     /// 默认 `false`：`verify` 保持只读语义（无副作用写入），与历史行为一致。
     pub(crate) track_last_used: bool,
+    /// API Key 最大生命周期（秒）。
+    ///
+    /// - `None`（默认）：不检查生命周期，仅依赖 `expire_at`。
+    /// - `Some(secs)`：`verify` 时检查 `created_at + secs >= now`，超期拒绝。
+    pub(crate) max_age_secs: Option<i64>,
 }
 
 #[cfg(test)]
