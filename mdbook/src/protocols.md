@@ -27,7 +27,7 @@ use garrison::protocol::jwt::JwtHandler;
 use jsonwebtoken::Algorithm;
 
 // 链式构造（默认 HS256，可通过 with_algorithm 切换 HS512）
-let handler = JwtHandler::new("my-secret").with_algorithm(Algorithm::HS512);
+let handler = JwtHandler::new("my-secret-that-is-at-least-32-bytes").with_algorithm(Algorithm::HS512);
 let token = handler.sign(1001, 3600)?;           // 签发（login_id + timeout 秒）
 let claims = handler.verify(&token)?;            // 校验，返回 GarrisonJwtClaims
 let new_token = handler.refresh(&token, 3600)?;  // 刷新（新 timeout）

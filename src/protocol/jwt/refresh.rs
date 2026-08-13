@@ -842,7 +842,7 @@ mod db_sqlite_tests {
         insert_refresh_token(&pool, &old_hash, None, 1, 0, 1, 9999, 0).await;
 
         // 构造 RefreshTokenRotation（Rule 7：持有 pool + jwt_handler + key_version）
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -885,7 +885,7 @@ mod db_sqlite_tests {
         let old_hash = sha256_hex(old_token);
         insert_refresh_token(&pool, &old_hash, None, 1, 0, 1, 9999, 0).await;
 
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -937,7 +937,7 @@ mod db_sqlite_tests {
         insert_refresh_token(&pool, &t2_hash, Some(&t1_hash), 1, 0, 1, 9999, 0).await;
         insert_refresh_token(&pool, &t3_hash, Some(&t2_hash), 1, 0, 1, 9999, 0).await;
 
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -980,7 +980,7 @@ mod db_sqlite_tests {
         let t1_hash = sha256_hex(t1_token);
         insert_refresh_token(&pool, &t1_hash, None, 1, 0, 1, 9999, 0).await;
 
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -1027,7 +1027,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn issue_creates_record_with_correct_fields() {
         let pool = setup_db().await;
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(2)));
 
@@ -1069,7 +1069,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn issue_with_empty_scopes_stores_none() {
         let pool = setup_db().await;
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -1105,7 +1105,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn validate_returns_some_for_valid_token() {
         let pool = setup_db().await;
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -1125,7 +1125,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn validate_returns_none_for_revoked_token() {
         let pool = setup_db().await;
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -1150,7 +1150,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn validate_returns_none_for_nonexistent_token() {
         let pool = setup_db().await;
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -1176,7 +1176,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn rotate_inherits_oauth2_fields() {
         let pool = setup_db().await;
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -1232,7 +1232,7 @@ mod db_sqlite_tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn rotate_old_record_with_null_new_fields_inherits_none() {
         let pool = setup_db().await;
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 

@@ -72,7 +72,7 @@ fn claims_jti_none_skipped_in_json() {
 /// sign 生成的新 token 包含唯一的 jti（UUID v4）。
 #[test]
 fn sign_generates_unique_jti() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let t1 = handler.sign("1001", 3600).unwrap();
     let t2 = handler.sign("1001", 3600).unwrap();
     // 同一秒内同一用户的 token 应不同（jti 保证唯一性）
@@ -114,23 +114,24 @@ fn claims_deserializes() {
 /// new 默认采用 HS256 算法（spec Scenario）。
 #[test]
 fn new_defaults_to_hs256() {
-    let handler = JwtHandler::new("my-secret-key");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     assert_eq!(handler.algorithm, Algorithm::HS256);
-    assert_eq!(handler.secret, "my-secret-key");
+    assert_eq!(handler.secret, "0123456789abcdef0123456789abcdef");
     assert!(handler.device.is_none());
 }
 
 /// with_algorithm 切换为 HS512（spec Scenario）。
 #[test]
 fn with_algorithm_switches_to_hs512() {
-    let handler = JwtHandler::new("my-secret-key").with_algorithm(Algorithm::HS512);
+    let handler =
+        JwtHandler::new("0123456789abcdef0123456789abcdef").with_algorithm(Algorithm::HS512);
     assert_eq!(handler.algorithm, Algorithm::HS512);
 }
 
 /// with_device 设置设备标识。
 #[test]
 fn with_device_sets_device() {
-    let handler = JwtHandler::new("secret").with_device("ios-app");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef").with_device("ios-app");
     assert_eq!(handler.device, Some("ios-app".to_string()));
 }
 
@@ -141,7 +142,7 @@ fn with_device_sets_device() {
 /// sign 返回三段 Base64URL（spec Scenario）。
 #[test]
 fn sign_returns_three_segment_jwt() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = handler.sign("1001", 3600).unwrap();
     let parts: Vec<&str> = token.split('.').collect();
     assert_eq!(parts.len(), 3, "JWT 应由三段组成");
@@ -165,7 +166,7 @@ fn sign_rejects_empty_secret() {
 /// sign 负数 timeout 返回 Config 错误（spec Scenario）。
 #[test]
 fn sign_rejects_negative_timeout() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let result = handler.sign("1001", -1);
     assert!(result.is_err());
     match result.err() {
@@ -177,7 +178,7 @@ fn sign_rejects_negative_timeout() {
 /// sign 带 device 写入 payload（spec Scenario）。
 #[test]
 fn sign_with_device_includes_device_in_claims() {
-    let handler = JwtHandler::new("secret").with_device("ios-app");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef").with_device("ios-app");
     let token = handler.sign("1001", 3600).unwrap();
     // verify 后检查 device
     let claims = handler.verify(&token).unwrap();
@@ -191,7 +192,7 @@ fn sign_with_device_includes_device_in_claims() {
 /// verify 有效 token 返回 claims（spec Scenario）。
 #[test]
 fn verify_valid_token_returns_claims() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = handler.sign("1001", 3600).unwrap();
     let claims = handler.verify(&token).unwrap();
     assert_eq!(claims.sub, "1001");
@@ -202,7 +203,7 @@ fn verify_valid_token_returns_claims() {
 /// verify 篡改 payload 返回错误（spec Scenario）。
 #[test]
 fn verify_tampered_payload_fails() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = handler.sign("1001", 3600).unwrap();
     let parts: Vec<&str> = token.split('.').collect();
     // 篡改 payload 段（替换为另一个 base64url 串）
@@ -214,9 +215,9 @@ fn verify_tampered_payload_fails() {
 /// verify 错误密钥返回错误（spec Scenario）。
 #[test]
 fn verify_wrong_secret_fails() {
-    let signer = JwtHandler::new("secret-a");
+    let signer = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = signer.sign("1001", 3600).unwrap();
-    let verifier = JwtHandler::new("secret-b");
+    let verifier = JwtHandler::new("fedcba9876543210fedcba9876543210");
     let result = verifier.verify(&token);
     assert!(result.is_err());
 }
@@ -224,7 +225,7 @@ fn verify_wrong_secret_fails() {
 /// verify 已过期 token 返回 ExpiredToken（spec Scenario）。
 #[test]
 fn verify_expired_token_returns_expired_error() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     // sign timeout=1 秒，sleep 3 秒后 verify 应触发 ExpiredSignature
     // （leeway=0，不容忍时钟偏差；3 秒容差避免高负载下时序敏感失败）
     let token = handler.sign("1001", 1).unwrap();
@@ -240,9 +241,10 @@ fn verify_expired_token_returns_expired_error() {
 /// verify 算法不匹配返回错误（spec Scenario）。
 #[test]
 fn verify_algorithm_mismatch_fails() {
-    let signer = JwtHandler::new("secret").with_algorithm(Algorithm::HS512);
+    let signer =
+        JwtHandler::new("0123456789abcdef0123456789abcdef").with_algorithm(Algorithm::HS512);
     let token = signer.sign("1001", 3600).unwrap();
-    let verifier = JwtHandler::new("secret"); // 默认 HS256
+    let verifier = JwtHandler::new("0123456789abcdef0123456789abcdef"); // 默认 HS256
     let result = verifier.verify(&token);
     assert!(result.is_err());
 }
@@ -254,7 +256,7 @@ fn verify_algorithm_mismatch_fails() {
 /// verify 拒绝 nbf 为未来时间的 token。
 #[test]
 fn verify_future_nbf_returns_invalid_token() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     // 手动构造 nbf = now + 10 的 token
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -270,9 +272,9 @@ fn verify_future_nbf_returns_invalid_token() {
         nbf: Some(now + 10), // 未来 10 秒生效
     };
     let header = jsonwebtoken::Header::new(Algorithm::HS256);
-    let key = jsonwebtoken::EncodingKey::from_secret(b"secret");
+    let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
     let token = jsonwebtoken::encode(&header, &claims, &key).unwrap();
-    // 立即 verify 应返回 Err(InvalidToken)
+    // 立即 Verify 应返回 Err(InvalidToken)
     let result = handler.verify(&token);
     assert!(result.is_err(), "未来 nbf 应被拒绝: {:?}", result.ok());
     match result.err() {
@@ -290,7 +292,7 @@ fn verify_future_nbf_returns_invalid_token() {
 /// verify 接受 nbf = now 的 token（边界场景）。
 #[test]
 fn verify_present_nbf_returns_ok() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     // sign 自动设置 nbf = now，verify 应通过
     let token = handler.sign("1001", 3600).unwrap();
     let result = handler.verify(&token);
@@ -302,7 +304,7 @@ fn verify_present_nbf_returns_ok() {
 /// verify 接受 nbf = now - 10 的 token（过去时间）。
 #[test]
 fn verify_past_nbf_returns_ok() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -317,7 +319,7 @@ fn verify_past_nbf_returns_ok() {
         nbf: Some(now - 10), // 过去 10 秒已生效
     };
     let header = jsonwebtoken::Header::new(Algorithm::HS256);
-    let key = jsonwebtoken::EncodingKey::from_secret(b"secret");
+    let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
     let token = jsonwebtoken::encode(&header, &claims, &key).unwrap();
     let result = handler.verify(&token);
     assert!(result.is_ok(), "nbf = 过去应通过校验: {:?}", result.err());
@@ -326,7 +328,7 @@ fn verify_past_nbf_returns_ok() {
 /// verify 接受无 nbf 字段的旧 token（向后兼容）。
 #[test]
 fn verify_token_without_nbf_field_returns_ok() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -341,7 +343,7 @@ fn verify_token_without_nbf_field_returns_ok() {
         "jti": uuid::Uuid::new_v4().to_string()
     });
     let header = jsonwebtoken::Header::new(Algorithm::HS256);
-    let key = jsonwebtoken::EncodingKey::from_secret(b"secret");
+    let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
     let token = jsonwebtoken::encode(&header, &claims_json, &key).unwrap();
     let result = handler.verify(&token);
     assert!(
@@ -360,7 +362,7 @@ fn verify_token_without_nbf_field_returns_ok() {
 /// refresh 返回新 token 且可 verify。
 #[test]
 fn refresh_issues_new_valid_token() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = handler.sign("1001", 3600).unwrap();
     let new_token = handler.refresh(&token, 7200).unwrap();
     assert_ne!(token, new_token);
@@ -371,7 +373,7 @@ fn refresh_issues_new_valid_token() {
 /// refresh 旧 token 无效时返回错误。
 #[test]
 fn refresh_invalid_token_fails() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let result = handler.refresh("invalid.token.here", 3600);
     assert!(result.is_err());
 }
@@ -398,8 +400,57 @@ fn jwt_claims_alias_works() {
 /// 验证 `JwtHandler::sign` 接受 String 形式 login_id。
 #[test]
 fn sign_accepts_login_id_numeric() {
-    let handler = JwtHandler::new("secret");
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = handler.sign("1001".to_string(), 3600).unwrap();
+    let claims = handler.verify(&token).unwrap();
+    assert_eq!(claims.login_id, "1001");
+}
+
+// ============================================================================
+// H-13: JWT 密钥最小长度校验
+// ============================================================================
+
+/// H-13: `sign` 拒绝 < 32 字节密钥，返回 Config 错误。
+#[test]
+fn sign_rejects_short_secret() {
+    let handler = JwtHandler::new("short-key"); // 9 bytes < 32
+    let result = handler.sign("1001", 3600);
+    assert!(result.is_err(), "短密钥 sign 应返回错误");
+    match result.err() {
+        Some(GarrisonError::Config(msg)) => {
+            assert!(
+                msg.contains("jwt-secret-too-short"),
+                "错误应包含 jwt-secret-too-short，实际: {}",
+                msg
+            );
+        },
+        other => panic!("期望 Config 错误，实际: {:?}", other),
+    }
+}
+
+/// H-13: `verify` 拒绝 < 32 字节密钥，返回 Config 错误。
+#[test]
+fn verify_rejects_short_secret() {
+    let handler = JwtHandler::new("short-key"); // 9 bytes < 32
+    let result = handler.verify("eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMDAxIn0.fake");
+    assert!(result.is_err(), "短密钥 verify 应返回错误");
+    match result.err() {
+        Some(GarrisonError::Config(msg)) => {
+            assert!(
+                msg.contains("jwt-secret-too-short"),
+                "错误应包含 jwt-secret-too-short，实际: {}",
+                msg
+            );
+        },
+        other => panic!("期望 Config 错误，实际: {:?}", other),
+    }
+}
+
+/// H-13: 恰好 32 字节密钥应正常工作（边界值）。
+#[test]
+fn sign_accepts_exactly_32_byte_secret() {
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef"); // exactly 32 bytes
+    let token = handler.sign("1001", 3600).unwrap();
     let claims = handler.verify(&token).unwrap();
     assert_eq!(claims.login_id, "1001");
 }

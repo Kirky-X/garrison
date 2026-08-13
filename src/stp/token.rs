@@ -604,7 +604,7 @@ mod tests {
             let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
             // 签发 JWT token
-            let handler = crate::protocol::jwt::JwtHandler::new("verify-jwt-secret");
+            let handler = crate::protocol::jwt::JwtHandler::new("verify-jwt-secret-min-32bytes!!");
             let jwt_token = handler.sign("jwt-verify-user", 3600).unwrap();
 
             let result = logic.verify_token(&jwt_token).await;
@@ -681,7 +681,7 @@ mod tests {
             let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
             // 签发 JWT token
-            let handler = crate::protocol::jwt::JwtHandler::new("refresh-jwt-secret");
+            let handler = crate::protocol::jwt::JwtHandler::new("refresh-jwt-secret-min-32bytes!!");
             let old_token = handler.sign("refresh-user", 3600).unwrap();
 
             let result = logic.refresh_token(&old_token).await;

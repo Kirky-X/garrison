@@ -90,7 +90,7 @@ mod refresh_token_e2e {
     async fn refresh_token_rotation_reuse_detection_e2e() {
         let pool = setup_db().await;
 
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret_key"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_key_min_32_bytes!!!!"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
@@ -151,7 +151,7 @@ mod refresh_token_e2e {
         insert_refresh_token(&pool, &old_hash, None, 1001, 0, 1, now_unix() + 3600, 1).await;
 
         // 2. 创建 RefreshTokenRotation 实例
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret_key"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_key_min_32_bytes!!!!"));
         let key_version = Arc::new(RwLock::new(1u32));
         let rotation = RefreshTokenRotation::new(pool, jwt_handler, key_version);
 

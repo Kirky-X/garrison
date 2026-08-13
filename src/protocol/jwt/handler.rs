@@ -11,6 +11,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{GarrisonJwtClaims, JwtHandler};
 
+/// JWT 签名密钥最小长度（字节）。
+///
+/// 256 位匹配 HS256 算法安全强度，与 OWASP / NIST SP 800-117 推荐一致。
+/// 短于此阈值的密钥可被暴力破解，导致 JWT 伪造（H-13 修复）。
+const MIN_SECRET_BYTES: usize = 32;
+
 impl JwtHandler {
     /// 创建新的 JWT 处理器，默认采用 HS256 算法。
     ///
@@ -59,6 +65,14 @@ impl JwtHandler {
         if self.secret.is_empty() {
             return Err(GarrisonError::Config("jwt-secret-empty".to_string()));
         }
+        // H-13: JWT 密钥最小长度校验（防暴力破解）
+        if self.secret.len() < MIN_SECRET_BYTES {
+            return Err(GarrisonError::Config(format!(
+                "jwt-secret-too-short::{}::{}",
+                self.secret.len(),
+                MIN_SECRET_BYTES
+            )));
+        }
         if timeout < 0 {
             return Err(GarrisonError::Config(format!(
                 "timeout 不能为负数: {}",
@@ -97,6 +111,14 @@ impl JwtHandler {
     pub fn verify(&self, token: &str) -> GarrisonResult<GarrisonJwtClaims> {
         if self.secret.is_empty() {
             return Err(GarrisonError::Config("jwt-secret-empty".to_string()));
+        }
+        // H-13: JWT 密钥最小长度校验（防暴力破解）
+        if self.secret.len() < MIN_SECRET_BYTES {
+            return Err(GarrisonError::Config(format!(
+                "jwt-secret-too-short::{}::{}",
+                self.secret.len(),
+                MIN_SECRET_BYTES
+            )));
         }
         let key = DecodingKey::from_secret(self.secret.as_bytes());
         let mut validation = Validation::new(self.algorithm);

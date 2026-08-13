@@ -1643,7 +1643,7 @@ async fn refresh_token_valid_jwt_returns_new_token() {
     let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
     // 先生成一个有效 JWT token
-    let handler = crate::protocol::jwt::JwtHandler::new("refresh-test-secret");
+    let handler = crate::protocol::jwt::JwtHandler::new("refresh-test-secret-min-32-bytes!!");
     let original_token = handler.sign("7007", 3600).unwrap();
 
     // 刷新 token（同秒内 iat/exp 可能相同，不强制 new_token != original_token）
@@ -2289,7 +2289,7 @@ async fn check_login_stateless_only_jwt_verify() {
     );
 
     // 用 JwtHandler 直接签发 token，不通过 login（确保 DAO 无 session）
-    let handler = crate::protocol::jwt::JwtHandler::new("stateless-test-secret");
+    let handler = crate::protocol::jwt::JwtHandler::new("stateless-test-secret-min-32bytes!");
     let token = handler.sign("1001", 3600).unwrap();
 
     // Stateless 模式：仅 JWT verify，不查 session → 应返回 Ok(true)

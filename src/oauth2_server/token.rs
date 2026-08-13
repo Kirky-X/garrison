@@ -3493,7 +3493,7 @@ mod refresh_rotation_tests {
             dao.clone(),
             "https://auth.example.com/login".into(),
         ));
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation = Arc::new(RefreshTokenRotation::new(
             pool,
             jwt_handler,

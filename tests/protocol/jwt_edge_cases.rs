@@ -65,7 +65,7 @@ fn base64url_encode(input: &[u8]) -> String {
 /// `alg:none` 不在允许列表中 → 返回 `InvalidToken` 错误。
 #[tokio::test]
 async fn none_algorithm_injection_rejected() {
-    let handler = JwtHandler::new("secret-key");
+    let handler = JwtHandler::new("secret-key-min-32-bytes-long!!!!");
 
     // 手工构造 alg:none JWT（header.payload.，签名段为空）
     let header_json = r#"{"alg":"none","typ":"JWT"}"#;
@@ -99,7 +99,7 @@ async fn none_algorithm_injection_rejected() {
 /// 但 token 仍应有效。
 #[tokio::test]
 async fn iat_future_time_tolerates_clock_skew() {
-    let secret = "clock-skew-secret";
+    let secret = "clock-skew-secret-min-32-bytes-long";
     let handler = JwtHandler::new(secret);
 
     let now = now_ts();
@@ -140,7 +140,7 @@ async fn iat_future_time_tolerates_clock_skew() {
 /// 已过期的 token 在 `verify` 阶段即被拒绝，返回 `ExpiredToken`。
 #[tokio::test]
 async fn refresh_expired_token_returns_error() {
-    let handler = JwtHandler::new("refresh-secret");
+    let handler = JwtHandler::new("refresh-secret-min-32-bytes-long!!!");
 
     // 签发一个 1 秒过期的 token
     let token = handler.sign("1001", 1).unwrap();
@@ -166,7 +166,7 @@ async fn refresh_expired_token_returns_error() {
 /// 空 claims `{}` 缺少这些字段 → 反序列化失败 → 返回 `InvalidToken`。
 #[tokio::test]
 async fn empty_claims_jwt_rejected() {
-    let secret = "empty-claims-secret";
+    let secret = "empty-claims-secret-min-32-bytes!!!";
     let handler = JwtHandler::new(secret);
 
     // 使用 jsonwebtoken::encode 编码空 claims（{}）

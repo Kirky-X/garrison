@@ -88,7 +88,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 4. 演示 JWT 签发后可被 JwtHandler 独立校验
     println!("[4] JWT 独立校验（使用 protocol::jwt::JwtHandler）");
     use garrison::protocol::jwt::JwtHandler;
-    let handler = JwtHandler::new("jwt-modes-demo-secret");
+    let handler = JwtHandler::new("jwt-modes-demo-secret-min-32bytes!");
     let claims = handler.verify(&token)?;
     println!(
         "    verify(token) → sub={}, login_id={}",
@@ -99,7 +99,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 5. 错误的 secret 校验失败
     println!("[5] 错误密钥校验失败（预期）");
-    let wrong_handler = JwtHandler::new("wrong-secret");
+    let wrong_handler = JwtHandler::new("wrong-secret-min-32-bytes-long!!!!");
     let result = wrong_handler.verify(&token);
     assert!(result.is_err(), "错误密钥应校验失败");
     match result.unwrap_err() {

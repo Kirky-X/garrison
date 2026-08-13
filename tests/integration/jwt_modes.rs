@@ -72,7 +72,7 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
 /// HS256 sign → verify roundtrip：claims 字段一致。
 #[tokio::test(flavor = "multi_thread")]
 async fn hs256_sign_verify_roundtrip() {
-    let handler = JwtHandler::new("hs256-secret");
+    let handler = JwtHandler::new("hs256-secret-that-is-at-least-32");
     assert_eq!(handler.algorithm, Algorithm::HS256);
 
     let token = handler.sign("1001", 3600).expect("HS256 sign 应成功");
@@ -87,7 +87,8 @@ async fn hs256_sign_verify_roundtrip() {
 /// HS512 sign → verify roundtrip。
 #[tokio::test(flavor = "multi_thread")]
 async fn hs512_sign_verify_roundtrip() {
-    let handler = JwtHandler::new("hs512-secret").with_algorithm(Algorithm::HS512);
+    let handler =
+        JwtHandler::new("hs512-secret-that-is-at-least-32b").with_algorithm(Algorithm::HS512);
     assert_eq!(handler.algorithm, Algorithm::HS512);
 
     let token = handler.sign("2002", 7200).expect("HS512 sign 应成功");
@@ -98,7 +99,7 @@ async fn hs512_sign_verify_roundtrip() {
 /// with_device 设置设备标识后 claims.device 为 Some。
 #[tokio::test(flavor = "multi_thread")]
 async fn with_device_sets_claims_device() {
-    let handler = JwtHandler::new("device-secret").with_device("web-browser");
+    let handler = JwtHandler::new("device-secret-min-32-bytes-long!!").with_device("web-browser");
     let token = handler.sign("3003", 3600).unwrap();
     let claims = handler.verify(&token).unwrap();
     assert_eq!(claims.device.as_deref(), Some("web-browser"));
@@ -107,8 +108,9 @@ async fn with_device_sets_claims_device() {
 /// 跨算法 verify 失败：HS256 签发的 token 不能被 HS512 handler 校验。
 #[tokio::test(flavor = "multi_thread")]
 async fn cross_algorithm_verify_fails() {
-    let hs256 = JwtHandler::new("shared-secret");
-    let hs512 = JwtHandler::new("shared-secret").with_algorithm(Algorithm::HS512);
+    let hs256 = JwtHandler::new("shared-secret-min-32-bytes-long!!!");
+    let hs512 =
+        JwtHandler::new("shared-secret-min-32-bytes-long!!!").with_algorithm(Algorithm::HS512);
 
     let token = hs256.sign("1001", 3600).unwrap();
     let result = hs512.verify(&token);
@@ -122,7 +124,7 @@ async fn cross_algorithm_verify_fails() {
 /// refresh 返回新 token 且可 verify，login_id 一致。
 #[tokio::test(flavor = "multi_thread")]
 async fn refresh_issues_new_valid_token() {
-    let handler = JwtHandler::new("refresh-secret");
+    let handler = JwtHandler::new("refresh-secret-min-32-bytes-long!!!");
     let original = handler.sign("4004", 3600).unwrap();
     let refreshed = handler.refresh(&original, 7200).expect("refresh 应成功");
     let claims = handler.verify(&refreshed).unwrap();
@@ -136,7 +138,7 @@ async fn refresh_issues_new_valid_token() {
 /// refresh 对无效 token 返回错误。
 #[tokio::test(flavor = "multi_thread")]
 async fn refresh_invalid_token_fails() {
-    let handler = JwtHandler::new("refresh-secret");
+    let handler = JwtHandler::new("refresh-secret-min-32-bytes-long!!!");
     let result = handler.refresh("not.a.valid.jwt", 3600);
     assert!(result.is_err(), "无效 token refresh 应失败");
 }
@@ -162,7 +164,7 @@ async fn sign_rejects_empty_secret() {
 /// sign 对负数 timeout 返回 Config 错误。
 #[tokio::test(flavor = "multi_thread")]
 async fn sign_rejects_negative_timeout() {
-    let handler = JwtHandler::new("valid-secret");
+    let handler = JwtHandler::new("valid-secret-min-32-bytes-long!!!!");
     let result = handler.sign("1001", -1);
     assert!(result.is_err());
     match result.unwrap_err() {
@@ -188,7 +190,7 @@ async fn stateless_mode_passes_with_jwt_only() {
     let logic = make_logic_with_mode(JwtMode::Stateless).await;
 
     // 用 JwtHandler 直接签发 token，不通过 login（确保无 session）
-    let handler = JwtHandler::new("jwt-modes-test-secret");
+    let handler = JwtHandler::new("jwt-modes-test-secret-min-32bytes!");
     let token = handler.sign("5005", 3600).unwrap();
 
     // Stateless：仅 JWT verify，不查 session → 应通过
@@ -244,7 +246,7 @@ async fn mixin_mode_fails_with_jwt_only_no_session() {
     let logic = make_logic_with_mode(JwtMode::Mixin).await;
 
     // 用 JwtHandler 直接签发 token，不通过 login（无 session）
-    let handler = JwtHandler::new("jwt-modes-test-secret");
+    let handler = JwtHandler::new("jwt-modes-test-secret-min-32bytes!");
     let token = handler.sign("7007", 3600).unwrap();
 
     let result = with_current_token(token, async { logic.check_login().await }).await;
