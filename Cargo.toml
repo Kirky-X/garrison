@@ -326,6 +326,10 @@ dao-key-index = []
 # === 安全告警系统 ===
 security-alert = []
 device-binding = ["security-alert"]
+# 会话劫持检测：check_login 路径中对比当前请求 IP 与会话创建时存储的 IP，
+# 检测到不一致时广播告警事件（AlertOnly 模式）或额外踢出会话（Kickout 模式）。
+# 依赖 security-alert（复用 AnomalyDetector trait + AlertListenerManager 广播链路）。
+session-hijack-detection = ["security-alert"]
 
 # === 二级认证瞬态标记 ===
 safe-auth = []
@@ -425,6 +429,7 @@ full = [
     "rate-limit-redis",
     "anomalous-detector-dual",
     "security-alert",
+    "session-hijack-detection",
     "device-binding",
     "safe-auth",
     "dynamic-active-timeout",
@@ -444,7 +449,7 @@ production = [
     "listener", "tracing-log", "metrics-prometheus",
     "audit-inklog",
     "tenant-isolation",
-    "security-alert", "device-binding",
+    "security-alert", "session-hijack-detection", "device-binding",
     "safe-defaults",
     "firewall-waf",
     "three-tier-cache",

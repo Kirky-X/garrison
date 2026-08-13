@@ -385,7 +385,75 @@ pub async fn inject_client_ip(mut req: Request, next: Next) -> Response {
         .unwrap_or_default();
 
     let ip = extract_client_ip(&req, trusted_proxies);
+    // H-8: 同步写入 task_local，供 SessionHijackDetector 在 check_login 路径读取
+    #[cfg(feature = "session-hijack-detection")]
+    {
+        let _ = CLIENT_IP.try_with(|cell| {
+            *cell.borrow_mut() = Some(ip.clone());
+        });
+    }
     req.extensions_mut().insert(ClientIp(ip));
+    next.run(req).await
+}
+
+// ============================================================================
+// H-8: task_local 客户端上下文（供 SessionHijackDetector 读取）
+// ============================================================================
+
+// 当前请求客户端 IP（task_local，`session-hijack-detection` feature 启用时可用）。
+#[cfg(feature = "session-hijack-detection")]
+tokio::task_local! {
+    /// 当前请求客户端 IP（task_local，`pub(crate)` 供测试设置上下文）。
+    pub(crate) static CLIENT_IP: std::cell::RefCell<Option<String>>;
+    /// 当前请求 User-Agent（task_local，`pub(crate)` 供测试设置上下文）。
+    pub(crate) static CLIENT_USER_AGENT: std::cell::RefCell<Option<String>>;
+}
+
+/// 获取当前请求的客户端 IP（从 task_local 读取）。
+///
+/// 仅在 `session-hijack-detection` feature 启用时可用。
+/// 非 HTTP 请求路径（如直接 API 调用）返回 `None`。
+#[cfg(feature = "session-hijack-detection")]
+pub fn current_client_ip() -> Option<String> {
+    CLIENT_IP
+        .try_with(|cell| cell.borrow().clone())
+        .unwrap_or(None)
+}
+
+/// 获取当前请求的 User-Agent（从 task_local 读取）。
+///
+/// 仅在 `session-hijack-detection` feature 启用时可用。
+/// 非 HTTP 请求路径（如直接 API 调用）返回 `None`。
+#[cfg(feature = "session-hijack-detection")]
+pub fn current_user_agent() -> Option<String> {
+    CLIENT_USER_AGENT
+        .try_with(|cell| cell.borrow().clone())
+        .unwrap_or(None)
+}
+
+/// User-Agent 自动注入中间件。
+///
+/// 从请求 `User-Agent` header 提取值并存入 task_local `CLIENT_USER_AGENT`，
+/// 供 `SessionHijackDetector` 在 `check_login` 路径读取。
+///
+/// # 挂载位置
+///
+/// 仅挂载到外网 router（`external_router()`），在 `inject_client_ip` 之后。
+/// 仅在 `session-hijack-detection` feature 启用时有实际效果。
+pub async fn inject_user_agent(req: Request, next: Next) -> Response {
+    #[cfg(feature = "session-hijack-detection")]
+    {
+        let ua = req
+            .headers()
+            .get(axum::http::header::USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        CLIENT_USER_AGENT
+            .try_with(|cell| {
+                *cell.borrow_mut() = ua;
+            })
+            .ok();
+    }
     next.run(req).await
 }
 

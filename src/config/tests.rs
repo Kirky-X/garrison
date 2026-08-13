@@ -752,6 +752,9 @@ fn update_without_watcher_is_noop() {
         anomalous_analyzer_interval_secs: DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS,
         #[cfg(feature = "anomalous-detector-dual")]
         anomalous_analyzer_burst_threshold: DEFAULT_ANOMALOUS_BURST_THRESHOLD,
+        enable_jwt_revocation: false,
+        #[cfg(feature = "session-hijack-detection")]
+        session_hijack_mode: crate::config::SessionHijackMode::default(),
         watcher: None,
     };
     assert!(config.update(|c| c.timeout = 999).is_ok());

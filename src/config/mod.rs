@@ -187,6 +187,20 @@ pub enum OverflowLogoutMode {
     Replaced,
 }
 
+/// 会话劫持检测模式（H-8 修复）。
+///
+/// 控制 `check_login` 路径中 IP 对比检测到疑似劫持时的行为。
+/// 仅在 `session-hijack-detection` feature 启用时生效。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionHijackMode {
+    /// 仅广播告警事件，不踢出会话（默认，安全降级）。
+    #[default]
+    AlertOnly,
+    /// 广播告警事件并踢出疑似被劫持的会话。
+    Kickout,
+}
+
 // ============================================================================
 // 多租户隔离配置
 // ============================================================================
@@ -471,6 +485,21 @@ pub struct GarrisonConfig {
     /// - `Kickout`：踢出最旧会话（触发 Kickout 事件）
     /// - `Replaced`：顶替最旧会话（触发 Replaced 事件）
     pub overflow_logout_mode: OverflowLogoutMode,
+
+    /// 会话劫持检测模式（H-8 修复）。默认 `AlertOnly`。
+    ///
+    /// 仅在 `session-hijack-detection` feature 启用时生效。
+    /// - `AlertOnly`：检测到疑似劫持时仅广播告警事件
+    /// - `Kickout`：检测到疑似劫持时广播告警并踢出会话
+    #[cfg(feature = "session-hijack-detection")]
+    pub session_hijack_mode: SessionHijackMode,
+
+    /// 是否启用 JWT 撤销黑名单（H-14 修复）。默认 `false`。
+    ///
+    /// 启用后，`logout` / `kickout` 时将 JWT 的 `jti` 写入 DAO 黑名单（TTL = 剩余有效期），
+    /// `check_login_stateless` 在 JWT verify 成功后检查黑名单，已撤销的 JWT 返回 `TokenRevoked`。
+    /// 仅在 `protocol-jwt` feature 启用且 `token_style="jwt"` 时有实际效果。
+    pub enable_jwt_revocation: bool,
 
     /// 审计日志脱敏模式（T012）。默认 `Partial`。
     ///

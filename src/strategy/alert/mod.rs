@@ -20,6 +20,8 @@ pub mod detector;
 /// 告警监听器实现模块。
 pub mod listener;
 
+#[cfg(feature = "session-hijack-detection")]
+pub use detector::SessionHijackDetector;
 pub use detector::{IpChangeDetector, RapidSuccessiveDetector};
 pub use listener::{AuditAlertListener, TracingAlertListener};
 
@@ -92,10 +94,12 @@ pub enum AnomalyType {
     IpChanged,
     /// 设备指纹变化。
     DeviceChanged,
-    /// 地理位置跳跃（短时间内跨地域登录）。
+    /// 地理位置跳跃（短时间内跨地域的登录）。
     GeoJump,
     /// 快速连续登录（短时间内多次登录）。
     RapidSuccessiveLogin,
+    /// 会话劫持疑似（当前请求 IP 与会话创建时存储的 IP 不一致，H-8 修复）。
+    SessionHijackSuspected,
 }
 
 /// 告警监听器 trait，提供安全事件订阅抽象。

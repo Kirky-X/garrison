@@ -239,6 +239,8 @@ impl GarrisonAuthServer {
                 middleware::inject_login_client_ip,
             ))
             .layer(axum::middleware::from_fn(middleware::inject_client_ip))
+            // H-8: User-Agent 注入 middleware（在 inject_client_ip 之后）
+            .layer(axum::middleware::from_fn(middleware::inject_user_agent))
             .layer(Extension(trusted_proxies))
             .layer(axum::middleware::from_fn_with_state(
                 rate_limit_state,

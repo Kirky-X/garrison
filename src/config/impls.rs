@@ -70,6 +70,9 @@ impl GarrisonConfig {
             device_binding_mode: DEFAULT_DEVICE_BINDING_MODE.to_string(),
             replaced_login_exit_mode: ReplacedLoginExitMode::default(),
             overflow_logout_mode: OverflowLogoutMode::default(),
+            #[cfg(feature = "session-hijack-detection")]
+            session_hijack_mode: SessionHijackMode::default(),
+            enable_jwt_revocation: false,
             audit_mask_mode: AuditMaskMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-waf")]

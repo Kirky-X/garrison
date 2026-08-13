@@ -280,6 +280,51 @@ impl GarrisonUtil {
             .await
     }
 
+    /// 密码修改后失效用户所有会话（H-7 修复）。
+    ///
+    /// 清除指定 `login_id` 的所有 Token-Session 和 Account-Session，
+    /// 并广播 `GarrisonEvent::Kickout` 事件（reason: "password-changed"）。
+    ///
+    /// 应用层在密码修改成功后应调用此方法，确保已签发的会话立即失效，
+    /// 缩小凭证泄露后的攻击窗口。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识（支持 `String`、`&str` 等 `Into<String>` 类型）。
+    ///
+    /// # 返回
+    /// 成功返回 `Ok(())`。
+    ///
+    /// # 错误
+    /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
+    /// - 会话销毁失败：透传 `GarrisonError`。
+    ///
+    /// # 示例
+    ///
+    /// ```ignore
+    /// // 应用层密码修改成功后调用
+    /// GarrisonUtil::invalidate_sessions_after_password_change("user-001").await?;
+    /// ```
+    pub async fn invalidate_sessions_after_password_change(
+        login_id: impl Into<String>,
+    ) -> GarrisonResult<()> {
+        let login_id: String = login_id.into();
+        let logic = crate::manager::GarrisonManager::logic()?;
+        // 销毁该用户所有会话
+        logic.session.logout_by_login_id(&login_id).await?;
+        // 广播 Kickout 事件（reason: "password-changed"）
+        #[cfg(feature = "listener")]
+        if let Some(lm) = &logic.listener_manager {
+            lm.broadcast(&crate::listener::GarrisonEvent::Kickout {
+                login_id: login_id.clone(),
+                token: String::new(),
+                reason: loc!("session-kickout-password-changed", "password-changed"),
+                request_context: None,
+            })
+            .await;
+        }
+        Ok(())
+    }
+
     /// 主动吊销 token：销毁指定 token 的会话。
     ///
     /// 与 [`kickout_by_token`](Self::kickout_by_token) 的区别：

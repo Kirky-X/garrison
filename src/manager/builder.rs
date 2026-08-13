@@ -469,7 +469,11 @@ impl GarrisonManagerBuilder {
             crate::cache::UserCacheService,
         >,
     ) -> Arc<GarrisonLogicDefault> {
-        let mut builder = GarrisonLogicDefault::new(session, config, firewall)
+        // H-8: 自动注册 SessionHijackDetector（feature 启用时）
+        #[cfg(feature = "session-hijack-detection")]
+        let hijack_mode = config.session_hijack_mode;
+
+        let mut builder = GarrisonLogicDefault::new(session.clone(), config, firewall)
             .with_plugin_manager(plugin_manager)
             .with_auth_logic(auth_logic)
             .with_permission_checker(permission_checker)
@@ -481,6 +485,13 @@ impl GarrisonManagerBuilder {
         #[cfg(feature = "three-tier-cache")]
         {
             builder = builder.with_user_cache_service(user_cache_service);
+        }
+        // H-8: 自动注册会话劫持检测器（复用 session + config 中的 mode）
+        #[cfg(feature = "session-hijack-detection")]
+        {
+            builder = builder.with_anomaly_detector(Arc::new(
+                crate::strategy::alert::SessionHijackDetector::new(session, hijack_mode),
+            ));
         }
         Arc::new(builder)
     }

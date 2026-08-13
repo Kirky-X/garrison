@@ -103,8 +103,10 @@ fn strip_prefix(prefixed: &str) -> String {
 ///
 /// **后续跟进**：若未来引入 Redis/分布式 backend，需改用 async API（`_sync` 在网络 I/O 场景下会阻塞 tokio worker 线程）。
 pub struct GarrisonDaoOxcache {
-    cache: Cache<String, String>,
     /// 原子操作互斥锁，保证 `set_if_absent` / `get_and_delete` / `incr` 等的串行化。
+    ///
+    /// **字段排序依据**（Cache 局部性优化）：按访问频率降序排列，
+    /// 高频字段前置以优先命中 L1 Cache Line（鲲鹏 128B / x86 64B）。
     ///
     /// **为何用 `parking_lot::Mutex` 而非 `tokio::sync::Mutex`**（H3 修复）：
     /// 原实现用 `tokio::sync::Mutex` + async cache API（`cache.get().await`），
@@ -112,18 +114,20 @@ pub struct GarrisonDaoOxcache {
     /// （`cache.get_sync()`），锁内全同步操作（<1μs），不让出 tokio task，
     /// 与 `get`/`set` 方法的 `_sync` 模式对齐（文件 L118-127 设计结论）。
     atomic_mutex: parking_lot::Mutex<()>,
-    /// Redis 部署模式配置（仅在 `cache-redis` feature 启用时存在）。
-    ///
-    /// 通过 [`with_redis_config`] builder 方法设置。未设置时为 `None`，
-    /// oxcache 使用默认 Redis 配置。
-    #[cfg(feature = "cache-redis")]
-    redis_config: Option<RedisConfig>,
     /// key 索引，用于实现 `keys()` 方法（oxcache 0.3.3 无原生 keys/iter API）。
     /// 仅在 `dao-key-index` feature 启用时维护（由 `protocol-apikey` /
     /// `anomalous-detector-dual` 传递），避免影响其他场景的内存开销。
     /// TTL 过期的 key 会在 `keys()` 调用时惰性清理。
     #[cfg(feature = "dao-key-index")]
     key_index: parking_lot::RwLock<std::collections::HashSet<String>>,
+    /// 缓存后端（oxcache L1 内存 + L2 Redis）。
+    cache: Cache<String, String>,
+    /// Redis 部署模式配置（仅在 `cache-redis` feature 启用时存在）。
+    ///
+    /// 通过 [`with_redis_config`] builder 方法设置。未设置时为 `None`，
+    /// oxcache 使用默认 Redis 配置。
+    #[cfg(feature = "cache-redis")]
+    redis_config: Option<RedisConfig>,
 }
 
 impl GarrisonDaoOxcache {
@@ -143,12 +147,12 @@ impl GarrisonDaoOxcache {
             .await
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-init::{}", e)))?;
         Ok(Self {
-            cache,
             atomic_mutex: parking_lot::Mutex::new(()),
-            #[cfg(feature = "cache-redis")]
-            redis_config: None,
             #[cfg(feature = "dao-key-index")]
             key_index: parking_lot::RwLock::new(std::collections::HashSet::new()),
+            cache,
+            #[cfg(feature = "cache-redis")]
+            redis_config: None,
         })
     }
 

@@ -360,6 +360,9 @@ impl SessionLogic for GarrisonLogicDefault {
                     .get_token_session(&token)
                     .await?
                     .map(|ts| ts.login_id);
+                // H-14: JWT 撤销黑名单（注销前写入，确保 jti 在 TTL 内被拒绝）
+                #[cfg(feature = "protocol-jwt")]
+                self.blacklist_jwt_jti(&token).await;
                 self.session.logout(&token).await?;
                 // auto-wire: 触发 plugin on_logout + listener Logout 事件
                 if let (Some(pm), Some(id)) = (&self.plugin_manager, login_id.as_ref()) {
@@ -400,6 +403,14 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn kickout(&self, login_id: &str) -> GarrisonResult<()> {
+        // H-14: JWT 撤销黑名单（踢出前将所有 token 的 jti 写入黑名单）
+        #[cfg(feature = "protocol-jwt")]
+        {
+            let tokens = self.session.get_tokens_by_login_id(login_id);
+            for token in &tokens {
+                self.blacklist_jwt_jti(token).await;
+            }
+        }
         // kickout 语义等同 logout_by_login_id
         self.session.logout_by_login_id(login_id).await?;
         // auto-wire: 触发 listener Kickout 事件（plugin 无 kickout 钩子）
@@ -417,6 +428,9 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn kickout_by_token(&self, token: &str) -> GarrisonResult<()> {
+        // H-14: JWT 撤销黑名单
+        #[cfg(feature = "protocol-jwt")]
+        self.blacklist_jwt_jti(token).await;
         // kickout_by_token 语义等同 logout(token)
         self.session.logout(token).await
     }
@@ -493,7 +507,7 @@ impl SessionLogic for GarrisonLogicDefault {
         };
 
         let result = match self.jwt_mode {
-            JwtMode::Stateless => self.check_login_stateless(&token),
+            JwtMode::Stateless => self.check_login_stateless(&token).await,
             JwtMode::Mixin => self.check_login_mixin(&token).await,
             JwtMode::Simple => self.check_login_simple(&token).await,
         };
@@ -1007,7 +1021,8 @@ impl GarrisonLogicDefault {
     ///
     /// 要求启用 `protocol-jwt` feature 且 `token_style=jwt`，否则返回 `Config` 错误。
     /// JWT verify 失败时透传 `InvalidToken`/`ExpiredToken`（不查询 session）。
-    fn check_login_stateless(&self, token: &str) -> GarrisonResult<bool> {
+    /// H-14: `enable_jwt_revocation=true` 时，verify 成功后检查 jti 黑名单。
+    async fn check_login_stateless(&self, token: &str) -> GarrisonResult<bool> {
         #[cfg(feature = "protocol-jwt")]
         {
             if self.config.token_style != "jwt" {
@@ -1017,7 +1032,19 @@ impl GarrisonLogicDefault {
             }
             let handler = crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
             // spec R-002: 无效签名返回 InvalidToken，过期返回 ExpiredToken（透传 verify 错误）
-            handler.verify(token)?;
+            let claims = handler.verify(token)?;
+            // H-14: JWT 撤销黑名单检查（verify 成功后、返回 Ok 前）
+            if self.config.enable_jwt_revocation {
+                if let Some(jti) = &claims.jti {
+                    let key = format!("jwt:blacklist:{}", jti);
+                    if self.session.dao().get(&key).await?.is_some() {
+                        return Err(GarrisonError::TokenRevoked(format!(
+                            "jwt-revoked::jti={}",
+                            &jti[..jti.len().min(16)]
+                        )));
+                    }
+                }
+            }
             Ok(true)
         }
         #[cfg(not(feature = "protocol-jwt"))]
@@ -1160,6 +1187,45 @@ impl GarrisonLogicDefault {
             return Ok(true);
         }
         Ok(valid)
+    }
+}
+
+// ============================================================================
+// GarrisonLogicDefault 私有方法：JWT 撤销黑名单（H-14）
+// ============================================================================
+
+impl GarrisonLogicDefault {
+    /// H-14: 将 JWT 的 `jti` 写入 DAO 黑名单。
+    ///
+    /// 解析 token 获取 claims，若 `jti` 为 Some 且 TTL > 0，
+    /// 则写入 `jwt:blacklist:{jti}` = "1"（TTL = 剩余有效期秒数）。
+    /// DAO 失败时 warn 日志不中断主流程。
+    #[cfg(feature = "protocol-jwt")]
+    async fn blacklist_jwt_jti(&self, token: &str) {
+        if !self.config.enable_jwt_revocation || self.config.token_style != "jwt" {
+            return;
+        }
+        let handler = crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
+        let claims = match handler.verify(token) {
+            Ok(c) => c,
+            Err(_) => return, // token 已过期或无效，无需加入黑名单
+        };
+        let jti = match claims.jti {
+            Some(j) => j,
+            None => return, // 旧 token 无 jti，跳过
+        };
+        let now_unix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let ttl_secs = claims.exp - now_unix;
+        if ttl_secs <= 0 {
+            return; // 已过期，无需加入黑名单
+        }
+        let key = format!("jwt:blacklist:{}", jti);
+        if let Err(e) = self.session.dao().set(&key, "1", ttl_secs as u64).await {
+            tracing::warn!(error = %e, jti = &jti[..jti.len().min(16)], "JWT blacklist write failed");
+        }
     }
 }
 
@@ -3978,6 +4044,138 @@ mod tests {
             assert!(
                 result.unwrap().is_none(),
                 "token 无对应 session 时应返回 None"
+            );
+        }
+    }
+
+    // ========================================================================
+    // T014: JWT 撤销黑名单测试（H-14）
+    // ========================================================================
+
+    #[cfg(feature = "protocol-jwt")]
+    mod jwt_revocation_tests {
+        use super::*;
+        use crate::dao::GarrisonDao;
+        use crate::session::GarrisonSession;
+        use crate::stp::mock::{MockDao, MockFirewall};
+        use crate::stp::with_current_token;
+        use crate::strategy::GarrisonPermissionStrategy;
+        use std::sync::Arc;
+
+        /// 创建 JWT 模式 logic + 共享 MockDao（用于验证黑名单写入）。
+        fn make_jwt_revocation_logic(
+            enable_revocation: bool,
+        ) -> (GarrisonLogicDefault, Arc<MockDao>) {
+            let dao = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
+            let mut config = GarrisonConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.jwt_secret = "jwt-revocation-test-secret-32bytes!".to_string().into();
+            config.enable_jwt_revocation = enable_revocation;
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+                .with_jwt_mode(JwtMode::Stateless);
+            (logic, dao)
+        }
+
+        /// logout 后 jti 写入黑名单（dao.get 返回 Some）。
+        #[tokio::test]
+        async fn logout_writes_jti_to_blacklist() {
+            let (logic, dao) = make_jwt_revocation_logic(true);
+            let handler =
+                crate::protocol::jwt::JwtHandler::new("jwt-revocation-test-secret-32bytes!");
+            let token = logic
+                .login("user-1", &LoginParams::default())
+                .await
+                .unwrap();
+
+            // 提取 jti
+            let claims = handler.verify(&token).unwrap();
+            let jti = claims.jti.expect("JWT 应包含 jti");
+
+            // 执行 logout（需设置 current_token）
+            with_current_token(token, async {
+                logic.logout().await.expect("logout 应成功");
+            })
+            .await;
+
+            // 验证黑名单已写入
+            let key = format!("jwt:blacklist:{}", jti);
+            let value = dao.get(&key).await.unwrap();
+            assert!(value.is_some(), "logout 后 jti 应被写入黑名单");
+            assert_eq!(value.unwrap(), "1");
+        }
+
+        /// stateless 模式对已撤销 JWT 返回 TokenRevoked 错误。
+        #[tokio::test]
+        async fn stateless_rejects_revoked_jwt() {
+            let (logic, _dao) = make_jwt_revocation_logic(true);
+            let token = logic
+                .login("user-2", &LoginParams::default())
+                .await
+                .unwrap();
+
+            // 先 logout 将 jti 加入黑名单
+            with_current_token(token.clone(), async {
+                logic.logout().await.expect("logout 应成功");
+            })
+            .await;
+
+            // stateless check_login 应返回 TokenRevoked
+            let result = with_current_token(token, async { logic.check_login().await }).await;
+
+            assert!(
+                matches!(&result, Err(GarrisonError::TokenRevoked(_))),
+                "已撤销 JWT 应返回 TokenRevoked，实际: {:?}",
+                result
+            );
+        }
+
+        /// 未过期且未撤销的 JWT 正常通过 stateless check_login。
+        #[tokio::test]
+        async fn stateless_accepts_valid_jwt() {
+            let (logic, _dao) = make_jwt_revocation_logic(true);
+            let token = logic
+                .login("user-3", &LoginParams::default())
+                .await
+                .unwrap();
+
+            // 不 logout，直接 check_login
+            let result = with_current_token(token, async { logic.check_login().await }).await;
+
+            assert!(result.is_ok(), "有效 JWT 应返回 Ok，实际: {:?}", result);
+            assert!(result.unwrap(), "有效 JWT 应返回 true");
+        }
+
+        /// enable_jwt_revocation=false 时 logout 不写黑名单。
+        #[tokio::test]
+        async fn no_blacklist_when_revocation_disabled() {
+            let (logic, dao) = make_jwt_revocation_logic(false);
+            let handler =
+                crate::protocol::jwt::JwtHandler::new("jwt-revocation-test-secret-32bytes!");
+            let token = logic
+                .login("user-4", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let claims = handler.verify(&token).unwrap();
+            let jti = claims.jti.expect("JWT 应包含 jti");
+
+            with_current_token(token, async {
+                logic.logout().await.expect("logout 应成功");
+            })
+            .await;
+
+            // 黑名单不应有记录
+            let key = format!("jwt:blacklist:{}", jti);
+            let value = dao.get(&key).await.unwrap();
+            assert!(
+                value.is_none(),
+                "enable_jwt_revocation=false 时 logout 不应写入黑名单"
             );
         }
     }

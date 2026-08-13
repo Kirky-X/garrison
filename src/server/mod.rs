@@ -50,8 +50,11 @@ mod server_impl;
 
 pub use middleware::{
     api_key_auth_middleware, audit_log_middleware, external_path_filter, inject_client_ip,
-    inject_login_client_ip, internal_path_filter, rate_limit_middleware, ClientIp, TrustedProxies,
+    inject_login_client_ip, inject_user_agent, internal_path_filter, rate_limit_middleware,
+    ClientIp, TrustedProxies,
 };
+#[cfg(feature = "session-hijack-detection")]
+pub use middleware::{current_client_ip, current_user_agent};
 pub use server_impl::to_api_response;
 
 /// Auth Server 配置。

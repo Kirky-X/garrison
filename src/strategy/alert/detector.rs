@@ -11,6 +11,9 @@ use uuid::Uuid;
 
 use super::{AnomalyDetector, AnomalyType, SecurityAlertEvent};
 
+#[cfg(feature = "session-hijack-detection")]
+use crate::config::SessionHijackMode;
+
 /// IP 变化检测器，对比当前登录 IP 与历史最近 session 的 IP。
 ///
 /// 实现 `AnomalyDetector` trait，在 `check_on_login` 时：
@@ -19,7 +22,8 @@ use super::{AnomalyDetector, AnomalyType, SecurityAlertEvent};
 /// 3. 取其 IP 作为历史 IP，与当前登录 IP 对比
 /// 4. 不同则发出 `AnomalyLogin { anomaly_type: IpChanged }`
 ///
-/// `check_on_check_login` 因签名不含当前 IP 参数，无法检测 IP 变化，返回空 Vec。
+/// check_on_check_login 因签名不含当前 IP 参数，无法检测 IP 变化，返回空 Vec。
+/// 会话劫持检测请使用 `SessionHijackDetector`（通过 task_local 获取当前 IP）。
 pub struct IpChangeDetector {
     /// 会话管理器引用，用于查询历史 session。
     session: Arc<GarrisonSession>,
@@ -91,6 +95,100 @@ impl AnomalyDetector for IpChangeDetector {
     ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
         // check_on_check_login 签名不含当前 IP，无法检测 IP 变化
         Ok(Vec::new())
+    }
+}
+
+// ============================================================================
+// SessionHijackDetector（H-8：会话劫持检测）
+// ============================================================================
+
+/// 会话劫持检测器，对比当前请求 IP 与会话创建时存储的 IP。
+///
+/// 与 `IpChangeDetector` 不同，此检测器在 `check_on_check_login` 路径工作：
+/// 通过 `tokio::task_local!` 获取当前请求的客户端 IP（由 `inject_client_ip` middleware 注入），
+/// 与 `TokenSession` 中存储的 IP 对比。两者均 `Some` 且不同时判定疑似劫持。
+///
+/// # 行为模式
+///
+/// - `AlertOnly`（默认）：广播 `SessionHijackSuspected` 告警事件，不踢出会话。
+/// - `Kickout`：广播告警事件并调用 `session.logout(token)` 踢出疑似被劫持的会话。
+///
+/// # Feature Gate
+///
+/// 仅在 `session-hijack-detection` feature 启用时编译。
+#[cfg(feature = "session-hijack-detection")]
+pub struct SessionHijackDetector {
+    /// 会话管理器引用，用于查询/销毁 token session。
+    session: Arc<GarrisonSession>,
+    /// 检测到劫持时的行为模式。
+    mode: SessionHijackMode,
+}
+
+#[cfg(feature = "session-hijack-detection")]
+impl SessionHijackDetector {
+    /// 创建 `SessionHijackDetector` 实例。
+    ///
+    /// # 参数
+    /// - `session`: 会话管理器引用。
+    /// - `mode`: 检测到劫持时的行为模式（`AlertOnly` / `Kickout`）。
+    pub fn new(session: Arc<GarrisonSession>, mode: SessionHijackMode) -> Self {
+        Self { session, mode }
+    }
+}
+
+#[cfg(feature = "session-hijack-detection")]
+#[async_trait]
+impl AnomalyDetector for SessionHijackDetector {
+    async fn check_on_login(
+        &self,
+        _login_id: &str,
+        _device_id: &str,
+        _ip: Option<&str>,
+    ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
+        // 劫持检测仅在 check_login 路径工作（需要 task_local 上下文）
+        Ok(Vec::new())
+    }
+
+    async fn check_on_check_login(
+        &self,
+        login_id: &str,
+        token: &str,
+    ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
+        // 从 task_local 获取当前请求的客户端 IP
+        let current_ip = match crate::server::middleware::current_client_ip() {
+            Some(ip) => ip,
+            None => return Ok(Vec::new()), // 非 HTTP 路径（无 task_local 上下文）不检测
+        };
+
+        // 获取会话创建时存储的 IP
+        let stored_ip = match self.session.get_token_session(token).await? {
+            Some(ts) => match ts.ip {
+                Some(ip) => ip,
+                None => return Ok(Vec::new()), // 存储 IP 为 None 时不检测（无历史 IP 可对比）
+            },
+            None => return Ok(Vec::new()), // 会话已不存在，无需检测
+        };
+
+        // 两者均 Some 且不同时判定劫持
+        if current_ip == stored_ip {
+            return Ok(Vec::new());
+        }
+
+        let detail = format!("会话 IP 不一致: 存储={}, 当前={}", stored_ip, current_ip);
+
+        // Kickout 模式: 踢出疑似被劫持的会话
+        if self.mode == SessionHijackMode::Kickout {
+            if let Err(e) = self.session.logout(token).await {
+                tracing::warn!(error = %e, token = &token[..token.len().min(8)], "SessionHijackDetector: kickout failed");
+            }
+        }
+
+        Ok(vec![SecurityAlertEvent::AnomalyLogin {
+            login_id: login_id.to_string(),
+            anomaly_type: AnomalyType::SessionHijackSuspected,
+            detail,
+            trace_id: Uuid::new_v4().to_string(),
+        }])
     }
 }
 
@@ -464,6 +562,154 @@ mod tests {
                 );
             },
             _ => panic!("期望 AnomalyLogin 事件"),
+        }
+    }
+
+    // ========================================================================
+    // SessionHijackDetector 测试（H-8）
+    // ========================================================================
+
+    #[cfg(feature = "session-hijack-detection")]
+    mod hijack_tests {
+        use super::*;
+        use crate::config::SessionHijackMode;
+        use crate::server::middleware::{CLIENT_IP, CLIENT_USER_AGENT};
+
+        /// 辅助函数：创建带指定 IP 和 UA 的 token session。
+        async fn create_session_with_ip_ua(
+            session: &GarrisonSession,
+            login_id: &str,
+            token: &str,
+            ip: Option<&str>,
+            ua: Option<&str>,
+        ) {
+            let params = LoginParams {
+                ip: ip.map(|s| s.to_string()),
+                user_agent: ua.map(|s| s.to_string()),
+                ..Default::default()
+            };
+            session
+                .create_token_session(login_id, token, &params)
+                .await
+                .unwrap();
+        }
+
+        /// 在 task_local 上下文中运行检测器测试。
+        async fn with_client_ip<F, R>(ip: Option<&str>, f: F) -> R
+        where
+            F: AsyncFnOnce() -> R,
+        {
+            let ip_owned = ip.map(|s| s.to_string());
+            CLIENT_IP
+                .scope(
+                    std::cell::RefCell::new(ip_owned),
+                    CLIENT_USER_AGENT.scope(std::cell::RefCell::new(None), f()),
+                )
+                .await
+        }
+
+        /// IP 相同不告警。
+        #[tokio::test]
+        async fn hijack_ip_same_no_alert() {
+            let (_dao, session) = make_session();
+            create_session_with_ip_ua(&session, "1001", "T1", Some("1.2.3.4"), None).await;
+
+            let detector =
+                SessionHijackDetector::new(session.clone(), SessionHijackMode::AlertOnly);
+            let alerts = with_client_ip(Some("1.2.3.4"), || async {
+                detector.check_on_check_login("1001", "T1").await.unwrap()
+            })
+            .await;
+            assert!(alerts.is_empty(), "IP 相同时不应告警");
+        }
+
+        /// IP 不同且均为 Some 时产生 SessionHijackSuspected 事件。
+        #[tokio::test]
+        async fn hijack_ip_different_emits_alert() {
+            let (_dao, session) = make_session();
+            create_session_with_ip_ua(&session, "1001", "T1", Some("1.2.3.4"), None).await;
+
+            let detector =
+                SessionHijackDetector::new(session.clone(), SessionHijackMode::AlertOnly);
+            let alerts = with_client_ip(Some("5.6.7.8"), || async {
+                detector.check_on_check_login("1001", "T1").await.unwrap()
+            })
+            .await;
+            assert_eq!(alerts.len(), 1, "IP 不同时应返回 1 个告警");
+            match &alerts[0] {
+                SecurityAlertEvent::AnomalyLogin {
+                    anomaly_type,
+                    detail,
+                    ..
+                } => {
+                    assert_eq!(*anomaly_type, AnomalyType::SessionHijackSuspected);
+                    assert!(detail.contains("1.2.3.4"), "detail 应包含存储 IP");
+                    assert!(detail.contains("5.6.7.8"), "detail 应包含当前 IP");
+                },
+                _ => panic!("期望 AnomalyLogin 事件"),
+            }
+        }
+
+        /// 存储 IP 为 None 时不告警。
+        #[tokio::test]
+        async fn hijack_stored_ip_none_no_alert() {
+            let (_dao, session) = make_session();
+            create_session_with_ip_ua(&session, "1001", "T1", None, None).await;
+
+            let detector =
+                SessionHijackDetector::new(session.clone(), SessionHijackMode::AlertOnly);
+            let alerts = with_client_ip(Some("1.2.3.4"), || async {
+                detector.check_on_check_login("1001", "T1").await.unwrap()
+            })
+            .await;
+            assert!(alerts.is_empty(), "存储 IP 为 None 时不应告警");
+        }
+
+        /// 当前 IP 为 None 时不告警。
+        #[tokio::test]
+        async fn hijack_current_ip_none_no_alert() {
+            let (_dao, session) = make_session();
+            create_session_with_ip_ua(&session, "1001", "T1", Some("1.2.3.4"), None).await;
+
+            let detector =
+                SessionHijackDetector::new(session.clone(), SessionHijackMode::AlertOnly);
+            // 不设置 task_local 上下文（current_client_ip 返回 None）
+            let alerts = detector.check_on_check_login("1001", "T1").await.unwrap();
+            assert!(alerts.is_empty(), "当前 IP 为 None 时不应告警");
+        }
+
+        /// Kickout 模式下检测到劫持时 token session 被删除。
+        #[tokio::test]
+        async fn hijack_kickout_mode_deletes_session() {
+            let (_dao, session) = make_session();
+            create_session_with_ip_ua(&session, "1001", "T1", Some("1.2.3.4"), None).await;
+
+            // 确认 session 存在
+            assert!(session.get_token_session("T1").await.unwrap().is_some());
+
+            let detector = SessionHijackDetector::new(session.clone(), SessionHijackMode::Kickout);
+            let alerts = with_client_ip(Some("5.6.7.8"), || async {
+                detector.check_on_check_login("1001", "T1").await.unwrap()
+            })
+            .await;
+            assert_eq!(alerts.len(), 1, "应返回 1 个告警");
+            // Kickout 模式应删除 token session
+            assert!(
+                session.get_token_session("T1").await.unwrap().is_none(),
+                "Kickout 模式下 token session 应被删除"
+            );
+        }
+
+        /// check_on_login 始终返回空 Vec。
+        #[tokio::test]
+        async fn hijack_check_on_login_returns_empty() {
+            let (_dao, session) = make_session();
+            let detector = SessionHijackDetector::new(session, SessionHijackMode::AlertOnly);
+            let alerts = detector
+                .check_on_login("1001", "dev-1", Some("1.2.3.4"))
+                .await
+                .unwrap();
+            assert!(alerts.is_empty(), "check_on_login 应返回空 Vec");
         }
     }
 }

@@ -355,6 +355,79 @@ async fn kickout_by_token_destroys_token_session() {
 }
 
 // ------------------------------------------------------------------------
+// H-7: invalidate_sessions_after_password_change
+// ------------------------------------------------------------------------
+
+/// H-7: 密码修改后失效所有会话。
+///
+/// 调用 `invalidate_sessions_after_password_change` 后该用户所有
+/// Token-Session 和 Account-Session 均被清除。
+#[tokio::test]
+#[serial]
+async fn invalidate_sessions_after_password_change_destroys_all_sessions() {
+    init_global_manager(false).await;
+    let logic = GarrisonManager::logic().unwrap();
+    let t1 = logic
+        .login("pwd-change-user", &LoginParams::default())
+        .await
+        .unwrap();
+    let t2 = logic
+        .login("pwd-change-user", &LoginParams::default())
+        .await
+        .unwrap();
+
+    // 确认会话已创建
+    assert!(logic
+        .session
+        .get_token_session(&t1)
+        .await
+        .unwrap()
+        .is_some());
+    assert!(logic
+        .session
+        .get_token_session(&t2)
+        .await
+        .unwrap()
+        .is_some());
+
+    // 调用密码修改联动失效
+    GarrisonUtil::invalidate_sessions_after_password_change("pwd-change-user")
+        .await
+        .unwrap();
+
+    // 所有 Token-Session 应被清除
+    assert!(
+        logic
+            .session
+            .get_token_session(&t1)
+            .await
+            .unwrap()
+            .is_none(),
+        "密码修改后 t1 应失效"
+    );
+    assert!(
+        logic
+            .session
+            .get_token_session(&t2)
+            .await
+            .unwrap()
+            .is_none(),
+        "密码修改后 t2 应失效"
+    );
+    // Account-Session 应被清除
+    assert!(
+        logic
+            .session
+            .get_account_session("pwd-change-user")
+            .await
+            .unwrap()
+            .is_none(),
+        "密码修改后 Account-Session 应被清除"
+    );
+    GarrisonManager::reset_for_test();
+}
+
+// ------------------------------------------------------------------------
 // check_login 有效 / 无效 / 过期 / 未登录抛异常
 // ------------------------------------------------------------------------
 
