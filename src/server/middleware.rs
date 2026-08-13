@@ -21,10 +21,9 @@ use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use dashmap::DashMap;
 use limiteron::limiters::{Limiter, TokenBucketLimiter};
-use parking_lot::Mutex;
 use serde_json::json;
-use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Instant;
@@ -51,7 +50,7 @@ struct BucketEntry {
 /// - `max_entries` 上限防 DoS 内存耗尽，超限时 LRU 淘汰最久未访问的 bucket。
 /// - `trusted_proxies` 限定 X-Forwarded-For 信任边界，非可信来源的 XFF 被忽略。
 pub struct RateLimitState {
-    buckets: Mutex<HashMap<String, BucketEntry>>,
+    buckets: DashMap<String, BucketEntry>,
     /// 每个 IP 的令牌桶容量（u64，匹配 limiteron TokenBucketLimiter）。
     capacity: u64,
     /// 每个 IP 的令牌补充速率（令牌/秒）。
@@ -83,7 +82,7 @@ impl RateLimitState {
     pub fn with_options(capacity: u32, max_entries: usize, trusted_proxies: Vec<IpAddr>) -> Self {
         let capacity = capacity as u64;
         Self {
-            buckets: Mutex::new(HashMap::new()),
+            buckets: DashMap::new(),
             // 桶容量 = 补充速率 = capacity（与原手写实现一致）
             capacity,
             refill_rate: capacity,
@@ -95,7 +94,7 @@ impl RateLimitState {
 
     /// 当前 bucket 数量（测试/运维用）。
     pub fn bucket_count(&self) -> usize {
-        self.buckets.lock().len()
+        self.buckets.len()
     }
 }
 
@@ -139,23 +138,26 @@ pub async fn rate_limit_middleware(
     let ip = extract_client_ip(&req, &state.trusted_proxies);
     // 短暂持锁：取出 bucket Arc 并更新 last_access，然后在锁外调用 async allow
     // （limiteron allow 内部用原子 CAS，不阻塞，但避免跨 await 持有 parking_lot 锁）
+    // DashMap 分片锁：不同 IP 的读写操作可并行，避免全局 Mutex 瓶颈
     let bucket = {
-        let mut buckets = state.buckets.lock();
         // 新 IP 插入前若已达 max_entries，淘汰最久未访问的 bucket（LRU）
-        if !buckets.contains_key(&ip) && buckets.len() >= state.max_entries {
-            if let Some(oldest_key) = buckets
+        if !state.buckets.contains_key(&ip) && state.buckets.len() >= state.max_entries {
+            if let Some(oldest_key) = state
+                .buckets
                 .iter()
-                .min_by_key(|(_, e)| e.last_access)
-                .map(|(k, _)| k.clone())
+                .min_by_key(|e| e.value().last_access)
+                .map(|e| e.key().clone())
             {
-                buckets.remove(&oldest_key);
+                state.buckets.remove(&oldest_key);
             }
         }
-        let entry = buckets.entry(ip.clone()).or_insert_with(|| BucketEntry {
-            // 每秒补充 refill_rate 个令牌，桶容量为 capacity
-            limiter: Arc::new(TokenBucketLimiter::new(state.capacity, state.refill_rate)),
-            last_access: Instant::now(),
-        });
+        let mut entry = state
+            .buckets
+            .entry(ip.clone())
+            .or_insert_with(|| BucketEntry {
+                limiter: Arc::new(TokenBucketLimiter::new(state.capacity, state.refill_rate)),
+                last_access: Instant::now(),
+            });
         entry.last_access = Instant::now();
         entry.limiter.clone()
     };

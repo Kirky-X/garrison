@@ -13,6 +13,8 @@
 //! - `GARRISON_INTERNAL_PORT`：内网端口（默认 8081）
 //! - `GARRISON_RATE_LIMIT`：外网每 IP 限速（默认 100）
 //! - `GARRISON_INTERNAL_API_KEY`：内网 API Key（必须配置，无默认值，fail-closed）
+//! - `GARRISON_WORKER_THREADS`：Tokio worker 线程数（默认 = CPU 核数）
+//! - `GARRISON_MAX_BLOCKING_THREADS`：Tokio blocking 线程上限（默认 512）
 //!
 //! # 使用
 //!
@@ -26,9 +28,37 @@ use garrison::backend::embedded::BackendEmbedded;
 use garrison::backend::AuthBackend;
 use garrison::error::GarrisonResult;
 use garrison::server::GarrisonAuthServer;
+use mimalloc::MiMalloc;
 
-#[tokio::main]
-async fn main() -> GarrisonResult<()> {
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
+fn main() -> GarrisonResult<()> {
+    // 显式构建 Tokio runtime，支持通过环境变量调优线程参数
+    let worker_threads = std::env::var("GARRISON_WORKER_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok());
+    let max_blocking_threads = std::env::var("GARRISON_MAX_BLOCKING_THREADS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(512);
+
+    let mut runtime_builder = tokio::runtime::Builder::new_multi_thread();
+    runtime_builder
+        .enable_all()
+        .max_blocking_threads(max_blocking_threads);
+    if let Some(threads) = worker_threads {
+        runtime_builder.worker_threads(threads);
+    }
+
+    let runtime = runtime_builder
+        .build()
+        .expect("failed to build Tokio runtime");
+
+    runtime.block_on(async_main())
+}
+
+async fn async_main() -> GarrisonResult<()> {
     // 从环境变量读取配置（带默认值）
     let external_port = std::env::var("GARRISON_EXTERNAL_PORT")
         .ok()

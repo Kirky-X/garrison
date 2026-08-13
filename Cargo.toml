@@ -124,6 +124,8 @@ quick-xml = { version = "0.41", optional = true, default-features = false, featu
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
+# mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
+mimalloc = { version = "0.1", optional = true }
 inklog = { version = "0.1", default-features = false }
 limiteron = { version = "0.2", default-features = false, features = ["distributed"] }
 # sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
@@ -359,7 +361,7 @@ backend-remote = ["dep:reqwest"]
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
 secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
 # secure-simple-token 确保 SimpleTokenStyle 使用 HMAC 签名（A11 CRITICAL 修复）
-auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token"]
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token", "dep:mimalloc"]
 abac = ["dep:cedar-policy", "cache-memory"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
@@ -462,9 +464,10 @@ debug = true
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = "fat"
 codegen-units = 1
 strip = true
+panic = "abort"
 
 # === 测试目标 ===
 [[test]]
