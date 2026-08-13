@@ -284,6 +284,8 @@ tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 web-waf = ["web-axum"]
 web-cors = ["web-axum"]
 web-csrf = ["web-axum", "dep:rand", "dep:base64", "dep:subtle"]
+# HTTP 安全响应头中间件（X-Content-Type-Options / X-Frame-Options / HSTS / Cache-Control）
+web-security-headers = ["web-axum"]
 
 # === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
 # 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）

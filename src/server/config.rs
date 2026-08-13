@@ -12,6 +12,8 @@ impl Default for AuthServerConfig {
             rate_limit_max_entries: 100_000,
             rate_limit_trusted_proxies: Vec::new(),
             internal_api_key: String::new(),
+            external_body_limit: 256 * 1024,  // 256 KB
+            internal_body_limit: 1024 * 1024, // 1 MB
         }
     }
 }

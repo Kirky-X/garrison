@@ -1037,6 +1037,17 @@ impl TokenHandler {
         // 删除旧 refresh_token + 签发新 refresh_token（轮换）
         // 旧 token 删除后，再次使用会因 dao.get 返回 None 而返回 invalid_grant
         // （隐式 reuse detection：旧 token 无法重用）
+        //
+        // 安全告警：DAO fallback 无 reuse detection，建议迁移到 RefreshTokenRotation
+        static DAO_FALLBACK_WARNED: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
+        if !DAO_FALLBACK_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::warn!(
+                client_id = %client.client_id,
+                "refresh_token using DAO fallback without reuse detection, \
+                 recommend enabling db-sqlite feature and injecting RefreshTokenRotation"
+            );
+        }
         #[allow(deprecated)]
         let key = DaoKeyPrefix::OAuth2RefreshToken.build_key(refresh_token);
         let json = self

@@ -227,11 +227,24 @@ pub async fn check_abac_with_policy(
 /// 满足 R-abac-001："`abac` feature 关闭时 stub 仍返回 `Ok(())`（no-op 语义不变）"——
 /// 虽然宏仍生成调用代码，但本 stub 使其成为 no-op。
 /// 注意：`abac` feature 开启时未初始化引擎走 fail-closed 路径（见上方 `#[cfg(feature = "abac")]` 版本）。
+///
+/// # 安全告警
+///
+/// 首次调用时输出 `tracing::warn!` 提醒部署者 ABAC 未启用，
+/// 使用 `AtomicBool` 确保进程生命周期内仅告警一次（避免日志洪泛）。
 #[cfg(not(feature = "abac"))]
 pub async fn check_abac_with_policy(
     _action: &str,
     _resource: &str,
     _abac_expr: &str,
 ) -> crate::error::GarrisonResult<()> {
+    static ABAC_NOOP_WARNED: std::sync::atomic::AtomicBool =
+        std::sync::atomic::AtomicBool::new(false);
+    if !ABAC_NOOP_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        tracing::warn!(
+            "ABAC feature is disabled, check_abac_with_policy is a no-op. \
+             Enable 'abac' feature for policy-based authorization"
+        );
+    }
     Ok(())
 }

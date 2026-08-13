@@ -127,6 +127,22 @@ impl GarrisonAuthServer {
         self
     }
 
+    /// 设置外网请求体大小上限（字节，默认 256KB）。
+    ///
+    /// 超过此限制的请求返回 `413 Payload Too Large`。
+    pub fn with_external_body_limit(mut self, limit: usize) -> Self {
+        self.config.external_body_limit = limit;
+        self
+    }
+
+    /// 设置内网请求体大小上限（字节，默认 1MB）。
+    ///
+    /// 超过此限制的请求返回 `413 Payload Too Large`。
+    pub fn with_internal_body_limits(mut self, limit: usize) -> Self {
+        self.config.internal_body_limit = limit;
+        self
+    }
+
     /// 注入租户解析器（feature = "tenant-isolation"）。
     ///
     /// `Some(resolver)` 时，`external_router` / `internal_router` 自动注入
@@ -218,8 +234,16 @@ impl GarrisonAuthServer {
             .layer(axum::middleware::from_fn_with_state(
                 rate_limit_state,
                 rate_limit_middleware,
-            ))
-            .layer(axum::middleware::from_fn(audit_log_middleware));
+            ));
+
+        // 安全头中间件：rate_limit 之后、audit_log 之前
+        // （axum layer 反序执行：audit_log → security_headers → rate_limit → path_filter）
+        #[cfg(feature = "web-security-headers")]
+        let router = router.layer(axum::middleware::from_fn(
+            crate::web::security_headers::security_headers_middleware,
+        ));
+
+        let router = router.layer(axum::middleware::from_fn(audit_log_middleware));
 
         // 租户中间件：tenant-isolation feature 启用且注入 resolver 时才挂载
         #[cfg(feature = "tenant-isolation")]
@@ -265,7 +289,10 @@ impl GarrisonAuthServer {
             }
         };
 
-        router
+        // 请求体大小限制（最外层，确保所有 body extractor 受控）
+        router.layer(axum::extract::DefaultBodyLimit::max(
+            self.config.external_body_limit,
+        ))
     }
 
     /// 构建内网路由（sdforge + path-filter + api_key_auth + audit_log + tenant_resolution）。
@@ -333,7 +360,10 @@ impl GarrisonAuthServer {
             }
         };
 
-        router
+        // 请求体大小限制（最外层，确保所有 body extractor 受控）
+        router.layer(axum::extract::DefaultBodyLimit::max(
+            self.config.internal_body_limit,
+        ))
     }
 
     /// 同时启动外网和内网两个 axum 服务器。

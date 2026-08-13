@@ -11,6 +11,36 @@
 //! - [`XssMode::Whitelist`](crate::secure::xss::XssMode::Whitelist)：白名单内的标签保留原样（属性值中的特殊字符仍转义），
 //!   非白名单标签全部转义，纯文本内容中的特殊字符也转义
 //! - 转义顺序：`&` 必须最先转义，避免二次转义
+//!
+//! ## 使用指南
+//!
+//! `XssProtector` 需在**应用层**对用户输入显式调用转义，框架不会自动处理响应中的 XSS。
+//!
+//! - **JSON 响应**：认证服务器响应为 JSON（`Content-Type: application/json`），
+//!   浏览器不会将其解析为 HTML，通常不需要 HTML 转义。
+//! - **HTML 页面**：OAuth2 authorize 授权页、SSO 重定向页等返回 HTML 的场景，
+//!   必须对所有用户可控输入（如 `redirect_uri`、`state`、用户名）调用 `sanitize`。
+//!
+//! ### EscapeAll 模式（纯文本场景）
+//!
+//! ```ignore
+//! use garrison::secure::xss::{XssMode, XssProtector};
+//!
+//! let protector = XssProtector::new(XssMode::EscapeAll);
+//! let safe = protector.sanitize(user_input);
+//! // "<script>alert(1)</script>" → "&lt;script&gt;alert(1)&lt;/script&gt;"
+//! ```
+//!
+//! ### Whitelist 模式（富文本场景）
+//!
+//! ```ignore
+//! use garrison::secure::xss::{XssMode, XssProtector};
+//!
+//! let protector = XssProtector::new(XssMode::Whitelist(vec!["b", "i", "a"]);
+//! let safe = protector.sanitize(html_input);
+//! // "<b>bold</b><script>x</script>" → "<b>bold</b>&lt;script&gt;x&lt;/script&gt;"
+//! // 白名单标签的 on* 事件属性和 javascript: URI 也会被自动移除
+//! ```
 
 /// XSS 防护模式枚举。
 ///

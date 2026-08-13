@@ -1079,3 +1079,26 @@ async fn test_with_internal_api_key_accepts_str_and_string() {
     let server2 = GarrisonAuthServer::new(backend).with_internal_api_key("string-key".to_string());
     assert_eq!(server2.config.internal_api_key, "string-key");
 }
+
+// ========================================================================
+// body limit 配置测试
+// ========================================================================
+
+/// AuthServerConfig 默认 body limit 值正确（外网 256KB、内网 1MB）。
+#[tokio::test]
+async fn test_default_body_limits() {
+    let config = AuthServerConfig::default();
+    assert_eq!(config.external_body_limit, 256 * 1024, "外网默认应为 256KB");
+    assert_eq!(config.internal_body_limit, 1024 * 1024, "内网默认应为 1MB");
+}
+
+/// builder 方法可覆盖默认 body limit 值。
+#[tokio::test]
+async fn test_with_body_limits() {
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_body_limit(512 * 1024)
+        .with_internal_body_limits(2 * 1024 * 1024);
+    assert_eq!(server.config.external_body_limit, 512 * 1024);
+    assert_eq!(server.config.internal_body_limit, 2 * 1024 * 1024);
+}

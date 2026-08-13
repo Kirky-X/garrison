@@ -69,6 +69,10 @@ pub struct AuthServerConfig {
     pub rate_limit_trusted_proxies: Vec<std::net::IpAddr>,
     /// 内网 API Key（用于 X-API-Key 头校验）。
     pub internal_api_key: String,
+    /// 外网请求体大小上限（字节，默认 256KB）。
+    pub external_body_limit: usize,
+    /// 内网请求体大小上限（字节，默认 1MB）。
+    pub internal_body_limit: usize,
 }
 
 /// TLS 配置（证书 + 私钥文件路径）。

@@ -48,6 +48,10 @@ pub mod cors;
 #[cfg(feature = "web-csrf")]
 pub mod csrf;
 
+/// HTTP 安全响应头中间件模块（X-Content-Type-Options / X-Frame-Options / HSTS / Cache-Control）。
+#[cfg(feature = "web-security-headers")]
+pub mod security_headers;
+
 /// axum 框架适配子模块（firewall-waf middleware 等）。
 #[cfg(feature = "firewall-waf")]
 pub mod axum;
