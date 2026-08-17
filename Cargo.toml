@@ -92,7 +92,7 @@ limiteron = { version = "0.2", default-features = false, features = ["distribute
 # 此 cfg 在 **garrison 上下文** 求值——garrison 必须暴露同名 `http` feature 才能让
 # 路由注册代码编译进来。详见 `[features]` 段的 `http` 桥接 feature。
 sdforge = { version = "0.4", default-features = false, features = ["http"] }
-trait-kit = { version = "0.3", default-features = false, features = ["async"] }
+trait-kit = { version = "0.4", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.11", optional = true, default-features = false }
 icu_plurals = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_datetime = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
