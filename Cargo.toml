@@ -25,7 +25,7 @@ path = "src/lib.rs"
 # === Required dependencies ===
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-confers = "0.4"
+confers = "0.5"
 tokio = { version = "1", features = ["sync", "macros", "rt-multi-thread", "time"] }
 once_cell = "1.19"
 inventory = "0.3"
