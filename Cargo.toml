@@ -166,7 +166,7 @@ wiremock = { workspace = true }
 warp = { default-features = false, features = ["test"], workspace = true }
 rsa = "0.9"
 rand = { workspace = true }
-testcontainers = "0.27"
+testcontainers = "0.28"
 criterion = { version = "0.5", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
