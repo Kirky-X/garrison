@@ -63,7 +63,7 @@ oxcache = { version = "0.3", default-features = false }
 # dbnexus 0.4+ 在 src/lib.rs#L51 设置 compile_error!，强制至少启用一个数据库驱动 feature
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
-dbnexus = { version = "0.4", optional = true, default-features = false }
+dbnexus = { version = "0.5", optional = true, default-features = false }
 sea-orm = { version = "2.0.0-rc.43", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false, features = ["fmt", "json", "env-filter"] }

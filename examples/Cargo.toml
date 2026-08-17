@@ -38,7 +38,7 @@ tonic = { version = "0.14", default-features = false, features = ["transport"], 
 # 直接被 cache_redis 使用（RedisBackend L2 后端配置）
 oxcache = { version = "0.3", optional = true }
 # 直接被 v0_5_0_demo 使用（DbPool 类型签名，与 garrison 同版本 0.4）
-dbnexus = { version = "0.4", default-features = false, optional = true }
+dbnexus = { version = "0.5", default-features = false, optional = true }
 # 直接被 oauth2_flow / scope_handler 使用（mock OAuth2 token / refresh 端点）
 wiremock = "0.6"
 # 直接被 macro_annotations 使用（读取 axum Response body）
