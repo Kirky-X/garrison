@@ -7,25 +7,14 @@
 //! 用 limiteron 的 `GarrisonDaoDistributedLimiter::atomic_check_and_incr` 实现
 //! 全局 + 单 IP 双重限流（fixed window counter 语义，禁止手写 token bucket）。
 //!
-//! # 算法（Fixed Window Counter + AIMD 自适应阈值）
+//! # 算法（Fixed Window Counter，委托 limiteron）
 //!
-//! 1. 全局桶：`atomic_check_and_incr("ddos:global", threshold=adaptive_burst, ttl=1s)`
-//!    —— 1 秒窗口内允许 adaptive_burst 次全局请求
-//! 2. 单 IP 桶：`atomic_check_and_incr("ddos:ip:{ip}", threshold=adaptive_per_ip_rps, ttl=1s)`
-//!    —— 1 秒窗口内允许 adaptive_per_ip_rps 次单 IP 请求
+//! 1. 全局桶：`atomic_check_and_incr("ddos:global", threshold=burst, ttl=1s)`
+//!    —— 1 秒窗口内允许 burst 次全局请求
+//! 2. 单 IP 桶：`atomic_check_and_incr("ddos:ip:{ip}", threshold=per_ip_rps, ttl=1s)`
+//!    —— 1 秒窗口内允许 per_ip_rps 次单 IP 请求
 //! 3. 全局桶先检查，per_ip 桶后检查
 //! 4. 窗口 TTL 到期后计数器自动重置（DAO 后端的 TTL 机制保证）
-//!
-//! ## AIMD 自适应阈值（v0.8.0 新增）
-//!
-//! 启用 [`with_adaptive`](DDoSStrategy::with_adaptive) 后，burst 和 per_ip_rps 阈值
-//! 不再是固定值，而是由 limiteron `RuleBasedAdaptiveLimiter` 的 AIMD 策略动态调整：
-//! - 下游 P99 > target 或 error_rate > target → 收紧阈值（乘 decrease_factor）
-//! - 下游健康 → 放宽阈值（乘 increase_factor）
-//! - 结果 clamp 到 `[min_threshold, max_threshold]`
-//!
-//! 调用方通过 [`record_downstream`](DDoSStrategy::record_downstream) 喂入每次请求的
-//! 响应时间和错误状态，阈值调整在冷却期后自动发生。
 //!
 //! # 与 RateLimit 的区别
 //!
@@ -39,10 +28,9 @@
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
-use crate::limiteron::{AdaptiveThresholdProvider, GarrisonDaoDistributedLimiter};
+use crate::limiteron::GarrisonDaoDistributedLimiter;
 use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
-use limiteron::limiters::adaptive::AdaptiveConfig;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -89,37 +77,15 @@ impl Default for DDoSConfig {
 /// let config = DDoSConfig { global_rps: 100, per_ip_rps: 10, burst: 20 };
 /// let strategy = DDoSStrategy::new(config, dao);
 /// ```
-///
-/// # 启用 AIMD 自适应阈值
-///
-/// ```ignore
-/// use garrison::strategy::firewall::ddos::{DDoSConfig, DDoSStrategy};
-/// use limiteron::limiters::adaptive::AdaptiveConfig;
-///
-/// let adaptive_config = AdaptiveConfig::builder()
-///     .initial_threshold(20)
-///     .min_threshold(5)
-///     .max_threshold(200)
-///     .target_p99_ms(200.0)
-///     .target_error_rate(0.05)
-///     .build();
-///
-/// let strategy = DDoSStrategy::new(config, dao)
-///     .with_adaptive(adaptive_config, adaptive_config.clone());
-/// ```
 pub struct DDoSStrategy {
-    /// 配置（单 IP rps + 全局 burst，固定阈值基准）。
+    /// 配置（单 IP rps + 全局 burst）。
     config: DDoSConfig,
     /// limiteron 适配器（提供原子 check-and-increment）。
     limiter: GarrisonDaoDistributedLimiter,
-    /// 全局桶自适应阈值提供器（None 时用固定 burst）。
-    adaptive_global: Option<AdaptiveThresholdProvider>,
-    /// 单 IP 桶自适应阈值提供器（None 时用固定 per_ip_rps）。
-    adaptive_per_ip: Option<AdaptiveThresholdProvider>,
 }
 
 impl DDoSStrategy {
-    /// 创建 DDoS 防护策略实例（固定阈值模式）。
+    /// 创建 DDoS 防护策略实例。
     ///
     /// # 参数
     /// - `config`: 配置（单 IP rps + 全局 burst）。
@@ -128,90 +94,7 @@ impl DDoSStrategy {
         Self {
             config,
             limiter: GarrisonDaoDistributedLimiter::new(dao),
-            adaptive_global: None,
-            adaptive_per_ip: None,
         }
-    }
-
-    /// 启用 AIMD 自适应阈值，替换固定 burst 和 per_ip_rps。
-    ///
-    /// 启用后，[`check`](GarrisonFirewallStrategy::check) 中使用的 threshold 将从
-    /// `AdaptiveThresholdProvider` 动态获取（基于下游 P99/error_rate 的 AIMD 调整），
-    /// 而非 `DDoSConfig` 的固定值。调用方需通过
-    /// [`record_downstream`](Self::record_downstream) 喂入下游指标。
-    ///
-    /// # 参数
-    /// - `global_config`: 全局桶的 AIMD 配置（initial_threshold 应设为 `burst`）。
-    /// - `per_ip_config`: 单 IP 桶的 AIMD 配置（initial_threshold 应设为 `per_ip_rps`）。
-    ///
-    /// # 返回
-    /// `Self`（builder 模式，允许链式调用）。
-    ///
-    /// # 示例
-    ///
-    /// ```ignore
-    /// use limiteron::limiters::adaptive::AdaptiveConfig;
-    ///
-    /// let global = AdaptiveConfig::builder()
-    ///     .initial_threshold(20)
-    ///     .min_threshold(5)
-    ///     .max_threshold(200)
-    ///     .target_p99_ms(200.0)
-    ///     .target_error_rate(0.05)
-    ///     .build();
-    /// let per_ip = AdaptiveConfig::builder()
-    ///     .initial_threshold(10)
-    ///     .min_threshold(2)
-    ///     .max_threshold(50)
-    ///     .target_p99_ms(200.0)
-    ///     .target_error_rate(0.05)
-    ///     .build();
-    ///
-    /// let strategy = DDoSStrategy::new(config, dao)
-    ///     .with_adaptive(global, per_ip);
-    /// ```
-    pub fn with_adaptive(
-        mut self,
-        global_config: AdaptiveConfig,
-        per_ip_config: AdaptiveConfig,
-    ) -> Self {
-        self.adaptive_global = Some(AdaptiveThresholdProvider::new(global_config));
-        self.adaptive_per_ip = Some(AdaptiveThresholdProvider::new(per_ip_config));
-        self
-    }
-
-    /// 记录下游指标（响应时间 + 是否错误）。
-    ///
-    /// 启用自适应阈值后，调用方应在每次请求完成时调用此方法喂入指标。
-    /// `AdaptiveThresholdProvider` 内部的 `DownstreamMetrics` 采集后，
-    /// AIMD 策略会在冷却期后自动调整阈值。
-    ///
-    /// 未启用自适应阈值时此方法为 no-op。
-    ///
-    /// # 参数
-    /// - `response_time_ms`: 本次请求的响应时间（毫秒）。
-    /// - `is_error`: 本次请求是否为错误。
-    pub fn record_downstream(&self, response_time_ms: f64, is_error: bool) {
-        if let Some(ref global) = self.adaptive_global {
-            global.record_downstream(response_time_ms, is_error);
-        }
-        if let Some(ref per_ip) = self.adaptive_per_ip {
-            per_ip.record_downstream(response_time_ms, is_error);
-        }
-    }
-
-    /// 获取全局桶的自适应阈值提供器引用。
-    ///
-    /// 返回 `Some` 仅当通过 [`with_adaptive`](Self::with_adaptive) 启用自适应时。
-    pub fn adaptive_global_provider(&self) -> Option<&AdaptiveThresholdProvider> {
-        self.adaptive_global.as_ref()
-    }
-
-    /// 获取单 IP 桶的自适应阈值提供器引用。
-    ///
-    /// 返回 `Some` 仅当通过 [`with_adaptive`](Self::with_adaptive) 启用自适应时。
-    pub fn adaptive_per_ip_provider(&self) -> Option<&AdaptiveThresholdProvider> {
-        self.adaptive_per_ip.as_ref()
     }
 }
 
@@ -221,42 +104,30 @@ impl GarrisonFirewallStrategy for DDoSStrategy {
         // 窗口 TTL：1 秒（fixed window counter 语义）
         const WINDOW_TTL: Duration = Duration::from_secs(1);
 
-        // 确定全局桶阈值：自适应模式从 provider 获取，否则用固定 burst
-        let global_threshold = match &self.adaptive_global {
-            Some(provider) => provider.current_threshold().await,
-            None => self.config.burst as u64,
-        };
-
-        // 1. 全局桶检查（threshold=global_threshold，1 秒窗口）
+        // 1. 全局桶检查（threshold=burst，1 秒窗口）
         let global_ok = self
             .limiter
-            .atomic_check_and_incr("ddos:global", global_threshold, WINDOW_TTL)
+            .atomic_check_and_incr("ddos:global", self.config.burst as u64, WINDOW_TTL)
             .await
             .map_err(|e| GarrisonError::Dao(format!("strategy-ddos-global::{}", e)))?;
         if !global_ok {
             return Err(GarrisonError::FirewallBlocked(format!(
                 "strategy-ddos-global-blocked::{}",
-                global_threshold
+                self.config.burst
             )));
         }
 
-        // 确定单 IP 桶阈值：自适应模式从 provider 获取，否则用固定 per_ip_rps
-        let per_ip_threshold = match &self.adaptive_per_ip {
-            Some(provider) => provider.current_threshold().await,
-            None => self.config.per_ip_rps as u64,
-        };
-
-        // 2. 单 IP 桶检查（threshold=per_ip_threshold，1 秒窗口）
+        // 2. 单 IP 桶检查（threshold=per_ip_rps，1 秒窗口）
         let ip_key = format!("ddos:ip:{}", ctx.ip);
         let ip_ok = self
             .limiter
-            .atomic_check_and_incr(&ip_key, per_ip_threshold, WINDOW_TTL)
+            .atomic_check_and_incr(&ip_key, self.config.per_ip_rps as u64, WINDOW_TTL)
             .await
             .map_err(|e| GarrisonError::Dao(format!("strategy-ddos-ip::{}::{}", ctx.ip, e)))?;
         if !ip_ok {
             return Err(GarrisonError::FirewallBlocked(format!(
                 "strategy-ddos-ip-blocked::{}::{}",
-                ctx.ip, per_ip_threshold
+                ctx.ip, self.config.per_ip_rps
             )));
         }
 

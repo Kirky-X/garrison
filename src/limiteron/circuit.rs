@@ -59,17 +59,11 @@ impl ErrorClassifier for GarrisonErrorClassifier {
 /// 以便 `GarrisonErrorClassifier` 不计入失败计数（避免客户端错误触发熔断）。
 fn to_limiteron_error(e: GarrisonError) -> LimiteronError {
     match &e {
-        GarrisonError::Network(msg) => {
-            LimiteronError::StorageError(limiteron::error::StorageError::ConnectionError {
-                msg: msg.clone(),
-                source: None,
-            })
-        },
+        GarrisonError::Network(msg) => LimiteronError::StorageError(
+            limiteron::error::StorageError::ConnectionError(msg.clone()),
+        ),
         GarrisonError::Dao(msg) => {
-            LimiteronError::StorageError(limiteron::error::StorageError::QueryError {
-                msg: msg.clone(),
-                source: None,
-            })
+            LimiteronError::StorageError(limiteron::error::StorageError::QueryError(msg.clone()))
         },
         // 客户端错误 → ValidationError（不计入熔断失败计数）
         GarrisonError::InvalidParam(msg)
@@ -88,10 +82,9 @@ fn to_garrison_error(e: LimiteronError) -> GarrisonError {
         LimiteronError::CircuitBreakerError(msg) => {
             GarrisonError::Network(format!("circuit-open::{}", msg))
         },
-        LimiteronError::StorageError(limiteron::error::StorageError::ConnectionError {
-            msg,
-            ..
-        }) => GarrisonError::Network(msg.clone()),
+        LimiteronError::StorageError(limiteron::error::StorageError::ConnectionError(msg)) => {
+            GarrisonError::Network(msg.clone())
+        },
         LimiteronError::LimitError(msg) => {
             GarrisonError::FirewallBlocked(format!("circuit-limited::{}", msg))
         },

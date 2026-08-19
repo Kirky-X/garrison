@@ -340,8 +340,9 @@ firewall-ratelimit = ["firewall", "dep:rand"]
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall", "limiteron/geo-matching"]
-# v0.8.0：启用 limiteron adaptive-limiting，接入 AIMD 自适应限流
-firewall-ddos = ["firewall", "limiteron/adaptive-limiting", "limiteron/priority-queue"]
+# v0.8.0 曾接入 limiteron AIMD 自适应限流；limiteron 0.2.10 已将 adaptive-limiting /
+# priority-queue 改为 no-op 占位（模块移除），故回落到固定阈值 fixed window counter
+firewall-ddos = ["firewall"]
 firewall-waf = ["firewall", "web-axum"]
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 anomalous-detector-dual = ["firewall", "listener", "dao-key-index"]
@@ -469,7 +470,6 @@ production = [
     "audit-inklog",
     "tenant-isolation",
     "security-alert", "session-hijack-detection", "security-extra", "device-binding",
-    "safe-defaults",
     "core-advanced",
     "firewall-waf",
     "three-tier-cache",
