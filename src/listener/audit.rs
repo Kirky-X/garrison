@@ -115,6 +115,7 @@ fn mask_audit_token(token: &str) -> String {
     format!("{}\u{2026}", prefix)
 }
 
+#[cfg(all(feature = "db-sqlite"))]
 /// metadata 字段脱敏内置黑名单（LOW-1 兜底）。
 ///
 /// 即使 operator 未配置 `AuditConfig.mask_fields`，metadata 中这些敏感字段名也替换为
@@ -136,6 +137,7 @@ const BUILTIN_MASK_FIELDS: &[&str] = &[
     "new_key",
 ];
 
+#[cfg(all(feature = "db-sqlite"))]
 fn json_metadata(pairs: &[(&str, &str)]) -> String {
     let map: serde_json::Map<String, serde_json::Value> = pairs
         .iter()

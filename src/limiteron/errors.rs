@@ -11,18 +11,12 @@ use limiteron::error::{LimiteronError, StorageError};
 
 /// 将 `GarrisonError` 映射为 `StorageError`。
 pub(super) fn map_to_storage_err(e: GarrisonError) -> StorageError {
-    StorageError::QueryError {
-        msg: format!("{}", e),
-        source: None,
-    }
+    StorageError::QueryError(format!("{}", e))
 }
 
 /// 将 `GarrisonError` 映射为 `LimiteronError`。
 pub(super) fn map_to_limiter_err(e: GarrisonError) -> LimiteronError {
-    LimiteronError::StorageError(StorageError::QueryError {
-        msg: format!("{}", e),
-        source: None,
-    })
+    LimiteronError::StorageError(StorageError::QueryError(format!("{}", e)))
 }
 
 #[cfg(test)]

@@ -41,8 +41,8 @@ axum = { version = "0.8", default-features = false, features = ["json"] }
 actix-web = { version = "4.0", default-features = false }
 warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
-oxcache = { version = "0.3", default-features = false }
-dbnexus = { version = "0.4", default-features = false }
+oxcache = { version = "0.4", path = "../base/oxcache", default-features = false }
+dbnexus = { version = "0.5", path = "../base/dbnexus", default-features = false }
 md5 = { version = "0.7" }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "env-filter"] }
 rand = { version = "0.8" }
@@ -65,7 +65,7 @@ path = "src/lib.rs"
 # === Required dependencies ===
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-confers = "0.4"
+confers = { version = "0.5", path = "../base/confers" }
 tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time"] }
 once_cell = "1.19"
 inventory = "0.3"
@@ -99,7 +99,7 @@ bcrypt = { version = "0.19", optional = true }
 rand = { optional = true, workspace = true }
 zeroize = { version = "1", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1", optional = true, default-features = false }
-oxcache = { version = "0.3", default-features = false }
+oxcache = { version = "0.4", path = "../base/oxcache", default-features = false }
 # dbnexus 0.4+ 在 src/lib.rs#L51 设置 compile_error!，强制至少启用一个数据库驱动 feature
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
@@ -126,15 +126,15 @@ redis = { version = "1.2", optional = true, default-features = false, features =
 futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true }
-inklog = { version = "0.1", default-features = false }
-limiteron = { version = "0.2", default-features = false, features = ["distributed"] }
+inklog = { version = "0.2", path = "../base/inklog", default-features = false }
+limiteron = { version = "0.2", path = "../base/limiteron", default-features = false, features = ["distributed"] }
 # sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
 # 始终可用（`server_impl.rs` 无条件调用 `sdforge::http::build()`）。
 # 但 `#[forge]` 宏生成的 `inventory::submit!` 被 `#[cfg(feature = "http")]` 保护，
 # 此 cfg 在 **garrison 上下文** 求值——garrison 必须暴露同名 `http` feature 才能让
 # 路由注册代码编译进来。详见 `[features]` 段的 `http` 桥接 feature。
-sdforge = { version = "0.4", default-features = false, features = ["http"] }
-trait-kit = { version = "0.3", default-features = false, features = ["async"] }
+sdforge = { version = "0.4", path = "../base/sdforge", default-features = false, features = ["http"] }
+trait-kit = { version = "0.4", path = "../base/trait-kit", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.11", optional = true, default-features = false }
 icu_plurals = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_datetime = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
