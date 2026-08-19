@@ -479,7 +479,8 @@ async fn test_listen_starts_and_runs() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(0)
-        .with_internal_port(0);
+        .with_internal_port(0)
+        .with_internal_api_key("test-api-key");
 
     tokio::select! {
         result = server.listen() => {

@@ -531,7 +531,7 @@ fn simple_style_verify_non_numeric_returns_ok() {
 #[cfg(feature = "protocol-jwt")]
 #[test]
 fn jwt_style_generate_and_verify_roundtrip() {
-    let style = JwtTokenStyle::new("test-secret-key");
+    let style = JwtTokenStyle::new("test-secret-key-aaaabbbbccccdddd");
     let token = style.generate("1001", 3600).unwrap();
     let login_id = style.verify(&token).unwrap();
     assert_eq!(
@@ -545,7 +545,7 @@ fn jwt_style_generate_and_verify_roundtrip() {
 #[cfg(feature = "protocol-jwt")]
 #[test]
 fn jwt_style_verify_invalid_returns_none() {
-    let style = JwtTokenStyle::new("test-secret-key");
+    let style = JwtTokenStyle::new("test-secret-key-aaaabbbbccccdddd");
     // 篡改的 token（无法通过签名校验）
     let result = style.verify("invalid.jwt.token").unwrap();
     assert_eq!(result, None, "无效 JWT verify 应返回 Ok(None)");
@@ -555,7 +555,7 @@ fn jwt_style_verify_invalid_returns_none() {
 #[cfg(feature = "protocol-jwt")]
 #[test]
 fn jwt_style_parse_valid_returns_claims() {
-    let style = JwtTokenStyle::new("test-secret-key");
+    let style = JwtTokenStyle::new("test-secret-key-aaaabbbbccccdddd");
     let token = style.generate("2002", 3600).unwrap();
     let claims = style.parse(&token).unwrap();
     assert_eq!(claims.login_id, "2002");
@@ -566,7 +566,7 @@ fn jwt_style_parse_valid_returns_claims() {
 #[cfg(feature = "protocol-jwt")]
 #[test]
 fn jwt_style_parse_invalid_returns_error() {
-    let style = JwtTokenStyle::new("test-secret-key");
+    let style = JwtTokenStyle::new("test-secret-key-aaaabbbbccccdddd");
     let result = style.parse("invalid.jwt.token");
     assert!(result.is_err(), "无效 JWT parse 应返回 Err");
 }

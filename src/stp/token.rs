@@ -600,7 +600,7 @@ mod tests {
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "verify-jwt-secret".to_string().into();
+            config.jwt_secret = "verify-jwt-secret-0000000000000000".to_string().into();
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
@@ -608,7 +608,8 @@ mod tests {
             let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
             // 签发 JWT token
-            let handler = crate::protocol::jwt::JwtHandler::new("verify-jwt-secret-min-32bytes!!");
+            let handler =
+                crate::protocol::jwt::JwtHandler::new("verify-jwt-secret-0000000000000000");
             let jwt_token = handler.sign("jwt-verify-user", 3600).unwrap();
 
             let result = logic.verify_token(&jwt_token).await;
@@ -635,7 +636,7 @@ mod tests {
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "verify-jwt-secret".to_string().into();
+            config.jwt_secret = "verify-jwt-secret-0000000000000000".to_string().into();
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
@@ -676,7 +677,7 @@ mod tests {
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "refresh-jwt-secret".to_string().into();
+            config.jwt_secret = "refresh-jwt-secret-0000000000000000".to_string().into();
             config.timeout = 3600;
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
@@ -685,7 +686,8 @@ mod tests {
             let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
             // 签发 JWT token
-            let handler = crate::protocol::jwt::JwtHandler::new("refresh-jwt-secret-min-32bytes!!");
+            let handler =
+                crate::protocol::jwt::JwtHandler::new("refresh-jwt-secret-0000000000000000");
             let old_token = handler.sign("refresh-user", 3600).unwrap();
 
             let result = logic.refresh_token(&old_token).await;
@@ -712,7 +714,7 @@ mod tests {
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "refresh-jwt-secret".to_string().into();
+            config.jwt_secret = "refresh-jwt-secret-0000000000000000".to_string().into();
             config.timeout = 3600;
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,

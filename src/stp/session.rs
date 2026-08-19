@@ -2632,7 +2632,7 @@ mod tests {
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn check_login_stateless_valid_jwt_returns_true() {
-            let secret = "coverage-secret-stateless-valid";
+            let secret = "coverage-secret-stateless-valid-32bytes!!";
             let logic = make_jwt_logic(false, JwtMode::Stateless, secret);
             let handler = crate::protocol::jwt::JwtHandler::new(secret);
             let jwt_token = handler
@@ -2652,7 +2652,11 @@ mod tests {
         #[cfg(feature = "protocol-jwt")]
         #[tokio::test]
         async fn check_login_stateless_invalid_token_returns_error() {
-            let logic = make_jwt_logic(false, JwtMode::Stateless, "coverage-secret-stateless");
+            let logic = make_jwt_logic(
+                false,
+                JwtMode::Stateless,
+                "coverage-secret-stateless-0123456789",
+            );
             let result = with_current_token("invalid.jwt.token".to_string(), async {
                 logic.check_login().await
             })
@@ -3834,7 +3838,7 @@ mod tests {
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
-            config.jwt_secret = "gen-jwt-secret".to_string().into();
+            config.jwt_secret = "gen-jwt-secret-aaaabbbbccccdddd0".to_string().into();
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,

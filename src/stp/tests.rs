@@ -1701,7 +1701,7 @@ async fn refresh_token_valid_jwt_returns_new_token() {
     let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "refresh-test-secret".to_string().into();
+    config.jwt_secret = "refresh-test-secret-aaaabbbbccccdddd".to_string().into();
     config.timeout = 3600;
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
@@ -1716,7 +1716,7 @@ async fn refresh_token_valid_jwt_returns_new_token() {
     let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
     // 先生成一个有效 JWT token
-    let handler = crate::protocol::jwt::JwtHandler::new("refresh-test-secret-min-32-bytes!!");
+    let handler = crate::protocol::jwt::JwtHandler::new("refresh-test-secret-aaaabbbbccccdddd");
     let original_token = handler.sign("7007", 3600).unwrap();
 
     // 刷新 token（同秒内 iat/exp 可能相同，不强制 new_token != original_token）
@@ -2350,7 +2350,7 @@ async fn check_login_stateless_only_jwt_verify() {
     let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "stateless-test-secret".to_string().into();
+    config.jwt_secret = "stateless-test-secret-aaaabbbbccccdddd".to_string().into();
     config.throw_on_not_login = true;
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
@@ -2362,7 +2362,7 @@ async fn check_login_stateless_only_jwt_verify() {
     );
 
     // 用 JwtHandler 直接签发 token，不通过 login（确保 DAO 无 session）
-    let handler = crate::protocol::jwt::JwtHandler::new("stateless-test-secret-min-32bytes!");
+    let handler = crate::protocol::jwt::JwtHandler::new("stateless-test-secret-aaaabbbbccccdddd");
     let token = handler.sign("1001", 3600).unwrap();
 
     // Stateless 模式：仅 JWT verify，不查 session → 应返回 Ok(true)
@@ -2388,7 +2388,7 @@ async fn check_login_mixin_jwt_and_session() {
     let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "mixin-test-secret".to_string().into();
+    config.jwt_secret = "mixin-test-secret-aaaabbbbccccdddd".to_string().into();
     config.throw_on_not_login = true;
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
@@ -3303,7 +3303,7 @@ async fn check_and_renew_renews_jwt_when_threshold_reached() {
     let mut config = GarrisonConfig::default_config();
     config.timeout = 10;
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "test-secret".to_string().into();
+    config.jwt_secret = "test-secret-aaaabbbbccccdddd-0123456789".to_string().into();
     config.auto_renewal_threshold = 90;
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
