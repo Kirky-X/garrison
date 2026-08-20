@@ -86,7 +86,7 @@ actix-web = { optional = true, default-features = false, workspace = true }
 warp = { optional = true, default-features = false, workspace = true }
 jsonwebtoken = { version = "11", optional = true, default-features = false, features = ["rust_crypto"] }
 reqwest = { optional = true, default-features = false, features = ["json", "rustls", "rustls-native-certs", "form"], workspace = true }
-totp-rs = { version = "5", optional = true }
+totp-rs = { version = "6", optional = true }
 sha2 = { version = "0.11", optional = true }
 hmac = { version = "0.13", optional = true }
 subtle = { version = "2.6", optional = true, default-features = false, features = ["std"] }
