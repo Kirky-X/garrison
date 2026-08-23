@@ -1,0 +1,5 @@
+# 统一 LF 换行（rustfmt newline_style=Unix）：
+# Windows 下 core.autocrlf=true 的 checkout 会把文本文件重写为 CRLF，
+# 导致 cargo fmt --check 全量报 "Incorrect newline style"。
+# eol=lf 使任何平台 checkout 都保持 LF，仓库存储本已是 LF（零 renormalize 差异）。
+* text=auto eol=lf
