@@ -726,6 +726,27 @@ pub struct RedisConfig {
     pub pool_size: u32,
 }
 
+impl RedisConfig {
+    /// 标记并记录「使用默认 Redis 地址」（`redis://127.0.0.1:6379`）的一次性 warn。
+    ///
+    /// 生产缺配会静默连接本机 Redis——此告警让降级路径可见（同一进程仅一次）。
+    pub fn warn_default_once(&self) {
+        use std::sync::OnceLock;
+        static DEFAULT_URL_WARNED: OnceLock<()> = OnceLock::new();
+        let is_default = matches!(
+            &self.mode,
+            RedisDeploymentMode::Single { url }
+                if url == "redis://127.0.0.1:6379"
+        );
+        if is_default && DEFAULT_URL_WARNED.set(()).is_ok() {
+            tracing::warn!(
+                "redis-config-using-default-url: connection will target 127.0.0.1:6379; \
+                 configure Redis via dao config for production"
+            );
+        }
+    }
+}
+
 // ============================================================================
 // `RedisDeploymentMode` 与 `RedisConfig` 的 trait 实现分离至 `defaults` 子模块
 // （规则 25：mod.rs 只放 trait/struct/enum 定义，impl 块拆到独立文件）
@@ -787,15 +808,18 @@ pub mod alone_cache;
 
 pub mod warmup;
 
-// `MockDao` 在生产代码中也作为进程内原子 DAO 使用
-// （如 `PasswordRateLimiter` / `GarrisonFirewallCheckHookDefault` 的内存模式），
-// 不再限制为 `cfg(test)`。
-mod mock;
+// `InMemoryDao` 在生产代码中也作为进程内原子 DAO 使用
+// （如 `PasswordRateLimiter` / `GarrisonFirewallCheckHookDefault` 的内存模式）。
+mod in_memory;
 
-pub use mock::MockDao;
+pub use in_memory::InMemoryDao;
+
+/// 旧名兼容别名（正名 `InMemoryDao`；依赖 `MockDao` 的下游请迁移，下版本移除）。
+#[deprecated(note = "renamed to InMemoryDao")]
+pub type MockDao = InMemoryDao;
 
 #[cfg(all(test, feature = "protocol-apikey"))]
-pub(crate) use mock::glob_match;
+pub(crate) use in_memory::glob_match;
 
 #[cfg(test)]
 /// DAO trait 契约测试与跨模块共享的 mock 实现（仅 `cfg(test)` 下编译）。
@@ -805,7 +829,8 @@ pub mod tests {
     // `crate::dao::tests::MockDao` / `crate::dao::tests::glob_match` 可用
     #[cfg(feature = "protocol-apikey")]
     pub(crate) use super::glob_match;
-    pub use super::MockDao;
+    // 兼容层：重导出 InMemoryDao（测试内部以 MockDao 名使用，不触发 deprecated）
+    pub use super::InMemoryDao as MockDao;
     use crate::error::GarrisonError;
     use parking_lot::Mutex;
     use std::collections::HashMap;

@@ -679,7 +679,7 @@ impl KeycloakProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::MockDao;
+    use crate::dao::InMemoryDao;
 
     // ========================================================================
     // T111-KeycloakConfig Red-Green
@@ -893,7 +893,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let keycloak_claims = provider
             .verify_id_token(&id_token)
             .await
@@ -1061,7 +1061,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -1170,7 +1170,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -1275,7 +1275,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -1382,7 +1382,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let keycloak_claims = provider
             .verify_id_token(&id_token)
             .await

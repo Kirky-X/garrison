@@ -10,7 +10,7 @@
 //! - `password`：用户名密码验证 + token（需注入 PasswordVerifier）
 
 use crate::constants::{DaoKeyPrefix, TokenType};
-use crate::dao::{GarrisonDao, MockDao};
+use crate::dao::{GarrisonDao, InMemoryDao};
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::limiteron::GarrisonDaoDistributedLimiter;
 // 导入 DistributedLimiter trait 以使用 get_count / incr_with_ttl 方法
@@ -220,7 +220,14 @@ impl PasswordRateLimiter {
     /// - `max_attempts`：窗口内允许的最大失败次数（达此值后锁定至窗口过期）
     /// - `window_seconds`：滑动窗口时长（秒），窗口过期后计数自动重置
     pub fn new(max_attempts: u32, window_seconds: u64) -> Self {
-        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        Self::with_memory_default(max_attempts, window_seconds)
+    }
+
+    /// 显式选择进程内内存后端（单实例部署/测试；多实例生产务必 [`with_dao`](Self::with_dao)）。
+    ///
+    /// 仅适用于单实例：多实例部署时限速器将形同虚设（各进程独立计数）。
+    pub fn with_memory_default(max_attempts: u32, window_seconds: u64) -> Self {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
         Self {
             limiter,
@@ -510,7 +517,7 @@ impl TokenRateLimiter {
         username_max: u64,
         username_window_secs: u64,
     ) -> Self {
-        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         Self::with_dao_and_limits(
             client_max,
             client_window_secs,
@@ -1367,7 +1374,7 @@ fn generate_token() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::MockDao;
+    use crate::dao::InMemoryDao;
     use crate::oauth2_server::authorize::AuthorizeHandler;
     use crate::oauth2_server::client::DaoOAuth2ClientStore;
 
@@ -1386,7 +1393,7 @@ mod tests {
 
     /// 创建测试用 handler（含 password verifier）。
     fn make_handler() -> (TokenHandler, Arc<MockDao>) {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(
             store.clone(),
@@ -2315,7 +2322,7 @@ mod tests {
     /// 计数器 key 存在 —— 证明 with_dao 没有像 `new()` 那样内部创建 MockDao。
     #[tokio::test]
     async fn password_rate_limiter_with_dao_uses_injected_dao() {
-        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let limiter = PasswordRateLimiter::with_dao(3, 300, dao.clone());
 
         // 注入的 DAO 初始无 entry
@@ -2347,7 +2354,7 @@ mod tests {
     /// 计数器 key 存在 —— 证明 with_dao_and_limits 没有内部创建 MockDao。
     #[tokio::test]
     async fn token_rate_limiter_with_dao_uses_injected_dao() {
-        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let limiter = TokenRateLimiter::with_dao_and_limits(10, 1, 5, 60, dao.clone());
 
         // 注入的 DAO 初始无 entry
@@ -2380,7 +2387,7 @@ mod tests {
     /// 验证 username 计数器相互独立 —— 这是分布式限速的前提（多实例共享 DAO 计数）。
     #[tokio::test]
     async fn password_rate_limiter_with_dao_isolates_usernames() {
-        let shared_dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let shared_dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
 
         // 模拟两个实例共享同一 DAO
         let limiter1 = PasswordRateLimiter::with_dao(2, 300, shared_dao.clone());
@@ -3484,7 +3491,7 @@ mod refresh_rotation_tests {
     /// 创建注入 RefreshTokenRotation 的 TokenHandler。
     async fn make_handler_with_rotation() -> TokenHandler {
         let pool = setup_db().await;
-        let dao = Arc::new(crate::dao::MockDao::new());
+        let dao = Arc::new(crate::dao::InMemoryDao::new());
         let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(
             store.clone(),
@@ -3504,7 +3511,7 @@ mod refresh_rotation_tests {
 
     /// 创建未注入 RefreshTokenRotation 的 TokenHandler（fallback 路径）。
     fn make_handler_without_rotation() -> TokenHandler {
-        let dao = Arc::new(crate::dao::MockDao::new());
+        let dao = Arc::new(crate::dao::InMemoryDao::new());
         let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(
             store.clone(),

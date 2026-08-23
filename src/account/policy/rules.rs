@@ -516,29 +516,126 @@ impl NistComplianceRule {
     pub fn new(min_length: u32) -> Self {
         Self { min_length }
     }
+}
 
-    /// HIBP（Have I Been Pwned）泄露密码检查。
+/// HIBP（Have I Been Pwned）泄露密码检查结果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HibpVerdict {
+    /// 密码是否出现在已知泄露库（泄漏次数 ≥ 阈值）。
+    pub pwned: bool,
+    /// 命中泄漏次数（0 表示未命中或服务不可达）。
+    pub count: u64,
+    /// HIBP 服务是否可用（网络失败/解析失败时 false——fail-open，不阻塞密码修改）。
+    pub service_available: bool,
+}
+
+impl NistComplianceRule {
+    /// HIBP k-anonymity range API 默认端点。
+    const HIBP_URL: &'static str = "https://api.pwnedpasswords.com/range";
+    /// 默认判定阈值：泄漏次数 ≥ 1 即视为已泄露。
+    const DEFAULT_HIBP_THRESHOLD: u64 = 1;
+    /// 请求超时（秒）。
+    const HIBP_TIMEOUT_SECS: u64 = 3;
+
+    /// HIBP 检查（k-anonymity range search）。
     ///
-    /// # v0.7.0 stub
+    /// 仅上传本地 SHA-1 哈希的前 5 个 hex 字符（不传明文/完整哈希）；
+    /// 响应为 `SUFFIX:COUNT` 行，比对剩余 35 字符后缀并累计次数。
     ///
-    /// 当前为 stub，始终返回 `Ok(())`。v0.9.0 将实现真实 HIBP API 调用：
-    /// - 使用 SHA-1 哈希密码
-    /// - 通过 k-anonymity range search 查询 HIBP API（仅发送哈希前缀）
-    /// - 匹配到的泄露次数 > 0 时返回 `Err(PolicyError)`
+    /// # 失败策略（proposal 澄清 C-2）
     ///
-    /// # 参数
-    /// - `password`: 待检查的明文密码
+    /// 网络不可达/超时/响应解析失败 → **fail-open**：返回未泄露 + `service_available=false`
+    /// + `warn!` 日志（HIBP 不可达不应锁死全部密码修改），调用方可据
+    /// `service_available` 决定补充审计。
     ///
-    /// # 返回
-    /// - `Ok(())`: 密码未泄露（stub 阶段始终返回 Ok）
-    /// - `Err(PolicyError)`: 密码已泄露（v0.9.0 实现）
-    pub fn check_hibp(&self, _password: &str) -> Result<(), PolicyError> {
-        // v0.7.0 stub: 始终返回 Ok，推迟到 v0.9.0 实现真实 HIBP API 调用。
-        // v0.9.0 实现时需注意：
-        // - 使用 reqwest 异步 HTTP client（需将本方法改为 async）
-        // - k-anonymity 协议：仅发送 SHA-1 前 5 字符
-        // - 不阻塞密码修改（HIBP API 不可达时返回 Ok，记日志）
-        Ok(())
+    /// feature `policy-hibp` 关闭时返回显性错误（而非静默通过）。
+    #[cfg(feature = "policy-hibp")]
+    pub async fn check_hibp(&self, password: &str) -> Result<HibpVerdict, PolicyError> {
+        self.check_hibp_with_base(password, Self::HIBP_URL).await
+    }
+
+    /// 指向自定义 base URL 的 HIBP 检查（测试注入点）。
+    #[cfg(feature = "policy-hibp")]
+    pub async fn check_hibp_with_base(
+        &self,
+        password: &str,
+        base_url: &str,
+    ) -> Result<HibpVerdict, PolicyError> {
+        use sha1::{Digest, Sha1};
+
+        let digest = Sha1::digest(password.as_bytes());
+        let hex_digest: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+        let prefix = &hex_digest[..5];
+        let suffix = &hex_digest[5..];
+
+        let url = format!("{base_url}/{prefix}");
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(Self::HIBP_TIMEOUT_SECS))
+            .build()
+            .map_err(|e| {
+                tracing::warn!("hibp-client-build-failed::{}", e);
+                PolicyError::new("hibp", format!("hibp-client-build-failed::{e}"))
+            })?;
+
+        let resp = match client.get(&url).send().await {
+            Ok(r) if r.status().is_success() => r,
+            Ok(r) => {
+                tracing::warn!("hibp-http-status::{url}::{}", r.status());
+                return Ok(HibpVerdict {
+                    pwned: false,
+                    count: 0,
+                    service_available: false,
+                });
+            }
+            Err(e) => {
+                tracing::warn!("hibp-request-failed::{url}::{e}");
+                return Ok(HibpVerdict {
+                    pwned: false,
+                    count: 0,
+                    service_available: false,
+                });
+            }
+        };
+
+        let body = match resp.text().await {
+            Ok(b) => b,
+            Err(e) => {
+                tracing::warn!("hibp-body-read-failed::{e}");
+                return Ok(HibpVerdict {
+                    pwned: false,
+                    count: 0,
+                    service_available: false,
+                });
+            }
+        };
+
+        // 响应形如 "<SUFFIX>:<COUNT>"，每行一个；后缀大小写不敏感比对
+        let suffix_lower = suffix.to_lowercase();
+        let mut total: u64 = 0;
+        for line in body.lines() {
+            if let Some((hit, count_str)) = line.split_once(':') {
+                if hit.trim().to_lowercase() == suffix_lower {
+                    if let Ok(c) = count_str.trim().parse::<u64>() {
+                        total = total.saturating_add(c);
+                    }
+                }
+            }
+        }
+
+        Ok(HibpVerdict {
+            pwned: total >= Self::DEFAULT_HIBP_THRESHOLD,
+            count: total,
+            service_available: true,
+        })
+    }
+
+    /// HIBP 检查（feature 未启用时的显性降级）。
+    #[cfg(not(feature = "policy-hibp"))]
+    pub async fn check_hibp(&self, _password: &str) -> Result<HibpVerdict, PolicyError> {
+        Err(PolicyError::new(
+            "hibp",
+            "HIBP 检查需要启用 policy-hibp feature".to_string(),
+        ))
     }
 }
 
@@ -1084,5 +1181,117 @@ mod tests {
         assert_eq!(rules[6].name(), "dictionary");
         assert_eq!(rules[7].name(), "not_email");
         assert_eq!(rules[8].name(), "regex");
+    }
+}
+
+#[cfg(all(test, feature = "policy-hibp"))]
+mod hibp_tests {
+    use super::*;
+    use sha1::{Digest, Sha1};
+    use wiremock::matchers::{method, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn sha1_hex(pw: &str) -> String {
+        Sha1::digest(pw.as_bytes())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
+
+    /// HIBP 命中（count ≥ 阈值）→ pwned=true。
+    #[tokio::test]
+    async fn hibp_hit_reports_pwned() {
+        let server = MockServer::start().await;
+        let hex = sha1_hex("i_am_leaked_2024");
+        let suffix = &hex[5..];
+        Mock::given(method("GET"))
+            .and(path_regex(r"/range/[0-9a-f]{5}".to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!("{suffix}:217\nAABBCCDD:1\n")))
+            .mount(&server)
+            .await;
+
+        let rule = NistComplianceRule::new(8);
+        let verdict = rule
+            .check_hibp_with_base("i_am_leaked_2024", &format!("{}/range", server.uri()))
+            .await
+            .unwrap();
+        assert!(verdict.pwned, "命中应判定已泄露");
+        assert_eq!(verdict.count, 217);
+        assert!(verdict.service_available);
+    }
+
+    /// 未命中 → pwned=false。
+    #[tokio::test]
+    async fn hibp_miss_reports_clean() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"/range/[0-9a-f]{5}".to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_string("FFFFFF000000000000000000000000000000000001:1\n"))
+            .mount(&server)
+            .await;
+
+        let rule = NistComplianceRule::new(8);
+        let verdict = rule
+            .check_hibp_with_base("totally_clean_password_xyz", &format!("{}/range", server.uri()))
+            .await
+            .unwrap();
+        assert!(!verdict.pwned);
+        assert_eq!(verdict.count, 0);
+        assert!(verdict.service_available);
+    }
+
+    /// HTTP 5xx → fail-open（service_available=false，不报错）。
+    #[tokio::test]
+    async fn hibp_server_error_fails_open() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"/range/[0-9a-f]{5}".to_string()))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let rule = NistComplianceRule::new(8);
+        let verdict = rule
+            .check_hibp_with_base("whatever_password", &format!("{}/range", server.uri()))
+            .await
+            .unwrap();
+        assert!(!verdict.pwned);
+        assert!(!verdict.service_available);
+    }
+
+    /// 响应格式错误 → fail-open。
+    #[tokio::test]
+    async fn hibp_malformed_response_fails_open() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"/range/[0-9a-f]{5}".to_string()))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>error</html>"))
+            .mount(&server)
+            .await;
+
+        let rule = NistComplianceRule::new(8);
+        let verdict = rule
+            .check_hibp_with_base("malformed_response_pw", &format!("{}/range", server.uri()))
+            .await
+            .unwrap();
+        assert!(!verdict.pwned);
+        assert!(verdict.service_available); // 200+格式错：可解析但不命中 → 服务可用
+    }
+
+    /// 连接拒绝（服务不可达）→ fail-open service_available=false。
+    #[tokio::test]
+    async fn hibp_unreachable_fails_open() {
+        // 指向一个无监听的端口
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let rule = NistComplianceRule::new(8);
+        let verdict = rule
+            .check_hibp_with_base("unreachable_pw", &format!("http://{addr}"))
+            .await
+            .unwrap();
+        assert!(!verdict.pwned);
+        assert!(!verdict.service_available);
     }
 }

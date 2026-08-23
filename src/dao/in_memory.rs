@@ -1,11 +1,12 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! DAO 层测试 mock 实现。
+//! DAO 进程内实现（HashMap + Instant 模拟 TTL）。
 //!
-//! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
-//! 提供 `MockDao`（基于 `HashMap` + `Instant` 模拟 TTL）与 `glob_match` helper，
-//! 供 `dao::tests` 契约测试及跨模块测试复用。
+//! 提供 `InMemoryDao`（完整实现 `GarrisonDao` 的内存后端，含 CAS/set_if_absent/
+//! incr/lua 模拟），生产代码亦可用作单实例部署后端（如 PasswordRateLimiter /
+//! GarrisonFirewallCheckHookDefault 的内存模式）；旧名 `InMemoryDao` 以 deprecated
+//! 别名保留一个版本。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -27,17 +28,17 @@ use std::time::{Duration, Instant};
 /// - `expire`: 重置 expire_at
 ///
 /// `pub` 供跨模块测试（如 `strategy::hooks`）复用，仅在 `cfg(test)` 下编译。
-pub struct MockDao {
+pub struct InMemoryDao {
     store: Mutex<HashMap<String, (String, Option<Instant>)>>,
 }
 
-impl Default for MockDao {
+impl Default for InMemoryDao {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl MockDao {
+impl InMemoryDao {
     /// 创建空的 mock DAO 实例（无任何键值）。
     pub fn new() -> Self {
         Self {
@@ -47,7 +48,7 @@ impl MockDao {
 }
 
 #[async_trait]
-impl GarrisonDao for MockDao {
+impl GarrisonDao for InMemoryDao {
     async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
@@ -141,7 +142,7 @@ impl GarrisonDao for MockDao {
     ///
     /// # L7 复杂度说明
     ///
-    /// O(n) 遍历是预期行为：`MockDao` 是测试用实现，store 容量小（通常 < 1000 entry），
+    /// O(n) 遍历是预期行为：`InMemoryDao` 是测试用实现，store 容量小（通常 < 1000 entry），
     /// 无需索引优化。生产环境应使用 `GarrisonDaoOxcache`（Redis SCAN）或 dbnexus（SQL LIKE），
     /// 它们的 keys() 实现委托后端原生 scan API，不在此 O(n) 路径上。
     async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
@@ -390,7 +391,7 @@ impl GarrisonDao for MockDao {
 
     /// eval_lua 内存模拟实现（识别两类脚本模式）。
     ///
-    /// MockDao 不支持真正的 Lua 脚本，但用 `parking_lot::Mutex` 保证进程内原子性。
+    /// InMemoryDao 不支持真正的 Lua 脚本，但用 `parking_lot::Mutex` 保证进程内原子性。
     ///
     /// # 支持的脚本模式
     ///
@@ -430,7 +431,7 @@ impl GarrisonDao for MockDao {
     }
 }
 
-impl MockDao {
+impl InMemoryDao {
     /// INCR + EXPIRE 模式：原子递增 + TTL。
     async fn eval_lua_incr_mode(
         &self,

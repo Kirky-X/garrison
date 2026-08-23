@@ -119,6 +119,10 @@ garrison-macros = { optional = true, workspace = true }
 rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem"] }
 unicode-security = { version = "0.1", optional = true, default-features = false }
 maxminddb = { version = "0.30", optional = true, default-features = false }
+# IP 白名单 CIDR 解析（account-authflow 的 IpWhitelisted 条件真实求值）
+ipnetwork = { version = "0.20", optional = true, default-features = false }
+# HIBP k-anonymity 前缀哈希（policy-hibp 使用；sha2 0.11 不再包含 Sha1）
+sha1 = { version = "0.11.0-rc.5", optional = true, default-features = false }
 quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
 redis = { version = "1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
@@ -287,7 +291,9 @@ account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:sha2", "dep:b
 credential-zeroize = ["account-credential", "zeroize"]
 account-policy = ["account-credential", "dep:regex"]
 account-lockout = ["firewall"]
-account-authflow = ["account-credential", "account-policy", "account-lockout"]
+account-authflow = ["account-credential", "account-policy", "account-lockout", "dep:ipnetwork"]
+# HIBP 泄露密码检查（k-anonymity range search，网络调用；关闭时返回显性错误）
+policy-hibp = ["dep:reqwest", "dep:sha1"]
 
 # === Web 框架适配 ===
 web-axum = ["axum", "axum/tokio", "axum/http1"]

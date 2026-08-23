@@ -540,7 +540,7 @@ mod tests {
 
     // === DaoOAuth2ClientStore 测试 ===
 
-    use crate::dao::MockDao;
+    use crate::dao::InMemoryDao;
 
     fn make_test_client(id: &str) -> OAuth2Client {
         OAuth2Client::new(
@@ -555,7 +555,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_create_and_get() {
-        let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
+        let store = DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new()));
         let client = make_test_client("store-001");
         store.create(client.clone()).await.expect("创建");
         let got = store.get("store-001").await.expect("查询").expect("应存在");
@@ -567,7 +567,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_create_duplicate_fails() {
-        let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
+        let store = DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new()));
         let client = make_test_client("dup-001");
         store.create(client.clone()).await.expect("首次创建");
         let err = store.create(client).await.unwrap_err();
@@ -576,14 +576,14 @@ mod tests {
 
     #[tokio::test]
     async fn store_get_nonexistent_returns_none() {
-        let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
+        let store = DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new()));
         let got = store.get("no-such").await.expect("查询");
         assert!(got.is_none());
     }
 
     #[tokio::test]
     async fn store_update_existing() {
-        let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
+        let store = DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new()));
         let mut client = make_test_client("upd-001");
         store.create(client.clone()).await.expect("创建");
         client.scopes = vec!["admin".into()];
@@ -594,7 +594,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_update_nonexistent_fails() {
-        let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
+        let store = DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new()));
         let client = make_test_client("no-exist");
         let err = store.update(client).await.unwrap_err();
         assert!(matches!(err, GarrisonError::OAuth2(_)));
@@ -602,7 +602,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_delete() {
-        let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
+        let store = DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new()));
         store
             .create(make_test_client("del-001"))
             .await
@@ -613,7 +613,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_list_sorted_by_client_id() {
-        let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
+        let store = DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new()));
         store.create(make_test_client("charlie")).await.unwrap();
         store.create(make_test_client("alpha")).await.unwrap();
         store.create(make_test_client("bravo")).await.unwrap();
@@ -626,7 +626,7 @@ mod tests {
 
     #[tokio::test]
     async fn store_list_empty() {
-        let store = DaoOAuth2ClientStore::new(Arc::new(MockDao::new()));
+        let store = DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new()));
         let list = store.list().await.expect("列表");
         assert!(list.is_empty());
     }

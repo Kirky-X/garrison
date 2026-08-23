@@ -169,6 +169,8 @@ impl GarrisonDaoOxcache {
     /// 消费 self 并返回新实例。
     #[cfg(feature = "cache-redis")]
     pub fn with_redis_config(mut self, config: RedisConfig) -> Self {
+        // 默认地址（127.0.0.1:6379）仅在缺配时出现——一次性 warn 显性化降级路径
+        config.warn_default_once();
         // M4 防护：_sync API（set_if_absent/incr/decr/get_and_delete）仅适用于
         // in-memory 后端。oxcache sync_mode(true) + backend_arc() 会返回
         // Err(NotSupported)（见 oxcache cache_builder.rs L93-101）。

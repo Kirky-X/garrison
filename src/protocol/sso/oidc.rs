@@ -803,7 +803,7 @@ fn url_encode(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::MockDao;
+    use crate::dao::InMemoryDao;
 
     // ========================================================================
     // 数据结构测试
@@ -922,7 +922,7 @@ mod tests {
         let config = make_test_config();
         let provider = DefaultOidcProvider::new(config, "test-client-id", "secret")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let url = provider
             .get_authorization_url(
                 "https://sp.example.com/callback",
@@ -946,7 +946,7 @@ mod tests {
         let config = make_test_config();
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let url = provider
             .get_authorization_url("https://cb.com/cb", "st", &["openid"])
             .await
@@ -960,7 +960,7 @@ mod tests {
         let config = make_test_config();
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let url = provider
             .get_authorization_url("https://cb.com/cb", "st", &[])
             .await
@@ -1045,7 +1045,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         //  先注册 state，再交换授权码
         provider
             .get_authorization_url(
@@ -1089,7 +1089,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         //  先注册 state
         provider
             .get_authorization_url(
@@ -1136,7 +1136,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         //  先注册 state
         provider
             .get_authorization_url(
@@ -1186,7 +1186,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let user_info = provider.get_user_info("access-token-123").await.unwrap();
         assert_eq!(user_info.sub, "user-123");
         assert_eq!(user_info.email, "user@example.com");
@@ -1218,7 +1218,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.get_user_info("bad-token").await;
         assert!(result.is_err());
     }
@@ -1443,7 +1443,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "无效签名应返回错误");
         match result.err() {
@@ -1480,7 +1480,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "过期 token 应返回错误");
         match result.err() {
@@ -1517,7 +1517,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "iss 不匹配应返回错误");
         match result.err() {
@@ -1554,7 +1554,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "aud 不匹配应返回错误");
         match result.err() {
@@ -1594,7 +1594,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(
             result.is_ok(),
@@ -1626,7 +1626,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "client-id", "secret")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.validate_id_token(&id_token).await;
         assert!(result.is_err(), "aud 数组不含 client_id 时应返回错误");
         match result.err() {
@@ -1698,7 +1698,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "secret")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         //  先注册 state
         provider
             .get_authorization_url(
@@ -1767,7 +1767,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         // 未注册 state 直接调用 exchange_code
         let result = provider
             .exchange_code("code", "https://sp.example.com/cb", "unregistered-state")
@@ -1812,7 +1812,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         // 注册 state "abc"
         provider
             .get_authorization_url("https://sp.example.com/cb", "abc", &["openid"])
@@ -1878,7 +1878,7 @@ mod tests {
 
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         // 注册 state
         provider
             .get_authorization_url("https://sp.example.com/cb", "one-time-state", &["openid"])
@@ -1934,7 +1934,7 @@ mod tests {
         // 使用 1 秒 TTL（GarrisonDao::set 的 ttl_seconds: u64 最小粒度为秒）
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()))
+            .with_dao(Arc::new(InMemoryDao::new()))
             .with_state_ttl(Duration::from_secs(1));
         provider
             .get_authorization_url("https://sp.example.com/cb", "expiring-state", &["openid"])
@@ -1976,7 +1976,7 @@ mod tests {
         // with_max_state_entries 是 no-op（DAO 模式下容量由 oxcache 自管理）
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()))
+            .with_dao(Arc::new(InMemoryDao::new()))
             .with_max_state_entries(2);
         // 注册 3 个 state（max=2，但 no-op 不淘汰）
         provider
@@ -2011,7 +2011,7 @@ mod tests {
         };
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         // state_store_len 始终返回 0（stub）
         assert_eq!(provider.state_store_len(), 0);
         provider
@@ -2201,7 +2201,7 @@ mod tests {
         };
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.get_user_info("access-token").await;
         assert!(result.is_err(), "超大 userinfo 响应应返回错误");
     }
@@ -2231,7 +2231,7 @@ mod tests {
         };
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         // 先注册 state
         provider
             .get_authorization_url("https://sp.example.com/cb", "state-e2", &["openid"])

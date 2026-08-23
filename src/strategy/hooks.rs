@@ -22,7 +22,7 @@
 //! | 设备异常 | 未知设备指纹登录 | 阻断登录（0.3.0 简化：需设备库，无数据则 pass） |
 
 use crate::constants::DaoKeyPrefix;
-use crate::dao::{GarrisonDao, MockDao};
+use crate::dao::{GarrisonDao, InMemoryDao};
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::limiteron::GarrisonDaoDistributedLimiter;
 // listener_manager 注入（feature-gated）
@@ -204,11 +204,16 @@ pub struct GarrisonFirewallCheckHookDefault {
 }
 
 impl GarrisonFirewallCheckHookDefault {
-    /// 创建默认实现实例（内存模式，内部用 `MockDao` 作为 limiteron 后端）。
-    ///
-    /// 向后兼容：与原 `new()` 语义一致（进程内计数），但内部委托 limiteron 而非手写 HashMap。
+    /// 创建内存模式默认实例（`#[doc(hidden)]`：仅测试/单实例部署；生产请用
+    /// `with_dao` 注入分布式后端或显式 `with_memory_default`）。
+    #[doc(hidden)]
     pub fn new() -> Self {
-        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        Self::with_memory_default()
+    }
+
+    /// 显式选择进程内内存后端（单实例部署/测试；多实例生产务必 `with_dao`）。
+    pub fn with_memory_default() -> Self {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
         Self {
             limiter,
@@ -637,7 +642,7 @@ mod tests {
 
     /// 辅助：构造 DAO 模式 hook。
     fn make_dao_hook() -> (GarrisonFirewallCheckHookDefault, Arc<MockDao>) {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone());
         (hook, dao)
     }
@@ -651,7 +656,7 @@ mod tests {
     /// `ip_failure_count` / `account_failure_count` 始终从当前后端读取。
     #[tokio::test]
     async fn with_dao_creates_distributed_mode() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone());
         // 验证可创建，且 record_failure 走注入的 DAO 路径
         let ctx = LoginContext::new("1001").with_ip("9.9.9.9");
@@ -877,7 +882,7 @@ mod tests {
     /// 不再静默用 0（避免脏数据导致阈值检测失效）。
     #[tokio::test]
     async fn check_brute_force_returns_err_on_dirty_count() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         // 写入非数字字符串到 fw:acct:1001
         dao.set("fw:acct:1001", "not-a-number", 3600).await.unwrap();
         let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao);
@@ -902,7 +907,7 @@ mod tests {
     /// 覆盖行 364（DAO 模式 count < threshold 返回 Ok）。
     #[tokio::test]
     async fn check_login_frequency_dao_mode_passes_below_threshold() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         // 写入 9 次失败（阈值 10）
         dao.set("fw:ip:1.2.3.4", "9", 3600).await.unwrap();
         let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao);
@@ -916,7 +921,7 @@ mod tests {
     /// 覆盖行 407（DAO 模式 count < threshold 返回 Ok）。
     #[tokio::test]
     async fn check_brute_force_dao_mode_passes_below_threshold() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         // 写入 4 次失败（阈值 5）
         dao.set("fw:acct:1001", "4", 3600).await.unwrap();
         let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao);
@@ -934,7 +939,7 @@ mod tests {
         // inventory 注册需要在静态上下文中
         // 由于 inventory::submit! 在编译期注册，这里用已有的 listener_manager
         // 直接验证：超阈值时返回 Err 即可（broadcast 是副作用）
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         dao.set("fw:acct:1001", "5", 3600).await.unwrap();
         let lm = Arc::new(GarrisonListenerManager::new());
         let hook = GarrisonFirewallCheckHookDefault::new()

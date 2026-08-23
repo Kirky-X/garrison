@@ -348,7 +348,7 @@ pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> GarrisonResult<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::MockDao;
+    use crate::dao::InMemoryDao;
     use crate::oauth2_server::client::{GrantType, OAuth2Client};
 
     /// 创建测试用 OAuth2Client。
@@ -365,7 +365,7 @@ mod tests {
 
     /// 创建测试用 AuthorizeHandler。
     fn make_handler() -> (AuthorizeHandler, Arc<MockDao>) {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let store = Arc::new(crate::oauth2_server::client::DaoOAuth2ClientStore::new(
             dao.clone(),
         ));
