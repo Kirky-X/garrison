@@ -1399,7 +1399,7 @@ mod tests {
     /// T092 测试 1：`with_pkce` 设置有效 verifier 后，`exchange_code` 请求体包含 `code_verifier`
     ///
     ///
-    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic。
+    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic。
     /// Green 阶段（T093）：实现 `with_pkce` 后测试通过。
     ///
     /// # 测试流程
@@ -1468,7 +1468,7 @@ mod tests {
     /// T092 测试 2：`with_pkce` 传入无效 verifier（长度 < 43）返回 `InvalidParam` 错误
     ///
     ///
-    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic（非预期 InvalidParam）。
+    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic（非预期 InvalidParam）。
     /// Green 阶段（T093）：实现校验后返回 `InvalidParam` 错误。
     #[test]
     fn keycloak_pkce_flow_fails_on_invalid_verifier() {
@@ -1561,7 +1561,7 @@ mod tests {
     /// T092 测试 4：同时配置 `client_secret` 和 PKCE 时，`exchange_code` 使用 PKCE 鉴权
     ///
     ///
-    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic。
+    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic。
     /// Green 阶段（T093）：实现 PKCE 优先级逻辑后测试通过。
     ///
     /// # 测试流程

@@ -61,7 +61,7 @@ pub use loader::{EmptyEntityLoader, StaticEntityLoader};
 /// impl EntityLoader for MyDbEntityLoader {
 ///     async fn load_entities(&self) -> GarrisonResult<cedar_policy::Entities> {
 ///         // 从数据库查询实体并构造 Entities
-///         todo!()
+///         (未实现占位)
 ///     }
 /// }
 /// ```

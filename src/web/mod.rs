@@ -162,7 +162,7 @@ mod tests {
         let result = apply_frontend_separation_cors(&mut resp, &config);
         assert!(result.is_ok());
         // 无 Origin 上下文时不设置 Allow-Origin（避免 wildcard）
-        assert!(resp.headers.get(CORS_ALLOW_ORIGIN).is_none());
+        assert!(!resp.headers.contains_key(CORS_ALLOW_ORIGIN));
         assert_eq!(
             resp.headers.get(CORS_ALLOW_HEADERS),
             Some(&DEFAULT_CORS_ALLOW_HEADERS.to_string())
@@ -202,7 +202,7 @@ mod tests {
         let result = apply_frontend_separation_cors_with_origin(&mut resp, &config, None);
         assert!(result.is_ok());
         assert!(
-            resp.headers.get(CORS_ALLOW_ORIGIN).is_none(),
+            !resp.headers.contains_key(CORS_ALLOW_ORIGIN),
             "无 Origin 时不应设置 Allow-Origin"
         );
         // Allow-Headers/Methods 和 Vary 仍应设置

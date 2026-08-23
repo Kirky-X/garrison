@@ -1173,13 +1173,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(
-            ts_after.safe_services.get("expired-service").is_none(),
+            !ts_after.safe_services.contains_key("expired-service"),
             "过期条目应被惰性删除，实际: {:?}",
             ts_after.safe_services
         );
         // 验证未过期条目未受影响
         assert!(
-            ts_after.safe_services.get("valid-service").is_some(),
+            ts_after.safe_services.contains_key("valid-service"),
             "未过期条目不应被删除"
         );
     }

@@ -704,7 +704,7 @@ mod tests {
     /// 验证 `WechatMiniAppProvider::get_user_info` 调用 `jscode2session` 成功时
     /// 返回 `SocialUserInfo`。
     ///
-    /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
+    /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
     /// Green 阶段（T089）：实现 jscode2session 调用后测试通过。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_success() {
@@ -742,7 +742,7 @@ mod tests {
     /// 验证 `WechatMiniAppProvider::get_user_info` 在微信返回 `errcode=40029`
     ///（无效 code）时返回 `GarrisonError`。
     ///
-    /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
+    /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
     /// Green 阶段（T089）：实现 errcode 检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_invalid_code() {
@@ -774,7 +774,7 @@ mod tests {
     /// 验证 `WechatMiniAppProvider::get_user_info` 在 HTTP 500 时返回
     /// `GarrisonError::Network`。
     ///
-    /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
+    /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
     /// Green 阶段（T089）：实现 HTTP 状态码检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_network_error() {
@@ -808,7 +808,7 @@ mod tests {
     /// 验证 `WechatMiniAppProvider::get_user_info` 在响应缺少 `openid` 字段时
     /// 返回 `GarrisonError`。
     ///
-    /// Red 阶段：`get_user_info` 含 `todo!()` → panic。
+    /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
     /// Green 阶段（T089）：实现 openid 缺失检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_missing_openid() {

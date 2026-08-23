@@ -287,7 +287,7 @@ impl PasswordPolicyRule for NotCommonPasswordRule {
 ///
 /// # 安全性
 ///
-/// stub 不触发 `todo!()`/`unimplemented!()` panic，可安全调用。
+/// stub 不触发 `(未实现占位)`/`(未实现占位)` panic，可安全调用。
 pub struct MaxAgeRule;
 
 impl MaxAgeRule {

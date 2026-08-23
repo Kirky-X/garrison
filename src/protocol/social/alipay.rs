@@ -562,7 +562,7 @@ mod tests {
     /// T009 Red: 验证 `AlipayProvider::get_user_info` 解析支付宝 user.info.share 响应中的
     /// nick/avatar/user_id。
     ///
-    /// Red 阶段：`get_user_info` 为 `todo!()` → panic。
+    /// Red 阶段：`get_user_info` 为 `(未实现占位)` → panic。
     /// Green 阶段（T010）：实现 alipay.user.info.share 调用后测试通过。
     ///
     /// # 测试流程

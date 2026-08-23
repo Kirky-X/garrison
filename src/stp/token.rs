@@ -391,7 +391,7 @@ mod tests {
         let client = mock.check_client_token().await;
         let temp = mock.check_temp_token().await;
         for result in [access, client, temp] {
-            let msg = result.err().expect("未登录时应返回 Err");
+            let msg = result.expect_err("未登录时应返回 Err");
             // 通过模式匹配提取内部消息（Debug 已脱敏，不直接输出内部 key）
             let inner = match &msg {
                 GarrisonError::NotLogin(s) => s.clone(),

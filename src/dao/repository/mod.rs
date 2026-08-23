@@ -1250,28 +1250,28 @@ mod tests {
             &self,
             _stmt: sea_orm::Statement,
         ) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
-            unimplemented!("MockConn only for get_database_backend")
+            Err(sea_orm::DbErr::Custom("MockConn only supports get_database_backend".into()))
         }
 
         async fn execute_unprepared(
             &self,
             _sql: &str,
         ) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
-            unimplemented!("MockConn only for get_database_backend")
+            Err(sea_orm::DbErr::Custom("MockConn only supports get_database_backend".into()))
         }
 
         async fn query_one_raw(
             &self,
             _stmt: sea_orm::Statement,
         ) -> Result<Option<sea_orm::QueryResult>, sea_orm::DbErr> {
-            unimplemented!("MockConn only for get_database_backend")
+            Err(sea_orm::DbErr::Custom("MockConn only supports get_database_backend".into()))
         }
 
         async fn query_all_raw(
             &self,
             _stmt: sea_orm::Statement,
         ) -> Result<Vec<sea_orm::QueryResult>, sea_orm::DbErr> {
-            unimplemented!("MockConn only for get_database_backend")
+            Err(sea_orm::DbErr::Custom("MockConn only supports get_database_backend".into()))
         }
     }
 
