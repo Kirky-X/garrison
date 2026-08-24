@@ -27,7 +27,7 @@
 /// ```
 pub struct TotpHandler {
     /// 内部 TOTP 实例。
-    totp: totp_rs::TOTP,
+    totp: totp_rs::Totp,
     /// 时间步长（秒）。用于重放防护 TTL 计算（`validate_and_consume`）。
     step: u64,
 }

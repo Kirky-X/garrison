@@ -1392,7 +1392,7 @@ mod tests {
     }
 
     /// 创建测试用 handler（含 password verifier）。
-    fn make_handler() -> (TokenHandler, Arc<MockDao>) {
+    fn make_handler() -> (TokenHandler, Arc<InMemoryDao>) {
         let dao = Arc::new(InMemoryDao::new());
         let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(

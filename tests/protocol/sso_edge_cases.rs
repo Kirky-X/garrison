@@ -8,104 +8,22 @@
 //! - 7.3 centerId 映射不存在返回错误（等价为 client_id 不匹配）
 //! - 7.4 并发 ticket 校验仅一个成功（一次性使用语义）
 //!
-//! 依据 spec protocol-sso。使用 MockDao（HashMap + parking_lot::Mutex + Instant）。
+//! 依据 spec protocol-sso。使用产品内存 Dao 实现 `InMemoryDao`（garrison::dao::InMemoryDao）。
 
 #![cfg(feature = "protocol-sso")]
 
-use async_trait::async_trait;
-use garrison::dao::GarrisonDao;
-use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::dao::{GarrisonDao, InMemoryDao};
+use garrison::error::GarrisonError;
 use garrison::protocol::sso::SsoClient;
-use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-// ============================================================================
-// MockDao（HashMap + parking_lot::Mutex + Instant 模拟 TTL）
-// ============================================================================
-
-struct MockDao {
-    store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-}
-
-impl MockDao {
-    fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl GarrisonDao for MockDao {
-    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
-        let mut store = self.store.lock();
-        match store.get(key) {
-            Some((value, expire_at)) => {
-                if let Some(deadline) = expire_at {
-                    if Instant::now() >= *deadline {
-                        store.remove(key);
-                        return Ok(None);
-                    }
-                }
-                Ok(Some(value.clone()))
-            },
-            None => Ok(None),
-        }
-    }
-
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
-        let expire_at = if ttl_seconds == 0 {
-            None
-        } else {
-            Some(Instant::now() + Duration::from_secs(ttl_seconds))
-        };
-        self.store
-            .lock()
-            .insert(key.to_string(), (value.to_string(), expire_at));
-        Ok(())
-    }
-
-    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((existing, _)) => {
-                *existing = value.to_string();
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((_, expire_at)) => {
-                *expire_at = if seconds == 0 {
-                    None
-                } else {
-                    Some(Instant::now() + Duration::from_secs(seconds))
-                };
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn delete(&self, key: &str) -> GarrisonResult<()> {
-        self.store.lock().remove(key);
-        Ok(())
-    }
-}
 
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
-/// 创建 SsoClient（使用 MockDao）。
+/// 创建 SsoClient（使用产品 InMemoryDao）。
 fn make_client() -> SsoClient {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     SsoClient::new(dao, "test-sso-secret-key")
 }
 
@@ -177,12 +95,12 @@ async fn center_id_mapping_not_found_returns_error() {
 ///
 /// 验证同一 ticket 在并发校验时仅一个成功（一次性使用语义）。
 ///
-/// `validate_ticket` 在校验成功后立即从 DAO 删除 ticket。由于 MockDao 使用
+/// `validate_ticket` 在校验成功后立即从 DAO 删除 ticket。由于 `InMemoryDao` 使用
 /// `parking_lot::Mutex`（同步锁），并发校验会被串行化，确保仅第一个校验成功，
 /// 其余因 ticket 已删除而失败。
 #[tokio::test]
 async fn concurrent_ticket_validation_only_one_succeeds() {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     // 使用 Arc<SsoClient> 以便在多个并发任务间共享
     let client = Arc::new(SsoClient::new(dao, "test-sso-secret-key"));
 

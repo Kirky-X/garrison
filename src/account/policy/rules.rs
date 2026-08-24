@@ -531,10 +531,13 @@ pub struct HibpVerdict {
 
 impl NistComplianceRule {
     /// HIBP k-anonymity range API 默认端点。
+    #[cfg(feature = "policy-hibp")]
     const HIBP_URL: &'static str = "https://api.pwnedpasswords.com/range";
     /// 默认判定阈值：泄漏次数 ≥ 1 即视为已泄露。
+    #[cfg(feature = "policy-hibp")]
     const DEFAULT_HIBP_THRESHOLD: u64 = 1;
     /// 请求超时（秒）。
+    #[cfg(feature = "policy-hibp")]
     const HIBP_TIMEOUT_SECS: u64 = 3;
 
     /// HIBP 检查（k-anonymity range search）。

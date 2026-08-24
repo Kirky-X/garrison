@@ -11,6 +11,14 @@
 //! 5. `GarrisonUtil::logout` 销毁会话
 //!
 //! 依据 spec protocol-jwt + core-auth-api。
+//!
+//! # NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现
+//!
+//! `GarrisonManager::builder().interface(...)` 是必需的依赖注入点，但 garrison
+//! 仓库内基于 Dao 的 `GarrisonInterface` **只有 `#[cfg(test)]` mock 实现**，
+//! 无产品实现（trait 设计为业务方回调）。按 production-mock-purge 规则
+//! "不发明生产代码"，此处保留本地 `MockInterface`（返回空权限/角色列表）
+//! 并明确标注，等待用户裁定（见报告 NEEDS CLARIFICATION #1）。
 
 #![cfg(feature = "protocol-jwt")]
 // jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
@@ -19,97 +27,17 @@
 
 use async_trait::async_trait;
 use garrison::config::GarrisonConfig;
-use garrison::dao::GarrisonDao;
-use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::dao::{GarrisonDao, InMemoryDao};
+use garrison::error::GarrisonResult;
 use garrison::manager::GarrisonManager;
 use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
-use parking_lot::Mutex;
 use serial_test::serial;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-// ============================================================================
-// MockDao（HashMap + Instant 模拟 TTL）
-// ============================================================================
-
-struct MockDao {
-    store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-}
-
-impl MockDao {
-    fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl GarrisonDao for MockDao {
-    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
-        let mut store = self.store.lock();
-        match store.get(key) {
-            Some((value, expire_at)) => {
-                if let Some(deadline) = expire_at {
-                    if Instant::now() >= *deadline {
-                        store.remove(key);
-                        return Ok(None);
-                    }
-                }
-                Ok(Some(value.clone()))
-            },
-            None => Ok(None),
-        }
-    }
-
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
-        let expire_at = if ttl_seconds == 0 {
-            None
-        } else {
-            Some(Instant::now() + Duration::from_secs(ttl_seconds))
-        };
-        self.store
-            .lock()
-            .insert(key.to_string(), (value.to_string(), expire_at));
-        Ok(())
-    }
-
-    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((existing, _)) => {
-                *existing = value.to_string();
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((_, expire_at)) => {
-                *expire_at = if seconds == 0 {
-                    None
-                } else {
-                    Some(Instant::now() + Duration::from_secs(seconds))
-                };
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn delete(&self, key: &str) -> GarrisonResult<()> {
-        self.store.lock().remove(key);
-        Ok(())
-    }
-}
 
 // ============================================================================
 // MockInterface（权限/角色数据回调）
 // ============================================================================
+// NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，保留本地 mock（见文件头说明）。
 
 struct MockInterface;
 
@@ -128,8 +56,10 @@ impl GarrisonInterface for MockInterface {
 // ============================================================================
 
 /// 初始化 GarrisonManager（token_style=jwt，jwt_secret ≥ 32 字节）。
+///
+/// DAO 使用产品内存实现 `InMemoryDao`（garrison::dao::InMemoryDao）。
 async fn init_jwt_manager() {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     // ≥32 字节，满足 HS256 jwt_secret 最小长度校验

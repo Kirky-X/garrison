@@ -9,7 +9,7 @@
 //! - 8.4 已过期的 JWT 调用 refresh 返回错误
 //! - 8.5 空 claims 的 JWT 被拒绝
 //!
-//! 依据 spec protocol-jwt。直接测试 `JwtHandler`（无状态，不需要 MockDao）。
+//! 依据 spec protocol-jwt。直接测试 `JwtHandler`（无状态，不需要 DAO）。
 
 #![cfg(feature = "protocol-jwt")]
 

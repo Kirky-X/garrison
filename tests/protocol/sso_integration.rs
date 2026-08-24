@@ -14,100 +14,21 @@
 
 #![cfg(feature = "protocol-sso")]
 
-use async_trait::async_trait;
-use garrison::dao::GarrisonDao;
+use garrison::dao::{GarrisonDao, InMemoryDao};
 use garrison::error::GarrisonError;
 use garrison::protocol::sso::SsoClient;
-use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-// ============================================================================
-// MockDao（HashMap + Instant 模拟 TTL，跨子系统共享）
-// ============================================================================
-
-struct MockDao {
-    store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-}
-
-impl MockDao {
-    fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl GarrisonDao for MockDao {
-    async fn get(&self, key: &str) -> Result<Option<String>, GarrisonError> {
-        let mut store = self.store.lock();
-        match store.get(key) {
-            Some((value, expire_at)) => {
-                if let Some(deadline) = expire_at {
-                    if Instant::now() >= *deadline {
-                        store.remove(key);
-                        return Ok(None);
-                    }
-                }
-                Ok(Some(value.clone()))
-            },
-            None => Ok(None),
-        }
-    }
-
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<(), GarrisonError> {
-        let expire_at = if ttl_seconds == 0 {
-            None
-        } else {
-            Some(Instant::now() + Duration::from_secs(ttl_seconds))
-        };
-        self.store
-            .lock()
-            .insert(key.to_string(), (value.to_string(), expire_at));
-        Ok(())
-    }
-
-    async fn update(&self, key: &str, value: &str) -> Result<(), GarrisonError> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((existing, _)) => {
-                *existing = value.to_string();
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn expire(&self, key: &str, seconds: u64) -> Result<(), GarrisonError> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((_, expire_at)) => {
-                *expire_at = if seconds == 0 {
-                    None
-                } else {
-                    Some(Instant::now() + Duration::from_secs(seconds))
-                };
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn delete(&self, key: &str) -> Result<(), GarrisonError> {
-        self.store.lock().remove(key);
-        Ok(())
-    }
-}
 
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
 /// 创建共享 DAO 的两个 SsoClient（模拟子系统 A 和 B）。
-fn make_two_clients() -> (SsoClient, SsoClient, Arc<MockDao>) {
-    let dao = Arc::new(MockDao::new());
+///
+/// 使用产品内存 Dao 实现 `InMemoryDao`（garrison::dao::InMemoryDao），
+/// 经 `Arc<InMemoryDao>` 具体类型共享同一存储实例给两个客户端。
+fn make_two_clients() -> (SsoClient, SsoClient, Arc<InMemoryDao>) {
+    let dao = Arc::new(InMemoryDao::new());
     let dao_dyn: Arc<dyn GarrisonDao> = dao.clone();
     let client_a = SsoClient::new(dao_dyn.clone(), "test-sso-secret-key");
     let client_b = SsoClient::new(dao_dyn, "test-sso-secret-key");
@@ -218,7 +139,7 @@ async fn destroy_nonexistent_ticket_is_idempotent() {
 /// ticket TTL 默认 60 秒（spec Scenario）。
 #[tokio::test]
 async fn ticket_has_default_ttl_60_seconds() {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let client = SsoClient::new(dao, "test-sso-secret-key");
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     // 直接通过 DAO 验证 ticket 存在
@@ -235,7 +156,7 @@ async fn ticket_has_default_ttl_60_seconds() {
 /// with_ticket_ttl 自定义 TTL 跨子系统生效。
 #[tokio::test]
 async fn with_ticket_ttl_custom_ttl_across_subsystems() {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let client_a = SsoClient::new(dao.clone(), "test-sso-secret-key").with_ticket_ttl(120);
     let client_b = SsoClient::new(dao, "test-sso-secret-key").with_ticket_ttl(120);
 

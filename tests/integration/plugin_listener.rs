@@ -19,6 +19,13 @@
 //! 2. auto-wire 端到端（通过 `GarrisonManager::builder()` + `GarrisonUtil::login` 验证自动触发）
 //!
 //! 依据 spec plugin-system + listener-system。
+//!
+//! # production-mock-purge (T024)
+//!
+//! - auto-wire 辅助 DAO `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
+//! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
+//!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
+//!   本文件三个 auto-wire 组内的 `EmptyInterface` 替身保留）。
 
 #![cfg(feature = "listener")]
 
@@ -366,91 +373,6 @@ async fn permission_check_event_only_goes_to_listener() {
 // GarrisonUtil::login 会自动触发 on_login 钩子与 Login 事件。
 // ============================================================================
 
-/// 辅助 MockDao（复用 manager 测试的 HashMap 模式，适配 async）。
-mod auto_wire_helpers {
-    use async_trait::async_trait;
-    use garrison::dao::GarrisonDao;
-    use garrison::error::{GarrisonError, GarrisonResult};
-    use std::collections::HashMap;
-    use std::time::{Duration, Instant};
-    use tokio::sync::Mutex;
-
-    pub struct MockDao {
-        store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-    }
-
-    impl MockDao {
-        pub fn new() -> Self {
-            Self {
-                store: Mutex::new(HashMap::new()),
-            }
-        }
-    }
-
-    #[async_trait]
-    impl GarrisonDao for MockDao {
-        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
-            let mut store = self.store.lock().await;
-            match store.get(key) {
-                Some((value, expire_at)) => {
-                    if let Some(deadline) = expire_at {
-                        if Instant::now() >= *deadline {
-                            store.remove(key);
-                            return Ok(None);
-                        }
-                    }
-                    Ok(Some(value.clone()))
-                },
-                None => Ok(None),
-            }
-        }
-
-        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
-            let expire_at = if ttl_seconds == 0 {
-                None
-            } else {
-                Some(Instant::now() + Duration::from_secs(ttl_seconds))
-            };
-            self.store
-                .lock()
-                .await
-                .insert(key.to_string(), (value.to_string(), expire_at));
-            Ok(())
-        }
-
-        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
-            let mut store = self.store.lock().await;
-            match store.get_mut(key) {
-                Some((existing, _)) => {
-                    *existing = value.to_string();
-                    Ok(())
-                },
-                None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-            }
-        }
-
-        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
-            let mut store = self.store.lock().await;
-            match store.get_mut(key) {
-                Some((_, expire_at)) => {
-                    *expire_at = if seconds == 0 {
-                        None
-                    } else {
-                        Some(Instant::now() + Duration::from_secs(seconds))
-                    };
-                    Ok(())
-                },
-                None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-            }
-        }
-
-        async fn delete(&self, key: &str) -> GarrisonResult<()> {
-            self.store.lock().await.remove(key);
-            Ok(())
-        }
-    }
-}
-
 /// auto-wire: `GarrisonManager::builder()` + `GarrisonUtil::login` 自动触发 plugin on_login 钩子。
 ///
 /// 验证 0.2.1 修复：init 阶段注入 PluginManager 后，
@@ -458,8 +380,8 @@ mod auto_wire_helpers {
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_login_triggers_plugin_on_login() {
-    use auto_wire_helpers::MockDao;
     use garrison::config::GarrisonConfig;
+    use garrison::dao::InMemoryDao;
     use garrison::manager::GarrisonManager;
     use garrison::stp::{GarrisonInterface, GarrisonUtil};
 
@@ -477,7 +399,7 @@ async fn auto_wire_login_triggers_plugin_on_login() {
 
     reset_counters();
 
-    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(InMemoryDao::new());
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 
@@ -507,8 +429,8 @@ async fn auto_wire_login_triggers_plugin_on_login() {
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_login_broadcasts_listener_login_event() {
-    use auto_wire_helpers::MockDao;
     use garrison::config::GarrisonConfig;
+    use garrison::dao::InMemoryDao;
     use garrison::manager::GarrisonManager;
     use garrison::stp::{GarrisonInterface, GarrisonUtil};
 
@@ -525,7 +447,7 @@ async fn auto_wire_login_broadcasts_listener_login_event() {
 
     reset_counters();
 
-    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(InMemoryDao::new());
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 
@@ -553,8 +475,8 @@ async fn auto_wire_login_broadcasts_listener_login_event() {
 #[tokio::test]
 #[serial_test::serial]
 async fn auto_wire_logout_triggers_hooks() {
-    use auto_wire_helpers::MockDao;
     use garrison::config::GarrisonConfig;
+    use garrison::dao::InMemoryDao;
     use garrison::manager::GarrisonManager;
     use garrison::stp::{GarrisonInterface, GarrisonUtil};
 
@@ -571,7 +493,7 @@ async fn auto_wire_logout_triggers_hooks() {
 
     reset_counters();
 
-    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(InMemoryDao::new());
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(EmptyInterface);
 

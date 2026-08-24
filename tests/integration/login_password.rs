@@ -13,6 +13,13 @@
 //! 6. listener 广播 LoginFailure 事件（user_not_found / wrong_password）
 //!
 //! 运行：`cargo test --features "account-credential db-sqlite listener cache-memory" --test login_password_integration`
+//!
+//! # production-mock-purge (T024)
+//!
+//! NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
+//! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
+//! 本文件 `MockInterface` 替身仅满足 `GarrisonPermissionStrategyDefault::new` 构造，
+//! 不参与任何权限断言）。
 
 #![cfg(all(
     feature = "account-credential",

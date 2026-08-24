@@ -84,6 +84,15 @@ pub mod session_flow;
 /// E2E 测试用的空权限/空角色 mock 接口实现。
 ///
 /// `GarrisonInterface` trait 实现位于 [`mock`] 子模块（规则 25 接口隔离）。
+///
+/// # NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现
+///
+/// `GarrisonManager::builder().interface(...)` 是必需注入点，但仓库内基于 Dao 的
+/// `GarrisonInterface` **只有 `#[cfg(test)]` mock 实现，无产品实现**（trait 设计为
+/// 业务方回调；产品权限链 GarrisonInterface → PermissionChecker → Authorizer 中，
+/// PermissionChecker/Authorizer 有产品实现，数据源 callback 无）。按
+/// production-mock-purge 规则"不发明生产代码"，E2E 共享测试替身保留并标注，
+/// 等待用户裁定（见报告 NEEDS CLARIFICATION #1）。
 pub(super) struct MockInterface;
 
 /// 创建 GarrisonDaoOxcache 实例（真实 oxcache 实现，非 Mock）。

@@ -10,6 +10,9 @@
 //! - 6.5 expires_in=0 表示立即过期（解析为 Some(0)）
 //!
 //! 依据 spec protocol-oauth2。使用 wiremock 0.6 提供 HTTP mock。
+//!
+//! # wiremock: 外部第三方协议模拟，经 production-mock-purge 方案豁免
+//! （NEEDS CLARIFICATION #1 用户裁定保留）
 
 #![cfg(feature = "protocol-oauth2")]
 

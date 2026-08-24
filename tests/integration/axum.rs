@@ -6,6 +6,13 @@
 //! 验证 `GarrisonRouter` 包装 `axum::Router`、`route_protected` 语法糖注册鉴权规则、
 //! middleware 自动从 header/cookie 提取 token + 设置 task_local、
 //! `DefaultGarrisonInterceptor` 根据 annotation 调用 `GarrisonUtil` 的完整链路。
+//!
+//! # production-mock-purge (T024)
+//!
+//! - `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
+//! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
+//!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
+//!   本文件 `MockInterface` 替身保留）。
 
 #![cfg(feature = "web-axum")]
 
@@ -14,96 +21,16 @@ use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use garrison::annotation::Annotation;
 use garrison::config::GarrisonConfig;
-use garrison::dao::GarrisonDao;
+use garrison::dao::{GarrisonDao, InMemoryDao};
 use garrison::error::GarrisonError;
 use garrison::manager::GarrisonManager;
 use garrison::router::GarrisonRouter;
 use garrison::stp::{GarrisonInterface, GarrisonUtil};
 use http_body_util::BodyExt;
-use parking_lot::Mutex;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use tower::ServiceExt;
-
-// ============================================================================
-// MockDao（HashMap + Instant 模拟 TTL）
-// ============================================================================
-
-struct MockDao {
-    store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-}
-
-impl MockDao {
-    fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl GarrisonDao for MockDao {
-    async fn get(&self, key: &str) -> Result<Option<String>, GarrisonError> {
-        let mut store = self.store.lock();
-        match store.get(key) {
-            Some((value, expire_at)) => {
-                if let Some(deadline) = expire_at {
-                    if Instant::now() >= *deadline {
-                        store.remove(key);
-                        return Ok(None);
-                    }
-                }
-                Ok(Some(value.clone()))
-            },
-            None => Ok(None),
-        }
-    }
-
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<(), GarrisonError> {
-        let expire_at = if ttl_seconds == 0 {
-            None
-        } else {
-            Some(Instant::now() + Duration::from_secs(ttl_seconds))
-        };
-        self.store
-            .lock()
-            .insert(key.to_string(), (value.to_string(), expire_at));
-        Ok(())
-    }
-
-    async fn update(&self, key: &str, value: &str) -> Result<(), GarrisonError> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((existing, _)) => {
-                *existing = value.to_string();
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn expire(&self, key: &str, seconds: u64) -> Result<(), GarrisonError> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((_, expire_at)) => {
-                *expire_at = if seconds == 0 {
-                    None
-                } else {
-                    Some(Instant::now() + Duration::from_secs(seconds))
-                };
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn delete(&self, key: &str) -> Result<(), GarrisonError> {
-        self.store.lock().remove(key);
-        Ok(())
-    }
-}
 
 // ============================================================================
 // MockInterface（权限/角色数据回调）
@@ -165,7 +92,7 @@ fn make_config() -> GarrisonConfig {
 
 /// 初始化 GarrisonManager（覆盖式更新，带权限/角色数据）。
 async fn init_manager(permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let config = Arc::new(make_config());
     let mut interface = MockInterface::new();
     for (id, perms) in permissions {

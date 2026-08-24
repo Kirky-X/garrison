@@ -364,7 +364,7 @@ mod tests {
     }
 
     /// 创建测试用 AuthorizeHandler。
-    fn make_handler() -> (AuthorizeHandler, Arc<MockDao>) {
+    fn make_handler() -> (AuthorizeHandler, Arc<InMemoryDao>) {
         let dao = Arc::new(InMemoryDao::new());
         let store = Arc::new(crate::oauth2_server::client::DaoOAuth2ClientStore::new(
             dao.clone(),

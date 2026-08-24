@@ -33,17 +33,20 @@ impl GarrisonSession {
     }
 
     /// 获取 DAO 引用（`pub(crate)` 供 `GarrisonLogicDefault` 构造 `ApiKeyHandler`、
-    /// `health::checks` 执行依赖探测等需要 DAO 的内部模块复用）。
+    /// `health::checks` 执行依赖探测，以及 `protocol-jwt` 黑名单读写等内部模块复用）。
     ///
     /// # 调用方
     /// - `GarrisonLogicDefault::check_api_key`（`protocol-apikey` feature）
     /// - `health::checks::DbHealthCheck` / `CacheHealthCheck`（`db-postgres` / `db-mysql` /
     ///   `cache-redis` feature 启用时）
+    /// - `GarrisonLogicDefault::blacklist_jwt_jti` / `check_login_stateless`
+    ///   （`protocol-jwt` feature）
     #[cfg(any(
         feature = "protocol-apikey",
         feature = "db-postgres",
         feature = "db-mysql",
-        feature = "cache-redis"
+        feature = "cache-redis",
+        feature = "protocol-jwt"
     ))]
     pub(crate) fn dao(&self) -> &Arc<dyn GarrisonDao> {
         &self.dao

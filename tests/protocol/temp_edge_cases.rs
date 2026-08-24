@@ -8,104 +8,21 @@
 //! - 11.3 已过期的临时凭证校验失败
 //! - 11.4 scope 超出权限被拒绝
 //!
-//! 依据 spec protocol-temp。使用 MockDao（HashMap + parking_lot::Mutex + Instant）。
+//! 依据 spec protocol-temp。使用产品内存 Dao 实现 `InMemoryDao`（garrison::dao::InMemoryDao）。
 
 #![cfg(feature = "protocol-temp")]
 
-use async_trait::async_trait;
-use garrison::dao::GarrisonDao;
-use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::dao::{GarrisonDao, InMemoryDao};
 use garrison::protocol::temp::TempCredentialHandler;
-use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
-
-// ============================================================================
-// MockDao（HashMap + parking_lot::Mutex + Instant 模拟 TTL）
-// ============================================================================
-
-struct MockDao {
-    store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-}
-
-impl MockDao {
-    fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl GarrisonDao for MockDao {
-    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
-        let mut store = self.store.lock();
-        match store.get(key) {
-            Some((value, expire_at)) => {
-                if let Some(deadline) = expire_at {
-                    if Instant::now() >= *deadline {
-                        store.remove(key);
-                        return Ok(None);
-                    }
-                }
-                Ok(Some(value.clone()))
-            },
-            None => Ok(None),
-        }
-    }
-
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
-        let expire_at = if ttl_seconds == 0 {
-            None
-        } else {
-            Some(Instant::now() + Duration::from_secs(ttl_seconds))
-        };
-        self.store
-            .lock()
-            .insert(key.to_string(), (value.to_string(), expire_at));
-        Ok(())
-    }
-
-    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((existing, _)) => {
-                *existing = value.to_string();
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((_, expire_at)) => {
-                *expire_at = if seconds == 0 {
-                    None
-                } else {
-                    Some(Instant::now() + Duration::from_secs(seconds))
-                };
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn delete(&self, key: &str) -> GarrisonResult<()> {
-        self.store.lock().remove(key);
-        Ok(())
-    }
-}
 
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
-/// 创建 TempCredentialHandler（使用 MockDao）。
+/// 创建 TempCredentialHandler（使用产品 InMemoryDao）。
 fn make_handler() -> TempCredentialHandler {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     TempCredentialHandler::new(dao)
 }
 
@@ -153,7 +70,7 @@ async fn one_time_temp_credential_invalidated_after_use() {
 /// 验证已过期的临时凭证校验失败（get 返回 None）。
 ///
 /// `TempCredentialHandler` 依赖 DAO 的 TTL 机制实现过期。当凭证过期后，
-/// DAO 的 `get` 返回 `None`（MockDao 模拟 TTL 过期）。
+/// DAO 的 `get` 返回 `None`（InMemoryDao 在 `get` 时清理已过期键）。
 #[tokio::test]
 async fn expired_temp_credential_validation_fails() {
     let handler = make_handler();

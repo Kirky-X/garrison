@@ -13,6 +13,13 @@
 //! 6. 跨模式场景：Mixin 下 session 失效 → check_login 失败
 //!
 //! 运行：`cargo test --features "protocol-jwt cache-memory" --test jwt_modes_integration`
+//!
+//! # production-mock-purge (T024)
+//!
+//! NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
+//! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
+//! 本文件 `MockInterface` 替身仅满足 `GarrisonPermissionStrategyDefault::new` 构造，
+//! 不参与任何权限断言）。
 
 #![cfg(all(feature = "protocol-jwt", feature = "cache-memory"))]
 // jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段

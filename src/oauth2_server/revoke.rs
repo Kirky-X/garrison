@@ -75,7 +75,7 @@ mod tests {
     use crate::oauth2_server::token::{TokenHandler, TokenRequest};
 
     /// 创建测试用 handler 和 DAO。
-    fn make_handlers() -> (RevokeHandler, Arc<MockDao>, Arc<TokenHandler>) {
+    fn make_handlers() -> (RevokeHandler, Arc<InMemoryDao>, Arc<TokenHandler>) {
         let dao = Arc::new(InMemoryDao::new());
         let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(

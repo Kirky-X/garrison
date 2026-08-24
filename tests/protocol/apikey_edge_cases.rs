@@ -5,127 +5,28 @@
 //!
 //! 验证 `ApiKeyHandler` 在边界条件下的行为：
 //! - 10.2 命名空间隔离：namespace A 的 APIKey 不能访问 namespace B
-//! - 10.3 已过期的 APIKey 校验失败
+//! - 10.3 已过期的 APIKey 校验失败（原用例因依赖 mock DAO 的"get 不清理过期键"
+//!   语义（`ExpiredToken` 比 `InvalidToken` 更具体），已下沉至 tests/unit/，
+//!   见 `tests/unit/apikey_mock_edge.rs` 的说明）
 //! - 10.4 无效格式的 APIKey 返回错误
 //!
-//! 依据 spec protocol-apikey。使用 MockDao（HashMap + parking_lot::Mutex）。
-//!
-//! 注意：`ApiKeyHandler::verify` 自行检查 `ApiKeyInfo.expire_at` 字段判断过期，
-//! 不依赖 DAO 层 TTL 驱逐。因此 MockDao 不在 `get` 时移除过期键，
-//! 以便 `verify` 能读取 `ApiKeyInfo` 并返回 `ExpiredToken`（而非 `InvalidToken`）。
-//! 这与 apikey 模块自身测试（mod tests）的 MockDao 模式一致。
+//! 依据 spec protocol-apikey。使用产品内存 Dao 实现 `InMemoryDao`
+//! （garrison::dao::InMemoryDao，get 时清理已过期键，符合产品 DAO 语义）。
 
 #![cfg(feature = "protocol-apikey")]
 
-use async_trait::async_trait;
-use garrison::dao::GarrisonDao;
-use garrison::error::{GarrisonError, GarrisonResult};
+use garrison::dao::{GarrisonDao, InMemoryDao};
+use garrison::error::GarrisonError;
 use garrison::protocol::apikey::ApiKeyHandler;
-use parking_lot::Mutex;
-use std::collections::HashMap;
 use std::sync::Arc;
-
-// ============================================================================
-// MockDao（HashMap + parking_lot::Mutex，不强制 TTL 驱逐）
-// ============================================================================
-
-struct MockDao {
-    store: Mutex<HashMap<String, String>>,
-}
-
-impl MockDao {
-    fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl GarrisonDao for MockDao {
-    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
-        Ok(self.store.lock().get(key).cloned())
-    }
-
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
-        self.store.lock().insert(key.to_string(), value.to_string());
-        Ok(())
-    }
-
-    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some(existing) => {
-                *existing = value.to_string();
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
-        Ok(())
-    }
-
-    async fn delete(&self, key: &str) -> GarrisonResult<()> {
-        self.store.lock().remove(key);
-        Ok(())
-    }
-
-    /// 简单 glob 匹配：支持 `*`（任意字符序列）和 `?`（单字符）。
-    ///
-    /// 复制自 `src/dao/mod.rs::tests::glob_match`（pub(crate) 限定，集成测试无法访问）。
-    /// 用于支持 `ApiKeyHandler::verify` 扫描新格式 key `garrison:apikey:*:<key>`。
-    async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
-        let store = self.store.lock();
-        let mut result = Vec::new();
-        for key in store.keys() {
-            if glob_match(pattern, key) {
-                result.push(key.clone());
-            }
-        }
-        Ok(result)
-    }
-}
-
-/// 简单 glob 匹配函数（支持 `*` 和 `?`）。
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let pattern: Vec<char> = pattern.chars().collect();
-    let text: Vec<char> = text.chars().collect();
-    let mut p = 0;
-    let mut t = 0;
-    let mut star_p: Option<usize> = None;
-    let mut star_t = 0;
-
-    while t < text.len() {
-        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == text[t]) {
-            p += 1;
-            t += 1;
-        } else if p < pattern.len() && pattern[p] == '*' {
-            star_p = Some(p);
-            star_t = t;
-            p += 1;
-        } else if let Some(sp) = star_p {
-            p = sp + 1;
-            star_t += 1;
-            t = star_t;
-        } else {
-            return false;
-        }
-    }
-    while p < pattern.len() && pattern[p] == '*' {
-        p += 1;
-    }
-    p == pattern.len()
-}
 
 // ============================================================================
 // 辅助函数
 // ============================================================================
 
-/// 创建 ApiKeyHandler（使用 MockDao）。
+/// 创建 ApiKeyHandler（使用产品 InMemoryDao）。
 fn make_handler() -> ApiKeyHandler {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     ApiKeyHandler::new(dao)
 }
 
@@ -205,30 +106,12 @@ async fn namespace_isolation_blocks_cross_namespace_access() {
     );
 }
 
-/// 10.3 expired_apikey_validation_fails
-///
-/// 验证已过期的 APIKey 校验失败，返回 `ExpiredToken` 错误。
-///
-/// `ApiKeyHandler::verify` 在读取 `ApiKeyInfo` 后检查 `expire_at <= now`，
-/// 若已过期则返回 `ExpiredToken`。
-#[tokio::test]
-async fn expired_apikey_validation_fails() {
-    let handler = make_handler();
-
-    // 生成一个 1 秒过期的 key
-    let key = handler.generate("1001", vec![], 1).await.unwrap();
-
-    // 等待 2 秒让 key 过期
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-    // verify 应返回 ExpiredToken
-    let result = handler.verify(&key).await;
-    assert!(result.is_err(), "已过期的 APIKey 校验应失败");
-    match result.err() {
-        Some(GarrisonError::ExpiredToken(_)) => {},
-        other => panic!("期望 ExpiredToken 错误，实际: {:?}", other),
-    }
-}
+// 10.3 expired_apikey_validation_fails 已下沉至 tests/unit/apikey_mock_edge.rs：
+// 该用例需要 DAO 在 key 过期后仍能返回存入值（由 handler 检查 `ApiKeyInfo.expire_at`
+// 返回 `ExpiredToken`），而产品 `InMemoryDao` 在 `get` 时会清理已过期键，
+// 返回 `InvalidToken`（not-found）。两者均拒绝过期 key，仅错误类型细分不同；
+// 为保持断言语义不变，"以过期-key 仍可读达 ExpiredToken" 的 mock 专属行为用例
+// 按 production-mock-purge 方案下沉至单元测试目录。
 
 /// 10.4 invalid_format_apikey_returns_error
 ///

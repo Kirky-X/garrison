@@ -21,16 +21,23 @@
 //! | 008 | 自动降级到 Stateless | 无自动降级 | 测试 DAO 错误显性传播 |
 //! | 009 | jti 黑名单 | logout 删除 token session | 测试 token 失效 |
 //! | 010 | DisableServiceException | FirewallBlocked | 测试 LockoutState + 构造 DisableService |
+//!
+//! # production-mock-purge (T024)
+//!
+//! - `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
+//! - BW-AC-008 故障注入用例（`FailingDao` + `init_manager_failing` + `bw_ac_008_*`）
+//!   为故障注入语义，属单元层，已下沉至 tests/unit/acceptance_criteria.rs。
+//! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
+//!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
+//!   本文件 `MockInterface` 替身保留）。
 
 #![allow(clippy::bool_assert_comparison)]
 
 use async_trait::async_trait;
-use parking_lot::Mutex;
 use serial_test::serial;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
+use garrison::dao::InMemoryDao;
 use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::session::GarrisonSession;
 use garrison::stp::{with_current_token, GarrisonInterface, GarrisonUtil};
@@ -64,136 +71,6 @@ where
 mod common;
 
 // ============================================================================
-// MockDao：HashMap + Instant 模拟 TTL（复用 stp/tests.rs 的 mock 模式）
-// ============================================================================
-
-struct MockDao {
-    store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-}
-
-impl MockDao {
-    fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl GarrisonDao for MockDao {
-    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
-        let mut store = self.store.lock();
-        match store.get(key) {
-            Some((value, expire_at)) => {
-                if let Some(deadline) = expire_at {
-                    if Instant::now() >= *deadline {
-                        store.remove(key);
-                        return Ok(None);
-                    }
-                }
-                Ok(Some(value.clone()))
-            },
-            None => Ok(None),
-        }
-    }
-
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
-        let expire_at = if ttl_seconds == 0 {
-            None
-        } else {
-            Some(Instant::now() + Duration::from_secs(ttl_seconds))
-        };
-        self.store
-            .lock()
-            .insert(key.to_string(), (value.to_string(), expire_at));
-        Ok(())
-    }
-
-    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((existing, _)) => {
-                *existing = value.to_string();
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((_, expire_at)) => {
-                *expire_at = if seconds == 0 {
-                    None
-                } else {
-                    Some(Instant::now() + Duration::from_secs(seconds))
-                };
-                Ok(())
-            },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn delete(&self, key: &str) -> GarrisonResult<()> {
-        self.store.lock().remove(key);
-        Ok(())
-    }
-
-    /// 查询键的剩余 TTL（重写以支持 BW-AC-002 的 TTL 续期验证）。
-    async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
-        let store = self.store.lock();
-        match store.get(key) {
-            Some((_, Some(deadline))) => {
-                let now = Instant::now();
-                if now >= *deadline {
-                    Ok(None)
-                } else {
-                    Ok(Some(deadline.duration_since(now)))
-                }
-            },
-            Some((_, None)) => Ok(None),
-            None => Ok(None),
-        }
-    }
-}
-
-// ============================================================================
-// FailingDao：所有操作返回 Err（BW-AC-008 模拟 oxcache 故障）
-// ============================================================================
-
-struct FailingDao;
-
-#[async_trait]
-impl GarrisonDao for FailingDao {
-    async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
-        Err(GarrisonError::Dao(
-            "simulated redis cluster failure".to_string(),
-        ))
-    }
-    async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
-        Err(GarrisonError::Dao(
-            "simulated redis cluster failure".to_string(),
-        ))
-    }
-    async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
-        Err(GarrisonError::Dao(
-            "simulated redis cluster failure".to_string(),
-        ))
-    }
-    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
-        Err(GarrisonError::Dao(
-            "simulated redis cluster failure".to_string(),
-        ))
-    }
-    async fn delete(&self, _key: &str) -> GarrisonResult<()> {
-        Err(GarrisonError::Dao(
-            "simulated redis cluster failure".to_string(),
-        ))
-    }
-}
-
-// ============================================================================
 // MockInterface：可配置权限/角色列表
 // ============================================================================
 
@@ -216,12 +93,12 @@ impl GarrisonInterface for MockInterface {
 // 辅助函数：初始化全局 GarrisonManager
 // ============================================================================
 
-/// 初始化全局 GarrisonManager，返回 MockDao 引用（用于验证 DAO 内部状态）。
+/// 初始化全局 GarrisonManager，返回 InMemoryDao 引用（用于验证 DAO 内部状态）。
 ///
 /// 注意：`GarrisonManager::builder()` 是覆盖式更新（line 199 注释），允许重复 init，
 /// 因此 integration tests 不需要 `reset_for_test()`（该函数仅 `#[cfg(test)]` 可见）。
-async fn init_manager(permissions: Vec<String>, roles: Vec<String>) -> Arc<MockDao> {
-    let dao = Arc::new(MockDao::new());
+async fn init_manager(permissions: Vec<String>, roles: Vec<String>) -> Arc<InMemoryDao> {
+    let dao = Arc::new(InMemoryDao::new());
     let mut config = GarrisonConfig::default_config();
     config.timeout = 3600;
     config.active_timeout = -1;
@@ -235,25 +112,6 @@ async fn init_manager(permissions: Vec<String>, roles: Vec<String>) -> Arc<MockD
         .await
         .expect("GarrisonManager::builder() 应成功");
     dao
-}
-
-/// 初始化全局 GarrisonManager 并注入 FailingDao（用于 BW-AC-008 故障降级测试）。
-async fn init_manager_failing() {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
-    let mut config = GarrisonConfig::default_config();
-    config.timeout = 3600;
-    config.active_timeout = -1;
-    let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface {
-        permissions: vec![],
-        roles: vec![],
-    });
-    GarrisonManager::builder()
-        .dao(dao)
-        .config(Arc::new(config))
-        .interface(interface)
-        .build()
-        .await
-        .expect("GarrisonManager::builder() 应成功");
 }
 
 // ============================================================================
@@ -338,7 +196,7 @@ async fn bw_ac_001_oidc_login_creates_account_and_token() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_002_protected_api_renews_token_session_ttl() {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let session = GarrisonSession::new(dao.clone(), 3600, 86400);
 
     // Given: 用户已登录
@@ -406,7 +264,7 @@ async fn bw_ac_002_protected_api_renews_token_session_ttl() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_003_concurrent_login_kicks_earliest_session() {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let session = GarrisonSession::new(dao.clone(), 3600, 86400);
 
     // Given: 用户登录设备 A 和设备 B
@@ -551,13 +409,13 @@ async fn bw_ac_005_permission_check_returns_403() {
 
 /// BW-AC-006：oxcache 后端切换为 Memory 后功能正常（FRD §8.1 BW-AC-006）。
 ///
-/// 验证使用 MockDao（模拟 oxcache 内存后端）时，登录、鉴权、
+/// 验证使用 InMemoryDao（产品内存后端，替代原 MockDao）时，登录、鉴权、
 /// 会话管理功能正常工作。代码无需修改即可适配不同后端。
 ///
 /// # Gherkin
 ///
 /// ```text
-/// Given: oxcache 后端切换为 Memory（使用 MockDao 模拟）
+/// Given: oxcache 后端切换为 Memory（使用产品 InMemoryDao）
 /// When: 修改后端配置后重启
 /// Then:
 ///   - 应用代码无修改
@@ -730,51 +588,6 @@ async fn bw_ac_007_dbnexus_sqlite_backend_works() {
 }
 
 // ============================================================================
-// BW-AC-008: oxcache 故障降级测试
-// ============================================================================
-
-/// BW-AC-008：oxcache Redis Cluster 故障时降级为 JWT Stateless 模式
-/// （FRD §8.1 BW-AC-008）。
-///
-/// # 规则7 冲突
-///
-/// spec 期望"系统降级为 JWT Stateless 模式"，但代码库无自动降级逻辑。
-/// 降级需业务代码捕获 DAO 错误后手动切换 `JwtMode::Stateless`。
-/// 本测试验证 DAO 故障时错误显性传播（规则12：失败必须显性化），
-/// 不验证自动降级（推迟到 v0.7.0）。
-///
-/// # Gherkin
-///
-/// ```text
-/// Given: oxcache Redis Cluster 后端故障（mock DAO 返回 Err）
-/// When: 用户尝试登录
-/// Then:
-///   - DAO 错误显性传播（login 返回 Err(GarrisonError::Dao)）
-///   - 错误不被吞掉或隐藏在默认值背后
-///   - 触发告警（tracing::warn 日志，由 session.create 内部记录）
-/// ```
-#[tokio::test]
-#[serial]
-async fn bw_ac_008_oxcache_failure_degrades_to_jwt_stateless() {
-    init_manager_failing().await;
-
-    // When: 用户尝试登录（FailingDao 的 set 返回 Err）
-    let result = GarrisonUtil::login_simple("user-008").await;
-
-    // Then: DAO 错误显性传播（规则12）
-    assert!(result.is_err(), "DAO 故障时 login 应返回错误（不吞掉）");
-    let err = result.unwrap_err();
-    assert!(
-        matches!(err, GarrisonError::Dao(_)),
-        "期望 Dao 错误，实际: {:?}",
-        err
-    );
-
-    // 规则7 冲突文档：自动降级到 JwtMode::Stateless 未实现。
-    // 业务代码应捕获此错误后手动切换 JwtMode::Stateless 重试（需 protocol-jwt feature）。
-}
-
-// ============================================================================
 // BW-AC-009: logout 后 Token 失效
 // ============================================================================
 
@@ -863,7 +676,7 @@ async fn bw_ac_009_logout_invalidates_token() {
 async fn bw_ac_010_login_failure_locks_account() {
     use garrison::account::lockout::{UserLockoutConfig, UserLockoutStrategy, WaitStrategy};
 
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
 
     // 配置：5 次失败触发锁定，每次临时锁定 30min（Linear 策略 base=1800）
     let config = UserLockoutConfig {

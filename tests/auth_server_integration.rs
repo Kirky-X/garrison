@@ -15,6 +15,23 @@
 //! - 内网端点：check-login / get-token-info / health 等
 //! - 中间件：rate_limit / api_key_auth / audit_log
 //! - 错误响应：401（无 API Key）/ 429（限速）/ 错误码映射
+//!
+//! # NEEDS CLARIFICATION: 无产品 AuthBackend 可替换 MockAuthBackend（保留标注）
+//!
+//! `MockAuthBackend` 是实现产品 `AuthBackend` trait 的测试替身（in-memory token
+//! 表）。仓库内产品 `AuthBackend` 实现仅两个：`BackendEmbedded`（委托全局
+//! `GarrisonManager`，需要业务方提供 `GarrisonInterface`）与 `BackendRemote`
+//! （连接远程 Auth Server）。
+//!
+//! 由于：
+//! 1. garrison 无基于 Dao 的产品 `GarrisonInterface` 实现（见 NEEDS CLARIFICATION #1），
+//!    无法构造 `BackendEmbedded` 的完整产品链；
+//! 2. 断言依赖 mock 的确定性行为（`created_at=1000`、`token-user1-` 前缀、
+//!    `error_code=INVALID_TOKEN`），替换为 `BackendEmbedded` 会改变断言语义、
+//!    违反"断言语义等价，只改依赖注入来源"约束。
+//!
+//! 按 production-mock-purge 规则"不发明生产代码"，本文件 mock 保留并标注，
+//! 等待用户裁定（建议：与 tests/e2e/ 的 BackendEmbedded 全栈测试合并后删除本文件）。
 
 #![cfg(feature = "auth-server")]
 
