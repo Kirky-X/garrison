@@ -424,6 +424,7 @@ async fn main() -> GarrisonResult<()> {
 | `server-graceful-shutdown`    |  ❌  |  0.7.0   | 服务器优雅停机（sdforge 透传）                                                                                                                                                                                                       |
 | `credit-metering`             |  ❌  |  0.7.0   | Credit 计量（多租户配额消费统计 / 告警 / 重置）                                                                                                                                                                                       |
 | `api-docs`                    |  ❌  |  0.7.0   | OpenAPI 文档生成（sdforge 透传）                                                                                                                                                                                                     |
+| `policy-hibp`                 |  ❌  |  0.8.1   | HIBP 泄露密码检查（k-anonymity，仅上传 SHA-1 前 5 位 range 查询，默认关）                                                                                                                                                            |
 | `full`                        |  ❌  |    —     | 聚合所有特性                                                                                                                                                                                                                     |
 | `production`                  |  ❌  |    —     | 生产环境推荐组合                                                                                                                                                                                                                 |
 | `development`                 |  ❌  |    —     | 开发环境组合                                                                                                                                                                                                                     |
@@ -433,6 +434,12 @@ async fn main() -> GarrisonResult<()> {
 ## 📚 API 文档
 
 - **在线文档**：[https://docs.rs/garrison](https://docs.rs/garrison)
+
+### 迁移说明（0.8.x）
+
+- `MockDao` 已正名 `InMemoryDao`（`src/dao/in_memory.rs`；`src/dao/mod.rs` 保留 `#[deprecated]` 别名过渡，下版本移除）。依赖旧名的下游请迁移。
+- authflow 新增 `ip_whitelist`（CIDR 白名单，`IpNetwork::contains`）与 `custom_evaluators`（自定义条件评估 trait `CustomConditionEvaluator`，满足后可短路放行）。
+- `policy-hibp` 关闭时 `check_hibp` 返回显性 `Err(HibpDisabled)`（不再静默通过）。
 - **本地生成**：`cargo doc --no-deps --features full --open`
 - **示例代码**（独立 workspace member，`cargo run -p garrison-examples --bin <name> --features full`）：
   - [examples/src/bin/basic_login.rs](./examples/src/bin/basic_login.rs)：完整业务场景（167 行）
