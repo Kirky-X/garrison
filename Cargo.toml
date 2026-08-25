@@ -540,14 +540,3 @@ unexpected_cfgs = { level = "allow" }
 
 # === 本地 base 项目 patch（与 sinnan workspace 对齐）===
 # garrison 作为 sinnan 的 path 依赖时，sinnan workspace 的 patch 会传播；
-# 此处对齐保证 garrison 独立编译与 sinnan 内编译使用同一套 base 项目源码
-# （limiteron/sdforge 等 HEAD 与 crates.io 发布版存在 API 差异，如
-# limiteron QueryError struct 化、sdforge version 参数数字化）。
-[patch.crates-io]
-sdforge = { path = "../sdforge" }
-dbnexus = { path = "../dbnexus" }
-confers = { path = "../confers" }
-oxcache = { path = "../oxcache" }
-limiteron = { path = "../limiteron" }
-trait-kit = { path = "../trait-kit" }
-inklog = { path = "../inklog" }
