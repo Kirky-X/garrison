@@ -233,14 +233,14 @@ jobs:
       - name: Publish garrison-macros to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --package garrison-macros
+        run: cargo publish --package garrison-macros --allow-dirty
       # 等待 crates.io 索引传播（通常几秒，保险起见 sleep 15s 避免 garrison publish 找不到依赖）
       - name: Wait for crates.io index propagation
         run: sleep 15
       - name: Publish garrison to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --package garrison
+        run: cargo publish --package garrison --allow-dirty
 
   # ============================================================================
   # 阶段 4：创建 GitHub Release（依赖 crates.io 发布成功，避免半发布不一致）
