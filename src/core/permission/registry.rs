@@ -101,7 +101,8 @@ impl PermissionRegistry {
     ///
     /// # 安全检测（`secure-confusable` feature 启用时）
     ///
-    /// 注册前调用 [`check_confusable`](crate::secure::confusable::check_confusable) 检测
+    /// 注册前调用 `check_confusable`（`secure-confusable` feature 启用时经
+    /// `crate::secure::confusable` 模块实现） 检测
     /// permission name 中的 Unicode 同形异义字。发现可疑字符时通过 `tracing::warn` 上报
     /// 。**不阻止注册**——仅警告，符合"失败显性化但非阻塞"原则
     /// （Rule 12）。

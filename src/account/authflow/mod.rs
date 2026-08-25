@@ -86,10 +86,10 @@ pub enum AuthCondition {
     HasCredential(String),
     /// 用户处于锁定状态。
     IsLocked,
-    /// 请求来源 IP 在白名单（经 [`AuthExecutor::with_ip_whitelist`] 注入，
+    /// 请求来源 IP 在白名单（经 [`AuthExecutor::with_ip_whitelist`](crate::account::authflow::executor::AuthExecutor::with_ip_whitelist) 注入，
     /// 未注入时恒为 false）。
     IpWhitelisted,
-    /// 自定义条件（求值器经 [`AuthExecutor::with_custom_evaluator`] 运行期注册；
+    /// 自定义条件（求值器经 [`AuthExecutor::with_custom_evaluator`](crate::account::authflow::executor::AuthExecutor::with_custom_evaluator) 运行期注册；
     /// 未注册的条件名将返回显性错误而非静默 false）。
     Custom(String),
 }
@@ -132,7 +132,7 @@ impl IpWhitelist {
 
 /// 自定义认证条件求值器（[`AuthCondition::Custom`] 的运行期扩展点）。
 ///
-/// 实现方注册到 [`AuthExecutor::with_custom_evaluator`]；求值失败按 `?` 传播。
+/// 实现方注册到 [`AuthExecutor::with_custom_evaluator`](crate::account::authflow::executor::AuthExecutor::with_custom_evaluator)；求值失败按 `?` 传播。
 #[async_trait::async_trait]
 pub trait CustomConditionEvaluator: Send + Sync {
     /// 对给定上下文求值（true = 走 if_step）。

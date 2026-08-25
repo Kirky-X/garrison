@@ -2,6 +2,7 @@
 //! See LICENSE for full license text.
 
 #![doc(html_root_url = "https://docs.rs/garrison/latest")]
+#![allow(rustdoc::invalid_rust_codeblocks)]
 
 //! # Garrison
 //!
