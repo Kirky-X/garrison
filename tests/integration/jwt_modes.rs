@@ -63,7 +63,7 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "jwt-modes-test-secret".to_string().into();
+    config.jwt_secret = "jwt-modes-test-secret-0123456789abcdef".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = true;
     let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
@@ -197,7 +197,7 @@ async fn stateless_mode_passes_with_jwt_only() {
     let logic = make_logic_with_mode(JwtMode::Stateless).await;
 
     // 用 JwtHandler 直接签发 token，不通过 login（确保无 session）
-    let handler = JwtHandler::new("jwt-modes-test-secret-min-32bytes!");
+    let handler = JwtHandler::new("jwt-modes-test-secret-0123456789abcdef");
     let token = handler.sign("5005", 3600).unwrap();
 
     // Stateless：仅 JWT verify，不查 session → 应通过
