@@ -589,7 +589,7 @@ impl NistComplianceRule {
                     count: 0,
                     service_available: false,
                 });
-            }
+            },
             Err(e) => {
                 tracing::warn!("hibp-request-failed::{url}::{e}");
                 return Ok(HibpVerdict {
@@ -597,7 +597,7 @@ impl NistComplianceRule {
                     count: 0,
                     service_available: false,
                 });
-            }
+            },
         };
 
         let body = match resp.text().await {
@@ -609,7 +609,7 @@ impl NistComplianceRule {
                     count: 0,
                     service_available: false,
                 });
-            }
+            },
         };
 
         // 响应形如 "<SUFFIX>:<COUNT>"，每行一个；后缀大小写不敏感比对
@@ -1209,7 +1209,9 @@ mod hibp_tests {
         let suffix = &hex[5..];
         Mock::given(method("GET"))
             .and(path_regex(r"/range/[0-9a-f]{5}".to_string()))
-            .respond_with(ResponseTemplate::new(200).set_body_string(format!("{suffix}:217\nAABBCCDD:1\n")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(format!("{suffix}:217\nAABBCCDD:1\n")),
+            )
             .mount(&server)
             .await;
 
@@ -1229,13 +1231,19 @@ mod hibp_tests {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path_regex(r"/range/[0-9a-f]{5}".to_string()))
-            .respond_with(ResponseTemplate::new(200).set_body_string("FFFFFF000000000000000000000000000000000001:1\n"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string("FFFFFF000000000000000000000000000000000001:1\n"),
+            )
             .mount(&server)
             .await;
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base("totally_clean_password_xyz", &format!("{}/range", server.uri()))
+            .check_hibp_with_base(
+                "totally_clean_password_xyz",
+                &format!("{}/range", server.uri()),
+            )
             .await
             .unwrap();
         assert!(!verdict.pwned);

@@ -37,7 +37,6 @@ use super::{
     AuthCondition, AuthContext, AuthResult, AuthStep, AuthenticationFlow, CustomConditionEvaluator,
     IpWhitelist,
 };
-use std::collections::HashMap;
 use crate::account::credential::{Credential, CredentialModel, CredentialRepository};
 use crate::account::lockout::UserLockoutStrategy;
 use crate::account::policy::PasswordPolicyEngine;
@@ -46,6 +45,7 @@ use crate::loc;
 use crate::stp::{GarrisonLogicDefault, LoginParams, MfaLogic, SessionLogic};
 use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -1093,7 +1093,7 @@ impl AuthExecutor {
                     // 未注入白名单：恒 false（fail-safe），区别于静默——留 debug 痕迹
                     tracing::debug!("authflow-ip-whitelist-not-configured (ip={})", ctx.ip);
                     Ok(false)
-                }
+                },
             },
             AuthCondition::Custom(name) => {
                 // 扩展点：按名查注册的求值器；未注册是配置错误，显性报错而非静默 false
@@ -1103,7 +1103,7 @@ impl AuthExecutor {
                         "authflow-unknown-custom-condition::{name}"
                     ))),
                 }
-            }
+            },
         }
     }
 
@@ -2492,7 +2492,10 @@ mod tests {
                     "注册求值器=true 应执行 if_step（RequiredAction → Failed），reason: {reason}"
                 );
             },
-            other => panic!("注册求值器=true 应执行 if_step（Failed），实际: {:?}", other),
+            other => panic!(
+                "注册求值器=true 应执行 if_step（Failed），实际: {:?}",
+                other
+            ),
         }
     }
 
@@ -2503,7 +2506,9 @@ mod tests {
         #[async_trait]
         impl CustomConditionEvaluator for FailingEval {
             async fn evaluate(&self, _ctx: &AuthContext) -> GarrisonResult<bool> {
-                Err(GarrisonError::InvalidParam("evaluator-intentional-failure".to_string()))
+                Err(GarrisonError::InvalidParam(
+                    "evaluator-intentional-failure".to_string(),
+                ))
             }
         }
 
@@ -2538,11 +2543,8 @@ mod tests {
     #[tokio::test]
     async fn conditional_ip_whitelisted_hit_executes_if_step() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
-        let whitelist = IpWhitelist::parse(&[
-            "10.0.0.0/8".to_string(),
-            "192.168.1.0/24".to_string(),
-        ])
-        .unwrap();
+        let whitelist =
+            IpWhitelist::parse(&["10.0.0.0/8".to_string(), "192.168.1.0/24".to_string()]).unwrap();
         let executor = make_executor(repo, None).with_ip_whitelist(whitelist);
         let flow = FlowBuilder::new("test")
             .conditional(

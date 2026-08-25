@@ -28,12 +28,12 @@
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::StatusCode;
+use garrison::dao::InMemoryDao;
 use garrison::{
     check_abac, check_access_token, check_client_token, check_login, check_mfa, check_permission,
     check_role, check_temp_token, GarrisonConfig, GarrisonDao, GarrisonError, GarrisonInterface,
     GarrisonManager, GarrisonUtil,
 };
-use garrison::dao::InMemoryDao;
 use http_body_util::BodyExt;
 use serial_test::serial;
 use std::collections::HashMap;
