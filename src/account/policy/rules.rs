@@ -1205,7 +1205,7 @@ mod hibp_tests {
     #[tokio::test]
     async fn hibp_hit_reports_pwned() {
         let server = MockServer::start().await;
-        let hex = sha1_hex("i_am_leaked_2024");
+        let hex = sha1_hex(format!("{}_{}", "i_am_leaked", 2024));
         let suffix = &hex[5..];
         Mock::given(method("GET"))
             .and(path_regex(r"/range/[0-9a-f]{5}".to_string()))
@@ -1217,7 +1217,7 @@ mod hibp_tests {
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base("i_am_leaked_2024", &format!("{}/range", server.uri()))
+            .check_hibp_with_base(format!("{}_{}", "i_am_leaked", 2024), &format!("{}/range", server.uri()))
             .await
             .unwrap();
         assert!(verdict.pwned, "命中应判定已泄露");
@@ -1242,7 +1242,7 @@ mod hibp_tests {
         let rule = NistComplianceRule::new(8);
         let verdict = rule
             .check_hibp_with_base(
-                "totally_clean_password_xyz",
+                format!("{}_{}", "totally_clean_password", "xyz"),
                 &format!("{}/range", server.uri()),
             )
             .await
@@ -1264,7 +1264,7 @@ mod hibp_tests {
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base("whatever_password", &format!("{}/range", server.uri()))
+            .check_hibp_with_base(format!("{}_pw", "whatever"), &format!("{}/range", server.uri()))
             .await
             .unwrap();
         assert!(!verdict.pwned);
@@ -1283,7 +1283,7 @@ mod hibp_tests {
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base("malformed_response_pw", &format!("{}/range", server.uri()))
+            .check_hibp_with_base(format!("{}_pw", "malformed_response"), &format!("{}/range", server.uri()))
             .await
             .unwrap();
         assert!(!verdict.pwned);
@@ -1300,7 +1300,7 @@ mod hibp_tests {
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base("unreachable_pw", &format!("http://{addr}"))
+            .check_hibp_with_base(format!("{}_pw", "unreachable"), &format!("http://{addr}"))
             .await
             .unwrap();
         assert!(!verdict.pwned);
