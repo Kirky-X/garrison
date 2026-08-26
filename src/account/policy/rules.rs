@@ -1217,7 +1217,10 @@ mod hibp_tests {
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base(format!("{}_{}", "i_am_leaked", 2024), &format!("{}/range", server.uri()))
+            .check_hibp_with_base(
+                format!("{}_{}", "i_am_leaked", 2024),
+                &format!("{}/range", server.uri()),
+            )
             .await
             .unwrap();
         assert!(verdict.pwned, "命中应判定已泄露");
@@ -1264,7 +1267,10 @@ mod hibp_tests {
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base(format!("{}_pw", "whatever"), &format!("{}/range", server.uri()))
+            .check_hibp_with_base(
+                format!("{}_pw", "whatever"),
+                &format!("{}/range", server.uri()),
+            )
             .await
             .unwrap();
         assert!(!verdict.pwned);
@@ -1283,7 +1289,10 @@ mod hibp_tests {
 
         let rule = NistComplianceRule::new(8);
         let verdict = rule
-            .check_hibp_with_base(format!("{}_pw", "malformed_response"), &format!("{}/range", server.uri()))
+            .check_hibp_with_base(
+                format!("{}_pw", "malformed_response"),
+                &format!("{}/range", server.uri()),
+            )
             .await
             .unwrap();
         assert!(!verdict.pwned);
