@@ -47,7 +47,7 @@ pub fn current_renewed_token() -> Option<String> {
     CURRENT_RENEWED_TOKEN
         .try_get()
         .ok()
-        .and_then(|arc| arc.lock().unwrap().clone())
+        .and_then(|arc| arc.lock().unwrap_or_else(|p| p.into_inner()).clone())
 }
 
 /// 设置续签后的新 Token（crate 内部 API）。
@@ -56,7 +56,7 @@ pub fn current_renewed_token() -> Option<String> {
 /// 作用域内时为 no-op（不影响 `check_login` 返回值）。
 pub(crate) fn set_renewed_token(token: String) {
     if let Ok(arc) = CURRENT_RENEWED_TOKEN.try_get() {
-        *arc.lock().unwrap() = Some(token);
+        *arc.lock().unwrap_or_else(|p| p.into_inner()) = Some(token);
     }
 }
 
@@ -74,7 +74,7 @@ pub fn get_renewed_token() -> Option<String> {
 /// 未在 [`with_renewed_token_scope`] 作用域内调用时为 no-op。
 pub fn clear_renewed_token() {
     if let Ok(arc) = CURRENT_RENEWED_TOKEN.try_get() {
-        *arc.lock().unwrap() = None;
+        *arc.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 }
 
@@ -233,5 +233,27 @@ mod tests {
             assert_eq!(get_renewed_token(), None, "清除后应返回 None");
         })
         .await;
+    }
+
+    /// 锁中毒（poisoned）时仍应恢复内部值而非 panic（T034）。
+    #[tokio::test]
+    async fn renewed_token_recovers_from_poisoned_mutex() {
+        // 构造一个中毒的 Mutex：在持有锁的线程中 panic
+        let poisoned = Arc::new(Mutex::new(Some("kept".to_string())));
+        let p2 = poisoned.clone();
+        let handle = std::thread::spawn(move || {
+            let _guard = p2.lock().unwrap();
+            panic!("inject poison");
+        });
+        let _ = handle.join();
+        // 将中毒的 Arc<Mutex> 注入 task_local 作用域
+        let got = CURRENT_RENEWED_TOKEN
+            .scope(poisoned.clone(), async { current_renewed_token() })
+            .await;
+        assert_eq!(
+            got,
+            Some("kept".to_string()),
+            "锁中毒时应通过 into_inner 恢复内部值而非 panic"
+        );
     }
 }

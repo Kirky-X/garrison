@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 异常检测器实现模块，提供 IP 变化检测与快速连续登录检测。
@@ -279,7 +279,7 @@ mod tests {
     /// 辅助函数：创建带 MockDao 的 GarrisonSession（Arc 包装）。
     fn make_session() -> (Arc<MockDao>, Arc<GarrisonSession>) {
         let dao: Arc<MockDao> = Arc::new(MockDao::new());
-        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
         (dao, session)
     }
 

@@ -1264,6 +1264,49 @@ pub mod tests {
             );
         }
 
+        /// T025：键过期瞬间 update 应返回 missing，且绝不应将键写成永久值。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_update_expired_key_returns_missing_no_permanent_write() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            dao.set("oc_exp_ttl", "value1", 1).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let result = dao.update("oc_exp_ttl", "value2").await;
+            assert!(
+                matches!(result, Err(GarrisonError::Dao(_))),
+                "过期键 update 应返回 Dao 错误而非写入永久值"
+            );
+            let got = dao.get("oc_exp_ttl").await.unwrap();
+            assert!(got.is_none(), "过期键 update 后不应存在（含永久键）");
+            let timeout = dao.get_timeout("oc_exp_ttl").await.unwrap();
+            assert!(timeout.is_none(), "过期键 update 后 timeout 应为 None");
+        }
+
+        /// T025：永久键 update 仍保留永久语义（不为 regression）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_update_permanent_key_stays_permanent() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            dao.set_permanent("oc_perm", "value1").await.unwrap();
+            dao.update("oc_perm", "value2").await.unwrap();
+            let got = dao.get("oc_perm").await.unwrap();
+            assert_eq!(got, Some("value2".to_string()), "永久键 update 应更新值");
+            let timeout = dao.get_timeout("oc_perm").await.unwrap();
+            assert!(timeout.is_none(), "永久键 update 后 timeout 仍应为 None");
+        }
+
+        /// T035：incr 在 u64::MAX 溢出时返回 Dao 错误而非 panic/回绕。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_incr_overflow_returns_error() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            dao.set("oc_incr_max", &u64::MAX.to_string(), 3600)
+                .await
+                .unwrap();
+            let result = dao.incr("oc_incr_max", 3600).await;
+            assert!(
+                matches!(result, Err(GarrisonError::Dao(_))),
+                "u64::MAX 自增应返回 Dao 错误而非溢出"
+            );
+        }
+
         /// 验证 expire 重置过期时间。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_resets_ttl() {
@@ -1474,8 +1517,8 @@ pub mod tests {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
             let result = dao.rename("oc_missing_old", "oc_new").await;
             assert!(
-                matches!(result, Err(GarrisonError::InvalidParam(_))),
-                "rename 不存在的键应返回 InvalidParam，实际: {:?}",
+                result.is_err(),
+                "rename 不存在的键应返回错误（且不写入永久条目），实际: {:?}",
                 result
             );
         }

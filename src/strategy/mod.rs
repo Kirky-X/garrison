@@ -230,6 +230,14 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> GarrisonResult<()> {
         Ok(())
     }
+
+    /// 诊断：防火墙 hook 是否已注入（用于 builder 自动装配自检）。
+    ///
+    /// 默认实现返回 `false`；`GarrisonPermissionStrategyDefault` 在注入
+    /// `GarrisonFirewallCheckHook` 后返回 `true`。
+    fn firewall_hook_injected(&self) -> bool {
+        false
+    }
 }
 
 // ============================================================================
@@ -260,6 +268,11 @@ pub struct GarrisonPermissionStrategyDefault {
     permission_checker: Option<Arc<dyn PermissionChecker>>,
     /// 可选 DAO，用于权限缓存。
     dao: Option<Arc<dyn GarrisonDao>>,
+    /// 可选租户维度，用于权限缓存键隔离（T023）。
+    ///
+    /// `Some(t)` 时缓存键为 `garrison:perm:cache:<t>:<login_id>:<permission>`；
+    /// `None` 时使用占位符 `_`，保持向后兼容（无租户隔离）。
+    tenant_id: Option<i64>,
     /// 角色层级映射（如 "admin" → ["user"]），空时保持 默认行为。
     role_hierarchy: HashMap<String, Vec<String>>,
     /// 可选插件管理器，注入后 check_permission 前后触发钩子。

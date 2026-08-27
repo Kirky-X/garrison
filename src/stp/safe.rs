@@ -1,4 +1,4 @@
-//! 二级认证（Safe Auth）瞬态标记实现。
+﻿//! 二级认证（Safe Auth）瞬态标记实现。
 //!
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -241,6 +241,7 @@ mod tests {
             dao.clone() as Arc<dyn GarrisonDao>,
             3600,
             86400,
+            0,
         ));
         let mut config = GarrisonConfig::default_config();
         config.throw_on_not_login = false;
@@ -1011,7 +1012,7 @@ mod tests {
             inner: inner.clone(),
             delay,
         });
-        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
         (inner, session)
     }
 

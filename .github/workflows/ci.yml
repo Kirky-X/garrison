@@ -42,9 +42,9 @@ jobs:
         with:
           shared-key: ci-default-deps
       - name: Check (default features)
-        run: cargo check
+        run: cargo check --locked
       - name: Build (default features)
-        run: cargo build
+        run: cargo build --locked
 
   # === 全特性检查 ===
   check-full:
@@ -64,9 +64,33 @@ jobs:
         with:
           shared-key: ci-full-deps
       - name: Check (full)
-        run: cargo check --features "full"
+        run: cargo check --features "full" --locked
       - name: Build (full)
-        run: cargo build --features "full"
+        run: cargo build --features "full" --locked
+
+  # === 生产组合编译门禁 ===
+  # 验证 production 聚合特性与 examples workspace 全特性均可独立编译，
+  # 并强制 --locked 与已提交 Cargo.lock 一致（T31）。
+  check-production:
+    name: Check (production + examples)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+        with:
+          components: rustfmt, clippy
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        with:
+          tool: protoc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-prod-deps
+      - name: Check (production features)
+        run: cargo check --features "production" --locked
+      - name: Check (examples, all features)
+        run: cargo check -p examples --all-features --locked
 
   # === 格式化检查 ===
   fmt:
@@ -135,9 +159,9 @@ jobs:
         with:
           shared-key: ci-test-deps-${{ matrix.rust }}
       - name: Test (default)
-        run: cargo test --no-default-features --features "default" --lib
+        run: cargo test --no-default-features --features "default" --lib --locked
       - name: Test (full)
-        run: cargo test --features "full" --lib
+        run: cargo test --features "full" --lib --locked
 
   # === 文档构建 ===
   doc:
@@ -204,7 +228,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
-          arguments: --all-features
+          arguments: --all-features --locked
 
   # === 集成测试（tests/ 目录，仅 Linux + MSRV） ===
   integration-test:

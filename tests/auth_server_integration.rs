@@ -138,6 +138,7 @@ impl AuthBackend for MockAuthBackend {
             dynamic_active_timeout: None,
             #[cfg(feature = "session-extra")]
             is_anon: false,
+            effective_timeout: None,
         })
     }
 

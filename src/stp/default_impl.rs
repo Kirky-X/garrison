@@ -6,6 +6,25 @@
 use super::*;
 
 impl GarrisonLogicDefault {
+    /// 获取底层 DAO 引用（跨模块逻辑如 firewall 计数/封禁 / JWT 黑名单使用）。
+    #[cfg(any(
+        feature = "protocol-apikey",
+        feature = "db-postgres",
+        feature = "db-mysql",
+        feature = "cache-redis",
+        feature = "protocol-jwt",
+        feature = "firewall-bruteforce"
+    ))]
+    pub(crate) fn dao(&self) -> std::sync::Arc<dyn crate::dao::GarrisonDao> {
+        self.session.dao().clone()
+    }
+
+    /// 诊断：builder 是否已将防火墙 hook 注入（T010 自检）。
+    #[allow(dead_code)]
+    pub(crate) fn firewall_hook_injected(&self) -> bool {
+        self.firewall.firewall_hook_injected()
+    }
+
     /// 创建默认实现实例。
     ///
     /// # 参数
@@ -284,7 +303,9 @@ impl GarrisonLogicDefault {
     ///
     /// # 兼容性
     ///
-    /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`（兼容 0.6.0 未启用 API Key 场景）。
+    /// `protocol-apikey` feature 关闭时，本方法返回
+    /// `Err(GarrisonError::Config)`（CRIT-008 fail-closed：杜绝"编译通过但校验
+    /// 全部放行"的安全假象，对齐 SimpleTokenStyle 的 A11 修复模式）。
     #[cfg(feature = "protocol-apikey")]
     pub async fn check_api_key(&self, namespace: &str) -> GarrisonResult<()> {
         // 无 token 上下文 = 请求未携带 API Key，返回 NotLogin（映射 401）
@@ -337,9 +358,47 @@ impl GarrisonLogicDefault {
 
     /// 校验 API Key（`protocol-apikey` feature 关闭时的兼容实现）。
     ///
-    /// 返回 `Ok(())`（兼容 0.6.0 未启用 API Key 场景）。
+    /// CRIT-008（fix-security-audit-findings）：fail-closed 返回配置错误。
+    /// 原实现静默返回 `Ok(())`——宏在任意 feature 组合下都会生成对本方法的调用，
+    /// feature 缺失时所有携带任意字符串的请求均通过校验（API Key 认证完全失效）。
     #[cfg(not(feature = "protocol-apikey"))]
     pub async fn check_api_key(&self, _namespace: &str) -> GarrisonResult<()> {
-        Ok(())
+        Err(GarrisonError::Config(
+            "check_api_key requires protocol-apikey feature (fail-closed: enable the feature or remove #[check_api_key] annotations)".to_string(),
+        ))
+    }
+}
+
+#[cfg(all(test, not(feature = "protocol-apikey")))]
+mod no_feature_tests {
+    use super::*;
+    use crate::config::GarrisonConfig;
+    use crate::dao::tests::MockDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::mock::MockInterface;
+
+    /// CRIT-008: feature 关闭时 check_api_key 必须 fail-closed 返回 Err(Config)。
+    #[tokio::test]
+    async fn check_api_key_without_feature_returns_config_error() {
+        GarrisonManager::reset_for_test();
+        let dao: std::sync::Arc<dyn crate::dao::GarrisonDao> =
+            std::sync::Arc::new(MockDao::new());
+        let config = std::sync::Arc::new(GarrisonConfig::default());
+        let interface: std::sync::Arc<dyn crate::stp::GarrisonInterface> =
+            std::sync::Arc::new(MockInterface);
+        GarrisonManager::builder()
+            .dao(dao)
+            .config(config)
+            .interface(interface)
+            .build()
+            .await
+            .unwrap();
+
+        let result = GarrisonUtil::check_api_key("any-namespace").await;
+        assert!(
+            matches!(result, Err(GarrisonError::Config(ref m)) if m.contains("protocol-apikey")),
+            "feature 关闭时应返回 Err(Config)，实际: {:?}",
+            result
+        );
     }
 }

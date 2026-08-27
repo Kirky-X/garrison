@@ -130,7 +130,9 @@ impl TotpHandler {
     /// - `Ok(Vec<u8>)`: 解码成功。
     /// - `Err(GarrisonError::Internal)`: Base32 解码失败。
     pub fn secret_from_base32(s: &str) -> GarrisonResult<Vec<u8>> {
-        base32::decode(base32::Alphabet::Rfc4648 { padding: false }, s)
-            .ok_or_else(|| GarrisonError::Internal(format!("secure-base32-decode::{}", s)))
+        base32::decode(base32::Alphabet::Rfc4648 { padding: false }, s).ok_or_else(|| {
+            // 错误信息仅暴露 secret 长度，避免泄露密钥原文（T39）
+            GarrisonError::Internal(format!("secure-base32-decode::secret_len={}", s.len()))
+        })
     }
 }

@@ -197,7 +197,7 @@ async fn bw_ac_001_oidc_login_creates_account_and_token() {
 #[serial]
 async fn bw_ac_002_protected_api_renews_token_session_ttl() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
-    let session = GarrisonSession::new(dao.clone(), 3600, 86400);
+    let session = GarrisonSession::new(dao.clone(), 3600, 86400, 0);
 
     // Given: 用户已登录
     session
@@ -265,7 +265,7 @@ async fn bw_ac_002_protected_api_renews_token_session_ttl() {
 #[serial]
 async fn bw_ac_003_concurrent_login_kicks_earliest_session() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
-    let session = GarrisonSession::new(dao.clone(), 3600, 86400);
+    let session = GarrisonSession::new(dao.clone(), 3600, 86400, 0);
 
     // Given: 用户登录设备 A 和设备 B
     session

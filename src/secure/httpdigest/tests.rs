@@ -1229,6 +1229,85 @@ fn validate_uri_mismatch_rejected() {
 }
 
 // ========================================================================
+// T021: nonce 服务端签名（防自铸 nonce）
+// ========================================================================
+
+/// 注入 server_key 后，challenge 生成的签名 nonce 通过 is_nonce_valid；
+/// 自铸（无 HMAC / HMAC 错误）nonce 一律被拒。
+#[test]
+fn signed_nonce_roundtrip_and_self_minted_rejected() {
+    let auth = HttpDigestAuth::new("realm", "SHA256")
+        .unwrap()
+        .with_server_key(b"server-secret-key-material-with-enough-bytes-32");
+    // challenge 生成带签名 nonce
+    let nonce = extract_nonce(&auth.challenge()).unwrap();
+    assert!(auth.is_nonce_valid(&nonce), "签名 nonce 应有效");
+
+    // 自铸：旧格式 2 段（无签名）应被拒
+    let forged = STANDARD.encode(
+        format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes(),
+    );
+    assert!(
+        !auth.is_nonce_valid(&forged),
+        "无签名自铸 nonce 应被拒（T021）"
+    );
+
+    // 自铸：3 段但 HMAC 错误应被拒
+    let ts = current_unix_seconds();
+    let uuid = Uuid::new_v4().simple().to_string();
+    let forged3 = STANDARD.encode(format!("{}:{}:deadbeef", ts, uuid).as_bytes());
+    assert!(
+        !auth.is_nonce_valid(&forged3),
+        "HMAC 错误的自铸 nonce 应被拒（T021）"
+    );
+}
+
+/// 注入 server_key 后，完整 validate 流程对签名 nonce 通过、对自铸 nonce 拒绝。
+#[test]
+fn validate_rejects_self_minted_nonce_with_server_key() {
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_server_key(b"server-secret-key-material-with-enough-bytes-32");
+    let ha1 = auth.compute_ha1("admin", "secret");
+    // 自铸旧格式 nonce（无签名）
+    let nonce = STANDARD.encode(
+        format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes(),
+    );
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth, "admin", "test@realm", &nonce, nc, cnonce, method, uri, &ha1,
+    );
+    assert!(
+        !auth.validate(&header, method, uri, &ha1),
+        "自铸 nonce 应被拒（T021）"
+    );
+}
+
+/// 注入 server_key 后，challenge 签发的 nonce 可完成完整 validate 校验。
+#[test]
+fn validate_succeeds_with_signed_nonce() {
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_server_key(b"server-secret-key-material-with-enough-bytes-32");
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = extract_nonce(&auth.challenge()).unwrap();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth, "admin", "test@realm", &nonce, nc, cnonce, method, uri, &ha1,
+    );
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "签名 nonce 应完成完整校验（T021）"
+    );
+}
+
+// ========================================================================
 // 辅助函数
 // ========================================================================
 

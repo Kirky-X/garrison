@@ -500,8 +500,8 @@ async fn cache_permission_writes_and_reads_back() {
     let cached = fw.get_cached_permission("1001", "user:read").await.unwrap();
     assert_eq!(cached, Some(true), "缓存应命中并返回 true");
 
-    // 验证 key 格式
-    let key = "garrison:perm:cache:1001:user:read";
+    // 验证 key 格式（tenant_id 未设置时使用占位符 `_`）
+    let key = "garrison:perm:cache:_:1001:user:read";
     assert_eq!(
         dao.get(key).await.unwrap(),
         Some("true".to_string()),
@@ -548,6 +548,75 @@ async fn cache_permission_overwrite() {
         fw.get_cached_permission("1001", "user:read").await.unwrap(),
         Some(false),
         "覆盖后应返回 false"
+    );
+}
+
+/// 验证租户隔离：不同 tenant 相同 login_id 的权限缓存互不污染（T023）。
+#[tokio::test]
+async fn cache_permission_isolated_by_tenant() {
+    let dao = Arc::new(MockCacheDao::new());
+    let iface_a = MockInterface::new();
+    let iface_b = MockInterface::new();
+
+    let fw_tenant_a = GarrisonPermissionStrategyDefault::new(Arc::new(iface_a))
+        .with_dao(dao.clone())
+        .with_tenant_id(1);
+    let fw_tenant_b = GarrisonPermissionStrategyDefault::new(Arc::new(iface_b))
+        .with_dao(dao.clone())
+        .with_tenant_id(2);
+
+    // 租户 A 缓存 user:read = true
+    fw_tenant_a
+        .cache_permission("1001", "user:read", true, 300)
+        .await
+        .unwrap();
+
+    // 租户 B 读取相同 login_id + permission 应未命中（互不污染）
+    let b = fw_tenant_b
+        .get_cached_permission("1001", "user:read")
+        .await
+        .unwrap();
+    assert!(b.is_none(), "租户 B 不应读到租户 A 的缓存");
+
+    // 各自键空间独立
+    assert_eq!(
+        dao.get("garrison:perm:cache:1:1001:user:read")
+            .await
+            .unwrap(),
+        Some("true".to_string())
+    );
+    assert_eq!(
+        dao.get("garrison:perm:cache:2:1001:user:read")
+            .await
+            .unwrap(),
+        None
+    );
+}
+
+/// 验证 invalidate_permission_cache 使权限回收立即生效，而非等 300s TTL（T024）。
+#[tokio::test]
+async fn invalidate_permission_cache_reflects_revocation_immediately() {
+    let dao = Arc::new(MockCacheDao::new());
+    let mut iface = MockInterface::new();
+    iface.set_permissions("1001", &[]); // interface 实际无 user:read
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+
+    // 预先写入矛盾缓存 true
+    fw.cache_permission("1001", "user:read", true, 300)
+        .await
+        .unwrap();
+    assert!(
+        fw.check_permission("1001", "user:read").await.unwrap(),
+        "应命中缓存返回 true"
+    );
+
+    // 回收：失效该用户全部权限缓存
+    fw.invalidate_permission_cache("1001").await.unwrap();
+
+    // 失效后立即回源查询 interface（无 user:read），返回 false，不等 TTL
+    assert!(
+        !fw.check_permission("1001", "user:read").await.unwrap(),
+        "失效后应立即回源返回 false，而非读取已回收的缓存"
     );
 }
 

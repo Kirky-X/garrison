@@ -41,6 +41,11 @@ pub enum DaoKeyPrefix {
     OAuth2AuthCode,
     /// OAuth2 access_token key 前缀：`oauth2:atoken:`
     OAuth2AccessToken,
+    /// OAuth2 授权码已签发 token 的吊销追踪记录前缀：`oauth2:codeused:`
+    ///
+    /// 授权码被原子消费（删除）后，其签发的 access/refresh token 记录在此，
+    /// 供重放/双花检测时吊销（T019）。
+    OAuth2CodeUsed,
     /// OAuth2 refresh_token key 前缀：`oauth2:rtoken:`
     ///
     /// # 废弃（v0.7.1）
@@ -78,6 +83,7 @@ impl DaoKeyPrefix {
             Self::OAuth2Client => "oauth2:client:",
             Self::OAuth2AuthCode => "oauth2:authcode:",
             Self::OAuth2AccessToken => "oauth2:atoken:",
+            Self::OAuth2CodeUsed => "oauth2:codeused:",
             Self::OAuth2RefreshToken => "oauth2:rtoken:",
         }
     }

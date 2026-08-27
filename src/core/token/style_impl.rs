@@ -102,10 +102,10 @@ impl SimpleTokenStyle {
 #[cfg(feature = "secure-simple-token")]
 impl Token for SimpleTokenStyle {
     fn generate(&self, login_id: &str, _timeout: i64) -> GarrisonResult<String> {
-        // A11: fail-closed — 空密钥拒绝生成 token
-        if self.secret.is_empty() {
+        // R-sessiontokenconsistency / 对齐 JWT 双向强校验：secret 短于 32 字节拒绝生成 token
+        if self.secret.len() < 32 {
             return Err(GarrisonError::Config(
-                "SimpleTokenStyle secret 不能为空（A11 fail-closed）".to_string(),
+                "SimpleTokenStyle secret 长度必须 >= 32 字节（对齐 JWT 强校验）".to_string(),
             ));
         }
         let uuid = Uuid::new_v4();
@@ -119,8 +119,8 @@ impl Token for SimpleTokenStyle {
     fn verify(&self, token: &str) -> GarrisonResult<Option<String>> {
         use subtle::ConstantTimeEq;
 
-        // A11: fail-closed — 空密钥拒绝验证（所有 token 视为无效）
-        if self.secret.is_empty() {
+        // R-sessiontokenconsistency / 对齐 JWT：secret 短于 32 字节视为无效（所有 token 拒绝）
+        if self.secret.len() < 32 {
             return Ok(None);
         }
         // 格式：<login_id>\x1f<uuid>.<hmac>（\x1f = ASCII Unit Separator，见 H2）
@@ -152,10 +152,10 @@ impl Token for SimpleTokenStyle {
     }
 
     fn parse(&self, token: &str) -> GarrisonResult<TokenClaims> {
-        // A11: fail-closed — 空密钥拒绝解析
-        if self.secret.is_empty() {
+        // R-sessiontokenconsistency / 对齐 JWT：secret 短于 32 字节拒绝解析
+        if self.secret.len() < 32 {
             return Err(GarrisonError::Config(
-                "SimpleTokenStyle secret 不能为空（A11 fail-closed）".to_string(),
+                "SimpleTokenStyle secret 长度必须 >= 32 字节（对齐 JWT 强校验）".to_string(),
             ));
         }
         // 格式：<login_id>\x1f<uuid>.<hmac>（\x1f = ASCII Unit Separator，见 H2）

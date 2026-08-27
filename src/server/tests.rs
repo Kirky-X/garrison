@@ -67,6 +67,7 @@ impl AuthBackend for MockAuthBackend {
             dynamic_active_timeout: None,
             #[cfg(feature = "session-extra")]
             is_anon: false,
+            effective_timeout: None,
         })
     }
     async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {

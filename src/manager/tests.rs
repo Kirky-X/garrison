@@ -338,7 +338,7 @@ async fn default_factory_builds_working_logic() {
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
     let timeout = u64::try_from(config.timeout).unwrap();
-    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
     let firewall: Arc<dyn GarrisonPermissionStrategy> =
         Arc::new(GarrisonPermissionStrategyDefault::new(interface));
 
@@ -986,7 +986,7 @@ async fn manager_drop_cancels_cleanup_task() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(CountingDao {
         counter: counter.clone(),
     });
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     // 添加 token 到 login_token_map，确保 cleanup 有内容可遍历
     session.add_login_token("user1", "token1");
 

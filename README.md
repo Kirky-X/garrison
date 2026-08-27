@@ -352,13 +352,13 @@ async fn main() -> GarrisonResult<()> {
 | `protocol-zeroize`            |  ❌  |  0.4.2   | 协议层密钥零化（Drop 时清零 secret 字段）                                                                                                                                                                                        |
 | `oauth2-scope-handler`        |  ❌  |  0.4.0   | OAuth2 ScopeHandler 注册表                                                                                                                                                                                                       |
 | `protocol-sso-server`         |  ❌  |  0.4.0   | SSO Server 独立抽象 + CenterIdConverter                                                                                                                                                                                          |
-| `secure-saml`                 |  ❌  |  0.5.0   | SAML 2.0 骨架（rsa 签名验证）                                                                                                                                                                                                    |
+| `protocol-saml`               |  ❌  |  0.5.0   | SAML 2.0 骨架（rsa 签名验证）                                                                                                                                                                                                    |
 | `alone-cache`                 |  ❌  |  0.4.0   | AloneCache 多 Redis 实例隔离装饰器                                                                                                                                                                                               |
 | `parameter-query`             |  ❌  |  0.4.0   | ParameterQuery 参数化查询 + Builder                                                                                                                                                                                              |
 | `secure-totp`                 |  ❌  |  0.2.0   | TOTP 动态验证码 (RFC 6238)                                                                                                                                                                                                       |
 | `secure-sign`                 |  ❌  |  0.2.0   | HMAC-SHA256/SHA512 工具                                                                                                                                                                                                          |
-| `secure-httpbasic`            |  ❌  |  0.2.0   | HTTP Basic 认证 (RFC 7617)                                                                                                                                                                                                       |
-| `secure-httpdigest`           |  ❌  |  0.2.0   | HTTP Digest 认证 (RFC 7616)                                                                                                                                                                                                      |
+| `protocol-httpbasic`          |  ❌  |  0.2.0   | HTTP Basic 认证 (RFC 7617)                                                                                                                                                                                                       |
+| `protocol-httpdigest`         |  ❌  |  0.2.0   | HTTP Digest 认证 (RFC 7616)                                                                                                                                                                                                      |
 | `secure-confusable`           |  ❌  |  0.5.1   | Unicode 同形异义字检测                                                                                                                                                                                                           |
 | `secure-masking`              |  ❌  |  0.6.2   | 敏感数据脱敏（regex 真实脱敏）                                                                                                                                                                                                   |
 | `secure-xss`                  |  ❌  |  0.6.2   | XSS 防护                                                                                                                                                                                                                         |
@@ -375,6 +375,16 @@ async fn main() -> GarrisonResult<()> {
 | `tracing-log`                 |  ❌  |  0.1.0   | tracing 日志桥接                                                                                                                                                                                                                 |
 | `metrics-prometheus`          |  ❌  |  0.3.0   | Prometheus 指标                                                                                                                                                                                                                  |
 | `observability-otlp`          |  ❌  |  0.3.0   | OpenTelemetry OTLP 分布式追踪                                                                                                                                                                                                    |
+
+> **v0.9.0 Feature 改名映射**：部分安全/协议模块在 v0.9.0 从 `secure-*` 命名空间统一迁移到 `protocol-*`（域归并到协议层）：
+>
+> | 旧名称 (≤0.8.x)      | 新名称 (≥0.9.0)        | 说明                     |
+> | -------------------- | ---------------------- | ------------------------ |
+> | `secure-saml`        | `protocol-saml`        | SAML 2.0 签名验证        |
+> | `secure-httpbasic`   | `protocol-httpbasic`   | HTTP Basic 认证          |
+> | `secure-httpdigest`  | `protocol-httpdigest`  | HTTP Digest 认证         |
+>
+> 升级时请将 `Cargo.toml` 中的 feature 引用按上表重命名，功能与默认行为不变。
 
 > **可观测性 no-op 契约**：`metrics-prometheus` / `observability-otlp` / `tracing-log` 均未启用时，
 > `observability` 模块仍可导入但所有 API 为 no-op（`None` 短路 / 零开销），避免用户误以为指标或追踪已启用。

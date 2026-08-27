@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 会话模块，提供双模会话管理（Account-Session + Token-Session）。
@@ -173,6 +173,15 @@ pub struct TokenSession {
     #[cfg(feature = "session-extra")]
     #[serde(default)]
     pub is_anon: bool,
+    /// remember-me 生效时的权威 token TTL（秒）。
+    ///
+    /// `LoginParams.remember_me == true` 且配置启用时写入 `Some(remember_me_timeout)`，
+    /// 否则为 `None`（使用全局 `timeout`）。
+    /// `get_token_session` / `get_token_session_with_ttl` 的过期判定以本字段为权威来源，
+    /// 避免 DB/缓存 TTL 与业务语义漂移（R-sessiontokenconsistency-001）。
+    /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为 `None`（向后兼容）。
+    #[serde(default)]
+    pub effective_timeout: Option<i64>,
 }
 
 /// 会话过期监听器 trait。
@@ -197,7 +206,7 @@ pub struct TokenSession {
 ///     }
 /// }
 ///
-/// let mut session = garrison::session::GarrisonSession::new(dao, 3600, 86400);
+/// let mut session = garrison::session::GarrisonSession::new(dao, 3600, 86400, 0);
 /// session.add_expiry_listener(Arc::new(AuditListener));
 /// ```
 #[async_trait]
@@ -230,6 +239,14 @@ pub struct GarrisonSession {
     timeout: u64,
     /// Account-Session 级 activity 超时（秒）。
     active_timeout: u64,
+    /// remember-me 扩展后的 token TTL（秒）。
+    ///
+    /// 登录时 `LoginParams.remember_me == true` 且 `remember_me_enabled` 时，
+    /// Token-Session 的 DAO TTL 与该 TokenSession 的 `effective_timeout` 均取此值，
+    /// 否则使用 `timeout`（R-sessiontokenconsistency-001：TTL 权威来源写入会话记录）。
+    ///
+    /// 非 `remember_me` 登录路径仍使用 `timeout`，`effective_timeout` 为 `None`。
+    remember_me_timeout: u64,
     /// 匿名 Session 超时（秒）。
     ///
     /// 启用 `anonymous-session` feature 后存在。由 `anon` 模块的 `get_anon_token_session`
@@ -320,7 +337,7 @@ mod tests {
     /// 辅助函数：创建带 MockDao 的 GarrisonSession。
     fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, GarrisonSession) {
         let dao = Arc::new(MockDao::new());
-        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout);
+        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout, 0);
         (dao, session)
     }
 
@@ -1144,7 +1161,7 @@ mod tests {
         use crate::listener::GarrisonListenerManager;
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let mgr = Arc::new(GarrisonListenerManager::new());
-        let session = GarrisonSession::new(dao, 3600, 86400).with_listener_manager(mgr);
+        let session = GarrisonSession::new(dao, 3600, 86400, 0).with_listener_manager(mgr);
         assert!(session.listener_manager.is_some());
     }
 
@@ -1193,7 +1210,7 @@ mod tests {
             inner: inner.clone(),
             fail_delete_key: "garrison:sso:ticket:ticket-fail".to_string(),
         });
-        let session = GarrisonSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
         // login 并关联 SSO ticket
         session.create("1001", "T1").await.unwrap();
@@ -1455,7 +1472,7 @@ mod tests {
             inner: inner.clone(),
             delay: Duration::from_millis(50),
         });
-        let session = GarrisonSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
         // 并发执行两次 create 同一 login_id（用 tokio::join! 确保并发）
         let (r1, r2) = tokio::join!(session.create("1001", "T1"), session.create("1001", "T2"),);
@@ -1875,7 +1892,7 @@ mod tests {
             inner: inner.clone(),
             fail_get_key: token_key("T2"),
         });
-        let session = GarrisonSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
         // 创建 3 个 token：T1（有效）、T2（DAO get 会失败）、T3（将注销）
         session.create("1001", "T1").await.unwrap();
@@ -2158,7 +2175,7 @@ mod tests {
             inner: inner.clone(),
             fail_update_key: account_key("user1"),
         });
-        let session = GarrisonSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
         // 先创建 AccountSession（create 用 set，不受 FailingUpdateDao 影响）
         session.create("user1", "T1").await.unwrap();

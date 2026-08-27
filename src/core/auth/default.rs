@@ -353,6 +353,8 @@ impl AuthLogic for AuthLogicDefault {
                 // 匿名 session 在 token:session:anon:{token}，入口即返回 NotLogin）
                 #[cfg(feature = "session-extra")]
                 is_anon: false,
+                // renew 复制旧会话的 TTL 权威来源（R-sessiontokenconsistency-001）
+                effective_timeout: old_ts.effective_timeout,
             };
 
             // 4. 保存新 Token-Session with remaining TTL

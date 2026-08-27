@@ -3,12 +3,19 @@
 
 //! `HttpDigestAuth` 实现块，封装 RFC 7616 质询生成与响应校验。
 
+use super::algorithm::hex_encode;
 use super::{DigestAlgorithm, HttpDigestAuth};
 use crate::error::{GarrisonError, GarrisonResult};
 use base64::{engine::general_purpose::STANDARD, Engine};
+use hkdf::Hkdf;
+use hmac::{Hmac, KeyInit, Mac};
+use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
 use subtle::ConstantTimeEq;
 use uuid::Uuid;
+
+/// nonce 服务端签名 HKDF info（域分隔，避免与其他 HKDF 派生密钥域混用）。
+const NONCE_HMAC_HKDF_INFO: &[u8] = b"garrison-httpdigest-nonce-v1";
 
 /// 默认 nonce 有效期（秒），RFC 7616 §3.2.1 建议 nonce 应有合理 TTL。
 const DEFAULT_NONCE_TTL_SECONDS: u64 = 300;
@@ -46,6 +53,7 @@ impl HttpDigestAuth {
             algorithm: algorithm.parse()?,
             nonce_ttl: DEFAULT_NONCE_TTL_SECONDS,
             dao: None,
+            server_key: None,
         })
     }
 
@@ -89,6 +97,22 @@ impl HttpDigestAuth {
         self
     }
 
+    /// 注入服务端签名密钥（T021）：以 HKDF 从 `secret` 域分隔派生 32 字节 HMAC 密钥。
+    ///
+    /// 派生：`HKDF-SHA256(salt = realm, ikm = secret, info = NONCE_HMAC_HKDF_INFO)`，
+    /// 复用 protocol-sign 的 HKDF 域分隔范式，避免密钥域混用。
+    ///
+    /// 注入后 `generate_nonce` 生成的 nonce 带服务端 HMAC 签名，
+    /// `is_nonce_valid` 会先验签名再校验时间戳，拒绝自铸（无有效签名）的 nonce。
+    pub fn with_server_key(mut self, secret: &[u8]) -> Self {
+        let hkdf = Hkdf::<Sha256>::new(Some(self.realm.as_bytes()), secret);
+        let mut key = [0u8; 32];
+        hkdf.expand(NONCE_HMAC_HKDF_INFO, &mut key)
+            .expect("HKDF-SHA256 派生 32 字节固定长度，不会失败");
+        self.server_key = Some(key);
+        self
+    }
+
     /// 获取 nonce 有效期（秒）。
     pub fn nonce_ttl(&self) -> u64 {
         self.nonce_ttl
@@ -116,23 +140,34 @@ impl HttpDigestAuth {
 
     /// 生成带时间戳的 nonce。
     ///
-    /// 格式：`base64("{timestamp}:{random_uuid}")`
+    /// 格式（无 `server_key`）：
+    /// - `base64("{timestamp}:{random_uuid}")`
+    ///
+    /// 格式（注入 `server_key`，T021）：
+    /// - `base64("{timestamp}:{random_uuid}:{hmac_sha256(server_key, timestamp:random_uuid)}")`
     /// - timestamp: 当前 Unix 秒
     /// - random_uuid: UUID v4（保证唯一性）
+    /// - mac: 服务端签名，签名验过才接受 nonce（杜绝自铸 nonce）
     fn generate_nonce(&self) -> String {
         let timestamp = current_unix_seconds();
         let random = Uuid::new_v4().simple().to_string();
-        let raw = format!("{}:{}", timestamp, random);
+        let raw = match &self.server_key {
+            Some(key) => {
+                let mac = sign_nonce_payload(key, timestamp, &random);
+                format!("{}:{}:{}", timestamp, random, mac)
+            },
+            None => format!("{}:{}", timestamp, random),
+        };
         STANDARD.encode(raw.as_bytes())
     }
 
-    /// 校验 nonce 是否有效（格式正确且未过期）。
+    /// 校验 nonce 是否有效（格式正确且未过期，且签名有效）。
     ///
-    /// nonce 格式: `base64("{timestamp}:{random}")`
-    /// - 解码失败 → 无效
-    /// - timestamp 非数字 → 无效
-    /// - timestamp 在未来 → 无效（防止客户端伪造未来 nonce）
-    /// - 已超过 TTL → 无效（过期）
+    /// nonce 格式（无 `server_key`，向后兼容）：`base64("{timestamp}:{random}")`
+    /// nonce 格式（注入 `server_key`，T021）：`base64("{timestamp}:{random}:{mac}")`
+    ///
+    /// 注入 `server_key` 时：先验 HMAC 签名（`constant_time_eq`），再校验时间戳，
+    /// 任一步失败即拒绝。未注入时保持旧格式行为（仅时间戳 TTL 防护）。
     pub(super) fn is_nonce_valid(&self, nonce: &str) -> bool {
         let decoded = match STANDARD.decode(nonce) {
             Ok(d) => d,
@@ -142,24 +177,51 @@ impl HttpDigestAuth {
             Ok(s) => s,
             Err(_) => return false,
         };
-        let parts: Vec<&str> = raw.splitn(2, ':').collect();
-        if parts.len() != 2 {
-            return false;
-        }
-        let timestamp: u64 = match parts[0].parse() {
-            Ok(t) => t,
-            Err(_) => return false,
-        };
         let now = current_unix_seconds();
-        // 防止未来时间戳（允许 5 秒时钟漂移）
-        if timestamp > now + 5 {
-            return false;
+        match &self.server_key {
+            Some(key) => {
+                // 签名格式：timestamp:uuid:mac（3 段）
+                let parts: Vec<&str> = raw.splitn(3, ':').collect();
+                if parts.len() != 3 {
+                    return false;
+                }
+                let timestamp: u64 = match parts[0].parse() {
+                    Ok(t) => t,
+                    Err(_) => return false,
+                };
+                // 先验签名（T021：先验 HMAC 再计时间戳，杜绝自铸 nonce）
+                if !verify_nonce_signature(key, timestamp, parts[1], parts[2]) {
+                    return false;
+                }
+                // 防止未来时间戳（允许 5 秒时钟漂移）
+                if timestamp > now + 5 {
+                    return false;
+                }
+                // 检查是否过期
+                if timestamp + self.nonce_ttl < now {
+                    return false;
+                }
+                true
+            },
+            None => {
+                // 向后兼容：旧格式 timestamp:random（2 段）
+                let parts: Vec<&str> = raw.splitn(2, ':').collect();
+                if parts.len() != 2 {
+                    return false;
+                }
+                let timestamp: u64 = match parts[0].parse() {
+                    Ok(t) => t,
+                    Err(_) => return false,
+                };
+                if timestamp > now + 5 {
+                    return false;
+                }
+                if timestamp + self.nonce_ttl < now {
+                    return false;
+                }
+                true
+            },
         }
-        // 检查是否过期
-        if timestamp + self.nonce_ttl < now {
-            return false;
-        }
-        true
     }
 
     /// 校验 nc（nonce count）单调性，拒绝重放攻击（vuln-0008，RFC 7616 §3.4.6）。
@@ -189,7 +251,21 @@ impl HttpDigestAuth {
     fn validate_nc(&self, nonce: &str, nc_hex: &str) -> bool {
         let dao = match &self.dao {
             Some(d) => d,
-            None => return true,
+            None => {
+                // fail-open：未注入 DAO 时跳过 nc 单调性校验（向后兼容），
+                // 仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
+                // 进程级一次性 warn（T022）：提醒运维注入 DAO 以启用 RFC 7616 §3.4.6 重放防护，
+                // 明确标注当前为 fail-open 语义（非 fail-closed）。
+                static WARNED_NO_DAO: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if !WARNED_NO_DAO.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::warn!(
+                        realm = %self.realm,
+                        "validate_nc: 未注入 DAO，跳过 nc 单调性校验（fail-open，300s 窗口内可重放）；生产环境请通过 with_dao 注入 DAO 以启用 RFC 7616 §3.4.6 重放防护"
+                    );
+                }
+                return true;
+            },
         };
         // 解析 nc hex → u64（RFC 7616 §3.4.6：nc 为 8 位 hex）
         let nc = match u64::from_str_radix(nc_hex, 16) {
@@ -574,4 +650,22 @@ pub(super) fn current_unix_seconds() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// 计算 nonce 服务端签名：`hmac_sha256(server_key, "{timestamp}:{uuid}")` 的 hex 编码。
+fn sign_nonce_payload(server_key: &[u8; 32], timestamp: u64, uuid: &str) -> String {
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac =
+        HmacSha256::new_from_slice(server_key).expect("HMAC 接受 32 字节密钥");
+    mac.update(timestamp.to_string().as_bytes());
+    mac.update(b":");
+    mac.update(uuid.as_bytes());
+    let result = mac.finalize().into_bytes();
+    hex_encode(&result)
+}
+
+/// 校验 nonce 服务端签名（常量时间比较）。
+fn verify_nonce_signature(server_key: &[u8; 32], timestamp: u64, uuid: &str, mac_hex: &str) -> bool {
+    let expected = sign_nonce_payload(server_key, timestamp, uuid);
+    constant_time_eq(expected.as_bytes(), mac_hex.as_bytes())
 }

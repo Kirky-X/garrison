@@ -47,6 +47,17 @@ impl GarrisonDao for MockCacheDao {
         self.store.lock().remove(key);
         Ok(())
     }
+    async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
+        let mut result = Vec::new();
+        // 支持尾部 `*` 通配前缀匹配（覆盖权限缓存失效场景）
+        let prefix = pattern.strip_suffix('*').unwrap_or(pattern);
+        for (k, _) in self.store.lock().iter() {
+            if k.starts_with(prefix) {
+                result.push(k.clone());
+            }
+        }
+        Ok(result)
+    }
 }
 
 #[cfg(test)]

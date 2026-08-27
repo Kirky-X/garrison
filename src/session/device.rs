@@ -379,7 +379,7 @@ mod tests {
     fn make_device_session(timeout: u64, active_timeout: u64) -> Arc<GarrisonSession> {
         use crate::dao::tests::MockDao;
         let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(MockDao::new());
-        Arc::new(GarrisonSession::new(dao, timeout, active_timeout))
+        Arc::new(GarrisonSession::new(dao, timeout, active_timeout, 0))
     }
 
     /// 验证 list_devices 返回指定 login_id 的所有活跃设备会话。

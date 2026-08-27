@@ -73,6 +73,7 @@ impl GarrisonConfig {
             #[cfg(feature = "session-hijack-detection")]
             session_hijack_mode: SessionHijackMode::default(),
             enable_jwt_revocation: false,
+            allow_stateless_jwt_no_revocation: false,
             audit_mask_mode: AuditMaskMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
             #[cfg(feature = "web-cors")]
@@ -571,6 +572,15 @@ impl GarrisonConfig {
             return Err(GarrisonError::Config(
                 "is_share=true requires is_concurrent=true".to_string(),
             ));
+        }
+        // session_hover_timeout 上界：10 年（315_360_000 秒），防止 saturating_mul 之外的
+        // 配置层误用超大值（T036）。合法值为 -1（禁用）或 (0, 上界]。
+        const MAX_SESSION_HOVER_TIMEOUT_SECS: i64 = 315_360_000;
+        if self.session_hover_timeout > MAX_SESSION_HOVER_TIMEOUT_SECS {
+            return Err(GarrisonError::Config(format!(
+                "session_hover_timeout ({}) exceeds maximum allowed {} seconds (10 years)",
+                self.session_hover_timeout, MAX_SESSION_HOVER_TIMEOUT_SECS
+            )));
         }
         Ok(())
     }

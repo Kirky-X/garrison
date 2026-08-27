@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! TokenLogic trait — Token 类型校验与刷新契约。
@@ -495,7 +495,7 @@ mod tests {
         use std::sync::Arc;
 
         /// A11: simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
-        const STP_TOKEN_SIMPLE_TEST_SECRET: &str = "stp-token-simple-test-secret";
+        const STP_TOKEN_SIMPLE_TEST_SECRET: &str = "stp-token-simple-test-secret-0123456789";
 
         /// A11: 构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
         fn test_jwt_secret(secret: &str) -> crate::config::JwtSecret {
@@ -512,7 +512,7 @@ mod tests {
         /// 构造 GarrisonLogicDefault，token_style 可配置。
         fn make_logic(token_style: &str) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = token_style.to_string();
@@ -596,7 +596,7 @@ mod tests {
         #[tokio::test]
         async fn verify_token_jwt_style_returns_login_id() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -632,7 +632,7 @@ mod tests {
         #[tokio::test]
         async fn verify_token_invalid_jwt_returns_invalid_token() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -673,7 +673,7 @@ mod tests {
         #[tokio::test]
         async fn refresh_token_jwt_valid_returns_new_token() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -710,7 +710,7 @@ mod tests {
         #[tokio::test]
         async fn refresh_token_invalid_jwt_returns_error() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();

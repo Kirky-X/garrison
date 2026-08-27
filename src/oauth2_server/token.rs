@@ -926,12 +926,21 @@ impl TokenHandler {
             .as_ref()
             .ok_or_else(|| GarrisonError::OAuth2("invalid_request".into()))?;
 
-        // 消费授权码（一次性）
-        let auth_code = self
-            .authorize_handler
-            .consume_code(code)
-            .await?
-            .ok_or_else(|| GarrisonError::OAuth2("invalid_grant".into()))?;
+        // 原子消费授权码（一次性）。get_and_delete 保证并发双花时仅一个成功。
+        let auth_code = match self.authorize_handler.consume_code(code).await? {
+            Some(ac) => ac,
+            None => {
+                // 授权码不存在/已过期/已被消费：判定为重放或并发双花，
+                // 吊销该 code 此前可能签发的 token（best-effort，T019）。
+                if let Err(e) = self.authorize_handler.revoke_replayed_code_tokens(code).await {
+                    tracing::warn!(
+                        error = %e,
+                        "revoke_replayed_code_tokens 失败（重放检测），仍返回 invalid_grant"
+                    );
+                }
+                return Err(GarrisonError::OAuth2("invalid_grant".into()));
+            },
+        };
 
         // 校验 client_id 一致性
         if auth_code.client_id != client.client_id {
@@ -954,14 +963,27 @@ impl TokenHandler {
         // 校验授权码中的 scope 是否在客户端 allowed_scopes 内（纵深防御）
         client.validate_scopes(&scopes)?;
         let user_id = auth_code.user_id;
-        self.issue_tokens(
-            &client.client_id,
-            Some(user_id),
-            &scopes,
-            true, // 返回 refresh_token
-            None, // authorization_code grant type 不携带 username
-        )
-        .await
+        let resp = self
+            .issue_tokens(
+                &client.client_id,
+                Some(user_id),
+                &scopes,
+                true, // 返回 refresh_token
+                None, // authorization_code grant type 不携带 username
+            )
+            .await?;
+        // 记录签发的 token，供重放/双花时吊销（T019，best-effort）。
+        if let Err(e) = self
+            .authorize_handler
+            .record_code_tokens(code, &resp.access_token, resp.refresh_token.as_deref())
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                "record_code_tokens 失败（吊销追踪不可用），本次授权仍成功"
+            );
+        }
+        Ok(resp)
     }
 
     /// refresh_token grant type：刷新令牌。

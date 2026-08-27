@@ -60,12 +60,16 @@ impl GarrisonInterface for MockInterface {
 
 async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "jwt-modes-test-secret-0123456789abcdef".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = true;
+    // T017: Stateless JWT 模式必须启用 JWT 撤销黑名单（fail-closed 守卫）。
+    if mode == JwtMode::Stateless {
+        config.enable_jwt_revocation = true;
+    }
     let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
         garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
@@ -273,7 +277,7 @@ async fn mixin_mode_fails_with_jwt_only_no_session() {
 async fn simple_mode_passes_with_session_only() {
     // Simple 模式 token_style 可以是 uuid（不依赖 JWT）
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -304,7 +308,7 @@ async fn simple_mode_passes_with_session_only() {
 #[serial]
 async fn simple_mode_fails_without_session() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;

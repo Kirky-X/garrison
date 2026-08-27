@@ -268,15 +268,16 @@ oauth2-scope-handler = ["protocol-oauth2"]
 # SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
 protocol-sso-server = ["protocol-sso"]
 # protocol-saml：启用 XmlSecSamlProvider（vuln-0001 修复），使用 rsa crate 验证 SAML Assertion XML 签名
-protocol-saml = ["protocol-sso", "rsa", "dep:base64"]
+# dep:subtle：CRIT-001 修复后 DigestValue 比对使用常量时间比较
+protocol-saml = ["protocol-sso", "rsa", "dep:base64", "dep:subtle"]
 
 # === 安全模块 ===
 secure-totp = ["totp-rs", "dep:base32"]
-secure-sign = ["dep:sha2", "hmac", "dep:base64", "md5", "dep:subtle"]
+secure-sign = ["dep:sha2", "hmac", "dep:base64", "dep:subtle"]
 # [v0.9.0] secure-httpbasic → protocol-httpbasic（域统一到协议层）
 protocol-httpbasic = ["dep:base64"]
 # [v0.9.0] secure-httpdigest → protocol-httpdigest（域统一到协议层）
-protocol-httpdigest = ["dep:sha2", "dep:base64", "md5", "dep:subtle"]
+protocol-httpdigest = ["dep:sha2", "dep:base64", "md5", "dep:subtle", "dep:hkdf", "hmac"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
 # 依赖 regex：Custom mask 真实脱敏（vuln-0010 D6 修复，原 placeholder 实现静默泄露敏感数据）
@@ -501,6 +502,11 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = true
+# 注意：panic = "abort" 会使进程在遇到 panic 时直接终止，而非展开栈。
+# 因此 src/channel.rs 与 src/stp/context.rs 中依赖 std::panic::catch_unwind
+# 实现的“隔离单个任务 panic、避免污染全局状态”的语义，在 release 构建下会
+# 退化为整个进程终止。生产环境若依赖该隔离语义，请改用 panic = "unwind"
+# 或确保任务边界（线程/tokio task）已单独隔离，详见 docs/DEPLOYMENT.md。
 panic = "abort"
 
 # === 测试目标 ===
@@ -534,9 +540,12 @@ harness = false
 # === Lint 配置 ===
 # sdforge #[forge] 宏在 garrison 中展开时生成 #[cfg(feature = "mcp")] /
 # #[cfg(feature = "cli")] / #[cfg(feature = "openapi")] 等代码，
-# garrison 不具备这些 feature，允许 unexpected_cfgs 以避免 check-cfg 警告。
+# garrison 不具备这些 feature，通过 check-cfg 显式登记这些外部 cfg 值，
+# 将 unexpected_cfgs 保持为 warn 级别（而非 allow）以便发现真正的意外 cfg。
 [lints.rust]
-unexpected_cfgs = { level = "allow" }
+unexpected_cfgs = { level = "warn", check-cfg = [
+    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "cache-memory", "cache-redis", "cli", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-geoip", "firewall-maxminddb", "firewall-ratelimit", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
+] }
 
 # === 本地 base 项目 patch（与 sinnan workspace 对齐）===
 # garrison 作为 sinnan 的 path 依赖时，sinnan workspace 的 patch 会传播；

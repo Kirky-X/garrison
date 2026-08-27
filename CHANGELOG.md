@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.9.0-rc.2] - 2026-08-26
+
+### Breaking
+- **`check_api_key` fail-closed（CRIT-008）**：当 `protocol-apikey` feature 关闭时，
+  `#[check_api_key]` 生成的调用不再静默返回 `Ok(())`（此前所有携带任意字符串的请求均通过校验）。
+  现返回 `Err(GarrisonError::Config("check_api_key requires protocol-apikey feature"))`。
+  若宏已用于未启用该 feature 的构建，请启用 `protocol-apikey` 或移除注解。
+- **`check_abac_with_policy` fail-closed（CRIT-009）**：当 `abac` feature 关闭、且端点声明了
+  `abac` 策略（`abac = "..."`）时，返回 `Err(GarrisonError::Config)` 而非静默放行。
+  未声明 `abac` 策略的端点保持 no-op 放行。
+  逃生门：调用 `garrison::abac::set_abac_missing_feature_policy(true)` 可切换为 AllowWithWarn
+  （放行 + `warn` 告警），默认 Deny（fail-closed）。
+- **防火墙自动装配（CRIT-010）**：启用任一 `firewall-*` feature 时，`GarrisonManager::builder()`
+  自动注入 `GarrisonFirewallCheckHookDefault`（共享 DAO 限流器），并新增 `login` / `check_login`
+  失败路径的暴力破解计数（`record_failure`）、成功路径清零。此前该防护为 dead-code。
+
+### Changed
+- `session::dao()` 的 `pub(crate)` 可见性扩展至 `firewall-bruteforce` feature（供 login/check_login 计数使用）。
+- `GarrisonPermissionStrategy::firewall_hook_injected()` 诊断方法新增（默认 `false`，默认实现返回实际注入状态）。
+
 ## [0.9.0-rc.1] - 2026-08-25
 
 ### Added

@@ -262,7 +262,7 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let timeout = u64::try_from(config.timeout).unwrap();
-        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
         let firewall: Arc<dyn GarrisonPermissionStrategy> =
             Arc::new(GarrisonPermissionStrategyDefault::new(interface));
         Arc::new(GarrisonLogicDefault::new(session, config, firewall))

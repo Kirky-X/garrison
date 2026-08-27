@@ -510,6 +510,13 @@ impl DefaultOidcProvider {
     ///   签名验证失败 / claims 解析失败 / token 已过期 / iss 不匹配 / aud 不匹配。
     /// - `GarrisonError::Internal`: JWKS 拉取失败 / DAO 读写失败 / 反序列化失败。
     #[cfg(feature = "protocol-jwt")]
+    // 清洗 JWT `kid` 用于日志/错误输出（T39）：过滤控制字符并限长 128，
+    // 防止恶意 kid 注入控制字符污染日志或造成输出异常。
+    fn sanitize_kid(kid: &str) -> String {
+        let filtered: String = kid.chars().filter(|c| !c.is_control()).collect();
+        filtered.chars().take(128).collect()
+    }
+
     async fn validate_id_token_impl(&self, id_token: &str) -> GarrisonResult<bool> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
@@ -563,11 +570,11 @@ impl DefaultOidcProvider {
         //    缓存（其他请求可能已填充），命中则复用，未命中才真正发起 HTTP 请求。
         let cache_key = self.jwks_cache_key();
         let cached = dao.get(&cache_key).await?;
-        let jwks: JwksResponse = match cached
+        let (jwks, fresh): (JwksResponse, bool) = match cached
             .as_deref()
             .and_then(|json| serde_json::from_str(json).ok())
         {
-            Some(jwks) => jwks,
+            Some(jwks) => (jwks, false),
             None => {
                 // 缓存 miss / TTL 过期 / 反序列化失败：获取 single-flight 锁
                 let _lock = self.jwks_fetch_lock.lock().await;
@@ -577,9 +584,39 @@ impl DefaultOidcProvider {
                     .as_deref()
                     .and_then(|s| serde_json::from_str::<JwksResponse>(s).ok())
                 {
-                    Some(jwks) => jwks,
+                    Some(jwks) => (jwks, false),
                     None => {
                         // 仍未命中：真正发起 JWKS 拉取并写入缓存
+                        self.fetch_jwks().await?;
+                        let json = dao.get(&cache_key).await?.ok_or_else(|| {
+                            GarrisonError::Internal(
+                                "sso-oidc-jwks-cache-empty-after-fetch".to_string(),
+                            )
+                        })?;
+                        (
+                            serde_json::from_str(&json).map_err(|e| {
+                                GarrisonError::Internal(format!("sso-oidc-jwks-parse::{}", e))
+                            })?,
+                            true,
+                        )
+                    },
+                }
+            },
+        };
+
+        // 3. 按 kid 匹配 JWKS 公钥。若缓存命中但 kid 未命中（密钥轮换场景），
+        //    强制重新拉取一次 JWKS 再匹配（T37）；已 freshly-fetched 则直接报错。
+        let jwk = match jwks.keys.iter().find(|k| k.kid == kid).cloned() {
+            Some(jwk) => jwk,
+            None if !fresh => {
+                let _lock = self.jwks_fetch_lock.lock().await;
+                let cached = dao.get(&cache_key).await?;
+                let refreshed = match cached
+                    .as_deref()
+                    .and_then(|s| serde_json::from_str::<JwksResponse>(s).ok())
+                {
+                    Some(jwks) => jwks,
+                    None => {
                         self.fetch_jwks().await?;
                         let json = dao.get(&cache_key).await?.ok_or_else(|| {
                             GarrisonError::Internal(
@@ -590,21 +627,33 @@ impl DefaultOidcProvider {
                             GarrisonError::Internal(format!("sso-oidc-jwks-parse::{}", e))
                         })?
                     },
-                }
+                };
+                refreshed
+                    .keys
+                    .iter()
+                    .find(|k| k.kid == kid)
+                    .cloned()
+                    .ok_or_else(|| {
+                        GarrisonError::InvalidToken(format!(
+                            "sso-oidc-jwks-key-not-found::{}",
+                            Self::sanitize_kid(kid)
+                        ))
+                    })?
+            },
+            None => {
+                return Err(GarrisonError::InvalidToken(format!(
+                    "sso-oidc-jwks-key-not-found::{}",
+                    Self::sanitize_kid(kid)
+                )))
             },
         };
-
-        // 3. 按 kid 匹配 JWKS 公钥
-        let jwk = jwks.keys.iter().find(|k| k.kid == kid).cloned();
-        let jwk = jwk.ok_or_else(|| {
-            GarrisonError::InvalidToken(format!("sso-oidc-jwks-key-not-found::{}", kid))
-        })?;
 
         // 4. 构造 DecodingKey 并验签
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
             .map_err(|e| GarrisonError::InvalidToken(format!("sso-oidc-rsa-build::{}", e)))?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = true;
+        validation.validate_nbf = true; // T38：对齐 keycloak 版，启用 nbf 生效时间校验
         validation.leeway = 0;
         // jsonwebtoken 10 默认 validate_aud=true，但未设置 expected audience 会触发
         // InvalidAudience。关闭库内置 aud 校验，由我们手动校验 client_id 以提供精确错误信息。
@@ -1424,6 +1473,15 @@ mod tests {
     /// 用 key_signer 私钥签发 JWT，但 JWKS 返回 key_other 公钥 → 验签失败。
     /// 覆盖 `validate_id_token_impl` 中 `decode` 失败分支。
     #[cfg(feature = "protocol-jwt")]
+    /// T39: sanitize_kid 过滤控制字符并限长 128。
+    #[test]
+    fn sanitize_kid_filters_control_chars_and_limits_len() {
+        assert_eq!(DefaultOidcProvider::sanitize_kid("abc123"), "abc123");
+        assert_eq!(DefaultOidcProvider::sanitize_kid("bad\x01kid\x7f"), "badkid");
+        let long = "a".repeat(200);
+        assert_eq!(DefaultOidcProvider::sanitize_kid(&long).len(), 128);
+    }
+
     #[tokio::test]
     async fn validate_id_token_rejects_invalid_signature() {
         // 签发用 key_signer，JWKS 返回 key_other（不同密钥对）的公钥

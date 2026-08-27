@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! Stp 集成测试。
@@ -35,7 +35,7 @@ fn make_logic(
     has_role: bool,
 ) -> GarrisonLogicDefault {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout));
+    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout, 0));
     let mut config = GarrisonConfig::default_config();
     config.throw_on_not_login = throw_on_not_login;
     config.token_style = token_style.to_string();
@@ -54,7 +54,7 @@ fn make_logic(
 /// A11: simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
 ///
 /// 用于 SimpleTokenStyle::new 生成合法 HMAC token，供 verify_token 委托测试使用。
-const STP_SIMPLE_TEST_SECRET: &str = "stp-simple-test-secret";
+const STP_SIMPLE_TEST_SECRET: &str = "stp-simple-test-secret-0123456789abcd";
 
 /// A11: 构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
 ///
@@ -84,6 +84,7 @@ fn make_logic_with_dao(
         dao.clone() as Arc<dyn GarrisonDao>,
         timeout,
         active_timeout,
+        0,
     ));
     let mut config = GarrisonConfig::default_config();
     config.throw_on_not_login = throw_on_not_login;
@@ -221,7 +222,7 @@ async fn login_with_random_64_style() {
 async fn login_with_simple_style() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
-    assert_eq!(token.len(), 32, "simple 应生成 32 字符 token");
+    assert!(token.contains('.'), "simple token 应含 HMAC '.' 分隔符");
 }
 
 /// 验证未知 token_style 时 login 返回 Err。
@@ -1639,7 +1640,7 @@ async fn login_by_token_with_auth_logic_delegates_to_auth() {
     use crate::core::token::{Token, UuidTokenStyle};
 
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth_logic: Arc<dyn AuthLogic> =
         Arc::new(AuthLogicDefault::new(session.clone(), token_handler, 3600));
@@ -1698,7 +1699,7 @@ async fn refresh_token_invalid_jwt_returns_error() {
 async fn refresh_token_valid_jwt_returns_new_token() {
     // 构造 logic：token_style=jwt，使用明确 secret
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "refresh-test-secret-aaaabbbbccccdddd".to_string().into();
@@ -2347,11 +2348,13 @@ async fn with_jwt_mode_builder_sets_mode() {
 async fn check_login_stateless_only_jwt_verify() {
     // 构造 logic：jwt_mode=Stateless + token_style=jwt + 明确 secret
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "stateless-test-secret-aaaabbbbccccdddd".to_string().into();
     config.throw_on_not_login = true;
+    // T017 安全组合：stateless JWT 必须启用撤销
+    config.enable_jwt_revocation = true;
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
@@ -2385,7 +2388,7 @@ async fn check_login_stateless_only_jwt_verify() {
 async fn check_login_mixin_jwt_and_session() {
     // 构造 logic：jwt_mode=Mixin（默认）+ token_style=jwt + 明确 secret
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "mixin-test-secret-aaaabbbbccccdddd".to_string().into();
@@ -2969,7 +2972,7 @@ async fn sync_check_api_key_executes_without_panic() {
 #[tokio::test]
 async fn hover_timeout_evicts_inactive_session() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.session_hover_timeout = 1;
@@ -3006,7 +3009,7 @@ async fn hover_timeout_evicts_inactive_session() {
 #[tokio::test]
 async fn hover_timeout_active_session_not_evicted() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.session_hover_timeout = 10;
@@ -3040,7 +3043,7 @@ async fn hover_timeout_active_session_not_evicted() {
 #[tokio::test]
 async fn hover_timeout_disabled_by_default() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     // session_hover_timeout 保持默认 -1
@@ -3222,6 +3225,7 @@ fn make_logic_with_auth(
         dao.clone() as Arc<dyn GarrisonDao>,
         timeout,
         active_timeout,
+        0,
     ));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth_logic: Arc<dyn AuthLogic> = Arc::new(AuthLogicDefault::new(
@@ -3299,6 +3303,7 @@ async fn check_and_renew_renews_jwt_when_threshold_reached() {
         dao.clone() as Arc<dyn GarrisonDao>,
         10,
         86400,
+        0,
     ));
     let mut config = GarrisonConfig::default_config();
     config.timeout = 10;
@@ -4205,6 +4210,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
         fail_dao.clone() as Arc<dyn GarrisonDao>,
         3600,
         86400,
+        0,
     ));
     let mut config = GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
@@ -4505,3 +4511,4 @@ fn mock_clock_clone_shares_state() {
         "Clone 后应共享时间状态"
     );
 }
+

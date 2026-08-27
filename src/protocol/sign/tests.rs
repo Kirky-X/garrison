@@ -165,7 +165,7 @@ async fn validate_success_stores_nonce() {
         .validate("GET", "/api", ts, "nonce-store", "body", &sig)
         .await
         .unwrap();
-    let key = "garrison:sign:nonce:nonce-store";
+    let key = "garrison:sign:nonce:app-001:nonce-store";
     let stored = dao.get(key).await.unwrap();
     assert!(stored.is_some());
 }
@@ -256,4 +256,57 @@ async fn validate_method_case_difference_returns_error() {
         .validate("post", "/api", ts, "nonce-case", "body", &sig)
         .await;
     assert!(result.is_err());
+}
+
+/// T020：并发重放 — 16 个 tokio 任务同时用同一 nonce 校验，
+/// 仅一个成功（incr 返回 1），其余全部被拒（incr 返回 >1），原子防重放。
+#[tokio::test]
+async fn validate_nonce_concurrent_replay_only_one_wins() {
+    let dao = Arc::new(MockDao::new());
+    let handler = SignHandler::new("app-001", TEST_APP_SECRET, dao.clone()).unwrap();
+    let ts = now_ts();
+    let sig = handler.sign("POST", "/api", ts, "nonce-conc", "body");
+
+    let handler = Arc::new(handler);
+    let mut handles = Vec::new();
+    for _ in 0..16 {
+        let h = handler.clone();
+        let s = sig.clone();
+        handles.push(tokio::spawn(async move {
+            h.validate("POST", "/api", ts, "nonce-conc", "body", &s)
+                .await
+                .is_ok()
+        }));
+    }
+    let mut wins = 0usize;
+    for h in handles {
+        if h.await.unwrap() {
+            wins += 1;
+        }
+    }
+    assert_eq!(wins, 1, "并发重放：仅一个 nonce 校验应成功，实际 {}", wins);
+}
+
+/// T020：不同 app_key 的相同 nonce 互不污染（key 含 app_key 前缀）。
+#[tokio::test]
+async fn validate_nonce_isolated_by_app_key() {
+    let dao = Arc::new(MockDao::new());
+    let h1 = SignHandler::new("app-a", TEST_APP_SECRET, dao.clone()).unwrap();
+    let h2 = SignHandler::new("app-b", TEST_APP_SECRET, dao.clone()).unwrap();
+    let ts = now_ts();
+    let sig1 = h1.sign("POST", "/api", ts, "shared-nonce", "body");
+    let sig2 = h2.sign("POST", "/api", ts, "shared-nonce", "body");
+    // app-a 使用 shared-nonce 成功
+    h1.validate("POST", "/api", ts, "shared-nonce", "body", &sig1)
+        .await
+        .unwrap();
+    // app-b 使用相同 nonce（不同 app_key）仍应成功，互不污染
+    h2.validate("POST", "/api", ts, "shared-nonce", "body", &sig2)
+        .await
+        .unwrap();
+    // app-a 再次使用 shared-nonce 应被拒（自身重放）
+    assert!(h1
+        .validate("POST", "/api", ts, "shared-nonce", "body", &sig1)
+        .await
+        .is_err());
 }

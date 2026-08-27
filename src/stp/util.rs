@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! GarrisonUtil 静态方法入口 + JwtMode 校验模式枚举 + AuthBackend 全局桥接。
@@ -959,7 +959,7 @@ mod tests {
     /// 辅助函数：创建带 MockDao 的 Arc<GarrisonSession>。
     fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, Arc<GarrisonSession>) {
         let dao = Arc::new(MockDao::new());
-        let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, active_timeout));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, active_timeout, 0));
         (dao, session)
     }
 
@@ -1088,7 +1088,7 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(FailingGetDao {
             get_call_count: get_call_count.clone(),
         });
-        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
         // 添加 token 到内存索引（不经过 DAO，确保 cleanup 有内容可遍历）
         session.add_login_token("user1", "token1");
 
@@ -1189,6 +1189,7 @@ mod tests {
                 dynamic_active_timeout: None,
                 #[cfg(feature = "session-extra")]
                 is_anon: false,
+                effective_timeout: None,
             })
         }
         async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
@@ -2217,3 +2218,4 @@ mod tests {
         );
     }
 }
+

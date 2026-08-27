@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 策略注册表模块，提供 6 个可插拔策略 trait + Strategy 注册表。
@@ -570,7 +570,7 @@ mod tests {
         let config = Arc::new(GarrisonConfig::default_config());
         let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
         let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
         let firewall: Arc<dyn crate::strategy::GarrisonPermissionStrategy> =
             Arc::new(GarrisonPermissionStrategyDefault::new(interface));
         Arc::new(GarrisonLogicDefault::new(session, config, firewall))
@@ -1072,3 +1072,4 @@ mod tests {
         );
     }
 }
+

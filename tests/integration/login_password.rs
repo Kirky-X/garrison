@@ -254,7 +254,7 @@ async fn make_logic_with_password() -> Arc<GarrisonLogicDefault> {
 
     // 构造 oxcache DAO
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -350,7 +350,7 @@ async fn login_with_password_wrong_password() {
 #[serial]
 async fn login_with_password_fails_without_hasher() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -382,7 +382,7 @@ async fn login_with_password_fails_without_hasher() {
 #[serial]
 async fn login_with_password_fails_without_user_repository() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;

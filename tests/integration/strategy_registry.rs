@@ -63,7 +63,7 @@ async fn make_logic() -> Arc<GarrisonLogicDefault> {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
     let firewall = Arc::new(GarrisonPermissionStrategyDefault::new(interface));
     Arc::new(GarrisonLogicDefault::new(session, config, firewall))
 }

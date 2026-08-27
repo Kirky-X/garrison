@@ -76,7 +76,7 @@ mod tenant_audit_decision_e2e {
                 .await
                 .expect("oxcache 初始化应成功"),
         );
-        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
 
         let mut config = garrison::config::GarrisonConfig::default_config();
         config.token_style = "uuid".to_string();
