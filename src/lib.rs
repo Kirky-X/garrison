@@ -342,7 +342,7 @@ pub mod backend;
 /// 启用 `abac` feature 时编译核心引擎（AbacEngine / init_abac_engine），
 /// 依赖 `cedar-policy` crate。
 ///
-/// `abac` feature 关闭时仅提供 `check_abac_with_policy` stub（no-op），
+/// `abac` feature 关闭时仅提供 `check_abac_with_policy` fail-closed stub（endpoints without abac attr: no-op allow; with abac attr but feature disabled: Err(Config)），
 /// 确保宏 `#[check_permission(permission = "...", abac = "...")]` 生成的代码
 /// 在任意 feature 组合下均可编译（R-abac-005）。
 ///

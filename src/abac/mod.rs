@@ -20,7 +20,7 @@
 //! # Feature 依赖
 //!
 //! 启用 `abac` feature 时编译核心引擎，依赖 `cedar-policy` crate。
-//! `check_abac_with_policy` 在 `abac` feature 关闭时提供 no-op stub，
+//! `check_abac_with_policy` 在 `abac` feature 关闭时提供 fail-closed stub，
 //! 确保宏生成的代码在任意 feature 组合下均可编译。
 
 #[cfg(feature = "abac")]
