@@ -1,4 +1,4 @@
-﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! PermissionLogic trait — 权限与角色校验契约。

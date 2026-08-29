@@ -551,13 +551,18 @@ impl KeycloakProvider {
                         ("detail", &e.to_string())
                     ))
                 })?;
-                refreshed.keys.iter().find(|k| k.kid == kid).cloned().ok_or_else(|| {
-            GarrisonError::InvalidToken(loc!(
-                "keycloak-jwks-key-not-found",
-                format!("JWKS key not found for kid={}", Self::sanitize_kid(kid)),
-                ("kid", &Self::sanitize_kid(kid))
-            ))
-                })?
+                refreshed
+                    .keys
+                    .iter()
+                    .find(|k| k.kid == kid)
+                    .cloned()
+                    .ok_or_else(|| {
+                        GarrisonError::InvalidToken(loc!(
+                            "keycloak-jwks-key-not-found",
+                            format!("JWKS key not found for kid={}", Self::sanitize_kid(kid)),
+                            ("kid", &Self::sanitize_kid(kid))
+                        ))
+                    })?
             },
             None => {
                 return Err(GarrisonError::InvalidToken(loc!(

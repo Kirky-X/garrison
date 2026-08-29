@@ -710,12 +710,9 @@ impl SamlParseContext {
                     "sso-saml-missing-not-on-or-after".to_string(),
                 ));
             }
-            let expiry = chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after)
-                .map_err(|e| {
-                    GarrisonError::InvalidToken(format!(
-                        "sso-saml-not-on-or-after-parse::{}",
-                        e
-                    ))
+            let expiry =
+                chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after).map_err(|e| {
+                    GarrisonError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
                 })?;
             if Utc::now().timestamp() >= expiry.timestamp() {
                 return Err(GarrisonError::InvalidToken(format!(
@@ -726,12 +723,9 @@ impl SamlParseContext {
             // NotBefore 校验（CRIT-004）：未来生效的断言不得即刻使用。
             // 缺失 NotBefore 允许（部分 IdP 不签发），存在则必须已生效。
             if !assertion.not_before.is_empty() {
-                let not_before =
-                    chrono::DateTime::parse_from_rfc3339(&assertion.not_before).map_err(|e| {
-                        GarrisonError::InvalidToken(format!(
-                            "sso-saml-not-before-parse::{}",
-                            e
-                        ))
+                let not_before = chrono::DateTime::parse_from_rfc3339(&assertion.not_before)
+                    .map_err(|e| {
+                        GarrisonError::InvalidToken(format!("sso-saml-not-before-parse::{}", e))
                     })?;
                 if Utc::now().timestamp() < not_before.timestamp() {
                     return Err(GarrisonError::InvalidToken(format!(
@@ -1085,13 +1079,16 @@ fn extract_reference_bindings(signed_info_xml: &str) -> Vec<ReferenceBinding> {
         while let Some(rel) = signed_info_xml[search_from..].find(start_tag) {
             let abs_start = search_from + rel;
             // 边界检查：避免匹配到 <References 等更长标签名
-            let after_tag = signed_info_xml[abs_start + start_tag.len()..].chars().next();
+            let after_tag = signed_info_xml[abs_start + start_tag.len()..]
+                .chars()
+                .next();
             if !matches!(after_tag, Some(' ') | Some('>') | Some('/')) {
                 search_from = abs_start + start_tag.len();
                 continue;
             }
             let content_start = abs_start + start_tag.len();
-            let rel_end = match signed_info_xml[content_start..].find("</ds:Reference>")
+            let rel_end = match signed_info_xml[content_start..]
+                .find("</ds:Reference>")
                 .or_else(|| signed_info_xml[content_start..].find("</Reference>"))
             {
                 Some(e) => e,
@@ -1103,7 +1100,9 @@ fn extract_reference_bindings(signed_info_xml: &str) -> Vec<ReferenceBinding> {
                 .find("URI=\"")
                 .and_then(|i| {
                     let vstart = i + "URI=\"".len();
-                    block[vstart..].find('"').map(|e| block[vstart..vstart + e].to_string())
+                    block[vstart..]
+                        .find('"')
+                        .map(|e| block[vstart..vstart + e].to_string())
                 })
                 .unwrap_or_default();
             let digest_method = block
@@ -1760,8 +1759,9 @@ mod tests {
     #[tokio::test]
     async fn parse_response_success() {
         let future = Utc::now().timestamp() + 3600;
-        let future_str =
-            chrono::DateTime::from_timestamp(future, 0).unwrap().to_rfc3339();
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
         let xml = format!(
             r#"<?xml version="1.0" encoding="UTF-8"?>
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
@@ -1790,7 +1790,8 @@ mod tests {
       </saml:Attribute>
     </saml:AttributeStatement>
     </saml:Assertion>
-</samlp:Response>"#);
+</samlp:Response>"#
+        );
         let provider = DefaultSamlProvider::new().unwrap();
         let response = provider.parse_response(&xml).await.unwrap();
         assert_eq!(response.destination, "https://sp.example.com/acs");
@@ -2401,8 +2402,12 @@ mod tests {
         #[test]
         fn verify_saml_signature_rejects_xsw_copied_signature() {
             let (legit_xml, public_key_pem) = build_test_signed_assertion();
-            let sig_start = legit_xml.find("<ds:Signature>").expect("fixture 应含 Signature");
-            let sig_end = legit_xml.find("</ds:Signature>").expect("fixture 应含 Signature 闭合")
+            let sig_start = legit_xml
+                .find("<ds:Signature>")
+                .expect("fixture 应含 Signature");
+            let sig_end = legit_xml
+                .find("</ds:Signature>")
+                .expect("fixture 应含 Signature 闭合")
                 + "</ds:Signature>".len();
             let stolen_signature = legit_xml[sig_start..sig_end].to_string();
 
@@ -2537,18 +2542,18 @@ mod tests {
         async fn xmlsec_provider_rejects_replayed_signed_assertion() {
             use crate::dao::GarrisonDao as _;
             let future = Utc::now().timestamp() + 3600;
-            let future_str =
-                chrono::DateTime::from_timestamp(future, 0).unwrap().to_rfc3339();
+            let future_str = chrono::DateTime::from_timestamp(future, 0)
+                .unwrap()
+                .to_rfc3339();
 
             // NotOnOrAfter 在签名前注入（纳入 DigestValue 计算）
-            let (signed_assertion, public_key_pem) =
-                build_test_signed_assertion_with_inner(&format!(
-                    "<SubjectConfirmationData NotOnOrAfter=\"{}\"/>",
-                    future_str
-                ));
+            let (signed_assertion, public_key_pem) = build_test_signed_assertion_with_inner(
+                &format!("<SubjectConfirmationData NotOnOrAfter=\"{}\"/>", future_str),
+            );
             let dao = std::sync::Arc::new(crate::dao::tests::MockDao::new());
-            let provider =
-                XmlSecSamlProvider::new(public_key_pem).unwrap().with_request_dao(dao);
+            let provider = XmlSecSamlProvider::new(public_key_pem)
+                .unwrap()
+                .with_request_dao(dao);
 
             let xml = format!(
                 r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
@@ -2755,8 +2760,9 @@ mod tests {
     #[test]
     fn parse_saml_response_xml_handles_empty_assertion() {
         let future = Utc::now().timestamp() + 3600;
-        let future_str =
-            chrono::DateTime::from_timestamp(future, 0).unwrap().to_rfc3339();
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
         let xml = format!(
             r#"<Response>
   <Assertion ID="empty-001">
@@ -2880,8 +2886,9 @@ mod tests {
     async fn in_response_to_binding_first_pass_then_rejected() {
         use crate::dao::GarrisonDao as _;
         let dao = std::sync::Arc::new(crate::dao::tests::MockDao::new());
-        let provider =
-            DefaultSamlProvider::new().unwrap().with_request_dao(dao.clone());
+        let provider = DefaultSamlProvider::new()
+            .unwrap()
+            .with_request_dao(dao.clone());
 
         let request = provider
             .build_authn_request("sp", "https://sp/acs", "https://idp/sso")
@@ -2948,6 +2955,10 @@ mod tests {
   <Status><StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></Status>
 </samlp:Response>"#;
         let result = provider.parse_response(xml).await;
-        assert!(result.is_ok(), "IdP-initiated 响应应放行，实际: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "IdP-initiated 响应应放行，实际: {:?}",
+            result
+        );
     }
 }

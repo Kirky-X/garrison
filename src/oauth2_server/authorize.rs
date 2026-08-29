@@ -903,7 +903,9 @@ mod tests {
         for _ in 0..16 {
             let h = handler.clone();
             let c = code.clone();
-            handles.push(tokio::spawn(async move { h.consume_code(&c).await.unwrap().is_some() }));
+            handles.push(tokio::spawn(async move {
+                h.consume_code(&c).await.unwrap().is_some()
+            }));
         }
         let mut wins = 0usize;
         for h in handles {
@@ -911,7 +913,11 @@ mod tests {
                 wins += 1;
             }
         }
-        assert_eq!(wins, 1, "并发双花：仅一个 consume_code 应成功，实际 {}", wins);
+        assert_eq!(
+            wins, 1,
+            "并发双花：仅一个 consume_code 应成功，实际 {}",
+            wins
+        );
     }
 
     /// T019：重放检测 + 吊销 — 授权码被消费后记录签发的 token，

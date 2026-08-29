@@ -1,4 +1,4 @@
-﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 会话模块，提供双模会话管理（Account-Session + Token-Session）。

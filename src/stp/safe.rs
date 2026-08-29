@@ -1,4 +1,4 @@
-﻿//! 二级认证（Safe Auth）瞬态标记实现。
+//! 二级认证（Safe Auth）瞬态标记实现。
 //!
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.

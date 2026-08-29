@@ -1,4 +1,4 @@
-﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! GarrisonSession 实现块（从 mod.rs 迁移）。
@@ -238,7 +238,8 @@ impl GarrisonSession {
     pub async fn create(&self, login_id: impl Into<String>, token: &str) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
         // 非 LoginParams 路径：无 remember_me（使用全局 timeout，effective_timeout = None）
-        self.create_inner(&login_id, token, None, None, None, None).await
+        self.create_inner(&login_id, token, None, None, None, None)
+            .await
     }
 
     /// 创建 Token-Session 并写入 LoginParams 中的 device/ip/user_agent。
@@ -344,9 +345,7 @@ impl GarrisonSession {
         };
         let token_json = serde_json::to_string(&token_session)
             .map_err(|e| GarrisonError::Session(format!("session-sim-token-serialize::{}", e)))?;
-        self.dao
-            .set(&token_key(token), &token_json, ttl)
-            .await?;
+        self.dao.set(&token_key(token), &token_json, ttl).await?;
 
         // 读取或创建 Account-Session
         let mut account = self
@@ -1209,10 +1208,7 @@ impl GarrisonSession {
             // 读不到 TTL 时（DAO 不支持 TTL 或键已无 TTL）按 effective_timeout.unwrap_or(self.timeout) 重置。
             let ttl = match self.dao.get_with_ttl(&token_key(token)).await? {
                 Some((_, Some(remaining))) => remaining.as_secs(),
-                _ => ts
-                    .effective_timeout
-                    .unwrap_or(self.timeout as i64)
-                    .max(0) as u64,
+                _ => ts.effective_timeout.unwrap_or(self.timeout as i64).max(0) as u64,
             };
             // 更新值 + 重置 TTL（用 set 覆盖，重置 TTL）
             self.dao.set(&token_key(token), &json, ttl).await?;
@@ -1647,7 +1643,11 @@ mod tests {
             .create_token_session(login_id, "normal-token", &params2)
             .await
             .unwrap();
-        let ts2 = session2.get_token_session("normal-token").await.unwrap().unwrap();
+        let ts2 = session2
+            .get_token_session("normal-token")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             ts2.effective_timeout, None,
             "非 remember-me 登录 effective_timeout 应为 None（使用全局 timeout）"
@@ -1666,7 +1666,10 @@ mod tests {
         let token = "rm-itoken";
         let mut params = crate::stp::LoginParams::default();
         params.remember_me = true;
-        session.create_token_session(login_id, token, &params).await.unwrap();
+        session
+            .create_token_session(login_id, token, &params)
+            .await
+            .unwrap();
 
         // 模拟空闲 2 小时（超过基础 timeout=3600，但远小于 remember_me_timeout）
         ts_set_last_active(&session, token, Utc::now().timestamp() - 7200).await;

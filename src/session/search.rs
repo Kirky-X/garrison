@@ -1,4 +1,4 @@
-﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 会话搜索模块。
@@ -1043,4 +1043,3 @@ mod tests {
         assert_eq!(entries[0].0, "only");
     }
 }
-

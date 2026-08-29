@@ -1,4 +1,4 @@
-﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 use super::mock::MockDao;
@@ -1184,4 +1184,3 @@ async fn renew_locks_entry_cleaned_after_concurrent_renew() {
         auth.renew_locks.len()
     );
 }
-

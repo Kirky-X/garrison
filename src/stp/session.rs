@@ -1,4 +1,4 @@
-﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! SessionLogic trait — 会话生命周期管理契约（登录/登出/踢出/校验）。
@@ -19,9 +19,9 @@ use super::LoginParams;
 #[cfg(feature = "listener")]
 use crate::config::OverflowLogoutMode;
 use crate::config::ReplacedLoginExitMode;
-use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "secure-simple-token")]
 use crate::core::token::Token;
+use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "listener")]
 use crate::listener::GarrisonEvent;
 #[cfg(feature = "listener")]
@@ -318,8 +318,7 @@ impl SessionLogic for GarrisonLogicDefault {
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
             use crate::strategy::firewall::FirewallContext;
-            let strategy =
-                BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
             let fw_ctx = FirewallContext::new(&ip);
             if strategy.is_blocked(&fw_ctx).await? {
                 return Err(GarrisonError::FirewallBlocked(format!(
@@ -336,16 +335,12 @@ impl SessionLogic for GarrisonLogicDefault {
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
             use crate::strategy::firewall::FirewallContext;
-            let strategy =
-                BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
             let fw_ctx = FirewallContext::new(&ip);
             match &result {
                 Ok(_) => {
-                    let count_key = format!(
-                        "{}{}:count",
-                        crate::constants::DaoKeyPrefix::BruteForce,
-                        ip
-                    );
+                    let count_key =
+                        format!("{}{}:count", crate::constants::DaoKeyPrefix::BruteForce, ip);
                     if let Err(e) = self.dao().delete(&count_key).await {
                         tracing::warn!(
                             ip = %ip,
@@ -353,7 +348,7 @@ impl SessionLogic for GarrisonLogicDefault {
                             "brute force reset-on-success 失败（不影响登录结果）"
                         );
                     }
-                }
+                },
                 Err(_) => {
                     if let Err(record_err) = strategy.record_failure(&fw_ctx).await {
                         tracing::warn!(
@@ -362,7 +357,7 @@ impl SessionLogic for GarrisonLogicDefault {
                             "brute force record_failure 失败（不影响登录结果）"
                         );
                     }
-                }
+                },
             }
         }
 
@@ -557,8 +552,7 @@ impl SessionLogic for GarrisonLogicDefault {
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
             use crate::strategy::firewall::FirewallContext;
-            let strategy =
-                BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
             let fw_ctx = FirewallContext::new(&ip);
             if strategy.is_blocked(&fw_ctx).await? {
                 return Err(GarrisonError::FirewallBlocked(format!(
@@ -598,16 +592,12 @@ impl SessionLogic for GarrisonLogicDefault {
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
             use crate::strategy::firewall::FirewallContext;
-            let strategy =
-                BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
             let fw_ctx = FirewallContext::new(&ip);
             match &result {
                 Ok(true) => {
-                    let count_key = format!(
-                        "{}{}:count",
-                        crate::constants::DaoKeyPrefix::BruteForce,
-                        ip
-                    );
+                    let count_key =
+                        format!("{}{}:count", crate::constants::DaoKeyPrefix::BruteForce, ip);
                     if let Err(e) = self.dao().delete(&count_key).await {
                         tracing::warn!(
                             ip = %ip,
@@ -615,7 +605,7 @@ impl SessionLogic for GarrisonLogicDefault {
                             "brute force reset-on-success 失败（不影响校验结果）"
                         );
                     }
-                }
+                },
                 Ok(false) => {
                     if let Err(record_err) = strategy.record_failure(&fw_ctx).await {
                         tracing::warn!(
@@ -624,10 +614,10 @@ impl SessionLogic for GarrisonLogicDefault {
                             "brute force record_failure 失败（不影响校验结果）"
                         );
                     }
-                }
+                },
                 Err(_) => {
                     // 状态/配置错误（如未登录异常），非撞库尝试，不计入。
-                }
+                },
             }
         }
         result
@@ -1158,7 +1148,7 @@ impl GarrisonLogicDefault {
                         "stp-simple-token-style-requires-secure-simple-token-feature::".to_string(),
                     ))
                 }
-            }
+            },
             "jwt" => {
                 // 委托 JwtHandler::sign
                 #[cfg(feature = "protocol-jwt")]
@@ -3583,7 +3573,8 @@ mod tests {
                 config.token_style = "simple".to_string();
                 // A11: simple 模式下 verify_token 委托 SimpleTokenStyle（需 HMAC），
                 // 设置非空 jwt_secret 避免 fail-closed。
-                const SESSION_SIMPLE_TEST_SECRET: &str = "stp-session-simple-test-secret-0123456789";
+                const SESSION_SIMPLE_TEST_SECRET: &str =
+                    "stp-session-simple-test-secret-0123456789";
                 config.jwt_secret = SESSION_SIMPLE_TEST_SECRET.to_string().into();
                 let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                     has_permission: true,
@@ -3776,12 +3767,25 @@ mod tests {
             });
             let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
-            logic.login_with_token("quota-user", "qt-token-001").await.unwrap();
-            logic.login_with_token("quota-user", "qt-token-002").await.unwrap();
-            logic.login_with_token("quota-user", "qt-token-003").await.unwrap();
+            logic
+                .login_with_token("quota-user", "qt-token-001")
+                .await
+                .unwrap();
+            logic
+                .login_with_token("quota-user", "qt-token-002")
+                .await
+                .unwrap();
+            logic
+                .login_with_token("quota-user", "qt-token-003")
+                .await
+                .unwrap();
 
             // 第 3 个登录（> max_login_count=2）应踢出最旧 token qt-token-001
-            let oldest = logic.session.get_token_session("qt-token-001").await.unwrap();
+            let oldest = logic
+                .session
+                .get_token_session("qt-token-001")
+                .await
+                .unwrap();
             assert!(
                 oldest.is_none(),
                 "第 max_login_count+1 个会话应踢出最旧 token qt-token-001，实际: {:?}",
@@ -3789,11 +3793,21 @@ mod tests {
             );
             // qt-token-002 / qt-token-003 仍保留
             assert!(
-                logic.session.get_token_session("qt-token-002").await.unwrap().is_some(),
+                logic
+                    .session
+                    .get_token_session("qt-token-002")
+                    .await
+                    .unwrap()
+                    .is_some(),
                 "qt-token-002 应保留"
             );
             assert!(
-                logic.session.get_token_session("qt-token-003").await.unwrap().is_some(),
+                logic
+                    .session
+                    .get_token_session("qt-token-003")
+                    .await
+                    .unwrap()
+                    .is_some(),
                 "qt-token-003 应保留"
             );
         }
@@ -4133,7 +4147,9 @@ mod tests {
             });
             let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
-            let result = logic.login("simple-user-001", &LoginParams::default()).await;
+            let result = logic
+                .login("simple-user-001", &LoginParams::default())
+                .await;
             assert!(
                 matches!(result, Err(GarrisonError::Config(_))),
                 "未启用 secure-simple-token 时 simple token 生成应 fail-closed 返回 Config 错误"
@@ -4514,8 +4530,7 @@ mod firewall_tests {
 
     async fn setup() {
         GarrisonManager::reset_for_test();
-        let dao: std::sync::Arc<dyn crate::dao::GarrisonDao> =
-            std::sync::Arc::new(MockDao::new());
+        let dao: std::sync::Arc<dyn crate::dao::GarrisonDao> = std::sync::Arc::new(MockDao::new());
         // 关闭 throw_on_not_login：使无效 token 返回 Ok(false)（认证失败），
         // 从而触发 brute-force 计数路径。
         let mut config = GarrisonConfig::default();
@@ -4584,9 +4599,7 @@ mod firewall_tests {
             with_current_token("bogus2".to_string(), async {
                 let mut blocked = false;
                 // 仅 1 次失败，远未达阈值
-                if let Err(GarrisonError::FirewallBlocked(_)) =
-                    GarrisonUtil::check_login().await
-                {
+                if let Err(GarrisonError::FirewallBlocked(_)) = GarrisonUtil::check_login().await {
                     blocked = true;
                 }
                 blocked
@@ -4613,4 +4626,3 @@ mod firewall_tests {
         );
     }
 }
-

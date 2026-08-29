@@ -381,8 +381,7 @@ mod no_feature_tests {
     #[tokio::test]
     async fn check_api_key_without_feature_returns_config_error() {
         GarrisonManager::reset_for_test();
-        let dao: std::sync::Arc<dyn crate::dao::GarrisonDao> =
-            std::sync::Arc::new(MockDao::new());
+        let dao: std::sync::Arc<dyn crate::dao::GarrisonDao> = std::sync::Arc::new(MockDao::new());
         let config = std::sync::Arc::new(GarrisonConfig::default());
         let interface: std::sync::Arc<dyn crate::stp::GarrisonInterface> =
             std::sync::Arc::new(MockInterface);

@@ -1,4 +1,4 @@
-﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! Stp 集成测试。
@@ -217,12 +217,30 @@ async fn login_with_random_64_style() {
     assert_eq!(token.len(), 64, "random_64 应生成 64 字符 token");
 }
 
-/// 验证 token_style=simple 生成 32 字符 token。
+/// 验证 token_style=simple 生成含 HMAC '.' 分隔符的 token。
+///
+/// R-sessiontokenconsistency-002 后 simple 生成委托 `SimpleTokenStyle`（HMAC），
+/// 仅在 `secure-simple-token` feature 下可用（与下方 fail-closed 用例互补覆盖）。
+#[cfg(feature = "secure-simple-token")]
 #[tokio::test]
 async fn login_with_simple_style() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
     assert!(token.contains('.'), "simple token 应含 HMAC '.' 分隔符");
+}
+
+/// 验证未启用 `secure-simple-token` 时 simple style fail-closed 返回 Config 错误。
+///
+/// 覆盖 `generate_token` 的 `#[cfg(not(feature = "secure-simple-token"))]` 分支。
+#[cfg(not(feature = "secure-simple-token"))]
+#[tokio::test]
+async fn login_simple_without_feature_fails_closed() {
+    let logic = make_logic(3600, 86400, false, "simple", true, true);
+    let result = logic.login("1001", &LoginParams::default()).await;
+    assert!(
+        matches!(result, Err(GarrisonError::Config(_))),
+        "无 secure-simple-token 时 simple style 应 fail-closed 返回 Config 错误"
+    );
 }
 
 /// 验证未知 token_style 时 login 返回 Err。
@@ -4511,4 +4529,3 @@ fn mock_clock_clone_shares_state() {
         "Clone 后应共享时间状态"
     );
 }
-

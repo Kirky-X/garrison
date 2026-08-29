@@ -1244,9 +1244,8 @@ fn signed_nonce_roundtrip_and_self_minted_rejected() {
     assert!(auth.is_nonce_valid(&nonce), "签名 nonce 应有效");
 
     // 自铸：旧格式 2 段（无签名）应被拒
-    let forged = STANDARD.encode(
-        format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes(),
-    );
+    let forged = STANDARD
+        .encode(format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes());
     assert!(
         !auth.is_nonce_valid(&forged),
         "无签名自铸 nonce 应被拒（T021）"
@@ -1270,15 +1269,22 @@ fn validate_rejects_self_minted_nonce_with_server_key() {
         .with_server_key(b"server-secret-key-material-with-enough-bytes-32");
     let ha1 = auth.compute_ha1("admin", "secret");
     // 自铸旧格式 nonce（无签名）
-    let nonce = STANDARD.encode(
-        format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes(),
-    );
+    let nonce = STANDARD
+        .encode(format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes());
     let nc = "00000001";
     let cnonce = "0a4f113c";
     let method = "GET";
     let uri = "/resource";
     let header = build_md5_auth_header(
-        &auth, "admin", "test@realm", &nonce, nc, cnonce, method, uri, &ha1,
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
     );
     assert!(
         !auth.validate(&header, method, uri, &ha1),
@@ -1299,7 +1305,15 @@ fn validate_succeeds_with_signed_nonce() {
     let method = "GET";
     let uri = "/resource";
     let header = build_md5_auth_header(
-        &auth, "admin", "test@realm", &nonce, nc, cnonce, method, uri, &ha1,
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
     );
     assert!(
         auth.validate(&header, method, uri, &ha1),

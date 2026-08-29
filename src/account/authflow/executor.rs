@@ -1,4 +1,4 @@
-﻿//! AuthExecutor 核心。
+//! AuthExecutor 核心。
 //!
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
@@ -4397,4 +4397,3 @@ mod tests {
         }
     }
 }
-

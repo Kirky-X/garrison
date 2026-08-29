@@ -1477,7 +1477,10 @@ mod tests {
     #[test]
     fn sanitize_kid_filters_control_chars_and_limits_len() {
         assert_eq!(DefaultOidcProvider::sanitize_kid("abc123"), "abc123");
-        assert_eq!(DefaultOidcProvider::sanitize_kid("bad\x01kid\x7f"), "badkid");
+        assert_eq!(
+            DefaultOidcProvider::sanitize_kid("bad\x01kid\x7f"),
+            "badkid"
+        );
         let long = "a".repeat(200);
         assert_eq!(DefaultOidcProvider::sanitize_kid(&long).len(), 128);
     }

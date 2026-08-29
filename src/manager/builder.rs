@@ -329,7 +329,7 @@ impl GarrisonManagerBuilder {
         };
 
         // 5. 构造 firewall，注入 permission_checker + plugin_manager
-        let mut firewall_builder = GarrisonPermissionStrategyDefault::new(interface)
+        let firewall_builder = GarrisonPermissionStrategyDefault::new(interface)
             .with_permission_checker(permission_checker.clone())
             .with_plugin_manager(plugin_manager.clone());
 
@@ -337,13 +337,12 @@ impl GarrisonManagerBuilder {
         // 通过 `GarrisonFirewallCheckHookDefault` 注入共享 DAO 的限流器，
         // 使 login 流水线的 5 个 hook（含暴力破解/频率/geo/异常检测）真正生效。
         #[cfg(feature = "firewall")]
-        {
+        let firewall_builder = {
             use crate::strategy::hooks::GarrisonFirewallCheckHookDefault;
-            let hook = std::sync::Arc::new(
-                GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone()),
-            );
-            firewall_builder = firewall_builder.with_firewall_hook(hook);
-        }
+            let hook =
+                std::sync::Arc::new(GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone()));
+            firewall_builder.with_firewall_hook(hook)
+        };
 
         let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(firewall_builder);
 

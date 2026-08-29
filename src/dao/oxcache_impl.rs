@@ -254,20 +254,19 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .cache
             .ttl_sync(&actual_key)
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
-        let remaining_ttl = match remaining_ttl {
-            Some(ttl) => Some(ttl),
-            None => {
-                if !self
-                    .cache
-                    .exists_sync(&actual_key)
-                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?
-                {
-                    // 键已消失（过期瞬间 / 被删除）→ 报 missing，绝不写入永久值
-                    return Err(GarrisonError::Dao(format!("dao-key-missing::{}", key)));
-                }
-                None // 永久键，保留
-            },
-        };
+        let remaining_ttl =
+            match remaining_ttl {
+                Some(ttl) => Some(ttl),
+                None => {
+                    if !self.cache.exists_sync(&actual_key).map_err(|e| {
+                        GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e))
+                    })? {
+                        // 键已消失（过期瞬间 / 被删除）→ 报 missing，绝不写入永久值
+                        return Err(GarrisonError::Dao(format!("dao-key-missing::{}", key)));
+                    }
+                    None // 永久键，保留
+                },
+            };
         self.cache
             .set_with_ttl_sync(&actual_key, &value.to_string(), remaining_ttl)
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-update-set-with-ttl-sync::{}", e)))
@@ -359,19 +358,18 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .cache
             .ttl_sync(&actual_old)
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-ttl-sync::{}", e)))?;
-        let remaining_ttl = match remaining_ttl {
-            Some(ttl) => Some(ttl),
-            None => {
-                if !self
-                    .cache
-                    .exists_sync(&actual_old)
-                    .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e)))?
-                {
-                    return Err(GarrisonError::Dao(format!("dao-key-missing::{}", old_key)));
-                }
-                None
-            },
-        };
+        let remaining_ttl =
+            match remaining_ttl {
+                Some(ttl) => Some(ttl),
+                None => {
+                    if !self.cache.exists_sync(&actual_old).map_err(|e| {
+                        GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e))
+                    })? {
+                        return Err(GarrisonError::Dao(format!("dao-key-missing::{}", old_key)));
+                    }
+                    None
+                },
+            };
         self.cache
             .set_with_ttl_sync(&actual_new, &value, remaining_ttl)
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;

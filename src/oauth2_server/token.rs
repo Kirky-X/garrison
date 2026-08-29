@@ -932,7 +932,11 @@ impl TokenHandler {
             None => {
                 // 授权码不存在/已过期/已被消费：判定为重放或并发双花，
                 // 吊销该 code 此前可能签发的 token（best-effort，T019）。
-                if let Err(e) = self.authorize_handler.revoke_replayed_code_tokens(code).await {
+                if let Err(e) = self
+                    .authorize_handler
+                    .revoke_replayed_code_tokens(code)
+                    .await
+                {
                     tracing::warn!(
                         error = %e,
                         "revoke_replayed_code_tokens 失败（重放检测），仍返回 invalid_grant"

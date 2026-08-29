@@ -655,8 +655,7 @@ pub(super) fn current_unix_seconds() -> u64 {
 /// 计算 nonce 服务端签名：`hmac_sha256(server_key, "{timestamp}:{uuid}")` 的 hex 编码。
 fn sign_nonce_payload(server_key: &[u8; 32], timestamp: u64, uuid: &str) -> String {
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac =
-        HmacSha256::new_from_slice(server_key).expect("HMAC 接受 32 字节密钥");
+    let mut mac = HmacSha256::new_from_slice(server_key).expect("HMAC 接受 32 字节密钥");
     mac.update(timestamp.to_string().as_bytes());
     mac.update(b":");
     mac.update(uuid.as_bytes());
@@ -665,7 +664,12 @@ fn sign_nonce_payload(server_key: &[u8; 32], timestamp: u64, uuid: &str) -> Stri
 }
 
 /// 校验 nonce 服务端签名（常量时间比较）。
-fn verify_nonce_signature(server_key: &[u8; 32], timestamp: u64, uuid: &str, mac_hex: &str) -> bool {
+fn verify_nonce_signature(
+    server_key: &[u8; 32],
+    timestamp: u64,
+    uuid: &str,
+    mac_hex: &str,
+) -> bool {
     let expected = sign_nonce_payload(server_key, timestamp, uuid);
     constant_time_eq(expected.as_bytes(), mac_hex.as_bytes())
 }
