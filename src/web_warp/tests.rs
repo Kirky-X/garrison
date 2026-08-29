@@ -25,6 +25,7 @@ use warp::http::header;
 use warp::http::header::HeaderValue;
 use warp::http::StatusCode;
 use warp::reply::Reply;
+use warp::Filter;
 
 // ========================================================================
 // Reply impl 测试
@@ -542,5 +543,67 @@ async fn check_permission_filter_passes_with_valid_permission() {
     .await;
     assert!(result.is_ok());
 
+    GarrisonManager::reset_for_test();
+}
+
+// ========================================================================
+// T004: GarrisonRejection → 三框架统一 JSON（garrison_recover）
+// ========================================================================
+
+/// ACC-WARP-RECOVER-001（正常+异常）：真实 `warp::serve` 挂 `.recover(garrison_recover)` 后，
+/// 未登录请求返回 401 + 统一 `error_code`/`message` JSON（与 axum/actix 一致），
+/// 有效 token 放行 200。
+///
+/// 修复前：warp 拒绝链不自动调用 `impl Reply`，未登录会退化为默认 400 非 JSON
+/// （`mod.rs` 旧文档「保证三框架一致」名不副实，第 6 项缺陷）。
+#[tokio::test]
+#[serial]
+async fn warp_serve_unauthenticated_returns_unified_401_json() {
+    init_manager(&[], &[]).await;
+    let config = Arc::new(make_config());
+
+    let protected = warp::get()
+        .and(warp::path("protected"))
+        .and(warp::path::end())
+        .and(check_login(config))
+        .map(|()| "ok");
+    let routes = protected.recover(garrison_recover);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("应能绑定临时端口");
+    let addr = listener.local_addr().expect("应能取得实际地址");
+    let server = tokio::spawn(warp::serve(routes).incoming(listener).run());
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let client = reqwest::Client::new();
+    let url = format!("http://{}/protected", addr);
+
+    // 异常：无 token → 401 + 统一 JSON（error_code / message 字段）
+    let resp = client.get(&url).send().await.expect("请求应送达");
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "未登录应返回 401");
+    let body: serde_json::Value = resp.json().await.expect("body 应为 JSON");
+    assert!(
+        body.get("error_code").is_some(),
+        "响应应含 error_code 字段（三框架一致），实际: {body}"
+    );
+    assert!(
+        body.get("message").is_some(),
+        "响应应含 message 字段（三框架一致），实际: {body}"
+    );
+
+    // 正常：有效 token → 200
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login 应签发 token");
+    let resp = client
+        .get(&url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", token))
+        .send()
+        .await
+        .expect("请求应送达");
+    assert_eq!(resp.status(), StatusCode::OK, "有效 token 应放行 200");
+
+    server.abort();
     GarrisonManager::reset_for_test();
 }

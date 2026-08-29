@@ -28,31 +28,66 @@ use warp::Filter;
 /// `impl Reject for GarrisonRejection`：接入 warp 拒绝链（空 impl，仅需 Reject marker）。
 impl Reject for super::GarrisonRejection {}
 
-/// `impl Reply for GarrisonError`：复用 `response_parts_i18n()` 保证三框架一致。
+/// `GarrisonRejection` 的 `Display`：委托内部 `GarrisonError`，便于日志与排障。
+impl std::fmt::Display for super::GarrisonRejection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+/// 统一错误响应构建：与 axum `IntoResponse` / actix-web `ResponseError` 的
+/// 状态码及 body（`error_code` / `message` / 可选 `code`）完全一致。
+///
+/// [`Reply for GarrisonError`]、[`Reply for GarrisonRejection`] 与 [`garrison_recover`]
+/// 共用，单一事实来源，确保三框架响应同一形态。
+fn unified_error_reply(err: &GarrisonError) -> Response {
+    // 单次调用 response_parts_i18n() 获取所有字段（M2：消除冗余调用）
+    let (status, error_code, message, ex_code) = err.response_parts_i18n();
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    let body = if let Some(code) = ex_code {
+        serde_json::json!({
+            "error_code": error_code,
+            "message": message,
+            "code": code,
+        })
+    } else {
+        serde_json::json!({
+            "error_code": error_code,
+            "message": message,
+        })
+    };
+    // warp 内置 json + with_status 组合，自动设置 content-type: application/json
+    warp::reply::with_status(warp::reply::json(&body), status).into_response()
+}
+
+/// `impl Reply for GarrisonError`：复用 [`unified_error_reply`] 保证三框架一致。
 ///
 /// 状态码与错误码映射与 axum `IntoResponse` / actix-web `ResponseError` 完全一致。
 impl Reply for GarrisonError {
     fn into_response(self) -> Response {
         tracing::error!(error = ?self, "garrison rejection");
-        // 单次调用 response_parts_i18n() 获取所有字段（M2：消除冗余调用）
-        let (status, error_code, message, ex_code) = self.response_parts_i18n();
-        let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let body = if let Some(code) = ex_code {
-            serde_json::json!({
-                "error_code": error_code,
-                "message": message,
-                "code": code,
-            })
-        } else {
-            serde_json::json!({
-                "error_code": error_code,
-                "message": message,
-            })
-        };
-        // warp 内置 json + with_status 组合，自动设置 content-type: application/json
-        let body = warp::reply::json(&body);
-        warp::reply::with_status(body, status).into_response()
+        unified_error_reply(&self)
     }
+}
+
+/// `impl Reply for GarrisonRejection`：委托内部 `GarrisonError` 的统一响应。
+impl Reply for super::GarrisonRejection {
+    fn into_response(self) -> Response {
+        self.0.into_response()
+    }
+}
+
+/// `.recover()` 守卫映射处理器：把 `GarrisonRejection` 转为与三框架一致的
+/// `error_code` / `message` JSON（状态码对齐）；非 `GarrisonRejection` 原样返回。
+///
+/// 用法：`warp::serve(routes.recover(garrison_recover))`。warp 的拒绝链不会自动
+/// 调用 `impl Reply`，必须显式挂本处理器，否则未登录等拒绝会退化为 warp 默认
+/// 400 非 JSON 响应（三框架一致承诺失效）。
+pub async fn garrison_recover(err: warp::Rejection) -> Result<Response, warp::Rejection> {
+    if let Some(rej) = err.find::<super::GarrisonRejection>() {
+        return Ok(unified_error_reply(&rej.0));
+    }
+    Err(err)
 }
 
 // ============================================================================
