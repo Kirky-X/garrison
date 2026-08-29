@@ -525,6 +525,11 @@ name = "e2e"
 path = "tests/e2e.rs"
 required-features = ["full", "testing"]
 
+[[test]]
+name = "acceptance"
+path = "tests/acceptance.rs"
+required-features = ["full"]
+
 # === 二进制目标 ===
 [[bin]]
 name = "auth_server"
