@@ -8,6 +8,9 @@
 
 #![allow(dead_code)]
 
+/// 统一测试基建（`GarrisonTestHarness`），见 change `acceptance-overhaul` spec `test-harness`。
+pub mod harness;
+
 use dbnexus::DbPool;
 use garrison::dao::{init_dbnexus, GarrisonMigration};
 use std::path::PathBuf;
