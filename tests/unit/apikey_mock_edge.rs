@@ -70,6 +70,7 @@ impl GarrisonDao for MockDao {
         self.store.lock().remove(key);
         Ok(())
     }
+    garrison::atomic_test_fallback!();
 }
 
 /// 创建 ApiKeyHandler（使用本地 mock DAO）。

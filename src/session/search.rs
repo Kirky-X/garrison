@@ -962,6 +962,8 @@ mod tests {
                 .collect();
             Ok(keys)
         }
+
+        crate::atomic_test_fallback!();
     }
 
     /// MAX_SCAN 截断：keys() 返回超过 MAX_SCAN 条 key 时被截断为 MAX_SCAN。

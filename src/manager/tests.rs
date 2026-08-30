@@ -980,6 +980,7 @@ async fn manager_drop_cancels_cleanup_task() {
         async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
+        crate::atomic_test_fallback!();
     }
 
     let counter = Arc::new(AtomicUsize::new(0));

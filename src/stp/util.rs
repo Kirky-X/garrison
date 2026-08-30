@@ -1080,6 +1080,7 @@ mod tests {
         async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
+        crate::atomic_test_fallback!();
     }
 
     /// 验证清理失败时 task 只记录 warn 不中断，继续运行下一个周期。

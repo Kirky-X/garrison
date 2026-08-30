@@ -2479,6 +2479,7 @@ mod tests {
                 key
             )))
         }
+        crate::atomic_test_fallback!();
     }
 
     /// `PasswordRateLimiter` 在 DAO 故障时启用降级限速器 ——

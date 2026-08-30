@@ -113,6 +113,7 @@ impl GarrisonDao for MockDao {
         self.store.lock().remove(key);
         Ok(())
     }
+    garrison::atomic_test_fallback!();
 }
 
 // ============================================================================

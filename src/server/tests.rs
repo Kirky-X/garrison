@@ -855,6 +855,7 @@ impl GarrisonDao for SimpleMockDao {
     async fn delete(&self, _key: &str) -> GarrisonResult<()> {
         Ok(())
     }
+    crate::atomic_test_fallback!();
 }
 
 /// 简化 Mock OAuth2ClientStore，仅实现 trait 的 5 个方法。

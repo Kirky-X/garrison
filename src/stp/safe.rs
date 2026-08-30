@@ -1003,6 +1003,7 @@ mod tests {
         async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
+        crate::atomic_test_fallback!();
     }
 
     /// 创建使用 SlowDao 的 GarrisonSession，放大 token session 读写延迟。

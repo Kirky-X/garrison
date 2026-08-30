@@ -111,6 +111,7 @@ impl GarrisonDao for MockDao {
             _ => Ok(None),
         }
     }
+    crate::atomic_test_fallback!();
 }
 
 // ------------------------------------------------------------------------

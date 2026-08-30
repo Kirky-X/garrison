@@ -66,6 +66,90 @@ impl GarrisonDao for MockDao {
         }
         Ok(value)
     }
+
+    // T012：以下 5 个原子方法为编译期契约必需，按 trait 原组合语义实现
+    //（测试环境，TOCTOU 可接受）；核心的 `get_and_delete` 保留上方单锁原子实现。
+    // `set_permanent` 走 trait 默认（委托 `set`，本 mock 无 TTL）。
+
+    async fn set_if_absent(
+        &self,
+        key: &str,
+        value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        if self.get(key).await?.is_some() {
+            return Ok(false);
+        }
+        self.set(key, value, ttl_seconds).await?;
+        Ok(true)
+    }
+
+    async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
+        let value = self
+            .get(old_key)
+            .await?
+            .ok_or_else(|| GarrisonError::InvalidParam(format!("dao-key-missing::{}", old_key)))?;
+        self.set_permanent(new_key, &value).await?;
+        self.delete(old_key).await
+    }
+
+    async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
+        match self.get(key).await? {
+            Some(v) => {
+                let cur_val: u64 = v.parse().map_err(|_| {
+                    GarrisonError::Dao(format!("dao-incr-parse-u64::{}::{}", key, v))
+                })?;
+                let new_val = cur_val + 1;
+                self.update(key, &new_val.to_string()).await?;
+                Ok(new_val)
+            },
+            None => {
+                self.set(key, "1", ttl_seconds).await?;
+                Ok(1)
+            },
+        }
+    }
+
+    async fn decr(&self, key: &str) -> GarrisonResult<u64> {
+        match self.get(key).await? {
+            Some(v) => {
+                let cur_val: u64 = v.parse().map_err(|_| {
+                    GarrisonError::Dao(format!("dao-decr-parse-u64::{}::{}", key, v))
+                })?;
+                if cur_val == 0 {
+                    return Ok(0);
+                }
+                let new_val = cur_val - 1;
+                if new_val == 0 {
+                    self.delete(key).await?;
+                } else {
+                    self.update(key, &new_val.to_string()).await?;
+                }
+                Ok(new_val)
+            },
+            None => Ok(0),
+        }
+    }
+
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        new_value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        let current = self.get(key).await?;
+        if current.as_deref() == expected {
+            if ttl_seconds == 0 {
+                self.set_permanent(key, new_value).await?;
+            } else {
+                self.set(key, new_value, ttl_seconds).await?;
+            }
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 /// 创建 handler（使用 MockDao）。

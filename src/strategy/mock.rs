@@ -58,6 +58,7 @@ impl GarrisonDao for MockCacheDao {
         }
         Ok(result)
     }
+    crate::atomic_test_fallback!();
 }
 
 #[cfg(test)]

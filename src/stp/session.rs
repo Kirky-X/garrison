@@ -1771,6 +1771,7 @@ mod tests {
                 self.store.lock().remove(key);
                 Ok(())
             }
+            crate::atomic_test_fallback!();
         }
 
         // --------------------------------------------------------------------
@@ -2533,6 +2534,7 @@ mod tests {
                 self.store.lock().remove(key);
                 Ok(())
             }
+            crate::atomic_test_fallback!();
         }
 
         /// 最小 firewall mock（提供 L3 回调数据源）。

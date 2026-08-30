@@ -1075,6 +1075,8 @@ impl crate::dao::GarrisonDao for FailingDao {
             key
         )))
     }
+
+    crate::atomic_test_fallback!();
 }
 
 /// `validate_nc` 在 DAO 错误时 fail-closed（vuln-0012 修复验证）。

@@ -272,6 +272,7 @@ mod tests {
             self.store.lock().remove(key);
             Ok(())
         }
+        crate::atomic_test_fallback!();
     }
 
     // ------------------------------------------------------------------------

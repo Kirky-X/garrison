@@ -4216,6 +4216,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
         async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
             self.inner.get_timeout(key).await
         }
+        crate::atomic_test_fallback!();
     }
 
     let mock_dao = Arc::new(MockDao::new());

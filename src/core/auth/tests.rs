@@ -806,6 +806,7 @@ impl GarrisonDao for OrderTrackingDao {
     async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
         self.inner.get_timeout(key).await
     }
+    crate::atomic_test_fallback!();
 }
 
 /// A9: renew_to_equivalent 必须先创建新 token session，再失效旧 token session。

@@ -47,6 +47,8 @@ impl crate::dao::GarrisonDao for HangDao {
     async fn delete(&self, _key: &str) -> crate::error::GarrisonResult<()> {
         Ok(())
     }
+
+    crate::atomic_test_fallback!();
 }
 
 // ============================================================================

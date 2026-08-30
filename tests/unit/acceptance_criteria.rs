@@ -49,6 +49,7 @@ impl GarrisonDao for FailingDao {
             "simulated redis cluster failure".to_string(),
         ))
     }
+    garrison::atomic_test_fallback!();
 }
 
 /// 单元层空接口（仅满足 `GarrisonManager::builder().interface()` 构造要求；

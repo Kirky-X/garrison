@@ -1197,6 +1197,7 @@ mod tests {
             }
             self.inner.delete(key).await
         }
+        crate::atomic_test_fallback!();
     }
 
     /// logout 联动删除 SSO ticket 失败时记录 warn 但不中断主流程。
@@ -1457,6 +1458,7 @@ mod tests {
         async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
+        crate::atomic_test_fallback!();
     }
 
     /// R-001 修复验证：两个并发 `create` 同一 login_id，Account-Session 的 token 列表应包含两个 token。
@@ -1846,6 +1848,7 @@ mod tests {
         async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
+        crate::atomic_test_fallback!();
     }
 
     /// 测试用 DAO wrapper，在 update 特定 key 时返回错误。
@@ -1879,6 +1882,7 @@ mod tests {
         async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
+        crate::atomic_test_fallback!();
     }
 
     /// HIGH-004: 单 token DAO 读取失败不中断整个清理周期，改为 warn 日志并跳过该 token。
