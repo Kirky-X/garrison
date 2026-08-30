@@ -31,6 +31,13 @@ use tower::{Layer, Service};
 /// let svc = GarrisonGrpcAuthLayer.layer(my_service);
 /// Server::builder().add_service(svc).serve(addr).await?;
 /// ```
+///
+/// # 已知限制（安全审查 S4）
+///
+/// 本层不注入客户端 IP（`with_current_ip`）：`firewall-bruteforce` 的 IP 级
+/// 撞库计数/封禁在 gRPC 路径不生效（IP 由 HTTP 框架 middleware 注入）。
+/// gRPC token 为高熵随机串，在线猜测不可行；如需 IP 级防护，请在 transport
+/// 层提取对端地址后以 `garrison::stp::with_current_ip(ip, fut)` 包裹调用。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GarrisonGrpcAuthLayer;
 
@@ -64,9 +71,10 @@ where
     }
 
     fn call(&mut self, request: http::Request<tonic::body::Body>) -> Self::Future {
-        // 1. 提取 token（复用拦截器的严格 Bearer 校验；失败即拒绝，不进入 handler）
-        let metadata = tonic::metadata::MetadataMap::from_headers(request.headers().clone());
-        let token = super::GarrisonGrpcInterceptor::extract_token(&metadata).ok();
+        // 1. 提取 token（零克隆直读 HTTP 头，与拦截器共享 parse_bearer 单点逻辑；
+        //    失败即拒绝，不进入 handler）
+        let token =
+            super::GarrisonGrpcInterceptor::extract_token_from_headers(request.headers()).ok();
 
         let Some(token) = token else {
             return Box::pin(async {
@@ -77,9 +85,12 @@ where
             });
         };
 
-        // 2. 内层 future 先创建（tower 惯例：call() 内即发起），鉴权与内层调用
-        //    同处 `with_current_token` 作用域——handler 经 task_local 看到当前
-        //    token，`GarrisonUtil` 静态 API 可直接使用。
+        // 2. 内层 future 先创建（tower 惯例：call() 内即发起；tonic 内置
+        //    Routes/Grpc 为 level-based ready 协议，无许可滞留问题。若在
+        //    本层之外叠加容量型中间件如 ConcurrencyLimit，其 poll_ready
+        //    预取的许可在拒绝路径会滞留至 service drop——性能审查 P1/A5 结论），
+        //    鉴权与内层调用同处 `with_current_token` 作用域——handler 经
+        //    task_local 看到当前 token，`GarrisonUtil` 静态 API 可直接使用。
         let response_fut = self.inner.call(request);
         Box::pin(with_current_token(token, async move {
             match GarrisonUtil::check_login().await {

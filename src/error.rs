@@ -687,6 +687,21 @@ mod tests {
             remaining: 0,
         });
 
+        // 哨兵（架构审查 A2）：新增 GarrisonError 变体时必须同步加入上方
+        // samples 列表，否则本断言失败——防止唯一性/同源性检查静默失去覆盖。
+        #[cfg(feature = "credit-metering")]
+        assert_eq!(
+            samples.len(),
+            27,
+            "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
+        );
+        #[cfg(not(feature = "credit-metering"))]
+        assert_eq!(
+            samples.len(),
+            26,
+            "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
+        );
+
         let mut seen = std::collections::HashSet::new();
         for err in &samples {
             let code = err.code();
@@ -712,6 +727,19 @@ mod tests {
         }
         assert_eq!(GarrisonError::NotLogin("x".into()).code(), "NOT_LOGIN");
         assert_eq!(GarrisonError::Session("x".into()).code(), "SESSION_ERROR");
+    }
+
+    /// 哨兵（性能审查 P3）：`GarrisonError` 经 `Exception(Box<..>)` 后体积必须
+    /// 远低于 clippy `result_large_err` 阈值（128B），防止未来变体膨胀无声回退
+    /// 到「192 处告警」的级联状态（T011 连带修复的回归锚定）。
+    #[test]
+    fn error_size_stays_within_result_large_err_budget() {
+        let size = std::mem::size_of::<GarrisonError>();
+        assert!(
+            size <= 64,
+            "GarrisonError 体积膨胀（{size} 字节）：请改用 Box 装载大 payload，\
+             避免热路径 Result 越过 result_large_err 阈值"
+        );
     }
 
     /// 验证各 String 变体的 Display 输出包含原始消息（参数化）。

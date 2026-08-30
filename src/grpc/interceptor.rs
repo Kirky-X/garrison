@@ -51,8 +51,30 @@ impl GarrisonGrpcInterceptor {
             .to_str()
             .map_err(|_| Status::unauthenticated("Authorization metadata is not valid UTF-8"))?;
 
-        // 严格 Bearer 前缀校验（RFC 7235: scheme 大小写不敏感）
-        // 不接受裸 token：避免将 Basic/Digest 凭证误认为 Bearer token
+        Self::parse_bearer(auth_header)
+    }
+
+    /// [`Self::extract_token`] 的零克隆 HTTP 头版本（性能审查 P1）。
+    ///
+    /// gRPC metadata 即 HTTP/2 headers（头名已小写），从 `http::HeaderMap`
+    /// 直接提取可避免 auth layer 热路径上的 `HeaderMap` 整体克隆。
+    /// Bearer 解析逻辑与本方法共享 [`Self::parse_bearer`] 单点实现。
+    #[allow(clippy::result_large_err)]
+    pub fn extract_token_from_headers(headers: &http::HeaderMap) -> Result<String, Status> {
+        let auth_header = headers
+            .get("authorization")
+            .ok_or_else(|| Status::unauthenticated("missing Authorization metadata"))?
+            .to_str()
+            .map_err(|_| Status::unauthenticated("Authorization metadata is not valid UTF-8"))?;
+
+        Self::parse_bearer(auth_header)
+    }
+
+    /// 严格 Bearer 前缀校验核心（RFC 7235: scheme 大小写不敏感）。
+    ///
+    /// 不接受裸 token：避免将 Basic/Digest 凭证误认为 Bearer token。
+    #[allow(clippy::result_large_err)]
+    fn parse_bearer(auth_header: &str) -> Result<String, Status> {
         let token = auth_header
             .strip_prefix("Bearer ")
             .or_else(|| auth_header.strip_prefix("bearer "))

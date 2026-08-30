@@ -107,6 +107,27 @@ fn garrison_exception_debug_format_works() {
     assert!(debug.contains("请先登录"));
 }
 
+/// 验证 `Debug` 对 `login_id`（String 化后可能含 PII）与 `token_value` 同样脱敏。
+#[test]
+fn garrison_exception_debug_masks_login_id() {
+    let ex = GarrisonException::new(-1, "请先登录")
+        .with_token("tok-abcdef123456")
+        .with_login_id("13800138000");
+    let debug = format!("{:?}", ex);
+    assert!(
+        debug.contains("tok-abcd***"),
+        "token_value 应仅输出前 8 字符，实际: {debug}"
+    );
+    assert!(
+        debug.contains("1380***"),
+        "login_id 应仅输出前 4 字符（PII 脱敏），实际: {debug}"
+    );
+    assert!(
+        !debug.contains("13800138000"),
+        "login_id 全文不得出现在 Debug 输出，实际: {debug}"
+    );
+}
+
 /// 验证 `GarrisonException` 的 `Display` 输出格式。
 #[test]
 fn garrison_exception_display_format() {

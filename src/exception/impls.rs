@@ -126,12 +126,21 @@ impl std::fmt::Debug for GarrisonException {
             },
             None => "None".to_string(),
         };
+        // 脱敏：login_id 为 String（可能含手机号/邮箱等 PII），同样仅输出前 4 字符
+        //（安全审查 S2 修复：String 化后明文输出面扩大）
+        let masked_login_id = match &self.login_id {
+            Some(id) => {
+                let preview = id.get(..4).unwrap_or(id);
+                format!("Some(\"{}***\")", preview)
+            },
+            None => "None".to_string(),
+        };
         f.debug_struct("GarrisonException")
             .field("code", &self.code)
             .field("message", &self.message)
             .field("login_type", &self.login_type)
             .field("token_value", &masked_token)
-            .field("login_id", &self.login_id)
+            .field("login_id", &masked_login_id)
             .field("extras", &self.extras)
             .finish()
     }

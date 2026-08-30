@@ -574,228 +574,12 @@ pub trait GarrisonDao: Send + Sync {
     }
 }
 
-/// 仅供**测试 mock**：以非原子组合实现 6 个原子必需方法（T012 编译期契约的测试回退）。
-///
-/// `GarrisonDao` 的 `rename` / `set_if_absent` / `get_and_delete` / `incr` /
-/// `decr` / `compare_and_swap` 为必需方法（无默认实现），遗漏实现编译期报错。
-/// 全仓约 40 个内联测试 mock 只用到 5 个基础方法，为避免逐个手写 240 个方法，
-/// 本宏以 trait 原有的组合语义展开这 6 个方法——**与生产实现的差异**：
-/// 组合实现存在 TOCTOU 竞态，仅适用于单线程/串行（`serial_test`）测试环境。
-///
-/// # 用法
-/// 在 `#[async_trait] impl GarrisonDao for XxxMockDao` 块尾部展开一行：
-/// - garrison crate 内部：`crate::atomic_test_fallback!();`
-/// - 外部集成测试 / bench：`garrison::atomic_test_fallback!();`
-///
-/// 展开体为 `async_trait` 脱糖后的签名（`Pin<Box<dyn Future>>` + 生命周期
-/// 约束），与 trait 声明结构一致——属性宏先于块内 `macro_rules!` 调用展开，
-/// 因此本宏**不能**使用普通 `async fn` 形式。
-///
-/// 生产后端**禁止**使用本宏——必须用进程内锁或后端原语实现真原子
-/// （参阅 [`GarrisonDao`] trait 文档「原子性编译期契约」）。
-#[macro_export]
+/// DAO 原子方法测试回退宏（T012 编译期契约配套）——实现见 `atomic_fallback.rs`。
+/// `#[doc(hidden)]` + 测试域专用：生产 DAO 实现**禁止**使用组合语义。
+/// 注：完全的编译期门控（cfg testing）需 CI 测试命令追加 testing feature
+///（CI 现为 full-only，属 Non-Goals），已记录为后续 change（架构审查 A1）。
 #[doc(hidden)]
-macro_rules! atomic_test_fallback {
-    () => {
-        #[allow(clippy::type_complexity)]
-        fn set_if_absent<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            key: &'life1 str,
-            value: &'life2 str,
-            ttl_seconds: u64,
-        ) -> ::core::pin::Pin<
-            Box<
-                dyn ::core::future::Future<Output = $crate::error::GarrisonResult<bool>>
-                    + ::core::marker::Send
-                    + 'async_trait,
-            >,
-        >
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-            Self: ::core::marker::Sync + 'async_trait,
-        {
-            Box::pin(async move {
-                if self.get(key).await?.is_some() {
-                    return Ok(false);
-                }
-                self.set(key, value, ttl_seconds).await?;
-                Ok(true)
-            })
-        }
-
-        #[allow(clippy::type_complexity)]
-        fn rename<'life0, 'life1, 'life2, 'async_trait>(
-            &'life0 self,
-            old_key: &'life1 str,
-            new_key: &'life2 str,
-        ) -> ::core::pin::Pin<
-            Box<
-                dyn ::core::future::Future<Output = $crate::error::GarrisonResult<()>>
-                    + ::core::marker::Send
-                    + 'async_trait,
-            >,
-        >
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-            Self: ::core::marker::Sync + 'async_trait,
-        {
-            Box::pin(async move {
-                let value = self.get(old_key).await?.ok_or_else(|| {
-                    $crate::error::GarrisonError::InvalidParam(format!(
-                        "dao-key-missing::{}",
-                        old_key
-                    ))
-                })?;
-                self.set_permanent(new_key, &value).await?;
-                self.delete(old_key).await
-            })
-        }
-
-        #[allow(clippy::type_complexity)]
-        fn get_and_delete<'life0, 'life1, 'async_trait>(
-            &'life0 self,
-            key: &'life1 str,
-        ) -> ::core::pin::Pin<
-            Box<
-                dyn ::core::future::Future<Output = $crate::error::GarrisonResult<Option<String>>>
-                    + ::core::marker::Send
-                    + 'async_trait,
-            >,
-        >
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            Self: ::core::marker::Sync + 'async_trait,
-        {
-            Box::pin(async move {
-                let value = self.get(key).await?;
-                if value.is_some() {
-                    self.delete(key).await?;
-                }
-                Ok(value)
-            })
-        }
-
-        #[allow(clippy::type_complexity)]
-        fn incr<'life0, 'life1, 'async_trait>(
-            &'life0 self,
-            key: &'life1 str,
-            ttl_seconds: u64,
-        ) -> ::core::pin::Pin<
-            Box<
-                dyn ::core::future::Future<Output = $crate::error::GarrisonResult<u64>>
-                    + ::core::marker::Send
-                    + 'async_trait,
-            >,
-        >
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            Self: ::core::marker::Sync + 'async_trait,
-        {
-            Box::pin(async move {
-                match self.get(key).await? {
-                    Some(v) => {
-                        let cur_val: u64 = v.parse().map_err(|_| {
-                            $crate::error::GarrisonError::Dao(format!(
-                                "dao-incr-parse-u64::{}::{}",
-                                key, v
-                            ))
-                        })?;
-                        let new_val = cur_val + 1;
-                        self.update(key, &new_val.to_string()).await?;
-                        Ok(new_val)
-                    },
-                    None => {
-                        self.set(key, "1", ttl_seconds).await?;
-                        Ok(1)
-                    },
-                }
-            })
-        }
-
-        #[allow(clippy::type_complexity)]
-        fn decr<'life0, 'life1, 'async_trait>(
-            &'life0 self,
-            key: &'life1 str,
-        ) -> ::core::pin::Pin<
-            Box<
-                dyn ::core::future::Future<Output = $crate::error::GarrisonResult<u64>>
-                    + ::core::marker::Send
-                    + 'async_trait,
-            >,
-        >
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            Self: ::core::marker::Sync + 'async_trait,
-        {
-            Box::pin(async move {
-                match self.get(key).await? {
-                    Some(v) => {
-                        let cur_val: u64 = v.parse().map_err(|_| {
-                            $crate::error::GarrisonError::Dao(format!(
-                                "dao-decr-parse-u64::{}::{}",
-                                key, v
-                            ))
-                        })?;
-                        if cur_val == 0 {
-                            return Ok(0);
-                        }
-                        let new_val = cur_val - 1;
-                        if new_val == 0 {
-                            self.delete(key).await?;
-                        } else {
-                            self.update(key, &new_val.to_string()).await?;
-                        }
-                        Ok(new_val)
-                    },
-                    None => Ok(0),
-                }
-            })
-        }
-
-        #[allow(clippy::type_complexity)]
-        fn compare_and_swap<'life0, 'life1, 'life2, 'life3, 'async_trait>(
-            &'life0 self,
-            key: &'life1 str,
-            expected: Option<&'life2 str>,
-            new_value: &'life3 str,
-            ttl_seconds: u64,
-        ) -> ::core::pin::Pin<
-            Box<
-                dyn ::core::future::Future<Output = $crate::error::GarrisonResult<bool>>
-                    + ::core::marker::Send
-                    + 'async_trait,
-            >,
-        >
-        where
-            'life0: 'async_trait,
-            'life1: 'async_trait,
-            'life2: 'async_trait,
-            'life3: 'async_trait,
-            Self: ::core::marker::Sync + 'async_trait,
-        {
-            Box::pin(async move {
-                let current = self.get(key).await?;
-                if current.as_deref() == expected {
-                    if ttl_seconds == 0 {
-                        self.set_permanent(key, new_value).await?;
-                    } else {
-                        self.set(key, new_value, ttl_seconds).await?;
-                    }
-                    Ok(true)
-                } else {
-                    Ok(false)
-                }
-            })
-        }
-    };
-}
+pub mod atomic_fallback;
 
 // ============================================================================
 // Redis 部署模式配置
@@ -2297,6 +2081,26 @@ pub mod tests {
         assert!(
             dao.get("counter2").await.unwrap().is_none(),
             "递减后值为 0 时应删除 key"
+        );
+    }
+
+    /// 安全审查 S1：`InMemoryDao::incr` 对非数字值必须显式报错（Rule 12），
+    /// 禁止静默按 0 处理导致限速计数器重置（撞库防护旁路风险）。
+    #[tokio::test]
+    async fn in_memory_incr_non_numeric_value_errors_explicitly() {
+        let dao = InMemoryDao::new();
+        // 污染值（非数字）写入计数器 key
+        dao.set("rate:polluted", "not-a-number", 60).await.unwrap();
+        let result = dao.incr("rate:polluted", 60).await;
+        assert!(
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-incr-parse-u64")),
+            "incr 对非数字值应显式报错而非静默重置，实际: {:?}",
+            result
+        );
+        // 原值不被改写
+        assert_eq!(
+            dao.get("rate:polluted").await.unwrap().as_deref(),
+            Some("not-a-number")
         );
     }
 
