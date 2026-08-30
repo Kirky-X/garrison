@@ -83,9 +83,9 @@ impl GarrisonException {
 }
 
 impl From<GarrisonException> for GarrisonError {
-    /// 将 `GarrisonException` 转换为 `GarrisonError::Exception` 变体。
+    /// 将 `GarrisonException` 转换为 `GarrisonError::Exception` 变体（Box 装载控制枚举体积）。
     fn from(ex: GarrisonException) -> Self {
-        GarrisonError::Exception(ex)
+        GarrisonError::Exception(Box::new(ex))
     }
 }
 
@@ -98,7 +98,7 @@ impl From<GarrisonError> for GarrisonException {
     /// - 其他 → code=500（业务异常）
     fn from(err: GarrisonError) -> Self {
         match err {
-            GarrisonError::Exception(ex) => ex,
+            GarrisonError::Exception(ex) => *ex,
             GarrisonError::NotLogin(msg) => GarrisonException::new(-1, msg),
             GarrisonError::InvalidToken(msg) => GarrisonException::new(-1, msg),
             GarrisonError::ExpiredToken(msg) => GarrisonException::new(-1, msg),

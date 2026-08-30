@@ -60,7 +60,7 @@ fn response_error_not_implemented_returns_501() {
 #[test]
 fn response_error_exception_code_minus1_returns_401() {
     let ex = crate::exception::GarrisonException::new(-1, "未登录");
-    let err = GarrisonError::Exception(ex);
+    let err = GarrisonError::Exception(Box::new(ex));
     assert_eq!(err.status_code(), StatusCode::UNAUTHORIZED);
 }
 
@@ -68,7 +68,7 @@ fn response_error_exception_code_minus1_returns_401() {
 #[test]
 fn response_error_exception_code_minus2_returns_403() {
     let ex = crate::exception::GarrisonException::new(-2, "无权限");
-    let err = GarrisonError::Exception(ex);
+    let err = GarrisonError::Exception(Box::new(ex));
     assert_eq!(err.status_code(), StatusCode::FORBIDDEN);
 }
 

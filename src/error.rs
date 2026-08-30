@@ -57,7 +57,10 @@ pub enum GarrisonError {
     Context(String),
 
     /// 业务异常（携带上下文的可恢复异常）。
-    Exception(GarrisonException),
+    ///
+    /// `Box` 装载控制枚举体积（`GarrisonException` 含 `HashMap`，内联会使
+    /// `Result<_, GarrisonError>` 越过 clippy `result_large_err` 阈值）。
+    Exception(Box<GarrisonException>),
 
     /// OAuth2 协议错误。
     OAuth2(String),
@@ -292,6 +295,22 @@ impl GarrisonError {
     pub fn response_parts(&self) -> (u16, &'static str, &'static str, Option<i32>) {
         let (status, error_code, _, fallback_msg, ex_code) = self.parts_and_msg_key();
         (status, error_code, fallback_msg, ex_code)
+    }
+
+    /// 稳定的机器可读错误码（如 `"NOT_LOGIN"` / `"SESSION_ERROR"`）。
+    ///
+    /// 与 [`Self::response_parts`] 返回的 HTTP `error_code` 同源（单一事实来源
+    /// [`Self::parts_and_msg_key`]），供日志、监控埋点、audit-log 等非 HTTP
+    /// 场景按变体稳定检索；Display 文案受 i18n 影响时仍可用本方法做机器判别。
+    ///
+    /// 唯一例外：`Exception` 变体在 HTTP 层按业务 `ex.code` 条件复用
+    /// `NOT_LOGIN` / `NOT_PERMISSION`（对客户端语义一致），变体级机器码则
+    /// 固定为 `"EXCEPTION"`，保证本方法对所有变体两两唯一。
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::Exception(_) => "EXCEPTION",
+            _ => self.response_parts().1,
+        }
     }
 
     /// 内部方法：单次 match 产出所有字段（status, error_code, msg_key, fallback_msg, ex_code）。
@@ -619,6 +638,82 @@ impl miette::Diagnostic for GarrisonError {
 mod tests {
     use super::*;
 
+    /// 验证 `code()` 覆盖全部变体且两两唯一、非空、全大写、稳定（T011；
+    /// 供日志/监控等非 HTTP 场景使用，须与 `response_parts()` 的 error_code 同源防漂移）。
+    #[test]
+    fn error_code_covers_all_variants_unique_and_stable() {
+        let mut samples: Vec<GarrisonError> = vec![
+            GarrisonError::NotLogin("a".into()),
+            GarrisonError::NotPermission("a".into()),
+            GarrisonError::NotRole("a".into()),
+            GarrisonError::InvalidToken("a".into()),
+            GarrisonError::TokenRevoked("a".into()),
+            GarrisonError::ExpiredToken("a".into()),
+            GarrisonError::Dao("a".into()),
+            GarrisonError::Config("a".into()),
+            GarrisonError::Internal("a".into()),
+            GarrisonError::Session("a".into()),
+            GarrisonError::Annotation("a".into()),
+            GarrisonError::Context("a".into()),
+            GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(-1, "a"))),
+            GarrisonError::OAuth2("a".into()),
+            GarrisonError::Network("a".into()),
+            GarrisonError::InvalidResponse("a".into()),
+            GarrisonError::InvalidParam("a".into()),
+            GarrisonError::NotImplemented("a".into()),
+            GarrisonError::FirewallBlocked("a".into()),
+            GarrisonError::DisableService {
+                service: "default".into(),
+                until: None,
+            },
+            GarrisonError::NotSafe {
+                reason: "MFA_TOTP_REQUIRED".into(),
+            },
+            GarrisonError::InvalidStateTransition {
+                from: "Active".into(),
+                to: "Revoked".into(),
+            },
+            GarrisonError::SmsRateLimitExceeded {
+                window: "hourly".into(),
+            },
+            GarrisonError::SmsVerifyMaxAttempts,
+            GarrisonError::SmsCodeNotFound,
+            GarrisonError::SmsChannelRecycled,
+        ];
+        #[cfg(feature = "credit-metering")]
+        samples.push(GarrisonError::CreditInsufficient {
+            tenant_id: 1,
+            requested: 10,
+            remaining: 0,
+        });
+
+        let mut seen = std::collections::HashSet::new();
+        for err in &samples {
+            let code = err.code();
+            assert!(!code.is_empty(), "code 不得为空");
+            assert_eq!(code.to_uppercase(), code, "code 须全大写: {code}");
+            assert!(seen.insert(code), "code 须两两唯一，重复: {code}");
+        }
+        assert_eq!(samples.len(), seen.len());
+
+        // 稳定性：同变体重复取值一致；与 HTTP error_code 同源（Exception 例外——
+        // HTTP 层按 ex.code 条件复用 NOT_LOGIN/NOT_PERMISSION，变体级固定 EXCEPTION）。
+        for err in &samples {
+            assert_eq!(err.code(), err.code(), "code 须稳定: {err:?}");
+            if matches!(err, GarrisonError::Exception(_)) {
+                assert_eq!(err.code(), "EXCEPTION", "Exception 变体级码固定 EXCEPTION");
+            } else {
+                assert_eq!(
+                    err.code(),
+                    err.response_parts().1,
+                    "code 须与 response_parts error_code 同源: {err:?}"
+                );
+            }
+        }
+        assert_eq!(GarrisonError::NotLogin("x".into()).code(), "NOT_LOGIN");
+        assert_eq!(GarrisonError::Session("x".into()).code(), "SESSION_ERROR");
+    }
+
     /// 验证各 String 变体的 Display 输出包含原始消息（参数化）。
     #[test]
     fn string_variants_display_includes_message() {
@@ -829,7 +924,7 @@ mod tests {
     #[test]
     fn exception_variant_display_includes_code_and_message() {
         use crate::exception::GarrisonException;
-        let err = GarrisonError::Exception(GarrisonException::new(-1, "请先登录"));
+        let err = GarrisonError::Exception(Box::new(GarrisonException::new(-1, "请先登录")));
         assert_eq!(err.to_string(), "业务异常[-1]: 请先登录");
     }
 
@@ -840,7 +935,7 @@ mod tests {
         use crate::exception::GarrisonException;
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = GarrisonError::Exception(GarrisonException::new(-1, "请先登录"));
+        let err = GarrisonError::Exception(Box::new(GarrisonException::new(-1, "请先登录")));
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
@@ -852,7 +947,7 @@ mod tests {
         use crate::exception::GarrisonException;
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = GarrisonError::Exception(GarrisonException::new(-2, "无权限"));
+        let err = GarrisonError::Exception(Box::new(GarrisonException::new(-2, "无权限")));
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     }
@@ -864,7 +959,7 @@ mod tests {
         use crate::exception::GarrisonException;
         use axum::http::StatusCode;
         use axum::response::IntoResponse;
-        let err = GarrisonError::Exception(GarrisonException::new(500, "业务异常"));
+        let err = GarrisonError::Exception(Box::new(GarrisonException::new(500, "业务异常")));
         let response = err.into_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -980,14 +1075,14 @@ mod tests {
     /// 覆盖行 166-168（Exception 变体的 code 字段写入）。
     #[test]
     fn to_json_body_includes_code_for_exception_variant() {
-        let err = GarrisonError::Exception(crate::exception::GarrisonException {
+        let err = GarrisonError::Exception(Box::new(crate::exception::GarrisonException {
             code: 1001,
             message: "自定义业务异常".to_string(),
             login_type: 1,
             token_value: None,
             login_id: None,
             extras: std::collections::HashMap::new(),
-        });
+        }));
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "EXCEPTION");
         assert_eq!(body["code"], 1001);
@@ -1091,7 +1186,9 @@ mod tests {
                 "garrison.not_implemented",
             ),
             (
-                GarrisonError::Exception(crate::exception::GarrisonException::new(500, "x")),
+                GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(
+                    500, "x",
+                ))),
                 "garrison.exception",
             ),
         ];
@@ -1125,7 +1222,7 @@ mod tests {
             GarrisonError::Session(String::new()),
             GarrisonError::Annotation(String::new()),
             GarrisonError::Context(String::new()),
-            GarrisonError::Exception(crate::exception::GarrisonException::new(500, "")),
+            GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(500, ""))),
             GarrisonError::OAuth2(String::new()),
             GarrisonError::Network(String::new()),
             GarrisonError::InvalidResponse(String::new()),

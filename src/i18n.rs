@@ -628,7 +628,7 @@ mod tests {
     #[test]
     fn translate_error_zh_exception_variant() {
         let _guard = set_locale(GarrisonLocale::Zh);
-        let err = GarrisonError::Exception(GarrisonException::new(-1, "请先登录"));
+        let err = GarrisonError::Exception(Box::new(GarrisonException::new(-1, "请先登录")));
         assert_eq!(translate_error(&err), "业务异常[-1]: 请先登录");
     }
 
@@ -636,7 +636,7 @@ mod tests {
     #[test]
     fn translate_error_en_exception_variant() {
         let _guard = set_locale(GarrisonLocale::En);
-        let err = GarrisonError::Exception(GarrisonException::new(-1, "please login"));
+        let err = GarrisonError::Exception(Box::new(GarrisonException::new(-1, "please login")));
         assert_eq!(
             translate_error(&err),
             "Business exception[-1]: please login"
@@ -688,7 +688,7 @@ mod tests {
             (GarrisonError::InvalidParam("x".into()), "参数无效: x"),
             (GarrisonError::NotImplemented("x".into()), "未实现: x"),
             (
-                GarrisonError::Exception(GarrisonException::new(-1, "msg")),
+                GarrisonError::Exception(Box::new(GarrisonException::new(-1, "msg"))),
                 "业务异常[-1]: msg",
             ),
         ];
@@ -1065,7 +1065,7 @@ mod tests {
             GarrisonError::SmsVerifyMaxAttempts,
             GarrisonError::SmsCodeNotFound,
             GarrisonError::SmsChannelRecycled,
-            GarrisonError::Exception(GarrisonException::new(-1, "msg")),
+            GarrisonError::Exception(Box::new(GarrisonException::new(-1, "msg"))),
         ];
         for err in cases {
             // 仅验证不 panic 且返回非空 key

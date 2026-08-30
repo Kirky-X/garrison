@@ -134,7 +134,7 @@ fn existing_garrison_error_variants_unaffected() {
     // 确保新增 Exception 变体不破坏既有 match
     let errors: [GarrisonError; 2] = [
         GarrisonError::NotLogin("a".into()),
-        GarrisonError::Exception(GarrisonException::new(-1, "b")),
+        GarrisonError::Exception(Box::new(GarrisonException::new(-1, "b"))),
     ];
     assert_eq!(errors.len(), 2);
 }
@@ -200,7 +200,7 @@ fn from_garrison_error_exception_variant() {
         .with_token("T1")
         .with_login_id("1001")
         .build();
-    let err = GarrisonError::Exception(original.clone());
+    let err = GarrisonError::Exception(Box::new(original.clone()));
     let converted: GarrisonException = err.into();
     assert_eq!(converted.code, -1);
     assert_eq!(converted.message, "请先登录");
