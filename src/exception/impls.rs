@@ -58,9 +58,9 @@ impl GarrisonException {
         self
     }
 
-    /// 链式设置 login_id。
-    pub fn with_login_id(mut self, login_id: i64) -> Self {
-        self.login_id = Some(login_id);
+    /// 链式设置 login_id（与全局 login_id 一致为 `String` 语义）。
+    pub fn with_login_id(mut self, login_id: impl Into<String>) -> Self {
+        self.login_id = Some(login_id.into());
         self
     }
 

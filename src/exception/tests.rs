@@ -89,12 +89,12 @@ fn garrison_exception_new_accepts_string() {
 fn garrison_exception_clone_preserves_fields() {
     let mut ex = GarrisonException::new(-1, "请先登录");
     ex.token_value = Some("T1".to_string());
-    ex.login_id = Some(1001);
+    ex.login_id = Some("1001".to_string());
     let cloned = ex.clone();
     assert_eq!(cloned.code, -1);
     assert_eq!(cloned.message, "请先登录");
     assert_eq!(cloned.token_value, Some("T1".to_string()));
-    assert_eq!(cloned.login_id, Some(1001));
+    assert_eq!(cloned.login_id, Some("1001".to_string()));
 }
 
 /// 验证 `GarrisonException` 派生 `Debug`。
@@ -148,16 +148,31 @@ fn existing_garrison_error_variants_unaffected() {
 fn builder_chain_with_all_setters() {
     let ex = GarrisonException::new(-1, "请先登录")
         .with_token("T1")
-        .with_login_id(1001)
+        .with_login_id("1001")
         .with_login_type(1)
         .with_extra("device", "web")
         .build();
     assert_eq!(ex.code, -1);
     assert_eq!(ex.message, "请先登录");
     assert_eq!(ex.token_value, Some("T1".to_string()));
-    assert_eq!(ex.login_id, Some(1001));
+    assert_eq!(ex.login_id, Some("1001".to_string()));
     assert_eq!(ex.login_type, 1);
     assert_eq!(ex.extras.get("device"), Some(&"web".to_string()));
+}
+
+/// 验证 `login_id` 为 `Option<String>`（T010：与全局 login_id 的 String 迁移一致，
+/// `with_login_id` 同时接受 `&str` 与 `String`）。
+#[test]
+fn login_id_is_string_typed() {
+    let ex = GarrisonException::new(-1, "msg")
+        .with_login_id("1001")
+        .build();
+    assert_eq!(ex.login_id, Some("1001".to_string()));
+    let owned: String = "2002".to_string();
+    let ex2 = GarrisonException::new(-1, "msg")
+        .with_login_id(owned)
+        .build();
+    assert_eq!(ex2.login_id, Some("2002".to_string()));
 }
 
 /// 验证 Builder 接受 String 类型参数。
@@ -183,14 +198,14 @@ fn builder_accepts_string_args() {
 fn from_garrison_error_exception_variant() {
     let original = GarrisonException::new(-1, "请先登录")
         .with_token("T1")
-        .with_login_id(1001)
+        .with_login_id("1001")
         .build();
     let err = GarrisonError::Exception(original.clone());
     let converted: GarrisonException = err.into();
     assert_eq!(converted.code, -1);
     assert_eq!(converted.message, "请先登录");
     assert_eq!(converted.token_value, Some("T1".to_string()));
-    assert_eq!(converted.login_id, Some(1001));
+    assert_eq!(converted.login_id, Some("1001".to_string()));
 }
 
 /// 验证 `From<GarrisonError>` 对非 Exception 变体根据语义映射 code。

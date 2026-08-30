@@ -50,7 +50,9 @@ pub struct GarrisonException {
     pub token_value: Option<String>,
 
     /// 关联的登录主体（可能为 `None`）。
-    pub login_id: Option<i64>,
+    ///
+    /// 与全局 login_id 一致为 `String`（0.9.0 起 login_id 已由 i64 迁移为 String）。
+    pub login_id: Option<String>,
 
     /// 额外键值对上下文。
     pub extras: HashMap<String, String>,
