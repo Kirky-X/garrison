@@ -18,3 +18,6 @@ mod harness;
 
 #[path = "acceptance/web_smoke.rs"]
 mod web_smoke;
+
+#[path = "acceptance/storage.rs"]
+mod storage;
