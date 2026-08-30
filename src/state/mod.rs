@@ -13,9 +13,12 @@
 //!
 //! ## 不在范围内
 //!
-//! - 与现有 Session / User 模块的集成（推迟到 v0.7.0）
-//! - 状态机事件触发（推迟到 v0.7.0）
-//! - 状态持久化到 dbnexus（推迟到 v0.7.0）
+//! 以下集成项**已定义、尚未接入运行路径**（当前版本 0.9.0，接线计划见
+//! `docs/ROADMAP.md`；本模块文档不再承诺具体版本号）：
+//!
+//! - 与现有 Session / User 模块的集成
+//! - 状态机事件触发
+//! - 状态持久化到 dbnexus
 
 use crate::error::{GarrisonError, GarrisonResult};
 
