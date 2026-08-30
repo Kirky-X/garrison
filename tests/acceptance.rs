@@ -24,3 +24,45 @@ mod storage;
 
 #[path = "acceptance/authentication.rs"]
 mod authentication;
+
+#[path = "acceptance/session.rs"]
+mod session;
+
+#[path = "acceptance/rbac.rs"]
+mod rbac;
+
+#[path = "acceptance/protocol_jwt.rs"]
+mod protocol_jwt;
+
+#[path = "acceptance/protocol_oauth2.rs"]
+mod protocol_oauth2;
+
+#[path = "acceptance/protocol_mixed.rs"]
+mod protocol_mixed;
+
+#[path = "acceptance/security.rs"]
+mod security;
+
+#[path = "acceptance/web_axum.rs"]
+mod web_axum;
+
+#[path = "acceptance/web_actix.rs"]
+mod web_actix;
+
+#[path = "acceptance/web_warp.rs"]
+mod web_warp;
+
+#[path = "acceptance/resilience.rs"]
+mod resilience;
+
+#[path = "acceptance/concurrency.rs"]
+mod concurrency;
+
+#[path = "acceptance/server.rs"]
+mod server;
+
+#[path = "acceptance/repository.rs"]
+mod repository;
+
+#[path = "acceptance/environment.rs"]
+mod environment;
