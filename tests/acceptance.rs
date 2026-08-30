@@ -15,3 +15,6 @@ mod common;
 
 #[path = "acceptance/harness.rs"]
 mod harness;
+
+#[path = "acceptance/web_smoke.rs"]
+mod web_smoke;

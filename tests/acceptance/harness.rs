@@ -10,6 +10,7 @@
 
 use crate::common::harness::{with_tenant, GarrisonTestHarness, MockInterface};
 use garrison::error::GarrisonError;
+#[cfg(feature = "testing")]
 use garrison::manager::GarrisonManager;
 use garrison::stp::{with_current_token, GarrisonUtil, LoginParams};
 use serial_test::serial;

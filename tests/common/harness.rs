@@ -391,3 +391,161 @@ impl Harness {
         Ok(())
     }
 }
+
+// ============================================================================
+// 三框架同构测试服务器（spec test-harness R-test-harness-002）
+// ============================================================================
+
+/// Web 服务器共用测试配置：`throw_on_not_login = false`。
+///
+/// 默认 `true` 时未登录会在 `check_login`（全局管理器配置）以 `Session` 错误中断 → 500；
+/// 置 `false` 后返回 `Ok(false)` → interceptor 抛 `NotLogin` → 401
+/// （与仓库既有集成测试 `make_config()` 惯例一致）。router 与全局管理器
+/// 应使用同一份实例，保证 token 提取与登录态判定语义一致。
+pub fn web_test_config() -> Arc<GarrisonConfig> {
+    let mut config = GarrisonConfig::default_config();
+    config.throw_on_not_login = false;
+    Arc::new(config)
+}
+
+/// 各框架关停通道（差异收敛在 [`SpawnedServer::shutdown`] 内部）。
+enum ShutdownHandle {
+    #[cfg(any(feature = "web-axum", feature = "web-warp"))]
+    Tokio(tokio::task::JoinHandle<()>),
+    #[cfg(feature = "web-actix")]
+    Actix(actix_web::dev::ServerHandle),
+}
+
+/// 已启动的测试服务器句柄：实际绑定地址 + 优雅关停。
+///
+/// 三框架经 [`spawn_axum`] / [`spawn_actix`] / [`spawn_warp`] 同构：均绑定
+/// `127.0.0.1:0` 随机端口，注册 `Annotation::CheckLogin` 保护的 GET `/protected`，
+/// 未登录统一返回 401 + `error_code`/`message` JSON（三框架一致）。
+pub struct SpawnedServer {
+    addr: std::net::SocketAddr,
+    shutdown: ShutdownHandle,
+}
+
+impl SpawnedServer {
+    /// 实际绑定地址（`127.0.0.1:<随机端口>`）。
+    pub fn addr(&self) -> std::net::SocketAddr {
+        self.addr
+    }
+
+    /// 优雅关停服务器（tokio 系框架终止任务；actix 经服务器句柄 `stop(true)`）。
+    pub async fn shutdown(self) {
+        match self.shutdown {
+            #[cfg(any(feature = "web-axum", feature = "web-warp"))]
+            ShutdownHandle::Tokio(task) => task.abort(),
+            #[cfg(feature = "web-actix")]
+            ShutdownHandle::Actix(server) => server.stop(true).await,
+        }
+    }
+}
+
+/// 启动 axum 测试服务器：`/protected` 受 `Annotation::CheckLogin` 保护。
+///
+/// 绑定 `127.0.0.1:0` 取随机端口；`GarrisonRouter` middleware 对未登录请求
+/// 返回统一 401 JSON（`error_code`/`message`，与 actix/warp 一致）。
+#[cfg(feature = "web-axum")]
+pub async fn spawn_axum() -> SpawnedServer {
+    use garrison::annotation::Annotation;
+    use garrison::router::GarrisonRouter;
+
+    let router = GarrisonRouter::new(web_test_config())
+        .route_protected("/protected", || async { "ok" }, Annotation::CheckLogin)
+        .build();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("axum 测试服务器应能绑定临时端口");
+    let addr = listener.local_addr().expect("应能取得 axum 实际地址");
+    let task = tokio::spawn(async move {
+        if let Err(err) = axum::serve(listener, router).await {
+            eprintln!("axum 测试服务器异常终止: {err}");
+        }
+    });
+    SpawnedServer {
+        addr,
+        shutdown: ShutdownHandle::Tokio(task),
+    }
+}
+
+/// 启动 actix-web 测试服务器：`/protected` 受 `Annotation::CheckLogin` 保护。
+///
+/// 绑定 `127.0.0.1:0` 取随机端口；`GarrisonRouter::into_middleware()` 对未登录请求
+/// 返回统一 401 JSON（`error_code`/`message`，与 axum/warp 一致）。
+///
+/// actix-web 有自己的运行时（且本依赖 `default-features = false` 无 macros），
+/// 故在专属 `std::thread` 里以 `actix_web::rt::System::block_on` 驱动 `HttpServer`，
+/// 绑定后回传实际地址与服务器句柄；主测试仍在 tokio 运行时以 `reqwest` 访问。
+#[cfg(feature = "web-actix")]
+pub async fn spawn_actix() -> SpawnedServer {
+    use actix_web::{web, App, HttpServer};
+    use garrison::annotation::Annotation;
+    use garrison::web_actix::GarrisonRouter;
+
+    let (tx, rx) =
+        std::sync::mpsc::channel::<(std::net::SocketAddr, actix_web::dev::ServerHandle)>();
+    std::thread::spawn(move || {
+        let system = actix_web::rt::System::new();
+        let _ = system.block_on(async move {
+            // `HttpServer::new` 工厂按 worker 调用；`GarrisonMiddleware` 未实现 Clone，
+            // 故在工厂内重建（规则表内部均为 Arc 共享，重建成本低）。
+            let http = HttpServer::new(|| {
+                let middleware = GarrisonRouter::new(web_test_config())
+                    .route_protected("/protected", Annotation::CheckLogin)
+                    .into_middleware();
+                App::new()
+                    .route("/protected", web::get().to(|| async { "ok" }))
+                    .wrap(middleware)
+            })
+            .bind("127.0.0.1:0")
+            .expect("actix 测试服务器应能绑定临时端口");
+            let addr = http.addrs()[0];
+            let server = http.run();
+            // actix-server 2.9：`Server` 不再提供 `stop`/`Clone`，
+            // 经 `handle()` 取 `ServerHandle`（Clone + Send）回传给主测试线程。
+            let handle = server.handle();
+            tx.send((addr, handle))
+                .expect("应能回传 actix 地址与服务器句柄");
+            server.await
+        });
+    });
+
+    let (addr, server) = tokio::task::spawn_blocking(move || {
+        rx.recv()
+            .expect("actix 测试服务器应回传绑定地址（启动线程未 panic）")
+    })
+    .await
+    .expect("actix 启动线程不应异常");
+    SpawnedServer {
+        addr,
+        shutdown: ShutdownHandle::Actix(server),
+    }
+}
+
+/// 启动 warp 测试服务器：`/protected` 受 `check_login` filter 保护。
+///
+/// 绑定 `127.0.0.1:0` 取随机端口；`.recover(garrison_recover)` 把拒绝链映射为
+/// 统一 401 JSON（`error_code`/`message`，与 axum/actix 一致）。
+#[cfg(feature = "web-warp")]
+pub async fn spawn_warp() -> SpawnedServer {
+    use garrison::web_warp::{check_login, garrison_recover};
+    use warp::Filter;
+
+    let routes = warp::get()
+        .and(warp::path("protected"))
+        .and(warp::path::end())
+        .and(check_login(web_test_config()))
+        .map(|()| "ok")
+        .recover(garrison_recover);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("warp 测试服务器应能绑定临时端口");
+    let addr = listener.local_addr().expect("应能取得 warp 实际地址");
+    let task = tokio::spawn(warp::serve(routes).incoming(listener).run());
+    SpawnedServer {
+        addr,
+        shutdown: ShutdownHandle::Tokio(task),
+    }
+}
