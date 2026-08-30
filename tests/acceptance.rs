@@ -21,3 +21,6 @@ mod web_smoke;
 
 #[path = "acceptance/storage.rs"]
 mod storage;
+
+#[path = "acceptance/authentication.rs"]
+mod authentication;

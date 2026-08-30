@@ -255,6 +255,7 @@ pub struct HarnessBuilder {
     config: Option<Arc<GarrisonConfig>>,
     interface: Option<Arc<MockInterface>>,
     clock: Option<Arc<MockClock>>,
+    disable_repository: Option<Arc<dyn garrison::account::disable::DisableRepository>>,
     plugin_manager: Option<Arc<GarrisonPluginManager>>,
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<GarrisonListenerManager>>,
@@ -303,6 +304,15 @@ impl HarnessBuilder {
         self
     }
 
+    /// 注入封禁仓库（`account::disable::DisableRepository`，T020 封禁场景）。
+    pub fn disable_repository(
+        mut self,
+        repo: Arc<dyn garrison::account::disable::DisableRepository>,
+    ) -> Self {
+        self.disable_repository = Some(repo);
+        self
+    }
+
     /// 装配全局单例。
     ///
     /// # 错误
@@ -324,6 +334,9 @@ impl HarnessBuilder {
             .interface(interface.clone());
         if let Some(plugin_manager) = self.plugin_manager {
             builder = builder.with_plugin_manager(plugin_manager);
+        }
+        if let Some(disable_repository) = self.disable_repository {
+            builder = builder.with_disable_repository(disable_repository);
         }
         #[cfg(feature = "listener")]
         if let Some(listener_manager) = self.listener_manager {
