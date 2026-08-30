@@ -27,8 +27,6 @@ async fn make_backend(name: &str) -> Arc<dyn GarrisonDao> {
     }
 }
 
-const BACKENDS: [&str; 2] = ["in-memory", "oxcache"];
-
 /// ACC-STORAGE-001（异常/竞争）：100 task 并发 `set_if_absent` 同一 key，
 /// 恰好 1 个调用成功写入，其余全部返回 `Ok(false)`；最终值为首个写入值。
 async fn concurrency_set_if_absent_exactly_one_winner(backend: &str) {

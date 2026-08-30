@@ -967,6 +967,8 @@ mod tests {
             handler.dao.get(&at_key).await.unwrap().is_none(),
             "access token 记录应已被吊销删除"
         );
+        // 非 db-sqlite 面下该 variant 仍是 fallback 路径的正式存储键，测试合法使用
+        #[allow(deprecated)]
         let rt_key = crate::constants::DaoKeyPrefix::OAuth2RefreshToken.build_key("rt-fake-001");
         assert!(
             handler.dao.get(&rt_key).await.unwrap().is_none(),

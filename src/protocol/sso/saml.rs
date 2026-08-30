@@ -2540,7 +2540,6 @@ mod tests {
         /// CRIT-006: XmlSecSamlProvider 端到端——同一签名 Assertion 二次提交被重放防护拒绝。
         #[tokio::test]
         async fn xmlsec_provider_rejects_replayed_signed_assertion() {
-            use crate::dao::GarrisonDao as _;
             let future = Utc::now().timestamp() + 3600;
             let future_str = chrono::DateTime::from_timestamp(future, 0)
                 .unwrap()
