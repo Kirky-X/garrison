@@ -4529,6 +4529,10 @@ mod firewall_tests {
     use crate::manager::GarrisonManager;
     use crate::stp::mock::MockInterface;
     use crate::stp::{with_current_ip, with_current_token, GarrisonUtil};
+    // setup() 会 reset_for_test() 覆盖全局单例并替换 DAO：并发线程下彼此的
+    // brute-force 计数被清零 → `brute_force_blocks_ip_after_repeated_failed_check_login`
+    // 基线 flaky（#5 失败 #4/#6 通过）。按仓库惯例（account/metrics.rs）串行化。
+    use serial_test::serial;
 
     async fn setup() {
         GarrisonManager::reset_for_test();
@@ -4551,6 +4555,7 @@ mod firewall_tests {
 
     /// CRIT-010: 同一 IP 反复认证失败 → 触发暴力破解封禁（FirewallBlocked）。
     #[tokio::test]
+    #[serial]
     async fn brute_force_blocks_ip_after_repeated_failed_check_login() {
         setup().await;
         let ip = "203.0.113.5".to_string();
@@ -4578,6 +4583,7 @@ mod firewall_tests {
 
     /// CRIT-010: 认证成功路径应清零失败计数（不触发封禁）。
     #[tokio::test]
+    #[serial]
     async fn successful_login_resets_failure_count() {
         setup().await;
         let ip = "198.51.100.7".to_string();
@@ -4617,6 +4623,7 @@ mod firewall_tests {
 
     /// T010: 启用 firewall feature 时 builder 应自动注入 firewall_hook。
     #[tokio::test]
+    #[serial]
     async fn builder_auto_wires_firewall_hook() {
         setup().await;
         let injected = crate::manager::GarrisonManager::logic()
