@@ -2,7 +2,27 @@
 
 ## [Unreleased]
 
-> specmark change `acceptance-overhaul`：全量验收测试重构 + 缺陷全部修复（随实施推进，发布前于 T061 完成统计收口）。
+> specmark change `acceptance-overhaul`：全量验收测试重构 + 缺陷全部修复。
+>
+> **终验统计（T061 收口，证据 `target/gate-final.log`）**：
+> - 验收测试矩阵 `--test acceptance`：**380 passed / 0 failed**（ACC 编号 200+ 场景，
+>   按域组织：authentication 12 / session 8 / rbac 9 / protocol_jwt 19 / protocol_oauth2 12 /
+>   protocol_mixed 16 / security 30 / web_axum 12 / web_actix 8 / web_warp 6 / storage 8 /
+>   resilience 12 / concurrency 5 / server 18 / repository 22 / environment 8 + BW-AC 9 +
+>   migrated 旧树 166 场景）
+> - 全量 `--tests`：**4339 passed / 0 failed**（lib 3959 + acceptance 380，含 8 个
+>   `#[ignore]` 门控项：perf 3 + 外部服务 5）——基线 4185 → 4339（+154）
+> - 六门禁：fmt / clippy default / clippy full / clippy all-targets 全部 `-D warnings`
+>   干净；`cargo doc --features full` 0 告警
+> - 旧测试树全量迁移：e2e(59) / integration(108) / protocol(36) / repository(72) /
+>   acceptance_criteria(9) / auth_server_integration(12) / unit(2) 并入验收矩阵，
+>   根入口删除（`tests/` = acceptance.rs + acceptance/ + common/ + data/）
+>
+> **实证发现（验收首次真实验证 e2e 未验证声明）**：
+> - FINDING-025：会话存储无租户作用域（`tenant_isolation.enabled` 无运行时消费点），
+>   跨租户 check-login 返回 true；隔离强制点在 DAO 前缀层与审计层。后续 change 待定
+> - XSS 硬化实测：auth-server 在 login_id 校验层 400 拒绝尖括号载荷（入口拒绝）
+> - jsonwebtoken u64 秒边界：过期判定存在亚秒 flaky（测试已按 2.5s 跨秒修正）
 
 ### Breaking
 - **`GarrisonDao` 六个原子方法收严为必需方法（T012）**：`rename` / `set_if_absent` /
