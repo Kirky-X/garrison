@@ -954,6 +954,7 @@ mod tests {
     use crate::dao::GarrisonDao;
     use crate::error::{GarrisonError, GarrisonResult};
     use async_trait::async_trait;
+    use serial_test::serial;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// 辅助函数：创建带 MockDao 的 Arc<GarrisonSession>。
@@ -1526,6 +1527,7 @@ mod tests {
     /// 验证 `JwtMode::default()` 返回 `Mixin`（推荐默认模式）。
     ///
     /// 覆盖 `#[default]` 标注的 `Mixin` 变体。
+    #[serial]
     #[test]
     fn jwt_mode_default_is_mixin() {
         let mode = JwtMode::default();
@@ -1537,6 +1539,7 @@ mod tests {
     }
 
     /// 验证 `JwtMode` 三个变体互不相等（PartialEq 派生正确）。
+    #[serial]
     #[test]
     fn jwt_mode_variants_distinct() {
         assert_ne!(JwtMode::Stateless, JwtMode::Mixin);
@@ -1549,6 +1552,7 @@ mod tests {
     }
 
     /// 验证 `JwtMode` 的 Clone / Copy 行为（值拷贝，不丢失原值）。
+    #[serial]
     #[test]
     fn jwt_mode_clone_preserves_value() {
         let original = JwtMode::Stateless;
@@ -1563,6 +1567,7 @@ mod tests {
     /// 不需要初始化 GarrisonManager）。
     ///
     /// 覆盖 `has_permission` 中的本地参数校验路径。
+    #[serial]
     #[tokio::test]
     async fn has_permission_empty_returns_invalid_param() {
         let result = GarrisonUtil::has_permission("").await;
@@ -1576,6 +1581,7 @@ mod tests {
     /// 验证 `has_role("")` 返回 `InvalidParam`。
     ///
     /// 覆盖 `has_role` 中的本地参数校验路径。
+    #[serial]
     #[tokio::test]
     async fn has_role_empty_returns_invalid_param() {
         let result = GarrisonUtil::has_role("").await;

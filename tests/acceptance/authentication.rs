@@ -359,7 +359,7 @@ async fn acc_auth_009_token_context_not_leaked_across_tasks() {
 async fn acc_auth_010_wrong_password_and_unknown_user_indistinguishable() {
     use garrison::account::credential::password::Argon2Hasher;
     use garrison::dao::repository::{sqlite::DbnexusUserRepository, NewUser, UserRepository};
-    use garrison::dao::{init_dbnexus, GarrisonDao, GarrisonDaoOxcache, GarrisonMigration};
+    use garrison::dao::{init_dbnexus, GarrisonDao, GarrisonDaoOxcache};
     use garrison::error::GarrisonError;
     use garrison::session::GarrisonSession;
     use garrison::stp::{GarrisonInterface, GarrisonLogicDefault, PasswordLogic};
@@ -733,32 +733,28 @@ async fn acc_auth_016_safe_disable_defaults_false() {
 
     let backend = BackendEmbedded::new();
     // 新 token 未开启二级认证 → check_safe=false
-    assert_eq!(
-        backend.check_safe(&token).await.unwrap(),
-        false,
+    assert!(
+        !backend.check_safe(&token).await.unwrap(),
         "新 token 未开启二级认证，check_safe 应为 false"
     );
     // 新 token 未被封禁 → check_disable=false
-    assert_eq!(
-        backend.check_disable(&token).await.unwrap(),
-        false,
+    assert!(
+        !backend.check_disable(&token).await.unwrap(),
         "新 token 未被封禁，check_disable 应为 false"
     );
     // 未知 token → 两者均为 false（不误报，T030d fallback 语义）
-    assert_eq!(
-        backend
+    assert!(
+        !backend
             .check_safe("nonexistent-token-disabled-test-12345")
             .await
             .unwrap(),
-        false,
         "未知 token check_safe 应为 false"
     );
-    assert_eq!(
-        backend
+    assert!(
+        !backend
             .check_disable("nonexistent-token-disabled-test-12345")
             .await
             .unwrap(),
-        false,
         "未知 token check_disable 应为 false（未标记封禁）"
     );
 }

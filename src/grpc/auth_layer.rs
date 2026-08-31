@@ -3,7 +3,7 @@
 
 //! gRPC async 鉴权层（`GarrisonGrpcAuthLayer`）。
 //!
-//! 消除 [`super::GarrisonGrpcInterceptor`]「仅提取 token 不鉴权」的 footgun：
+//! 消除 `GarrisonGrpcInterceptor`（仅提取 token 不鉴权）的 footgun：
 //! tower `Layer`/`Service` 形态支持 async `GarrisonUtil::check_login()`，
 //! 失败以 `tonic::Status::UNAUTHENTICATED`（trailers-only 响应，经
 //! `Status::into_http` 构造）拒绝，成功则把 token 注入 task_local

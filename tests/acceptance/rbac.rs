@@ -475,12 +475,8 @@ async fn acc_rbac_008_strategy_hot_swap_takes_effect_immediately() {
         async move {
             with_tenant(0, async move {
                 with_current_token(token, async move {
-                    strategy
-                        .read()
-                        .permission_handler()
-                        .clone()
-                        .handle_check_permission("user:read")
-                        .await
+                    let handler = strategy.read().permission_handler().clone();
+                    handler.handle_check_permission("user:read").await
                 })
                 .await
             })

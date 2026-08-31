@@ -9,12 +9,12 @@
 //!
 //! 全部场景经 wiremock 0.6（dev-deps）mock 授权服务器响应，每测试自建 MockServer
 //! + `#[serial]` 串行守卫；本域为纯协议客户端，不依赖 `GarrisonTestHarness`
-//! （与 tests/protocol/oauth2_*.rs 同构；oauth2_server 服务端端点见 server.rs
-//! ACC-SRV-013..018 与 tests/e2e/oauth2_flow.rs，本文件不重复）。
+//!   （与 tests/protocol/oauth2_*.rs 同构；oauth2_server 服务端端点见 server.rs
+//!   ACC-SRV-013..018 与 tests/e2e/oauth2_flow.rs，本文件不重复）。
 //!
 //! ACC-OAUTH2-013..015 吸收 tests/protocol/oauth2_integration.rs（授权 URL
-//! redirect_uri 参数、空 client_id 构造拒绝）与 oauth2_edge_cases.rs（scope
-//! 空串 vs None 请求体差异、expires_in=0），Phase 4 迁移追溯。
+//!   redirect_uri 参数、空 client_id 构造拒绝）与 oauth2_edge_cases.rs（scope
+//!   空串 vs None 请求体差异、expires_in=0），Phase 4 迁移追溯。
 //!
 //! # API 偏差记录
 //!

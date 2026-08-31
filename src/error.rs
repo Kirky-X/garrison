@@ -300,7 +300,7 @@ impl GarrisonError {
     /// 稳定的机器可读错误码（如 `"NOT_LOGIN"` / `"SESSION_ERROR"`）。
     ///
     /// 与 [`Self::response_parts`] 返回的 HTTP `error_code` 同源（单一事实来源
-    /// [`Self::parts_and_msg_key`]），供日志、监控埋点、audit-log 等非 HTTP
+    /// `parts_and_msg_key` 私有助手），供日志、监控埋点、audit-log 等非 HTTP
     /// 场景按变体稳定检索；Display 文案受 i18n 影响时仍可用本方法做机器判别。
     ///
     /// 唯一例外：`Exception` 变体在 HTTP 层按业务 `ex.code` 条件复用

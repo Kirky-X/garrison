@@ -60,7 +60,7 @@ fn unified_error_reply(err: &GarrisonError) -> Response {
     warp::reply::with_status(warp::reply::json(&body), status).into_response()
 }
 
-/// `impl Reply for GarrisonError`：复用 [`unified_error_reply`] 保证三框架一致。
+/// `impl Reply for GarrisonError`：复用 `unified_error_reply` 保证三框架一致。
 ///
 /// 状态码与错误码映射与 axum `IntoResponse` / actix-web `ResponseError` 完全一致。
 impl Reply for GarrisonError {

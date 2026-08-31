@@ -58,7 +58,7 @@ impl GarrisonGrpcInterceptor {
     ///
     /// gRPC metadata 即 HTTP/2 headers（头名已小写），从 `http::HeaderMap`
     /// 直接提取可避免 auth layer 热路径上的 `HeaderMap` 整体克隆。
-    /// Bearer 解析逻辑与本方法共享 [`Self::parse_bearer`] 单点实现。
+    /// Bearer 解析逻辑与本方法共享 `parse_bearer` 单点实现（私有助手）。
     #[allow(clippy::result_large_err)]
     pub fn extract_token_from_headers(headers: &http::HeaderMap) -> Result<String, Status> {
         let auth_header = headers

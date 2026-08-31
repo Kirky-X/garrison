@@ -210,12 +210,9 @@ async fn acc_conc_003_concurrent_auto_renewal_exactly_once() {
             all_tasks_ok = false;
             eprintln!("check_login 意外失败: {e:?}");
         }
-        match renewed {
-            Some(new_token) => {
-                renewer_logged_ok = Some(logged.is_ok() && matches!(logged, Ok(true)));
-                renewed_tokens.push(new_token);
-            },
-            None => {},
+        if let Some(new_token) = renewed {
+            renewer_logged_ok = Some(logged.is_ok() && matches!(logged, Ok(true)));
+            renewed_tokens.push(new_token);
         }
     }
     assert!(
@@ -546,11 +543,16 @@ async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
 /// 连接持有独立内存库，并发会话会看到空库；单连接池保证迁移/写入/轮换的
 /// 读-改-写序列串行可见。
 async fn setup_single_connection_db() -> dbnexus::DbPool {
-    let mut config = dbnexus::DbConfig::default();
-    config.url = "sqlite::memory:".to_string();
-    config.pool_config.max_connections = 1;
-    config.pool_config.min_connections = 1;
-    config.pool_config.acquire_timeout = 15_000;
+    let config = dbnexus::DbConfig {
+        url: "sqlite::memory:".to_string(),
+        pool_config: dbnexus::PoolConfig {
+            max_connections: 1,
+            min_connections: 1,
+            acquire_timeout: 15_000,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
     let pool = dbnexus::DbPool::with_config(config)
         .await
         .expect("初始化单连接 dbnexus 池应成功");

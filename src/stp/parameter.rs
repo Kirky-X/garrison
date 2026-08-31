@@ -339,6 +339,7 @@ mod tests {
     }
 
     /// 验证 with_device 设置 device 上下文。
+    #[serial]
     #[test]
     fn with_device_sets_context() {
         let builder = ParameterQueryBuilder::new().with_device("dev1");
@@ -346,6 +347,7 @@ mod tests {
     }
 
     /// 验证 with_token 设置 token 上下文。
+    #[serial]
     #[test]
     fn with_token_sets_context() {
         let builder = ParameterQueryBuilder::new().with_token("abc-token");
@@ -354,6 +356,7 @@ mod tests {
 
     /// spec Scenario: 链式调用设置上下文。
     /// 验证 with_login_id("1001".to_string()).with_device("dev1") 链式调用后 builder 持有完整上下文。
+    #[serial]
     #[test]
     fn chain_with_login_id_and_device_sets_context() {
         let builder = ParameterQueryBuilder::new()
