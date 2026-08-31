@@ -170,8 +170,7 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
     invalid_sig.replace_range(0..1, if &valid_sig[0..1] == "0" { "1" } else { "0" });
 
     const BLOCKS: usize = 20;
-    const BLOCK_SIZE: usize = 1000;
-    const ITERATIONS: usize = BLOCKS * BLOCK_SIZE; // 20000/侧
+    const BLOCK_SIZE: usize = 1000; // 共 20000 次/侧
 
     // 预热：避免首次编译/缓存影响
     for _ in 0..100 {
