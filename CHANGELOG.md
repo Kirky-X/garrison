@@ -4,12 +4,13 @@
 
 > specmark change `acceptance-overhaul`：全量验收测试重构 + 缺陷全部修复。
 >
-> **终验统计（T061 收口，证据 `target/gate-final.log`）**：
-> - 验收测试矩阵 `--test acceptance`：**380 passed / 0 failed**（ACC 编号 200+ 场景，
->   按域组织：authentication 12 / session 8 / rbac 9 / protocol_jwt 19 / protocol_oauth2 12 /
->   protocol_mixed 16 / security 30 / web_axum 12 / web_actix 8 / web_warp 6 / storage 8 /
->   resilience 12 / concurrency 5 / server 18 / repository 22 / environment 8 + BW-AC 9 +
->   migrated 旧树 166 场景）
+> **终验统计（T061/T066 收口，证据 `target/gate-final.log` + 三维审查独立复测）**：
+> - 验收测试矩阵 `--test acceptance`：**380 passed / 0 failed**（3 ignored），分域实测：
+>   authentication 19 / session 18 / rbac 18 / protocol_jwt 19 / protocol_oauth2 15 /
+>   protocol_mixed 23 / security 27 / web_axum 24 / web_actix 8 / web_warp 6 / storage 16 /
+>   resilience 12 / concurrency 9 / server 18 / repository 30 / environment 4 / BW-AC 6 /
+>   harness 4 + migrated 旧树 104（另有 keycloak_oidc/tenant_isolation 2 例与
+>   environment testing 2 例受 feature 门控，见 T065 说明）
 > - 全量 `--tests`：**4339 passed / 0 failed**（lib 3959 + acceptance 380，含 8 个
 >   `#[ignore]` 门控项：perf 3 + 外部服务 5）——基线 4185 → 4339（+154）
 > - 六门禁：fmt / clippy default / clippy full / clippy all-targets 全部 `-D warnings`

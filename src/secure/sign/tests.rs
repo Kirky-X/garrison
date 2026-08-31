@@ -189,10 +189,11 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
     }
     let invalid_elapsed = start_invalid.elapsed();
 
-    // 常量时间比较：错误签名不应明显快于正确签名
-    // 阈值 8 倍：路径以 HMAC 计算为主导，两种签名耗时天然接近；
-    // 真正的常量时间回归（逐字节提前返回）会产生数量级差距，
-    // 8 倍仍可捕获且对 CI 并行负载噪声更鲁棒（验收 Phase4 去 flaky）。
+    // 常量时间比较：错误签名不应明显快于正确签名（Phase 4 去 flaky 阈值 8x）。
+    // 守卫边界（三维审查 L 记录）：本测试可捕获「跳过 HMAC/整段比较」类数量级
+    // 回归；「naive 逐字节 ==」类回归耗时比≈1.0-1.2（HMAC 计算占主导），3x/8x
+    // 均无法捕获——该类由实现侧 constant-time 原语（subtle 全长比较）保证，
+    // 见 signer.rs；本测试为防回归粗筛而非时序侧信道唯一防线。
     let ratio = if invalid_elapsed < valid_elapsed {
         valid_elapsed.as_nanos() as f64 / invalid_elapsed.as_nanos().max(1) as f64
     } else {

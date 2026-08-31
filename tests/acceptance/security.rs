@@ -1035,7 +1035,10 @@ async fn acc_sec_023_xss_login_id_not_reflected() {
     let config = Arc::new(GarrisonConfig::default_config());
     let (external_url, _internal_url, _handle) =
         start_garrison_server(100, "test-key", config).await;
-    let client = reqwest::Client::new();
+    // X-Tenant-Id 默认头（tenant_client）：tenant_resolution_middleware 对缺失
+    // 租户头返回 400 BAD_REQUEST（Phase 4 审查探针实证），携带租户头后请求
+    // 真实进入 login 路径（200），不反射断言在 200 分支生效。
+    let client = tenant_client();
     let login_url = format!("{}/api/v1/auth/login", external_url);
 
     for payload in XSS_PAYLOADS {
@@ -1065,9 +1068,10 @@ async fn acc_sec_023_xss_login_id_not_reflected() {
             "XSS payload 导致 500 错误 (payload={payload:?}): {body_text}"
         );
         // HARD 断言 2: 若校验层放行（200），响应 body 不得反射 payload（防反射型 XSS）
-        // 实测语义（Phase 4 修正）：真实 auth-server 在 login_id 校验层对含
-        // 控制字符/尖括号的载荷直接 400 拒绝（XSS 硬化于入口）；400 分支不再要求
-        // JSON content-type（校验拒绝体非 JSON），以「拒绝 + 不渲染为 HTML」为锚。
+        // 实测语义（Phase 4 修正，审查探针实证）：无 X-Tenant-Id 时的 400 来自
+        // tenant_resolution_middleware 的租户头强制（非 login_id 校验层——login_id
+        // 无入口校验语义）；带租户头时全部 XSS payload 均 200 且 token（uuid 风格）
+        // 不反射载荷。400 分支保持「拒绝 + 不渲染为 HTML」防御性锚定。
         if status.as_u16() == 200 {
             assert!(
                 !body_text.contains(payload),
@@ -1144,16 +1148,22 @@ async fn acc_sec_024_csrf_api_mode_origin_behavior() {
     );
 }
 
-/// ACC-SEC-025（异常）：跨租户 token 隔离——租户 0 登录的 token 在租户 1 上下文中
-/// check-login 被拒（数据隔离）且 check-permission 被拒；同租户 check-login 放行
-/// （隔离确实生效而非全局拒绝）。
+/// ACC-SEC-025（异常）：跨租户 token 隔离验收（FINDING-025 实证记录）。
 ///
 /// # 迁移溯源（Phase 4 T040/T043）
 /// 自 tests/e2e/pentest/privilege_escalation.rs `pentest_privilege_escalation_cross_tenant`
 /// （T044）移植，并合并 tests/e2e/api_authz_boundary.rs
-/// `test_authz_boundary_cross_tenant_token_isolation`（T030）。原版仅断言
-/// 跨租户 check-permission 拒绝；本场景强化为「同租户放行 + 跨租户拒绝」的
-/// 双向对照，跨租户 check-login 拒绝为隔离语义的直接证据。
+/// `test_authz_boundary_cross_tenant_token_isolation`（T030）。
+///
+/// # 实测契约（findings 记录，非弱化）
+///
+/// **会话存储（token:session）不按租户作用域**——`tenant_isolation.enabled` 当前
+/// 无运行时消费点（仅配置解析），跨租户 check-login 返回 `data=true`（原 pentest
+/// 断言从未被 CI 执行，属未验证声明；验收首次真实验证后按实际契约记录）。
+/// 隔离的既有强制点：DAO 前缀层（ACC-STORAGE-006）与 check-permission 层
+/// （本场景下方硬断言）。会话级强制列为后续 change（随 DAO 键作用域设计）。
+/// 本场景以哨兵断言记录现状：若未来实施会话级隔离，哨兵将显性失败并要求
+/// 移除本记录（防静默「修复」后测试假绿）。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn acc_sec_025_cross_tenant_token_isolation() {
@@ -1223,7 +1233,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
         "FINDING-025 语义漂移：会话层隔离现已生效，请移除本记录并同步文档"
     );
     eprintln!(
-        "[FINDING-025] 跨租户 check-login 返回 data=true（会话存储无租户作用域，         已知限制见 tasks.md T044 记录；隔离强制点：DAO 前缀层/审计层）"
+        "[FINDING-025] 跨租户 check-login 返回 data=true（会话存储无租户作用域，         已知限制见 CHANGELOG Unreleased（FINDING-025）；隔离强制点：DAO 前缀层/审计层）"
     );
 
     // 跨租户 check-permission：拒绝（error_code / 4xx）
