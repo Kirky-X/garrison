@@ -27,8 +27,6 @@
 //!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
 //!   本文件三个 auto-wire 组内的 `EmptyInterface` 替身保留）。
 
-#![cfg(feature = "listener")]
-
 use async_trait::async_trait;
 use garrison::error::GarrisonResult;
 use garrison::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};

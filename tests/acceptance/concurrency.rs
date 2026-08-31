@@ -13,6 +13,10 @@
 //! 文件尾原样并入 3 个 `#[ignore]` 性能基线（tests/e2e/perf.rs 的
 //! perf_login / perf_check_login / perf_check_permission，保留 `#[ignore]`
 //! 与原文档注释；经 `--ignored` 显式触发）。
+//!
+//! Phase 4 测试迁移（T040/T043）：ACC-CONC-006 自 tests/e2e/api_boundary.rs
+//! `test_api_boundary_concurrent_refresh_same_token`（T026）移植；
+//! 文件尾 3 个性能基线即 tests/e2e/perf.rs 原样迁入（确认覆盖，无需重复）。
 
 use garrison::dao::{GarrisonDao, InMemoryDao};
 use garrison::protocol::jwt::JwtHandler;
@@ -557,6 +561,87 @@ async fn setup_single_connection_db() -> dbnexus::DbPool {
     let applied = migration.migrate_core().await.expect("migrate_core 应成功");
     assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
     pool
+}
+
+// ------------------------------------------------------------------------
+// ACC-CONC-006：并发 renew 同一 token（T026 移植）
+// ------------------------------------------------------------------------
+
+/// ACC-CONC-006（异常侧）：3 个并发 task 对同一 token 调用
+/// `BackendEmbedded::renew_to_equivalent`（`/api/v1/auth/refresh` 端点的下游，
+/// 见 src/server/sdforge_routes.rs `auth_refresh`）——恰一次成功，其余被
+/// 轮换失效拒绝（`NotLogin`/`InvalidToken`，per-token 异步锁串行化消除
+/// CWE-362 TOCTOU）；新 token 有效、旧 token 失效，无重复签发。
+///
+/// # 迁移溯源（Phase 4 T040/T043）
+/// 自 tests/e2e/api_boundary.rs `test_api_boundary_concurrent_refresh_same_token`
+///（T026）移植。原版经 HTTP 断言「恰好 1 个成功 + 2 个 error_code=NOT_LOGIN」；
+/// 本场景在逻辑层直接断言（同一实现路径），语义等价。
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[serial]
+async fn acc_conc_006_concurrent_renew_to_equivalent_exactly_once() {
+    use garrison::backend::{AuthBackend, BackendEmbedded};
+    use garrison::error::GarrisonError;
+
+    let _h = GarrisonTestHarness::builder()
+        .config(test_config())
+        .init()
+        .await
+        .unwrap();
+    let old_token = GarrisonUtil::login_simple("conc-1006").await.unwrap();
+
+    let backend = Arc::new(BackendEmbedded::new());
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..3 {
+        let backend = backend.clone();
+        let token = old_token.clone();
+        set.spawn(async move { backend.renew_to_equivalent(&token).await });
+    }
+
+    let mut success_tokens: Vec<String> = Vec::new();
+    let mut rejected: Vec<GarrisonError> = Vec::new();
+    while let Some(result) = set.join_next().await {
+        match result.expect("并发 renew task 不应 panic") {
+            Ok(new_token) => success_tokens.push(new_token),
+            Err(err) => rejected.push(err),
+        }
+    }
+
+    // 恰一次成功：其余全部被轮换失效拒绝（无重复签发）
+    assert_eq!(
+        success_tokens.len(),
+        1,
+        "3 个并发 renew 应恰一次成功（per-token 锁串行化），实际成功数: {}",
+        success_tokens.len()
+    );
+    assert_eq!(rejected.len(), 2, "其余 2 个并发 renew 应被拒绝");
+    for err in &rejected {
+        assert!(
+            matches!(
+                err,
+                GarrisonError::NotLogin(_) | GarrisonError::InvalidToken(_)
+            ),
+            "并发 renew 失败方应被轮换失效语义拒绝（NotLogin/InvalidToken），实际: {err:?}"
+        );
+    }
+
+    let new_token = success_tokens.into_iter().next().unwrap();
+    assert_ne!(new_token, old_token, "renew 应轮换出新 token");
+
+    // 新 token 有效且绑定同一主体；旧 token 轮换后失效
+    let new_logged =
+        with_current_token(new_token, async { GarrisonUtil::check_login().await }).await;
+    assert!(
+        matches!(new_logged, Ok(true)),
+        "新 token 应有效（实际: {new_logged:?}）",
+    );
+    assert_eq!(
+        GarrisonUtil::get_login_id_by_token(&old_token)
+            .await
+            .unwrap(),
+        None,
+        "旧 token 轮换后应已失效（无反查）"
+    );
 }
 
 // ============================================================================

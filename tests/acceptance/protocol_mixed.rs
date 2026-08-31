@@ -10,6 +10,19 @@
 //! 一次性消费竞争场景统一使用 `multi_thread` flavor（与 tests/acceptance/storage.rs
 //! 的并发惯例一致）。
 //!
+//! ACC-MIXED-017..022 吸收 tests/protocol/{sso_integration,sso_edge_cases,
+//! sign_edge_cases,apikey_edge_cases,temp_edge_cases}.rs 的未覆盖用例
+//!（ticket 销毁/多 client/无效格式、sign 空/非法签名、apikey 命名空间隔离、
+//! temp scope 越权），Phase 4 迁移追溯。
+//!
+//! Phase 4 测试迁移（T040/T043）补充：
+//! - ACC-MIXED-023 自 tests/e2e/error_scenarios.rs 的 check-api-key 端点用例移植
+//!   （`test_e2e_check_api_key_invalid_returns_error` / `test_e2e_check_api_key_empty_returns_error`）；
+//! - 去重注释：tests/unit/apikey_mock_edge.rs `expired_apikey_validation_fails`
+//!   （10.3）→ ACC-MIXED-012（过期 key 被拒语义等价；单元层 mock DAO 返回
+//!   `ExpiredToken`、产品 `InMemoryDao` 返回 `InvalidToken("apikey-not-found")`，
+//!   API 偏差见文件头记录，两者均拒绝过期 key）。
+//!
 //! # SSO 模拟说明
 //!
 //! `SsoClient` 为纯 DAO 实现（HMAC 验签与 ticket 存储均在本地共享 DAO，无网络
@@ -24,12 +37,17 @@
 //! 处理器内部的 `ExpiredToken`（后者需 mock DAO 的「get 不清理过期键」语义，
 //! 与 tests/protocol/apikey_edge_cases.rs 的说明一致）；两者均拒绝过期 key。
 
+use async_trait::async_trait;
 use garrison::dao::{GarrisonDao, InMemoryDao};
-use garrison::error::GarrisonError;
+use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::protocol::apikey::ApiKeyHandler;
 use garrison::protocol::sign::SignHandler;
 use garrison::protocol::sso::SsoClient;
 use garrison::protocol::temp::TempCredentialHandler;
+use garrison::session::GarrisonSession;
+use garrison::stp::context::with_current_token;
+use garrison::stp::{GarrisonInterface, GarrisonLogicDefault};
+use garrison::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -570,4 +588,276 @@ async fn acc_mixed_016_temp_concurrent_consume_exactly_once() {
         hit_count, 1,
         "并发 consume 同一凭证应恰好 1 个取到（TOCTOU 将出现多次），实际 {hit_count}"
     );
+}
+
+// ------------------------------------------------------------------------
+// ACC-MIXED-017..022：sso 销毁/多 client、sign 参数、apikey 隔离、temp scope
+// （迁自 tests/protocol/{sso,sign,apikey,temp}_edge_cases.rs 与 sso_integration.rs，
+//  Phase 4 迁移追溯）
+// ------------------------------------------------------------------------
+
+/// ACC-MIXED-017（正常+异常）：`destroy_ticket` 销毁后跨子系统不可校验
+/// （另一共享 DAO 的 client 校验失败）；销毁不存在的 ticket 幂等返回 Ok。
+/// 迁自 tests/protocol/sso_integration.rs::destroy_ticket_affects_subsystem_b、
+/// destroy_nonexistent_ticket_is_idempotent（2 例合并）
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_mixed_017_sso_destroy_ticket_and_idempotent() {
+    let dao: Arc<dyn GarrisonDao> = make_dao();
+    let client_a = SsoClient::new(dao.clone(), "acceptance-sso-secret");
+    let client_b = SsoClient::new(dao, "acceptance-sso-secret");
+
+    let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
+    client_a.destroy_ticket(&ticket).await.expect("销毁应成功");
+
+    let result = client_b.validate_ticket(&ticket, 2001).await;
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
+        "销毁后另一子系统应无法校验，实际: {result:?}"
+    );
+
+    // 幂等：销毁不存在的 ticket 返回 Ok
+    client_b
+        .destroy_ticket("nonexistent")
+        .await
+        .expect("销毁不存在 ticket 应幂等 Ok");
+}
+
+/// ACC-MIXED-018（正常）：多 client_id / login_id 独立签发互不影响——
+/// 同一签发方为不同 client_id / 不同 login_id 签发 ticket 互不相同，
+/// 各自在对应 client_id 下校验成功。
+/// 迁自 tests/protocol/sso_integration.rs::multiple_clients_issue_independent_tickets
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_mixed_018_sso_multiple_clients_independent_tickets() {
+    let dao: Arc<dyn GarrisonDao> = make_dao();
+    let client_a = SsoClient::new(dao.clone(), "acceptance-sso-secret");
+    let client_b = SsoClient::new(dao, "acceptance-sso-secret");
+
+    let t1 = client_a.issue_ticket("1001", 2001).await.unwrap();
+    let t2 = client_a.issue_ticket("1001", 2002).await.unwrap();
+    let t3 = client_a.issue_ticket("1002", 2001).await.unwrap();
+    assert_ne!(t1, t2, "不同 client_id 应生成不同 ticket");
+    assert_ne!(t1, t3, "不同 login_id 应生成不同 ticket");
+    assert_ne!(t2, t3, "t2/t3 亦应互不相同");
+
+    assert_eq!(
+        client_b.validate_ticket(&t1, 2001).await.unwrap(),
+        "1001".to_string()
+    );
+    assert_eq!(
+        client_b.validate_ticket(&t2, 2002).await.unwrap(),
+        "1001".to_string()
+    );
+    assert_eq!(
+        client_b.validate_ticket(&t3, 2001).await.unwrap(),
+        "1002".to_string()
+    );
+}
+
+/// ACC-MIXED-019（异常）：无效格式 ticket 被拒绝——短字符串 / 非 hex 字符串
+/// 校验均返回 `InvalidToken`（DAO 查找不命中，fail-closed）。
+/// 迁自 tests/protocol/sso_edge_cases.rs::ticket_invalid_format_returns_error
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_mixed_019_sso_invalid_ticket_format_rejected() {
+    let client = SsoClient::new(make_dao(), "acceptance-sso-secret");
+
+    for (name, bad) in [
+        ("短字符串", "short"),
+        (
+            "非 hex 字符串",
+            "ZZZZ_invalid_ticket_string_with_non_hex_chars",
+        ),
+    ] {
+        let result = client.validate_ticket(bad, 2001).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
+            "{name} 应被拒绝，实际: {result:?}"
+        );
+    }
+}
+
+/// ACC-MIXED-020（异常）：缺失/非法签名参数拒绝——空 signature（Base64 解码
+/// 失败）与无效 Base64 signature 均返回 `InvalidToken`；body 篡改（sign-mismatch）
+/// 已由 ACC-MIXED-005 覆盖（见去重清单，不重复移植）。
+/// 迁自 tests/protocol/sign_edge_cases.rs::missing_required_params_returns_error
+///（空/非法签名两例；签名不匹配例与 ACC-MIXED-005 语义等价）
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_mixed_020_sign_empty_or_invalid_signature_rejected() {
+    let handler = SignHandler::new(
+        "app-020",
+        "acceptance-sign-secret-0123456789abcdef",
+        make_dao(),
+    )
+    .expect("构造应成功");
+    let ts = now_ts();
+
+    // 空 signature → Base64 解码失败 → InvalidToken
+    let result = handler
+        .validate("POST", "/api", ts, "nonce-empty-sig", "body", "")
+        .await;
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
+        "空 signature 应被拒绝，实际: {result:?}"
+    );
+
+    // 无效 Base64 signature → 解码失败 → InvalidToken
+    let result = handler
+        .validate(
+            "POST",
+            "/api",
+            ts,
+            "nonce-invalid-sig",
+            "body",
+            "!!!invalid-base64!!!",
+        )
+        .await;
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidToken(_))),
+        "无效 Base64 signature 应被拒绝，实际: {result:?}"
+    );
+}
+
+/// ACC-MIXED-021（正常+异常）：API Key 命名空间隔离——key 经 `login_id`
+/// 绑定业务命名空间，verify 返回各自的 login_id；跨命名空间（login_id 不匹配
+/// 另一 namespace）访问可被业务方据此阻断。
+/// 迁自 tests/protocol/apikey_edge_cases.rs::namespace_isolation_blocks_cross_namespace_access
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_mixed_021_apikey_namespace_isolation() {
+    let handler = ApiKeyHandler::new(make_dao());
+
+    // namespace A：login_id=1001（read）；namespace B：login_id=2002（write）
+    let key_a = handler
+        .generate("1001", vec!["read".to_string()], 3600)
+        .await
+        .unwrap();
+    let key_b = handler
+        .generate("2002", vec!["write".to_string()], 3600)
+        .await
+        .unwrap();
+    assert_ne!(key_a, key_b, "不同 namespace 的 key 应互不相同");
+
+    let info_a = handler.verify(&key_a).await.unwrap();
+    let info_b = handler.verify(&key_b).await.unwrap();
+    assert_eq!(info_a.login_id, "1001", "namespace A 应返回 login_id=1001");
+    assert_eq!(info_b.login_id, "2002", "namespace B 应返回 login_id=2002");
+
+    // 隔离边界：A 的 key 的 login_id 不匹配 namespace B（反之亦然）
+    assert_ne!(
+        info_a.login_id, "2002",
+        "namespace A 的 key 不应匹配 namespace B（隔离边界）"
+    );
+    assert_ne!(
+        info_b.login_id, "1001",
+        "namespace B 的 key 不应匹配 namespace A（隔离边界）"
+    );
+}
+
+/// ACC-MIXED-022（异常）：临时凭证 scope 越权拒绝——凭证 value 携带业务 scope
+///（JSON），业务方读取后校验：scope="read" 的凭证不允许 "write" 操作，
+/// 允许 "read" 操作（应用层 scope 检查语义；协议层无 scope 字段，
+/// 同 tests/protocol/temp_edge_cases.rs::scope_exceeded_access_denied 的模拟方式）。
+/// 迁自 tests/protocol/temp_edge_cases.rs::scope_exceeded_access_denied
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_mixed_022_temp_credential_scope_privilege_rejected() {
+    let handler = TempCredentialHandler::new(make_dao());
+
+    let credential_value = r#"{"scope":"read"}"#;
+    let key = handler
+        .issue("verify", credential_value, 600)
+        .await
+        .unwrap();
+    let stored = handler
+        .consume(&key)
+        .await
+        .expect("consume 不应报错")
+        .expect("应成功读取凭证");
+    let parsed: serde_json::Value = serde_json::from_str(&stored).unwrap();
+    let credential_scope = parsed["scope"].as_str().expect("scope 应为字符串");
+
+    // 越权：请求操作 "write" 超出凭证 scope "read"
+    let allowed_write = credential_scope == "write";
+    assert!(
+        !allowed_write,
+        "scope=\"read\" 的凭证不应允许 \"write\" 操作（权限超出边界）"
+    );
+
+    // 授权：read 操作命中 read scope
+    let read_allowed = credential_scope == "read";
+    assert!(read_allowed, "scope=\"read\" 的凭证应允许 \"read\" 操作");
+}
+
+// ------------------------------------------------------------------------
+// ACC-MIXED-023：check_api_key 端点语义（Phase 4 T040/T043，自 tests/e2e 移植）
+// ------------------------------------------------------------------------
+
+/// 空授权 `GarrisonInterface` 替身（与 session.rs 的 `NoopInterface` 同构，
+/// 仅满足 `GarrisonPermissionStrategyDefault` 构造要求，不参与断言）。
+struct NoopInterface;
+
+#[async_trait]
+impl GarrisonInterface for NoopInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(vec![])
+    }
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(vec![])
+    }
+}
+
+/// ACC-MIXED-023（异常+正常）：`GarrisonLogicDefault::check_api_key`（auth-server
+/// `/api/v1/auth/check-api-key` 端点的下游，见 src/stp/default_impl.rs）——
+/// 未知 key / 空 key 均拒绝 `InvalidToken`（fail-closed），有效 key 放行 Ok。
+///
+/// # 迁移溯源（Phase 4 T040/T043）
+/// 自 tests/e2e/error_scenarios.rs `test_e2e_check_api_key_invalid_returns_error` /
+/// `test_e2e_check_api_key_empty_returns_error` 移植。原版经 HTTP 断言
+/// `error_code="INVALID_TOKEN"`；本场景在逻辑层直接断言错误类型（同一实现
+/// 路径），并补充有效 key 放行的正常路径锚点（不可弱化）。
+///
+/// # 装配说明
+/// 直构 `GarrisonLogicDefault`（独立 `GarrisonSession` + `InMemoryDao`），
+/// 不触碰 `GarrisonManager` 全局单例，无需 `#[serial]`；`check_api_key` 内部
+/// 以 `current_token` 作为 key、用自持 DAO 构造 `ApiKeyHandler` 校验
+/// （`verify_with_namespace`，firewall-bruteforce 的 IP 上下文未设置时 fail-open
+/// 跳过，见 src/stp/default_impl.rs）。
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_mixed_023_check_api_key_invalid_and_empty_rejected() {
+    let dao: Arc<dyn GarrisonDao> = make_dao();
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
+        GarrisonPermissionStrategyDefault::new(Arc::new(NoopInterface)),
+    );
+    let logic = GarrisonLogicDefault::new(
+        session,
+        Arc::new(garrison::config::GarrisonConfig::default_config()),
+        firewall,
+    );
+
+    // 未知 key → InvalidToken（fail-closed，不静默放行）
+    let unknown = with_current_token("nonexistent-api-key".to_string(), async {
+        logic.check_api_key("default").await
+    })
+    .await;
+    assert!(
+        matches!(unknown, Err(GarrisonError::InvalidToken(_))),
+        "未知 API Key 应返回 InvalidToken，实际: {unknown:?}"
+    );
+
+    // 空 key → InvalidToken
+    let empty = with_current_token(String::new(), async {
+        logic.check_api_key("default").await
+    })
+    .await;
+    assert!(
+        matches!(empty, Err(GarrisonError::InvalidToken(_))),
+        "空 API Key 应返回 InvalidToken，实际: {empty:?}"
+    );
+
+    // 正常路径锚点：同一 DAO 生成的有效 key 放行
+    let handler = ApiKeyHandler::new(dao);
+    let valid_key = handler
+        .generate("1001", vec!["read".to_string()], 3600)
+        .await
+        .expect("生成应成功");
+    let ok = with_current_token(valid_key, async { logic.check_api_key("default").await }).await;
+    assert!(ok.is_ok(), "有效 API Key 应校验通过，实际: {ok:?}");
 }

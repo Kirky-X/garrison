@@ -66,3 +66,9 @@ mod repository;
 
 #[path = "acceptance/environment.rs"]
 mod environment;
+
+#[path = "acceptance/bw_ac.rs"]
+mod bw_ac;
+
+#[path = "acceptance/migrated/mod.rs"]
+mod migrated;

@@ -21,8 +21,6 @@
 //! 本文件 `MockInterface` 替身仅满足 `GarrisonPermissionStrategyDefault::new` 构造，
 //! 不参与任何权限断言）。
 
-#![cfg(feature = "cache-memory")]
-
 use async_trait::async_trait;
 use garrison::config::GarrisonConfig;
 use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};

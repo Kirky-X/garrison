@@ -21,10 +21,8 @@
 //! 本文件 `MockInterface` 替身仅满足 `GarrisonPermissionStrategyDefault::new` 构造，
 //! 不参与任何权限断言）。
 
-#![cfg(all(feature = "protocol-jwt", feature = "cache-memory"))]
 // jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
 // 类型为 Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
-#![allow(clippy::useless_conversion)]
 
 use async_trait::async_trait;
 use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};

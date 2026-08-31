@@ -12,6 +12,10 @@
 //! （与 tests/protocol/oauth2_*.rs 同构；oauth2_server 服务端端点见 server.rs
 //! ACC-SRV-013..018 与 tests/e2e/oauth2_flow.rs，本文件不重复）。
 //!
+//! ACC-OAUTH2-013..015 吸收 tests/protocol/oauth2_integration.rs（授权 URL
+//! redirect_uri 参数、空 client_id 构造拒绝）与 oauth2_edge_cases.rs（scope
+//! 空串 vs None 请求体差异、expires_in=0），Phase 4 迁移追溯。
+//!
 //! # API 偏差记录
 //!
 //! - `OAuth2Client` 不提供 revoke 方法（RFC 7009 撤销属授权服务器职责，客户端库
@@ -688,4 +692,339 @@ async fn acc_oauth2_012_scope_privilege_escalation_blocked_client_side() {
         .await
         .expect("授权 scope 应放行");
     assert_eq!(token.access_token, "ok-token");
+}
+
+// ============================================================================
+// ACC-OAUTH2-013..015：构造校验与边界（迁自 tests/protocol/oauth2_*.rs）
+// ============================================================================
+
+/// ACC-OAUTH2-013（正常+异常）：授权 URL 构造——`redirect_uri` 以 URL 编码
+/// 查询参数出现（其余必填参数已由 ACC-OAUTH2-001 覆盖）；空 client_id 构造期
+/// 拒绝（`Config("oauth2-client-id-empty")`，src/protocol/oauth2/client.rs:178）。
+/// 迁自 tests/protocol/oauth2_integration.rs::get_auth_url_with_pkce_includes_required_params
+/// 与 new_rejects_empty_client_id（2 例合并）
+#[tokio::test]
+#[serial]
+async fn acc_oauth2_013_auth_url_redirect_uri_and_empty_client_id_rejected() {
+    // 正常：授权 URL 含 URL 编码的 redirect_uri 参数
+    let server = MockServer::start().await;
+    let client = client_for(&server);
+    let verifier = "a".repeat(43);
+    let (url, _challenge) = client
+        .get_auth_url_with_pkce("xyz-state", &verifier)
+        .expect("get_auth_url_with_pkce 应成功");
+    assert!(
+        url.contains("redirect_uri="),
+        "URL 应含 redirect_uri（URL 编码），实际: {}",
+        url
+    );
+
+    // 异常：空 client_id → 构造期拒绝
+    let err = match OAuth2Client::new(
+        "",
+        "secret",
+        "https://cb.example.com",
+        "https://auth.example.com/authorize",
+        "https://auth.example.com/token",
+    ) {
+        Ok(_) => panic!("空 client_id 应构造失败"),
+        Err(e) => e,
+    };
+    match err {
+        GarrisonError::Config(msg) => {
+            assert!(msg.contains("client-id-empty"), "实际: {}", msg)
+        },
+        other => panic!("期望 Config（client-id-empty），实际: {:?}", other),
+    }
+}
+
+/// ACC-OAUTH2-014（正常）：`scope=Some("")` 与 `scope=None` 产生不同的请求体
+/// ——空串携带 `scope=` 参数、None 不携带；两个互斥 mock 分别命中并返回不同
+/// token，证明行为差异真实发生在请求体层面（而非客户端内部状态）。
+/// 迁自 tests/protocol/oauth2_edge_cases.rs::scope_empty_string_vs_none_behavior_differs
+#[tokio::test]
+#[serial]
+async fn acc_oauth2_014_empty_scope_vs_none_body_differs() {
+    let server = MockServer::start().await;
+
+    // Mock 1：body 含 "scope=" → token-empty-scope（仅消费一次）
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .and(body_string_contains("scope="))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "token-empty-scope",
+            "token_type": "Bearer"
+        })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    // Mock 2：其余 POST（不含 "scope="）→ token-no-scope（仅消费一次）
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "token-no-scope",
+            "token_type": "Bearer"
+        })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+
+    let resp_empty = client
+        .get_client_credentials_token(Some(""))
+        .await
+        .expect("scope=Some(\"\") 应成功");
+    assert_eq!(
+        resp_empty.access_token, "token-empty-scope",
+        "scope=Some(\"\") 应触发含 scope= 的请求"
+    );
+
+    let resp_none = client
+        .get_client_credentials_token(None)
+        .await
+        .expect("scope=None 应成功");
+    assert_eq!(
+        resp_none.access_token, "token-no-scope",
+        "scope=None 应触发不含 scope= 的请求"
+    );
+
+    assert_ne!(
+        resp_empty.access_token, resp_none.access_token,
+        "scope=\"\" 与 scope=None 应产生不同行为"
+    );
+}
+
+/// ACC-OAUTH2-015（异常）：`expires_in=0` 解析为 `Some(0)`——协议层只解析
+/// 不判定过期（判定权在业务方），业务方应据 `expires_in <= 0` 视为立即过期。
+/// 迁自 tests/protocol/oauth2_edge_cases.rs::expires_in_zero_means_immediate_expiry
+#[tokio::test]
+#[serial]
+async fn acc_oauth2_015_expires_in_zero_parsed_as_immediate_expiry() {
+    let server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "zero-expiry-token",
+            "token_type": "Bearer",
+            "expires_in": 0
+        })))
+        .mount(&server)
+        .await;
+
+    let client = client_for(&server);
+    let resp = client
+        .get_client_credentials_token(None)
+        .await
+        .expect("请求应成功");
+
+    assert_eq!(
+        resp.expires_in,
+        Some(0),
+        "expires_in=0 应解析为 Some(0)，表示立即过期"
+    );
+    assert!(
+        resp.expires_in.map(|e| e <= 0).unwrap_or(true),
+        "业务方应判定 expires_in=0 为立即过期"
+    );
+}
+
+// ============================================================================
+// ACC-OAUTH2-016：Keycloak OIDC RP 完整流程（T041 迁移自
+// tests/integration/keycloak_oidc.rs，`keycloak-oidc` 门控）
+// ============================================================================
+
+/// ACC-OAUTH2-016（正常）：Keycloak OIDC RP 完整授权码流程端到端——
+/// wiremock 模拟 Keycloak 的 discovery / JWKS / token 端点，验证
+/// `discover` → `exchange_code` → `verify_id_token`（RSA 签名的 id_token 含
+/// sub / preferred_username / email / realm_access.roles / resource_access /
+/// tenant_id claim 全部正确解析）。
+#[cfg(all(
+    feature = "keycloak-oidc",
+    feature = "db-sqlite",
+    feature = "cache-memory"
+))]
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_oauth2_016_keycloak_oidc_rp_full_flow_e2e() {
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    use garrison::dao::GarrisonDaoOxcache;
+    use garrison::{KeycloakConfig, KeycloakProvider};
+    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+    use rand::rngs::OsRng;
+    use rsa::pkcs1::EncodeRsaPrivateKey;
+    use rsa::traits::PublicKeyParts;
+    use rsa::RsaPrivateKey;
+    use serde::Serialize;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[derive(Serialize)]
+    struct TestIdTokenClaims {
+        iss: String,
+        sub: String,
+        aud: String,
+        exp: i64,
+        iat: i64,
+        preferred_username: String,
+        email: String,
+        realm_access: serde_json::Value,
+        resource_access: serde_json::Value,
+        tenant_id: i64,
+    }
+
+    let server = MockServer::start().await;
+
+    let mut rng = OsRng;
+    let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
+    let public_key = rsa::RsaPublicKey::from(&private_key);
+
+    let n_bytes = public_key.n().to_bytes_be();
+    let e_bytes = public_key.e().to_bytes_be();
+    let n_b64 = URL_SAFE_NO_PAD.encode(n_bytes);
+    let e_b64 = URL_SAFE_NO_PAD.encode(e_bytes);
+    let kid = "key1";
+
+    let issuer = server.uri();
+    let token_endpoint = format!("{}/protocol/openid-connect/token", server.uri());
+    let jwks_uri = format!("{}/protocol/openid-connect/certs", server.uri());
+
+    // Mock: discovery endpoint
+    Mock::given(method("GET"))
+        .and(path("/.well-known/openid-configuration"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{}/protocol/openid-connect/auth", server.uri()),
+            "token_endpoint": token_endpoint,
+            "jwks_uri": jwks_uri,
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["RS256"],
+        })))
+        .mount(&server)
+        .await;
+
+    // Mock: JWKS endpoint
+    Mock::given(method("GET"))
+        .and(path("/protocol/openid-connect/certs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "keys": [{
+                "kid": kid,
+                "kty": "RSA",
+                "alg": "RS256",
+                "use": "sig",
+                "n": n_b64,
+                "e": e_b64
+            }]
+        })))
+        .mount(&server)
+        .await;
+
+    // 生成 id_token
+    let sub = "user-123";
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+
+    let claims = TestIdTokenClaims {
+        iss: issuer.clone(),
+        sub: sub.into(),
+        aud: "garrison-rp".into(),
+        exp: now + 3600,
+        iat: now,
+        preferred_username: "testuser".into(),
+        email: "test@example.com".into(),
+        realm_access: serde_json::json!({ "roles": ["admin", "user"] }),
+        resource_access: serde_json::json!({
+            "account": { "roles": ["manage-account"] }
+        }),
+        tenant_id: 42,
+    };
+
+    let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
+    let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(kid.to_string());
+    let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
+
+    // Mock: token endpoint
+    Mock::given(method("POST"))
+        .and(path("/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "access-token-abc",
+            "refresh_token": "refresh-token-xyz",
+            "id_token": id_token,
+            "token_type": "Bearer",
+            "expires_in": 3600,
+            "scope": "openid profile email"
+        })))
+        .mount(&server)
+        .await;
+
+    let config = KeycloakConfig {
+        base_url: server.uri(),
+        client_id: "garrison-rp".into(),
+        client_secret: Some("client-secret-123".into()),
+        redirect_uri: "https://app.example.com/cb".into(),
+        expected_iss: server.uri(),
+    };
+    let provider = KeycloakProvider::new(config)
+        .expect("KeycloakProvider::new 应成功")
+        .with_dao(Arc::new(
+            GarrisonDaoOxcache::new()
+                .await
+                .expect("构造 GarrisonDaoOxcache 应成功"),
+        ));
+
+    // Step 1: discover
+    let metadata = provider.discover().await.expect("discover 应成功");
+    assert_eq!(metadata.issuer, issuer);
+    assert_eq!(metadata.token_endpoint, token_endpoint);
+    assert_eq!(metadata.jwks_uri, jwks_uri);
+
+    // Step 2: exchange_code
+    let token_set = provider
+        .exchange_code("auth-code-xyz")
+        .await
+        .expect("exchange_code 应成功");
+    assert!(!token_set.access_token.is_empty(), "access_token 应非空");
+    assert!(!token_set.refresh_token.is_empty(), "refresh_token 应非空");
+    assert!(!token_set.id_token.is_empty(), "id_token 应非空");
+    assert_eq!(token_set.expires_in, 3600);
+
+    // Step 3: verify_id_token
+    let keycloak_claims = provider
+        .verify_id_token(&token_set.id_token)
+        .await
+        .expect("verify_id_token 应成功");
+    assert_eq!(keycloak_claims.sub, sub, "claims.sub 应匹配");
+    assert_eq!(
+        keycloak_claims.preferred_username.as_deref(),
+        Some("testuser"),
+        "preferred_username 应匹配"
+    );
+    assert_eq!(
+        keycloak_claims.email.as_deref(),
+        Some("test@example.com"),
+        "email 应匹配"
+    );
+    assert_eq!(
+        keycloak_claims.realm_access.roles,
+        vec!["admin", "user"],
+        "realm_access.roles 应匹配"
+    );
+    assert_eq!(
+        keycloak_claims.tenant_id,
+        Some(42),
+        "tenant_id claim 应正确解析"
+    );
+    assert!(
+        keycloak_claims.resource_access.contains_key("account"),
+        "resource_access 应包含 account，实际: {:?}",
+        keycloak_claims.resource_access
+    );
 }

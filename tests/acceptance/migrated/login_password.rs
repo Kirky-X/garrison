@@ -21,12 +21,6 @@
 //! 本文件 `MockInterface` 替身仅满足 `GarrisonPermissionStrategyDefault::new` 构造，
 //! 不参与任何权限断言）。
 
-#![cfg(all(
-    feature = "account-credential",
-    feature = "db-sqlite",
-    feature = "cache-memory"
-))]
-
 use async_trait::async_trait;
 use garrison::account::credential::password::{
     Argon2Hasher, BcryptHasher, PasswordHasher, PasswordVerifier,

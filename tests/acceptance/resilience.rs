@@ -7,6 +7,11 @@
 //! API Key 错误 401 / 限流 429 / BackendRemote 500 与超时的错误传播及
 //! 熔断打开-恢复。
 //!
+//! Phase 4 测试迁移（T040/T043）：ACC-RES-001 去重收纳 BW-AC-008 故障注入用例
+//! （tests/unit/acceptance_criteria.rs，编号注释已并入场景文档）；ACC-RES-009..012
+//! 自 tests/e2e 移植（坏 body / login_id 长度边界 / path_filter 双向 404 + 审计与
+//! health 链路 / metrics 端点），来源映射见各场景文档与文件尾迁移块。
+//!
 //! - ACC-RES-001 不经 GarrisonManager（独立 `GarrisonLogicDefault` 双实例：
 //!   健康 DAO 签发 + FailingDao 故障验证），无需 `#[serial]`。
 //! - ACC-RES-002/003 只构造配置与 builder，不触碰全局单例，无需 `#[serial]`。
@@ -17,8 +22,10 @@
 
 use async_trait::async_trait;
 use garrison::backend::types::LoginParams;
-use garrison::backend::{AuthBackend, BackendRemote};
+use garrison::backend::{AuthBackend, BackendEmbedded, BackendRemote};
 use garrison::config::GarrisonConfig;
+#[cfg(feature = "tenant-isolation")]
+use garrison::context::tenant::HeaderTenantResolver;
 use garrison::dao::{GarrisonDao, InMemoryDao};
 use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::limiteron::CircuitBreakerWrapper;
@@ -138,6 +145,13 @@ fn default_firewall() -> Arc<dyn GarrisonPermissionStrategy> {
 /// 装配：同一份 `jwt_mode=Stateless` 配置 + 同一 secret 构造两个独立
 /// `GarrisonLogicDefault` 实例——健康实例（InMemoryDao）签发 JWT 作为正常
 /// 锚点，故障实例（FailingDao，模拟 oxcache 故障）验证该 token 且尝试新登录。
+///
+/// # 迁移溯源（Phase 4 T040/T043）
+/// 去重收纳 **BW-AC-008**（tests/unit/acceptance_criteria.rs
+/// `bw_ac_008_oxcache_failure_degrades_to_jwt_stateless`，FRD §8.1）：
+/// 原用例断言 `login` 返回 `Err(GarrisonError::Dao)` 且错误不被吞掉；本场景
+/// 保留该语义并强化——不仅断言新登录显性失败（`GarrisonError::Dao`），还额外
+/// 断言已签发 JWT 在故障 DAO 下仍可通过无状态签名校验（降级路径成立）。
 #[tokio::test]
 async fn acc_res_001_oxcache_failure_jwt_stateless_token_still_verifiable() {
     let config = Arc::new(jwt_stateless_config());
@@ -304,7 +318,10 @@ async fn acc_res_003_builder_build_fail_fast() {
 
 /// 测试用 Mock AuthBackend（in-memory token 表，镜像
 /// tests/auth_server_integration.rs 的已知良好装配，注释见该文件 NEEDS CLARIFICATION）。
-struct MockAuthBackend {
+///
+/// `pub(crate)`：供 security.rs 的 pentest 场景（ACC-SEC-021..024/027/028）复用
+/// （Phase 4 测试迁移 T040/T043）。
+pub(crate) struct MockAuthBackend {
     tokens: parking_lot::Mutex<HashMap<String, String>>,
 }
 
@@ -435,7 +452,7 @@ impl AuthBackend for MockAuthBackend {
 }
 
 /// 生成一个简单的伪 UUID（不依赖 uuid crate，镜像 auth_server_integration.rs）。
-fn uuid_like() -> String {
+pub(crate) fn uuid_like() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -445,7 +462,11 @@ fn uuid_like() -> String {
 }
 
 /// 启动双端口测试服务器（外网 + 内网），返回 (external_url, internal_url, handle)。
-async fn start_test_server(
+///
+/// `pub(crate)`：供 security.rs 的 pentest 场景（ACC-SEC-021..024/027/028）复用
+/// （Phase 4 测试迁移 T040/T043）。仅使用 `MockAuthBackend`（无全局状态），
+/// 不需要 `#[serial]`。
+pub(crate) async fn start_test_server(
     rate_limit: u32,
     api_key: &str,
 ) -> (String, String, tokio::task::JoinHandle<()>) {
@@ -721,4 +742,405 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
         .await
         .expect("关闭后请求应正常");
     assert!(ok, "熔断恢复后 check_login 应返回 true");
+}
+
+// ============================================================================
+// Phase 4 测试迁移（T040/T043）：server 层输入边界 / 路径过滤 / 健康与指标
+//
+// 来源 tests/e2e：
+// - api_errors.rs：test_api_errors_malformed_body（T023）/ test_api_errors_oversized_field（T024）
+// - api_boundary.rs：test_api_boundary_login_id_lengths（T025）
+// - api_authz_boundary.rs：test_authz_boundary_no_token_returns_401（T028）
+// - error_scenarios.rs：test_e2e_external_rejects_internal_path / test_e2e_internal_rejects_external_path
+// - middleware.rs：test_e2e_audit_log_middleware_does_not_break_flow / test_e2e_health_endpoint_returns_ok /
+//   test_e2e_metrics_endpoint_with_prometheus
+// 基础设施（以下两个 server 助手）供 security.rs pentest 场景复用。
+// ============================================================================
+
+/// 构造缺省租户上下文 HTTP 客户端（`X-Tenant-Id: 0`，`tenant-isolation` 启用时）。
+///
+/// 镜像 tests/e2e/mod.rs 的 `default_tenant_headers` + `make_client`（Phase 4 迁移），
+/// 供经 `start_garrison_server` 的跨租户场景（ACC-SEC-025）使用。
+pub(crate) fn tenant_client() -> reqwest::Client {
+    let mut headers = reqwest::header::HeaderMap::new();
+    #[cfg(feature = "tenant-isolation")]
+    headers.insert(
+        "X-Tenant-Id",
+        reqwest::header::HeaderValue::from_static("0"),
+    );
+    reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .expect("构造 reqwest 客户端失败")
+}
+
+/// 启动基于 `BackendEmbedded`（全局 GarrisonManager）的双端口测试服务器。
+///
+/// 先经 `GarrisonTestHarness`（全局单例）用给定 `config` 装配管理器，再以
+/// `BackendEmbedded` 为后端启动 `GarrisonAuthServer`；`tenant-isolation` 启用时
+/// 注入 `HeaderTenantResolver` + `tenant_resolution_middleware`（镜像
+/// tests/e2e/mod.rs 的 `spawn_server`，Phase 4 迁移）。
+///
+/// # 调用约束
+///
+/// 触碰全局单例，调用方测试必须标注 `#[serial]`（硬性要求 5）。
+pub(crate) async fn start_garrison_server(
+    rate_limit: u32,
+    api_key: &str,
+    config: Arc<GarrisonConfig>,
+) -> (String, String, tokio::task::JoinHandle<()>) {
+    use crate::common::harness::GarrisonTestHarness;
+
+    let _h = GarrisonTestHarness::builder()
+        .config(config)
+        .init()
+        .await
+        .expect("harness init 应成功（GarrisonManager 全局单例）");
+    let backend: Arc<dyn AuthBackend> = Arc::new(BackendEmbedded::new());
+
+    let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let external_port = external_listener.local_addr().unwrap().port();
+    let internal_port = internal_listener.local_addr().unwrap().port();
+    let external_url = format!("http://127.0.0.1:{}", external_port);
+    let internal_url = format!("http://127.0.0.1:{}", internal_port);
+
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_port(external_port)
+        .with_internal_port(internal_port)
+        .with_rate_limit(rate_limit)
+        .with_internal_api_key(api_key);
+    // tenant-isolation 启用时注入 HeaderTenantResolver（防跨租户测试）
+    #[cfg(feature = "tenant-isolation")]
+    let server = server.with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
+
+    let external_router = server.external_router();
+    let internal_router = server.internal_router();
+    let handle = tokio::spawn(async move {
+        let (ext_res, int_res) = tokio::join!(
+            axum::serve(external_listener, external_router),
+            axum::serve(internal_listener, internal_router)
+        );
+        if let Err(e) = ext_res {
+            eprintln!("Garrison server 外网异常: {}", e);
+        }
+        if let Err(e) = int_res {
+            eprintln!("Garrison server 内网异常: {}", e);
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    (external_url, internal_url, handle)
+}
+
+/// 统一「恰 4xx」断言宏：状态码必须为客户端错误（400/422 等）。
+macro_rules! assert_is_4xx {
+    ($status:expr, $msg:expr) => {
+        assert!(
+            $status.is_client_error(),
+            "{}（实际 status={}）",
+            $msg,
+            $status
+        );
+    };
+}
+
+/// ACC-RES-009（异常）：login/check-login 恶意或畸形 body 拒绝——空 body、
+/// 非 JSON 字符串、空 JSON 对象、缺失 login_id、login_id 类型错误均 4xx；
+/// null 字节 login_id 因 serde_json 可接受返回 200+token（记录实际行为）；
+/// check-login 缺失必填 token 字段 4xx（T023 + T028 合并移植）。
+#[tokio::test]
+async fn acc_res_009_malformed_body_rejected_4xx() {
+    use garrison::backend::types::LoginParams;
+
+    let (external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    // 1. 空 body → 4xx
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .body("")
+        .header("content-type", "application/json")
+        .send()
+        .await
+        .expect("空 body 请求失败");
+    assert_is_4xx!(resp.status(), "空 body 应返回 4xx");
+
+    // 2. 非 JSON 字符串 → 4xx
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .body("not json")
+        .header("content-type", "application/json")
+        .send()
+        .await
+        .expect("非 JSON 请求失败");
+    assert_is_4xx!(resp.status(), "非 JSON 字符串应返回 4xx");
+
+    // 3. 空 JSON 对象（缺必填字段）→ 4xx
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("空 JSON 对象请求失败");
+    assert_is_4xx!(resp.status(), "空 JSON 对象应返回 4xx");
+
+    // 4. 缺 login_id 字段 → 4xx
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .json(&serde_json::json!({ "params": LoginParams::default() }))
+        .send()
+        .await
+        .expect("缺 login_id 请求失败");
+    assert_is_4xx!(resp.status(), "缺 login_id 字段应返回 4xx");
+
+    // 5. login_id 类型错误（数字而非字符串）→ 4xx
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .json(&serde_json::json!({ "login_id": 123, "params": LoginParams::default() }))
+        .send()
+        .await
+        .expect("类型错误请求失败");
+    assert_is_4xx!(resp.status(), "login_id 类型错误应返回 4xx");
+
+    // 6. login_id 含 null 字节 → 4xx 或 200+token（serde_json 可接受 null 字节；
+    //    200 时业务层正常处理，token 非空）
+    let null_byte_body = "{\"login_id\": \"a\\u0000b\", \"params\": {}}";
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .body(null_byte_body)
+        .header("content-type", "application/json")
+        .send()
+        .await
+        .expect("null 字节请求失败");
+    let status = resp.status();
+    let body: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
+    assert!(
+        status.is_client_error() || status == reqwest::StatusCode::OK,
+        "null 字节 login_id 应返回 4xx 或 200，实际 status={}",
+        status
+    );
+    if status == reqwest::StatusCode::OK {
+        assert!(
+            body["data"].as_str().is_some(),
+            "null 字节 login_id 返回 200 时应有 token，body={:?}",
+            body
+        );
+    }
+
+    // 7. check-login 缺失必填 token 字段 → 4xx（T028）
+    let resp = client
+        .post(format!("{}/api/v1/auth/check-login", internal_url))
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .expect("无 token 字段请求失败");
+    assert_is_4xx!(resp.status(), "check-login 缺 token 字段应返回 4xx");
+}
+
+/// ACC-RES-010（正常+异常）：login_id 长度边界——空串与超长 65536/70000 返回
+/// 4xx 或 200（不返回 5xx）；常规长度 1/255/256 必须 200 + 非空 token
+/// （T024 + T025 合并移植）。
+#[tokio::test]
+async fn acc_res_010_login_id_length_boundaries_no_5xx() {
+    use garrison::backend::types::LoginParams;
+
+    let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    // 常规长度：1/255/256 → 200 + token
+    for len in [1usize, 255, 256] {
+        let resp = client
+            .post(format!("{}/api/v1/auth/login", external_url))
+            .json(&serde_json::json!({
+                "login_id": "a".repeat(len),
+                "params": LoginParams::default()
+            }))
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("login_id 长度 {} 请求失败: {}", len, e));
+        assert_eq!(
+            resp.status(),
+            reqwest::StatusCode::OK,
+            "login_id 长度 {} 应返回 200，实际 status={}",
+            len,
+            resp.status()
+        );
+        let body: serde_json::Value = resp.json().await.expect("响应非 JSON");
+        assert!(
+            body["data"].as_str().is_some(),
+            "login_id 长度 {} 应返回 token，body={:?}",
+            len,
+            body
+        );
+    }
+
+    // 空串：4xx 或 200（MockAuthBackend 不校验 login_id 有效性）
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .json(&serde_json::json!({
+            "login_id": "",
+            "params": LoginParams::default()
+        }))
+        .send()
+        .await
+        .expect("空串请求失败");
+    assert!(
+        resp.status().is_client_error() || resp.status() == reqwest::StatusCode::OK,
+        "login_id 空串应返回 4xx 或 200，实际 status={}",
+        resp.status()
+    );
+
+    // 超长：65536 / 70000 → 200 或 4xx，禁止 5xx
+    for len in [65536usize, 70000] {
+        let resp = client
+            .post(format!("{}/api/v1/auth/login", external_url))
+            .json(&serde_json::json!({
+                "login_id": "a".repeat(len),
+                "params": LoginParams::default()
+            }))
+            .send()
+            .await
+            .unwrap_or_else(|e| panic!("login_id 长度 {} 请求失败: {}", len, e));
+        let status = resp.status();
+        assert!(
+            status == reqwest::StatusCode::OK || status.is_client_error(),
+            "login_id 长度 {} 应返回 200 或 4xx，实际 status={}",
+            len,
+            status
+        );
+        assert!(
+            !status.is_server_error(),
+            "login_id 长度 {} 不应返回 5xx，实际 status={}",
+            len,
+            status
+        );
+    }
+}
+
+/// ACC-RES-011（异常+正常）：path_filter 双向隔离 + 审计/健康链路不阻断——
+/// 外网访问内网路径 check-login 404、内网访问外网路径 login 404（路由不可
+/// 越界）；审计日志中间件下 login → check-login 全链路正常（200 + data=true）、
+/// health 端点 200 + data=ok（T050 路径过滤 + 中间件场景合并移植）。
+#[tokio::test]
+async fn acc_res_011_path_filter_isolation_and_audit_health_flow() {
+    use garrison::backend::types::LoginParams;
+
+    let (external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    // path_filter：外网访问内网路径 → 404
+    let resp = client
+        .post(format!("{}/api/v1/auth/check-login", external_url))
+        .json(&serde_json::json!({ "token": "any" }))
+        .send()
+        .await
+        .expect("外部访问内网路径请求失败");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "外网访问内网路径应返回 404（path_filter 拦截），实际 status={}",
+        resp.status()
+    );
+
+    // path_filter：内网访问外网路径 → 404
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", internal_url))
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "login_id": "user1",
+            "params": LoginParams::default()
+        }))
+        .send()
+        .await
+        .expect("内网访问外网路径请求失败");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::NOT_FOUND,
+        "内网访问外网路径应返回 404（path_filter 拦截），实际 status={}",
+        resp.status()
+    );
+
+    // 审计日志中间件不阻断正常链路：login → check-login 全通过
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .json(&serde_json::json!({
+            "login_id": "audit-user",
+            "params": LoginParams::default()
+        }))
+        .send()
+        .await
+        .expect("审计链路 login 请求失败");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::OK,
+        "审计日志中间件不应阻断 login（实际 status={}）",
+        resp.status()
+    );
+    let body: serde_json::Value = resp.json().await.expect("login 响应非 JSON");
+    let token = body["data"]
+        .as_str()
+        .expect("login 应返回 token")
+        .to_string();
+    let resp = client
+        .post(format!("{}/api/v1/auth/check-login", internal_url))
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({ "token": token }))
+        .send()
+        .await
+        .expect("审计链路 check-login 请求失败");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::OK,
+        "审计日志中间件不应阻断 check-login（实际 status={}）",
+        resp.status()
+    );
+    let body: serde_json::Value = resp.json().await.expect("check-login 响应非 JSON");
+    assert_eq!(body["data"], true, "审计链路下 check-login 应返回 true");
+
+    // health 端点：200 + data=ok
+    let resp = client
+        .get(format!("{}/api/v1/auth/health", internal_url))
+        .header("x-api-key", "test-key")
+        .send()
+        .await
+        .expect("health 请求失败");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::OK,
+        "health 端点应返回 200（实际 status={}）",
+        resp.status()
+    );
+    let body: serde_json::Value = resp.json().await.expect("health 响应非 JSON");
+    assert_eq!(body["data"], "ok", "health 端点应返回 ok");
+}
+
+/// ACC-RES-012（正常）：metrics 端点——Prometheus 格式，200 + `garrison_` 前缀
+/// 指标或空 body（无指标注册时不 panic；`metrics-prometheus` feature 门控）。
+/// 来源：tests/e2e/middleware.rs::test_e2e_metrics_endpoint_with_prometheus。
+#[cfg(feature = "metrics-prometheus")]
+#[tokio::test]
+async fn acc_res_012_metrics_endpoint_serves_prometheus() {
+    let (_external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .get(format!("{}/api/v1/metrics", internal_url))
+        .header("x-api-key", "test-key")
+        .send()
+        .await
+        .expect("metrics 请求失败");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::OK,
+        "metrics 端点应返回 200（实际 status={}）",
+        resp.status()
+    );
+    // #[forge] 宏用 Json(value) 包装返回值，响应 body 为 JSON 序列化的字符串
+    let body: String = resp.json().await.expect("metrics 响应非 JSON 字符串");
+    assert!(
+        body.contains("garrison_") || body.is_empty(),
+        "metrics 应包含 garrison_ 前缀或为空，实际: {:?}",
+        &body[..body.len().min(200)]
+    );
 }

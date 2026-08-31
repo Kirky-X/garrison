@@ -23,8 +23,6 @@
 //!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
 //!   本文件 `MockInterface` 替身保留）。
 
-#![cfg(feature = "annotation-macros")]
-
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::StatusCode;

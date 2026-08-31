@@ -30,7 +30,7 @@ use axum::http::{Request, StatusCode};
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
-use garrison::annotation::{Annotation, CheckLogin, CheckPermission, CheckRole};
+use garrison::annotation::{Annotation, CheckLogin, CheckPermission, CheckRole, Ignore};
 use garrison::annotation::{PermissionName, RoleName};
 use garrison::error::GarrisonError;
 use garrison::router::GarrisonRouter;
@@ -40,8 +40,12 @@ use serial_test::serial;
 use std::sync::Arc;
 use tower::ServiceExt;
 
+#[cfg(all(feature = "annotation-macros", feature = "abac"))]
+use garrison::check_abac;
 #[cfg(feature = "annotation-macros")]
 use garrison::stp::with_current_token;
+#[cfg(feature = "annotation-macros")]
+use garrison::{check_access_token, check_client_token, check_mfa, check_temp_token};
 #[cfg(feature = "annotation-macros")]
 use garrison::{check_login, check_permission, check_role};
 
@@ -385,6 +389,80 @@ async fn wax_check_perm_handler() -> &'static str {
 #[check_role("admin")]
 async fn wax_check_role_handler() -> &'static str {
     "wax_role_ok"
+}
+
+/// `#[check_permission("user:read", "user:write")]` 多权限 AND 语义 handler。
+#[cfg(feature = "annotation-macros")]
+#[check_permission("user:read", "user:write")]
+async fn wax_perm_and_handler() -> &'static str {
+    "wax_perm_and_ok"
+}
+
+/// `#[check_role("admin", "superadmin")]` 多角色 AND 语义 handler。
+#[cfg(feature = "annotation-macros")]
+#[check_role("admin", "superadmin")]
+async fn wax_role_and_handler() -> &'static str {
+    "wax_role_and_ok"
+}
+
+/// `#[check_access_token]` 类型校验 handler（spec annotation-macros P2）。
+#[cfg(feature = "annotation-macros")]
+#[check_access_token]
+async fn wax_access_token_handler() -> &'static str {
+    "wax_access_token_ok"
+}
+
+/// `#[check_client_token]` 类型校验 handler（spec annotation-macros P2）。
+#[cfg(feature = "annotation-macros")]
+#[check_client_token]
+async fn wax_client_token_handler() -> &'static str {
+    "wax_client_token_ok"
+}
+
+/// `#[check_temp_token]` 类型校验 handler（spec annotation-macros P2）。
+#[cfg(feature = "annotation-macros")]
+#[check_temp_token]
+async fn wax_temp_token_handler() -> &'static str {
+    "wax_temp_token_ok"
+}
+
+/// `#[check_mfa]` 二级认证校验 handler（spec annotation-macros R-anno-004）。
+#[cfg(feature = "annotation-macros")]
+#[check_mfa]
+async fn wax_mfa_handler() -> &'static str {
+    "wax_mfa_ok"
+}
+
+/// `#[check_abac]` ABAC 策略校验 handler（allow：`principal == principal` 恒真）。
+#[cfg(all(feature = "annotation-macros", feature = "abac"))]
+#[check_abac(
+    action = "access",
+    resource = "Resource::\"default\"",
+    abac = "principal == principal"
+)]
+async fn wax_abac_allow_handler() -> &'static str {
+    "wax_abac_ok"
+}
+
+/// `#[check_abac]` ABAC 策略校验 handler（deny：`principal != principal` 恒假）。
+#[cfg(all(feature = "annotation-macros", feature = "abac"))]
+#[check_abac(
+    action = "access",
+    resource = "Resource::\"default\"",
+    abac = "principal != principal"
+)]
+async fn wax_abac_deny_handler() -> &'static str {
+    "wax_abac_deny"
+}
+
+/// strict 模式配置（`throw_on_not_login = true`）：未登录走 `Err(Session)` → 500
+///（与 integration/annotation_macros.rs 的 `make_config_strict` 惯例一致）。
+fn strict_test_config() -> Arc<garrison::config::GarrisonConfig> {
+    let mut config = garrison::config::GarrisonConfig::default_config();
+    config.timeout = 3600;
+    config.active_timeout = -1;
+    config.throw_on_not_login = true;
+    Arc::new(config)
 }
 
 /// ACC-WAX-006（正常+异常）：`#[check_login]` 宏包装 handler 编译并运行——
@@ -772,4 +850,556 @@ async fn acc_wax_012_security_headers_on_success_and_error() {
         "错误响应也应携带安全头"
     );
     assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+}
+
+// ============================================================================
+// ACC-WAX-013..014：Ignore 匿名访问 / 无效 token 拒绝（T041 迁移自
+// tests/integration/axum.rs + annotation.rs 的既有边界）
+// ============================================================================
+
+/// ACC-WAX-013（正常）：`Ignore` 注解与 `Ignore` extractor 均允许匿名访问——
+/// （a）`Annotation::Ignore` 经 `GarrisonRouter::route_protected` 放行无 token 请求 200；
+/// （b）`Ignore` extractor 挂载于普通 Router 放行匿名请求 200（原
+/// `ignore_allows_anonymous_access` / `public_without_token_returns_200`）。
+#[tokio::test]
+#[serial]
+async fn acc_wax_013_ignore_annotation_and_extractor_allow_anonymous() {
+    let _h = GarrisonTestHarness::builder()
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+
+    // （a）Annotation::Ignore（GarrisonRouter 中间件路径）
+    let app = GarrisonRouter::new(web_test_config())
+        .route_protected("/public", || async { "public ok" }, Annotation::Ignore)
+        .build();
+    let resp = app
+        .oneshot(get_request("/public", None))
+        .await
+        .expect("请求应送达 app");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "Ignore 注解路由应放行匿名访问"
+    );
+    assert_eq!(
+        axum_body(resp).await,
+        "public ok",
+        "handler body 应原样返回"
+    );
+
+    // （b）Ignore extractor（per-handler 路径）
+    let app2 = Router::new().route("/pub", get(|_: Ignore| async { "pub ok" }));
+    let resp = app2.oneshot(get_request("/pub", None)).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "Ignore extractor 应放行匿名访问"
+    );
+    assert_eq!(axum_body(resp).await, "pub ok");
+}
+
+/// ACC-WAX-014（异常）：无效 token 被拒绝 401——（a）middleware（GarrisonRouter
+/// Bearer）与（b）extractor（`CheckLogin`）两路径均返回 401 + 与 `NotLogin` 基准
+/// 全等的错误体；（c）响应体不泄漏内部细节（codebase-hardening：不出现
+/// `GarrisonManager`）。原 `check_login_with_invalid_token_returns_401` /
+/// `protected_with_invalid_token_returns_401`。
+#[tokio::test]
+#[serial]
+async fn acc_wax_014_invalid_token_rejected_by_middleware_and_extractor() {
+    let _h = GarrisonTestHarness::builder()
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+
+    // （a）middleware：Bearer 携带无效 token → 401 + 统一错误体
+    let app = GarrisonRouter::new(web_test_config())
+        .route_protected("/protected", || async { "ok" }, Annotation::CheckLogin)
+        .build();
+    let resp = app
+        .clone()
+        .oneshot(get_request("/protected", Some("invalid-token")))
+        .await
+        .expect("请求应送达 app");
+    assert_error_aligned(
+        resp,
+        &GarrisonError::NotLogin("router-not-login".to_string()),
+    )
+    .await;
+
+    // （b）extractor：`CheckLogin` 拒绝无效 token → 401 + 统一错误体
+    let app2 = Router::new().route("/login", get(|_: CheckLogin| async { "login_ok" }));
+    let resp = app2
+        .oneshot(get_request("/login", Some("invalid-token")))
+        .await
+        .unwrap();
+    assert_error_aligned(
+        resp,
+        &GarrisonError::NotLogin("annotation-not-login".to_string()),
+    )
+    .await;
+
+    // （c）响应体不泄漏内部细节（原 unauthorized_response_body_contains_error_json）
+    let resp = app
+        .oneshot(get_request("/protected", Some("invalid-token")))
+        .await
+        .expect("请求应送达 app");
+    let body = axum_body(resp).await;
+    assert!(
+        !body.contains("GarrisonManager"),
+        "响应体不应泄漏内部细节: {}",
+        body
+    );
+}
+
+// ============================================================================
+// ACC-WAX-015..021：注解宏 loose/strict 模式与类型化变体（T041 迁移自
+// tests/integration/annotation_macros.rs；001/006-008 已覆盖的合格路径去重）
+// ============================================================================
+
+/// ACC-WAX-015（异常）：`#[check_login]` strict 模式错误转发——`throw_on_not_login
+/// = true` 时未登录为 `Err(Session("未登录"))` → 500（框架既有行为，宏正确转发
+/// 不吞错不篡改），且 fn body 不执行（响应体不含 handler 输出）。
+#[cfg(feature = "annotation-macros")]
+#[tokio::test]
+#[serial]
+async fn acc_wax_015_macro_check_login_strict_forwards_error() {
+    let _h = GarrisonTestHarness::builder()
+        .config(strict_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+
+    let response = with_current_token("invalid-token".to_string(), async {
+        wax_check_login_handler().await
+    })
+    .await;
+    assert_eq!(
+        response.status().as_u16(),
+        500,
+        "strict 模式未登录应为 Session 错误 → 500，实际: {}",
+        response.status()
+    );
+    let body = axum_body(response).await;
+    assert!(
+        !body.contains("wax_login_ok"),
+        "fn body 不应执行：响应体不得包含 handler 输出"
+    );
+}
+
+/// ACC-WAX-016（正常+异常）：`#[check_permission]` 多参数 AND 语义——
+/// 同时持有 `user:read` + `user:write` 放行 200 + 原 body；仅持部分权限拒绝 403
+/// + NOT_PERMISSION（原 `check_permission_and_all/partial_returns_*`）。
+#[cfg(feature = "annotation-macros")]
+#[tokio::test]
+#[serial]
+async fn acc_wax_016_macro_check_permission_and_semantics() {
+    let interface = MockInterface::new();
+    interface.allow("1001", &["user:read", "user:write"], &[]);
+    let _h = GarrisonTestHarness::builder()
+        .interface(interface.clone())
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+    let token_partial = GarrisonUtil::login_simple("1002")
+        .await
+        .expect("login_simple 应签发 token");
+
+    // AND 全部持有 → 200 + 原 body
+    let resp = with_default_tenant(async {
+        with_current_token(token, async { wax_perm_and_handler().await }).await
+    })
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK, "AND 全持有应放行 200");
+    assert_eq!(axum_body(resp).await, "wax_perm_and_ok");
+
+    // AND 部分持有（缺 user:write）→ 403 + NOT_PERMISSION
+    let resp = with_default_tenant(async {
+        with_current_token(token_partial, async { wax_perm_and_handler().await }).await
+    })
+    .await;
+    assert_eq!(resp.status().as_u16(), 403, "AND 缺任一权限应拒绝 403");
+    let body: serde_json::Value =
+        serde_json::from_str(&axum_body(resp).await).expect("403 响应体应为 JSON");
+    assert_eq!(
+        body["error_code"], "NOT_PERMISSION",
+        "AND 缺权限应返回 NOT_PERMISSION"
+    );
+}
+
+/// ACC-WAX-017（正常+异常）：`#[check_role]` 多角色 AND 语义——
+/// 同时持有 `admin` + `superadmin` 放行 200 + 原 body；仅持部分角色拒绝 403
+/// + NOT_ROLE（原 `check_role_and_all/partial_returns_*`）。
+#[cfg(feature = "annotation-macros")]
+#[tokio::test]
+#[serial]
+async fn acc_wax_017_macro_check_role_and_semantics() {
+    let interface = MockInterface::new();
+    interface.allow("1001", &[], &["admin", "superadmin"]);
+    let _h = GarrisonTestHarness::builder()
+        .interface(interface.clone())
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+    let token_partial = GarrisonUtil::login_simple("1002")
+        .await
+        .expect("login_simple 应签发 token");
+
+    // AND 全部持有 → 200 + 原 body
+    let resp = with_default_tenant(async {
+        with_current_token(token, async { wax_role_and_handler().await }).await
+    })
+    .await;
+    assert_eq!(resp.status(), StatusCode::OK, "AND 全持有应放行 200");
+    assert_eq!(axum_body(resp).await, "wax_role_and_ok");
+
+    // AND 部分持有（缺 superadmin）→ 403 + NOT_ROLE
+    let resp = with_default_tenant(async {
+        with_current_token(token_partial, async { wax_role_and_handler().await }).await
+    })
+    .await;
+    assert_eq!(resp.status().as_u16(), 403, "AND 缺任一角色应拒绝 403");
+    let body: serde_json::Value =
+        serde_json::from_str(&axum_body(resp).await).expect("403 响应体应为 JSON");
+    assert_eq!(body["error_code"], "NOT_ROLE", "AND 缺角色应返回 NOT_ROLE");
+}
+
+/// ACC-WAX-018（正常+异常）：`#[check_access_token]` 宏展开为包装器（loose 配置）——
+/// 伪造 token 拒绝 401（宏把 `Ok(false)` 转为 NotLogin → 401）；有效 token 放行
+/// 200 + 原 body。单次 harness（loose）内覆盖原两条测试
+///（`check_access_token_expands_to_wrapper` / `_with_valid_token_returns_200`）。
+#[cfg(feature = "annotation-macros")]
+#[tokio::test]
+#[serial]
+async fn acc_wax_018_macro_check_access_token_loose_and_valid() {
+    let _h = GarrisonTestHarness::builder()
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+
+    // 异常：伪造 token → 401（expands_to_wrapper 语义）
+    let resp = with_current_token("invalid-token".to_string(), async {
+        wax_access_token_handler().await
+    })
+    .await;
+    assert_eq!(
+        resp.status().as_u16(),
+        401,
+        "伪造 token 应拒绝 401，实际: {}",
+        resp.status()
+    );
+
+    // 正常：有效 token → 200 + 原 body
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+    let resp = with_current_token(token, async { wax_access_token_handler().await }).await;
+    assert_eq!(resp.status(), StatusCode::OK, "有效 token 应放行 200");
+    assert_eq!(axum_body(resp).await, "wax_access_token_ok");
+}
+
+/// ACC-WAX-019（正常+异常）：`#[check_client_token]` 宏展开为包装器（loose 配置）——
+/// 伪造 token 拒绝 401；有效 token 放行 200 + 原 body（原
+/// `check_client_token_expands_to_wrapper` / `_with_valid_token_returns_200`）。
+#[cfg(feature = "annotation-macros")]
+#[tokio::test]
+#[serial]
+async fn acc_wax_019_macro_check_client_token_loose_and_valid() {
+    let _h = GarrisonTestHarness::builder()
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+
+    // 异常：伪造 token → 401
+    let resp = with_current_token("invalid-token".to_string(), async {
+        wax_client_token_handler().await
+    })
+    .await;
+    assert_eq!(
+        resp.status().as_u16(),
+        401,
+        "伪造 token 应拒绝 401，实际: {}",
+        resp.status()
+    );
+
+    // 正常：有效 token → 200 + 原 body
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+    let resp = with_current_token(token, async { wax_client_token_handler().await }).await;
+    assert_eq!(resp.status(), StatusCode::OK, "有效 token 应放行 200");
+    assert_eq!(axum_body(resp).await, "wax_client_token_ok");
+}
+
+/// ACC-WAX-020（正常+异常）：`#[check_temp_token]` 宏展开为包装器（loose 配置）——
+/// 伪造 token 拒绝 401；有效 token 放行 200 + 原 body（原
+/// `check_temp_token_expands_to_wrapper` / `_with_valid_token_returns_200`）。
+#[cfg(feature = "annotation-macros")]
+#[tokio::test]
+#[serial]
+async fn acc_wax_020_macro_check_temp_token_loose_and_valid() {
+    let _h = GarrisonTestHarness::builder()
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+
+    // 异常：伪造 token → 401
+    let resp = with_current_token("invalid-token".to_string(), async {
+        wax_temp_token_handler().await
+    })
+    .await;
+    assert_eq!(
+        resp.status().as_u16(),
+        401,
+        "伪造 token 应拒绝 401，实际: {}",
+        resp.status()
+    );
+
+    // 正常：有效 token → 200 + 原 body
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+    let resp = with_current_token(token, async { wax_temp_token_handler().await }).await;
+    assert_eq!(resp.status(), StatusCode::OK, "有效 token 应放行 200");
+    assert_eq!(axum_body(resp).await, "wax_temp_token_ok");
+}
+
+/// ACC-WAX-021（正常）：宏包装 handler 可挂载进 axum `Router`——经
+/// `with_current_token` 包裹 `oneshot` 调用，`#[check_login]` /
+/// `#[check_permission]` / `#[check_role]` 三路由均放行 200
+///（强化：原 `handler_works_with_axum_router` 仅断言 /login）。
+#[cfg(feature = "annotation-macros")]
+#[tokio::test]
+#[serial]
+async fn acc_wax_021_macro_handlers_mount_into_axum_router() {
+    let interface = MockInterface::new();
+    interface.allow("1001", &["user:read"], &["admin"]);
+    let _h = GarrisonTestHarness::builder()
+        .interface(interface.clone())
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+
+    let app = Router::new()
+        .route("/login", get(wax_check_login_handler))
+        .route("/perm", get(wax_check_perm_handler))
+        .route("/role", get(wax_check_role_handler));
+
+    with_default_tenant(async {
+        let response = with_current_token(token.clone(), async {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/login")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        })
+        .await;
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "宏 handler 挂载 Router 后 /login 应 200"
+        );
+
+        let response = with_current_token(token.clone(), async {
+            app.clone()
+                .oneshot(
+                    Request::builder()
+                        .method("GET")
+                        .uri("/perm")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap()
+        })
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "/perm 应 200");
+
+        let response = with_current_token(token, async {
+            app.oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/role")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        })
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "/role 应 200");
+    })
+    .await;
+}
+
+// ============================================================================
+// ACC-WAX-022..023：`#[check_mfa]`（正常 + 异常，R-anno-004）
+// ============================================================================
+
+/// ACC-WAX-022（正常）：`#[check_mfa]` 已登录 + 已开启二级认证 → 200 + 原 body。
+/// `check_safe` 依赖 `TokenSession.safe_services`，仅 `login_simple` 不足以通过，
+/// 需先调用 `GarrisonLogicDefault::open_safe("default", ...)` 开启二级认证标记
+///（仅 `security-extra` 启用时需要；无该 feature 时 `is_safe` 默认 `Ok(true)`）。
+#[cfg(feature = "annotation-macros")]
+#[tokio::test]
+#[serial]
+async fn acc_wax_022_macro_check_mfa_with_valid_token() {
+    let _h = GarrisonTestHarness::builder()
+        .config(web_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+
+    #[cfg(feature = "security-extra")]
+    {
+        let logic = garrison::GarrisonManager::logic().expect("logic init");
+        garrison::stp::with_current_token(token.clone(), async {
+            logic.open_safe("default", 3600).await.expect("open_safe");
+        })
+        .await;
+    }
+
+    let response = with_current_token(token, async { wax_mfa_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::OK, "MFA 已开启应放行 200");
+    assert_eq!(axum_body(response).await, "wax_mfa_ok");
+}
+
+/// ACC-WAX-023（异常）：`#[check_mfa]` 未登录 → `check_safe` 依赖 session 失败，
+/// 响应不是 200（框架拒绝 MFA 校验，仅 `security-extra` 下有效——无该 feature
+/// 时 `is_safe` 默认 `Ok(true)` 为 no-op 不拦截）。
+#[cfg(all(feature = "annotation-macros", feature = "security-extra"))]
+#[tokio::test]
+#[serial]
+async fn acc_wax_023_macro_check_mfa_without_token_forwards_error() {
+    let _h = GarrisonTestHarness::builder()
+        .config(strict_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+
+    let response = with_current_token("invalid-token".to_string(), async {
+        wax_mfa_handler().await
+    })
+    .await;
+    assert_ne!(
+        response.status(),
+        StatusCode::OK,
+        "MFA 校验在未登录时必须失败（非 200）"
+    );
+}
+
+// ============================================================================
+// ACC-WAX-024..025：`#[check_abac]`（无引擎 fail-closed / 引擎 Allow+Deny，
+// R-anno-005）
+// ============================================================================
+
+/// ACC-WAX-024（异常）：`#[check_abac]` ABAC 引擎未初始化时 fail-closed——
+/// 已登录（a）与未登录（b）均返回 500（`check_abac_with_policy` 返回
+/// `Err(Config)`，即使未登录也优先返回 ABAC 错误，不执行 fn body）。
+#[cfg(all(feature = "annotation-macros", feature = "abac"))]
+#[tokio::test]
+#[serial]
+async fn acc_wax_024_macro_check_abac_without_engine_fail_closed() {
+    // reset_abac_for_test 需要 testing 特性（spec 约束：testing 严禁在
+    // full/production 之外的构造中启用）；与 ACC-WAX-025 之间恢复无引擎态。
+    #[cfg(feature = "testing")]
+    {
+        garrison::abac::reset_abac_for_test();
+    }
+    let _h = GarrisonTestHarness::builder()
+        .config(strict_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+
+    // （a）已登录 + 无引擎 → fail-closed 500
+    let response = with_current_token(token, async { wax_abac_allow_handler().await }).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "无 ABAC 引擎时应 fail-closed 500"
+    );
+
+    // （b）未登录 + 无引擎 → 同样 fail-closed 500（ABAC 优先于登录态）
+    let response = with_current_token("invalid-token".to_string(), async {
+        wax_abac_allow_handler().await
+    })
+    .await;
+    assert_eq!(
+        response.status(),
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "未登录时同样优先返回 ABAC 错误（fail-closed）"
+    );
+}
+
+/// ACC-WAX-025（正常+异常）：`#[check_abac]` 引擎已初始化——Allow 策略
+///（`principal == principal`）放行 200 + 原 body；Deny 策略（`principal !=
+/// principal`）拒绝 403。schema / `EmptyEntityLoader` 装配
+///（原 `check_abac_engine_initialized_allow/deny_returns_*`，同场景合并）。
+#[cfg(all(feature = "annotation-macros", feature = "abac", feature = "testing"))]
+#[tokio::test]
+#[serial]
+async fn acc_wax_025_macro_check_abac_engine_allow_and_deny() {
+    use garrison::abac::{init_abac_engine, reset_abac_for_test, AbacEngine, EmptyEntityLoader};
+
+    reset_abac_for_test();
+    let _h = GarrisonTestHarness::builder()
+        .config(strict_test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+
+    let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
+    let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader))
+        .await
+        .expect("schema valid");
+    init_abac_engine(engine).expect("init_abac_engine");
+
+    let token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("login_simple 应签发 token");
+
+    // Allow 策略 → 200 + 原 body
+    let response =
+        with_current_token(token.clone(), async { wax_abac_allow_handler().await }).await;
+    assert_eq!(response.status(), StatusCode::OK, "ABAC Allow 应放行 200");
+    assert_eq!(axum_body(response).await, "wax_abac_ok");
+
+    // Deny 策略 → 403
+    let response = with_current_token(token, async { wax_abac_deny_handler().await }).await;
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "ABAC Deny 应拒绝 403"
+    );
+
+    reset_abac_for_test();
 }

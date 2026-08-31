@@ -512,20 +512,9 @@ strip = true
 panic = "abort"
 
 # === 测试目标 ===
-[[test]]
-name = "db_mysql_testcontainers"
-path = "tests/db_mysql_testcontainers.rs"
-required-features = ["db-mysql"]
-
-[[test]]
-name = "auth_server_integration"
-path = "tests/auth_server_integration.rs"
-required-features = ["auth-server"]
-
-[[test]]
-name = "e2e"
-path = "tests/e2e.rs"
-required-features = ["full", "testing"]
+# Phase 4 迁移（T040/T042/T043）：db_mysql_testcontainers / auth_server_integration /
+# e2e 已并入 tests/acceptance/（environment.rs、server.rs、各域文件），
+# 原文件删除，对应 [[test]] 条目一并移除（避免悬空路径）。
 
 [[test]]
 name = "acceptance"

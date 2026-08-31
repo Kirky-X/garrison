@@ -575,3 +575,549 @@ async fn acc_rbac_009_interface_error_fails_loud_and_recovers() {
         "clear_failure 后授权校验应恢复放行，实际: {recovered:?}"
     );
 }
+
+// ------------------------------------------------------------------------
+// ACC-RBAC-010..018：策略注册表域（T041 迁移自 tests/integration/strategy_registry.rs；
+// ACC-RBAC-008 已覆盖的 register/remove 生命周期与 runtime 热替换去重）
+// ------------------------------------------------------------------------
+
+/// 构造测试用 `Arc<GarrisonLogicDefault>`（直构，不经全局单例；与
+/// integration/strategy_registry.rs 的 make_logic 惯例一致）。
+async fn make_strategy_logic() -> Arc<garrison::stp::GarrisonLogicDefault> {
+    use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+    use garrison::session::GarrisonSession;
+    use garrison::stp::GarrisonInterface;
+    use garrison::strategy::GarrisonPermissionStrategy;
+
+    struct NoopInterface;
+    #[async_trait::async_trait]
+    impl GarrisonInterface for NoopInterface {
+        async fn get_permission_list(
+            &self,
+            _login_id: &str,
+        ) -> garrison::error::GarrisonResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn get_role_list(
+            &self,
+            _login_id: &str,
+        ) -> garrison::error::GarrisonResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(NoopInterface);
+    let timeout = u64::try_from(config.timeout).unwrap_or(3600);
+    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
+        garrison::strategy::GarrisonPermissionStrategyDefault::new(interface),
+    );
+    Arc::new(garrison::stp::GarrisonLogicDefault::new(
+        session, config, firewall,
+    ))
+}
+
+/// ACC-RBAC-010（正常）：6 个策略 trait 可被业务方外部实现并调用——
+/// `LoginHandler` / `LogoutHandler` / `PermissionHandler` / `TokenGenerator` /
+/// `SessionCreator` / `FirewallStrategy`（spec R-strategy-registry-001；
+/// 原 login/logout/permission/token/session/firewall handler 六测试合并）。
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
+    use garrison::error::GarrisonResult;
+    use garrison::strategy::{
+        FirewallStrategy, LoginHandler, LogoutHandler, PermissionHandler, SessionCreator,
+        TokenGenerator,
+    };
+
+    // LoginHandler
+    struct MyLoginHandler;
+    #[async_trait::async_trait]
+    impl LoginHandler for MyLoginHandler {
+        async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
+            Ok(format!("token-{}", login_id))
+        }
+    }
+    let handler = MyLoginHandler;
+    assert_eq!(handler.handle_login("1001").await.unwrap(), "token-1001");
+
+    // LogoutHandler
+    struct MyLogoutHandler;
+    #[async_trait::async_trait]
+    impl LogoutHandler for MyLogoutHandler {
+        async fn handle_logout(&self) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn handle_logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+    }
+    let handler = MyLogoutHandler;
+    assert!(handler.handle_logout().await.is_ok());
+    assert!(handler.handle_logout_by_login_id("1001").await.is_ok());
+
+    // PermissionHandler
+    struct MyPermissionHandler;
+    #[async_trait::async_trait]
+    impl PermissionHandler for MyPermissionHandler {
+        async fn handle_check_permission(&self, _permission: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn handle_check_role(&self, _role: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+    }
+    let handler = MyPermissionHandler;
+    assert!(handler.handle_check_permission("user:read").await.is_ok());
+    assert!(handler.handle_check_role("admin").await.is_ok());
+
+    // TokenGenerator
+    struct MyTokenGenerator;
+    #[async_trait::async_trait]
+    impl TokenGenerator for MyTokenGenerator {
+        async fn generate_token(&self, login_id: &str) -> GarrisonResult<String> {
+            Ok(format!("gen-{}", login_id))
+        }
+        async fn refresh_token(&self, token: &str) -> GarrisonResult<String> {
+            Ok(format!("refreshed-{}", token))
+        }
+    }
+    let gen = MyTokenGenerator;
+    assert_eq!(gen.generate_token("1001").await.unwrap(), "gen-1001");
+    assert_eq!(gen.refresh_token("old").await.unwrap(), "refreshed-old");
+
+    // SessionCreator
+    struct MySessionCreator;
+    #[async_trait::async_trait]
+    impl SessionCreator for MySessionCreator {
+        async fn create_session(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn check_login(&self) -> GarrisonResult<bool> {
+            Ok(true)
+        }
+    }
+    let creator = MySessionCreator;
+    assert!(creator.create_session("1001", "tok").await.is_ok());
+    assert!(creator.check_login().await.unwrap());
+
+    // FirewallStrategy（`check_login_hooks` 与 `FirewallLoginContext` 仅在该组
+    // feature 下可用，cfg gate 与 src/strategy/registry.rs 一致）
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
+    {
+        use garrison::strategy::FirewallLoginContext;
+        struct MyFirewallStrategy;
+        #[async_trait::async_trait]
+        impl FirewallStrategy for MyFirewallStrategy {
+            async fn check_login_hooks(
+                &self,
+                _login_id: &str,
+                _ctx: &FirewallLoginContext,
+            ) -> GarrisonResult<()> {
+                Ok(())
+            }
+        }
+        let fw = MyFirewallStrategy;
+        let ctx = FirewallLoginContext::new("1001");
+        assert!(fw.check_login_hooks("1001", &ctx).await.is_ok());
+    }
+}
+
+/// ACC-RBAC-011（正常）：`Strategy::new(logic)` 构造后 6 个 getter 全部返回
+/// 非空 `Arc`（spec R-strategy-registry-002）。
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_rbac_011_strategy_new_initializes_all_six_handlers() {
+    use garrison::strategy::Strategy;
+
+    let logic = make_strategy_logic().await;
+    let strategy = Strategy::new(logic);
+    assert!(Arc::strong_count(strategy.login_handler()) >= 1);
+    assert!(Arc::strong_count(strategy.logout_handler()) >= 1);
+    assert!(Arc::strong_count(strategy.permission_handler()) >= 1);
+    assert!(Arc::strong_count(strategy.token_generator()) >= 1);
+    assert!(Arc::strong_count(strategy.session_creator()) >= 1);
+    assert!(Arc::strong_count(strategy.firewall_strategy()) >= 1);
+}
+
+/// ACC-RBAC-012（正常）：默认登录策略委托 `SessionLogic::login` 生成非空 token。
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_rbac_012_default_login_handler_generates_token_via_logic() {
+    use garrison::strategy::Strategy;
+
+    let logic = make_strategy_logic().await;
+    let strategy = Strategy::new(logic);
+    let token = strategy.login_handler().handle_login("1001").await.unwrap();
+    assert!(
+        !token.is_empty(),
+        "默认登录策略应委托 logic.login 生成 token"
+    );
+}
+
+/// ACC-RBAC-013（正常）：默认防火墙策略为 no-op（返回 Ok）。
+#[cfg(any(
+    feature = "sms-rate-limit",
+    feature = "firewall-ratelimit",
+    feature = "firewall-bruteforce",
+    feature = "firewall-ddos",
+    feature = "firewall",
+    feature = "oauth2-server"
+))]
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_rbac_013_default_firewall_strategy_is_noop() {
+    use garrison::strategy::{FirewallLoginContext, Strategy};
+
+    let logic = make_strategy_logic().await;
+    let strategy = Strategy::new(logic);
+    let ctx = FirewallLoginContext::new("1001");
+    let result = strategy
+        .firewall_strategy()
+        .check_login_hooks("1001", &ctx)
+        .await;
+    assert!(result.is_ok(), "默认防火墙策略应为 no-op 返回 Ok");
+}
+
+/// ACC-RBAC-014（正常）：6 个策略均支持 register / get / remove 三组方法——
+/// 全量替换为自定义实现后全部 remove 恢复默认（不报错；spec R-strategy-registry-003
+/// 批量验证；原 all_six_strategies_support_register_get_remove）。
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_rbac_014_all_six_strategies_support_register_get_remove() {
+    use garrison::error::GarrisonResult;
+    use garrison::strategy::{
+        FirewallStrategy, LoginHandler, LogoutHandler, PermissionHandler, SessionCreator, Strategy,
+        TokenGenerator,
+    };
+
+    let logic = make_strategy_logic().await;
+    let mut strategy = Strategy::new(logic);
+
+    // 6 个 getter 均可调用
+    let _ = strategy.login_handler();
+    let _ = strategy.logout_handler();
+    let _ = strategy.permission_handler();
+    let _ = strategy.token_generator();
+    let _ = strategy.session_creator();
+    let _ = strategy.firewall_strategy();
+
+    // 6 个 remove 均可调用（恢复默认，不报错）
+    strategy.remove_login_handler();
+    strategy.remove_logout_handler();
+    strategy.remove_permission_handler();
+    strategy.remove_token_generator();
+    strategy.remove_session_creator();
+    strategy.remove_firewall_strategy();
+
+    // 6 个 register 均可调用（自定义实现替换）
+    struct CustomLogin;
+    #[async_trait::async_trait]
+    impl LoginHandler for CustomLogin {
+        async fn handle_login(&self, id: &str) -> GarrisonResult<String> {
+            Ok(format!("c-{}", id))
+        }
+    }
+    struct CustomLogout;
+    #[async_trait::async_trait]
+    impl LogoutHandler for CustomLogout {
+        async fn handle_logout(&self) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn handle_logout_by_login_id(&self, _: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+    }
+    struct CustomPermission;
+    #[async_trait::async_trait]
+    impl PermissionHandler for CustomPermission {
+        async fn handle_check_permission(&self, _: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn handle_check_role(&self, _: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+    }
+    struct CustomTokenGen;
+    #[async_trait::async_trait]
+    impl TokenGenerator for CustomTokenGen {
+        async fn generate_token(&self, id: &str) -> GarrisonResult<String> {
+            Ok(format!("g-{}", id))
+        }
+        async fn refresh_token(&self, t: &str) -> GarrisonResult<String> {
+            Ok(t.to_string())
+        }
+    }
+    struct CustomSession;
+    #[async_trait::async_trait]
+    impl SessionCreator for CustomSession {
+        async fn create_session(&self, _: &str, _: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn check_login(&self) -> GarrisonResult<bool> {
+            Ok(true)
+        }
+    }
+    struct CustomFirewall;
+    #[async_trait::async_trait]
+    impl FirewallStrategy for CustomFirewall {
+        #[cfg(any(
+            feature = "sms-rate-limit",
+            feature = "firewall-ratelimit",
+            feature = "firewall-bruteforce",
+            feature = "firewall-ddos",
+            feature = "firewall",
+            feature = "oauth2-server"
+        ))]
+        async fn check_login_hooks(
+            &self,
+            _: &str,
+            _: &garrison::strategy::FirewallLoginContext,
+        ) -> GarrisonResult<()> {
+            Ok(())
+        }
+    }
+
+    strategy.register_login_handler(Arc::new(CustomLogin));
+    strategy.register_logout_handler(Arc::new(CustomLogout));
+    strategy.register_permission_handler(Arc::new(CustomPermission));
+    strategy.register_token_generator(Arc::new(CustomTokenGen));
+    strategy.register_session_creator(Arc::new(CustomSession));
+    strategy.register_firewall_strategy(Arc::new(CustomFirewall));
+
+    // 注册后再次 remove 全部恢复默认（不报错）
+    strategy.remove_login_handler();
+    strategy.remove_logout_handler();
+    strategy.remove_permission_handler();
+    strategy.remove_token_generator();
+    strategy.remove_session_creator();
+    strategy.remove_firewall_strategy();
+}
+
+/// ACC-RBAC-015（正常+异常）：替换一个策略不影响其他策略（`Arc::ptr_eq` 原样）
+/// 且旧策略被 drop 无泄漏（weak 引用失效，spec R-strategy-registry-004；
+/// 原 replace_one_strategy_does_not_affect_others + replace_drops_old_handler 合并）。
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_rbac_015_replace_isolated_and_old_handler_dropped() {
+    use garrison::error::GarrisonResult;
+    use garrison::strategy::{LoginHandler, Strategy};
+
+    struct CustomLoginHandler;
+    #[async_trait::async_trait]
+    impl LoginHandler for CustomLoginHandler {
+        async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
+            Ok(format!("custom-{}", login_id))
+        }
+    }
+
+    let logic = make_strategy_logic().await;
+    let mut strategy = Strategy::new(logic);
+
+    // 替换前：克隆其他 5 个策略的 Arc 引用
+    let original_logout = strategy.logout_handler().clone();
+    let original_permission = strategy.permission_handler().clone();
+    let original_token = strategy.token_generator().clone();
+    let original_session = strategy.session_creator().clone();
+    let original_firewall = strategy.firewall_strategy().clone();
+
+    // 注册第一个自定义策略 → 记录 weak 引用
+    let handler_v1 = Arc::new(CustomLoginHandler);
+    let weak_v1 = Arc::downgrade(&handler_v1);
+    strategy.register_login_handler(handler_v1);
+
+    // 其他 5 个策略的 Arc 应指向同一对象（未被替换）
+    assert!(
+        Arc::ptr_eq(&original_logout, strategy.logout_handler()),
+        "替换 LoginHandler 不应影响 LogoutHandler"
+    );
+    assert!(
+        Arc::ptr_eq(&original_permission, strategy.permission_handler()),
+        "替换 LoginHandler 不应影响 PermissionHandler"
+    );
+    assert!(
+        Arc::ptr_eq(&original_token, strategy.token_generator()),
+        "替换 LoginHandler 不应影响 TokenGenerator"
+    );
+    assert!(
+        Arc::ptr_eq(&original_session, strategy.session_creator()),
+        "替换 LoginHandler 不应影响 SessionCreator"
+    );
+    assert!(
+        Arc::ptr_eq(&original_firewall, strategy.firewall_strategy()),
+        "替换 LoginHandler 不应影响 FirewallStrategy"
+    );
+
+    // login_handler 确实已替换
+    let token = strategy.login_handler().handle_login("1001").await.unwrap();
+    assert_eq!(token, "custom-1001");
+
+    // 再次替换：第一个策略应被 drop（weak 引用失效 → 无内存泄漏）
+    struct AnotherLoginHandler;
+    #[async_trait::async_trait]
+    impl LoginHandler for AnotherLoginHandler {
+        async fn handle_login(&self, login_id: &str) -> GarrisonResult<String> {
+            Ok(format!("v2-{}", login_id))
+        }
+    }
+    strategy.register_login_handler(Arc::new(AnotherLoginHandler));
+    assert!(
+        weak_v1.upgrade().is_none(),
+        "替换后旧策略应被 drop，无内存泄漏"
+    );
+}
+
+/// ACC-RBAC-016（正常）：`GarrisonManager::with_strategy()` 整体替换策略注册表——
+/// 替换后 `strategy()` 返回新注册表且自定义 LoginHandler 生效
+///（原 manager_with_strategy_replaces_registry）。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn acc_rbac_016_manager_with_strategy_replaces_registry() {
+    use garrison::error::GarrisonResult;
+    use garrison::manager::GarrisonManager;
+    use garrison::stp::GarrisonUtil;
+    use garrison::strategy::{LoginHandler, Strategy};
+    use parking_lot::RwLock;
+
+    let _h = GarrisonTestHarness::builder()
+        .config(test_config())
+        .init()
+        .await
+        .expect("harness init 应成功");
+    // 预热单例，确认 strategy() 可用（init 后必可获取）
+    assert!(
+        GarrisonManager::strategy().is_ok(),
+        "init 后应能获取 strategy"
+    );
+
+    // 获取原 logic 并构造自定义 Strategy
+    let logic = GarrisonManager::logic().unwrap();
+    let custom_strategy = Arc::new(RwLock::new(Strategy::new(logic)));
+
+    // 注入自定义 LoginHandler
+    struct CustomLogin;
+    #[async_trait::async_trait]
+    impl LoginHandler for CustomLogin {
+        async fn handle_login(&self, id: &str) -> GarrisonResult<String> {
+            Ok(format!("custom-{}", id))
+        }
+    }
+    custom_strategy
+        .write()
+        .register_login_handler(Arc::new(CustomLogin));
+
+    // with_strategy 替换
+    GarrisonManager::with_strategy(custom_strategy).unwrap();
+
+    // 验证替换后使用自定义策略
+    let strategy = GarrisonManager::strategy().unwrap();
+    let login_handler = strategy.read().login_handler().clone();
+    let token = login_handler.handle_login("1001").await.unwrap();
+    assert_eq!(token, "custom-1001", "with_strategy 后应使用自定义策略");
+
+    // 替换后全局 util 仍可用（prove 未破坏单例整体装配）
+    let util_token = GarrisonUtil::login_simple("1001")
+        .await
+        .expect("替换策略后 login 应仍可用");
+    assert!(!util_token.is_empty(), "login 应签发非空 token");
+}
+
+/// ACC-RBAC-017（正常）：同时替换多个策略，每个策略独立工作
+///（原 replace_multiple_strategies_independently）。
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_rbac_017_replace_multiple_strategies_independently() {
+    use garrison::error::GarrisonResult;
+    use garrison::strategy::{LoginHandler, Strategy, TokenGenerator};
+
+    struct CustomLoginHandler;
+    #[async_trait::async_trait]
+    impl LoginHandler for CustomLoginHandler {
+        async fn handle_login(&self, id: &str) -> GarrisonResult<String> {
+            Ok(format!("login-{}", id))
+        }
+    }
+    struct CustomTokenGenerator;
+    #[async_trait::async_trait]
+    impl TokenGenerator for CustomTokenGenerator {
+        async fn generate_token(&self, id: &str) -> GarrisonResult<String> {
+            Ok(format!("token-{}", id))
+        }
+        async fn refresh_token(&self, t: &str) -> GarrisonResult<String> {
+            Ok(format!("refreshed-{}", t))
+        }
+    }
+
+    let logic = make_strategy_logic().await;
+    let mut strategy = Strategy::new(logic);
+
+    strategy.register_login_handler(Arc::new(CustomLoginHandler));
+    strategy.register_token_generator(Arc::new(CustomTokenGenerator));
+
+    let login_token = strategy.login_handler().handle_login("1001").await.unwrap();
+    assert_eq!(login_token, "login-1001");
+    let gen_token = strategy
+        .token_generator()
+        .generate_token("1001")
+        .await
+        .unwrap();
+    assert_eq!(gen_token, "token-1001");
+    let refreshed = strategy
+        .token_generator()
+        .refresh_token("old")
+        .await
+        .unwrap();
+    assert_eq!(refreshed, "refreshed-old");
+}
+
+/// ACC-RBAC-018（正常）：`Strategy` 经 `Arc<RwLock<Strategy>>` 多线程安全共享——
+/// 4 个线程并发 read + 调用计数 handler，恰累计 4 次
+///（原 strategy_thread_safe_via_arc_rwlock）。
+#[tokio::test(flavor = "multi_thread")]
+async fn acc_rbac_018_strategy_thread_safe_via_arc_rwlock() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::thread;
+
+    use garrison::error::GarrisonResult;
+    use garrison::strategy::{LoginHandler, Strategy};
+    use parking_lot::RwLock;
+
+    struct CountingLoginHandler {
+        counter: Arc<AtomicUsize>,
+    }
+    #[async_trait::async_trait]
+    impl LoginHandler for CountingLoginHandler {
+        async fn handle_login(&self, _id: &str) -> GarrisonResult<String> {
+            self.counter.fetch_add(1, Ordering::SeqCst);
+            Ok("ok".to_string())
+        }
+    }
+
+    let logic = make_strategy_logic().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let mut strategy = Strategy::new(logic);
+    strategy.register_login_handler(Arc::new(CountingLoginHandler {
+        counter: counter.clone(),
+    }));
+
+    let shared = Arc::new(RwLock::new(strategy));
+
+    let mut handles = vec![];
+    for _ in 0..4 {
+        let s = shared.clone();
+        handles.push(thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let handler = s.read().login_handler().clone();
+                handler.handle_login("1").await.unwrap();
+            });
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    assert_eq!(counter.load(Ordering::SeqCst), 4, "4 个线程应各自调用一次");
+}

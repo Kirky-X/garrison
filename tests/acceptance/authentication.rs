@@ -9,6 +9,14 @@
 //! 密码场景（010）使用独立 `GarrisonLogicDefault` 实例 + 真实 SQLite 迁移
 //! （镜像 integration/login_password.rs 的已知良好装配）；封禁（011）经
 //! `DefaultDisableRepository`；锁定（012）经 `UserLockoutStrategy`。
+//!
+//! Phase 4 测试迁移（T040/T043）：
+//! - ACC-AUTH-016/017/018 自 tests/e2e（safe+disable 默认值 / switch-to / refresh 链）移植；
+//! - ACC-AUTH-019 自 tests/acceptance_criteria.rs **BW-AC-010** 移植（编号注释保留）；
+//! - 去重注释：BW-AC-004 → ACC-RBAC-004（+ACC-RBAC-007 web 403 编码）、
+//!   BW-AC-005 → ACC-RBAC-003（+ACC-RBAC-007）、BW-AC-006 →
+//!   ACC-AUTH-001/002 + ACC-RBAC-001/002（组合覆盖）、BW-AC-009 →
+//!   ACC-AUTH-002 + ACC-SESS-001（logout 失效 + Token-Session 删除）。
 
 use crate::common::harness::GarrisonTestHarness;
 use garrison::stp::context::{get_renewed_token, with_renewed_token_scope};
@@ -521,4 +529,587 @@ async fn acc_auth_012_lockout_blocks_after_repeated_failures() {
     // 管理员解锁：恢复
     strategy.unlock("victim-user").await.unwrap();
     strategy.check(&ctx).await.expect("解锁后应恢复放行");
+}
+
+// ------------------------------------------------------------------------
+// ACC-AUTH-013..016：Phase 4 测试迁移（T040/T043，自 tests/e2e 移植）
+// ------------------------------------------------------------------------
+
+/// ACC-AUTH-017（异常）：switch-to 默认安全拒绝——未注入自定义
+/// `SwitchToGuard` 时默认 `DenyAllSwitchToGuard` fail-closed 拒绝所有身份切换
+/// （`NotPermission`），且被拒切换无副作用（token 仍绑定原主体并保持有效）。
+///
+/// # 迁移溯源（Phase 4 T040/T043）
+/// 自 tests/e2e/session_flow.rs `test_e2e_switch_to_default_denies` 与
+/// tests/e2e/api_happy.rs `test_api_happy_kickout_switch_renew`（T021）的
+/// switch-to 部分移植。原版经 HTTP 断言 `error_code="NOT_PERMISSION"`；
+/// 本场景在逻辑层直接断言 `BackendEmbedded::switch_to` 的 `NotPermission`
+/// 错误并补充无副作用断言（不可弱化，语义等价）。
+#[tokio::test]
+#[serial]
+async fn acc_auth_017_switch_to_default_deny_all_guard_rejects() {
+    use garrison::backend::{AuthBackend, BackendEmbedded};
+    use garrison::error::GarrisonError;
+
+    let _h = GarrisonTestHarness::builder()
+        .config(test_config())
+        .init()
+        .await
+        .unwrap();
+    let token = GarrisonUtil::login_simple("user-a").await.unwrap();
+    let _token_b = GarrisonUtil::login_simple("user-b").await.unwrap();
+
+    let backend = BackendEmbedded::new();
+    let result = backend.switch_to(&token, "user-b").await;
+    assert!(
+        matches!(result, Err(GarrisonError::NotPermission(_))),
+        "默认 DenyAllSwitchToGuard 应拒绝 switch-to，实际: {result:?}"
+    );
+
+    // 无副作用：token 仍绑定原主体且有效
+    assert_eq!(
+        GarrisonUtil::get_login_id_by_token(&token).await.unwrap(),
+        Some("user-a".to_string()),
+        "被拒的切换不应改变 token 绑定主体"
+    );
+    let logged = with_current_token(token, async { GarrisonUtil::check_login().await }).await;
+    assert!(
+        matches!(logged, Ok(true)),
+        "被拒的切换后原 token 应仍有效，实际: {logged:?}"
+    );
+}
+
+/// ACC-AUTH-018（正常）：refresh 链 50 次——连续 `renew_to_equivalent` 50 次
+/// 每次产出新 token（新旧互异）、链路不中断，最终 token 有效且首 token 已失效。
+///
+/// # 迁移溯源（Phase 4 T040/T043）
+/// 自 tests/e2e/api_boundary.rs `test_api_boundary_refresh_chain_50_times`（T027）
+/// 移植。原版经 HTTP `/api/v1/auth/refresh` 断言 status 200 + 新 token；
+/// 本场景在逻辑层直接调用 `BackendEmbedded::renew_to_equivalent`（refresh
+/// 端点的同一下游实现，见 src/server/sdforge_routes.rs `auth_refresh`），
+/// 保留「链不中断 / 新旧互异 / 终态有效」全部语义。
+#[tokio::test]
+#[serial]
+async fn acc_auth_018_refresh_chain_50_times_keeps_valid() {
+    use garrison::backend::{AuthBackend, BackendEmbedded};
+
+    let _h = GarrisonTestHarness::builder()
+        .config(test_config())
+        .init()
+        .await
+        .unwrap();
+    let backend = BackendEmbedded::new();
+
+    let first_token = GarrisonUtil::login_simple("chain-refresh-user")
+        .await
+        .unwrap();
+    let mut current = first_token.clone();
+    for i in 1..=50 {
+        let new_token = backend
+            .renew_to_equivalent(&current)
+            .await
+            .unwrap_or_else(|e| panic!("第 {i} 次 refresh 应成功，实际: {e:?}"));
+        assert_ne!(current, new_token, "第 {i} 次 refresh 应返回新 token");
+        current = new_token;
+    }
+
+    // 终态：最终 token 有效
+    let logged = with_current_token(current, async { GarrisonUtil::check_login().await }).await;
+    assert!(
+        matches!(logged, Ok(true)),
+        "refresh 链 50 次后最终 token 应有效，实际: {logged:?}"
+    );
+    // 首 token 经轮换链已失效
+    let first_check =
+        with_current_token(first_token, async { GarrisonUtil::check_login().await }).await;
+    assert_token_invalid!(first_check, "refresh 链后首个 token 应已失效");
+}
+
+/// ACC-AUTH-019（异常）：**BW-AC-010** 连续登录失败封禁——5 次失败触发锁定
+/// （Linear 策略 base=1800s → 锁定时长 ≈ 30 分钟），LockoutState 字段正确
+/// （failure_count=5、locked_until>0、锁定时长落在 ±60s 窗口），且可构造
+/// `DisableService` 错误（until=Some(now+30min)，HTTP status=403）。
+///
+/// # 迁移溯源（Phase 4 T040/T043）
+/// 自 tests/acceptance_criteria.rs `bw_ac_010_login_failure_locks_account`
+///（FRD §8.1 **BW-AC-010**）原样移植，断言语义与编号注释保留。
+#[tokio::test]
+#[serial]
+#[cfg(feature = "account-lockout")]
+async fn acc_auth_019_bw_ac_010_login_failure_locks_account() {
+    use garrison::account::lockout::{UserLockoutConfig, UserLockoutStrategy, WaitStrategy};
+    use garrison::dao::InMemoryDao;
+
+    let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(InMemoryDao::new());
+
+    // 配置：5 次失败触发锁定，每次临时锁定 30min（Linear 策略 base=1800）
+    let config = UserLockoutConfig {
+        max_failure_factor: 5,
+        permanent_lockout: false,
+        max_temporary_lockouts: 3,
+        wait_strategy: WaitStrategy::Linear { base_seconds: 1800 },
+        failure_window_seconds: 300,
+    };
+    let strategy = UserLockoutStrategy::new(config, dao.clone());
+
+    // Given: 用户连续 5 次登录失败
+    for _ in 0..5 {
+        strategy
+            .record_failure("user-010")
+            .await
+            .expect("record_failure 应成功");
+    }
+
+    // Then: 读取 LockoutState 验证锁定状态
+    let lockout_key = "lockout:user-010";
+    let lockout_json = dao
+        .get(lockout_key)
+        .await
+        .expect("DAO get 应成功")
+        .expect("LockoutState 应存在");
+    let state: garrison::account::lockout::LockoutState =
+        serde_json::from_str(&lockout_json).expect("反序列化 LockoutState 应成功");
+
+    assert_eq!(state.failure_count, 5, "失败次数应为 5");
+    assert!(
+        state.locked_until > 0,
+        "locked_until 应已设置（账号已锁定）"
+    );
+
+    // 验证锁定时长 ≈ 30min（1800 秒，允许 ±60 秒误差）
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let lock_duration = state.locked_until - now;
+    assert!(
+        (1740..=1860).contains(&lock_duration),
+        "锁定时长应接近 1800 秒（30min），实际: {} 秒",
+        lock_duration
+    );
+
+    // Then: 构造 DisableService 错误（业务代码在捕获 FirewallBlocked 后调用）
+    let until = chrono::Utc::now() + chrono::Duration::minutes(30);
+    let disable_err = garrison::error::GarrisonError::DisableService {
+        service: "default".to_string(),
+        until: Some(until),
+    };
+
+    // 验证错误变体与字段
+    match &disable_err {
+        garrison::error::GarrisonError::DisableService { service, until } => {
+            assert_eq!(service, "default");
+            assert!(until.is_some(), "until 应为 Some");
+        },
+        other => panic!("期望 DisableService 变体，实际: {other:?}"),
+    }
+
+    // 验证 HTTP status = 403
+    let (status, _, _, _) = disable_err.response_parts();
+    assert_eq!(status, 403, "DisableService 的 HTTP status 应为 403");
+}
+
+/// ACC-AUTH-016（正常）：安全默认值——新登录 token 未经二级认证
+/// `check_safe=false`、未被封禁 `check_disable=false`；未知 token 同样两项
+/// 均为 false（不误报封禁/认证状态）。
+///
+/// # 迁移溯源（Phase 4 T040/T043）
+/// 自 tests/e2e/permission_flow.rs `test_e2e_check_safe_default_returns_false` /
+/// `test_e2e_check_disable_default_returns_false` 与 tests/e2e/api_authz_boundary.rs
+/// `test_authz_boundary_disabled_token_rejected`（T030d）的 check-disable 部分
+/// 移植。原版经 HTTP 断言 `data=false`；本场景经 `BackendEmbedded::check_safe` /
+/// `check_disable`（端点同一下游）直接断言布尔值。
+#[tokio::test]
+#[serial]
+async fn acc_auth_016_safe_disable_defaults_false() {
+    use garrison::backend::{AuthBackend, BackendEmbedded};
+
+    let _h = GarrisonTestHarness::builder()
+        .config(test_config())
+        .init()
+        .await
+        .unwrap();
+    let token = GarrisonUtil::login_simple("user1").await.unwrap();
+
+    let backend = BackendEmbedded::new();
+    // 新 token 未开启二级认证 → check_safe=false
+    assert_eq!(
+        backend.check_safe(&token).await.unwrap(),
+        false,
+        "新 token 未开启二级认证，check_safe 应为 false"
+    );
+    // 新 token 未被封禁 → check_disable=false
+    assert_eq!(
+        backend.check_disable(&token).await.unwrap(),
+        false,
+        "新 token 未被封禁，check_disable 应为 false"
+    );
+    // 未知 token → 两者均为 false（不误报，T030d fallback 语义）
+    assert_eq!(
+        backend
+            .check_safe("nonexistent-token-disabled-test-12345")
+            .await
+            .unwrap(),
+        false,
+        "未知 token check_safe 应为 false"
+    );
+    assert_eq!(
+        backend
+            .check_disable("nonexistent-token-disabled-test-12345")
+            .await
+            .unwrap(),
+        false,
+        "未知 token check_disable 应为 false（未标记封禁）"
+    );
+}
+
+// ------------------------------------------------------------------------
+// ACC-AUTH-020..022：密码凭据域（T041 迁移自 tests/integration/login_password.rs；
+// ACC-AUTH-010 已覆盖的「防枚举统一错误」语义在 021 中标注去重）
+// ------------------------------------------------------------------------
+
+/// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password
+/// (1001)。v0.4.2 安全审计 A-014：实现层 reason 统一为 "invalid_credentials"，
+/// listener 无法仅凭 reason 区分两类失败，需借助 login_id（测试场景固定）。
+#[cfg(all(feature = "account-credential", feature = "listener"))]
+struct PasswordLoginListener;
+
+#[cfg(all(feature = "account-credential", feature = "listener"))]
+#[async_trait::async_trait]
+impl garrison::listener::GarrisonListener for PasswordLoginListener {
+    async fn on_event(
+        &self,
+        event: &garrison::listener::GarrisonEvent,
+    ) -> garrison::error::GarrisonResult<()> {
+        if let garrison::listener::GarrisonEvent::LoginFailure {
+            login_id, reason, ..
+        } = event
+        {
+            if reason == "invalid_credentials" {
+                if *login_id == "9999" {
+                    LOGIN_FAILURE_NOT_FOUND.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                } else if *login_id == "1001" {
+                    LOGIN_FAILURE_WRONG_PASSWORD.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(feature = "account-credential", feature = "listener"))]
+fn password_login_listener_factory() -> std::sync::Arc<dyn garrison::listener::GarrisonListener> {
+    std::sync::Arc::new(PasswordLoginListener)
+}
+
+#[cfg(all(feature = "account-credential", feature = "listener"))]
+inventory::submit! {
+    garrison::listener::GarrisonListenerEntry { factory: password_login_listener_factory }
+}
+
+#[cfg(all(feature = "account-credential", feature = "listener"))]
+static LOGIN_FAILURE_NOT_FOUND: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(all(feature = "account-credential", feature = "listener"))]
+static LOGIN_FAILURE_WRONG_PASSWORD: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+#[cfg(all(feature = "account-credential", feature = "listener"))]
+fn reset_listener_counters() {
+    use std::sync::atomic::Ordering;
+    LOGIN_FAILURE_NOT_FOUND.store(0, Ordering::SeqCst);
+    LOGIN_FAILURE_WRONG_PASSWORD.store(0, Ordering::SeqCst);
+}
+
+/// ACC-AUTH-020（正常+异常）：`Argon2Hasher` / `BcryptHasher` hash → verify
+/// roundtrip——相同密码匹配、不同密码不匹配、跨算法不互认、`PasswordVerifier`
+/// 自动识别算法（原 argon2/bcrypt/cross_algorithm/password_verifier 四测试合并）。
+#[cfg(all(
+    feature = "account-credential",
+    feature = "db-sqlite",
+    feature = "cache-memory"
+))]
+#[tokio::test]
+async fn acc_auth_020_password_hashers_roundtrip_and_auto_detect() {
+    use garrison::account::credential::password::{
+        Argon2Hasher, BcryptHasher, PasswordHasher, PasswordVerifier,
+    };
+
+    let argon2 = Argon2Hasher::new();
+    let argon2_hash = argon2.hash("correct-password").expect("hash 应成功");
+    assert!(
+        argon2_hash.starts_with("$argon2"),
+        "Argon2 哈希应以 $argon2 开头，实际: {}",
+        &argon2_hash[..8.min(argon2_hash.len())]
+    );
+    assert!(
+        argon2.verify("correct-password", &argon2_hash).unwrap(),
+        "相同密码应匹配"
+    );
+    assert!(
+        !argon2.verify("wrong-password", &argon2_hash).unwrap(),
+        "不同密码应不匹配"
+    );
+
+    let bcrypt = BcryptHasher::with_cost(4); // 低 cost 加速测试
+    let bcrypt_hash = bcrypt.hash("correct-password").expect("hash 应成功");
+    assert!(
+        bcrypt_hash.starts_with("$2"),
+        "Bcrypt 哈希应以 $2 开头，实际: {}",
+        &bcrypt_hash[..3.min(bcrypt_hash.len())]
+    );
+    assert!(
+        bcrypt.verify("correct-password", &bcrypt_hash).unwrap(),
+        "相同密码应匹配"
+    );
+    assert!(
+        !bcrypt.verify("wrong-password", &bcrypt_hash).unwrap(),
+        "不同密码应不匹配"
+    );
+
+    // 跨算法校验不得误判为 true
+    assert!(
+        !matches!(bcrypt.verify("password", &argon2_hash), Ok(true)),
+        "Argon2 hash 不应被 Bcrypt 验证为 true"
+    );
+    assert!(
+        !matches!(argon2.verify("password", &bcrypt_hash), Ok(true)),
+        "Bcrypt hash 不应被 Argon2 验证为 true"
+    );
+
+    // PasswordVerifier 自动识别算法
+    assert!(
+        PasswordVerifier::verify("secret", &argon2.hash("secret").unwrap()).unwrap(),
+        "PasswordVerifier 应识别 Argon2 hash 并校验通过"
+    );
+    assert!(
+        PasswordVerifier::verify("secret", &bcrypt.hash("secret").unwrap()).unwrap(),
+        "PasswordVerifier 应识别 Bcrypt hash 并校验通过"
+    );
+    assert!(
+        !PasswordVerifier::verify("wrong", &argon2.hash("secret").unwrap()).unwrap(),
+        "Argon2 hash 错误密码应不匹配"
+    );
+    assert!(
+        !PasswordVerifier::verify("wrong", &bcrypt.hash("secret").unwrap()).unwrap(),
+        "Bcrypt hash 错误密码应不匹配"
+    );
+}
+
+/// 构造注入 Argon2Hasher + DbnexusUserRepository + ListenerManager 的
+/// `GarrisonLogicDefault`（镜像 ACC-AUTH-010 的 SQLite 装配与旧 login_password.rs）。
+#[cfg(all(
+    feature = "account-credential",
+    feature = "db-sqlite",
+    feature = "cache-memory",
+    feature = "listener"
+))]
+async fn make_logic_with_password() -> std::sync::Arc<garrison::stp::GarrisonLogicDefault> {
+    use garrison::account::credential::password::{Argon2Hasher, PasswordHasher};
+    use garrison::dao::repository::{sqlite::DbnexusUserRepository, NewUser, UserRepository};
+    use garrison::dao::{init_dbnexus, GarrisonDao, GarrisonDaoOxcache, GarrisonMigration};
+    use garrison::session::GarrisonSession;
+    use garrison::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
+
+    struct NoopInterface;
+    #[async_trait::async_trait]
+    impl garrison::stp::GarrisonInterface for NoopInterface {
+        async fn get_permission_list(
+            &self,
+            _login_id: &str,
+        ) -> garrison::error::GarrisonResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn get_role_list(
+            &self,
+            _login_id: &str,
+        ) -> garrison::error::GarrisonResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    let pool = init_dbnexus("sqlite::memory:").await.unwrap();
+    let migration = GarrisonMigration::with_base_dir(
+        pool.clone(),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations/sqlite"),
+    );
+    migration.migrate_core().await.unwrap();
+
+    let user_repo = Arc::new(DbnexusUserRepository::new(pool.clone()));
+    let hasher = Argon2Hasher::new();
+    let password_hash = PasswordHasher::hash(&hasher, "secret").unwrap();
+    user_repo
+        .create(
+            0,
+            NewUser {
+                username: "1001".to_string(),
+                password_hash,
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .expect("预置用户应成功");
+
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let mut config = garrison::config::GarrisonConfig::default_config();
+    config.token_style = "uuid".to_string();
+    config.timeout = 3600;
+    config.throw_on_not_login = true;
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
+        GarrisonPermissionStrategyDefault::new(Arc::new(NoopInterface)),
+    );
+    let lm = Arc::new(garrison::listener::GarrisonListenerManager::new());
+
+    Arc::new(
+        garrison::stp::GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+            .with_password_hasher(Arc::new(hasher))
+            .with_user_repository(user_repo)
+            .with_listener_manager(lm),
+    )
+}
+
+#[cfg(all(
+    feature = "account-credential",
+    feature = "db-sqlite",
+    feature = "cache-memory"
+))]
+fn test_password_config() -> garrison::config::GarrisonConfig {
+    let mut config = garrison::config::GarrisonConfig::default_config();
+    config.token_style = "uuid".to_string();
+    config.timeout = 3600;
+    config
+}
+
+/// ACC-AUTH-021（正常+异常）：`login_with_password` 端到端——用户存在 + 密码匹配
+/// 签发非空 token（成功语义去重至 ACC-AUTH-010 的正确密码锚点）；用户不存在 /
+/// 密码错误统一返回 `InvalidParam("invalid password")`（防枚举，去重至
+/// ACC-AUTH-010）且 listener 广播 `LoginFailure` 事件各 1 次（本场景增量覆盖：
+/// 原 login_password.rs 的 user_not_found / wrong_password 事件计数断言）。
+#[cfg(all(
+    feature = "account-credential",
+    feature = "db-sqlite",
+    feature = "cache-memory",
+    feature = "listener"
+))]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn acc_auth_021_password_login_success_and_failure_listener_events() {
+    use garrison::error::GarrisonError;
+    use garrison::stp::PasswordLogic;
+
+    reset_listener_counters();
+    let logic = make_logic_with_password().await;
+
+    // 正常：用户存在 + 密码匹配 → 非空 token
+    let token = logic.login_with_password("1001", "secret").await;
+    assert!(
+        token.is_ok(),
+        "login_with_password 应成功: {:?}",
+        token.err()
+    );
+    assert!(!token.unwrap().is_empty(), "返回 token 不应为空");
+
+    // 异常：用户不存在 → 统一错误 + LoginFailure(login_id=9999) 事件
+    let result = logic.login_with_password("9999", "secret").await;
+    match result.unwrap_err() {
+        GarrisonError::InvalidParam(msg) => assert_eq!(
+            msg, "invalid password",
+            "用户不存在应统一返回 'invalid password'，不泄露真实原因"
+        ),
+        other => panic!("期望 InvalidParam，实际: {:?}", other),
+    }
+    assert_eq!(
+        LOGIN_FAILURE_NOT_FOUND.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "应广播 1 次 LoginFailure(login_id=9999) 事件"
+    );
+
+    // 异常：密码错误 → 统一错误 + LoginFailure(login_id=1001) 事件
+    let result = logic.login_with_password("1001", "wrong-password").await;
+    match result.unwrap_err() {
+        GarrisonError::InvalidParam(msg) => assert_eq!(
+            msg, "invalid password",
+            "密码错误应统一返回 'invalid password'"
+        ),
+        other => panic!("期望 InvalidParam，实际: {:?}", other),
+    }
+    assert_eq!(
+        LOGIN_FAILURE_WRONG_PASSWORD.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "应广播 1 次 LoginFailure(login_id=1001) 事件"
+    );
+}
+
+/// ACC-AUTH-022（异常）：`login_with_password` 装配缺失 fail-fast——未配置 hasher
+/// 返回 `Config("password hasher not configured")`；未配置 user_repository 返回
+/// `Config("user repository not configured")`（显性报错，不静默降级）。
+#[cfg(all(
+    feature = "account-credential",
+    feature = "db-sqlite",
+    feature = "cache-memory"
+))]
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn acc_auth_022_password_login_fails_without_hasher_or_repository() {
+    use garrison::account::credential::password::Argon2Hasher;
+    use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
+    use garrison::error::GarrisonError;
+    use garrison::session::GarrisonSession;
+    use garrison::stp::{GarrisonInterface, GarrisonLogicDefault, PasswordLogic};
+    use garrison::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
+
+    struct NoopInterface;
+    #[async_trait::async_trait]
+    impl GarrisonInterface for NoopInterface {
+        async fn get_permission_list(
+            &self,
+            _login_id: &str,
+        ) -> garrison::error::GarrisonResult<Vec<String>> {
+            Ok(vec![])
+        }
+        async fn get_role_list(
+            &self,
+            _login_id: &str,
+        ) -> garrison::error::GarrisonResult<Vec<String>> {
+            Ok(vec![])
+        }
+    }
+
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
+        GarrisonPermissionStrategyDefault::new(Arc::new(NoopInterface)),
+    );
+
+    // 未配置 hasher → Config
+    let logic_no_hasher = Arc::new(GarrisonLogicDefault::new(
+        session.clone(),
+        Arc::new(test_password_config()),
+        firewall.clone(),
+    ));
+    let result = logic_no_hasher.login_with_password("1001", "secret").await;
+    match result.unwrap_err() {
+        GarrisonError::Config(msg) => assert!(
+            msg.contains("password hasher not configured"),
+            "错误消息应包含 'password hasher not configured'，实际: {}",
+            msg
+        ),
+        other => panic!("期望 Config，实际: {:?}", other),
+    }
+
+    // 未配置 user_repository → Config
+    let logic_no_repo = Arc::new(
+        GarrisonLogicDefault::new(session, Arc::new(test_password_config()), firewall)
+            .with_password_hasher(Arc::new(Argon2Hasher::new())),
+    );
+    let result = logic_no_repo.login_with_password("1001", "secret").await;
+    match result.unwrap_err() {
+        GarrisonError::Config(msg) => assert!(
+            msg.contains("user repository not configured"),
+            "错误消息应包含 'user repository not configured'，实际: {}",
+            msg
+        ),
+        other => panic!("期望 Config，实际: {:?}", other),
+    }
 }
