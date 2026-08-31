@@ -169,7 +169,9 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
     // 翻转第一个字符（'0'-'9'/'a'-'f' 互换），保证首字节不同
     invalid_sig.replace_range(0..1, if &valid_sig[0..1] == "0" { "1" } else { "0" });
 
-    const ITERATIONS: usize = 10000;
+    const BLOCKS: usize = 20;
+    const BLOCK_SIZE: usize = 1000;
+    const ITERATIONS: usize = BLOCKS * BLOCK_SIZE; // 20000/侧
 
     // 预热：避免首次编译/缓存影响
     for _ in 0..100 {
@@ -177,34 +179,40 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
         let _ = Signer::verify_hmac_sha256(secret, data, &invalid_sig);
     }
 
-    let start_valid = Instant::now();
-    for _ in 0..ITERATIONS {
-        let _ = Signer::verify_hmac_sha256(secret, data, &valid_sig);
-    }
-    let valid_elapsed = start_valid.elapsed();
+    // 交错块测量（ABAB…）：交替计时两侧各 BLOCK_SIZE 次，抵消并行负载的
+    // 慢漂移（Phase 4 去 flaky：串行分窗在负载波动下出现偶发 8x+ 假阳性）。
+    let mut valid_nanos: u128 = 0;
+    let mut invalid_nanos: u128 = 0;
+    for _ in 0..BLOCKS {
+        let start = Instant::now();
+        for _ in 0..BLOCK_SIZE {
+            let _ = Signer::verify_hmac_sha256(secret, data, &valid_sig);
+        }
+        valid_nanos += start.elapsed().as_nanos();
 
-    let start_invalid = Instant::now();
-    for _ in 0..ITERATIONS {
-        let _ = Signer::verify_hmac_sha256(secret, data, &invalid_sig);
+        let start = Instant::now();
+        for _ in 0..BLOCK_SIZE {
+            let _ = Signer::verify_hmac_sha256(secret, data, &invalid_sig);
+        }
+        invalid_nanos += start.elapsed().as_nanos();
     }
-    let invalid_elapsed = start_invalid.elapsed();
 
-    // 常量时间比较：错误签名不应明显快于正确签名（Phase 4 去 flaky 阈值 8x）。
+    // 常量时间比较：错误签名不应明显快于正确签名（阈值 4x，交错后噪声大幅收敛）。
     // 守卫边界（三维审查 L 记录）：本测试可捕获「跳过 HMAC/整段比较」类数量级
-    // 回归；「naive 逐字节 ==」类回归耗时比≈1.0-1.2（HMAC 计算占主导），3x/8x
-    // 均无法捕获——该类由实现侧 constant-time 原语（subtle 全长比较）保证，
-    // 见 signer.rs；本测试为防回归粗筛而非时序侧信道唯一防线。
-    let ratio = if invalid_elapsed < valid_elapsed {
-        valid_elapsed.as_nanos() as f64 / invalid_elapsed.as_nanos().max(1) as f64
+    // 回归；「naive 逐字节 ==」类回归耗时比≈1.0-1.2（HMAC 计算占主导），
+    // 无法由时序测试捕获——该类由实现侧 constant-time 原语（subtle 全长比较）
+    // 保证，见 signer.rs；本测试为防回归粗筛而非时序侧信道唯一防线。
+    let ratio = if invalid_nanos < valid_nanos {
+        valid_nanos as f64 / invalid_nanos.max(1) as f64
     } else {
-        invalid_elapsed.as_nanos() as f64 / valid_elapsed.as_nanos().max(1) as f64
+        invalid_nanos as f64 / valid_nanos.max(1) as f64
     };
     assert!(
-        ratio < 8.0,
-        "时序差异过大 ratio={:.2}, valid={:?}, invalid={:?}（常量时间比较失败）",
+        ratio < 4.0,
+        "时序差异过大 ratio={:.2}, valid_ns={}, invalid_ns={}（常量时间比较失败）",
         ratio,
-        valid_elapsed,
-        invalid_elapsed
+        valid_nanos,
+        invalid_nanos
     );
 }
 
