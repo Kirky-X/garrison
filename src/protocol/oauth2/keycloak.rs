@@ -476,6 +476,8 @@ impl KeycloakProvider {
         filtered.chars().take(128).collect()
     }
 
+    /// 校验 Keycloak 签发的 `id_token`（JWKS 公钥 + iss/aud/exp 校验），
+    /// 返回解码后的 claims。DAO 未注入时返回配置错误（无法缓存 JWKS）。
     pub async fn verify_id_token(&self, id_token: &str) -> GarrisonResult<KeycloakClaims> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 

@@ -148,13 +148,17 @@ pub(crate) mod test_support {
     /// "no such table"），文件库天然共享。tempdir 在函数返回时尝试
     /// 清理；Windows 下文件被池占用时由 tempfile 静默保留，无碍。
     pub async fn setup_db() -> DbPool {
+        // 预创建 0 字节文件（sqlite 视为空库）：不用 `?mode=rwc` query——
+        // 老 sqlx（MSRV-aware resolver 在 1.85 面选出的版本）会把 query
+        // 并入路径解析导致只读打开（attempt to write a readonly database）。
         let dir = tempfile::tempdir().expect("tempdir 应成功");
         let db_path = dir
             .path()
             .join("test.db")
             .to_string_lossy()
             .replace('\\', "/");
-        let url = format!("sqlite://{db_path}?mode=rwc");
+        std::fs::File::create(&db_path).expect("创建测试库文件应成功");
+        let url = format!("sqlite://{db_path}");
         let pool = init_dbnexus(&url).await.expect("init_dbnexus 应成功");
         let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
@@ -181,13 +185,15 @@ mod tests {
     /// 创建并初始化 SQLite 数据库（迁移 + 返回 pool）。
     /// 唯一临时文件库：见上方 `setup_db` 的内存库跨连接可见性说明。
     async fn setup_db() -> DbPool {
+        // 预创建 0 字节文件，URL 不带 query：原因同上方 setup_db 注释
         let dir = tempfile::tempdir().expect("tempdir 应成功");
         let db_path = dir
             .path()
             .join("test.db")
             .to_string_lossy()
             .replace('\\', "/");
-        let url = format!("sqlite://{db_path}?mode=rwc");
+        std::fs::File::create(&db_path).expect("创建测试库文件应成功");
+        let url = format!("sqlite://{db_path}");
         let pool = init_dbnexus(&url).await.expect("init_dbnexus 应成功");
         let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
