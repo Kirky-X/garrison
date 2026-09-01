@@ -1609,8 +1609,10 @@ mod tests {
         let token = "rm-token-001";
 
         // 构造 remember_me=true 的 LoginParams
-        let mut params = crate::stp::LoginParams::default();
-        params.remember_me = true;
+        let params = crate::stp::LoginParams {
+            remember_me: true,
+            ..Default::default()
+        };
         session
             .create_token_session(login_id, token, &params)
             .await
@@ -1637,8 +1639,10 @@ mod tests {
 
         // 4) 非 remember-me 登录使用全局 timeout，effective_timeout = None
         let session2 = GarrisonSession::new(Arc::new(MockDao::new()), 3600, 86400, 7_776_000);
-        let mut params2 = crate::stp::LoginParams::default();
-        params2.remember_me = false;
+        let params2 = crate::stp::LoginParams {
+            remember_me: false,
+            ..Default::default()
+        };
         session2
             .create_token_session(login_id, "normal-token", &params2)
             .await
@@ -1664,8 +1668,10 @@ mod tests {
         let session = GarrisonSession::new(Arc::new(MockDao::new()), 3600, 86400, 7_776_000);
         let login_id = "user-rm-integration";
         let token = "rm-itoken";
-        let mut params = crate::stp::LoginParams::default();
-        params.remember_me = true;
+        let params = crate::stp::LoginParams {
+            remember_me: true,
+            ..Default::default()
+        };
         session
             .create_token_session(login_id, token, &params)
             .await

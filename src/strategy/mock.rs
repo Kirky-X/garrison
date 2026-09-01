@@ -51,7 +51,7 @@ impl GarrisonDao for MockCacheDao {
         let mut result = Vec::new();
         // 支持尾部 `*` 通配前缀匹配（覆盖权限缓存失效场景）
         let prefix = pattern.strip_suffix('*').unwrap_or(pattern);
-        for (k, _) in self.store.lock().iter() {
+        for k in self.store.lock().keys() {
             if k.starts_with(prefix) {
                 result.push(k.clone());
             }

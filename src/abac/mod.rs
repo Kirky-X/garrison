@@ -153,9 +153,15 @@ pub async fn check_abac_with_policy(
 mod no_feature_tests {
     use super::*;
 
+    // 全局开关 ABAC_MISSING_FEATURE_POLICY 进程级共享：涉及它的测试必须互斥，
+    // 否则并行执行下 opt-in 测试的"置 1→恢复 0"窗口会让 fail-closed 测试读到 1。
+    static ABAC_POLICY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// CRIT-009: 声明了 abac 策略但 feature 关闭 → 必须 fail-closed Err(Config)。
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // 测试进程退出即释放；互斥正确性优先
     async fn abac_with_expr_but_feature_off_is_fail_closed() {
+        let _guard = ABAC_POLICY_LOCK.lock().unwrap();
         let r = check_abac_with_policy(
             "order:read",
             "Resource::\"order\"",
@@ -178,7 +184,9 @@ mod no_feature_tests {
 
     /// 显式 opt-in AllowWithWarn 时放行（并恢复默认）。
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)] // 测试进程退出即释放；互斥正确性优先
     async fn abac_allow_with_warn_opt_in_grants() {
+        let _guard = ABAC_POLICY_LOCK.lock().unwrap();
         set_abac_missing_feature_policy(true);
         let r = check_abac_with_policy(
             "order:read",
