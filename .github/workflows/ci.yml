@@ -135,6 +135,11 @@ jobs:
     name: Test (${{ matrix.os }} / Rust ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    env:
+      # Linux runner 上 sqlite 文件库 URL 在 1.85/beta 面触发
+      # SQLITE_READONLY（预创建空文件亦然），统一回退内存库；
+      # macOS/Windows 文件库修多连接 "no such table" 偶发。
+      GARRISON_TEST_SQLITE_MEMORY: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -241,6 +246,8 @@ jobs:
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
+    env:
+      GARRISON_TEST_SQLITE_MEMORY: "1"
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -263,6 +270,9 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    env:
+      # llvm-cov 面下 sqlite 文件库 URL 触发 SQLITE_READONLY，回退内存库
+      GARRISON_TEST_SQLITE_MEMORY: "1"
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

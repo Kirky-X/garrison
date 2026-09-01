@@ -89,7 +89,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 4. 构造 GarrisonLogicDefault，注入 hasher + user_repository
     let config = Arc::new(GarrisonConfig::default_config());
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 7_776_000));
     let firewall = Arc::new(GarrisonPermissionStrategyDefault::new(Arc::new(
         NoopInterface,
     )));

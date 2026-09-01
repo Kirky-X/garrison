@@ -143,11 +143,22 @@ pub(crate) mod test_support {
 
     /// 创建并初始化 SQLite 数据库（迁移 + 返回 pool）。
     ///
-    /// 用唯一临时文件而非 `sqlite::memory:`：内存库在连接池多连接下
-    /// 跨连接不可见（迁移建表与业务查询可能落不同连接，导致偶发
-    /// "no such table"），文件库天然共享。tempdir 在函数返回时尝试
-    /// 清理；Windows 下文件被池占用时由 tempfile 静默保留，无碍。
+    /// 默认用唯一临时文件库：内存库在连接池多连接下跨连接不可见
+    /// （迁移建表与业务查询可能落不同连接，偶发 "no such table"），
+    /// 文件库天然共享。设 `GARRISON_TEST_SQLITE_MEMORY=1` 回退内存库——
+    /// CI 的 beta/llvm-cov 面文件库触发 SQLITE_READONLY（机制未明、
+    /// 稳定复现），这两面历史上对内存库无跨连接问题。
     pub async fn setup_db() -> DbPool {
+        if std::env::var("GARRISON_TEST_SQLITE_MEMORY").as_deref() == Ok("1") {
+            let pool = init_dbnexus("sqlite::memory:")
+                .await
+                .expect("init_dbnexus 应成功");
+            let migration =
+                GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
+            let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+            assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+            return pool;
+        }
         // 预创建 0 字节文件（sqlite 视为空库）：不用 `?mode=rwc` query——
         // 老 sqlx（MSRV-aware resolver 在 1.85 面选出的版本）会把 query
         // 并入路径解析导致只读打开（attempt to write a readonly database）。
@@ -183,8 +194,19 @@ mod tests {
     }
 
     /// 创建并初始化 SQLite 数据库（迁移 + 返回 pool）。
-    /// 唯一临时文件库：见上方 `setup_db` 的内存库跨连接可见性说明。
+    /// 唯一临时文件库；`GARRISON_TEST_SQLITE_MEMORY=1` 时回退内存库
+    /// （见上方 `setup_db` 文档）。
     async fn setup_db() -> DbPool {
+        if std::env::var("GARRISON_TEST_SQLITE_MEMORY").as_deref() == Ok("1") {
+            let pool = init_dbnexus("sqlite::memory:")
+                .await
+                .expect("init_dbnexus 应成功");
+            let migration =
+                GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
+            let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+            assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+            return pool;
+        }
         // 预创建 0 字节文件，URL 不带 query：原因同上方 setup_db 注释
         let dir = tempfile::tempdir().expect("tempdir 应成功");
         let db_path = dir
