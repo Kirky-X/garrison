@@ -215,3 +215,4 @@ flamegraph.svg
 /specmark/
 skills-lock.json
 .cargo/
+.workbuddy-ai/
