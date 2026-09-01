@@ -90,7 +90,7 @@ jobs:
       - name: Check (production features)
         run: cargo check --features "production" --locked
       - name: Check (examples, all features)
-        run: cargo check -p examples --all-features --locked
+        run: cargo check -p garrison-examples --all-features --locked
 
   # === 格式化检查 ===
   fmt:
@@ -219,16 +219,23 @@ jobs:
   # === cargo-deny（漏洞 / 许可证 / 禁用源 / 重复依赖） ===
   # cargo-deny 已覆盖 cargo-audit 的漏洞检查功能，且配置统一在 deny.toml 管理。
   # 删除独立 audit job，避免维护两份忽略列表（audit.toml + deny.toml）。
-  # cargo-deny-action 会自动生成 Cargo.lock（库 crate 不提交 Cargo.lock）
+  # 用 runner 原生 cargo-deny 而非 EmbarkStudios 容器 action：容器内
+  # rustup 仅含固定版本 musl toolchain，无法满足 rust-toolchain.toml
+  # 的 stable override（startup 即报 uninstalled toolchain）。
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # v1
         with:
-          arguments: --all-features --locked
+          tool: cargo-deny
+      - name: Generate Cargo.lock (library crate, not committed)
+        run: cargo generate-lockfile
+      - name: Run cargo deny
+        run: cargo deny --all-features --locked check
 
   # === 集成测试（tests/ 目录，仅 Linux + MSRV） ===
   integration-test:
