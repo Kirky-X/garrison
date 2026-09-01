@@ -2859,7 +2859,6 @@ mod tests {
             config.enable_jwt_revocation = false;
             config.allow_stateless_jwt_no_revocation = false;
             config.throw_on_not_login = false;
-            let secret = "coverage-secret-stateless-0123456789";
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
             let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let firewall = Arc::new(MockFirewall {
