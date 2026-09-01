@@ -162,10 +162,8 @@ pub(crate) mod test_support {
         // 预创建 0 字节文件（sqlite 视为空库）：不用 `?mode=rwc` query——
         // 老 sqlx（MSRV-aware resolver 在 1.85 面选出的版本）会把 query
         // 并入路径解析导致只读打开（attempt to write a readonly database）。
-        let dir = tempfile::tempdir().expect("tempdir 应成功");
-        let db_path = dir
-            .path()
-            .join("test.db")
+        let db_path = std::env::temp_dir()
+            .join(format!("garrison_test_{}.db", uuid::Uuid::new_v4()))
             .to_string_lossy()
             .replace('\\', "/");
         std::fs::File::create(&db_path).expect("创建测试库文件应成功");
@@ -208,10 +206,8 @@ mod tests {
             return pool;
         }
         // 预创建 0 字节文件，URL 不带 query：原因同上方 setup_db 注释
-        let dir = tempfile::tempdir().expect("tempdir 应成功");
-        let db_path = dir
-            .path()
-            .join("test.db")
+        let db_path = std::env::temp_dir()
+            .join(format!("garrison_test_{}.db", uuid::Uuid::new_v4()))
             .to_string_lossy()
             .replace('\\', "/");
         std::fs::File::create(&db_path).expect("创建测试库文件应成功");
