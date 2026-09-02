@@ -251,7 +251,14 @@ impl GarrisonDao for InMemoryDao {
             Ok(1)
         } else {
             let (val_str, _) = store.get(key).cloned().unwrap();
-            let new_val = val_str.parse::<u64>().unwrap_or(0) + 1;
+            // Rule 12：解析失败显式报错，禁止静默按 0 处理导致限速计数器重置
+            //（安全审查 S1 修复，与 decr/compare_and_update_if_greater 对齐）
+            let cur_val: u64 = val_str.parse().map_err(|_| {
+                GarrisonError::Dao(format!("dao-incr-parse-u64::{}::{}", key, val_str))
+            })?;
+            let new_val = cur_val
+                .checked_add(1)
+                .ok_or_else(|| GarrisonError::Dao(format!("dao-incr-overflow-u64::{}", key)))?;
             // 保留原 expire_at（不重置 TTL）
             let expire_at = store.get(key).and_then(|(_, e)| *e);
             store.insert(key.to_string(), (new_val.to_string(), expire_at));

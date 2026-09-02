@@ -724,6 +724,7 @@ async fn default_router_handles_request() {
 /// 2. handler 内 `TENANT.try_get()` 返回 `Ok(ctx)` 且 `ctx.tenant_id == 42`
 /// 3. 响应 body 含 `tenant:42`
 #[cfg(feature = "tenant-isolation")]
+#[serial]
 #[tokio::test]
 async fn tenant_resolution_middleware_sets_tenant_context() {
     use crate::context::tenant::{HeaderTenantResolver, TenantResolver, TENANT};
@@ -772,6 +773,7 @@ async fn tenant_resolution_middleware_sets_tenant_context() {
 /// 验证：请求不带 `X-Tenant-Id` header，middleware 调用 `resolver.resolve()` 失败，
 /// 返回 `StatusCode::BAD_REQUEST`，不执行 handler。
 #[cfg(feature = "tenant-isolation")]
+#[serial]
 #[tokio::test]
 async fn tenant_resolution_middleware_missing_header_returns_400() {
     use crate::context::tenant::{HeaderTenantResolver, TenantResolver};

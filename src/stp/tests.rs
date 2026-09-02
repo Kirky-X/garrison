@@ -175,6 +175,7 @@ async fn init_global_manager_with_perms(
 // ------------------------------------------------------------------------
 
 /// 验证 login 返回非空 token 并创建会话。
+#[serial]
 #[tokio::test]
 async fn login_creates_session_and_returns_token() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -192,6 +193,7 @@ async fn login_creates_session_and_returns_token() {
 }
 
 /// 验证重复登录生成不同 token 并记录多 token。
+#[serial]
 #[tokio::test]
 async fn login_repeated_creates_multiple_tokens() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -210,6 +212,7 @@ async fn login_repeated_creates_multiple_tokens() {
 }
 
 /// 验证 token_style=random_64 生成 64 字符 token。
+#[serial]
 #[tokio::test]
 async fn login_with_random_64_style() {
     let logic = make_logic(3600, 86400, false, "random_64", true, true);
@@ -222,6 +225,7 @@ async fn login_with_random_64_style() {
 /// R-sessiontokenconsistency-002 后 simple 生成委托 `SimpleTokenStyle`（HMAC），
 /// 仅在 `secure-simple-token` feature 下可用（与下方 fail-closed 用例互补覆盖）。
 #[cfg(feature = "secure-simple-token")]
+#[serial]
 #[tokio::test]
 async fn login_with_simple_style() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -233,6 +237,7 @@ async fn login_with_simple_style() {
 ///
 /// 覆盖 `generate_token` 的 `#[cfg(not(feature = "secure-simple-token"))]` 分支。
 #[cfg(not(feature = "secure-simple-token"))]
+#[serial]
 #[tokio::test]
 async fn login_simple_without_feature_fails_closed() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -246,6 +251,7 @@ async fn login_simple_without_feature_fails_closed() {
 /// 验证未知 token_style 时 login 返回 Err。
 ///
 /// 覆盖 `generate_token` 的 `other =>` 分支，断言返回 `GarrisonError::Config`。
+#[serial]
 #[tokio::test]
 async fn create_token_unknown_style_errors() {
     let logic = make_logic(3600, 86400, false, "unknown_style", true, true);
@@ -258,6 +264,7 @@ async fn create_token_unknown_style_errors() {
 }
 
 /// 验证 login_with_token 用自定义 token 创建会话。
+#[serial]
 #[tokio::test]
 async fn login_with_custom_token() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -281,6 +288,7 @@ async fn login_with_custom_token() {
 // ------------------------------------------------------------------------
 
 /// 验证 logout 销毁当前 token 的会话。
+#[serial]
 #[tokio::test]
 async fn logout_destroys_current_token() {
     let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
@@ -298,6 +306,7 @@ async fn logout_destroys_current_token() {
 }
 
 /// 验证 logout 未登录时幂等返回 Ok。
+#[serial]
 #[tokio::test]
 async fn logout_when_not_logged_in_is_noop() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -307,6 +316,7 @@ async fn logout_when_not_logged_in_is_noop() {
 }
 
 /// 验证 logout_by_login_id 销毁所有 token。
+#[serial]
 #[tokio::test]
 async fn logout_by_login_id_destroys_all_tokens() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -336,6 +346,7 @@ async fn logout_by_login_id_destroys_all_tokens() {
 }
 
 /// 验证 kickout 按账号踢出（语义等同 logout_by_login_id）。
+#[serial]
 #[tokio::test]
 async fn kickout_by_account_destroys_session() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -358,6 +369,7 @@ async fn kickout_by_account_destroys_session() {
 }
 
 /// 验证 kickout_by_token 按 token 踢出。
+#[serial]
 #[tokio::test]
 async fn kickout_by_token_destroys_token_session() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -616,6 +628,7 @@ async fn get_login_id_returns_none_for_invalid_token() {
 // ------------------------------------------------------------------------
 
 /// 验证 current_token 未设置时抛错。
+#[serial]
 #[test]
 fn current_token_errors_when_not_set() {
     let result = current_token();
@@ -626,6 +639,7 @@ fn current_token_errors_when_not_set() {
 }
 
 /// 验证 current_token 在作用域内返回 token。
+#[serial]
 #[tokio::test]
 async fn current_token_returns_value_in_scope() {
     with_current_token("scoped-token".to_string(), async {
@@ -649,6 +663,7 @@ async fn current_token_returns_value_in_scope() {
 /// 2. `GarrisonContext::capture()` 捕获上下文
 /// 3. `tokio::spawn` 子任务，在子任务内 `ctx.within()` 恢复上下文
 /// 4. 子任务内 `current_token()` 应返回父 task 设置的 token
+#[serial]
 #[tokio::test(flavor = "multi_thread")]
 async fn task_local_propagates_across_spawn() {
     // 1. 在父 task 设置 current_token 并捕获上下文
@@ -681,6 +696,7 @@ async fn task_local_propagates_across_spawn() {
 ///
 /// 在未设置 `current_token` 的 task 中 capture，`within()` 内
 /// `current_token()` 应失败（返回 Err）。
+#[serial]
 #[tokio::test(flavor = "multi_thread")]
 async fn garrison_context_capture_without_token_propagates_none() {
     // 在未设置 current_token 的 task 中 capture
@@ -700,6 +716,7 @@ async fn garrison_context_capture_without_token_propagates_none() {
 // ------------------------------------------------------------------------
 
 /// 已登录且 firewall 返回 true 时 check_permission 通过。
+#[serial]
 #[tokio::test]
 async fn check_permission_held_returns_ok() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -713,6 +730,7 @@ async fn check_permission_held_returns_ok() {
 }
 
 /// 已登录但 firewall 返回 false 时抛 NotPermission。
+#[serial]
 #[tokio::test]
 async fn check_permission_not_held_throws_not_permission() {
     let logic = make_logic(3600, 86400, true, "uuid", false, true);
@@ -729,6 +747,7 @@ async fn check_permission_not_held_throws_not_permission() {
 }
 
 /// 未登录且 throw_on_not_login=true 时抛 NotLogin。
+#[serial]
 #[tokio::test]
 async fn check_permission_not_login_throws_when_throw_on_not_login() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -741,6 +760,7 @@ async fn check_permission_not_login_throws_when_throw_on_not_login() {
 }
 
 /// 未登录且 throw_on_not_login=false 时 check_permission 抛 NotPermission（降级为无权限）。
+#[serial]
 #[tokio::test]
 async fn check_permission_not_login_throws_not_permission_when_silent() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -757,6 +777,7 @@ async fn check_permission_not_login_throws_not_permission_when_silent() {
 // ------------------------------------------------------------------------
 
 /// 已登录且 firewall 返回 true 时 check_role 通过。
+#[serial]
 #[tokio::test]
 async fn check_role_held_returns_ok() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -766,6 +787,7 @@ async fn check_role_held_returns_ok() {
 }
 
 /// 已登录但 firewall 返回 false 时抛 NotRole。
+#[serial]
 #[tokio::test]
 async fn check_role_not_held_throws_not_role() {
     let logic = make_logic(3600, 86400, true, "uuid", true, false);
@@ -778,6 +800,7 @@ async fn check_role_not_held_throws_not_role() {
 }
 
 /// 未登录且 throw_on_not_login=true 时 check_role 抛 NotLogin。
+#[serial]
 #[tokio::test]
 async fn check_role_not_login_throws_when_throw_on_not_login() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -790,6 +813,7 @@ async fn check_role_not_login_throws_when_throw_on_not_login() {
 }
 
 /// 未登录且 throw_on_not_login=false 时 check_role 抛 NotRole（降级为无角色）。
+#[serial]
 #[tokio::test]
 async fn check_role_not_login_throws_not_role_when_silent() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -930,6 +954,7 @@ async fn util_check_disable_fails_when_not_initialized() {
 // ------------------------------------------------------------------------
 
 /// has_permission 空字符串返回 InvalidParam（校验在 logic() 之前，不依赖全局状态）。
+#[serial]
 #[tokio::test]
 async fn util_has_permission_empty_string_returns_invalid_param() {
     let result = GarrisonUtil::has_permission("").await;
@@ -941,6 +966,7 @@ async fn util_has_permission_empty_string_returns_invalid_param() {
 }
 
 /// has_role 空字符串返回 InvalidParam。
+#[serial]
 #[tokio::test]
 async fn util_has_role_empty_string_returns_invalid_param() {
     let result = GarrisonUtil::has_role("").await;
@@ -1294,6 +1320,7 @@ async fn util_check_disable_returns_ok_by_default() {
 ///
 /// 0.2.1 起login_by_token 被 override：优先委托 auth_logic，否则使用 verify_token。
 /// uuid token 不包含 login_id，verify_token 返回 InvalidToken。
+#[serial]
 #[tokio::test]
 async fn login_by_token_uuid_style_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -1322,6 +1349,7 @@ async fn util_login_by_token_fails_when_not_initialized() {
 /// A11: core-token `SimpleTokenStyle` 改为 HMAC-SHA256 签名格式
 /// `<login_id>-<uuid>.<hmac>`，需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
 #[cfg(feature = "secure-simple-token")]
+#[serial]
 #[tokio::test]
 async fn verify_token_simple_style_returns_login_id() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -1335,6 +1363,7 @@ async fn verify_token_simple_style_returns_login_id() {
 /// verify_token 对 uuid style token 返回 InvalidToken（spec Scenario）。
 ///
 /// uuid token 不包含 login_id，Token::verify 返回 None → InvalidToken。
+#[serial]
 #[tokio::test]
 async fn verify_token_uuid_style_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -1350,6 +1379,7 @@ async fn verify_token_uuid_style_returns_invalid_token() {
 /// verify_token 对无效 token 返回 InvalidToken（spec Scenario）。
 ///
 /// "nodash" 无 '-' 分隔符，SimpleTokenStyle::verify 返回 Ok(None) → InvalidToken。
+#[serial]
 #[tokio::test]
 async fn verify_token_invalid_returns_error() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -1365,6 +1395,7 @@ async fn verify_token_invalid_returns_error() {
 ///
 /// A11: SimpleTokenStyle 要求 token 含合法 HMAC-SHA256 签名，防止身份伪造。
 #[cfg(feature = "secure-simple-token")]
+#[serial]
 #[tokio::test]
 async fn verify_token_malformed_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
@@ -1393,6 +1424,7 @@ async fn util_verify_token_fails_when_not_initialized() {
 }
 
 /// refresh_token default 返回 NotImplemented（spec Scenario: 未启用 protocol-jwt）。
+#[serial]
 #[tokio::test]
 async fn refresh_token_default_returns_not_implemented() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -2328,6 +2360,7 @@ fn jwt_mode_default_is_mixin() {
 /// R-001: JwtMode 是 Copy（无需 Arc 包装）。
 ///
 /// 覆盖 spec protocol-jwt-modes R-001 验收 case 2。
+#[serial]
 #[test]
 fn jwt_mode_is_copy() {
     let mode = JwtMode::Stateless;
@@ -2459,6 +2492,7 @@ async fn check_login_simple_only_session() {
 /// trait default `login_with_password` 返回 NotImplemented（spec: 需 account-credential + db-sqlite）。
 ///
 /// 覆盖行 331-333（login_with_password 默认实现）。
+#[serial]
 #[tokio::test]
 async fn trait_default_login_with_password_returns_not_implemented() {
     let logic = MinimalLogic {
@@ -2480,6 +2514,7 @@ async fn trait_default_login_with_password_returns_not_implemented() {
 ///
 /// 覆盖 check_login_mixin 的 listener 分支（行 749-751, 753）。
 /// 触发条件：account session 不存在 → is_valid 返回 false，但 token session 仍存在。
+#[serial]
 #[tokio::test]
 async fn check_login_mixin_broadcasts_session_timeout_when_account_missing() {
     let (dao, logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
@@ -2503,6 +2538,7 @@ async fn check_login_mixin_broadcasts_session_timeout_when_account_missing() {
 /// check_login_simple 在 token 无效且 listener_manager 注入时广播 SessionTimeout 事件。
 ///
 /// 覆盖 check_login_simple 的 listener 分支（行 774-777, 779）。
+#[serial]
 #[tokio::test]
 async fn check_login_simple_broadcasts_session_timeout_when_account_missing() {
     let (dao, logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
@@ -2706,6 +2742,7 @@ async fn util_login_by_token_delegates_to_logic_after_init() {
 // ------------------------------------------------------------------------
 
 /// check_access_token 未登录时返回 NotLogin（覆盖 trait 默认实现 Err 路径）。
+#[serial]
 #[tokio::test]
 async fn check_access_token_not_logged_in_returns_not_login() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -2718,6 +2755,7 @@ async fn check_access_token_not_logged_in_returns_not_login() {
 }
 
 /// check_client_token 未登录时返回 NotLogin。
+#[serial]
 #[tokio::test]
 async fn check_client_token_not_logged_in_returns_not_login() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -2730,6 +2768,7 @@ async fn check_client_token_not_logged_in_returns_not_login() {
 }
 
 /// check_temp_token 未登录时返回 NotLogin。
+#[serial]
 #[tokio::test]
 async fn check_temp_token_not_logged_in_returns_not_login() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -2987,6 +3026,7 @@ async fn sync_check_api_key_executes_without_panic() {
 /// MockClock 推进 2 秒后 check_login 返回 false（踢出）。
 ///
 /// 使用 MockClock 替代 `tokio::time::sleep` 消除 flaky 测试（T007）。
+#[serial]
 #[tokio::test]
 async fn hover_timeout_evicts_inactive_session() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -3024,6 +3064,7 @@ async fn hover_timeout_evicts_inactive_session() {
 }
 
 /// R-hover-004: `session_hover_timeout=10`（10秒），login 后立即 check_login 返回 true。
+#[serial]
 #[tokio::test]
 async fn hover_timeout_active_session_not_evicted() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -3058,6 +3099,7 @@ async fn hover_timeout_active_session_not_evicted() {
 }
 
 /// R-hover-001: 默认配置 `session_hover_timeout=-1`，login 后 check_login 返回 true（不受悬停影响）。
+#[serial]
 #[tokio::test]
 async fn hover_timeout_disabled_by_default() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -4216,6 +4258,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
         async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
             self.inner.get_timeout(key).await
         }
+        crate::atomic_test_fallback!();
     }
 
     let mock_dao = Arc::new(MockDao::new());

@@ -376,8 +376,10 @@ mod no_feature_tests {
     use crate::dao::tests::MockDao;
     use crate::manager::GarrisonManager;
     use crate::stp::mock::MockInterface;
+    use serial_test::serial;
 
     /// CRIT-008: feature 关闭时 check_api_key 必须 fail-closed 返回 Err(Config)。
+    #[serial]
     #[tokio::test]
     async fn check_api_key_without_feature_returns_config_error() {
         GarrisonManager::reset_for_test();

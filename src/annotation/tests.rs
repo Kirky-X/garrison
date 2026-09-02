@@ -535,6 +535,7 @@ fn annotation_from_str_data_variant_returns_err() {
 }
 
 /// Display 对所有 unit 变体输出与 name() 一致的字符串。
+#[serial]
 #[test]
 fn display_matches_name_for_all_unit_variants() {
     let unit_variants = [

@@ -59,6 +59,7 @@ impl GarrisonDao for MockDao {
         data.remove(key);
         Ok(())
     }
+    crate::atomic_test_fallback!();
 }
 
 #[cfg(test)]

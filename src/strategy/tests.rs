@@ -937,6 +937,8 @@ async fn check_permission_cache_write_failure_warns_but_returns_result() {
         async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
+
+        crate::atomic_test_fallback!();
     }
 
     let mut iface = MockInterface::new();

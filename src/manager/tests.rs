@@ -317,6 +317,7 @@ async fn init_overwrites_existing() {
 }
 
 /// 验证 inventory 已注册 default factory。
+#[serial]
 #[test]
 fn default_factory_registered_via_inventory() {
     use std::iter::Iterator;
@@ -331,6 +332,7 @@ fn default_factory_registered_via_inventory() {
 }
 
 /// 验证 default factory 构造的 logic 可正常 login。
+#[serial]
 #[tokio::test]
 async fn default_factory_builds_working_logic() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -980,6 +982,7 @@ async fn manager_drop_cancels_cleanup_task() {
         async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
+        crate::atomic_test_fallback!();
     }
 
     let counter = Arc::new(AtomicUsize::new(0));

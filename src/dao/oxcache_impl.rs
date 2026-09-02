@@ -113,6 +113,11 @@ pub struct GarrisonDaoOxcache {
     /// 跨 await 持锁序列化所有原子操作。改为 `parking_lot::Mutex` + `_sync` API
     /// （`cache.get_sync()`），锁内全同步操作（<1μs），不让出 tokio task，
     /// 与 `get`/`set` 方法的 `_sync` 模式对齐（文件 L118-127 设计结论）。
+    ///
+    /// **扩展上限**（性能审查 P2）：此为跨**所有 key** 的单把全局锁——
+    /// 六个原子方法在不同 key 上也无法并行（实测 100-task 不同 key 与同 key
+    /// 同为全串行）。当前负载（临界区 <1μs、单请求原子操作个位数）不构成
+    /// 瓶颈；目标十万级 QPS 前应引入按 key hash 的分片锁（16-64 shard）。
     atomic_mutex: parking_lot::Mutex<()>,
     /// key 索引，用于实现 `keys()` 方法（oxcache 0.3.3 无原生 keys/iter API）。
     /// 仅在 `dao-key-index` feature 启用时维护（由 `protocol-apikey` /

@@ -66,6 +66,11 @@ impl GarrisonDao for MockDao {
         }
         Ok(value)
     }
+
+    // T012/架构审查 A3：其余 5 个原子方法经子集宏展开（逻辑单点维护于
+    // dao::atomic_fallback::impls），本 mock 自定义的单锁原子 get_and_delete
+    //（vuln-0005 语义）保留不被覆盖。
+    crate::atomic_test_fallback_no_get_and_delete!();
 }
 
 /// 创建 handler（使用 MockDao）。

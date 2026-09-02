@@ -58,9 +58,9 @@ impl GarrisonException {
         self
     }
 
-    /// 链式设置 login_id。
-    pub fn with_login_id(mut self, login_id: i64) -> Self {
-        self.login_id = Some(login_id);
+    /// 链式设置 login_id（与全局 login_id 一致为 `String` 语义）。
+    pub fn with_login_id(mut self, login_id: impl Into<String>) -> Self {
+        self.login_id = Some(login_id.into());
         self
     }
 
@@ -83,9 +83,9 @@ impl GarrisonException {
 }
 
 impl From<GarrisonException> for GarrisonError {
-    /// 将 `GarrisonException` 转换为 `GarrisonError::Exception` 变体。
+    /// 将 `GarrisonException` 转换为 `GarrisonError::Exception` 变体（Box 装载控制枚举体积）。
     fn from(ex: GarrisonException) -> Self {
-        GarrisonError::Exception(ex)
+        GarrisonError::Exception(Box::new(ex))
     }
 }
 
@@ -98,7 +98,7 @@ impl From<GarrisonError> for GarrisonException {
     /// - 其他 → code=500（业务异常）
     fn from(err: GarrisonError) -> Self {
         match err {
-            GarrisonError::Exception(ex) => ex,
+            GarrisonError::Exception(ex) => *ex,
             GarrisonError::NotLogin(msg) => GarrisonException::new(-1, msg),
             GarrisonError::InvalidToken(msg) => GarrisonException::new(-1, msg),
             GarrisonError::ExpiredToken(msg) => GarrisonException::new(-1, msg),
@@ -126,12 +126,21 @@ impl std::fmt::Debug for GarrisonException {
             },
             None => "None".to_string(),
         };
+        // 脱敏：login_id 为 String（可能含手机号/邮箱等 PII），同样仅输出前 4 字符
+        //（安全审查 S2 修复：String 化后明文输出面扩大）
+        let masked_login_id = match &self.login_id {
+            Some(id) => {
+                let preview = id.get(..4).unwrap_or(id);
+                format!("Some(\"{}***\")", preview)
+            },
+            None => "None".to_string(),
+        };
         f.debug_struct("GarrisonException")
             .field("code", &self.code)
             .field("message", &self.message)
             .field("login_type", &self.login_type)
             .field("token_value", &masked_token)
-            .field("login_id", &self.login_id)
+            .field("login_id", &masked_login_id)
             .field("extras", &self.extras)
             .finish()
     }

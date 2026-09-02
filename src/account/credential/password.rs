@@ -8,7 +8,7 @@
 //!
 //! - `PasswordHasher` trait 定义 `hash` / `verify` 抽象
 //! - `Argon2Hasher` 使用 argon2 0.5 crate（Argon2id, m=19456, t=2, p=1）
-//! - `BcryptHasher` 使用 bcrypt 0.15 crate（默认 cost=12）
+//! - `BcryptHasher` 使用 bcrypt 0.19 crate（默认 cost=12）
 //! - `PasswordVerifier` 根据 hash 前缀自动选择算法校验
 //!
 //! ## 迁移说明（v0.6.0）
@@ -169,7 +169,7 @@ impl PasswordHasher for Argon2Hasher {
 
 /// Bcrypt 密码哈希器。
 ///
-/// 使用 bcrypt 0.15 crate，默认 cost=12。
+/// 使用 bcrypt 0.19 crate，默认 cost=12。
 pub struct BcryptHasher {
     /// cost 参数（4-31），默认 12。
     cost: u32,

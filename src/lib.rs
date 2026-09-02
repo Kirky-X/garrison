@@ -118,7 +118,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! garrison = { version = "0.8", features = ["web-axum", "protocol-jwt"] }
+//! garrison = { version = "0.9", features = ["web-axum", "protocol-jwt"] }
 //! ```
 //!
 //! ```rust

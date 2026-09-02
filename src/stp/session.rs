@@ -1559,6 +1559,7 @@ mod tests {
     #![allow(clippy::useless_conversion)]
     use super::*;
     use crate::config::GarrisonConfig;
+    use serial_test::serial;
     use std::sync::Arc;
 
     /// 最小 mock：实现 `GarrisonCore` + 9 个必需 `SessionLogic` 方法
@@ -1771,6 +1772,7 @@ mod tests {
                 self.store.lock().remove(key);
                 Ok(())
             }
+            crate::atomic_test_fallback!();
         }
 
         // --------------------------------------------------------------------
@@ -2533,6 +2535,7 @@ mod tests {
                 self.store.lock().remove(key);
                 Ok(())
             }
+            crate::atomic_test_fallback!();
         }
 
         /// 最小 firewall mock（提供 L3 回调数据源）。
@@ -2835,6 +2838,7 @@ mod tests {
 
         /// Stateless 模式 + token_style != jwt → Err Config。
         #[cfg(feature = "protocol-jwt")]
+        #[serial]
         #[tokio::test]
         async fn check_login_stateless_wrong_token_style_returns_config_error() {
             // token_style=uuid 但 jwt_mode=Stateless
@@ -2852,6 +2856,7 @@ mod tests {
         /// T017：token_style=jwt + jwt_mode=Stateless + enable_jwt_revocation=false 互斥，
         /// 启动校验 fail-closed 返回 Config 错误（不可吊销的永久 JWT 凭证）。不依赖 token 合法性。
         #[cfg(feature = "protocol-jwt")]
+        #[serial]
         #[tokio::test]
         async fn check_login_stateless_without_revocation_rejected() {
             let mut config = GarrisonConfig::default_config();
@@ -2881,6 +2886,7 @@ mod tests {
         /// T017 正例：启用 `allow_stateless_jwt_no_revocation` 风险接受开关后，
         /// 该组合被放行（需有效 JWT 才能真正通过 verify）。
         #[cfg(feature = "protocol-jwt")]
+        #[serial]
         #[tokio::test]
         async fn check_login_stateless_risk_accept_flag_allows() {
             let secret = "coverage-secret-stateless-0123456789";
@@ -4133,6 +4139,7 @@ mod tests {
 
         /// token_style=simple 未启用 `secure-simple-token` feature 时 fail-closed 返回 Config 错误。
         #[cfg(not(feature = "secure-simple-token"))]
+        #[serial]
         #[tokio::test]
         async fn generate_token_simple_style_requires_feature() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -4159,6 +4166,7 @@ mod tests {
         ///
         /// 覆盖 lines 726-739：`jwt` 分支（委托 JwtHandler::sign）。
         #[cfg(feature = "protocol-jwt")]
+        #[serial]
         #[tokio::test]
         async fn generate_token_jwt_style() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -4193,6 +4201,7 @@ mod tests {
         /// Mixin 模式 + 有效 token → Ok(true)。
         ///
         /// 覆盖 lines 808-821：valid=true → check_and_update_hover → check_and_renew → Ok(true)。
+        #[serial]
         #[tokio::test]
         async fn check_login_mixin_valid_token_returns_true() {
             let logic = make_logic(false).with_jwt_mode(JwtMode::Mixin);
@@ -4420,6 +4429,7 @@ mod tests {
         }
 
         /// logout 后 jti 写入黑名单（dao.get 返回 Some）。
+        #[serial]
         #[tokio::test]
         async fn logout_writes_jti_to_blacklist() {
             let (logic, dao) = make_jwt_revocation_logic(true);
@@ -4448,6 +4458,7 @@ mod tests {
         }
 
         /// stateless 模式对已撤销 JWT 返回 TokenRevoked 错误。
+        #[serial]
         #[tokio::test]
         async fn stateless_rejects_revoked_jwt() {
             let (logic, _dao) = make_jwt_revocation_logic(true);
@@ -4473,6 +4484,7 @@ mod tests {
         }
 
         /// 未过期且未撤销的 JWT 正常通过 stateless check_login。
+        #[serial]
         #[tokio::test]
         async fn stateless_accepts_valid_jwt() {
             let (logic, _dao) = make_jwt_revocation_logic(true);
@@ -4489,6 +4501,7 @@ mod tests {
         }
 
         /// enable_jwt_revocation=false 时 logout 不写黑名单。
+        #[serial]
         #[tokio::test]
         async fn no_blacklist_when_revocation_disabled() {
             let (logic, dao) = make_jwt_revocation_logic(false);
@@ -4526,6 +4539,10 @@ mod firewall_tests {
     use crate::manager::GarrisonManager;
     use crate::stp::mock::MockInterface;
     use crate::stp::{with_current_ip, with_current_token, GarrisonUtil};
+    // setup() 会 reset_for_test() 覆盖全局单例并替换 DAO：并发线程下彼此的
+    // brute-force 计数被清零 → `brute_force_blocks_ip_after_repeated_failed_check_login`
+    // 基线 flaky（#5 失败 #4/#6 通过）。按仓库惯例（account/metrics.rs）串行化。
+    use serial_test::serial;
 
     async fn setup() {
         GarrisonManager::reset_for_test();
@@ -4548,6 +4565,7 @@ mod firewall_tests {
 
     /// CRIT-010: 同一 IP 反复认证失败 → 触发暴力破解封禁（FirewallBlocked）。
     #[tokio::test]
+    #[serial]
     async fn brute_force_blocks_ip_after_repeated_failed_check_login() {
         setup().await;
         let ip = "203.0.113.5".to_string();
@@ -4575,6 +4593,7 @@ mod firewall_tests {
 
     /// CRIT-010: 认证成功路径应清零失败计数（不触发封禁）。
     #[tokio::test]
+    #[serial]
     async fn successful_login_resets_failure_count() {
         setup().await;
         let ip = "198.51.100.7".to_string();
@@ -4614,6 +4633,7 @@ mod firewall_tests {
 
     /// T010: 启用 firewall feature 时 builder 应自动注入 firewall_hook。
     #[tokio::test]
+    #[serial]
     async fn builder_auto_wires_firewall_hook() {
         setup().await;
         let injected = crate::manager::GarrisonManager::logic()
