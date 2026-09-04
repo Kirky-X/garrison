@@ -150,6 +150,30 @@ impl UserCacheService {
         result
     }
 
+    /// TTL 随机抖动（±10%），防止缓存雪崩。
+    ///
+    /// 大量 key 使用相同基础 TTL 时会同时过期，引发 stampede（即使有 singleflight，
+    /// 集中回源仍会增加 L3 压力）。通过 `std::hash` 的随机种子为每次调用引入
+    /// ±10% 的确定性抖动，使过期时间分散。
+    ///
+    /// # 参数
+    /// - `base_secs`: 基础 TTL 秒数（必须 > 0）。
+    ///
+    /// # 返回
+    /// 抖动后的 TTL 秒数，范围 `[base * 0.9, base * 1.1]`，最小为 1。
+    fn ttl_with_jitter(&self, base_secs: u64) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        // DefaultHasher 每次进程启动使用随机种子，确保不同 key 获得不同抖动
+        base_secs.hash(&mut hasher);
+        std::thread::current().id().hash(&mut hasher);
+        let hash = hasher.finish();
+        // 映射到 [90%, 110%] 范围
+        let jitter_factor = 0.9 + (hash % 2001) as f64 / 10000.0;
+        (base_secs as f64 * jitter_factor).round() as u64
+    }
+
     /// 返回 L1 缓存 TTL（秒）。
     pub fn l1_ttl_secs(&self) -> u64 {
         self.l1_ttl_secs
@@ -209,7 +233,11 @@ impl UserCacheService {
             if let Some(cached) = self.dao.get(&key).await? {
                 // Backfill L1
                 self.l1
-                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                    .set_with_ttl(
+                        &key,
+                        &cached,
+                        Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
+                    )
                     .await
                     .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
                 let perms: Vec<String> = serde_json::from_str(&cached)
@@ -226,11 +254,13 @@ impl UserCacheService {
                 .set_with_ttl(
                     &key,
                     &serialized,
-                    Some(Duration::from_secs(self.l1_ttl_secs)),
+                    Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
                 )
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-            self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
+            self.dao
+                .set(&key, &serialized, self.ttl_with_jitter(self.l2_ttl_secs))
+                .await?;
 
             Ok(perms)
         })
@@ -286,7 +316,11 @@ impl UserCacheService {
             if let Some(cached) = self.dao.get(&key).await? {
                 // Backfill L1
                 self.l1
-                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                    .set_with_ttl(
+                        &key,
+                        &cached,
+                        Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
+                    )
                     .await
                     .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
                 let roles: Vec<String> = serde_json::from_str(&cached)
@@ -303,11 +337,13 @@ impl UserCacheService {
                 .set_with_ttl(
                     &key,
                     &serialized,
-                    Some(Duration::from_secs(self.l1_ttl_secs)),
+                    Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
                 )
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-            self.dao.set(&key, &serialized, self.l2_ttl_secs).await?;
+            self.dao
+                .set(&key, &serialized, self.ttl_with_jitter(self.l2_ttl_secs))
+                .await?;
 
             Ok(roles)
         })
@@ -362,7 +398,11 @@ impl UserCacheService {
             if let Some(cached) = self.dao.get(&key).await? {
                 // Backfill L1
                 self.l1
-                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
+                    .set_with_ttl(
+                        &key,
+                        &cached,
+                        Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
+                    )
                     .await
                     .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
                 return Ok(Some(cached));
@@ -373,10 +413,16 @@ impl UserCacheService {
             if let Some(ref info) = user_info {
                 // Backfill L1 + L2 (only when Some, None is not cached)
                 self.l1
-                    .set_with_ttl(&key, info, Some(Duration::from_secs(self.l1_ttl_secs)))
+                    .set_with_ttl(
+                        &key,
+                        info,
+                        Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
+                    )
                     .await
                     .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-                self.dao.set(&key, info, self.l2_ttl_secs).await?;
+                self.dao
+                    .set(&key, info, self.ttl_with_jitter(self.l2_ttl_secs))
+                    .await?;
             }
             Ok(user_info)
         })
