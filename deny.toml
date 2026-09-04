@@ -14,18 +14,10 @@ yanked = "deny"
 # 官方状态：No patch available（截至 2026-07-13），显式忽略 advisory。
 # 参见 https://rustsec.org/advisories/RUSTSEC-2023-0071
 #
-# RUSTSEC-2026-0173: proc-macro-error2 v2.0.1 unmaintained（迁移自 audit.toml）
-# 依赖链：garrison → dbnexus → dbnexus-macros/sea-bae → proc-macro-error2
-# 影响范围：仅编译期（proc-macro），无运行时风险；上游 sea-bae/dbnexus-macros 升级前无法消除。
-#
-# RUSTSEC-2026-0204: crossbeam-epoch 0.9.18 fmt::Display invalid pointer dereference（迁移自 audit.toml）
-# 依赖链：garrison → moka → crossbeam-epoch
-# 影响范围：仅在 null pointer 上调用 fmt::Display 时触发 panic（非 memory safety）；
-# 无 patched 版本（截至 2026-07-06），transitive 依赖无法直接升级，记录为已知/接受。
+# 已清理（2026-09-05）：RUSTSEC-2026-0173（proc-macro-error2 已随 base 升级退出依赖图）
+# 与 RUSTSEC-2026-0204（crossbeam-epoch 已升至 patched 0.9.20）不再需要忽略。
 ignore = [
     "RUSTSEC-2023-0071",
-    "RUSTSEC-2026-0173",
-    "RUSTSEC-2026-0204",
 ]
 
 [licenses]
