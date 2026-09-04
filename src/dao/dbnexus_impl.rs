@@ -696,7 +696,7 @@ mod embedded_migrations_tests {
     ///
     /// Scenario: 递归复制 include_dir::Dir 到文件系统。
     /// WHEN copy_embedded_dir(&POSTGRES_MIGRATIONS, tempdir)
-    /// THEN tempdir/core/ 包含 7 个 .sql 文件，内容与嵌入文件一致
+    /// THEN tempdir/core/ 包含 10 个 .sql 文件，内容与嵌入文件一致
     #[test]
     fn copy_embedded_dir_writes_files_to_tempdir() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
