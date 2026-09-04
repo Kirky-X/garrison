@@ -5,6 +5,11 @@
 -- 对应 spec: extensible-schema
 -- 数据库: SQLite（TEXT 存储 UUID/JSON/enum，INTEGER 0/1 存储 boolean）
 -- 幂等性: 所有 CREATE TABLE/INDEX 使用 IF NOT EXISTS
+--
+-- 时间字段约定（migration-schema-optimization 记录）：
+-- 本文件的时间字段使用 TEXT 存储 ISO 8601 时间戳（CURRENT_TIMESTAMP），
+-- 这是历史遗留设计。后续新增迁移表统一使用 INTEGER 存储 Unix 秒。
+-- 新迁移表应继续使用 INTEGER（Unix 秒），不与本文件的 TEXT 格式混用。
 
 -- UP:
 

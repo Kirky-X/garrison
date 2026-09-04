@@ -454,6 +454,29 @@ fn config_default_session_hover_is_negative_one() {
     assert_eq!(config.session_hover_timeout, -1);
 }
 
+/// T036: `session_hover_timeout` 超过 10 年（315_360_000 秒）上界时校验应拒绝。
+#[test]
+fn config_rejects_session_hover_timeout_above_max() {
+    let mut config = GarrisonConfig::default_config();
+    config.session_hover_timeout = 315_360_001;
+    let result = config.validate();
+    assert!(
+        result.is_err(),
+        "超过上界的 session_hover_timeout 应被配置校验拒绝"
+    );
+}
+
+/// T036: `session_hover_timeout` 等于上界（10 年）时校验应通过。
+#[test]
+fn config_accepts_session_hover_timeout_at_max() {
+    let mut config = GarrisonConfig::default_config();
+    config.session_hover_timeout = 315_360_000;
+    assert!(
+        config.validate().is_ok(),
+        "等于上界的 session_hover_timeout 应被接受"
+    );
+}
+
 // ========================================================================
 // frontend_separation 配置测试（spec R-frontend-001 ~ R-frontend-003）
 // ========================================================================
@@ -751,6 +774,7 @@ fn update_without_watcher_is_noop() {
         #[cfg(feature = "anomalous-detector-dual")]
         anomalous_analyzer_burst_threshold: DEFAULT_ANOMALOUS_BURST_THRESHOLD,
         enable_jwt_revocation: false,
+        allow_stateless_jwt_no_revocation: false,
         #[cfg(feature = "session-hijack-detection")]
         session_hijack_mode: crate::config::SessionHijackMode::default(),
         #[cfg(feature = "credit-metering")]

@@ -111,12 +111,41 @@ fn random64_style_verify_returns_none() {
 
 /// 测试用 HMAC 密钥（生产环境应从配置注入）。
 #[cfg(feature = "secure-simple-token")]
-const TEST_SECRET: &str = "test-hmac-secret-key-for-unit-tests";
+const TEST_SECRET: &str = "test-hmac-secret-key-for-unit-tests-01";
 
 /// 创建带 TEST_SECRET 的 SimpleTokenStyle 实例。
 #[cfg(feature = "secure-simple-token")]
 fn make_simple_style() -> SimpleTokenStyle {
     SimpleTokenStyle::new(TEST_SECRET.to_string())
+}
+
+/// R-sessiontokenconsistency-002（T016）：secret 短于 32 字节时 generate/verify 失败，
+/// 对齐 JWT 双向强校验；32 字节边界成功。
+#[cfg(feature = "secure-simple-token")]
+#[test]
+fn simple_style_secret_31_bytes_fails_32_bytes_succeeds() {
+    let short = "a".repeat(31);
+    let style_short = SimpleTokenStyle::new(short);
+    assert!(
+        style_short.generate("u1", 3600).is_err(),
+        "31 字节 secret 应拒绝生成 token"
+    );
+    assert!(
+        style_short.verify("x.y").unwrap().is_none(),
+        "31 字节 secret verify 应拒绝所有 token"
+    );
+
+    let ok = "a".repeat(32);
+    let style_ok = SimpleTokenStyle::new(ok);
+    assert!(
+        style_ok.generate("u1", 3600).is_ok(),
+        "32 字节 secret 应成功生成 token"
+    );
+    // parse 同样应被 31 字节 secret 拒绝
+    assert!(
+        style_short.parse("u1\x1fx.y").is_err(),
+        "31 字节 secret parse 应拒绝"
+    );
 }
 
 /// SimpleTokenStyle 生成 `<login_id>\x1f<uuid>.<hmac>` 格式。
@@ -256,8 +285,8 @@ fn a11_simple_style_verify_rejects_forged_hmac() {
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_verify_rejects_token_from_different_secret() {
-    let style_a = SimpleTokenStyle::new("secret-A".to_string());
-    let style_b = SimpleTokenStyle::new("secret-B".to_string());
+    let style_a = SimpleTokenStyle::new("secret-A-0123456789abcdefghijklmnop".to_string());
+    let style_b = SimpleTokenStyle::new("secret-B-0123456789abcdefghijklmnop".to_string());
     // 用 secret-A 生成 token
     let token = style_a.generate("victim", 3600).unwrap();
     // 用 secret-B 验证 → 应失败
@@ -439,7 +468,7 @@ fn factory_creates_random64_style() {
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn factory_creates_simple_style() {
-    let token = TokenStyleFactory::new("simple", "factory-secret").unwrap();
+    let token = TokenStyleFactory::new("simple", "factory-secret-key-0123456789abcd").unwrap();
     let t = token.generate("42", 60).unwrap();
     assert!(t.starts_with("42\x1f"), "token 应以 login_id + \\x1f 开头");
     assert!(t.contains('.'), "token 应含 '.' 分隔 HMAC");

@@ -500,6 +500,11 @@ pub struct GarrisonConfig {
     /// `check_login_stateless` 在 JWT verify 成功后检查黑名单，已撤销的 JWT 返回 `TokenRevoked`。
     /// 仅在 `protocol-jwt` feature 启用且 `token_style="jwt"` 时有实际效果。
     pub enable_jwt_revocation: bool,
+    /// 显式风险接受：允许 `token_style=jwt` + `jwt_mode=Stateless` + `enable_jwt_revocation=false`
+    /// 的不安全组合（不可吊销的永久 JWT 凭证）。默认 `false`（R-sessiontokenconsistency / T017 互斥校验）。
+    ///
+    /// 仅当运维明确知悉风险并承担后果时设为 `true`；正常部署应使用 `enable_jwt_revocation=true` 或 `JwtMode::Mixin`。
+    pub allow_stateless_jwt_no_revocation: bool,
 
     /// 审计日志脱敏模式（T012）。默认 `Partial`。
     ///

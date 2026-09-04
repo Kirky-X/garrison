@@ -159,9 +159,17 @@ impl SignHandler {
             ));
         }
 
-        // (2) nonce 防重放检查
-        let nonce_key = format!("garrison:sign:nonce:{}", nonce);
-        if self.dao.get(&nonce_key).await?.is_some() {
+        // (2) nonce 防重放：原子自增（消除 get/set TOCTOU 竞态）
+        //
+        // key 增加 `app_key` 前缀，避免多应用共用 DAO 时 nonce 互相污染
+        // （不同 app_key 的相同 nonce 互不冲突）。`incr` 为原子操作，
+        // 返回值 > 1 即表示 nonce 已被使用过（重放），直接拒绝。
+        let nonce_key = format!("garrison:sign:nonce:{}:{}", self.app_key, nonce);
+        let count = self
+            .dao
+            .incr(&nonce_key, self.timestamp_window as u64)
+            .await?;
+        if count > 1 {
             return Err(GarrisonError::InvalidToken("sign-nonce-replay".to_string()));
         }
 
@@ -186,10 +194,7 @@ impl SignHandler {
             },
         }
 
-        // (4) 校验成功，存储 nonce（TTL = timestamp_window）
-        self.dao
-            .set(&nonce_key, "1", self.timestamp_window as u64)
-            .await?;
+        // (4) 校验成功：nonce 已由 incr 原子写入（TTL = timestamp_window），无需再 set
         Ok(())
     }
 }

@@ -35,8 +35,8 @@ openspec/
 *.a
 *.lib
 
-# Cargo（库 crate 不提交 Cargo.lock；二进制 crate 请注释此行）
-Cargo.lock
+# Cargo：本仓库现统一纳入版本控制 Cargo.lock（库 crate 也锁定依赖树，保证可重现构建与 CI --locked 一致性）
+# Cargo.lock
 
 # -----------------------------------------------------------------------------
 # Rust 工具链临时文件
@@ -46,6 +46,9 @@ Cargo.lock
 
 # sccache 缓存
 .sccache/
+
+# Python 虚拟环境
+.venv/
 
 # -----------------------------------------------------------------------------
 # IDE / 编辑器
@@ -214,3 +217,5 @@ flamegraph.svg
 # specmark 工作目录与 skills lock 不入库
 /specmark/
 skills-lock.json
+.cargo/
+.workbuddy-ai/

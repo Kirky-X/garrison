@@ -56,6 +56,7 @@ impl GarrisonPermissionStrategyDefault {
             interface,
             permission_checker: None,
             dao: None,
+            tenant_id: None,
             role_hierarchy: HashMap::new(),
             plugin_manager: None,
             #[cfg(any(
@@ -87,6 +88,25 @@ impl GarrisonPermissionStrategyDefault {
     pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
         self.dao = Some(dao);
         self
+    }
+
+    /// 设置租户维度，启用权限缓存键租户隔离（T023）。
+    ///
+    /// 注入后权限缓存键形如 `garrison:perm:cache:<tenant_id>:<login_id>:<permission>`，
+    /// 不同租户相同 `login_id` 的权限判定结果互不污染。
+    /// 不注入（`None`）时缓存键使用占位符 `_`，保持向后兼容（无租户隔离）。
+    pub fn with_tenant_id(mut self, tenant_id: i64) -> Self {
+        self.tenant_id = Some(tenant_id);
+        self
+    }
+
+    /// 构造权限缓存键（T023：含租户维度）。
+    fn perm_cache_key(&self, login_id: &str, permission: &str) -> String {
+        let tenant = self
+            .tenant_id
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| "_".to_string());
+        format!("garrison:perm:cache:{}:{}:{}", tenant, login_id, permission)
     }
 
     /// 配置角色层级映射。
@@ -155,7 +175,7 @@ impl GarrisonPermissionStrategyDefault {
 
     /// 缓存权限校验结果。
     ///
-    /// 将校验结果写入 `GarrisonDao`，key 格式 `garrison:perm:cache:<login_id>:<permission>`。
+    /// 将校验结果写入 `GarrisonDao`，key 格式 `garrison:perm:cache:<tenant_id>:<login_id>:<permission>`。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -176,7 +196,7 @@ impl GarrisonPermissionStrategyDefault {
         ttl_seconds: u64,
     ) -> GarrisonResult<()> {
         if let Some(dao) = &self.dao {
-            let key = format!("garrison:perm:cache:{}:{}", login_id, permission);
+            let key = self.perm_cache_key(login_id, permission);
             dao.set(&key, if result { "true" } else { "false" }, ttl_seconds)
                 .await?;
         }
@@ -201,7 +221,7 @@ impl GarrisonPermissionStrategyDefault {
         permission: &str,
     ) -> GarrisonResult<Option<bool>> {
         if let Some(dao) = &self.dao {
-            let key = format!("garrison:perm:cache:{}:{}", login_id, permission);
+            let key = self.perm_cache_key(login_id, permission);
             match dao.get(&key).await? {
                 Some(v) => Ok(Some(v == "true")),
                 None => Ok(None),
@@ -210,10 +230,58 @@ impl GarrisonPermissionStrategyDefault {
             Ok(None)
         }
     }
+
+    /// 失效某 `login_id` 的全部权限缓存（T024）。
+    ///
+    /// 扫描 `garrison:perm:cache:<tenant>:<login_id>:*` 模式并逐一删除，
+    /// 使权限回收 / 角色变更后下一次 `check_permission` 立即回源查询业务接口，
+    /// 而非等待 300 秒 TTL 自然过期。
+    ///
+    /// 建议在 logout 流程与角色 / 权限变更监听器中调用本方法。
+    /// 未注入 DAO 时为 no-op（向后兼容）。
+    pub async fn invalidate_permission_cache(&self, login_id: &str) -> GarrisonResult<()> {
+        if let Some(dao) = &self.dao {
+            let tenant = self
+                .tenant_id
+                .map(|t| t.to_string())
+                .unwrap_or_else(|| "_".to_string());
+            let pattern = format!("garrison:perm:cache:{}:{}:*", tenant, login_id);
+            let keys = dao.keys(&pattern).await?;
+            for k in keys {
+                dao.delete(&k).await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
+    fn firewall_hook_injected(&self) -> bool {
+        #[cfg(any(
+            feature = "sms-rate-limit",
+            feature = "firewall-ratelimit",
+            feature = "firewall-bruteforce",
+            feature = "firewall-ddos",
+            feature = "firewall",
+            feature = "oauth2-server"
+        ))]
+        {
+            self.firewall_hook.is_some()
+        }
+        #[cfg(not(any(
+            feature = "sms-rate-limit",
+            feature = "firewall-ratelimit",
+            feature = "firewall-bruteforce",
+            feature = "firewall-ddos",
+            feature = "firewall",
+            feature = "oauth2-server"
+        )))]
+        {
+            false
+        }
+    }
+
     async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         self.interface.get_permission_list(login_id).await
     }
@@ -323,6 +391,13 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
     ))]
     async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(hook) = &self.firewall_hook else {
+            // T010 回归护栏：firewall feature 启用却未注入 hook，说明 builder
+            // 自动装配被意外移除——输出 error! 避免"编译通过但防火墙静默失效"。
+            #[cfg(feature = "firewall")]
+            tracing::error!(
+                "firewall feature enabled but GarrisonFirewallCheckHook not injected \
+                 (builder auto-wire may be broken)"
+            );
             return Ok(());
         };
         // 按序调用 5 个 hook，任一 Err 立即广播 FirewallBlock 并返回阻断登录

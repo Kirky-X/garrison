@@ -31,6 +31,8 @@ pub use registry::{FlowRegistration, FlowRegistry};
 
 use std::collections::HashMap;
 
+use crate::error::{GarrisonError, GarrisonResult};
+
 /// 认证步骤 enum，定义流程中的 7 种步骤类型。
 ///
 /// 使用 enum 而非 trait object（决策 D3），保证可序列化与编译期穷尽匹配。
@@ -84,10 +86,57 @@ pub enum AuthCondition {
     HasCredential(String),
     /// 用户处于锁定状态。
     IsLocked,
-    /// 请求来源 IP 在白名单。
+    /// 请求来源 IP 在白名单（经 [`AuthExecutor::with_ip_whitelist`](crate::account::authflow::executor::AuthExecutor::with_ip_whitelist) 注入，
+    /// 未注入时恒为 false）。
     IpWhitelisted,
-    /// 自定义条件（闭包不可序列化，仅运行期注册，v0.6.5 实现）。
+    /// 自定义条件（求值器经 [`AuthExecutor::with_custom_evaluator`](crate::account::authflow::executor::AuthExecutor::with_custom_evaluator) 运行期注册；
+    /// 未注册的条件名将返回显性错误而非静默 false）。
     Custom(String),
+}
+
+/// IP 白名单（CIDR 列表），用于 [`AuthCondition::IpWhitelisted`] 的真实求值。
+///
+/// 支持 IPv4/IPv6 CIDR（如 `10.0.0.0/8`、`2001:db8::/32`）；
+/// 单个 IP 视作 /32（v4）或 /128（v6）。
+#[derive(Debug, Clone, Default)]
+pub struct IpWhitelist {
+    cidrs: Vec<ipnetwork::IpNetwork>,
+}
+
+impl IpWhitelist {
+    /// 从 CIDR/IP 字符串列表构造；任一解析失败返回 [`GarrisonError::InvalidParam`]。
+    pub fn parse(items: &[String]) -> GarrisonResult<Self> {
+        let mut cidrs = Vec::with_capacity(items.len());
+        for item in items {
+            let net = ipnetwork::IpNetwork::try_from(item.trim()).map_err(|e| {
+                GarrisonError::InvalidParam(format!("ip-whitelist-parse-failed::{item}::{e}"))
+            })?;
+            cidrs.push(net);
+        }
+        Ok(Self { cidrs })
+    }
+
+    /// 判断 IP 是否命中任一 CIDR。
+    pub fn contains(&self, ip: &str) -> bool {
+        match ip.parse::<std::net::IpAddr>() {
+            Ok(addr) => self.cidrs.iter().any(|net| net.contains(addr)),
+            Err(_) => false,
+        }
+    }
+
+    /// 白名单是否为空。
+    pub fn is_empty(&self) -> bool {
+        self.cidrs.is_empty()
+    }
+}
+
+/// 自定义认证条件求值器（[`AuthCondition::Custom`] 的运行期扩展点）。
+///
+/// 实现方注册到 [`AuthExecutor::with_custom_evaluator`](crate::account::authflow::executor::AuthExecutor::with_custom_evaluator)；求值失败按 `?` 传播。
+#[async_trait::async_trait]
+pub trait CustomConditionEvaluator: Send + Sync {
+    /// 对给定上下文求值（true = 走 if_step）。
+    async fn evaluate(&self, ctx: &AuthContext) -> GarrisonResult<bool>;
 }
 
 /// 认证流程定义。

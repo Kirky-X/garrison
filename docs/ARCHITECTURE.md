@@ -2,11 +2,11 @@
 
 > Garrison 是面向 Rust 生态的身份认证鉴权框架。
 >
-> - 版本：0.8.1（安全加固 + 发布前审查修复 + 文档一致性修复）
+> - 版本：0.9.0-rc.1（发布候选：验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
-> - 存储：dbnexus 0.5（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
-> - 缓存：oxcache 0.4（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
+> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
+> - 缓存：oxcache 0.5（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [configuration.md](./CONFIGURATION.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。
 

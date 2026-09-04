@@ -344,7 +344,7 @@ mod tests {
         /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
         fn make_logic_without_creds() -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();

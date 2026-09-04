@@ -11,13 +11,16 @@
 //! - `GarrisonRouter`：路由规则构建器，`route_protected` 注册路径 + 注解映射，`into_filter` 生成守卫 Filter
 //! - `check_login()` / `check_role(role)` / `check_permission(perm)`：guard Filter，per-handler 鉴权
 //! - `garrison_principal` / `tenant_context`：value-extracting Filter
-//! - `impl Reply for GarrisonError` + `impl Reject for GarrisonRejection`：错误响应，复用 `response_parts()` 保证三框架一致
+//! - `impl Reply for GarrisonError` / `impl Reply`+`Reject`+`Display for GarrisonRejection` +
+//!   `garrison_recover()`：错误响应。warp 拒绝链不会自动调用 `Reply`，须显式挂
+//!   `.recover(garrison_recover)` 才能得到与 axum/actix 一致的 `error_code`/`message` JSON
 //!
 //! ## 模块结构（Rule 25 接口隔离）
 //!
 //! - `mod.rs`：仅声明 `GarrisonRouter` / `GarrisonRejection` 结构体 + re-export
 //! - `extractor`：value-extracting Filter（`garrison_principal` / `tenant_context`）
-//! - `extractors`：guard Filter（`check_login` / `check_role` / `check_permission`）+ `Reject` / `Reply` impl
+//! - `extractors`：guard Filter（`check_login` / `check_role` / `check_permission`）+
+//!   `Reject` / `Reply` / `Display` impl + `garrison_recover()`
 //! - [`router`]：`impl GarrisonRouter` + `impl Default`
 //!
 //! ## 使用示例
@@ -60,6 +63,8 @@ pub use extractors::check_login;
 pub use extractors::check_permission;
 /// `check_role` guard Filter：验证用户持有指定角色。
 pub use extractors::check_role;
+/// `.recover()` 守卫映射处理器：`GarrisonRejection` → 三框架一致的统一 JSON。
+pub use extractors::garrison_recover;
 
 // ============================================================================
 // 结构体声明：实现见子模块 router / extractors

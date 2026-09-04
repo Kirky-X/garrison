@@ -75,6 +75,11 @@ pub struct SamlAssertion {
     pub audience: String,
     /// 断言过期时间（`NotOnOrAfter`，RFC 3339 格式字符串）。
     pub not_on_or_after: String,
+    /// 断言生效时间（`<saml:Conditions NotBefore="...">`，RFC 3339 格式字符串）。
+    ///
+    /// CRIT-004：非空时必须晚于当前时间，未来生效的断言即刻使用将被拒绝。
+    #[serde(default)]
+    pub not_before: String,
     /// 属性集合（`<saml:AttributeStatement>` 中的键值对）。
     pub attributes: Vec<(String, String)>,
     /// Assertion 的原始 XML 字符串（含 `<ds:Signature>`，用于签名验证）。
@@ -101,6 +106,11 @@ pub struct SamlResponse {
     pub assertion: Option<SamlAssertion>,
     /// 状态码（`<samlp:StatusCode>` Value 属性，如 `urn:oasis:names:tc:SAML:2.0:status:Success`）。
     pub status_code: String,
+    /// SP 发起的 AuthnRequest ID（`InResponseTo` 属性，CRIT-005 绑定校验用）。
+    ///
+    /// IdP-initiated（unsolicited）响应此字段为空。
+    #[serde(default)]
+    pub in_response_to: String,
 }
 
 /// SAML AuthnRequest 结构，SP 发送给 IdP 的认证请求。
@@ -189,6 +199,10 @@ pub struct DefaultSamlProvider {
     expected_destination: Option<String>,
     /// 预期 Audience（SP 的 entity_id）。None = 跳过验证（仅告警）。
     expected_audience: Option<String>,
+    /// 可选 DAO（CRIT-005/006）：启用 InResponseTo 绑定校验与 Assertion 重放防护。
+    request_dao: Option<std::sync::Arc<dyn crate::dao::GarrisonDao>>,
+    /// 未配置 DAO 的 warn-once 标记。
+    warned_no_dao: std::sync::atomic::AtomicBool,
 }
 
 impl DefaultSamlProvider {
@@ -204,7 +218,18 @@ impl DefaultSamlProvider {
         Ok(Self {
             expected_destination: None,
             expected_audience: None,
+            request_dao: None,
+            warned_no_dao: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// 配置 DAO，启用 InResponseTo 绑定校验（CRIT-005）与 Assertion 重放防护（CRIT-006）。
+    ///
+    /// `build_authn_request` 会将请求 ID 写入注册表（TTL 600 秒），
+    /// `parse_response` 原子消费并校验。
+    pub fn with_request_dao(mut self, dao: std::sync::Arc<dyn crate::dao::GarrisonDao>) -> Self {
+        self.request_dao = Some(dao);
+        self
     }
 
     /// 配置预期 Destination（SP 的 ACS URL），开启 Destination 验证。
@@ -238,14 +263,20 @@ impl SamlProvider for DefaultSamlProvider {
         acs_url: &str,
         idp_sso_endpoint: &str,
     ) -> GarrisonResult<SamlRequest> {
-        Ok(SamlRequest {
+        let request = SamlRequest {
             id: Uuid::new_v4().to_string(),
             issue_instant: Utc::now().to_rfc3339(),
             // vuln-0002 修复：使用调用方传入的 IdP SSO 端点（不再为空）
             destination: idp_sso_endpoint.to_string(),
             issuer: sp_entity_id.to_string(),
             assertion_consumer_service_url: acs_url.to_string(),
-        })
+        };
+        // CRIT-005: 记录在途请求 ID 供 parse_response 绑定校验（TTL 600 秒）
+        if let Some(d) = &self.request_dao {
+            let key = format!("{}req:{}", DaoKeyPrefix::Saml, request.id);
+            d.set(&key, "1", 600).await?;
+        }
+        Ok(request)
     }
 
     async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse> {
@@ -261,6 +292,17 @@ impl SamlProvider for DefaultSamlProvider {
         }
         let mut response = parse_saml_response_xml(response_xml)?;
 
+        // CRIT-002: StatusCode 强制 Success（fail-closed，错误响应不得继续处理）
+        validate_status_code(&response.status_code)?;
+
+        // CRIT-005: InResponseTo ↔ AuthnRequest 绑定校验
+        enforce_in_response_to(
+            self.request_dao.as_ref(),
+            &self.warned_no_dao,
+            &response.in_response_to,
+        )
+        .await?;
+
         // vuln-0002 修复：Destination 验证（fail-loud）
         validate_destination(&response.destination, self.expected_destination.as_deref())?;
 
@@ -272,7 +314,23 @@ impl SamlProvider for DefaultSamlProvider {
         // vuln-0001: DefaultSamlProvider 不实现签名验证（fail-closed 剥离 Assertion）
         if let Some(ref assertion) = response.assertion {
             match self.validate_assertion(assertion).await {
-                Ok(true) => {},
+                Ok(true) => {
+                    // CRIT-006: 验签通过后强制重放检查（Assertion ID 一次性消费）
+                    if let Some(d) = &self.request_dao {
+                        if !check_assertion_replay(
+                            &assertion.id,
+                            &assertion.not_on_or_after,
+                            d.as_ref(),
+                        )
+                        .await?
+                        {
+                            return Err(GarrisonError::InvalidParam(format!(
+                                "sso-saml-assertion-replay::{}",
+                                assertion.id
+                            )));
+                        }
+                    }
+                },
                 Ok(false) => {
                     tracing::warn!("SAML Assertion signature verification failed, stripped");
                     response.assertion = None;
@@ -297,6 +355,21 @@ impl SamlProvider for DefaultSamlProvider {
 // ============================================================================
 // Destination / Audience 验证辅助（vuln-0002）
 // ============================================================================
+
+/// 校验 SAML Response 的 StatusCode 是否为 Success（CRIT-002，fail-closed）。
+///
+/// 非 Success 响应（如 Responder / Requester 错误）即使夹带 Assertion 也必须拒绝，
+/// 防止错误响应被当作成功登录处理。
+fn validate_status_code(status_code: &str) -> GarrisonResult<()> {
+    const STATUS_SUCCESS: &str = "urn:oasis:names:tc:SAML:2.0:status:Success";
+    if status_code != STATUS_SUCCESS {
+        return Err(GarrisonError::InvalidParam(format!(
+            "sso-saml-status-not-success::{}",
+            status_code
+        )));
+    }
+    Ok(())
+}
 
 /// 校验 SAML Response 的 Destination 是否匹配预期值（vuln-0002）。
 ///
@@ -366,6 +439,7 @@ struct SamlParseContext {
     destination: String,
     issuer: String,
     status_code: String,
+    in_response_to: String,
     assertion: Option<SamlAssertion>,
 
     // 状态标志
@@ -384,6 +458,7 @@ struct SamlParseContext {
     assertion_subject: String,
     assertion_audience: String,
     assertion_not_on_or_after: String,
+    assertion_not_before: String,
     assertion_id: String,
     assertion_attributes: Vec<(String, String)>,
 
@@ -398,6 +473,7 @@ impl SamlParseContext {
             destination: String::new(),
             issuer: String::new(),
             status_code: String::new(),
+            in_response_to: String::new(),
             assertion: None,
             in_assertion: false,
             in_issuer: false,
@@ -410,6 +486,7 @@ impl SamlParseContext {
             assertion_subject: String::new(),
             assertion_audience: String::new(),
             assertion_not_on_or_after: String::new(),
+            assertion_not_before: String::new(),
             assertion_id: String::new(),
             assertion_attributes: Vec::new(),
             assertion_start_pos: None,
@@ -426,8 +503,14 @@ impl SamlParseContext {
         match local_name.as_str() {
             "Response" => {
                 for attr in event.attributes().flatten() {
-                    if attr.key.as_ref() == b"Destination" {
-                        self.destination = attr_value_to_string(&attr.value);
+                    match attr.key.as_ref() {
+                        b"Destination" => {
+                            self.destination = attr_value_to_string(&attr.value);
+                        },
+                        b"InResponseTo" => {
+                            self.in_response_to = attr_value_to_string(&attr.value);
+                        },
+                        _ => {},
                     }
                 }
             },
@@ -438,6 +521,7 @@ impl SamlParseContext {
                 self.assertion_subject.clear();
                 self.assertion_audience.clear();
                 self.assertion_not_on_or_after.clear();
+                self.assertion_not_before.clear();
                 self.assertion_id.clear();
                 self.assertion_attributes.clear();
                 for attr in event.attributes().flatten() {
@@ -472,6 +556,13 @@ impl SamlParseContext {
                     }
                 }
             },
+            "Conditions" => {
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"NotBefore" {
+                        self.assertion_not_before = attr_value_to_string(&attr.value);
+                    }
+                }
+            },
             _ => {},
         }
     }
@@ -487,6 +578,13 @@ impl SamlParseContext {
                 for attr in event.attributes().flatten() {
                     if attr.key.as_ref() == b"Value" {
                         self.status_code = attr_value_to_string(&attr.value);
+                    }
+                }
+            },
+            "Conditions" => {
+                for attr in event.attributes().flatten() {
+                    if attr.key.as_ref() == b"NotBefore" {
+                        self.assertion_not_before = attr_value_to_string(&attr.value);
                     }
                 }
             },
@@ -541,6 +639,7 @@ impl SamlParseContext {
                         subject: self.assertion_subject.clone(),
                         audience: self.assertion_audience.clone(),
                         not_on_or_after: self.assertion_not_on_or_after.clone(),
+                        not_before: self.assertion_not_before.clone(),
                         attributes: self.assertion_attributes.clone(),
                         raw_xml: self.assertion_raw_xml.clone(),
                     });
@@ -602,21 +701,36 @@ impl SamlParseContext {
         self.current_text.push_str(text);
     }
 
-    /// 构建 `SamlResponse` 并校验 Assertion 过期时间。
+    /// 构建 `SamlResponse` 并校验 Assertion 时间条件（CRIT-004 fail-closed）。
     fn into_response(self) -> GarrisonResult<SamlResponse> {
         if let Some(ref assertion) = self.assertion {
-            if !assertion.not_on_or_after.is_empty() {
-                let expiry = chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after)
+            // NotOnOrAfter 缺失即拒绝：无过期时间的断言永不过期（重放窗口无限）
+            if assertion.not_on_or_after.is_empty() {
+                return Err(GarrisonError::InvalidToken(
+                    "sso-saml-missing-not-on-or-after".to_string(),
+                ));
+            }
+            let expiry =
+                chrono::DateTime::parse_from_rfc3339(&assertion.not_on_or_after).map_err(|e| {
+                    GarrisonError::InvalidToken(format!("sso-saml-not-on-or-after-parse::{}", e))
+                })?;
+            if Utc::now().timestamp() >= expiry.timestamp() {
+                return Err(GarrisonError::InvalidToken(format!(
+                    "sso-saml-assertion-expired::{}",
+                    assertion.not_on_or_after
+                )));
+            }
+            // NotBefore 校验（CRIT-004）：未来生效的断言不得即刻使用。
+            // 缺失 NotBefore 允许（部分 IdP 不签发），存在则必须已生效。
+            if !assertion.not_before.is_empty() {
+                let not_before = chrono::DateTime::parse_from_rfc3339(&assertion.not_before)
                     .map_err(|e| {
-                        GarrisonError::InvalidToken(format!(
-                            "sso-saml-not-on-or-after-parse::{}",
-                            e
-                        ))
+                        GarrisonError::InvalidToken(format!("sso-saml-not-before-parse::{}", e))
                     })?;
-                if Utc::now().timestamp() >= expiry.timestamp() {
+                if Utc::now().timestamp() < not_before.timestamp() {
                     return Err(GarrisonError::InvalidToken(format!(
-                        "sso-saml-assertion-expired::{}",
-                        assertion.not_on_or_after
+                        "sso-saml-assertion-not-yet-valid::{}",
+                        assertion.not_before
                     )));
                 }
             }
@@ -626,6 +740,7 @@ impl SamlParseContext {
             issuer: self.issuer,
             assertion: self.assertion,
             status_code: self.status_code,
+            in_response_to: self.in_response_to,
         })
     }
 }
@@ -741,6 +856,49 @@ pub async fn check_assertion_replay(
     };
     dao.set(&key, "1", ttl).await?;
     Ok(true)
+}
+
+/// InResponseTo ↔ AuthnRequest ID 绑定校验（CRIT-005）。
+///
+/// - 配置了 DAO：`InResponseTo` 非空时原子 get_and_delete 注册表条目
+///   （`saml:req:{id}`，由 build_authn_request 写入，TTL 600 秒），
+///   未命中即拒绝（不存在的在途请求 / 重放 / 过期）。
+/// - 未配置 DAO：携带 InResponseTo 的 SP-initiated 响应无法验证绑定 → fail-closed 拒绝；
+///   无 InResponseTo 的 IdP-initiated 响应放行但 warn 一次（防护未启用提示）。
+pub(crate) async fn enforce_in_response_to(
+    dao: Option<&std::sync::Arc<dyn crate::dao::GarrisonDao>>,
+    warned_no_dao: &std::sync::atomic::AtomicBool,
+    in_response_to: &str,
+) -> GarrisonResult<()> {
+    use std::sync::atomic::Ordering;
+    match dao {
+        Some(d) => {
+            if in_response_to.is_empty() {
+                return Ok(()); // IdP-initiated 响应无绑定语义
+            }
+            let key = format!("{}req:{}", DaoKeyPrefix::Saml, in_response_to);
+            if d.get_and_delete(&key).await?.is_none() {
+                return Err(GarrisonError::InvalidParam(format!(
+                    "sso-saml-in-response-to-unknown::{}",
+                    in_response_to
+                )));
+            }
+            Ok(())
+        },
+        None => {
+            if !in_response_to.is_empty() {
+                return Err(GarrisonError::InvalidParam(
+                    "sso-saml-in-response-to-unverifiable".to_string(),
+                ));
+            }
+            if !warned_no_dao.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    "SAML request_dao 未配置：InResponseTo 绑定与 Assertion 重放防护未启用"
+                );
+            }
+            Ok(())
+        },
+    }
 }
 
 /// 提取 XML 元素的 local name（去除命名空间前缀）。
@@ -892,6 +1050,211 @@ fn extract_signature_xml(assertion_xml: &str) -> Option<String> {
     None
 }
 
+/// Digest 算法 URI（XML-DSig 标准）：本实现仅支持 SHA-256。
+#[cfg(feature = "protocol-saml")]
+const DIGEST_ALG_SHA256: &str = "http://www.w3.org/2001/04/xmlenc#sha256";
+
+/// SignedInfo 内单个 `<ds:Reference>` 绑定（CRIT-001）。
+///
+/// XML-DSig 中签名对内容的绑定依赖「SignedInfo → Reference URI → 被引用元素
+/// 的 DigestValue」链条；缺失任一环即签名与内容解耦（XSW 可伪造）。
+#[cfg(feature = "protocol-saml")]
+struct ReferenceBinding {
+    /// `URI` 属性值，必须为 `#<element-id>` 形式。
+    uri: String,
+    /// `<ds:DigestMethod Algorithm="...">` 属性值。
+    digest_method: Option<String>,
+    /// `<ds:DigestValue>` base64 文本。
+    digest_value_b64: String,
+}
+
+/// 提取 SignedInfo 内全部 `<ds:Reference>` 绑定（CRIT-001）。
+///
+/// 支持有无命名空间前缀两种形式；找不到返回空 Vec。
+#[cfg(feature = "protocol-saml")]
+fn extract_reference_bindings(signed_info_xml: &str) -> Vec<ReferenceBinding> {
+    let mut bindings = Vec::new();
+    for start_tag in ["<ds:Reference", "<Reference"] {
+        let mut search_from = 0usize;
+        while let Some(rel) = signed_info_xml[search_from..].find(start_tag) {
+            let abs_start = search_from + rel;
+            // 边界检查：避免匹配到 <References 等更长标签名
+            let after_tag = signed_info_xml[abs_start + start_tag.len()..]
+                .chars()
+                .next();
+            if !matches!(after_tag, Some(' ') | Some('>') | Some('/')) {
+                search_from = abs_start + start_tag.len();
+                continue;
+            }
+            let content_start = abs_start + start_tag.len();
+            let rel_end = match signed_info_xml[content_start..]
+                .find("</ds:Reference>")
+                .or_else(|| signed_info_xml[content_start..].find("</Reference>"))
+            {
+                Some(e) => e,
+                None => break,
+            };
+            let block = &signed_info_xml[abs_start..content_start + rel_end];
+
+            let uri = block
+                .find("URI=\"")
+                .and_then(|i| {
+                    let vstart = i + "URI=\"".len();
+                    block[vstart..]
+                        .find('"')
+                        .map(|e| block[vstart..vstart + e].to_string())
+                })
+                .unwrap_or_default();
+            let digest_method = block
+                .find("<ds:DigestMethod")
+                .or_else(|| block.find("<DigestMethod"))
+                .and_then(|i| {
+                    let seg = &block[i..];
+                    let key = "Algorithm=\"";
+                    seg.find(key).and_then(|j| {
+                        let vs = j + key.len();
+                        seg[vs..].find('"').map(|e| seg[vs..vs + e].to_string())
+                    })
+                });
+            let digest_value_b64 = extract_xml_text(block, "DigestValue").unwrap_or_default();
+
+            bindings.push(ReferenceBinding {
+                uri,
+                digest_method,
+                digest_value_b64,
+            });
+            search_from = content_start + rel_end;
+        }
+        if !bindings.is_empty() {
+            break;
+        }
+    }
+    bindings
+}
+
+/// 提取指定 local name 元素的文本内容（首个匹配，去除前后空白）。
+///
+/// 同时兼容 `<ns:Name>` 与 `<Name>` 两种形式。
+#[cfg(feature = "protocol-saml")]
+fn extract_xml_text(xml: &str, local_name: &str) -> Option<String> {
+    for ns_prefix in ["ds:", ""] {
+        let start_tag = format!("<{}{}>", ns_prefix, local_name);
+        let end_tag = format!("</{}{}>", ns_prefix, local_name);
+        if let Some(s) = xml.find(&start_tag) {
+            let cs = s + start_tag.len();
+            if let Some(e) = xml[cs..].find(&end_tag) {
+                return Some(xml[cs..cs + e].trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+/// 按 ID 属性定位元素并返回其原始 XML 切片（含起止标签）（CRIT-001）。
+///
+/// 通过扫描同限定名标签的嵌套深度确定闭合位置；自闭合标签不影响深度。
+/// 找不到返回 None。
+#[cfg(feature = "protocol-saml")]
+fn find_element_raw_by_id(xml: &str, id: &str) -> Option<String> {
+    if id.is_empty() || id.contains('"') {
+        return None;
+    }
+    let id_pattern = format!("ID=\"{}\"", id);
+    let id_pos = xml.find(&id_pattern)?;
+    // 回退到最近的元素起始 '<'
+    let elem_start = xml[..id_pos].rfind('<')?;
+    let rest = &xml[elem_start + 1..];
+    let name_end = rest.find(|c| [' ', '>', '/'].contains(&c))?;
+    let qname = &rest[..name_end];
+    if qname.is_empty() || qname.starts_with('!') || qname.starts_with('?') {
+        return None;
+    }
+
+    let open_pat = format!("<{}", qname);
+    let close_pat = format!("</{}>", qname);
+    let is_valid_open = |abs: usize| -> bool {
+        matches!(
+            xml[abs + open_pat.len()..].chars().next(),
+            Some(' ') | Some('>') | Some('/')
+        )
+    };
+    let is_self_closing = |abs: usize| -> bool {
+        match xml[abs..].find('>') {
+            Some(tag_end) => xml[abs + tag_end - 1..abs + tag_end].ends_with('/'),
+            None => false,
+        }
+    };
+
+    let mut depth: usize = 0;
+    let mut pos = elem_start;
+    loop {
+        let o_rel = xml[pos..].find(&open_pat).map(|i| i + pos);
+        let c_rel = xml[pos..].find(&close_pat).map(|i| i + pos);
+        if let Some(o) = o_rel {
+            if o <= c_rel.unwrap_or(usize::MAX) && is_valid_open(o) && !is_self_closing(o) {
+                depth += 1;
+                pos = o + open_pat.len();
+                continue;
+            }
+        }
+        let close_abs = c_rel?;
+        depth = depth.checked_sub(1)?;
+        pos = close_abs + close_pat.len();
+        if depth == 0 {
+            return Some(xml[elem_start..pos].to_string());
+        }
+    }
+}
+
+/// 剥离元素切片内首个 `<ds:Signature>` 块（隐式 enveloped-signature transform）。
+///
+/// 本实现的摘要输入约定：被引用元素去除自身 Signature 子元素后的原始字节。
+/// 签名方与验证方必须采用相同约定（见模块文档 C14N 限制说明）。
+#[cfg(feature = "protocol-saml")]
+fn strip_enveloped_signature(element_xml: &str) -> String {
+    match extract_signature_xml(element_xml) {
+        Some(sig) => element_xml.replacen(&sig, "", 1),
+        None => element_xml.to_string(),
+    }
+}
+
+/// 校验单个 Reference 绑定：URI 解析 → 元素定位 → 摘要常量时间比对（CRIT-001）。
+///
+/// 返回 Err(reason) 表示绑定失败（调用方应拒绝验签）。
+#[cfg(feature = "protocol-saml")]
+fn validate_reference_binding(
+    document_xml: &str,
+    binding: &ReferenceBinding,
+) -> Result<(), &'static str> {
+    let Some(id) = binding.uri.strip_prefix('#') else {
+        return Err("reference-uri-not-fragment");
+    };
+    if id.is_empty() {
+        return Err("reference-uri-empty-id");
+    }
+    if binding.digest_method.as_deref() != Some(DIGEST_ALG_SHA256) {
+        return Err("digest-method-not-sha256");
+    }
+    let Some(element_raw) = find_element_raw_by_id(document_xml, id) else {
+        return Err("referenced-element-not-found");
+    };
+
+    use base64::Engine as _;
+    use rsa::sha2::{Digest, Sha256};
+    use subtle::ConstantTimeEq;
+
+    let stripped = strip_enveloped_signature(&element_raw);
+    let computed = Sha256::digest(stripped.as_bytes());
+    let expected = base64::engine::general_purpose::STANDARD
+        .decode(binding.digest_value_b64.trim())
+        .map_err(|_| "digest-value-base64-decode")?;
+
+    if expected.len() != computed.len() || expected.as_slice().ct_ne(computed.as_slice()).into() {
+        return Err("digest-value-mismatch");
+    }
+    Ok(())
+}
+
 /// 验证 SAML Assertion 的 XML 签名（vuln-0001 核心）。
 ///
 /// # 流程
@@ -1017,14 +1380,33 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
 
     let verifying_key = VerifyingKey::<Sha256>::new(public_key);
     match verifying_key.verify(signed_info_xml.as_bytes(), &signature) {
-        Ok(()) => Ok(true),
+        Ok(()) => {},
         Err(_) => {
             tracing::warn!(
                 "SAML signature verification failed: signature value does not match SignedInfo"
             );
-            Ok(false)
+            return Ok(false);
         },
     }
+
+    // 6. CRIT-001: DigestValue 校验链——签名仅对 Reference 绑定的元素背书。
+    // 缺失此环时签名与断言内容解耦，攻击者可拷贝合法 Signature 伪造任意身份（XSW）。
+    let references = extract_reference_bindings(&signed_info_xml);
+    if references.is_empty() {
+        tracing::warn!("SAML SignedInfo missing <ds:Reference>, rejected (XSW protection)");
+        return Ok(false);
+    }
+    for binding in &references {
+        if let Err(reason) = validate_reference_binding(assertion_xml, binding) {
+            tracing::warn!(
+                reason = %reason,
+                uri = %binding.uri,
+                "SAML <ds:Reference> binding verification failed"
+            );
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// 基于 XML-DSig 的 SAML Provider（vuln-0001 修复）。
@@ -1055,6 +1437,10 @@ pub struct XmlSecSamlProvider {
     expected_destination: Option<String>,
     /// 预期 Audience（SP 的 entity_id）。None = 跳过验证（仅告警）。
     expected_audience: Option<String>,
+    /// 可选 DAO（CRIT-005/006）：启用 InResponseTo 绑定校验与 Assertion 重放防护。
+    request_dao: Option<std::sync::Arc<dyn crate::dao::GarrisonDao>>,
+    /// 未配置 DAO 的 warn-once 标记。
+    warned_no_dao: std::sync::atomic::AtomicBool,
 }
 
 #[cfg(feature = "protocol-saml")]
@@ -1075,7 +1461,15 @@ impl XmlSecSamlProvider {
             idp_public_key_pem,
             expected_destination: None,
             expected_audience: None,
+            request_dao: None,
+            warned_no_dao: std::sync::atomic::AtomicBool::new(false),
         })
+    }
+
+    /// 配置 DAO，启用 InResponseTo 绑定校验（CRIT-005）与 Assertion 重放防护（CRIT-006）。
+    pub fn with_request_dao(mut self, dao: std::sync::Arc<dyn crate::dao::GarrisonDao>) -> Self {
+        self.request_dao = Some(dao);
+        self
     }
 
     /// 配置预期 Destination（SP 的 ACS URL），开启 Destination 验证。
@@ -1119,13 +1513,19 @@ impl SamlProvider for XmlSecSamlProvider {
         acs_url: &str,
         idp_sso_endpoint: &str,
     ) -> GarrisonResult<SamlRequest> {
-        Ok(SamlRequest {
+        let request = SamlRequest {
             id: Uuid::new_v4().to_string(),
             issue_instant: Utc::now().to_rfc3339(),
             destination: idp_sso_endpoint.to_string(),
             issuer: sp_entity_id.to_string(),
             assertion_consumer_service_url: acs_url.to_string(),
-        })
+        };
+        // CRIT-005: 记录在途请求 ID 供 parse_response 绑定校验（TTL 600 秒）
+        if let Some(d) = &self.request_dao {
+            let key = format!("{}req:{}", DaoKeyPrefix::Saml, request.id);
+            d.set(&key, "1", 600).await?;
+        }
+        Ok(request)
     }
 
     async fn parse_response(&self, response_xml: &str) -> GarrisonResult<SamlResponse> {
@@ -1141,6 +1541,17 @@ impl SamlProvider for XmlSecSamlProvider {
         }
         let mut response = parse_saml_response_xml(response_xml)?;
 
+        // CRIT-002: StatusCode 强制 Success（fail-closed，错误响应不得继续处理）
+        validate_status_code(&response.status_code)?;
+
+        // CRIT-005: InResponseTo ↔ AuthnRequest 绑定校验
+        enforce_in_response_to(
+            self.request_dao.as_ref(),
+            &self.warned_no_dao,
+            &response.in_response_to,
+        )
+        .await?;
+
         // vuln-0002: Destination 验证（fail-loud）
         validate_destination(&response.destination, self.expected_destination.as_deref())?;
 
@@ -1152,7 +1563,23 @@ impl SamlProvider for XmlSecSamlProvider {
         // vuln-0001: 验证 Assertion 签名（非 fail-closed，而是真实验证）
         if let Some(ref assertion) = response.assertion {
             match self.validate_assertion(assertion).await {
-                Ok(true) => {},
+                Ok(true) => {
+                    // CRIT-006: 验签通过后强制重放检查（Assertion ID 一次性消费）
+                    if let Some(d) = &self.request_dao {
+                        if !check_assertion_replay(
+                            &assertion.id,
+                            &assertion.not_on_or_after,
+                            d.as_ref(),
+                        )
+                        .await?
+                        {
+                            return Err(GarrisonError::InvalidParam(format!(
+                                "sso-saml-assertion-replay::{}",
+                                assertion.id
+                            )));
+                        }
+                    }
+                },
                 Ok(false) => {
                     tracing::warn!("SAML Assertion signature verification failed, stripped");
                     response.assertion = None;
@@ -1190,6 +1617,7 @@ mod tests {
             subject: "user@example.com".to_string(),
             audience: "https://sp.example.com".to_string(),
             not_on_or_after: "2026-07-10T12:00:00Z".to_string(),
+            not_before: String::new(),
             attributes: vec![("email".to_string(), "user@example.com".to_string())],
             raw_xml: None,
         };
@@ -1215,6 +1643,7 @@ mod tests {
             issuer: "https://idp.example.com".to_string(),
             assertion: None,
             status_code: "urn:oasis:names:tc:SAML:2.0:status:Success".to_string(),
+            in_response_to: String::new(),
         };
         let json = serde_json::to_string(&response).unwrap();
         let deserialized: SamlResponse = serde_json::from_str(&json).unwrap();
@@ -1255,6 +1684,7 @@ mod tests {
             subject: "user".to_string(),
             audience: "sp".to_string(),
             not_on_or_after: "2026-07-10T12:00:00Z".to_string(),
+            not_before: String::new(),
             attributes: vec![],
             raw_xml: None,
         };
@@ -1328,7 +1758,12 @@ mod tests {
     /// XML 字段（destination / issuer / status_code）仍正常解析。
     #[tokio::test]
     async fn parse_response_success() {
-        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+        let future = Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
                 xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
                 Destination="https://sp.example.com/acs">
@@ -1340,6 +1775,9 @@ mod tests {
     <saml:Issuer>https://idp.example.com</saml:Issuer>
     <saml:Subject>
       <saml:NameID>user@example.com</saml:NameID>
+      <saml:SubjectConfirmation>
+        <saml:SubjectConfirmationData NotOnOrAfter="{future_str}"/>
+      </saml:SubjectConfirmation>
     </saml:Subject>
     <saml:Conditions>
       <saml:AudienceRestriction>
@@ -1351,10 +1789,11 @@ mod tests {
         <saml:AttributeValue>user@example.com</saml:AttributeValue>
       </saml:Attribute>
     </saml:AttributeStatement>
-  </saml:Assertion>
-</samlp:Response>"#;
+    </saml:Assertion>
+</samlp:Response>"#
+        );
         let provider = DefaultSamlProvider::new().unwrap();
-        let response = provider.parse_response(xml).await.unwrap();
+        let response = provider.parse_response(&xml).await.unwrap();
         assert_eq!(response.destination, "https://sp.example.com/acs");
         assert_eq!(response.issuer, "https://idp.example.com");
         assert_eq!(
@@ -1367,9 +1806,9 @@ mod tests {
         );
     }
 
-    /// parse_response 解析无 Assertion 的响应（状态码非成功）（spec R-002）。
+    /// CRIT-002: 非 Success 状态码的 Response 返回 InvalidParam（fail-closed）。
     #[tokio::test]
-    async fn parse_response_without_assertion() {
+    async fn parse_response_rejects_non_success_status_code() {
         let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
 <samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
                 xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
@@ -1380,30 +1819,68 @@ mod tests {
   </samlp:Status>
 </samlp:Response>"#;
         let provider = DefaultSamlProvider::new().unwrap();
-        let response = provider.parse_response(xml).await.unwrap();
-        assert_eq!(response.destination, "https://sp.example.com/acs");
-        assert_eq!(response.issuer, "https://idp.example.com");
-        assert_eq!(
-            response.status_code,
-            "urn:oasis:names:tc:SAML:2.0:status:Requester"
+        let result = provider.parse_response(xml).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
+            "非 Success 状态码应返回 InvalidParam，实际: {:?}",
+            result
         );
-        assert!(response.assertion.is_none());
     }
 
-    /// parse_response 解析非 SAML XML 返回空字段（spec R-002）。
+    /// CRIT-002: 非 Success 响应夹带 Assertion 也必须拒绝（不得当作成功登录处理）。
+    #[tokio::test]
+    async fn parse_response_rejects_error_response_carrying_assertion() {
+        let future = Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <samlp:Status>
+    <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Responder"/>
+  </samlp:Status>
+  <saml:Assertion ID="evil-in-error">
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <saml:Subject><saml:NameID>admin@evil.test</saml:NameID></saml:Subject>
+    <saml:Conditions>
+      <saml:AudienceRestriction><saml:Audience>https://sp.example.com</saml:Audience></saml:AudienceRestriction>
+    </saml:Conditions>
+    <saml:SubjectConfirmationData NotOnOrAfter="{}"/>
+  </saml:Assertion>
+</samlp:Response>"#,
+            future_str
+        );
+        let provider = DefaultSamlProvider::new().unwrap();
+        let result = provider.parse_response(&xml).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("status-not-success")),
+            "错误响应夹带 Assertion 应被 StatusCode 校验拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// 非 SAML XML 输入：provider 层因 StatusCode 校验（CRIT-002）返回 InvalidParam（fail-closed）。
     ///
-    /// quick-xml 是宽松解析器，非 XML 文本不会报错，但解析结果中 SAML 字段均为空。
+    /// quick-xml 是宽松解析器，非 XML 文本不会在解析层报错（字段均为空），
+    /// 但空 status_code 不等于 Success，parse_response 必须拒绝而非静默放行。
     #[tokio::test]
     async fn parse_response_non_saml_xml_returns_empty_fields() {
         let provider = DefaultSamlProvider::new().unwrap();
-        let response = provider
-            .parse_response("not a saml response")
-            .await
-            .unwrap();
-        assert!(response.destination.is_empty());
-        assert!(response.issuer.is_empty());
-        assert!(response.status_code.is_empty());
-        assert!(response.assertion.is_none());
+        let result = provider.parse_response("not a saml response").await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("status-not-success")),
+            "非 SAML 输入（空 StatusCode）应被 fail-closed 拒绝，实际: {:?}",
+            result
+        );
+        // 解析层本身仍返回空字段（供直接调用方使用）
+        let parsed = parse_saml_response_xml("not a saml response").unwrap();
+        assert!(parsed.destination.is_empty());
+        assert!(parsed.status_code.is_empty());
+        assert!(parsed.assertion.is_none());
     }
 
     /// C-2: 过期的 SAML Assertion（NotOnOrAfter < now）应返回 InvalidToken 错误。
@@ -1485,6 +1962,7 @@ mod tests {
             subject: "user@example.com".to_string(),
             audience: "https://sp.example.com".to_string(),
             not_on_or_after: "2026-07-10T12:00:00Z".to_string(),
+            not_before: String::new(),
             attributes: vec![],
             raw_xml: None,
         };
@@ -1851,16 +2329,26 @@ mod tests {
         // vuln-0001: RSA-SHA256 签名验证测试
         // ========================================================================
 
-        /// 构造测试用 SAML Assertion XML（含合法 <ds:Signature>）。
+        /// 构造测试用 SAML Assertion XML（含完整 XML-DSig <ds:Signature>）。
         ///
         /// 返回 (assertion_xml, public_key_pem)：
-        /// - `assertion_xml`：含 `<ds:Signature>` 的 Assertion XML，签名值由 RSA 私钥对 SignedInfo 计算
+        /// - `assertion_xml`：含 `<ds:Signature>` 的 Assertion XML，SignedInfo 含
+        ///   `<ds:Reference URI="#id">` 与 SHA-256 DigestValue（CRIT-001 完整校验链）
         /// - `public_key_pem`：对应 RSA 公钥的 PKCS#8 PEM 字符串
+        ///
+        /// 摘要约定：DigestValue = SHA256(被引用元素去除 Signature 子元素后的原始字节)
+        /// ——与 `strip_enveloped_signature` 的隐式 enveloped-signature transform 一致。
         fn build_test_signed_assertion() -> (String, String) {
+            build_test_signed_assertion_with_inner("")
+        }
+
+        /// 带额外内部元素的变体：`extra_inner` 拼接在 Signature 之前，
+        /// 并纳入 DigestValue 计算（供端到端测试注入 NotOnOrAfter 等元素）。
+        fn build_test_signed_assertion_with_inner(extra_inner: &str) -> (String, String) {
             use base64::Engine as _;
             use rsa::pkcs1v15::SigningKey;
             use rsa::pkcs8::EncodePublicKey;
-            use rsa::sha2::Sha256;
+            use rsa::sha2::{Digest, Sha256};
             use rsa::signature::{SignatureEncoding, Signer};
             use rsa::RsaPrivateKey;
 
@@ -1873,8 +2361,24 @@ mod tests {
                 .to_public_key_pem(rsa::pkcs8::LineEnding::LF)
                 .expect("PEM 编码不应失败");
 
-            // 构造 <ds:SignedInfo>（不含 C14N，直接使用原始 XML 字符串作为签名输入）
-            let signed_info = r#"<ds:SignedInfo><ds:SignatureMethod Algorithm="http://www.w3.org/2001/04/xmldsig-more#rsa-sha256"></ds:SignatureMethod></ds:SignedInfo>"#;
+            let assertion_id = "_test-assertion-001";
+            let inner = format!(
+                "<saml:Issuer>https://idp.example.com</saml:Issuer>\
+<saml:Subject><saml:NameID>user@example.com</saml:NameID></saml:Subject>{extra_inner}"
+            );
+
+            // 摘要输入：不含 Signature 的元素原始字节（隐式 enveloped-signature transform）
+            let element_without_sig =
+                format!(r#"<Assertion ID="{}">{}</Assertion>"#, assertion_id, inner);
+            let digest_b64 = base64::engine::general_purpose::STANDARD
+                .encode(Sha256::digest(element_without_sig.as_bytes()));
+
+            // 构造 <ds:SignedInfo>（SignatureMethod + Reference/DigestValue 完整链）
+            // 注意：URI 属性含 "# 序列，需使用 r## 原始字符串
+            let signed_info = format!(
+                r##"<ds:SignedInfo><ds:SignatureMethod Algorithm="{}"></ds:SignatureMethod><ds:Reference URI="#{}"><ds:DigestMethod Algorithm="{}"></ds:DigestMethod><ds:DigestValue>{}</ds:DigestValue></ds:Reference></ds:SignedInfo>"##,
+                SIG_ALG_RSA_SHA256, assertion_id, DIGEST_ALG_SHA256, digest_b64
+            );
 
             // 用 RSA 私钥 + SHA-256 (PKCS#1 v1.5) 对 SignedInfo 签名
             let signing_key = SigningKey::<Sha256>::new(private_key);
@@ -1884,10 +2388,43 @@ mod tests {
 
             // 拼接完整 Assertion XML（含 <ds:Signature>）
             let xml = format!(
-                r#"<Assertion><ds:Signature>{}<ds:SignatureValue>{}</ds:SignatureValue></ds:Signature></Assertion>"#,
-                signed_info, signature_b64
+                r#"<Assertion ID="{}">{}<ds:Signature>{}<ds:SignatureValue>{}</ds:SignatureValue></ds:Signature></Assertion>"#,
+                assertion_id, inner, signed_info, signature_b64
             );
             (xml, public_key_pem)
+        }
+
+        /// CRIT-001（fix-security-audit-findings）: XSW 攻击防护。
+        ///
+        /// 攻击者将一份合法签名的 `<ds:Signature>` 原样拷贝进自己控制的
+        /// Assertion（NameID=admin），试图让有效签名为其伪造内容背书。
+        /// 验签必须拒绝——签名仅对 DigestValue 绑定的原始元素有效。
+        #[test]
+        fn verify_saml_signature_rejects_xsw_copied_signature() {
+            let (legit_xml, public_key_pem) = build_test_signed_assertion();
+            let sig_start = legit_xml
+                .find("<ds:Signature>")
+                .expect("fixture 应含 Signature");
+            let sig_end = legit_xml
+                .find("</ds:Signature>")
+                .expect("fixture 应含 Signature 闭合")
+                + "</ds:Signature>".len();
+            let stolen_signature = legit_xml[sig_start..sig_end].to_string();
+
+            let evil_xml = format!(
+                r#"<Assertion ID="evil-xsw"><saml:Issuer>https://idp.example.com</saml:Issuer><saml:Subject><saml:NameID>admin@evil.test</saml:NameID></saml:Subject>{}<saml:Attribute Name="role"><saml:AttributeValue>super-admin</saml:AttributeValue></saml:Attribute></Assertion>"#,
+                stolen_signature
+            );
+            let result = verify_saml_signature(&evil_xml, &public_key_pem);
+            assert!(
+                result.is_ok(),
+                "XSW 检测不应报错，应返回 Ok(false): {:?}",
+                result
+            );
+            assert!(
+                !result.unwrap(),
+                "XSW：拷贝的合法签名不得为未签名的攻击者 Assertion 背书"
+            );
         }
 
         /// vuln-0001: 合法 RSA-SHA256 签名应验证通过。
@@ -1993,6 +2530,47 @@ mod tests {
             assert!(
                 matches!(result, Err(GarrisonError::InvalidParam(_))),
                 "应为 InvalidParam 错误"
+            );
+        }
+
+        // ========================================================================
+        // CRIT-006: Assertion 重放防护接线（端到端）
+        // ========================================================================
+
+        /// CRIT-006: XmlSecSamlProvider 端到端——同一签名 Assertion 二次提交被重放防护拒绝。
+        #[tokio::test]
+        async fn xmlsec_provider_rejects_replayed_signed_assertion() {
+            let future = Utc::now().timestamp() + 3600;
+            let future_str = chrono::DateTime::from_timestamp(future, 0)
+                .unwrap()
+                .to_rfc3339();
+
+            // NotOnOrAfter 在签名前注入（纳入 DigestValue 计算）
+            let (signed_assertion, public_key_pem) = build_test_signed_assertion_with_inner(
+                &format!("<SubjectConfirmationData NotOnOrAfter=\"{}\"/>", future_str),
+            );
+            let dao = std::sync::Arc::new(crate::dao::tests::MockDao::new());
+            let provider = XmlSecSamlProvider::new(public_key_pem)
+                .unwrap()
+                .with_request_dao(dao);
+
+            let xml = format!(
+                r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                Destination="https://sp.example.com/acs">
+  <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.example.com</saml:Issuer>
+  <Status><StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></Status>
+  {signed_assertion}
+</samlp:Response>"#
+            );
+
+            let first = provider.parse_response(&xml).await.expect("首次解析应通过");
+            assert!(first.assertion.is_some(), "验签通过的 Assertion 不应被剥离");
+
+            let second = provider.parse_response(&xml).await;
+            assert!(
+                matches!(second, Err(GarrisonError::InvalidParam(ref m)) if m.contains("assertion-replay")),
+                "同一签名 Assertion 二次提交应被重放防护拒绝，实际: {:?}",
+                second
             );
         }
     }
@@ -2175,19 +2753,103 @@ mod tests {
     }
 
     /// 空 Assertion 元素（无子元素）应解析为 Some 但字段均为空。
+    ///
+    /// CRIT-004：解析层保留空字段；NotOnOrAfter 缺失的拒绝发生在 into_response，
+    /// 故此用例补充未来 NotOnOrAfter 以通过时间条件校验。
     #[test]
     fn parse_saml_response_xml_handles_empty_assertion() {
-        let xml = r#"<Response>
+        let future = Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<Response>
   <Assertion ID="empty-001">
+    <SubjectConfirmationData NotOnOrAfter="{}"/>
   </Assertion>
-</Response>"#;
-        let result = parse_saml_response_xml(xml).unwrap();
+</Response>"#,
+            future_str
+        );
+        let result = parse_saml_response_xml(&xml).unwrap();
         let assertion = result.assertion.expect("空 Assertion 仍应被解析");
         assert_eq!(assertion.id, "empty-001");
         assert!(assertion.issuer.is_empty());
         assert!(assertion.subject.is_empty());
         assert!(assertion.audience.is_empty());
         assert!(assertion.attributes.is_empty());
+    }
+
+    /// CRIT-004: NotOnOrAfter 缺失（空）即拒绝——无过期时间的断言不得放行。
+    #[test]
+    fn parse_saml_response_rejects_missing_not_on_or_after() {
+        let xml = r#"<Response>
+  <Assertion ID="no-expiry-001">
+    <Issuer>https://idp.example.com</Issuer>
+    <Subject><NameID>user@example.com</NameID></Subject>
+  </Assertion>
+</Response>"#;
+        let result = parse_saml_response_xml(xml);
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidToken(ref m)) if m.contains("missing-not-on-or-after")),
+            "缺失 NotOnOrAfter 应 fail-closed 拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// CRIT-004: NotBefore 在未来的断言即刻使用应被拒绝。
+    #[test]
+    fn parse_saml_response_rejects_future_not_before() {
+        let not_before = Utc::now().timestamp() + 3600;
+        let nb_str = chrono::DateTime::from_timestamp(not_before, 0)
+            .unwrap()
+            .to_rfc3339();
+        let expiry = Utc::now().timestamp() + 7200;
+        let exp_str = chrono::DateTime::from_timestamp(expiry, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<Response>
+  <Assertion ID="future-nb-001">
+    <Issuer>https://idp.example.com</Issuer>
+    <Conditions NotBefore="{}"/>
+    <Subject><NameID>user@example.com</NameID></Subject>
+    <SubjectConfirmationData NotOnOrAfter="{}"/>
+  </Assertion>
+</Response>"#,
+            nb_str, exp_str
+        );
+        let result = parse_saml_response_xml(&xml);
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidToken(ref m)) if m.contains("not-yet-valid")),
+            "未来 NotBefore 应被拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// CRIT-004: 已生效 NotBefore + 有效期内的断言正常通过。
+    #[test]
+    fn parse_saml_response_accepts_valid_not_before_window() {
+        let not_before = Utc::now().timestamp() - 300;
+        let nb_str = chrono::DateTime::from_timestamp(not_before, 0)
+            .unwrap()
+            .to_rfc3339();
+        let expiry = Utc::now().timestamp() + 3600;
+        let exp_str = chrono::DateTime::from_timestamp(expiry, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<Response>
+  <Assertion ID="valid-window-001">
+    <Issuer>https://idp.example.com</Issuer>
+    <Conditions NotBefore="{}"/>
+    <Subject><NameID>user@example.com</NameID></Subject>
+    <SubjectConfirmationData NotOnOrAfter="{}"/>
+  </Assertion>
+</Response>"#,
+            nb_str, exp_str
+        );
+        let result = parse_saml_response_xml(&xml);
+        assert!(result.is_ok(), "合法时间窗口不应报错，实际: {:?}", result);
     }
 
     /// 无 Assertion 的 Response 应返回 assertion=None。
@@ -2201,5 +2863,101 @@ mod tests {
         assert!(result.assertion.is_none());
         assert_eq!(result.destination, "https://sp.example.com");
         assert_eq!(result.issuer, "https://idp.example.com");
+    }
+
+    // ========================================================================
+    // CRIT-005: InResponseTo ↔ AuthnRequest 绑定校验
+    // ========================================================================
+
+    /// 构造带 InResponseTo 的最小合法 Response（Success，无 Assertion）。
+    fn build_sp_initiated_response(in_response_to: &str) -> String {
+        format!(
+            r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                Destination="https://sp.example.com/acs" InResponseTo="{in_response_to}">
+  <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.example.com</saml:Issuer>
+  <Status><StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></Status>
+</samlp:Response>"#
+        )
+    }
+
+    /// CRIT-005: 配置 DAO 后，InResponseTo 首次消费通过、二次消费拒绝（一次性）。
+    #[tokio::test]
+    async fn in_response_to_binding_first_pass_then_rejected() {
+        use crate::dao::GarrisonDao as _;
+        let dao = std::sync::Arc::new(crate::dao::tests::MockDao::new());
+        let provider = DefaultSamlProvider::new()
+            .unwrap()
+            .with_request_dao(dao.clone());
+
+        let request = provider
+            .build_authn_request("sp", "https://sp/acs", "https://idp/sso")
+            .await
+            .unwrap();
+        // 注册表应已写入请求 ID
+        assert!(
+            dao.get(&format!("{}req:{}", DaoKeyPrefix::Saml, request.id))
+                .await
+                .unwrap()
+                .is_some(),
+            "build_authn_request 应记录在途请求 ID"
+        );
+
+        let xml = build_sp_initiated_response(&request.id);
+        provider
+            .parse_response(&xml)
+            .await
+            .expect("首次消费在途请求 ID 应通过");
+
+        // 同一 InResponseTo 第二次提交：注册表条目已被原子消费 → 拒绝
+        let second = provider.parse_response(&xml).await;
+        assert!(
+            matches!(second, Err(GarrisonError::InvalidParam(ref m)) if m.contains("in-response-to-unknown")),
+            "同一 InResponseTo 二次消费应被拒绝，实际: {:?}",
+            second
+        );
+    }
+
+    /// CRIT-005: 未注册的 InResponseTo 直接拒绝。
+    #[tokio::test]
+    async fn in_response_to_unknown_rejected() {
+        let dao = std::sync::Arc::new(crate::dao::tests::MockDao::new());
+        let provider = DefaultSamlProvider::new().unwrap().with_request_dao(dao);
+        let xml = build_sp_initiated_response("_never-issued-id");
+        let result = provider.parse_response(&xml).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("in-response-to-unknown")),
+            "未注册的 InResponseTo 应被拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// CRIT-005: 无 DAO 时携带 InResponseTo 的响应 fail-closed 拒绝（无法验证绑定）。
+    #[tokio::test]
+    async fn in_response_to_without_dao_fail_closed() {
+        let provider = DefaultSamlProvider::new().unwrap();
+        let xml = build_sp_initiated_response("_some-request-id");
+        let result = provider.parse_response(&xml).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("unverifiable")),
+            "无 DAO 时 SP-initiated 响应应 fail-closed 拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// CRIT-005: IdP-initiated（无 InResponseTo）响应在无 DAO 时放行（warn 一次）。
+    #[tokio::test]
+    async fn idp_initiated_response_passes_without_dao() {
+        let provider = DefaultSamlProvider::new().unwrap();
+        let xml = r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                Destination="https://sp.example.com/acs">
+  <saml:Issuer xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion">https://idp.example.com</saml:Issuer>
+  <Status><StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></Status>
+</samlp:Response>"#;
+        let result = provider.parse_response(xml).await;
+        assert!(
+            result.is_ok(),
+            "IdP-initiated 响应应放行，实际: {:?}",
+            result
+        );
     }
 }

@@ -83,6 +83,30 @@ impl GarrisonDao for AloneCache {
         self.inner.get_and_delete(&self.prefixed_key(key)).await
     }
 
+    /// set_if_absent 委托内部 dao（原子 SETNX 语义，T012 收严为必需方法）。
+    async fn set_if_absent(
+        &self,
+        key: &str,
+        value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        self.inner
+            .set_if_absent(&self.prefixed_key(key), value, ttl_seconds)
+            .await
+    }
+
+    /// rename 委托内部 dao（原子重命名 + TTL 保留，T012 收严为必需方法）。
+    async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
+        self.inner
+            .rename(&self.prefixed_key(old_key), &self.prefixed_key(new_key))
+            .await
+    }
+
+    /// incr 委托内部 dao（原子计数，T012 收严为必需方法）。
+    async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
+        self.inner.incr(&self.prefixed_key(key), ttl_seconds).await
+    }
+
     /// M2 修复：compare_and_update_if_greater 委托内部 dao（消除 TOCTOU 竞态）。
     ///
     /// 默认实现已改为返回 `NotImplemented`（fail-closed），AloneCache 必须显式 forward

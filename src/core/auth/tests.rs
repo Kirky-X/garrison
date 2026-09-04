@@ -12,7 +12,7 @@ use std::time::Duration;
 /// 默认使用 DenyAllSwitchToGuard（L4 安全默认）。
 fn make_auth_logic(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout));
+    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout, 0));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     AuthLogicDefault::new(session, token_handler, timeout as i64)
 }
@@ -626,7 +626,7 @@ async fn renew_to_equivalent_invalid_token_returns_not_login() {
 async fn renew_to_equivalent_preserves_remaining_ttl() {
     // 手动构建 auth + dao，以便直接操作 DAO 的 TTL
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth = AuthLogicDefault::new(session, token_handler, 3600);
 
@@ -806,6 +806,7 @@ impl GarrisonDao for OrderTrackingDao {
     async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
         self.inner.get_timeout(key).await
     }
+    crate::atomic_test_fallback!();
 }
 
 /// A9: renew_to_equivalent 必须先创建新 token session，再失效旧 token session。
@@ -819,6 +820,7 @@ async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
         tracking_dao.clone() as Arc<dyn GarrisonDao>,
         3600,
         86400,
+        0,
     ));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth = AuthLogicDefault::new(session, token_handler, 3600);
@@ -861,6 +863,7 @@ async fn a9_renew_to_equivalent_old_token_valid_until_new_created() {
         tracking_dao.clone() as Arc<dyn GarrisonDao>,
         3600,
         86400,
+        0,
     ));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth = AuthLogicDefault::new(session, token_handler, 3600);
@@ -905,7 +908,7 @@ fn make_auth_logic_with_remember_me(
     rm_timeout: i64,
 ) -> AuthLogicDefault {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout));
+    let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout, 0));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     AuthLogicDefault::new(session, token_handler, timeout as i64)
         .with_remember_me(rm_enabled, rm_timeout)

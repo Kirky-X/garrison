@@ -12,14 +12,21 @@ impl GarrisonSession {
     /// - `dao`: DAO 引用（oxcache / dbnexus）。
     /// - `timeout`: token 级超时秒数（0 表示永久驻留）。
     /// - `active_timeout`: Account-Session 级 activity 超时秒数。
+    /// - `remember_me_timeout`: remember-me 登录时的 token TTL（秒）。
     ///
     /// # 返回
     /// 新建的 `GarrisonSession` 实例。
-    pub fn new(dao: Arc<dyn GarrisonDao>, timeout: u64, active_timeout: u64) -> Self {
+    pub fn new(
+        dao: Arc<dyn GarrisonDao>,
+        timeout: u64,
+        active_timeout: u64,
+        remember_me_timeout: u64,
+    ) -> Self {
         Self {
             dao,
             timeout,
             active_timeout,
+            remember_me_timeout,
             #[cfg(feature = "session-extra")]
             anon_session_timeout: crate::config::DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             login_locks: DashMap::new(),
@@ -33,17 +40,21 @@ impl GarrisonSession {
     }
 
     /// 获取 DAO 引用（`pub(crate)` 供 `GarrisonLogicDefault` 构造 `ApiKeyHandler`、
-    /// `health::checks` 执行依赖探测等需要 DAO 的内部模块复用）。
+    /// `health::checks` 执行依赖探测，以及 `protocol-jwt` 黑名单读写等内部模块复用）。
     ///
     /// # 调用方
     /// - `GarrisonLogicDefault::check_api_key`（`protocol-apikey` feature）
     /// - `health::checks::DbHealthCheck` / `CacheHealthCheck`（`db-postgres` / `db-mysql` /
     ///   `cache-redis` feature 启用时）
+    /// - `GarrisonLogicDefault::blacklist_jwt_jti` / `check_login_stateless`
+    ///   （`protocol-jwt` feature）
     #[cfg(any(
         feature = "protocol-apikey",
         feature = "db-postgres",
         feature = "db-mysql",
-        feature = "cache-redis"
+        feature = "cache-redis",
+        feature = "protocol-jwt",
+        feature = "firewall-bruteforce"
     ))]
     pub(crate) fn dao(&self) -> &Arc<dyn GarrisonDao> {
         &self.dao
@@ -141,7 +152,8 @@ impl GarrisonSession {
             return true; // 不启用悬停检查
         }
         let now = chrono::Utc::now().timestamp_millis();
-        let timeout_millis = hover_timeout_secs * 1000;
+        // saturating_mul 防止极大 hover_timeout 触发 i64 溢出（T036）
+        let timeout_millis = hover_timeout_secs.saturating_mul(1000);
         match self.last_active_time.get(login_id) {
             Some(last) => {
                 let elapsed = now - *last;
@@ -225,7 +237,9 @@ impl GarrisonSession {
     /// - DAO 写入失败：透传 `GarrisonError`。
     pub async fn create(&self, login_id: impl Into<String>, token: &str) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
-        self.create_inner(&login_id, token, None, None, None).await
+        // 非 LoginParams 路径：无 remember_me（使用全局 timeout，effective_timeout = None）
+        self.create_inner(&login_id, token, None, None, None, None)
+            .await
     }
 
     /// 创建 Token-Session 并写入 LoginParams 中的 device/ip/user_agent。
@@ -256,6 +270,7 @@ impl GarrisonSession {
             params.device.as_deref(),
             params.ip.as_deref(),
             params.user_agent.as_deref(),
+            Some(params.remember_me),
         )
         .await
     }
@@ -264,6 +279,7 @@ impl GarrisonSession {
     ///
     /// 在 per-login_id 锁内双写 Token-Session + Account-Session。
     /// device/ip/user_agent 为 None 时对应字段留空（向后兼容 `create`）。
+    /// `remember_me` 为 `Some(true)` 时，token TTL 与 `effective_timeout` 取 `remember_me_timeout`。
     async fn create_inner(
         &self,
         login_id: &str,
@@ -271,10 +287,11 @@ impl GarrisonSession {
         device: Option<&str>,
         ip: Option<&str>,
         user_agent: Option<&str>,
+        remember_me: Option<bool>,
     ) -> GarrisonResult<()> {
         let login_id: String = login_id.to_string();
         self.with_login_lock(&login_id, async {
-            self.create_token_session_inner(&login_id, token, device, ip, user_agent)
+            self.create_token_session_inner(&login_id, token, device, ip, user_agent, remember_me)
                 .await
         })
         .await
@@ -294,8 +311,20 @@ impl GarrisonSession {
         device: Option<&str>,
         ip: Option<&str>,
         user_agent: Option<&str>,
+        remember_me: Option<bool>,
     ) -> GarrisonResult<()> {
         let now = Utc::now().timestamp();
+
+        // R-sessiontokenconsistency-001：remember-me 生效时，TTL 权威来源 = remember_me_timeout，
+        // 并写入 TokenSession.effective_timeout 供后续过期判定使用；否则使用全局 timeout。
+        let (ttl, effective_timeout) = if remember_me == Some(true) {
+            (
+                self.remember_me_timeout,
+                Some(self.remember_me_timeout as i64),
+            )
+        } else {
+            (self.timeout, None)
+        };
 
         // 创建 Token-Session
         let token_session = TokenSession {
@@ -312,12 +341,11 @@ impl GarrisonSession {
             dynamic_active_timeout: None,
             #[cfg(feature = "session-extra")]
             is_anon: false,
+            effective_timeout,
         };
         let token_json = serde_json::to_string(&token_session)
             .map_err(|e| GarrisonError::Session(format!("session-sim-token-serialize::{}", e)))?;
-        self.dao
-            .set(&token_key(token), &token_json, self.timeout)
-            .await?;
+        self.dao.set(&token_key(token), &token_json, ttl).await?;
 
         // 读取或创建 Account-Session
         let mut account = self
@@ -369,9 +397,14 @@ impl GarrisonSession {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
                     GarrisonError::Session(format!("session-sim-token-deserialize::{}", e))
                 })?;
-                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + timeout < now）
+                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + 有效 TTL < now）
+                // TTL 权威来源为 TokenSession.effective_timeout（remember-me 时为 remember_me_timeout），
+                // 回退到全局 timeout。避免 DB/缓存 TTL 与业务语义漂移。
                 let now = Utc::now().timestamp();
-                if ts.last_active_at + (self.timeout.min(i64::MAX as u64) as i64) < now {
+                let ttl = ts
+                    .effective_timeout
+                    .unwrap_or(self.timeout.min(i64::MAX as u64) as i64);
+                if ts.last_active_at + ttl < now {
                     // 触发过期回调
                     self.trigger_expiry_listeners(&ts.login_id, token).await;
                     // 从 DAO 删除过期 session（清理）
@@ -416,9 +449,13 @@ impl GarrisonSession {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
                     GarrisonError::Session(format!("session-sim-token-deserialize::{}", e))
                 })?;
-                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + timeout < now）
+                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + 有效 TTL < now）
+                // TTL 权威来源为 effective_timeout，回退全局 timeout。
                 let now = Utc::now().timestamp();
-                if ts.last_active_at + (self.timeout.min(i64::MAX as u64) as i64) < now {
+                let effective_ttl = ts
+                    .effective_timeout
+                    .unwrap_or(self.timeout.min(i64::MAX as u64) as i64);
+                if ts.last_active_at + effective_ttl < now {
                     // 触发过期回调
                     self.trigger_expiry_listeners(&ts.login_id, token).await;
                     // 从 DAO 删除过期 session（清理）
@@ -1166,8 +1203,15 @@ impl GarrisonSession {
             let json = serde_json::to_string(&ts).map_err(|e| {
                 GarrisonError::Session(format!("session-sim-token-serialize::{}", e))
             })?;
+            // R-sessiontokenconsistency-001/013：touch 不再无条件把 TTL 压回基础 timeout。
+            // 优先读取旧键剩余 TTL 回写以保持语义（remember-me 长 TTL 不被缩水）；
+            // 读不到 TTL 时（DAO 不支持 TTL 或键已无 TTL）按 effective_timeout.unwrap_or(self.timeout) 重置。
+            let ttl = match self.dao.get_with_ttl(&token_key(token)).await? {
+                Some((_, Some(remaining))) => remaining.as_secs(),
+                _ => ts.effective_timeout.unwrap_or(self.timeout as i64).max(0) as u64,
+            };
             // 更新值 + 重置 TTL（用 set 覆盖，重置 TTL）
-            self.dao.set(&token_key(token), &json, self.timeout).await?;
+            self.dao.set(&token_key(token), &json, ttl).await?;
 
             // 同时更新 Account-Session 的 last_active_at + 对应 TokenInfo + 重置 TTL
             if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
@@ -1551,8 +1595,108 @@ mod tests {
     /// 辅助函数：创建带 MockDao 的 GarrisonSession（与 session::tests 中保持一致）。
     fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, GarrisonSession) {
         let dao = Arc::new(MockDao::new());
-        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout);
+        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout, 0);
         (dao, session)
+    }
+
+    /// T012：remember-me 登录时 TokenSession.effective_timeout 写入 remember_me_timeout，
+    /// 且 `get_token_session` 过期判定以 effective_timeout 为权威来源。
+    #[tokio::test]
+    async fn remember_me_token_uses_effective_timeout_as_authoritative() {
+        let dao = Arc::new(MockDao::new());
+        let session = GarrisonSession::new(dao.clone(), 3600, 86400, 7_776_000);
+        let login_id = "user-remember-me";
+        let token = "rm-token-001";
+
+        // 构造 remember_me=true 的 LoginParams
+        let params = crate::stp::LoginParams {
+            remember_me: true,
+            ..Default::default()
+        };
+        session
+            .create_token_session(login_id, token, &params)
+            .await
+            .unwrap();
+
+        // 1) 写入后 effective_timeout 应为 Some(remember_me_timeout)
+        let ts = session.get_token_session(token).await.unwrap().unwrap();
+        assert_eq!(
+            ts.effective_timeout,
+            Some(7_776_000),
+            "remember-me 登录应将 effective_timeout 写入会话记录"
+        );
+
+        // 2) 手动把 last_active_at 前移到 effective_timeout 之前一点点（未过期）
+        ts_set_last_active(&session, token, Utc::now().timestamp() - 100).await;
+
+        // 3) 把 last_active_at 推到 effective_timeout 之外 → 应判定过期返回 None
+        ts_set_last_active(&session, token, Utc::now().timestamp() - 7_776_001).await;
+        let expired = session.get_token_session(token).await.unwrap();
+        assert!(
+            expired.is_none(),
+            "超过 effective_timeout 的 remember-me token 应被判定过期"
+        );
+
+        // 4) 非 remember-me 登录使用全局 timeout，effective_timeout = None
+        let session2 = GarrisonSession::new(Arc::new(MockDao::new()), 3600, 86400, 7_776_000);
+        let params2 = crate::stp::LoginParams {
+            remember_me: false,
+            ..Default::default()
+        };
+        session2
+            .create_token_session(login_id, "normal-token", &params2)
+            .await
+            .unwrap();
+        let ts2 = session2
+            .get_token_session("normal-token")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            ts2.effective_timeout, None,
+            "非 remember-me 登录 effective_timeout 应为 None（使用全局 timeout）"
+        );
+        let _ = dao;
+    }
+
+    /// T014（R-sessiontokenconsistency-001 集成）：remember-me 登录后，空闲时长超过基础 timeout
+    /// 但仍小于 remember_me_timeout 时，`get_token_session` 仍返回 Some 且不删除会话
+    /// （即 remember-me 长 TTL 真正生效，不因 touch/读取被缩水回基础 timeout）。
+    #[tokio::test]
+    async fn remember_me_session_survives_base_timeout_but_expires_at_remember_me_timeout() {
+        // 基础 timeout=3600（1 小时），remember_me_timeout=7776000（90 天）
+        let session = GarrisonSession::new(Arc::new(MockDao::new()), 3600, 86400, 7_776_000);
+        let login_id = "user-rm-integration";
+        let token = "rm-itoken";
+        let params = crate::stp::LoginParams {
+            remember_me: true,
+            ..Default::default()
+        };
+        session
+            .create_token_session(login_id, token, &params)
+            .await
+            .unwrap();
+
+        // 模拟空闲 2 小时（超过基础 timeout=3600，但远小于 remember_me_timeout）
+        ts_set_last_active(&session, token, Utc::now().timestamp() - 7200).await;
+        let live = session.get_token_session(token).await.unwrap();
+        assert!(
+            live.is_some(),
+            "空闲超过基础 timeout 但仍在 remember_me_timeout 内，会话应仍然有效"
+        );
+        assert_eq!(live.unwrap().effective_timeout, Some(7_776_000));
+    }
+
+    /// 辅助：直接覆盖 TokenSession.last_active_at（绕过锁，仅测试用）。
+    async fn ts_set_last_active(session: &GarrisonSession, token: &str, ts: i64) {
+        let mut s = session.get_token_session(token).await.unwrap().unwrap();
+        s.last_active_at = ts;
+        let json = serde_json::to_string(&s).unwrap();
+        session
+            .dao
+            .set(&token_key(token), &json, 7_776_000)
+            .await
+            .unwrap();
     }
 
     // ----------------------------------------------------------------
@@ -1737,6 +1881,7 @@ mod tests {
             dynamic_active_timeout: None,
             #[cfg(feature = "session-extra")]
             is_anon: false,
+            effective_timeout: None,
         };
         session
             .create_token_session_with_ttl("T2", &new_ts, 600)
@@ -1788,14 +1933,14 @@ mod tests {
 
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // 默认值应为 DEFAULT_ANON_SESSION_TIMEOUT_SECS（1800 秒 = 30 分钟）
-        let default_session = GarrisonSession::new(dao.clone(), 3600, 86400);
+        let default_session = GarrisonSession::new(dao.clone(), 3600, 86400, 0);
         assert_eq!(
             default_session.anon_session_timeout, DEFAULT_ANON_SESSION_TIMEOUT_SECS,
             "new 默认应使用 DEFAULT_ANON_SESSION_TIMEOUT_SECS"
         );
 
         // builder 覆盖默认值
-        let session = GarrisonSession::new(dao, 3600, 86400).with_anon_session_timeout(99);
+        let session = GarrisonSession::new(dao, 3600, 86400, 0).with_anon_session_timeout(99);
         assert_eq!(
             session.anon_session_timeout, 99,
             "with_anon_session_timeout 应设置字段为指定值"
@@ -2259,7 +2404,7 @@ mod tests {
         use crate::dao::GarrisonDao;
 
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let session = GarrisonSession::new(dao.clone(), 3600, 86400);
+        let session = GarrisonSession::new(dao.clone(), 3600, 86400, 0);
         let returned = session.dao();
         // 验证返回的是同一个 Arc（通过比较指针是否指向同一对象）
         let returned_ptr = Arc::as_ptr(returned);

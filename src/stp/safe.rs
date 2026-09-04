@@ -241,6 +241,7 @@ mod tests {
             dao.clone() as Arc<dyn GarrisonDao>,
             3600,
             86400,
+            0,
         ));
         let mut config = GarrisonConfig::default_config();
         config.throw_on_not_login = false;
@@ -1002,6 +1003,7 @@ mod tests {
         async fn delete(&self, key: &str) -> GarrisonResult<()> {
             self.inner.delete(key).await
         }
+        crate::atomic_test_fallback!();
     }
 
     /// 创建使用 SlowDao 的 GarrisonSession，放大 token session 读写延迟。
@@ -1011,7 +1013,7 @@ mod tests {
             inner: inner.clone(),
             delay,
         });
-        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
         (inner, session)
     }
 
@@ -1173,13 +1175,13 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(
-            ts_after.safe_services.get("expired-service").is_none(),
+            !ts_after.safe_services.contains_key("expired-service"),
             "过期条目应被惰性删除，实际: {:?}",
             ts_after.safe_services
         );
         // 验证未过期条目未受影响
         assert!(
-            ts_after.safe_services.get("valid-service").is_some(),
+            ts_after.safe_services.contains_key("valid-service"),
             "未过期条目不应被删除"
         );
     }

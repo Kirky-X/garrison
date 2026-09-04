@@ -5,7 +5,7 @@
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
-use totp_rs::{Algorithm, TOTP};
+use totp_rs::{Algorithm, Builder as TotpBuilder};
 
 use super::TotpHandler;
 
@@ -23,14 +23,14 @@ impl TotpHandler {
     /// - `Ok(Self)`: 构造成功。
     /// - `Err(GarrisonError::Internal)`: 密钥长度或位数不合法。
     pub fn new(secret: Vec<u8>, step: u64, digits: u32) -> GarrisonResult<Self> {
-        let totp = TOTP::new(
-            Algorithm::SHA1,
-            digits as usize,
-            1, // skew = 1，允许 ±1 时间窗口偏差（RFC 6238 §5.2 推荐）
-            step,
-            secret,
-        )
-        .map_err(|e| GarrisonError::Internal(format!("secure-totp-init::{}", e)))?;
+        let totp = TotpBuilder::new()
+            .with_algorithm(Algorithm::SHA1)
+            .with_digits(digits as u8)
+            .with_skew(1) // skew = 1，允许 ±1 时间窗口偏差（RFC 6238 §5.2 推荐）
+            .with_step_duration(step)
+            .with_secret(secret)
+            .build()
+            .map_err(|e| GarrisonError::Internal(format!("secure-totp-init::{}", e)))?;
         Ok(Self { totp, step })
     }
 
@@ -42,7 +42,7 @@ impl TotpHandler {
     /// # 返回
     /// 指定位数的数字字符串。
     pub fn generate(&self, now: i64) -> String {
-        self.totp.generate(now as u64)
+        self.totp.generate(now as u64).to_string()
     }
 
     /// 校验 TOTP 验证码。
@@ -57,7 +57,7 @@ impl TotpHandler {
     /// - `true`: 校验通过。
     /// - `false`: 校验失败。
     pub fn validate(&self, code: &str, now: i64) -> bool {
-        self.totp.check(code, now as u64)
+        self.totp.check(code, now as u64).is_some()
     }
 
     /// 校验 TOTP 验证码并防止重放攻击。
@@ -107,7 +107,7 @@ impl TotpHandler {
         now: i64,
         dao: &dyn GarrisonDao,
     ) -> GarrisonResult<bool> {
-        if !self.totp.check(code, now as u64) {
+        if self.totp.check(code, now as u64).is_none() {
             return Ok(false);
         }
         let replay_key = format!("totp:used:{}:{}", login_id, code);
@@ -130,7 +130,9 @@ impl TotpHandler {
     /// - `Ok(Vec<u8>)`: 解码成功。
     /// - `Err(GarrisonError::Internal)`: Base32 解码失败。
     pub fn secret_from_base32(s: &str) -> GarrisonResult<Vec<u8>> {
-        base32::decode(base32::Alphabet::Rfc4648 { padding: false }, s)
-            .ok_or_else(|| GarrisonError::Internal(format!("secure-base32-decode::{}", s)))
+        base32::decode(base32::Alphabet::Rfc4648 { padding: false }, s).ok_or_else(|| {
+            // 错误信息仅暴露 secret 长度，避免泄露密钥原文（T39）
+            GarrisonError::Internal(format!("secure-base32-decode::secret_len={}", s.len()))
+        })
     }
 }

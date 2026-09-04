@@ -506,6 +506,33 @@ cargo doc --no-deps --features full --open
 
 ---
 
+## 9. 数据库迁移时间字段约定
+
+Garrison 支持 4 个数据库后端（PostgreSQL、MySQL、SQLite、DuckDB），每个后端有独立的 SQL 方言迁移文件（`migrations/<backend>/core/`）。
+
+### 时间字段格式
+
+| 迁移文件 | 时间字段类型 | 格式 | 说明 |
+|----------|------------|------|------|
+| `001_init.sql`（7 张核心表） | TEXT / VARCHAR(30) | ISO 8601（`CURRENT_TIMESTAMP`） | 历史遗留设计 |
+| `003+` 新增迁移表 | BIGINT / INTEGER | Unix 秒 | 统一约定 |
+
+### 新迁移规范
+
+**新迁移表必须使用 `BIGINT`（PostgreSQL/DuckDB）或 `INTEGER`（SQLite/MySQL）存储 Unix 秒时间戳。** 不与 `001_init.sql` 的 TEXT/VARCHAR 格式混用。
+
+原因：
+
+- Unix 秒整数支持直接数值比较（`WHERE created_at >= ?`），无需字符串解析
+- 与 Rust 代码中 `now_unix()` 返回值类型一致（`i64`）
+- 跨后端一致（TEXT 时间戳在 MySQL 用 VARCHAR(30)，其他用 TEXT，增加混乱）
+
+### 已有表的 TEXT 时间戳
+
+`001_init.sql` 的 7 张表（`app_user`、`app_role`、`app_permission`、`app_auth_method`、`app_session`、`app_login_log`、`app_user_ext`）保持 TEXT 类型不变。迁移为破坏性操作，风险大于收益（当前无跨表时间 JOIN）。
+
+---
+
 ## E2E / 性能 / 渗透测试
 
 Garrison 在 `tests/e2e/` 下提供完整的端到端（E2E）测试矩阵，覆盖 API 接口测试、性能基线测试、渗透测试三大维度。所有 E2E 测试基于 `RecordingClient` 抓包 + `RemoteContext` 远程模式 + in-process 模式双轨架构，可重复、可观测、可分析。

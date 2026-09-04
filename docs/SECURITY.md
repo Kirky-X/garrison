@@ -195,7 +195,12 @@ Garrison 的 API Key（`protocol-apikey`）采用以下安全设计：
 - **建议**：
   - 仅在受信任设备上启用 `remember_me`，公共/共享设备不应使用。
   - 根据业务风险调整 `remember_me_timeout`，高安全场景可缩短至 7 天（604800 秒）或禁用该功能。
-  - 配合 `active_timeout` 限制活跃窗口，即使 remember_me 延长了绝对过期时间，空闲超时仍会生效。
+### 5. RUSTSEC-2023-0071（rsa crate Marvin Attack）处置说明
+
+- **说明**：依赖图中的 `rsa` crate 存在 Marvin Attack 定时侧信道通告（RUSTSEC-2023-0071），且当前**无已修复版本**。
+- **影响评估**：Garrison 自身**不使用 RSA 算法**——JWT 仅支持 HS256/HS512（HMAC-SHA 对称签名，`protocol-jwt`）；`rsa` 为 jsonwebtoken 的可选传递依赖，仅当业务方自行使用 RSA 密钥的非对称 JWT 时才会进入实际代码路径。Garrison 的 HMAC 签名/校验路径**不涉及 RSA 解密操作**，Marvin Attack（针对 RSA 解密的 padding oracle）不适用于该路径。
+- **处置**：`deny.toml` 显式忽略该通告并注明理由（无 patched 版本 + 仅传递依赖 + HMAC 路径不受影响）；`rsa` 亦作为 dev-dependency 仅用于 `keycloak-oidc` 测试生成 RSA 密钥对（测试环境）。
+- **回归锚定**：若未来引入 RSA 非对称支持（如 RS256），必须重新评估该通告并补充解密路径的防护（或等待 rsa crate 发布修复版本后升级并移除忽略项）。
 
 ---
 

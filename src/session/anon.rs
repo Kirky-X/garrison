@@ -90,6 +90,7 @@ pub async fn get_anon_token_session(
                 #[cfg(feature = "session-extra")]
                 dynamic_active_timeout: None,
                 is_anon: true,
+                effective_timeout: None,
             };
 
             let json = serde_json::to_string(&ts).map_err(|e| {
@@ -159,7 +160,7 @@ mod tests {
         anon_timeout: u64,
     ) -> (Arc<MockDao>, GarrisonSession) {
         let dao = Arc::new(MockDao::new());
-        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout)
+        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout, 0)
             .with_anon_session_timeout(anon_timeout);
         (dao, session)
     }

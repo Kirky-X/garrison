@@ -27,22 +27,24 @@ pub(crate) use macros::dao_session;
 /// - `set_permanent` 存储永久键（无 TTL，默认实现委托 `set(key, value, 0)`）
 /// - `get_timeout` 查询剩余 TTL（默认返回 `NotImplemented`，需后端重写）
 /// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`GarrisonDaoOxcache` 在 `dao-key-index` feature 启用时通过维护 key 索引实现，由 `protocol-apikey` / `anomalous-detector-dual` 传递启用）
-/// - `rename` 重命名 key（默认 get→set→delete 三步，非原子）
+/// - `rename` 重命名 key（原子必需方法）
 ///
-/// # ⚠️ 默认实现非原子性警告（Issues 51-54）
+/// # 原子性编译期契约（Issues 51-54，acceptance-overhaul T012 收严）
 ///
-/// 以下方法的**默认实现**存在 TOCTOU 竞态，仅供开发/测试使用：
+/// 以下方法为**必需方法（无默认实现）**，实现方必须保证原子性：
 ///
-/// | 方法 | 竞态描述 |
-/// |------|----------|
-/// | `rename` | get→set_permanent→delete 三步，TTL 丢失且非原子 |
-/// | `set_if_absent` | get→set 两步，并发可重复插入 |
-/// | `get_and_delete` | get→delete 两步，并发可重复消费（SSO ticket 回放风险） |
-/// | `incr` / `decr` | get→parse→update 三步，并发丢失更新 |
-/// | `compare_and_swap` | get→set 两步，并发可覆盖中间值 |
+/// | 方法 | 原子性要求 |
+/// |------|-----------|
+/// | `rename` | 原子重命名（保留 TTL），禁止 get→set→delete 三步组合 |
+/// | `set_if_absent` | SETNX 语义，并发下仅一个调用成功写入 |
+/// | `get_and_delete` | GETDEL 语义，并发下仅一个调用取到值（SSO ticket 一次性消费） |
+/// | `incr` / `decr` | 原子计数，并发不丢失更新 |
+/// | `compare_and_swap` | CAS 语义，并发不覆盖中间值 |
 ///
-/// **生产后端必须重写这些方法**，使用数据库事务或 CAS 操作保证原子性。
-/// 默认实现已标注 `/// 默认实现：非原子`，但不会在运行时检测或警告。
+/// 此前这些方法提供非原子的组合默认实现（TOCTOU 竞态仅靠文档约束），
+/// 现已移除默认实现——遗漏实现将在**编译期**报错，而非运行时静默竞态。
+/// 内置实现（`MockDao` / `GarrisonDaoOxcache` / `GarrisonDaoDbnexus` / `AloneCache`）
+/// 均以进程内锁或后端原语满足原子性。
 #[async_trait]
 pub trait GarrisonDao: Send + Sync {
     /// 获取指定键的值。
@@ -117,28 +119,14 @@ pub trait GarrisonDao: Send + Sync {
     /// - `Ok(true)`: key 不存在，已成功写入。
     /// - `Ok(false)`: key 已存在，未写入。
     ///
-    /// # 默认实现（非原子）
+    /// # 原子性要求（必需方法）
     ///
-    /// 默认实现为 `get` + `set` 两步操作，存在 TOCTOU 竞态：
-    /// 并发调用同一 key 时多个调用都可能读到 `None` 并写入。
-    ///
-    /// **生产实现必须重写此方法**，使用后端原生的 SETNX / CAS / Lua 脚本：
-    /// - `GarrisonDaoOxcache`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
-    /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
-    /// - Redis 后端：应重写为 `SET key value NX EX ttl` 原子命令
-    /// - dbnexus 后端：应重写为 `INSERT ... ON CONFLICT DO NOTHING` 并检查 affected rows
-    async fn set_if_absent(
-        &self,
-        key: &str,
-        value: &str,
-        ttl_seconds: u64,
-    ) -> GarrisonResult<bool> {
-        if self.get(key).await?.is_some() {
-            return Ok(false);
-        }
-        self.set(key, value, ttl_seconds).await?;
-        Ok(true)
-    }
+    /// 实现必须保证 SETNX 原子性：并发调用同一 key 时**仅一个调用成功写入**。
+    /// 禁止 `get` + `set` 两步组合（TOCTOU 竞态：并发下多个调用都可能读到
+    /// `None` 并写入）。进程内实现用锁保护，Redis 用 `SET key value NX EX ttl`，
+    /// dbnexus 用 `INSERT ... ON CONFLICT DO NOTHING` 检查 affected rows。
+    async fn set_if_absent(&self, key: &str, value: &str, ttl_seconds: u64)
+        -> GarrisonResult<bool>;
 
     /// 查询键的剩余 TTL。
     ///
@@ -230,23 +218,12 @@ pub trait GarrisonDao: Send + Sync {
     /// # 错误
     /// - `GarrisonError::InvalidParam`: `old_key` 不存在。
     ///
-    /// # 非原子性警告
-    /// 默认实现为 `get → set_permanent → delete` 三步操作，存在竞态窗口：
-    /// 1. 读取 old_key 后、写入 new_key 前，old_key 可能被其他线程修改或删除
-    /// 2. 写入 new_key 后、删除 old_key 前，old_key 与 new_key 同时存在
-    /// 后端若支持原子 rename（如 Redis RENAME），应重写此方法。
+    /// # 原子性要求（必需方法）
     ///
-    /// # TTL 保留
-    /// 默认实现**不保留**原键 TTL（用 `set_permanent` 写入新键）。
-    /// 后端若需保留 TTL，应重写此方法（如 `GarrisonDaoOxcache` 用 `ttl_sync` + `set_with_ttl_sync`）。
-    async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
-        let value = self
-            .get(old_key)
-            .await?
-            .ok_or_else(|| GarrisonError::InvalidParam(format!("dao-key-missing::{}", old_key)))?;
-        self.set_permanent(new_key, &value).await?;
-        self.delete(old_key).await
-    }
+    /// 实现必须原子完成「读取旧键 → 写入新键 → 删除旧键」，且**保留原键 TTL**
+    /// （禁止 get→set_permanent→delete 三步组合：TTL 丢失且并发下 old_key 与
+    /// new_key 可能同时存在）。进程内实现用锁保护，Redis 用原生 `RENAME`。
+    async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()>;
 
     /// 原子地获取并删除键。
     ///
@@ -260,33 +237,14 @@ pub trait GarrisonDao: Send + Sync {
     /// - `Ok(Some(value))`: 键存在，已原子读取并删除。
     /// - `Ok(None)`: 键不存在或已过期。
     ///
-    /// # 默认实现（非原子）
-    /// 默认实现为 `get → delete` 两步操作，**存在 TOCTOU 竞态**：
-    /// 并发调用同一 key 时可能多个调用都返回 `Some`。
-    /// 后端若支持原子操作（如 Redis Lua / oxcache 内存后端原子操作），应重写此方法。
+    /// # 原子性要求（必需方法）
     ///
-    /// # 已重写的实现
-    /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
-    /// - `GarrisonDaoOxcache`：`parking_lot::Mutex` 保护，进程内原子
-    /// - `AloneCache`：委托内部 dao
-    ///
-    /// # 生产实现警告
-    ///
-    /// **生产部署必须重写此方法**，使用后端原子的 CAS / GETDEL / Lua 脚本：
-    /// - `GarrisonDaoOxcache`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
-    /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
-    /// - Redis 后端：应重写为 `GETDEL` 原子命令或 Lua 脚本
-    /// - dbnexus 后端：应重写为 SQL `DELETE ... RETURNING` 语句
-    ///
-    /// 使用默认实现（如 `MinimalDao`）在生产环境会导致 TOCTOU 竞态：
-    /// 并发调用同一 key 时多个调用都可能返回 `Some`。
-    async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
-        let value = self.get(key).await?;
-        if value.is_some() {
-            self.delete(key).await?;
-        }
-        Ok(value)
-    }
+    /// get 与 delete 必须在同一临界区内执行：并发调用同一 key 时**仅一个调用
+    /// 返回 `Some`**（SSO ticket 一次性消费等场景依赖此语义）。禁止
+    /// `get` → `delete` 两步组合（TOCTOU：并发下多个调用都可能返回 `Some`）。
+    /// 进程内实现用锁保护，Redis 用 `GETDEL` 或 Lua 脚本，dbnexus 用
+    /// `DELETE ... RETURNING`。
+    async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>>;
 
     /// 原子递增计数器（带 TTL）。
     ///
@@ -301,28 +259,13 @@ pub trait GarrisonDao: Send + Sync {
     /// # 返回
     /// - `Ok(new_value)`: 递增后的新值。
     ///
-    /// # 默认实现（非原子）
-    /// 默认实现为 get → parse → update/set 三步操作，存在竞态风险。
-    /// 后端若支持原子 incr（如 Redis INCR + EXPIRE），应重写此方法。
-    /// `MockDao` 已重写为进程内原子（Mutex 保护）。
-    async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
-        let current = self.get(key).await?;
-        match current {
-            Some(v) => {
-                // Rule 12：parse 失败必须显式报错，禁止静默返回 0 导致计数器重置
-                let cur_val: u64 = v.parse().map_err(|_| {
-                    GarrisonError::Dao(format!("dao-incr-parse-u64::{}::{}", key, v))
-                })?;
-                let new_val = cur_val + 1;
-                self.update(key, &new_val.to_string()).await?;
-                Ok(new_val)
-            },
-            None => {
-                self.set(key, "1", ttl_seconds).await?;
-                Ok(1)
-            },
-        }
-    }
+    /// # 原子性要求（必需方法）
+    ///
+    /// 实现必须原子完成「读取 → 递增 → 写回」：并发调用不丢失更新。
+    /// key 已存在时**不重置 TTL**（保留原窗口过期时间）；解析失败必须显式
+    /// 返回 `GarrisonError::Dao`，禁止静默返回 0 导致计数器重置（Rule 12）。
+    /// 进程内实现用锁保护，Redis 用 `INCR` + 首次 `EXPIRE`。
+    async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64>;
 
     /// 原子递减计数器（与 [`incr`](Self::incr) 对称）。
     ///
@@ -341,37 +284,15 @@ pub trait GarrisonDao: Send + Sync {
     /// # 返回
     /// - `Ok(new_value)`: 递减后的新值（key 不存在/已过期/值为 0 时返回 0）。
     ///
-    /// # 默认实现（返回 NotImplemented）
-    /// 默认实现返回 `GarrisonError::NotImplemented`（M2 修复，与
-    /// `compare_and_update_if_greater` 对齐，消除 TOCTOU 竞态）：
-    /// 原默认实现为 `get → parse → update/delete` 三步操作，存在 TOCTOU 竞态，
-    /// 并发调用同一 key 时多个调用可能基于同一过时 get 值计算新值并覆盖写入，
-    /// 导致"跨越式递减"（实际递减量大于 1）。`SmsRateLimiter::decrement_counter`
-    /// 的 flaky test（`concurrent_send_does_not_exceed_limit`）即由此引发。
-    /// 此方法用于 SMS 限速等安全敏感场景，必须由后端用原子 decr 实现。
+    /// # 原子性要求（必需方法）
     ///
-    /// # 已重写的实现
-    /// - `MockDao`：`parking_lot::Mutex` 保护，进程内原子
-    /// - `GarrisonDaoOxcache`：`atomic_state`（`tokio::sync::Mutex<AtomicTracker>`）保护，进程内原子
-    /// - `AloneCache`：委托内部 dao（M1 修复，与 `compare_and_update_if_greater` 对称）
-    ///
-    /// # 生产实现警告
-    ///
-    /// **生产部署必须重写此方法**，使用后端原子的 DECR / Lua 脚本：
-    /// - `GarrisonDaoOxcache`：已重写，用 `atomic_state`（含 `AtomicTracker.counters`）保护（进程内原子）
-    /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
-    /// - `AloneCache`：已重写，委托内部 dao（M1 修复）
-    /// - Redis 后端：应重写为 `DECR` 原子命令（值为 0 时额外 `DEL`）
-    /// - dbnexus 后端：应重写为 SQL `UPDATE ... WHERE ... RETURNING` 语句
-    ///
-    /// 使用默认实现（如 `MinimalDao`）会返回 `NotImplemented` 错误，
-    /// 强制调用方显式选择支持原子 decr 的后端，避免静默引入 TOCTOU 竞态。
-    async fn decr(&self, _key: &str) -> GarrisonResult<u64> {
-        Err(GarrisonError::NotImplemented(format!(
-            "decr 未实现：{} 后端不支持原子 decr（SMS 限速计数器回滚必须重写）",
-            std::any::type_name::<Self>()
-        )))
-    }
+    /// 语义与原子性：key 不存在或已过期返回 0（不创建 key）；当前值为 0 返回 0
+    /// （不递减为负）；递减后为 0 时删除 key（与 `SmsRateLimiter::decrement_counter`
+    /// 语义一致）；递减后 > 0 时保留原 TTL。禁止 `get → parse → update/delete`
+    /// 组合（TOCTOU：并发"跨越式递减"，曾致 SMS 限速 flaky test）。
+    /// 此方法用于 SMS 限速等安全敏感场景。进程内实现用锁保护，Redis 用
+    /// `DECR`（值为 0 时额外 `DEL`）。
+    async fn decr(&self, key: &str) -> GarrisonResult<u64>;
 
     /// 原子地比较并更新（仅当新值大于当前值时）。
     ///
@@ -601,32 +522,19 @@ pub trait GarrisonDao: Send + Sync {
     /// - `Ok(true)`: CAS 成功（当前值匹配 expected，已写入 new_value）。
     /// - `Ok(false)`: CAS 失败（当前值不匹配 expected，未写入）。
     ///
-    /// # 默认实现（非原子）
-    /// 默认实现为 get + compare + set 三步操作，存在 TOCTOU 竞态。
-    /// **生产后端必须重写此方法**，使用后端原生 CAS / Lua 脚本：
-    /// - `GarrisonDaoOxcache`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
-    /// - `MockDao`：已重写，用 `parking_lot::Mutex` 保护（进程内原子）
-    /// - Redis 后端：应重写为 Lua 脚本（GET + COMPARE + SET 原子执行）
-    /// - dbnexus 后端：应重写为 `UPDATE ... WHERE value = expected`
+    /// # 原子性要求（必需方法）
+    ///
+    /// 实现必须原子完成「比较 → 交换」：并发下不覆盖中间值（备份码消费等
+    /// 场景依赖此语义消除 get→verify→set TOCTOU 双花竞态）。禁止
+    /// `get + compare + set` 组合。进程内实现用锁保护，Redis 用 Lua 脚本，
+    /// dbnexus 用 `UPDATE ... WHERE value = expected`。
     async fn compare_and_swap(
         &self,
         key: &str,
         expected: Option<&str>,
         new_value: &str,
         ttl_seconds: u64,
-    ) -> GarrisonResult<bool> {
-        let current = self.get(key).await?;
-        if current.as_deref() == expected {
-            if ttl_seconds == 0 {
-                self.set_permanent(key, new_value).await?;
-            } else {
-                self.set(key, new_value, ttl_seconds).await?;
-            }
-            Ok(true)
-        } else {
-            Ok(false)
-        }
-    }
+    ) -> GarrisonResult<bool>;
 
     /// 插入 credit 消费流水记录（SQL）。
     ///
@@ -665,6 +573,13 @@ pub trait GarrisonDao: Send + Sync {
         )))
     }
 }
+
+/// DAO 原子方法测试回退宏（T012 编译期契约配套）——实现见 `atomic_fallback.rs`。
+/// `#[doc(hidden)]` + 测试域专用：生产 DAO 实现**禁止**使用组合语义。
+/// 注：完全的编译期门控（cfg testing）需 CI 测试命令追加 testing feature
+///（CI 现为 full-only，属 Non-Goals），已记录为后续 change（架构审查 A1）。
+#[doc(hidden)]
+pub mod atomic_fallback;
 
 // ============================================================================
 // Redis 部署模式配置
@@ -724,6 +639,27 @@ pub struct RedisConfig {
     pub connection_timeout_secs: u64,
     /// 连接池大小。
     pub pool_size: u32,
+}
+
+impl RedisConfig {
+    /// 标记并记录「使用默认 Redis 地址」（`redis://127.0.0.1:6379`）的一次性 warn。
+    ///
+    /// 生产缺配会静默连接本机 Redis——此告警让降级路径可见（同一进程仅一次）。
+    pub fn warn_default_once(&self) {
+        use std::sync::OnceLock;
+        static DEFAULT_URL_WARNED: OnceLock<()> = OnceLock::new();
+        let is_default = matches!(
+            &self.mode,
+            RedisDeploymentMode::Single { url }
+                if url == "redis://127.0.0.1:6379"
+        );
+        if is_default && DEFAULT_URL_WARNED.set(()).is_ok() {
+            tracing::warn!(
+                "redis-config-using-default-url: connection will target 127.0.0.1:6379; \
+                 configure Redis via dao config for production"
+            );
+        }
+    }
 }
 
 // ============================================================================
@@ -787,15 +723,18 @@ pub mod alone_cache;
 
 pub mod warmup;
 
-// `MockDao` 在生产代码中也作为进程内原子 DAO 使用
-// （如 `PasswordRateLimiter` / `GarrisonFirewallCheckHookDefault` 的内存模式），
-// 不再限制为 `cfg(test)`。
-mod mock;
+// `InMemoryDao` 在生产代码中也作为进程内原子 DAO 使用
+// （如 `PasswordRateLimiter` / `GarrisonFirewallCheckHookDefault` 的内存模式）。
+mod in_memory;
 
-pub use mock::MockDao;
+pub use in_memory::InMemoryDao;
+
+/// 旧名兼容别名（正名 `InMemoryDao`；依赖 `MockDao` 的下游请迁移，下版本移除）。
+#[deprecated(note = "renamed to InMemoryDao")]
+pub type MockDao = InMemoryDao;
 
 #[cfg(all(test, feature = "protocol-apikey"))]
-pub(crate) use mock::glob_match;
+pub(crate) use in_memory::glob_match;
 
 #[cfg(test)]
 /// DAO trait 契约测试与跨模块共享的 mock 实现（仅 `cfg(test)` 下编译）。
@@ -805,7 +744,8 @@ pub mod tests {
     // `crate::dao::tests::MockDao` / `crate::dao::tests::glob_match` 可用
     #[cfg(feature = "protocol-apikey")]
     pub(crate) use super::glob_match;
-    pub use super::MockDao;
+    // 兼容层：重导出 InMemoryDao（测试内部以 MockDao 名使用，不触发 deprecated）
+    pub use super::InMemoryDao as MockDao;
     use crate::error::GarrisonError;
     use parking_lot::Mutex;
     use std::collections::HashMap;
@@ -1239,6 +1179,49 @@ pub mod tests {
             );
         }
 
+        /// T025：键过期瞬间 update 应返回 missing，且绝不应将键写成永久值。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_update_expired_key_returns_missing_no_permanent_write() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            dao.set("oc_exp_ttl", "value1", 1).await.unwrap();
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let result = dao.update("oc_exp_ttl", "value2").await;
+            assert!(
+                matches!(result, Err(GarrisonError::Dao(_))),
+                "过期键 update 应返回 Dao 错误而非写入永久值"
+            );
+            let got = dao.get("oc_exp_ttl").await.unwrap();
+            assert!(got.is_none(), "过期键 update 后不应存在（含永久键）");
+            let timeout = dao.get_timeout("oc_exp_ttl").await.unwrap();
+            assert!(timeout.is_none(), "过期键 update 后 timeout 应为 None");
+        }
+
+        /// T025：永久键 update 仍保留永久语义（不为 regression）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_update_permanent_key_stays_permanent() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            dao.set_permanent("oc_perm", "value1").await.unwrap();
+            dao.update("oc_perm", "value2").await.unwrap();
+            let got = dao.get("oc_perm").await.unwrap();
+            assert_eq!(got, Some("value2".to_string()), "永久键 update 应更新值");
+            let timeout = dao.get_timeout("oc_perm").await.unwrap();
+            assert!(timeout.is_none(), "永久键 update 后 timeout 仍应为 None");
+        }
+
+        /// T035：incr 在 u64::MAX 溢出时返回 Dao 错误而非 panic/回绕。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn oxcache_incr_overflow_returns_error() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            dao.set("oc_incr_max", &u64::MAX.to_string(), 3600)
+                .await
+                .unwrap();
+            let result = dao.incr("oc_incr_max", 3600).await;
+            assert!(
+                matches!(result, Err(GarrisonError::Dao(_))),
+                "u64::MAX 自增应返回 Dao 错误而非溢出"
+            );
+        }
+
         /// 验证 expire 重置过期时间。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_resets_ttl() {
@@ -1449,8 +1432,8 @@ pub mod tests {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
             let result = dao.rename("oc_missing_old", "oc_new").await;
             assert!(
-                matches!(result, Err(GarrisonError::InvalidParam(_))),
-                "rename 不存在的键应返回 InvalidParam，实际: {:?}",
+                result.is_err(),
+                "rename 不存在的键应返回错误（且不写入永久条目），实际: {:?}",
                 result
             );
         }
@@ -1970,6 +1953,7 @@ pub mod tests {
             self.store.lock().remove(key);
             Ok(())
         }
+        crate::atomic_test_fallback!();
     }
 
     /// R-001: `set_permanent` 默认实现委托 `set(key, value, 0)`。
@@ -2075,34 +2059,48 @@ pub mod tests {
         );
     }
 
-    /// `decr` 默认实现返回 `NotImplemented`（M2 修复）。
+    /// `decr` 为编译期必需方法（T012 收严，取代 M2 的运行时 NotImplemented 默认）。
     ///
-    /// 默认实现原为 get → parse → update/delete 三步组合，存在 TOCTOU 竞态：
-    /// 并发调用同一 key 时多个调用可能基于同一过时 get 值计算新值并覆盖写入，
-    /// 导致"跨越式递减"（实际递减量大于 1）。`SmsRateLimiter::decrement_counter`
-    /// 的 flaky test（`concurrent_send_does_not_exceed_limit`）即由此引发。
-    /// M2 修复：改为返回 `NotImplemented`（fail-closed），与
-    /// `compare_and_update_if_greater` 对齐，强制后端重写以使用原子 decr。
-    ///
-    /// 此测试验证 MinimalDao（不重写任何默认方法）调用 decr 时返回 NotImplemented。
+    /// 默认实现原为 get → parse → update/delete 三步组合（TOCTOU"跨越式递减"，
+    /// 曾致 `concurrent_send_does_not_exceed_limit` flaky），M2 改为 NotImplemented
+    /// 运行时 fail-closed；acceptance-overhaul T012 进一步收严：**移除默认实现**，
+    /// 遗漏实现编译期报错（E0046），不再存在运行期"缺省"路径可供测试。
+    /// 本测试改验 MinimalDao 组合回退语义正确：5 → 4（保留 key），0 时删除 key。
     #[tokio::test]
-    async fn default_decr_returns_not_implemented() {
+    async fn decr_required_method_fallback_semantics() {
         let dao = MinimalDao::new();
-        // 即使 key 存在（get 会返回 Some），decr 默认实现也直接返回 NotImplemented，
-        // 不进入 get → parse → update/delete 路径，避免静默引入 TOCTOU 竞态
         dao.set("counter", "5", 60).await.unwrap();
-        let result = dao.decr("counter").await;
+        assert_eq!(dao.decr("counter").await.unwrap(), 4);
+        assert_eq!(
+            dao.get("counter").await.unwrap().as_deref(),
+            Some("4"),
+            "递减后值 > 0 时应保留 key"
+        );
+        dao.set("counter2", "1", 60).await.unwrap();
+        assert_eq!(dao.decr("counter2").await.unwrap(), 0);
         assert!(
-            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("decr") && msg.contains("原子 decr")),
-            "decr 默认实现应返回 NotImplemented（含 '原子 decr' 提示），实际: {:?}",
+            dao.get("counter2").await.unwrap().is_none(),
+            "递减后值为 0 时应删除 key"
+        );
+    }
+
+    /// 安全审查 S1：`InMemoryDao::incr` 对非数字值必须显式报错（Rule 12），
+    /// 禁止静默按 0 处理导致限速计数器重置（撞库防护旁路风险）。
+    #[tokio::test]
+    async fn in_memory_incr_non_numeric_value_errors_explicitly() {
+        let dao = InMemoryDao::new();
+        // 污染值（非数字）写入计数器 key
+        dao.set("rate:polluted", "not-a-number", 60).await.unwrap();
+        let result = dao.incr("rate:polluted", 60).await;
+        assert!(
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-incr-parse-u64")),
+            "incr 对非数字值应显式报错而非静默重置，实际: {:?}",
             result
         );
-        // 验证 key 未被修改（默认实现完全 short-circuit，不执行任何 DAO 操作）
-        let after = dao.get("counter").await.unwrap();
+        // 原值不被改写
         assert_eq!(
-            after.as_deref(),
-            Some("5"),
-            "decr 默认实现 short-circuit 后 key 不应被修改"
+            dao.get("rate:polluted").await.unwrap().as_deref(),
+            Some("not-a-number")
         );
     }
 

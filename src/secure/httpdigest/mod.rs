@@ -52,6 +52,16 @@ pub struct HttpDigestAuth {
     ///
     /// 行为细节（fail-closed 策略、Key 格式、TTL、容量规划）见 `auth::validate_nc`。
     dao: Option<std::sync::Arc<dyn crate::dao::GarrisonDao>>,
+    /// 服务端签名密钥（32 字节），用于给 nonce 附加 HMAC 签名（T021）。
+    ///
+    /// 注入后 `generate_nonce` 生成的 nonce 为
+    /// `base64("{timestamp}:{uuid}:{hmac_sha256(server_key, timestamp:uuid)}")`，
+    /// `is_nonce_valid` 会先验 HMAC 再校验时间戳，拒绝自铸（无有效签名）的 nonce。
+    /// 通过 `with_server_key` 以 HKDF 从配置密钥域分隔派生（复用 protocol-sign 派生范式）。
+    ///
+    /// 未注入时保持向后兼容：nonce 为旧格式 `base64("{timestamp}:{uuid}")`（无签名），
+    /// 仅依赖时间戳 TTL 防护；生产环境强烈建议注入 `server_key` 以杜绝自铸 nonce。
+    server_key: Option<[u8; 32]>,
 }
 
 /// `HttpDigestAuth` 实现块（质询生成与响应校验）。

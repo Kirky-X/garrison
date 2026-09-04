@@ -33,15 +33,19 @@
 //! - [`AuthExecutor`]：认证执行器（5 字段：logic / credential_repo / policy_engine / lockout / registry）
 
 use super::registry::FlowRegistry;
-use super::{AuthCondition, AuthContext, AuthResult, AuthStep, AuthenticationFlow};
+use super::{
+    AuthCondition, AuthContext, AuthResult, AuthStep, AuthenticationFlow, CustomConditionEvaluator,
+    IpWhitelist,
+};
 use crate::account::credential::{Credential, CredentialModel, CredentialRepository};
 use crate::account::lockout::UserLockoutStrategy;
 use crate::account::policy::PasswordPolicyEngine;
-use crate::error::GarrisonResult;
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
 use crate::stp::{GarrisonLogicDefault, LoginParams, MfaLogic, SessionLogic};
 use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -241,6 +245,10 @@ pub struct AuthExecutor {
     lockout: Option<Arc<UserLockoutStrategy>>,
     /// 流程注册表（SubFlow 步骤查询子流程）。
     registry: Arc<FlowRegistry>,
+    /// IP 白名单（可选，`IpWhitelisted` 条件真实求值；未注入恒 false）。
+    ip_whitelist: Option<IpWhitelist>,
+    /// 自定义条件求值器注册表（可选，`Custom(name)` 按名查找；未注册返回显性错误）。
+    custom_evaluators: HashMap<String, Arc<dyn CustomConditionEvaluator>>,
 }
 
 /// 步骤执行结果（内部类型，非公开）。
@@ -290,7 +298,28 @@ impl AuthExecutor {
             policy_engine,
             lockout,
             registry,
+            ip_whitelist: None,
+            custom_evaluators: HashMap::new(),
         }
+    }
+
+    /// 注入 IP 白名单（`IpWhitelisted` 条件的真实求值依据；未注入恒 false）。
+    pub fn with_ip_whitelist(mut self, whitelist: IpWhitelist) -> Self {
+        self.ip_whitelist = Some(whitelist);
+        self
+    }
+
+    /// 注册自定义条件求值器（`Custom(name)` 运行期扩展点）。
+    ///
+    /// 未注册的 Custom 条件在求值时返回
+    /// [`GarrisonError::InvalidParam`]（显性错误，不静默 false）。
+    pub fn with_custom_evaluator(
+        mut self,
+        name: impl Into<String>,
+        evaluator: Arc<dyn CustomConditionEvaluator>,
+    ) -> Self {
+        self.custom_evaluators.insert(name.into(), evaluator);
+        self
     }
 
     /// 获取密码策略引擎引用（供 RequiredAction 步骤使用）。
@@ -1058,13 +1087,22 @@ impl AuthExecutor {
                     Ok(false)
                 }
             },
-            AuthCondition::IpWhitelisted => {
-                // 无 IP 白名单配置，返回 false
-                Ok(false)
+            AuthCondition::IpWhitelisted => match &self.ip_whitelist {
+                Some(whitelist) => Ok(whitelist.contains(&ctx.ip)),
+                None => {
+                    // 未注入白名单：恒 false（fail-safe），区别于静默——留 debug 痕迹
+                    tracing::debug!("authflow-ip-whitelist-not-configured (ip={})", ctx.ip);
+                    Ok(false)
+                },
             },
-            AuthCondition::Custom(_) => {
-                // Custom 条件返回 false（未实现）
-                Ok(false)
+            AuthCondition::Custom(name) => {
+                // 扩展点：按名查注册的求值器；未注册是配置错误，显性报错而非静默 false
+                match self.custom_evaluators.get(name) {
+                    Some(evaluator) => evaluator.evaluate(ctx).await,
+                    None => Err(GarrisonError::InvalidParam(format!(
+                        "authflow-unknown-custom-condition::{name}"
+                    ))),
+                }
             },
         }
     }
@@ -1295,7 +1333,7 @@ mod tests {
         let config = Arc::new(GarrisonConfig::default_config());
         let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
         let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
         let firewall: Arc<dyn crate::strategy::GarrisonPermissionStrategy> =
             Arc::new(GarrisonPermissionStrategyDefault::new(interface));
         Arc::new(GarrisonLogicDefault::new(session, config, firewall))
@@ -2386,35 +2424,219 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 测试: conditional_custom_condition_returns_false_skips
+    // 测试: conditional_custom_condition_* （T003：Custom 扩展点三态）
     // ------------------------------------------------------------------------
 
-    /// R-009: Conditional 步骤 — Custom 条件永远返回 false → else_step=None → 跳过 → Success。
-    /// 覆盖 evaluate_condition 的 Custom 分支（未实现，返回 false）。
+    /// Custom 条件未注册求值器 → 显性 InvalidParam 错误（不再静默 false）。
     #[tokio::test]
-    async fn conditional_custom_condition_returns_false_skips() {
+    async fn conditional_custom_condition_unregistered_returns_error() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         let executor = make_executor(repo, None);
         let flow = FlowBuilder::new("test")
             .conditional(
-                AuthCondition::Custom("my_check".to_string()),
-                // if_step（不会执行，因 Custom 返回 false）
+                AuthCondition::Custom("never_registered".to_string()),
                 AuthStep::RequiredAction {
                     action: "x".to_string(),
                 },
-                // else_step=None → 跳过视为成功
                 None,
             )
             .build();
         let mut ctx = make_context("alice", "");
 
-        let result = executor.execute(&flow, &mut ctx).await.unwrap();
-
+        let result = executor.execute(&flow, &mut ctx).await;
         match result {
-            AuthResult::Success { login_id, .. } => {
-                assert_eq!(login_id, "alice");
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("never_registered"),
+                    "错误应包含条件名，实际: {msg}"
+                );
             },
-            other => panic!("应为 Success（Custom=false → 跳过），实际: {:?}", other),
+            other => panic!(
+                "未注册 Custom 条件应为 InvalidParam 显性错误，实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    /// Custom 条件已注册且返回 true → 走 if_step。
+    #[tokio::test]
+    async fn conditional_custom_condition_registered_true_executes_if_step() {
+        struct AlwaysTrue;
+        #[async_trait]
+        impl CustomConditionEvaluator for AlwaysTrue {
+            async fn evaluate(&self, _ctx: &AuthContext) -> GarrisonResult<bool> {
+                Ok(true)
+            }
+        }
+
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor =
+            make_executor(repo, None).with_custom_evaluator("my_check", Arc::new(AlwaysTrue));
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::Custom("my_check".to_string()),
+                AuthStep::RequiredAction {
+                    action: "do_review".to_string(),
+                },
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+
+        // if_step（RequiredAction）被执行 → 未实现 Failed 路径（区分分支被执行）
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+        match result {
+            AuthResult::Failed { reason, .. } => {
+                assert!(
+                    reason.contains("RequiredAction"),
+                    "注册求值器=true 应执行 if_step（RequiredAction → Failed），reason: {reason}"
+                );
+            },
+            other => panic!(
+                "注册求值器=true 应执行 if_step（Failed），实际: {:?}",
+                other
+            ),
+        }
+    }
+
+    /// Custom 求值器内部错误按 `?` 传播（不吞错）。
+    #[tokio::test]
+    async fn conditional_custom_condition_evaluator_error_propagates() {
+        struct FailingEval;
+        #[async_trait]
+        impl CustomConditionEvaluator for FailingEval {
+            async fn evaluate(&self, _ctx: &AuthContext) -> GarrisonResult<bool> {
+                Err(GarrisonError::InvalidParam(
+                    "evaluator-intentional-failure".to_string(),
+                ))
+            }
+        }
+
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor =
+            make_executor(repo, None).with_custom_evaluator("failing", Arc::new(FailingEval));
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::Custom("failing".to_string()),
+                AuthStep::RequiredAction {
+                    action: "x".to_string(),
+                },
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+
+        let result = executor.execute(&flow, &mut ctx).await;
+        match result {
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(msg.contains("evaluator-intentional-failure"), "got: {msg}");
+            },
+            other => panic!("求值器错误应传播，实际: {:?}", other),
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 测试: ip_whitelist_* （T001/T002：IpWhitelisted 真实求值）
+    // ------------------------------------------------------------------------
+
+    /// 白名单命中（IPv4 CIDR）→ IpWhitelisted 为 true → 执行 if_step。
+    #[tokio::test]
+    async fn conditional_ip_whitelisted_hit_executes_if_step() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let whitelist =
+            IpWhitelist::parse(&["10.0.0.0/8".to_string(), "192.168.1.0/24".to_string()]).unwrap();
+        let executor = make_executor(repo, None).with_ip_whitelist(whitelist);
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::IpWhitelisted,
+                AuthStep::RequiredAction {
+                    action: "trusted_path".to_string(),
+                },
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+        ctx.ip = "10.20.30.40".to_string();
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+        match result {
+            AuthResult::Failed { reason, .. } => {
+                assert!(
+                    reason.contains("RequiredAction"),
+                    "白名单命中应执行 if_step（RequiredAction → Failed），reason: {reason}"
+                );
+            },
+            other => panic!("白名单命中应执行 if_step（Failed），实际: {:?}", other),
+        }
+    }
+
+    /// 白名单未命中 → false → else_step=None 跳过 → Success。
+    #[tokio::test]
+    async fn conditional_ip_whitelisted_miss_skips() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let whitelist = IpWhitelist::parse(&["10.0.0.0/8".to_string()]).unwrap();
+        let executor = make_executor(repo, None).with_ip_whitelist(whitelist);
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::IpWhitelisted,
+                AuthStep::RequiredAction {
+                    action: "trusted_path".to_string(),
+                },
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+        ctx.ip = "203.0.113.9".to_string();
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+        match result {
+            AuthResult::Success { login_id, .. } => assert_eq!(login_id, "alice"),
+            other => panic!("未命中应跳过（Success），实际: {:?}", other),
+        }
+    }
+
+    /// 未注入白名单 → 恒 false（fail-safe）→ Success。
+    #[tokio::test]
+    async fn conditional_ip_whitelisted_not_configured_is_false() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let flow = FlowBuilder::new("test")
+            .conditional(
+                AuthCondition::IpWhitelisted,
+                AuthStep::RequiredAction {
+                    action: "trusted_path".to_string(),
+                },
+                None,
+            )
+            .build();
+        let mut ctx = make_context("alice", "");
+        ctx.ip = "10.0.0.1".to_string();
+
+        let result = executor.execute(&flow, &mut ctx).await.unwrap();
+        match result {
+            AuthResult::Success { login_id, .. } => assert_eq!(login_id, "alice"),
+            other => panic!("无白名单配置应为 false→Success，实际: {:?}", other),
+        }
+    }
+
+    /// IPv6 CIDR 命中 + 单 IP（无前缀）视作 /32 或 /128 + 非法 IP 字符串 contains=false。
+    #[test]
+    fn ip_whitelist_ipv6_single_ip_and_invalid() {
+        let wl = IpWhitelist::parse(&[
+            "2001:db8::/32".to_string(),
+            "172.16.5.7".to_string(), // 单 IP → /32
+        ])
+        .unwrap();
+        assert!(wl.contains("2001:db8::1"));
+        assert!(!wl.contains("2001:db9::1"));
+        assert!(wl.contains("172.16.5.7"));
+        assert!(!wl.contains("172.16.5.8"));
+        assert!(!wl.contains("not-an-ip"));
+        // 非法 CIDR 解析返回显性错误
+        let err = IpWhitelist::parse(&["10.0.0.0/99".to_string()]).unwrap_err();
+        match err {
+            GarrisonError::InvalidParam(msg) => assert!(msg.contains("10.0.0.0/99")),
+            other => panic!("非法 CIDR 应为 InvalidParam，实际: {other:?}"),
         }
     }
 

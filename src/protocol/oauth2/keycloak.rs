@@ -469,6 +469,15 @@ impl KeycloakProvider {
     ///   签名验证失败 / claims 解析失败 / token 已过期 / aud 不匹配 / iss 不匹配 / nbf 未生效。
     /// - `GarrisonError::Network`: JWKS 拉取失败。
     /// - `GarrisonError::Dao`: DAO 读写失败。
+    /// 清洗 JWT `kid` 用于日志/错误输出（T39）：过滤控制字符并限长 128，
+    /// 防止恶意 kid 注入控制字符污染日志或造成输出异常。
+    fn sanitize_kid(kid: &str) -> String {
+        let filtered: String = kid.chars().filter(|c| !c.is_control()).collect();
+        filtered.chars().take(128).collect()
+    }
+
+    /// 校验 Keycloak 签发的 `id_token`（JWKS 公钥 + iss/aud/exp 校验），
+    /// 返回解码后的 claims。DAO 未注入时返回配置错误（无法缓存 JWKS）。
     pub async fn verify_id_token(&self, id_token: &str) -> GarrisonResult<KeycloakClaims> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
@@ -498,11 +507,11 @@ impl KeycloakProvider {
         // 2. 从 DAO 读取 JWKS 缓存；缓存 miss 或反序列化失败（缓存损坏）时重新拉取
         let cache_key = self.jwks_cache_key();
         let cached = dao.get(&cache_key).await?;
-        let jwks: JwksResponse = match cached
+        let (jwks, fresh): (JwksResponse, bool) = match cached
             .as_deref()
             .and_then(|json| serde_json::from_str(json).ok())
         {
-            Some(jwks) => jwks,
+            Some(jwks) => (jwks, false),
             None => {
                 // 缓存 miss / TTL 过期 / 反序列化失败：重新拉取并写入缓存
                 self.fetch_jwks().await?;
@@ -512,25 +521,59 @@ impl KeycloakProvider {
                         "cache miss after fetch_jwks (DAO write anomaly)".to_string()
                     ))
                 })?;
-                serde_json::from_str(&json).map_err(|e| {
+                (
+                    serde_json::from_str(&json).map_err(|e| {
+                        GarrisonError::Internal(loc!(
+                            "keycloak-jwks-deserialize-failed",
+                            format!("JWKS deserialize failed: {}", e),
+                            ("detail", &e.to_string())
+                        ))
+                    })?,
+                    true,
+                )
+            },
+        };
+
+        // 3. 按 kid 匹配 JWKS 公钥。若缓存命中但 kid 未命中（密钥轮换场景），
+        //    强制重新拉取一次 JWKS 再匹配（T37）；已 freshly-fetched 则直接报错。
+        let jwk = match jwks.keys.iter().find(|k| k.kid == kid).cloned() {
+            Some(jwk) => jwk,
+            None if !fresh => {
+                self.fetch_jwks().await?;
+                let json = dao.get(&cache_key).await?.ok_or_else(|| {
+                    GarrisonError::Internal(loc!(
+                        "keycloak-jwks-cache-miss-after-fetch",
+                        "cache miss after fetch_jwks (DAO write anomaly)".to_string()
+                    ))
+                })?;
+                let refreshed: JwksResponse = serde_json::from_str(&json).map_err(|e| {
                     GarrisonError::Internal(loc!(
                         "keycloak-jwks-deserialize-failed",
                         format!("JWKS deserialize failed: {}", e),
                         ("detail", &e.to_string())
                     ))
-                })?
+                })?;
+                refreshed
+                    .keys
+                    .iter()
+                    .find(|k| k.kid == kid)
+                    .cloned()
+                    .ok_or_else(|| {
+                        GarrisonError::InvalidToken(loc!(
+                            "keycloak-jwks-key-not-found",
+                            format!("JWKS key not found for kid={}", Self::sanitize_kid(kid)),
+                            ("kid", &Self::sanitize_kid(kid))
+                        ))
+                    })?
+            },
+            None => {
+                return Err(GarrisonError::InvalidToken(loc!(
+                    "keycloak-jwks-key-not-found",
+                    format!("JWKS key not found for kid={}", kid),
+                    ("kid", kid)
+                )))
             },
         };
-
-        // 3. 按 kid 匹配 JWKS 公钥
-        let jwk = jwks.keys.iter().find(|k| k.kid == kid).cloned();
-        let jwk = jwk.ok_or_else(|| {
-            GarrisonError::InvalidToken(loc!(
-                "keycloak-jwks-key-not-found",
-                format!("JWKS key not found for kid={}", kid),
-                ("kid", kid)
-            ))
-        })?;
 
         // 4. 构造 DecodingKey 并验签
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|e| {
@@ -679,7 +722,7 @@ impl KeycloakProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::MockDao;
+    use crate::dao::InMemoryDao;
 
     // ========================================================================
     // T111-KeycloakConfig Red-Green
@@ -893,7 +936,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let keycloak_claims = provider
             .verify_id_token(&id_token)
             .await
@@ -1061,7 +1104,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -1170,7 +1213,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -1275,7 +1318,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let result = provider.verify_id_token(&id_token).await;
 
         match result {
@@ -1382,7 +1425,7 @@ mod tests {
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
-            .with_dao(Arc::new(MockDao::new()));
+            .with_dao(Arc::new(InMemoryDao::new()));
         let keycloak_claims = provider
             .verify_id_token(&id_token)
             .await
@@ -1399,7 +1442,7 @@ mod tests {
     /// T092 测试 1：`with_pkce` 设置有效 verifier 后，`exchange_code` 请求体包含 `code_verifier`
     ///
     ///
-    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic。
+    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic。
     /// Green 阶段（T093）：实现 `with_pkce` 后测试通过。
     ///
     /// # 测试流程
@@ -1468,7 +1511,7 @@ mod tests {
     /// T092 测试 2：`with_pkce` 传入无效 verifier（长度 < 43）返回 `InvalidParam` 错误
     ///
     ///
-    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic（非预期 InvalidParam）。
+    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic（非预期 InvalidParam）。
     /// Green 阶段（T093）：实现校验后返回 `InvalidParam` 错误。
     #[test]
     fn keycloak_pkce_flow_fails_on_invalid_verifier() {
@@ -1561,7 +1604,7 @@ mod tests {
     /// T092 测试 4：同时配置 `client_secret` 和 PKCE 时，`exchange_code` 使用 PKCE 鉴权
     ///
     ///
-    /// Red 阶段：`with_pkce` 方法体为 `todo!()` → 调用时 panic。
+    /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic。
     /// Green 阶段（T093）：实现 PKCE 优先级逻辑后测试通过。
     ///
     /// # 测试流程
@@ -1663,6 +1706,15 @@ mod tests {
             ("kid", "abc123")
         );
         assert_eq!(msg, "JWKS 中未找到 kid=abc123 的公钥");
+    }
+
+    /// T39: sanitize_kid 过滤控制字符并限长 128。
+    #[test]
+    fn sanitize_kid_filters_control_chars_and_limits_len() {
+        assert_eq!(KeycloakProvider::sanitize_kid("abc123"), "abc123");
+        assert_eq!(KeycloakProvider::sanitize_kid("bad\x01kid\x7f"), "badkid");
+        let long = "a".repeat(200);
+        assert_eq!(KeycloakProvider::sanitize_kid(&long).len(), 128);
     }
 
     // ========================================================================

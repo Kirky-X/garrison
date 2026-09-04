@@ -19,6 +19,8 @@ use super::LoginParams;
 #[cfg(feature = "listener")]
 use crate::config::OverflowLogoutMode;
 use crate::config::ReplacedLoginExitMode;
+#[cfg(feature = "secure-simple-token")]
+use crate::core::token::Token;
 use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(feature = "listener")]
 use crate::listener::GarrisonEvent;
@@ -309,7 +311,56 @@ impl SessionLogic for GarrisonLogicDefault {
         // emit metrics：登录尝试（成功/失败均记录）
         #[cfg(feature = "metrics-prometheus")]
         let start = std::time::Instant::now();
+
+        // CRIT-010: 暴力破解防护（firewall-bruteforce 启用时）。
+        // 前置短路：已封禁 IP 直接拒绝（不消耗校验资源）。
+        #[cfg(feature = "firewall-bruteforce")]
+        if let Some(ip) = crate::stp::current_ip() {
+            use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+            use crate::strategy::firewall::FirewallContext;
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
+            let fw_ctx = FirewallContext::new(&ip);
+            if strategy.is_blocked(&fw_ctx).await? {
+                return Err(GarrisonError::FirewallBlocked(format!(
+                    "stp-login-ip-blocked::{}",
+                    ip
+                )));
+            }
+        }
+
         let result = self.login_inner(login_id, params).await;
+
+        // CRIT-010: 失败计数（仅失败路径）；成功路径清零失败计数。
+        #[cfg(feature = "firewall-bruteforce")]
+        if let Some(ip) = crate::stp::current_ip() {
+            use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+            use crate::strategy::firewall::FirewallContext;
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
+            let fw_ctx = FirewallContext::new(&ip);
+            match &result {
+                Ok(_) => {
+                    let count_key =
+                        format!("{}{}:count", crate::constants::DaoKeyPrefix::BruteForce, ip);
+                    if let Err(e) = self.dao().delete(&count_key).await {
+                        tracing::warn!(
+                            ip = %ip,
+                            error = %e,
+                            "brute force reset-on-success 失败（不影响登录结果）"
+                        );
+                    }
+                },
+                Err(_) => {
+                    if let Err(record_err) = strategy.record_failure(&fw_ctx).await {
+                        tracing::warn!(
+                            ip = %ip,
+                            error = %record_err,
+                            "brute force record_failure 失败（不影响登录结果）"
+                        );
+                    }
+                },
+            }
+        }
+
         #[cfg(feature = "metrics-prometheus")]
         if let Some(m) = &self.metrics {
             m.record_login(result.is_ok());
@@ -343,8 +394,9 @@ impl SessionLogic for GarrisonLogicDefault {
                         )));
                     }
                 }
-                // create: 原子序列的 Step 2
-                session.create(login_id, token).await
+                // create: 原子序列的 Step 2（含并发策略 + 最大登录数配额，同一 login 锁区内）
+                self.create_session_with_quota(login_id, token, None, None, None, false)
+                    .await
             })
             .await
     }
@@ -495,6 +547,21 @@ impl SessionLogic for GarrisonLogicDefault {
 
     #[tracing::instrument(skip_all)]
     async fn check_login(&self) -> GarrisonResult<bool> {
+        // CRIT-010: 暴力破解防护前置短路（已封禁 IP 直接拒绝）。
+        #[cfg(feature = "firewall-bruteforce")]
+        if let Some(ip) = crate::stp::current_ip() {
+            use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+            use crate::strategy::firewall::FirewallContext;
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
+            let fw_ctx = FirewallContext::new(&ip);
+            if strategy.is_blocked(&fw_ctx).await? {
+                return Err(GarrisonError::FirewallBlocked(format!(
+                    "stp-check-login-ip-blocked::{}",
+                    ip
+                )));
+            }
+        }
+
         let token = match current_token() {
             Ok(t) => t,
             Err(_) => {
@@ -517,6 +584,40 @@ impl SessionLogic for GarrisonLogicDefault {
             if let Ok(Some(ts)) = self.session.get_token_session(&token).await {
                 self.run_anomaly_check_on_check_login(&ts.login_id, &token)
                     .await;
+            }
+        }
+
+        // CRIT-010: 认证失败计数（仅 Ok(false) 计入撞库尝试），成功路径清零。
+        #[cfg(feature = "firewall-bruteforce")]
+        if let Some(ip) = crate::stp::current_ip() {
+            use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
+            use crate::strategy::firewall::FirewallContext;
+            let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
+            let fw_ctx = FirewallContext::new(&ip);
+            match &result {
+                Ok(true) => {
+                    let count_key =
+                        format!("{}{}:count", crate::constants::DaoKeyPrefix::BruteForce, ip);
+                    if let Err(e) = self.dao().delete(&count_key).await {
+                        tracing::warn!(
+                            ip = %ip,
+                            error = %e,
+                            "brute force reset-on-success 失败（不影响校验结果）"
+                        );
+                    }
+                },
+                Ok(false) => {
+                    if let Err(record_err) = strategy.record_failure(&fw_ctx).await {
+                        tracing::warn!(
+                            ip = %ip,
+                            error = %record_err,
+                            "brute force record_failure 失败（不影响校验结果）"
+                        );
+                    }
+                },
+                Err(_) => {
+                    // 状态/配置错误（如未登录异常），非撞库尝试，不计入。
+                },
             }
         }
         result
@@ -618,37 +719,73 @@ impl GarrisonLogicDefault {
             return Ok(token);
         }
 
-        // 3. is_concurrent=false: 并发策略检查
-        self.check_concurrent_policy(login_id).await?;
-
-        // 4. 自动生成设备指纹
+        // 3. 自动生成设备指纹
         let params = self.prepare_device_fingerprint(params);
 
-        // 5. 设备绑定策略检测
+        // 4. 设备绑定策略检测
         self.check_device_binding(login_id, &params).await?;
 
-        // 6. 创建会话 + enforce 最大登录数（同一锁区内）
+        // 5. 创建会话 + 强制最大登录数（含并发策略，同一 login 锁区内，消除 TOCTOU）
         let token = self.generate_token(login_id)?;
-        let login_id_owned = login_id.to_string();
-        let token_owned = token.clone();
         let params_owned = params.clone();
+        self.create_session_with_quota(
+            login_id,
+            &token,
+            params_owned.device.as_deref(),
+            params_owned.ip.as_deref(),
+            params_owned.user_agent.as_deref(),
+            params_owned.remember_me,
+        )
+        .await?;
+
+        // 6. 事件通知（锁外执行，避免持锁跨 broadcast）
+        self.notify_login_event(login_id, &token, &params).await;
+        Ok(token)
+    }
+
+    /// 锁内公共序列：并发策略检查 + 创建会话 + 强制最大登录数。
+    ///
+    /// 抽取自 `login_inner` 与 `login_with_token` 的公共逻辑，统一会话创建配额行为，
+    /// 保证 `create` 与 `enforce_max_login_count` 在同一 `with_login_lock` 临界区内执行，
+    /// 消除 TOCTOU 竞态（HIGH-1）。`enforce_max_login_count` 失败时对新建会话做回滚。
+    ///
+    /// # 参数
+    /// - `login_id` / `token`：会话主体与 token
+    /// - `device` / `ip` / `user_agent`：设备上下文（来自 `LoginParams`，`login_with_token` 传 `None`）
+    /// - `remember_me`：记住我
+    async fn create_session_with_quota(
+        &self,
+        login_id: &str,
+        token: &str,
+        device: Option<&str>,
+        ip: Option<&str>,
+        user_agent: Option<&str>,
+        remember_me: bool,
+    ) -> GarrisonResult<()> {
+        // 1. 并发策略（is_concurrent=false）。注意：必须在 login 锁外执行，
+        //    因为 `check_concurrent_policy` 在 OldDevice 模式下会调用 `kickout`
+        //    （内部再次获取 per-login_id 锁），与下方 `with_login_lock` 临界区不能嵌套，
+        //    否则会重入死锁。
+        self.check_concurrent_policy(login_id).await?;
+
+        // 2. 创建 + enforce 最大登录数（同一 login 锁区内）
+        let login_id_owned = login_id.to_string();
+        let token_owned = token.to_string();
         self.session
             .with_login_lock(&login_id_owned, async {
                 self.session
                     .create_token_session_inner(
                         &login_id_owned,
                         &token_owned,
-                        params_owned.device.as_deref(),
-                        params_owned.ip.as_deref(),
-                        params_owned.user_agent.as_deref(),
+                        device,
+                        ip,
+                        user_agent,
+                        Some(remember_me),
                     )
                     .await?;
                 if self.config.max_login_count > 0 {
                     if let Err(e) = self
-                        .enforce_max_login_count_inner(
-                            &login_id_owned,
-                            self.config.max_login_count,
-                        )
+                        .enforce_max_login_count_inner(&login_id_owned, self.config.max_login_count)
                         .await
                     {
                         tracing::error!(
@@ -683,11 +820,7 @@ impl GarrisonLogicDefault {
                 }
                 Ok(())
             })
-            .await?;
-
-        // 7. 事件通知（锁外执行，避免持锁跨 broadcast）
-        self.notify_login_event(login_id, &token, &params).await;
-        Ok(token)
+            .await
     }
 
     /// is_share=true 时尝试复用现有有效 token。
@@ -998,7 +1131,24 @@ impl GarrisonLogicDefault {
                 uuid::Uuid::new_v4().simple(),
                 uuid::Uuid::new_v4().simple()
             )),
-            "simple" => Ok(uuid::Uuid::new_v4().simple().to_string()),
+            "simple" => {
+                // R-sessiontokenconsistency-002：复用 `SimpleTokenStyle`（HMAC-SHA256 签名），
+                // 消除裸 UUID 随机 token 与 verify 路径的格式不一致（单点真相）。
+                // `secure-simple-token` 未启用时 fail-closed 返回 Config 错误，与 TokenStyleFactory 一致。
+                #[cfg(feature = "secure-simple-token")]
+                {
+                    let style = crate::core::token::SimpleTokenStyle::new(
+                        self.config.jwt_secret.as_str().to_string(),
+                    );
+                    style.generate(login_id, self.config.timeout)
+                }
+                #[cfg(not(feature = "secure-simple-token"))]
+                {
+                    Err(GarrisonError::Config(
+                        "stp-simple-token-style-requires-secure-simple-token-feature::".to_string(),
+                    ))
+                }
+            },
             "jwt" => {
                 // 委托 JwtHandler::sign
                 #[cfg(feature = "protocol-jwt")]
@@ -1030,6 +1180,17 @@ impl GarrisonLogicDefault {
     async fn check_login_stateless(&self, token: &str) -> GarrisonResult<bool> {
         #[cfg(feature = "protocol-jwt")]
         {
+            // R-sessiontokenconsistency / T017：stateless JWT 但未启用撤销 = 不可吊销的永久凭证（高危）。
+            // 启动期互斥校验：token_style=jwt 且 jwt_mode=Stateless 且 enable_jwt_revocation=false 时拒绝，
+            // 给出三选一指引（开启撤销 / 改 Mixin / 显式风险接受）。fail-closed，不依赖 token 合法性。
+            if self.config.token_style == "jwt"
+                && !self.config.enable_jwt_revocation
+                && !self.config.allow_stateless_jwt_no_revocation
+            {
+                return Err(GarrisonError::Config(
+                    "stp-stateless-jwt-requires-revocation::token_style=jwt 且 jwt_mode=Stateless 时必须启用 enable_jwt_revocation（三选一：1) 开启 JWT 撤销黑名单 enable_jwt_revocation=true；2) 改用 JwtMode::Mixin；3) 显式风险接受开关 allow_stateless_jwt_no_revocation=true）".to_string(),
+                ));
+            }
             if self.config.token_style != "jwt" {
                 return Err(GarrisonError::Config(
                     "stp-stateless-requires-jwt-token-style::".to_string(),
@@ -1042,7 +1203,7 @@ impl GarrisonLogicDefault {
             if self.config.enable_jwt_revocation {
                 if let Some(jti) = &claims.jti {
                     let key = format!("jwt:blacklist:{}", jti);
-                    if self.session.dao().get(&key).await?.is_some() {
+                    if self.dao().get(&key).await?.is_some() {
                         return Err(GarrisonError::TokenRevoked(format!(
                             "jwt-revoked::jti={}",
                             &jti[..jti.len().min(16)]
@@ -1228,7 +1389,7 @@ impl GarrisonLogicDefault {
             return; // 已过期，无需加入黑名单
         }
         let key = format!("jwt:blacklist:{}", jti);
-        if let Err(e) = self.session.dao().set(&key, "1", ttl_secs as u64).await {
+        if let Err(e) = self.dao().set(&key, "1", ttl_secs as u64).await {
             tracing::warn!(error = %e, jti = &jti[..jti.len().min(16)], "JWT blacklist write failed");
         }
     }
@@ -1398,6 +1559,7 @@ mod tests {
     #![allow(clippy::useless_conversion)]
     use super::*;
     use crate::config::GarrisonConfig;
+    use serial_test::serial;
     use std::sync::Arc;
 
     /// 最小 mock：实现 `GarrisonCore` + 9 个必需 `SessionLogic` 方法
@@ -1610,6 +1772,7 @@ mod tests {
                 self.store.lock().remove(key);
                 Ok(())
             }
+            crate::atomic_test_fallback!();
         }
 
         // --------------------------------------------------------------------
@@ -1784,7 +1947,7 @@ mod tests {
             listener_manager: Arc<AlertListenerManager>,
         ) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -1797,7 +1960,7 @@ mod tests {
         /// 创建不带检测器的 GarrisonLogicDefault（向后兼容测试用）。
         fn make_logic_without_anomaly() -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -2039,7 +2202,7 @@ mod tests {
         /// 创建带 MockDao 的 GarrisonLogicDefault（无设备绑定策略，供测试自定义注入）。
         fn make_logic_base() -> GarrisonLogicDefault {
             let dao: Arc<MockDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -2372,6 +2535,7 @@ mod tests {
                 self.store.lock().remove(key);
                 Ok(())
             }
+            crate::atomic_test_fallback!();
         }
 
         /// 最小 firewall mock（提供 L3 回调数据源）。
@@ -2422,7 +2586,7 @@ mod tests {
 
         /// 构造带 UserCacheService 的 GarrisonLogicDefault。
         fn make_logic_with_cache(dao: Arc<CountingDao>) -> GarrisonLogicDefault {
-            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -2516,7 +2680,7 @@ mod tests {
         #[tokio::test]
         async fn logout_without_cache_service_backward_compatible() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(CountingDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -2561,7 +2725,7 @@ mod tests {
         /// 创建基础 GarrisonLogicDefault（uuid token_style，throw 可配置）。
         fn make_logic(throw_on_not_login: bool) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
             config.token_style = "uuid".to_string();
@@ -2580,9 +2744,12 @@ mod tests {
             secret: &str,
         ) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
+            // 安全默认：stateless JWT 必须启用撤销（T017 互斥校验），
+            // 需要无撤销组合的测试请自行构造 config。
+            config.enable_jwt_revocation = true;
             config.token_style = "jwt".to_string();
             config.jwt_secret = secret.to_string().into();
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
@@ -2633,7 +2800,8 @@ mod tests {
         #[tokio::test]
         async fn check_login_stateless_valid_jwt_returns_true() {
             let secret = "coverage-secret-stateless-valid-32bytes!!";
-            let logic = make_jwt_logic(false, JwtMode::Stateless, secret);
+            // 安全组合：jwt_mode=Stateless + enable_jwt_revocation=true（T017 互斥校验要求）
+            let logic = make_jwt_logic(true, JwtMode::Stateless, secret);
             let handler = crate::protocol::jwt::JwtHandler::new(secret);
             let jwt_token = handler
                 .sign("stateless-user-001", 3600)
@@ -2653,7 +2821,7 @@ mod tests {
         #[tokio::test]
         async fn check_login_stateless_invalid_token_returns_error() {
             let logic = make_jwt_logic(
-                false,
+                true,
                 JwtMode::Stateless,
                 "coverage-secret-stateless-0123456789",
             );
@@ -2670,6 +2838,7 @@ mod tests {
 
         /// Stateless 模式 + token_style != jwt → Err Config。
         #[cfg(feature = "protocol-jwt")]
+        #[serial]
         #[tokio::test]
         async fn check_login_stateless_wrong_token_style_returns_config_error() {
             // token_style=uuid 但 jwt_mode=Stateless
@@ -2680,6 +2849,67 @@ mod tests {
             assert!(
                 matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("stp-stateless-requires")),
                 "Stateless + token_style=uuid 应返回 Err(Config(...Stateless...))，实际: {:?}",
+                result
+            );
+        }
+
+        /// T017：token_style=jwt + jwt_mode=Stateless + enable_jwt_revocation=false 互斥，
+        /// 启动校验 fail-closed 返回 Config 错误（不可吊销的永久 JWT 凭证）。不依赖 token 合法性。
+        #[cfg(feature = "protocol-jwt")]
+        #[serial]
+        #[tokio::test]
+        async fn check_login_stateless_without_revocation_rejected() {
+            let mut config = GarrisonConfig::default_config();
+            config.token_style = "jwt".to_string();
+            config.enable_jwt_revocation = false;
+            config.allow_stateless_jwt_no_revocation = false;
+            config.throw_on_not_login = false;
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let firewall = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+                .with_jwt_mode(JwtMode::Stateless);
+            let result = with_current_token("any.token.here".to_string(), async {
+                logic.check_login().await
+            })
+            .await;
+            assert!(
+                matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("stp-stateless-jwt-requires-revocation")),
+                "stateless JWT 未启用撤销应 fail-closed 返回 Config 错误，实际: {:?}",
+                result
+            );
+        }
+
+        /// T017 正例：启用 `allow_stateless_jwt_no_revocation` 风险接受开关后，
+        /// 该组合被放行（需有效 JWT 才能真正通过 verify）。
+        #[cfg(feature = "protocol-jwt")]
+        #[serial]
+        #[tokio::test]
+        async fn check_login_stateless_risk_accept_flag_allows() {
+            let secret = "coverage-secret-stateless-0123456789";
+            let mut config = GarrisonConfig::default_config();
+            config.token_style = "jwt".to_string();
+            config.enable_jwt_revocation = false;
+            config.allow_stateless_jwt_no_revocation = true;
+            config.throw_on_not_login = false;
+            config.jwt_secret = secret.to_string().into();
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let firewall = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+                .with_jwt_mode(JwtMode::Stateless);
+            let handler = crate::protocol::jwt::JwtHandler::new(secret);
+            let jwt_token = handler.sign("risk-accept-user", 3600).unwrap();
+            let result = with_current_token(jwt_token, async { logic.check_login().await }).await;
+            assert!(
+                matches!(result, Ok(true)),
+                "显式风险接受开关开启时 stateless JWT 应放行（有效 JWT），实际: {:?}",
                 result
             );
         }
@@ -2751,7 +2981,7 @@ mod tests {
         async fn check_and_renew_ttl_sufficient_returns_none() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
             // session timeout=3600s，与 config.timeout 对齐以避免百分比计算偏差
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -2778,7 +3008,7 @@ mod tests {
         async fn check_and_renew_no_auth_logic_returns_config_error() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
             // session timeout=5s，与 config.timeout 对齐
-            let session = Arc::new(GarrisonSession::new(dao, 5, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 5, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -2812,7 +3042,7 @@ mod tests {
         #[tokio::test]
         async fn generate_token_unknown_style_returns_config_error() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "unknown-style".to_string();
@@ -3082,7 +3312,7 @@ mod tests {
                 throw_on_not_login: bool,
             ) -> (GarrisonLogicDefault, Arc<RecordingListener>) {
                 let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = throw_on_not_login;
                 config.token_style = "uuid".to_string();
@@ -3342,13 +3572,14 @@ mod tests {
             #[tokio::test]
             async fn login_by_token_creates_session_and_broadcasts_login() {
                 let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = false;
                 config.token_style = "simple".to_string();
                 // A11: simple 模式下 verify_token 委托 SimpleTokenStyle（需 HMAC），
                 // 设置非空 jwt_secret 避免 fail-closed。
-                const SESSION_SIMPLE_TEST_SECRET: &str = "stp-session-simple-test-secret";
+                const SESSION_SIMPLE_TEST_SECRET: &str =
+                    "stp-session-simple-test-secret-0123456789";
                 config.jwt_secret = SESSION_SIMPLE_TEST_SECRET.to_string().into();
                 let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
                     has_permission: true,
@@ -3409,7 +3640,7 @@ mod tests {
             #[tokio::test]
             async fn check_and_update_hover_evicts_on_timeout() {
                 let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = false;
                 config.token_style = "uuid".to_string();
@@ -3470,7 +3701,7 @@ mod tests {
             #[tokio::test]
             async fn check_and_update_hover_evicts_on_timeout_throws() {
                 let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = true;
                 config.token_style = "uuid".to_string();
@@ -3524,6 +3755,66 @@ mod tests {
                 .unwrap()
                 .expect("login_with_token 后应存在 Token-Session");
             assert_eq!(ts.login_id, "lwt-user-001");
+        }
+
+        /// T018：login_with_token 经由 create_session_with_quota 执行最大登录数配额，
+        /// 创建第 max_login_count+1 个会话时最旧会话被踢出。
+        #[tokio::test]
+        async fn login_with_token_enforces_max_login_count_evicts_oldest() {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let mut config = GarrisonConfig::default_config();
+            config.max_login_count = 2;
+            config.is_concurrent = true;
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+
+            logic
+                .login_with_token("quota-user", "qt-token-001")
+                .await
+                .unwrap();
+            logic
+                .login_with_token("quota-user", "qt-token-002")
+                .await
+                .unwrap();
+            logic
+                .login_with_token("quota-user", "qt-token-003")
+                .await
+                .unwrap();
+
+            // 第 3 个登录（> max_login_count=2）应踢出最旧 token qt-token-001
+            let oldest = logic
+                .session
+                .get_token_session("qt-token-001")
+                .await
+                .unwrap();
+            assert!(
+                oldest.is_none(),
+                "第 max_login_count+1 个会话应踢出最旧 token qt-token-001，实际: {:?}",
+                oldest
+            );
+            // qt-token-002 / qt-token-003 仍保留
+            assert!(
+                logic
+                    .session
+                    .get_token_session("qt-token-002")
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "qt-token-002 应保留"
+            );
+            assert!(
+                logic
+                    .session
+                    .get_token_session("qt-token-003")
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "qt-token-003 应保留"
+            );
         }
 
         /// token 已关联其他 login_id 时 `login_with_token` 应返回 Err。
@@ -3769,7 +4060,7 @@ mod tests {
         #[tokio::test]
         async fn generate_token_random_64_style() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "random_64".to_string();
@@ -3797,13 +4088,62 @@ mod tests {
             );
         }
 
-        /// token_style=simple 生成 32 字符 token。
-        ///
-        /// 覆盖 line 725：`simple` 分支（simple UUID，32 字符无连字符）。
+        /// token_style=simple 复用 `SimpleTokenStyle`（HMAC 签名），主登录路径产出的 token
+        /// 格式为 `<login_id>\x1f<uuid>.<hmac>`，且可被同一 `SimpleTokenStyle::verify` 通过
+        /// （R-sessiontokenconsistency-002：单点真相，generate 与 verify 不再格式分裂）。
+        #[cfg(feature = "secure-simple-token")]
         #[tokio::test]
-        async fn generate_token_simple_style() {
+        async fn generate_token_simple_style_is_hmac_and_verifiable() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let mut config = GarrisonConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "simple".to_string();
+            config.jwt_secret = "gen-simple-secret-aaaabbbbccccdddd0".to_string().into();
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(session, Arc::new(config.clone()), firewall);
+
+            // 主登录路径产出 token
+            let token = logic
+                .login("simple-user-001", &LoginParams::default())
+                .await
+                .unwrap();
+            // 格式：login_id \x1f uuid . hmac
+            assert!(token.contains('\x1f'), "simple token 应包含 \\x1f 分隔符");
+            assert!(token.contains('.'), "simple token 应包含 HMAC 分隔点");
+
+            // 同一 SimpleTokenStyle（同 secret）verify 应通过并解析出相同 login_id
+            let style =
+                crate::core::token::SimpleTokenStyle::new(config.jwt_secret.as_str().to_string());
+            let verified = style.verify(&token).unwrap();
+            assert_eq!(
+                verified,
+                Some("simple-user-001".to_string()),
+                "simple token 应能被同一 SimpleTokenStyle::verify 通过并解析出 login_id"
+            );
+
+            // AuthLogic 路径（login 即同一方法）产出格式一致，可被同一 verify 通过
+            let token2 = logic
+                .login("simple-user-001", &LoginParams::default())
+                .await
+                .unwrap();
+            assert_eq!(
+                style.verify(&token2).unwrap(),
+                Some("simple-user-001".to_string()),
+                "AuthLogic 路径产出的 simple token 应同样可被 SimpleTokenStyle::verify 通过"
+            );
+        }
+
+        /// token_style=simple 未启用 `secure-simple-token` feature 时 fail-closed 返回 Config 错误。
+        #[cfg(not(feature = "secure-simple-token"))]
+        #[serial]
+        #[tokio::test]
+        async fn generate_token_simple_style_requires_feature() {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "simple".to_string();
@@ -3813,28 +4153,24 @@ mod tests {
             });
             let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
 
-            let token = logic
+            let result = logic
                 .login("simple-user-001", &LoginParams::default())
-                .await
-                .unwrap();
-            // simple UUID = 32 字符无连字符
-            assert_eq!(
-                token.len(),
-                32,
-                "simple token 应为 32 字符，实际: {} 字符",
-                token.len()
+                .await;
+            assert!(
+                matches!(result, Err(GarrisonError::Config(_))),
+                "未启用 secure-simple-token 时 simple token 生成应 fail-closed 返回 Config 错误"
             );
-            assert!(!token.contains('-'), "simple token 不应包含连字符");
         }
 
         /// token_style=jwt 生成 JWT token。
         ///
         /// 覆盖 lines 726-739：`jwt` 分支（委托 JwtHandler::sign）。
         #[cfg(feature = "protocol-jwt")]
+        #[serial]
         #[tokio::test]
         async fn generate_token_jwt_style() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -3865,6 +4201,7 @@ mod tests {
         /// Mixin 模式 + 有效 token → Ok(true)。
         ///
         /// 覆盖 lines 808-821：valid=true → check_and_update_hover → check_and_renew → Ok(true)。
+        #[serial]
         #[tokio::test]
         async fn check_login_mixin_valid_token_returns_true() {
             let logic = make_logic(false).with_jwt_mode(JwtMode::Mixin);
@@ -4076,7 +4413,7 @@ mod tests {
             enable_revocation: bool,
         ) -> (GarrisonLogicDefault, Arc<MockDao>) {
             let dao = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -4092,6 +4429,7 @@ mod tests {
         }
 
         /// logout 后 jti 写入黑名单（dao.get 返回 Some）。
+        #[serial]
         #[tokio::test]
         async fn logout_writes_jti_to_blacklist() {
             let (logic, dao) = make_jwt_revocation_logic(true);
@@ -4120,6 +4458,7 @@ mod tests {
         }
 
         /// stateless 模式对已撤销 JWT 返回 TokenRevoked 错误。
+        #[serial]
         #[tokio::test]
         async fn stateless_rejects_revoked_jwt() {
             let (logic, _dao) = make_jwt_revocation_logic(true);
@@ -4145,6 +4484,7 @@ mod tests {
         }
 
         /// 未过期且未撤销的 JWT 正常通过 stateless check_login。
+        #[serial]
         #[tokio::test]
         async fn stateless_accepts_valid_jwt() {
             let (logic, _dao) = make_jwt_revocation_logic(true);
@@ -4161,6 +4501,7 @@ mod tests {
         }
 
         /// enable_jwt_revocation=false 时 logout 不写黑名单。
+        #[serial]
         #[tokio::test]
         async fn no_blacklist_when_revocation_disabled() {
             let (logic, dao) = make_jwt_revocation_logic(false);
@@ -4187,5 +4528,120 @@ mod tests {
                 "enable_jwt_revocation=false 时 logout 不应写入黑名单"
             );
         }
+    }
+}
+
+#[cfg(all(test, feature = "firewall-bruteforce"))]
+mod firewall_tests {
+    use super::*;
+    use crate::config::GarrisonConfig;
+    use crate::dao::tests::MockDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::mock::MockInterface;
+    use crate::stp::{with_current_ip, with_current_token, GarrisonUtil};
+    // setup() 会 reset_for_test() 覆盖全局单例并替换 DAO：并发线程下彼此的
+    // brute-force 计数被清零 → `brute_force_blocks_ip_after_repeated_failed_check_login`
+    // 基线 flaky（#5 失败 #4/#6 通过）。按仓库惯例（account/metrics.rs）串行化。
+    use serial_test::serial;
+
+    async fn setup() {
+        GarrisonManager::reset_for_test();
+        let dao: std::sync::Arc<dyn crate::dao::GarrisonDao> = std::sync::Arc::new(MockDao::new());
+        // 关闭 throw_on_not_login：使无效 token 返回 Ok(false)（认证失败），
+        // 从而触发 brute-force 计数路径。
+        let mut config = GarrisonConfig::default();
+        config.throw_on_not_login = false;
+        let config = std::sync::Arc::new(config);
+        let interface: std::sync::Arc<dyn crate::stp::GarrisonInterface> =
+            std::sync::Arc::new(MockInterface);
+        GarrisonManager::builder()
+            .dao(dao)
+            .config(config)
+            .interface(interface)
+            .build()
+            .await
+            .unwrap();
+    }
+
+    /// CRIT-010: 同一 IP 反复认证失败 → 触发暴力破解封禁（FirewallBlocked）。
+    #[tokio::test]
+    #[serial]
+    async fn brute_force_blocks_ip_after_repeated_failed_check_login() {
+        setup().await;
+        let ip = "203.0.113.5".to_string();
+        let blocked = with_current_ip(ip.clone(), async {
+            with_current_token("bogus-token".to_string(), async {
+                let mut blocked = false;
+                for _ in 0..12 {
+                    if let Err(GarrisonError::FirewallBlocked(_)) =
+                        GarrisonUtil::check_login().await
+                    {
+                        blocked = true;
+                        break;
+                    }
+                }
+                blocked
+            })
+            .await
+        })
+        .await;
+        assert!(
+            blocked,
+            "重复认证失败应触发 IP 封禁（返回 FirewallBlocked）"
+        );
+    }
+
+    /// CRIT-010: 认证成功路径应清零失败计数（不触发封禁）。
+    #[tokio::test]
+    #[serial]
+    async fn successful_login_resets_failure_count() {
+        setup().await;
+        let ip = "198.51.100.7".to_string();
+        // 先制造若干失败计数，再执行一次成功登录（无 token 的 check_login 失败不算，
+        // 这里用 login 成功路径验证清零逻辑：login 成功会 delete 计数键）。
+        with_current_ip(ip.clone(), async {
+            // 失败计数累积
+            for _ in 0..3 {
+                with_current_token("bogus".to_string(), async {
+                    let _ = GarrisonUtil::check_login().await;
+                })
+                .await;
+            }
+            // 成功登录（login 对任意合法 login_id 创建会话）
+            let _ = GarrisonUtil::login("legit-user", &LoginParams::default()).await;
+        })
+        .await;
+
+        // 清零后再次失败不应立即封禁（计数已重置，需重新累积）。
+        let blocked_immediately = with_current_ip(ip.clone(), async {
+            with_current_token("bogus2".to_string(), async {
+                let mut blocked = false;
+                // 仅 1 次失败，远未达阈值
+                if let Err(GarrisonError::FirewallBlocked(_)) = GarrisonUtil::check_login().await {
+                    blocked = true;
+                }
+                blocked
+            })
+            .await
+        })
+        .await;
+        assert!(
+            !blocked_immediately,
+            "成功登录后失败计数应被清零，单次失败不应立即封禁"
+        );
+    }
+
+    /// T010: 启用 firewall feature 时 builder 应自动注入 firewall_hook。
+    #[tokio::test]
+    #[serial]
+    async fn builder_auto_wires_firewall_hook() {
+        setup().await;
+        let injected = crate::manager::GarrisonManager::logic()
+            .unwrap()
+            .firewall_hook_injected();
+        assert!(
+            injected,
+            "firewall feature 启用时 builder 应自动注入 firewall_hook（避免 dead-code）"
+        );
     }
 }

@@ -573,6 +573,46 @@ mod service {
             }
             Ok(())
         }
+
+        /// 清理已撤销且已过期的 refresh token 记录。
+        ///
+        /// 删除满足以下**全部条件**的记录：
+        /// - `revoked = 1`（已撤销）
+        /// - `expires_at < now - grace_period`（过期超过 7 天）
+        ///
+        /// 不删除未撤销但已过期的 token（保留审计价值）。
+        /// 不删除已撤销但未过期的 token（grace period 内可能仍需追溯）。
+        ///
+        /// # 返回
+        /// 实际删除的记录数。
+        ///
+        /// # 错误
+        /// - `GarrisonError::Dao`: SQL 执行失败
+        ///
+        /// # 调用频率
+        /// 由调用方决定（建议与 session cleanup 同周期调度）。
+        pub async fn cleanup_expired(&self) -> GarrisonResult<usize> {
+            let session = self.pool.get_session("admin").await.map_err(|e| {
+                GarrisonError::Dao(format!("jwt-refresh-cleanup-get-session::{}", e))
+            })?;
+            let conn = session
+                .connection()
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-cleanup-get-conn::{}", e)))?;
+
+            // grace period = 7 天（与 refresh token TTL 一致）
+            let threshold = Self::now_unix() - 7 * 86400;
+            let stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "DELETE FROM refresh_tokens WHERE revoked = 1 AND expires_at < ?",
+                vec![Value::BigInt(Some(threshold))],
+            );
+            let result = conn
+                .execute_raw(stmt)
+                .await
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-cleanup-delete::{}", e)))?;
+
+            Ok(result.rows_affected() as usize)
+        }
     }
 }
 
@@ -1259,5 +1299,155 @@ mod db_sqlite_tests {
         assert_eq!(new_record.scopes, None);
         assert_eq!(new_record.username, None);
         assert_eq!(new_record.user_id, None);
+    }
+
+    // ========================================================================
+    // cleanup_expired 测试
+    // ========================================================================
+
+    /// 查询 refresh_tokens 表中的记录总数。
+    async fn count_records(pool: &DbPool) -> usize {
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) AS cnt FROM refresh_tokens",
+            vec![],
+        );
+        let row = conn
+            .query_one_raw(stmt)
+            .await
+            .expect("COUNT 应成功")
+            .expect("应有结果");
+        row.try_get::<i64>("", "cnt").unwrap() as usize
+    }
+
+    /// cleanup_expired 仅删除 revoked=1 且 expires_at < (now - 7天) 的记录。
+    ///
+    /// 场景覆盖：
+    /// - revoked=1 且 expires_at 远超 grace period → 应被删除
+    /// - revoked=0 且 expires_at 已过期 → 不应删除（审计价值）
+    /// - revoked=1 但 expires_at 在 grace period 内 → 不应删除
+    /// - revoked=0 且 expires_at 未过期 → 不应删除
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cleanup_expired_deletes_only_revoked_and_expired() {
+        let pool = setup_db().await;
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
+        let rotation =
+            RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let seven_days_ago = now - 7 * 86400;
+
+        // 1. revoked=1, expires_at 远超 grace period（30 天前过期）→ 应删除
+        insert_refresh_token(
+            &pool,
+            "hash_revoked_expired",
+            None,
+            1,
+            0,
+            1,
+            seven_days_ago - 86400 * 23,
+            1,
+        )
+        .await;
+        // 2. revoked=0, expires_at 已过期（10 天前）→ 不应删除
+        insert_refresh_token(
+            &pool,
+            "hash_active_expired",
+            None,
+            2,
+            0,
+            1,
+            seven_days_ago - 86400 * 3,
+            0,
+        )
+        .await;
+        // 3. revoked=1, expires_at 在 grace period 内（3 天前过期）→ 不应删除
+        insert_refresh_token(
+            &pool,
+            "hash_revoked_within_grace",
+            None,
+            3,
+            0,
+            1,
+            seven_days_ago + 86400 * 4,
+            1,
+        )
+        .await;
+        // 4. revoked=0, expires_at 未过期（7 天后）→ 不应删除
+        insert_refresh_token(
+            &pool,
+            "hash_active_valid",
+            None,
+            4,
+            0,
+            1,
+            now + 86400 * 7,
+            0,
+        )
+        .await;
+
+        assert_eq!(count_records(&pool).await, 4, "cleanup 前应有 4 条记录");
+
+        let deleted = rotation
+            .cleanup_expired()
+            .await
+            .expect("cleanup_expired 应成功");
+        assert_eq!(
+            deleted, 1,
+            "应仅删除 1 条记录（revoked=1 且 expires_at 超过 grace period）"
+        );
+
+        let remaining = count_records(&pool).await;
+        assert_eq!(remaining, 3, "应剩余 3 条记录");
+
+        // 验证被删除的是正确的记录
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT token_hash FROM refresh_tokens ORDER BY token_hash",
+            vec![],
+        );
+        let rows = conn.query_all_raw(stmt).await.expect("SELECT 应成功");
+        let hashes: Vec<String> = rows
+            .iter()
+            .map(|r| r.try_get::<String>("", "token_hash").unwrap())
+            .collect();
+        assert!(
+            hashes.contains(&"hash_active_expired".to_string()),
+            "未撤销的过期记录应保留"
+        );
+        assert!(
+            hashes.contains(&"hash_revoked_within_grace".to_string()),
+            "grace period 内的撤销记录应保留"
+        );
+        assert!(
+            hashes.contains(&"hash_active_valid".to_string()),
+            "有效记录应保留"
+        );
+        assert!(
+            !hashes.contains(&"hash_revoked_expired".to_string()),
+            "已撤销且过期超过 grace period 的记录应被删除"
+        );
+    }
+
+    /// cleanup_expired 在无匹配记录时返回 0。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn cleanup_expired_returns_zero_when_nothing_to_clean() {
+        let pool = setup_db().await;
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
+        let rotation =
+            RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
+
+        let deleted = rotation
+            .cleanup_expired()
+            .await
+            .expect("cleanup_expired 应成功");
+        assert_eq!(deleted, 0, "空表应返回 0");
     }
 }

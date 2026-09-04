@@ -317,6 +317,7 @@ async fn init_overwrites_existing() {
 }
 
 /// 验证 inventory 已注册 default factory。
+#[serial]
 #[test]
 fn default_factory_registered_via_inventory() {
     use std::iter::Iterator;
@@ -331,6 +332,7 @@ fn default_factory_registered_via_inventory() {
 }
 
 /// 验证 default factory 构造的 logic 可正常 login。
+#[serial]
 #[tokio::test]
 async fn default_factory_builds_working_logic() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -338,7 +340,7 @@ async fn default_factory_builds_working_logic() {
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
     let timeout = u64::try_from(config.timeout).unwrap();
-    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
     let firewall: Arc<dyn GarrisonPermissionStrategy> =
         Arc::new(GarrisonPermissionStrategyDefault::new(interface));
 
@@ -980,13 +982,14 @@ async fn manager_drop_cancels_cleanup_task() {
         async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
+        crate::atomic_test_fallback!();
     }
 
     let counter = Arc::new(AtomicUsize::new(0));
     let dao: Arc<dyn GarrisonDao> = Arc::new(CountingDao {
         counter: counter.clone(),
     });
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
     // 添加 token 到 login_token_map，确保 cleanup 有内容可遍历
     session.add_login_token("user1", "token1");
 

@@ -90,7 +90,7 @@ pub struct GarrisonRouter {
 
 /// actix-web middleware，提取 token + 解析租户 + 调用 interceptor + 设置 task_local。
 ///
-/// 配置了 [`TenantResolver`]（见 [`super::GarrisonRouter::with_tenant_resolver`]）时，
+/// 配置了 [`TenantResolver`]（见 [`GarrisonRouter::with_tenant_resolver`]）时，
 /// 请求处理前先从请求头解析 `TenantContext` 并进入 `TENANT.scope`，使
 /// `tenant-isolation` 下的 `check_permission` / `check_role` 获得租户上下文
 /// （fail-closed 的 `ctx-tenant-context-missing` 不再触发）。未配置时行为不变。

@@ -39,17 +39,19 @@
 //!
 //! 启用 `grpc` feature 时编译。未启用时模块不存在，不引入 tonic 依赖。
 
+/// gRPC async 鉴权层模块（`GarrisonGrpcAuthLayer`，tower Layer/Service）。
+pub mod auth_layer;
 /// gRPC 标准健康检查服务模块（`health_service()`）。
 pub mod health;
 /// gRPC 鉴权拦截器实现模块（`GarrisonGrpcInterceptor` impl 块）。
 pub mod interceptor;
 
+pub use auth_layer::{GarrisonGrpcAuthLayer, GarrisonGrpcAuthService};
 pub use health::health_service;
 
 /// Garrison gRPC 鉴权拦截器。
 ///
-/// 实现 `tonic::Interceptor` trait，从 gRPC 请求 metadata 提取 Authorization Bearer token
-/// 并调用 `GarrisonUtil::check_login()` 鉴权。鉴权失败时返回 `Status::UNAUTHENTICATED`。
+/// 实现 `tonic::Interceptor` trait，从 gRPC 请求 metadata 提取 Authorization Bearer token。
 ///
 /// # 重要限制：仅提取 token，不执行 async 鉴权
 ///
@@ -57,11 +59,19 @@ pub use health::health_service;
 /// 本拦截器仅完成 token 提取与基本格式校验（非空、`Bearer ` 前缀正确），
 /// **不**执行实际的登录态/权限校验。
 ///
-/// 完整的 async 鉴权推荐方案：
-/// - 使用 `tonic` 的 `tower::Layer` middleware（async），在 layer 中调用 `GarrisonContext`
-///   执行 `check_login` 等异步 API；
-/// - 或在 tonic service handler 内通过 `task_local`（`with_current_token`）读取 token，
-///   显式调用 `GarrisonUtil::check_login()`。
+/// # 完整 async 鉴权请使用 [`GarrisonGrpcAuthLayer`]
+///
+/// 本框架提供的 tower `Layer` 形态支持 async 鉴权：未登录/伪造 token 直接以
+/// `Status::UNAUTHENTICATED` 拒绝，放行时把 token 注入 task_local 供 handler 使用：
+///
+/// ```ignore
+/// use garrison::grpc::GarrisonGrpcAuthLayer;
+/// let svc = GarrisonGrpcAuthLayer.layer(my_greeter_service);
+/// tonic::transport::Server::builder().add_service(svc).serve(addr).await?;
+/// ```
+///
+/// 若使用本拦截器（仅格式校验），必须在 tonic service handler 内通过
+/// `task_local`（`with_current_token`）显式调用 `GarrisonUtil::check_login()`。
 ///
 /// # 使用
 ///

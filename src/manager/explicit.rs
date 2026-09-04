@@ -262,7 +262,7 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let timeout = u64::try_from(config.timeout).unwrap();
-        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
         let firewall: Arc<dyn GarrisonPermissionStrategy> =
             Arc::new(GarrisonPermissionStrategyDefault::new(interface));
         Arc::new(GarrisonLogicDefault::new(session, config, firewall))
@@ -392,6 +392,7 @@ mod tests {
     /// 行为一致（同一 task_local 上下文下返回相同允许/拒绝结果）。
     ///
     /// 验证委托语义：Manager 内部调用 logic.check_permission，返回值映射正确。
+    #[serial]
     #[tokio::test]
     async fn manager_check_permission_delegates_to_logic() {
         let interface: Arc<dyn GarrisonInterface> =

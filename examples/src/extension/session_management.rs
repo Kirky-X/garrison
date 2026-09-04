@@ -37,7 +37,7 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     // timeout=3600 秒（1小时），active_timeout=86400 秒（1天）
-    let session = GarrisonSession::new(dao, 3600, 86400);
+    let session = GarrisonSession::new(dao, 3600, 86400, 7_776_000);
     println!("[1] GarrisonSession 创建完成 (timeout=3600s, active_timeout=86400s)\n");
 
     // ----------------------------------------------------------------

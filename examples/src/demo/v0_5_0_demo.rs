@@ -76,7 +76,7 @@ async fn init_infrastructure() -> DemoResult<(DbPool, Arc<dyn GarrisonDao>, Arc<
 
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     // GarrisonSession::new 消费 dao，clone 一份返回给调用方
-    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 7_776_000));
     println!("    ✓ SQLite in-memory + oxcache DAO 已就绪");
 
     Ok((pool, dao, session))

@@ -113,6 +113,7 @@ impl GarrisonDao for MockDao {
         self.store.lock().remove(key);
         Ok(())
     }
+    garrison::atomic_test_fallback!();
 }
 
 // ============================================================================
@@ -158,7 +159,7 @@ impl GarrisonPermissionStrategy for MockFirewall {
 /// 创建 GarrisonLogicDefault 实例（使用 MockDao + MockFirewall，不依赖真实 dbnexus / redis）。
 fn make_logic() -> GarrisonLogicDefault {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 7_776_000));
     let config = Arc::new(GarrisonConfig::default_config());
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,

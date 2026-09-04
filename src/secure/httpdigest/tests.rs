@@ -752,7 +752,7 @@ fn hex_encode_known_bytes() {
 /// 场景：注入 DAO，首次请求 nc=00000001 应通过。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_first_use_accepted_with_dao() {
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -784,7 +784,7 @@ async fn validate_nc_first_use_accepted_with_dao() {
 /// 场景：注入 DAO，第一次 nc=00000001 通过，第二次相同 nc=00000001 应被拒绝。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_replay_rejected_with_dao() {
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -822,7 +822,7 @@ async fn validate_nc_replay_rejected_with_dao() {
 /// 场景：注入 DAO，第一次 nc=00000003 通过，第二次 nc=00000002 应被拒绝（nc 回退）。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_decrease_rejected_with_dao() {
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -870,7 +870,7 @@ async fn validate_nc_decrease_rejected_with_dao() {
 /// 场景：注入 DAO，nc=1→2→3 连续递增，每次都应通过。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_increasing_accepted_with_dao() {
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -940,7 +940,7 @@ async fn validate_nc_skipped_without_dao() {
 /// 场景：注入 DAO，nonce-A nc=1 通过，nonce-B nc=1 也应通过（不同 nonce 独立计数）。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_isolates_nonces_with_dao() {
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -1000,7 +1000,7 @@ async fn validate_nc_isolates_nonces_with_dao() {
 /// 注意：使用 `#[tokio::test]`（不带 `flavor = "multi_thread"`）创建 current_thread runtime。
 #[tokio::test]
 async fn validate_nc_current_thread_runtime_fail_closed() {
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -1075,6 +1075,8 @@ impl crate::dao::GarrisonDao for FailingDao {
             key
         )))
     }
+
+    crate::atomic_test_fallback!();
 }
 
 /// `validate_nc` 在 DAO 错误时 fail-closed（vuln-0012 修复验证）。
@@ -1129,7 +1131,7 @@ async fn validate_nc_dao_error_fail_closed() {
 /// 注意：使用普通 `#[test]`（不引入 tokio runtime），与 `#[tokio::test]` 区分。
 #[test]
 fn validate_nc_no_runtime_fail_closed() {
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -1168,7 +1170,7 @@ fn validate_nc_no_runtime_fail_closed() {
 /// validate_nc 返回 false（拒绝畸形请求，不是 fail-open）。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_malformed_hex_rejected() {
-    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::MockDao::new());
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
     let auth = HttpDigestAuth::new("test@realm", "MD5")
         .unwrap()
         .with_dao(dao);
@@ -1225,6 +1227,99 @@ fn validate_uri_mismatch_rejected() {
     assert!(
         !auth.validate(&header, method, actual_uri, &ha1),
         "CRITICAL-5: 客户端 uri 与实际请求 URI 不匹配应被拒绝"
+    );
+}
+
+// ========================================================================
+// T021: nonce 服务端签名（防自铸 nonce）
+// ========================================================================
+
+/// 注入 server_key 后，challenge 生成的签名 nonce 通过 is_nonce_valid；
+/// 自铸（无 HMAC / HMAC 错误）nonce 一律被拒。
+#[test]
+fn signed_nonce_roundtrip_and_self_minted_rejected() {
+    let auth = HttpDigestAuth::new("realm", "SHA256")
+        .unwrap()
+        .with_server_key(b"server-secret-key-material-with-enough-bytes-32");
+    // challenge 生成带签名 nonce
+    let nonce = extract_nonce(&auth.challenge()).unwrap();
+    assert!(auth.is_nonce_valid(&nonce), "签名 nonce 应有效");
+
+    // 自铸：旧格式 2 段（无签名）应被拒
+    let forged = STANDARD
+        .encode(format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes());
+    assert!(
+        !auth.is_nonce_valid(&forged),
+        "无签名自铸 nonce 应被拒（T021）"
+    );
+
+    // 自铸：3 段但 HMAC 错误应被拒
+    let ts = current_unix_seconds();
+    let uuid = Uuid::new_v4().simple().to_string();
+    let forged3 = STANDARD.encode(format!("{}:{}:deadbeef", ts, uuid).as_bytes());
+    assert!(
+        !auth.is_nonce_valid(&forged3),
+        "HMAC 错误的自铸 nonce 应被拒（T021）"
+    );
+}
+
+/// 注入 server_key 后，完整 validate 流程对签名 nonce 通过、对自铸 nonce 拒绝。
+#[test]
+fn validate_rejects_self_minted_nonce_with_server_key() {
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_server_key(b"server-secret-key-material-with-enough-bytes-32");
+    let ha1 = auth.compute_ha1("admin", "secret");
+    // 自铸旧格式 nonce（无签名）
+    let nonce = STANDARD
+        .encode(format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes());
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    assert!(
+        !auth.validate(&header, method, uri, &ha1),
+        "自铸 nonce 应被拒（T021）"
+    );
+}
+
+/// 注入 server_key 后，challenge 签发的 nonce 可完成完整 validate 校验。
+#[test]
+fn validate_succeeds_with_signed_nonce() {
+    let auth = HttpDigestAuth::new("test@realm", "MD5")
+        .unwrap()
+        .with_server_key(b"server-secret-key-material-with-enough-bytes-32");
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = extract_nonce(&auth.challenge()).unwrap();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "GET";
+    let uri = "/resource";
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        nc,
+        cnonce,
+        method,
+        uri,
+        &ha1,
+    );
+    assert!(
+        auth.validate(&header, method, uri, &ha1),
+        "签名 nonce 应完成完整校验（T021）"
     );
 }
 

@@ -31,6 +31,21 @@ use std::sync::Arc;
 /// 授权码有效期（10 分钟，RFC 6749 §4.1.2 建议 ≤ 10 分钟）。
 const AUTH_CODE_TTL_SECONDS: u64 = 600;
 
+/// 授权码已签发 token 的吊销追踪记录 TTL（30 天，覆盖 refresh token 生命周期）。
+///
+/// 用于重放/双花检测时定位并吊销此前签发的 access/refresh token（T019）。
+const CODE_USED_RECORD_TTL_SECONDS: u64 = 2_592_000;
+
+/// 授权码已签发 token 的吊销追踪记录（T019）。
+///
+/// 授权码被原子消费（删除）后，其签发的 token 仍需可被定位吊销，
+/// 因此将 `access_token` / `refresh_token` 单独持久化于此结构。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodeUsedRecord {
+    access_token: String,
+    refresh_token: Option<String>,
+}
+
 /// code_verifier 最小长度（RFC 7636 §4.1）。
 const CODE_VERIFIER_MIN_LEN: usize = 43;
 /// code_verifier 最大长度（RFC 7636 §4.1）。
@@ -265,20 +280,23 @@ impl AuthorizeHandler {
         Ok(AuthorizeResponse::Redirect { location })
     }
 
-    /// 消费授权码（一次性使用，消费后立即删除）。
+    /// 消费授权码（一次性使用，原子消费：读取与删除为单次 DAO 操作）。
     ///
     /// 供 /oauth2/token 端点调用：授权码交换 access_token。
     ///
+    /// 使用 `dao.get_and_delete` 将「读取 + 删除」合并为原子操作，消除
+    /// `get` 与 `delete` 之间的 TOCTOU 竞态窗口（并发双花 / 重放攻击）：
+    /// 多个并发请求同一 code 时，只有一个能原子地取到 `Some`，其余返回 `None`。
+    ///
     /// # 返回
     /// - `Ok(Some(code))`：授权码有效，返回关联数据
-    /// - `Ok(None)`：授权码不存在或已过期
+    /// - `Ok(None)`：授权码不存在、已过期或已被消费（重放/并发双花）
     pub async fn consume_code(&self, code: &str) -> GarrisonResult<Option<AuthorizationCode>> {
         let key = DaoKeyPrefix::OAuth2AuthCode.build_key(code);
-        let json = self.dao.get(&key).await?;
+        // 原子消费：get_and_delete 在存储层一次性完成「读取并返回 + 删除」
+        let json = self.dao.get_and_delete(&key).await?;
         match json {
             Some(json) => {
-                // 一次性使用：立即删除
-                self.dao.delete(&key).await?;
                 let auth_code: AuthorizationCode = serde_json::from_str(&json).map_err(|e| {
                     GarrisonError::Internal(format!("oauth2-server-authorize-deserialize::{}", e))
                 })?;
@@ -286,6 +304,67 @@ impl AuthorizeHandler {
             },
             None => Ok(None),
         }
+    }
+
+    /// 记录授权码签发的 token，供「重放/双花」时吊销（T019）。
+    ///
+    /// 授权码被原子消费（删除）后，其签发的 access/refresh token 仍需可被定位吊销。
+    /// 因此将 `access_token` / `refresh_token` 写入独立的 `oauth2:codeused:` 记录，
+    /// 与授权码主体（已删除）解耦。TTL 取较长值以覆盖 token 生命周期。
+    pub async fn record_code_tokens(
+        &self,
+        code: &str,
+        access_token: &str,
+        refresh_token: Option<&str>,
+    ) -> GarrisonResult<()> {
+        let key = DaoKeyPrefix::OAuth2CodeUsed.build_key(code);
+        let record = CodeUsedRecord {
+            access_token: access_token.to_string(),
+            refresh_token: refresh_token.map(|s| s.to_string()),
+        };
+        let json = serde_json::to_string(&record).map_err(|e| {
+            GarrisonError::Internal(format!("oauth2-server-authorize-serialize::{}", e))
+        })?;
+        self.dao
+            .set(&key, &json, CODE_USED_RECORD_TTL_SECONDS)
+            .await
+    }
+
+    /// 重放/双花检测：授权码已不存在时，吊销其此前签发的 token（T019）。
+    ///
+    /// 读取 `oauth2:codeused:` 记录，删除 access/refresh token 的 DAO 记录
+    /// （使 introspection / refresh 失效）。best-effort：删除失败仅记录告警，不阻断主流程。
+    ///
+    /// # 返回
+    /// - `Ok(true)`：存在该 code 的签发记录并已完成吊销
+    /// - `Ok(false)`：无签发记录（code 从未成功签发过 token，纯随机重放）
+    pub async fn revoke_replayed_code_tokens(&self, code: &str) -> GarrisonResult<bool> {
+        let key = DaoKeyPrefix::OAuth2CodeUsed.build_key(code);
+        let json = self.dao.get_and_delete(&key).await?;
+        let Some(json) = json else {
+            return Ok(false);
+        };
+        let record: CodeUsedRecord = match serde_json::from_str(&json) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "revoke_replayed_code_tokens: 反序列化 codeused 记录失败，跳过吊销");
+                return Ok(false);
+            },
+        };
+        // 吊销 access token（introspection / 资源服务器按 DAO 记录校验时失效）
+        let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(&record.access_token);
+        if let Err(e) = self.dao.delete(&at_key).await {
+            tracing::warn!(error = %e, "revoke_replayed_code_tokens: 删除 access token 记录失败");
+        }
+        // 吊销 refresh token（阻止后续 refresh 轮换）
+        if let Some(rt) = &record.refresh_token {
+            #[allow(deprecated)]
+            let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(rt);
+            if let Err(e) = self.dao.delete(&rt_key).await {
+                tracing::warn!(error = %e, "revoke_replayed_code_tokens: 删除 refresh token 记录失败");
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -348,7 +427,7 @@ pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> GarrisonResult<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::MockDao;
+    use crate::dao::InMemoryDao;
     use crate::oauth2_server::client::{GrantType, OAuth2Client};
 
     /// 创建测试用 OAuth2Client。
@@ -364,8 +443,8 @@ mod tests {
     }
 
     /// 创建测试用 AuthorizeHandler。
-    fn make_handler() -> (AuthorizeHandler, Arc<MockDao>) {
-        let dao = Arc::new(MockDao::new());
+    fn make_handler() -> (AuthorizeHandler, Arc<InMemoryDao>) {
+        let dao = Arc::new(InMemoryDao::new());
         let store = Arc::new(crate::oauth2_server::client::DaoOAuth2ClientStore::new(
             dao.clone(),
         ));
@@ -789,6 +868,116 @@ mod tests {
         let (handler, _) = make_handler();
         let result = handler.consume_code("nonexistent-code").await.unwrap();
         assert!(result.is_none());
+    }
+
+    /// T019：并发原子消费 — 16 个 tokio 任务同时用同一 code 调用 consume_code，
+    /// 仅一个成功（取到 Some），其余全部返回 None，杜绝并发双花 / 重放。
+    #[tokio::test]
+    async fn consume_code_atomic_concurrent_only_one_wins() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_test_client("consume-conc-001"))
+            .await
+            .unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = generate_code_challenge(verifier);
+        let req = make_request("consume-conc-001", &challenge);
+        let resp = handler.authorize(&req, Some(3001)).await.unwrap();
+        let location = match resp {
+            AuthorizeResponse::Redirect { location } => location,
+            _ => panic!("期望 Redirect"),
+        };
+        let code = location
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .to_string();
+
+        let handler = std::sync::Arc::new(handler);
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let h = handler.clone();
+            let c = code.clone();
+            handles.push(tokio::spawn(async move {
+                h.consume_code(&c).await.unwrap().is_some()
+            }));
+        }
+        let mut wins = 0usize;
+        for h in handles {
+            if h.await.unwrap() {
+                wins += 1;
+            }
+        }
+        assert_eq!(
+            wins, 1,
+            "并发双花：仅一个 consume_code 应成功，实际 {}",
+            wins
+        );
+    }
+
+    /// T019：重放检测 + 吊销 — 授权码被消费后记录签发的 token，
+    /// 再次消费（重放）时 `revoke_replayed_code_tokens` 应定位并删除签发记录。
+    #[tokio::test]
+    async fn revoke_replayed_code_tokens_deletes_records() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_test_client("revoke-001"))
+            .await
+            .unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = generate_code_challenge(verifier);
+        let req = make_request("revoke-001", &challenge);
+        let resp = handler.authorize(&req, Some(3002)).await.unwrap();
+        let location = match resp {
+            AuthorizeResponse::Redirect { location } => location,
+            _ => panic!("期望 Redirect"),
+        };
+        let code = location
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .to_string();
+
+        // 首次消费成功
+        assert!(handler.consume_code(&code).await.unwrap().is_some());
+        // 记录该 code 签发的 token（模拟 issue_tokens 之后）
+        handler
+            .record_code_tokens(&code, "at-fake-001", Some("rt-fake-001"))
+            .await
+            .unwrap();
+        // 重放：第二次消费返回 None
+        assert!(handler.consume_code(&code).await.unwrap().is_none());
+
+        // 吊销此前签发的 token
+        let revoked = handler.revoke_replayed_code_tokens(&code).await.unwrap();
+        assert!(revoked, "应检测到 codeused 记录并吊销 token");
+        // access/refresh token DAO 记录应被删除
+        let at_key = crate::constants::DaoKeyPrefix::OAuth2AccessToken.build_key("at-fake-001");
+        assert!(
+            handler.dao.get(&at_key).await.unwrap().is_none(),
+            "access token 记录应已被吊销删除"
+        );
+        // 非 db-sqlite 面下该 variant 仍是 fallback 路径的正式存储键，测试合法使用
+        #[allow(deprecated)]
+        let rt_key = crate::constants::DaoKeyPrefix::OAuth2RefreshToken.build_key("rt-fake-001");
+        assert!(
+            handler.dao.get(&rt_key).await.unwrap().is_none(),
+            "refresh token 记录应已被吊销删除"
+        );
+
+        // codeused 记录本身应已删除（get_and_delete 语义）
+        let revoked_again = handler.revoke_replayed_code_tokens(&code).await.unwrap();
+        assert!(!revoked_again, "codeused 记录应已消费删除");
     }
 
     #[test]

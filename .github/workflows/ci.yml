@@ -38,13 +38,13 @@ jobs:
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-default-deps
       - name: Check (default features)
-        run: cargo check
+        run: cargo check --locked
       - name: Build (default features)
-        run: cargo build
+        run: cargo build --locked
 
   # === 全特性检查 ===
   check-full:
@@ -60,13 +60,37 @@ jobs:
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-full-deps
       - name: Check (full)
-        run: cargo check --features "full"
+        run: cargo check --features "full" --locked
       - name: Build (full)
-        run: cargo build --features "full"
+        run: cargo build --features "full" --locked
+
+  # === 生产组合编译门禁 ===
+  # 验证 production 聚合特性与 examples workspace 全特性均可独立编译，
+  # 并强制 --locked 与已提交 Cargo.lock 一致（T31）。
+  check-production:
+    name: Check (production + examples)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+        with:
+          components: rustfmt, clippy
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        with:
+          tool: protoc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-prod-deps
+      - name: Check (production features)
+        run: cargo check --features "production" --locked
+      - name: Check (examples, all features)
+        run: cargo check -p garrison-examples --all-features --locked
 
   # === 格式化检查 ===
   fmt:
@@ -95,7 +119,7 @@ jobs:
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-full-deps
       - name: Clippy (default)
@@ -111,6 +135,11 @@ jobs:
     name: Test (${{ matrix.os }} / Rust ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
+    env:
+      # Linux runner 上 sqlite 文件库 URL 在 1.85/beta 面触发
+      # SQLITE_READONLY（预创建空文件亦然），统一回退内存库；
+      # macOS/Windows 文件库修多连接 "no such table" 偶发。
+      GARRISON_TEST_SQLITE_MEMORY: ${{ matrix.os == 'ubuntu-latest' && '1' || '0' }}
     strategy:
       fail-fast: false
       matrix:
@@ -131,13 +160,13 @@ jobs:
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-test-deps-${{ matrix.rust }}
       - name: Test (default)
-        run: cargo test --no-default-features --features "default" --lib
+        run: cargo test --no-default-features --features "default" --lib --locked
       - name: Test (full)
-        run: cargo test --features "full" --lib
+        run: cargo test --features "full" --lib --locked
 
   # === 文档构建 ===
   doc:
@@ -151,7 +180,7 @@ jobs:
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-full-deps
       - name: Build docs
@@ -195,21 +224,30 @@ jobs:
   # === cargo-deny（漏洞 / 许可证 / 禁用源 / 重复依赖） ===
   # cargo-deny 已覆盖 cargo-audit 的漏洞检查功能，且配置统一在 deny.toml 管理。
   # 删除独立 audit job，避免维护两份忽略列表（audit.toml + deny.toml）。
-  # cargo-deny-action 会自动生成 Cargo.lock（库 crate 不提交 Cargo.lock）
+  # 用 runner 原生 cargo-deny 而非 EmbarkStudios 容器 action：容器内
+  # rustup 仅含固定版本 musl toolchain，无法满足 rust-toolchain.toml
+  # 的 stable override（startup 即报 uninstalled toolchain）。
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # v1
         with:
-          arguments: --all-features
+          tool: cargo-deny
+      - name: Generate Cargo.lock (library crate, not committed)
+        run: cargo generate-lockfile
+      - name: Run cargo deny
+        run: cargo deny --all-features --locked check
 
   # === 集成测试（tests/ 目录，仅 Linux + MSRV） ===
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
+    env:
+      GARRISON_TEST_SQLITE_MEMORY: "1"
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -218,7 +256,7 @@ jobs:
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-full-deps
       - name: Integration tests (full features)
@@ -232,6 +270,9 @@ jobs:
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
+    env:
+      # llvm-cov 面下 sqlite 文件库 URL 触发 SQLITE_READONLY，回退内存库
+      GARRISON_TEST_SQLITE_MEMORY: "1"
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -240,7 +281,7 @@ jobs:
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
         with:
           tool: protoc
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-coverage-deps
       - name: Install cargo-llvm-cov

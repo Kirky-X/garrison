@@ -94,7 +94,7 @@ pub async fn run() -> GarrisonResult<()> {
     // 注意：AuthLogicDefault 不依赖 task_local 上下文，所有方法以 token 为入参，
     // 便于 protocol-jwt 等协议层模块干净复用。
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 7_776_000));
     let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
     let auth = AuthLogicDefault::new(session, token_handler, 3600);
     println!("[1] AuthLogicDefault 构建完成（timeout=3600s, active_timeout=86400s）\n");

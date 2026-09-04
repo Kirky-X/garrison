@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+﻿//! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
 //! session 模块测试（从 mod.rs 迁移，Rule 25 合规）。
@@ -13,7 +13,7 @@ use std::time::Duration;
 /// 辅助函数：创建带 MockDao 的 GarrisonSession。
 fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, GarrisonSession) {
     let dao = Arc::new(MockDao::new());
-    let session = GarrisonSession::new(dao.clone(), timeout, active_timeout);
+    let session = GarrisonSession::new(dao.clone(), timeout, active_timeout, 0);
     (dao, session)
 }
 
@@ -837,7 +837,7 @@ fn with_listener_manager_sets_field() {
     use crate::listener::GarrisonListenerManager;
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let mgr = Arc::new(GarrisonListenerManager::new());
-    let session = GarrisonSession::new(dao, 3600, 86400).with_listener_manager(mgr);
+    let session = GarrisonSession::new(dao, 3600, 86400, 0).with_listener_manager(mgr);
     assert!(session.listener_manager.is_some());
 }
 
@@ -886,7 +886,7 @@ async fn logout_sso_ticket_delete_failure_logs_warn_without_failing() {
         inner: inner.clone(),
         fail_delete_key: "garrison:sso:ticket:ticket-fail".to_string(),
     });
-    let session = GarrisonSession::new(dao, 3600, 86400);
+    let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
     // login 并关联 SSO ticket
     session.create("1001", "T1").await.unwrap();
@@ -1144,7 +1144,7 @@ async fn concurrent_login_same_user_creates_consistent_session() {
         inner: inner.clone(),
         delay: Duration::from_millis(50),
     });
-    let session = GarrisonSession::new(dao, 3600, 86400);
+    let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
     // 并发执行两次 create 同一 login_id（用 tokio::join! 确保并发）
     let (r1, r2) = tokio::join!(session.create("1001", "T1"), session.create("1001", "T2"),);
@@ -1564,7 +1564,7 @@ async fn cleanup_expired_tokens_dao_failure_skips_token_without_aborting() {
         inner: inner.clone(),
         fail_get_key: token_key("T2"),
     });
-    let session = GarrisonSession::new(dao, 3600, 86400);
+    let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
     // 创建 3 个 token：T1（有效）、T2（DAO get 会失败）、T3（将注销）
     session.create("1001", "T1").await.unwrap();
@@ -1847,7 +1847,7 @@ async fn add_login_token_persistent_dao_failure_skips_memory_write() {
         inner: inner.clone(),
         fail_update_key: account_key("user1"),
     });
-    let session = GarrisonSession::new(dao, 3600, 86400);
+    let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
     // 先创建 AccountSession（create 用 set，不受 FailingUpdateDao 影响）
     session.create("user1", "T1").await.unwrap();
@@ -1923,3 +1923,4 @@ async fn login_logout_persistent_consistency() {
         mem_tokens
     );
 }
+

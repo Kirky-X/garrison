@@ -954,12 +954,18 @@ mod tests {
     use crate::dao::GarrisonDao;
     use crate::error::{GarrisonError, GarrisonResult};
     use async_trait::async_trait;
+    use serial_test::serial;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// 辅助函数：创建带 MockDao 的 Arc<GarrisonSession>。
     fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, Arc<GarrisonSession>) {
         let dao = Arc::new(MockDao::new());
-        let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, active_timeout));
+        let session = Arc::new(GarrisonSession::new(
+            dao.clone(),
+            timeout,
+            active_timeout,
+            0,
+        ));
         (dao, session)
     }
 
@@ -1075,6 +1081,7 @@ mod tests {
         async fn delete(&self, _key: &str) -> GarrisonResult<()> {
             Ok(())
         }
+        crate::atomic_test_fallback!();
     }
 
     /// 验证清理失败时 task 只记录 warn 不中断，继续运行下一个周期。
@@ -1088,7 +1095,7 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(FailingGetDao {
             get_call_count: get_call_count.clone(),
         });
-        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
         // 添加 token 到内存索引（不经过 DAO，确保 cleanup 有内容可遍历）
         session.add_login_token("user1", "token1");
 
@@ -1189,6 +1196,7 @@ mod tests {
                 dynamic_active_timeout: None,
                 #[cfg(feature = "session-extra")]
                 is_anon: false,
+                effective_timeout: None,
             })
         }
         async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
@@ -1519,6 +1527,7 @@ mod tests {
     /// 验证 `JwtMode::default()` 返回 `Mixin`（推荐默认模式）。
     ///
     /// 覆盖 `#[default]` 标注的 `Mixin` 变体。
+    #[serial]
     #[test]
     fn jwt_mode_default_is_mixin() {
         let mode = JwtMode::default();
@@ -1530,6 +1539,7 @@ mod tests {
     }
 
     /// 验证 `JwtMode` 三个变体互不相等（PartialEq 派生正确）。
+    #[serial]
     #[test]
     fn jwt_mode_variants_distinct() {
         assert_ne!(JwtMode::Stateless, JwtMode::Mixin);
@@ -1542,6 +1552,7 @@ mod tests {
     }
 
     /// 验证 `JwtMode` 的 Clone / Copy 行为（值拷贝，不丢失原值）。
+    #[serial]
     #[test]
     fn jwt_mode_clone_preserves_value() {
         let original = JwtMode::Stateless;
@@ -1556,6 +1567,7 @@ mod tests {
     /// 不需要初始化 GarrisonManager）。
     ///
     /// 覆盖 `has_permission` 中的本地参数校验路径。
+    #[serial]
     #[tokio::test]
     async fn has_permission_empty_returns_invalid_param() {
         let result = GarrisonUtil::has_permission("").await;
@@ -1569,6 +1581,7 @@ mod tests {
     /// 验证 `has_role("")` 返回 `InvalidParam`。
     ///
     /// 覆盖 `has_role` 中的本地参数校验路径。
+    #[serial]
     #[tokio::test]
     async fn has_role_empty_returns_invalid_param() {
         let result = GarrisonUtil::has_role("").await;

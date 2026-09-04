@@ -206,6 +206,7 @@ mod tests {
                 .cloned()
                 .collect())
         }
+        crate::atomic_test_fallback!();
     }
 
     /// 模拟不支持 keys() 的 DAO（如生产环境 GarrisonDaoOxcache）。
@@ -247,6 +248,7 @@ mod tests {
                 "keys 未实现：NoKeysDao 后端不支持 key scan".to_string(),
             ))
         }
+        crate::atomic_test_fallback!();
     }
 
     /// warmup 在 DAO 不支持 keys() 时应返回零统计而非报错。
@@ -314,6 +316,7 @@ mod tests {
                 "模拟 keys() 数据库连接失败".to_string(),
             ))
         }
+        crate::atomic_test_fallback!();
     }
 
     /// warmup 在 keys() 返回非 NotImplemented 错误时应传播错误。
@@ -386,6 +389,7 @@ mod tests {
                 .cloned()
                 .collect())
         }
+        crate::atomic_test_fallback!();
     }
 
     /// warmup 在 get() 返回错误时应传播错误。
@@ -467,6 +471,7 @@ mod tests {
                 ))
             }
         }
+        crate::atomic_test_fallback!();
     }
 
     /// warmup 在 role keys 成功但 tenant keys 返回 NotImplemented 时应返回零统计。
@@ -668,6 +673,7 @@ mod tests {
                 ))
             }
         }
+        crate::atomic_test_fallback!();
     }
 
     /// warmup 在 role keys 成功但 tenant keys 返回非 NotImplemented 错误时应传播错误。

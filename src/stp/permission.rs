@@ -639,7 +639,7 @@ mod tests {
             has_role: bool,
         ) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
             config.token_style = "uuid".to_string();
@@ -961,7 +961,7 @@ mod tests {
         /// 构造带 permission_checker 的 GarrisonLogicDefault。
         fn make_logic_with_checker(allowed: bool, fail: bool) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();

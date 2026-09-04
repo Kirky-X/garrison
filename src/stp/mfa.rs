@@ -641,7 +641,7 @@ mod tests {
         /// 创建不带 disable_repository 的 GarrisonLogicDefault（向后兼容场景）。
         fn make_logic_without_repo() -> GarrisonLogicDefault {
             let dao: Arc<MockDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400));
+            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -660,6 +660,7 @@ mod tests {
                 dao.clone() as Arc<dyn GarrisonDao>,
                 3600,
                 86400,
+                0,
             ));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
@@ -903,6 +904,7 @@ mod tests {
                 dao.clone() as Arc<dyn GarrisonDao>,
                 3600,
                 86400,
+                0,
             ));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;

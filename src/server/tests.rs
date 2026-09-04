@@ -67,6 +67,7 @@ impl AuthBackend for MockAuthBackend {
             dynamic_active_timeout: None,
             #[cfg(feature = "session-extra")]
             is_anon: false,
+            effective_timeout: None,
         })
     }
     async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
@@ -728,9 +729,8 @@ fn test_to_api_response_with_sms_channel_recycled_error() {
 #[test]
 fn test_to_api_response_with_exception_not_login() {
     use crate::exception::GarrisonException;
-    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(GarrisonException::new(
-        -1,
-        "请先登录",
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(Box::new(
+        GarrisonException::new(-1, "请先登录"),
     )));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -742,9 +742,8 @@ fn test_to_api_response_with_exception_not_login() {
 #[test]
 fn test_to_api_response_with_exception_not_permission() {
     use crate::exception::GarrisonException;
-    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(GarrisonException::new(
-        -2,
-        "无权限",
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(Box::new(
+        GarrisonException::new(-2, "无权限"),
     )));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -756,9 +755,8 @@ fn test_to_api_response_with_exception_not_permission() {
 #[test]
 fn test_to_api_response_with_exception_other_code() {
     use crate::exception::GarrisonException;
-    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(GarrisonException::new(
-        1001,
-        "业务异常",
+    let result: Result<i32, GarrisonError> = Err(GarrisonError::Exception(Box::new(
+        GarrisonException::new(1001, "业务异常"),
     )));
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
@@ -857,6 +855,7 @@ impl GarrisonDao for SimpleMockDao {
     async fn delete(&self, _key: &str) -> GarrisonResult<()> {
         Ok(())
     }
+    crate::atomic_test_fallback!();
 }
 
 /// 简化 Mock OAuth2ClientStore，仅实现 trait 的 5 个方法。

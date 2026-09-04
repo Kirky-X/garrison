@@ -8,6 +8,12 @@
 -- 偏离说明: 依据 tasks.md T111，design.md 无完整 PostgresRepository 设计（L376-377 + L431-432），
 --   本实现参考 SqliteRepository 模式，schema 类型映射 SQLite→Postgres：
 --   INTEGER→BIGINT, AUTOINCREMENT→BIGSERIAL, TEXT→TEXT（保持，兼容 sqlite/mod.rs 的 try_get::<String>）
+--
+-- 时间字段约定（migration-schema-optimization 记录）：
+-- 本文件的时间字段使用 TEXT 存储 ISO 8601 时间戳（CURRENT_TIMESTAMP），
+-- 这是历史遗留设计。后续新增迁移表（003_refresh_tokens、004_audit_logs、
+-- 006_user_devices、008_credit_consumption）统一使用 BIGINT 存储 Unix 秒。
+-- 新迁移表应继续使用 BIGINT（Unix 秒），不与本文件的 TEXT 格式混用。
 
 -- UP:
 

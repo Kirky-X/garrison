@@ -409,7 +409,7 @@ mod tests {
     /// 辅助函数：创建带 MockDao 的 GarrisonSession。
     fn make_session(timeout: u64, active_timeout: u64) -> (Arc<MockDao>, GarrisonSession) {
         let dao = Arc::new(MockDao::new());
-        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout);
+        let session = GarrisonSession::new(dao.clone(), timeout, active_timeout, 0);
         (dao, session)
     }
 
@@ -436,6 +436,7 @@ mod tests {
             dynamic_active_timeout: None,
             #[cfg(feature = "session-extra")]
             is_anon: false,
+            effective_timeout: None,
         };
         let json = serde_json::to_string(&ts).unwrap();
         dao.set(&key, &json, 3600).await.unwrap();
@@ -668,6 +669,7 @@ mod tests {
             dynamic_active_timeout: None,
             #[cfg(feature = "session-extra")]
             is_anon: true,
+            effective_timeout: None,
         };
         let json = serde_json::to_string(&anon_ts).unwrap();
         dao.set(&anon_key, &json, 3600).await.unwrap();
@@ -960,6 +962,8 @@ mod tests {
                 .collect();
             Ok(keys)
         }
+
+        crate::atomic_test_fallback!();
     }
 
     /// MAX_SCAN 截断：keys() 返回超过 MAX_SCAN 条 key 时被截断为 MAX_SCAN。
@@ -968,7 +972,7 @@ mod tests {
     #[tokio::test]
     async fn search_truncates_keys_exceeding_max_scan() {
         let dao = Arc::new(LargeKeyDao::new(MAX_SCAN + 100));
-        let session = GarrisonSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
         // 搜索应成功完成（截断后所有 key 的 get() 返回 None，结果为空）
         let result = session
@@ -982,7 +986,7 @@ mod tests {
     #[tokio::test]
     async fn search_max_scan_boundary_not_truncated() {
         let dao = Arc::new(LargeKeyDao::new(MAX_SCAN));
-        let session = GarrisonSession::new(dao, 3600, 86400);
+        let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
         let result = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)

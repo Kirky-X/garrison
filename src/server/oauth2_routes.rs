@@ -217,7 +217,7 @@ async fn introspect_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::{GarrisonDao, MockDao};
+    use crate::dao::{GarrisonDao, InMemoryDao};
     use crate::oauth2_server::client::{
         DaoOAuth2ClientStore, GrantType, OAuth2Client, OAuth2ClientStore,
     };
@@ -228,7 +228,7 @@ mod tests {
 
     /// 创建测试用 OAuth2State + store（用于注册客户端）。
     fn make_state() -> (Arc<OAuth2State>, Arc<dyn OAuth2ClientStore>) {
-        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let state = Arc::new(OAuth2State::new(
             store.clone(),
@@ -606,7 +606,7 @@ mod tests {
     async fn test_token_endpoint_returns_429_on_rate_limit_exceeded() {
         use crate::oauth2_server::token::TokenRateLimiter;
 
-        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(
             store.clone(),

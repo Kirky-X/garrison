@@ -289,7 +289,13 @@ impl GarrisonManagerBuilder {
                 ))
             })?
         };
-        let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, active_timeout));
+        let remember_me_timeout = config.remember_me_timeout.max(0) as u64;
+        let session = Arc::new(GarrisonSession::new(
+            dao.clone(),
+            timeout,
+            active_timeout,
+            remember_me_timeout,
+        ));
 
         // 4. auto-wire：构造 5 个 manager（builder 字段为 Some 用注入值，None 用默认实现）
         // 4.1 PermissionChecker（委托 interface 查询权限/角色数据）
@@ -323,11 +329,22 @@ impl GarrisonManagerBuilder {
         };
 
         // 5. 构造 firewall，注入 permission_checker + plugin_manager
-        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
-            GarrisonPermissionStrategyDefault::new(interface)
-                .with_permission_checker(permission_checker.clone())
-                .with_plugin_manager(plugin_manager.clone()),
-        );
+        let firewall_builder = GarrisonPermissionStrategyDefault::new(interface)
+            .with_permission_checker(permission_checker.clone())
+            .with_plugin_manager(plugin_manager.clone());
+
+        // T010: firewall-* feature 启用时自动装配防火墙 hook（避免 dead-code）。
+        // 通过 `GarrisonFirewallCheckHookDefault` 注入共享 DAO 的限流器，
+        // 使 login 流水线的 5 个 hook（含暴力破解/频率/geo/异常检测）真正生效。
+        #[cfg(feature = "firewall")]
+        let firewall_builder = {
+            use crate::strategy::hooks::GarrisonFirewallCheckHookDefault;
+            let hook =
+                std::sync::Arc::new(GarrisonFirewallCheckHookDefault::new().with_dao(dao.clone()));
+            firewall_builder.with_firewall_hook(hook)
+        };
+
+        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(firewall_builder);
 
         // 6. 构造 disable_repository（委托同一 DAO 实例持久化封禁条目）
         let disable_repo = match self.disable_repository {
@@ -1183,7 +1200,7 @@ mod tests {
         let config = Arc::new(make_config());
         let interface = make_interface();
         let timeout = u64::try_from(config.timeout).unwrap();
-        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout));
+        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
         let firewall: Arc<dyn GarrisonPermissionStrategy> =
             Arc::new(GarrisonPermissionStrategyDefault::new(interface));
         let plugin_manager = Arc::new(crate::plugin::GarrisonPluginManager::new());
