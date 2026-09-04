@@ -43,9 +43,15 @@ fn new_empty_client_id_returns_config_error() {
 /// with_user_info_url 设置用户信息端点（spec Scenario）。
 #[test]
 fn with_user_info_url_sets_url() {
-    let client = OAuth2Client::new("cid", "secret", "https://example.com/cb", "auth", "token")
-        .unwrap()
-        .with_user_info_url("https://example.com/userinfo");
+    let client = OAuth2Client::new(
+        "cid",
+        "secret",
+        "https://example.com/cb",
+        "https://auth.example.com/authorize",
+        "https://auth.example.com/token",
+    )
+    .unwrap()
+    .with_user_info_url("https://example.com/userinfo");
     assert_eq!(client.user_info_url(), Some("https://example.com/userinfo"));
 }
 
@@ -56,7 +62,13 @@ fn with_user_info_url_sets_url() {
 #[test]
 fn redirect_uri_rejects_http_in_production() {
     // http://evil.com 应拒绝（明文 HTTP 回调到公网域名）
-    let result = OAuth2Client::new("cid", "sec", "http://evil.com/cb", "auth_url", "token_url");
+    let result = OAuth2Client::new(
+        "cid",
+        "sec",
+        "http://evil.com/cb",
+        "https://auth.example.com/authorize",
+        "https://auth.example.com/token",
+    );
     assert!(
         matches!(result, Err(GarrisonError::InvalidParam(_))),
         "http://evil.com 回调应被拒绝，实际 err: {:?}",
@@ -68,8 +80,8 @@ fn redirect_uri_rejects_http_in_production() {
         "cid",
         "sec",
         "https://example.com/cb",
-        "auth_url",
-        "token_url",
+        "https://auth.example.com/authorize",
+        "https://auth.example.com/token",
     );
     assert!(
         result.is_ok(),
@@ -82,8 +94,8 @@ fn redirect_uri_rejects_http_in_production() {
         "cid",
         "sec",
         "http://localhost:8080/cb",
-        "auth_url",
-        "token_url",
+        "https://auth.example.com/authorize",
+        "https://auth.example.com/token",
     );
     assert!(
         result.is_ok(),
@@ -96,8 +108,8 @@ fn redirect_uri_rejects_http_in_production() {
         "cid",
         "sec",
         "http://127.0.0.1:8080/cb",
-        "auth_url",
-        "token_url",
+        "https://auth.example.com/authorize",
+        "https://auth.example.com/token",
     );
     assert!(
         result.is_ok(),

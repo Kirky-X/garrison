@@ -251,7 +251,9 @@ embedded-migrations = ["dep:include_dir", "dep:tempfile"]
 
 # === 协议层插件 ===
 protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64", "dep:percent-encoding"]
-protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64", "dep:percent-encoding"]
+# protocol-sso 隐含 protocol-jwt：OIDC exchange_code 必须验签 id_token（fail-closed）。
+# 历史：sso 单独启用时 exchange_code 不验签直接返回 id_token（fail-open，安全审计修复）。
+protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
 protocol-jwt = ["jsonwebtoken", "dep:sha2"]
 protocol-sign = ["dep:sha2", "hmac", "dep:base64", "dep:hkdf"]
 # protocol-apikey：API Key 生成/校验/吊销/轮换。

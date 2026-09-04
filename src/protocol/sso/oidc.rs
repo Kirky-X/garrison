@@ -17,8 +17,8 @@
 //! - `OidcHandler`：Garrison 作为 IdP 签发/验证 id_token
 //! - `OidcProvider` trait：Garrison 作为 RP 与外部 IdP 交互
 //!
-//! 仅在启用 `protocol-sso` 特性时编译。`protocol-jwt` 特性启用后 `exchange_code`
-//! 在返回前自动调用 `validate_id_token`，未启用时保持向后兼容行为。
+//! 仅在启用 `protocol-sso` 特性时编译（该特性隐含 `protocol-jwt`，见 Cargo.toml）。
+//! `exchange_code` 在返回前强制调用 `validate_id_token` 验签（fail-closed）。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -49,6 +49,30 @@ fn build_safe_http_client() -> GarrisonResult<reqwest::Client> {
         .read_timeout(HTTP_READ_TIMEOUT)
         .build()
         .map_err(|e| GarrisonError::Network(format!("sso-oidc-http-client-build::{}", e)))
+}
+
+/// 校验 OIDC 端点 URL scheme（安全审计修复：端点明文传输防护）。
+///
+/// discovery 端点会携带 authorization code（token 端点还携带 `client_secret`），
+/// 明文 http 可被中间人窃取。规则与 oauth2 client 的 redirect_uri 校验一致：
+/// `https://` 任意 host；`http://localhost` / `http://127.0.0.1`（开发/测试场景）。
+fn validate_endpoint_scheme(url: &str, field: &str) -> GarrisonResult<()> {
+    let reject =
+        || GarrisonError::Config(format!("{field} must be https or localhost, got: {}", url));
+    let scheme_end = url.find("://").ok_or_else(reject)?;
+    let rest = &url[scheme_end + 3..];
+    match &url[..scheme_end] {
+        "https" => Ok(()),
+        "http" => {
+            let host_end = rest.find(['/', ':', '?']).unwrap_or(rest.len());
+            if matches!(&rest[..host_end], "localhost" | "127.0.0.1") {
+                Ok(())
+            } else {
+                Err(reject())
+            }
+        },
+        _ => Err(reject()),
+    }
 }
 
 /// 读取响应体并强制大小上限（E2 修复，protocol-sso 本地副本）。
@@ -261,8 +285,8 @@ struct JwksResponse {
 ///
 /// `validate_id_token` 在启用 `protocol-jwt` feature 时执行 JWKS 验签（RS256）+
 /// iss/aud/exp 校验；未启用时返回 `NotImplemented`。
-/// `exchange_code` 在启用 `protocol-jwt` feature 时返回前自动调用
-/// `validate_id_token`，未启用时保持向后兼容行为（不验签）。
+/// `protocol-sso` 隐含启用 `protocol-jwt`（见 Cargo.toml），`exchange_code` 返回前
+/// 强制验签；未启用的编译分支 fail-closed 返回 `Config` 错误（不验签不放行）。
 ///
 /// # 缓存行为
 ///
@@ -315,11 +339,19 @@ impl DefaultOidcProvider {
     ///
     /// # 错误
     /// - `GarrisonError::Network`: `reqwest::Client` 构建失败（E1：含超时配置）。
+    /// - `GarrisonError::Config`: discovery 端点 scheme 非 https/localhost
+    ///   （安全审计修复：明文 http 端点拒绝构造）。
     pub fn new(
         config: OidcDiscoveryConfig,
         client_id: &str,
         client_secret: &str,
     ) -> GarrisonResult<Self> {
+        // 端点 scheme 校验（安全审计修复）：authorization/token/userinfo/jwks
+        // 四个端点均携带敏感数据或影响验签信任链，明文 http 仅允许本机回环。
+        validate_endpoint_scheme(&config.authorization_endpoint, "authorization_endpoint")?;
+        validate_endpoint_scheme(&config.token_endpoint, "token_endpoint")?;
+        validate_endpoint_scheme(&config.userinfo_endpoint, "userinfo_endpoint")?;
+        validate_endpoint_scheme(&config.jwks_uri, "jwks_uri")?;
         // E1：使用 build_safe_http_client 注入 connect_timeout=10s / read_timeout=30s，
         // 防止恶意或慢速 IdP 拖垮服务端连接池（slowloris 类攻击）。
         let http_client = build_safe_http_client()?;
@@ -761,10 +793,18 @@ impl OidcProvider for DefaultOidcProvider {
             .ok_or_else(|| GarrisonError::Internal("sso-oidc-missing-id-token".to_string()))?;
 
         // 启用 protocol-jwt 时在返回前验证 id_token 签名 + iss/aud/exp。
-        // 未启用 protocol-jwt 时保持向后兼容行为（不验签，直接返回 id_token）。
+        // protocol-sso 特性已隐含 protocol-jwt（见 Cargo.toml），此处验签无条件执行；
+        // 未启用的编译分支为纵深防御：未验签的 id_token 必须 fail-closed 拒绝，
+        // 而非静默放行（安全审计修复，原实现为不验签直接返回）。
         #[cfg(feature = "protocol-jwt")]
         {
             self.validate_id_token_impl(&id_token).await?;
+        }
+        #[cfg(not(feature = "protocol-jwt"))]
+        {
+            return Err(GarrisonError::Config(
+                "sso-oidc-id-token-verification-unavailable::enable-protocol-jwt".to_string(),
+            ));
         }
 
         Ok(id_token)
@@ -799,7 +839,7 @@ impl OidcProvider for DefaultOidcProvider {
 
     async fn validate_id_token(&self, id_token: &str) -> GarrisonResult<bool> {
         // 启用 protocol-jwt 时执行 JWKS 验签 + iss/aud/exp 校验。
-        // 未启用 protocol-jwt 时返回 NotImplemented（保持向后兼容）。
+        // 未启用 protocol-jwt 时返回 NotImplemented（protocol-sso 隐含 jwt，此分支为纵深防御）。
         #[cfg(feature = "protocol-jwt")]
         {
             return self.validate_id_token_impl(id_token).await;
@@ -952,6 +992,39 @@ mod tests {
         assert_eq!(provider.client_secret, "client-secret");
     }
 
+    /// 构造期拒绝公网明文 http 端点（安全审计修复：token 端点携带 client_secret）。
+    #[test]
+    fn new_rejects_plaintext_http_endpoint() {
+        let mut config = make_test_config();
+        config.token_endpoint = "http://idp.example.com/token".to_string();
+        let result = DefaultOidcProvider::new(config, "cid", "secret");
+        match result {
+            Err(GarrisonError::Config(msg)) => {
+                assert!(
+                    msg.contains("token_endpoint"),
+                    "错误应指明 token_endpoint，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 Config，实际: {:?}", other),
+            Ok(_) => panic!("公网明文 http token_endpoint 应被构造期拒绝"),
+        }
+    }
+
+    /// localhost/127.0.0.1 的 http 端点放行（开发/测试场景，与 redirect_uri 约定一致）。
+    #[test]
+    fn new_allows_localhost_http_endpoints() {
+        let mut config = make_test_config();
+        config.authorization_endpoint = "http://127.0.0.1:9000/authorize".to_string();
+        config.token_endpoint = "http://localhost:9000/token".to_string();
+        let result = DefaultOidcProvider::new(config, "cid", "secret");
+        assert!(
+            result.is_ok(),
+            "localhost http 端点应放行，实际: {:?}",
+            result.err()
+        );
+    }
+
     /// OidcProvider trait 编译验证：DefaultOidcProvider 实现 OidcProvider trait（spec R-004）。
     #[test]
     fn default_oidc_provider_implements_oidc_provider() {
@@ -1047,7 +1120,7 @@ mod tests {
     ///
     /// 启用 `protocol-jwt` 时 `exchange_code` 返回前会调用
     /// `validate_id_token`，需要 mock JWKS endpoint + 真实 RSA 签发的 JWT。
-    /// 未启用 `protocol-jwt` 时不验签，使用假 JWT（保持向后兼容行为）。
+    /// `protocol-sso` 隐含 `protocol-jwt`，实际构建始终走验签路径。
     #[tokio::test]
     async fn exchange_code_success_returns_id_token() {
         use wiremock::matchers::{method, path};

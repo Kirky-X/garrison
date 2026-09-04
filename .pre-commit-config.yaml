@@ -92,7 +92,7 @@ repos:
     rev: v2.4.3
     hooks:
       - id: codespell
-        exclude: '^(docs/archive|temp|vendor)/.*$'
+        exclude: '^(docs/archive|temp|vendor)/.*$|^Cargo\.lock$'
         args: ['--ignore-words-list=crate,BU,aNULL', --check-filenames]
 
   # === Markdown 检查（仅检查 Garrison 文档，跳过 archive/temp） ===

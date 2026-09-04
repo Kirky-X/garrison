@@ -179,13 +179,17 @@ impl OAuth2Client {
         }
         let redirect_uri = redirect_uri.into();
         Self::validate_redirect_uri(&redirect_uri)?;
+        let auth_url = auth_url.into();
+        Self::validate_endpoint_url(&auth_url, "auth_url")?;
+        let token_url = token_url.into();
+        Self::validate_endpoint_url(&token_url, "token_url")?;
         let http = build_safe_http_client()?;
         Ok(Self {
             client_id,
             client_secret: client_secret.into(),
             redirect_uri,
-            auth_url: auth_url.into(),
-            token_url: token_url.into(),
+            auth_url,
+            token_url,
             user_info_url: None,
             introspect_url: None,
             http,
@@ -249,7 +253,21 @@ impl OAuth2Client {
         )))
     }
 
+    /// 校验请求端点 URL scheme（安全审计修复：端点明文传输防护）。
+    ///
+    /// token/introspection 端点会携带 `client_secret` 与 authorization code，
+    /// 明文 http 可被中间人窃取。规则与 [`Self::validate_redirect_uri`] 一致：
+    /// `https://` 任意 host；`http://localhost` / `http://127.0.0.1`（开发环境）。
+    fn validate_endpoint_url(url: &str, field: &str) -> GarrisonResult<()> {
+        Self::validate_redirect_uri(url).map_err(|_| {
+            GarrisonError::InvalidParam(format!("{field} must be https or localhost, got: {}", url))
+        })
+    }
+
     /// 设置用户信息端点 URL。
+    ///
+    /// 本客户端不在内部请求该端点（URL 仅供调用方消费），scheme 校验由使用方负责；
+    /// 客户端自身发起的端点（auth/token/introspection）在构造或请求时强制校验。
     pub fn with_user_info_url(mut self, url: impl Into<String>) -> Self {
         self.user_info_url = Some(url.into());
         self
@@ -588,6 +606,7 @@ impl OAuth2Client {
         token: &str,
     ) -> GarrisonResult<TokenIntrospectionResponse> {
         let url = self.introspect_url();
+        Self::validate_endpoint_url(&url, "introspect_url")?;
         let params = [
             ("token", token),
             ("client_id", &self.client_id),
@@ -882,5 +901,99 @@ mod tests {
             .exchange_code_with_pkce("code123", "state", "state", &verifier)
             .await;
         assert!(result.is_err(), "超大 token 响应必须被拒绝");
+    }
+
+    // ========================================================================
+    // 端点 scheme 校验（安全审计修复：端点明文传输防护）
+    // ========================================================================
+
+    /// 构造期拒绝公网明文 http token 端点（client_secret 明文传输风险）。
+    #[test]
+    fn new_rejects_plaintext_http_token_endpoint() {
+        let result = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://app.example.com/callback",
+            "https://auth.example.com/authorize",
+            "http://auth.example.com/token",
+        );
+        match result {
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("token_url"),
+                    "错误应指明 token_url，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+            Ok(_) => panic!("公网明文 http token 端点应被构造期拒绝"),
+        }
+    }
+
+    /// 构造期拒绝公网明文 http auth 端点（authorization code 明文传输风险）。
+    #[test]
+    fn new_rejects_plaintext_http_auth_endpoint() {
+        let result = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://app.example.com/callback",
+            "http://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        );
+        match result {
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("auth_url"),
+                    "错误应指明 auth_url，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+            Ok(_) => panic!("公网明文 http auth 端点应被构造期拒绝"),
+        }
+    }
+
+    /// localhost/127.0.0.1 的 http 端点放行（开发/测试场景，与 redirect_uri 约定一致）。
+    #[test]
+    fn new_allows_localhost_http_endpoints() {
+        let result = OAuth2Client::new(
+            "cid",
+            "secret",
+            "http://localhost:8080/cb",
+            "http://localhost:9000/authorize",
+            "http://127.0.0.1:9000/token",
+        );
+        assert!(
+            result.is_ok(),
+            "localhost http 端点应放行，实际: {:?}",
+            result.err()
+        );
+    }
+
+    /// introspect_token 运行时拒绝明文 introspection 端点
+    /// （with_introspect_url 是 builder 不 panic，在请求前拦截）。
+    #[tokio::test]
+    async fn introspect_token_rejects_plaintext_introspect_url() {
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://app.example.com/callback",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        )
+        .expect("client 构建成功")
+        .with_introspect_url("http://evil.example.com/introspect");
+        let result = client.introspect_token("token-value").await;
+        match result {
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("introspect_url"),
+                    "错误应指明 introspect_url，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+            Ok(_) => panic!("明文 introspection 端点应在请求前被拒绝"),
+        }
     }
 }
