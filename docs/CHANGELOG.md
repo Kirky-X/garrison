@@ -7,6 +7,10 @@
 
 ## [Unreleased]
 
+### Performance
+
+- **三层缓存 TTL 随机抖动（缓存雪崩防护）**：`UserCacheService` 新增 `ttl_with_jitter()` 方法，为 L1/L2 缓存写入引入 ±10% 随机抖动，防止大量 key 同时过期引发 stampede。所有 9 个缓存写入点（6 个 L1 `set_with_ttl` + 3 个 L2 `dao.set`）已使用抖动 TTL，getter 方法保持返回原始配置值。
+
 ### Changed
 
 - **审查发现修复（v0.8.1 全面深度审查报告，2026-08-02）**：
