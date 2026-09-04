@@ -1,18 +1,14 @@
 -- Copyright (c) 2026 Kirky.X. All rights reserved.
 -- See LICENSE for full license text.
 
--- Migration: 初始化 8 张核心表 + app_user_ext 扩展表（PostgreSQL 版本）
+-- Migration: 初始化 8 张核心表 + app_user_ext 扩展表
 -- 对应 spec: extensible-schema
--- 数据库: PostgreSQL（TEXT 存储 UUID/JSON/enum，BIGINT 0/1 存储 boolean，TEXT 存时间戳）
+-- 数据库: DuckDB（TEXT 存储 UUID/JSON/enum，BIGINT 存储 integer 字段）
 -- 幂等性: 所有 CREATE TABLE/INDEX 使用 IF NOT EXISTS
--- 偏离说明: 依据 tasks.md T111，design.md 无完整 PostgresRepository 设计（L376-377 + L431-432），
---   本实现参考 SqliteRepository 模式，schema 类型映射 SQLite→Postgres：
---   INTEGER→BIGINT, AUTOINCREMENT→BIGSERIAL, TEXT→TEXT（保持，兼容 sqlite/mod.rs 的 try_get::<String>）
 --
 -- 时间字段约定（migration-schema-optimization 记录）：
 -- 本文件的时间字段使用 TEXT 存储 ISO 8601 时间戳（CURRENT_TIMESTAMP），
--- 这是历史遗留设计。后续新增迁移表（003_refresh_tokens、004_audit_logs、
--- 006_user_devices、008_credit_consumption）统一使用 BIGINT 存储 Unix 秒。
+-- 这是历史遗留设计。后续新增迁移表统一使用 BIGINT 存储 Unix 秒。
 -- 新迁移表应继续使用 BIGINT（Unix 秒），不与本文件的 TEXT 格式混用。
 
 -- UP:
@@ -76,9 +72,7 @@ CREATE TABLE IF NOT EXISTS app_user_role (
     scope       TEXT,                                                     -- 授权范围（如 data scope）
     grant_time  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     tenant_id   BIGINT  NOT NULL DEFAULT 0,
-    PRIMARY KEY (user_id, role_id),
-    FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE,
-    FOREIGN KEY (role_id) REFERENCES app_role (id) ON DELETE CASCADE
+    PRIMARY KEY (user_id, role_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_user_role_role_id  ON app_user_role (role_id);
 CREATE INDEX IF NOT EXISTS idx_app_user_role_tenant  ON app_user_role (tenant_id);
@@ -90,9 +84,7 @@ CREATE TABLE IF NOT EXISTS app_role_permission (
     role_id         TEXT    NOT NULL,
     permission_id   TEXT    NOT NULL,
     tenant_id       BIGINT  NOT NULL DEFAULT 0,
-    PRIMARY KEY (role_id, permission_id),
-    FOREIGN KEY (role_id)         REFERENCES app_role       (id) ON DELETE CASCADE,
-    FOREIGN KEY (permission_id)   REFERENCES app_permission  (id) ON DELETE CASCADE
+    PRIMARY KEY (role_id, permission_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_role_permission_permission_id  ON app_role_permission (permission_id);
 CREATE INDEX IF NOT EXISTS idx_app_role_permission_tenant          ON app_role_permission (tenant_id);
@@ -108,8 +100,7 @@ CREATE TABLE IF NOT EXISTS app_auth_method (
     external_id  TEXT,                                                    -- 外部 ID（如 OAuth provider user id）
     metadata     TEXT,                                                    -- JSON 元数据
     create_time  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    tenant_id    BIGINT  NOT NULL DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE
+    tenant_id    BIGINT  NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_app_auth_method_user_id     ON app_auth_method (user_id);
 CREATE INDEX IF NOT EXISTS idx_app_auth_method_external_id  ON app_auth_method (external_id);
@@ -127,8 +118,7 @@ CREATE TABLE IF NOT EXISTS app_session (
     login_time   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_active  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     expire_time  TEXT,                                                    -- 过期时间
-    tenant_id    BIGINT  NOT NULL DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE
+    tenant_id    BIGINT  NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_app_session_user_id     ON app_session (user_id);
 CREATE INDEX IF NOT EXISTS idx_app_session_expire    ON app_session (expire_time);
@@ -147,8 +137,7 @@ CREATE TABLE IF NOT EXISTS app_login_log (
     success      BIGINT  NOT NULL DEFAULT 1,                             -- 0=失败, 1=成功
     fail_reason  TEXT,
     create_time  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    tenant_id    BIGINT  NOT NULL DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE SET NULL
+    tenant_id    BIGINT  NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_app_login_log_user_time   ON app_login_log (user_id, create_time);
 CREATE INDEX IF NOT EXISTS idx_app_login_log_create_time  ON app_login_log (create_time);
@@ -166,8 +155,7 @@ CREATE TABLE IF NOT EXISTS app_user_ext (
                   CHECK (field_type IN ('string', 'number', 'boolean', 'json', 'datetime')),
     created_at   TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at  TEXT    NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    tenant_id    BIGINT  NOT NULL DEFAULT 0,
-    FOREIGN KEY (user_id) REFERENCES app_user (id) ON DELETE CASCADE
+    tenant_id    BIGINT  NOT NULL DEFAULT 0
 );
 CREATE UNIQUE INDEX IF NOT EXISTS uk_app_user_ext_user_key   ON app_user_ext (user_id, field_key);
 CREATE INDEX        IF NOT EXISTS idx_app_user_ext_field_key  ON app_user_ext (field_key);

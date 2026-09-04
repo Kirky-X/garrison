@@ -10,6 +10,11 @@
 --   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP → VARCHAR(30) NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 --   CREATE [UNIQUE] INDEX IF NOT EXISTS → CREATE [UNIQUE] INDEX（MySQL 不支持 IF NOT EXISTS）
 --   DROP INDEX IF EXISTS → 移除（DROP TABLE 自动级联删除索引）
+--
+-- 时间字段约定（migration-schema-optimization 记录）：
+-- 本文件的时间字段使用 VARCHAR(30) 存储 ISO 8601 时间戳（CURRENT_TIMESTAMP），
+-- 这是历史遗留设计。后续新增迁移表统一使用 BIGINT 存储 Unix 秒。
+-- 新迁移表应继续使用 BIGINT（Unix 秒），不与本文件的 VARCHAR 格式混用。
 
 -- UP:
 
