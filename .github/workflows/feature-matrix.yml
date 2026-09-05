@@ -1,0 +1,85 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+#
+# Feature 组合矩阵与 examples 测试（审查报告 R-09/R-10）。
+#
+# - R-09：108 个 feature 的 each-feature 独立编译检查 + 重点两两组合采样。
+#   全量 powerset 为 O(2^108)，不可行；单一 feature + 定向采样覆盖
+#   「feature 单独启用/组合冲突」两类历史事故面（如 db-* × embedded-migrations、
+#   protocol-* × secure-ct-eq、web-* × annotation-macros）。
+# - R-10：examples 是独立 workspace member，根目录 `cargo test --features full`
+#   不会运行其 103 个测试；本工作流补齐该盲区。
+#
+# 调度策略：每周一 03:00 UTC 定时 + 手动触发，不阻塞 PR 关键路径。
+# 出现红色结果时按 feature 组合逐项 triage：真实冲突 → 修 Cargo.toml 依赖约束
+# 或登记 check-cfg；误报 → 加入排除清单并注释原因。
+
+name: Feature Matrix
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: feature-matrix-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+
+jobs:
+  each-feature:
+    name: Each-feature check (cargo-hack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        with:
+          tool: protoc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-feature-matrix
+      - name: Install cargo-hack
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-hack
+        with:
+          tool: cargo-hack
+      - name: Check each feature individually
+        # --no-dev-deps 跳过测试依赖编译，显著提速；--keep-going 收集全部失败便于一次性 triage。
+        run: cargo hack check --each-feature --no-dev-deps --keep-going
+      - name: Targeted two-feature combinations
+        run: |
+          cargo hack check --no-dev-deps --features "db-mysql,embedded-migrations"
+          cargo hack check --no-dev-deps --features "db-sqlite,protocol-apikey"
+          cargo hack check --no-dev-deps --features "db-postgres,three-tier-cache"
+          cargo hack check --no-dev-deps --features "protocol-jwt,secure-ct-eq"
+          cargo hack check --no-dev-deps --features "protocol-saml,protocol-oidc"
+          cargo hack check --no-dev-deps --features "web-warp,annotation-macros"
+          cargo hack check --no-dev-deps --features "web-actix,web-security"
+          cargo hack check --no-dev-deps --features "auth-server,backend-remote"
+          cargo hack check --no-dev-deps --features "oauth2-server,cache-redis"
+          cargo hack check --no-dev-deps --features "tenant-isolation,firewall-bruteforce"
+
+  examples:
+    name: Examples tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        with:
+          tool: protoc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-examples-deps
+      - name: Run examples tests (independent workspace member)
+        run: cargo test -p garrison-examples --all-features --locked

@@ -5,6 +5,7 @@
 > specmark change `acceptance-overhaul`：全量验收测试重构 + 缺陷全部修复。
 >
 > **终验统计（T061/T066 收口，证据 `target/gate-final.log` + 三维审查独立复测）**：
+>
 > - 验收测试矩阵 `--test acceptance`：**380 passed / 0 failed**（3 ignored），分域实测：
 >   authentication 19 / session 18 / rbac 18 / protocol_jwt 19 / protocol_oauth2 15 /
 >   protocol_mixed 23 / security 27 / web_axum 24 / web_actix 8 / web_warp 6 / storage 16 /
@@ -20,12 +21,14 @@
 >   根入口删除（`tests/` = acceptance.rs + acceptance/ + common/ + data/）
 >
 > **实证发现（验收首次真实验证 e2e 未验证声明）**：
+>
 > - FINDING-025：会话存储无租户作用域（`tenant_isolation.enabled` 无运行时消费点），
 >   跨租户 check-login 返回 true；隔离强制点在 DAO 前缀层与审计层。后续 change 待定
 > - XSS 硬化实测：auth-server 在 login_id 校验层 400 拒绝尖括号载荷（入口拒绝）
 > - jsonwebtoken u64 秒边界：过期判定存在亚秒 flaky（测试已按 2.5s 跨秒修正）
 
 ### Breaking
+
 - **`GarrisonDao` 六个原子方法收严为必需方法（T012）**：`rename` / `set_if_absent` /
   `get_and_delete` / `incr` / `decr` / `compare_and_swap` 移除非原子默认实现（TOCTOU
   竞态此前仅靠文档约束）。自定义实现方必须补齐这六个方法并以进程内锁或后端原语保证
@@ -40,6 +43,7 @@
   阈值，引发 192 处告警）。构造点需 `Box::new(...)` 或使用既有 `From<GarrisonException>`。
 
 ### Added
+
 - **`GarrisonGrpcAuthLayer`（T014，`grpc` feature）**：tower Layer/Service 形态的
   gRPC async 鉴权层——严格 Bearer 提取 → async `check_login` → 失败以
   `Status::UNAUTHENTICATED` 拒绝、成功在 `with_current_token` 作用域内放行。
@@ -53,6 +57,14 @@
   （100 task 竞争断言）等盲区补齐；现有 tests/ 将全量迁移重构入矩阵。
 
 ### Fixed
+
+- **`GarrisonDaoOxcache::keys()` glob 语义对齐**：`matches_pattern` 此前仅支持
+  后缀 `*` / 精确匹配（`?` 与中间 `*` 按字面量处理），与 trait 文档「支持 `*` 与 `?`」
+  及 `InMemoryDao::keys` / Redis `KEYS` 语义相悖。实现改为委托
+  `InMemoryDao::glob_match`（单一事实来源），`?` 匹配单字符、`*` 可出现在
+  pattern 任意位置。影响 `dao-key-index` 启用时的 `keys()`（`protocol-apikey`
+  的 `list_by_namespace` / `anomalous-detector-dual`），既有调用方所用 pattern
+  （前缀 + 尾部 `*`）行为不变。
 - warp `GarrisonRejection` 缺统一错误 JSON 映射（T004）：新增 `Display` + `Reply` 实现
   与 `garrison_recover()` 守卫，三框架错误响应（状态码 + `error_code`/`message` body）
   完全一致。
@@ -60,12 +72,14 @@
   `Session` 错误 → 500 而非 401（web 冒烟以 `web_test_config()` 同源配置修复）。
 
 ### Changed
+
 - 文档与代码事实同步（T015）：ARCHITECTURE.md 版本行 / lib.rs 示例版本 / bcrypt 注释 /
   state 模块 roadmap 表述 / SECURITY.md 增加 RUSTSEC-2023-0071 处置锚定。
 
 ## [0.9.0-rc.2] - 2026-08-26
 
 ### Breaking
+
 - **`check_api_key` fail-closed（CRIT-008）**：当 `protocol-apikey` feature 关闭时，
   `#[check_api_key]` 生成的调用不再静默返回 `Ok(())`（此前所有携带任意字符串的请求均通过校验）。
   现返回 `Err(GarrisonError::Config("check_api_key requires protocol-apikey feature"))`。
@@ -80,17 +94,20 @@
   失败路径的暴力破解计数（`record_failure`）、成功路径清零。此前该防护为 dead-code。
 
 ### Changed
+
 - `session::dao()` 的 `pub(crate)` 可见性扩展至 `firewall-bruteforce` feature（供 login/check_login 计数使用）。
 - `GarrisonPermissionStrategy::firewall_hook_injected()` 诊断方法新增（默认 `false`，默认实现返回实际注入状态）。
 
 ## [0.9.0-rc.1] - 2026-08-25
 
 ### Added
+
 - authflow：`IpWhitelist`（CIDR 白名单，`IpNetwork::contains`）与 `CustomConditionEvaluator` 自定义条件求值器（运行期注册，未注册条件名返回显性错误）
 - `policy-hibp` feature：HIBP k-anonymity 泄露密码检查（SHA-1 前 5 位 range 查询；关闭时 `check_hibp` 返回显性 `Err(HibpDisabled)`）
 - `web-axum` 对接 guardrail：garrison 侧 `IpWhitelist`/evaluator 受 `axum` 面门控
 
 ### Changed
+
 - `MockDao` 正名 `InMemoryDao`（`src/dao/in_memory.rs`；`deprecated` 别名过渡，下版本移除）
 - oauth2_server/secure/totp/dao 测试与内部引用全面迁移至 `InMemoryDao`/`Totp` 新 API
 - `totp-rs` 6.0 API 迁移（`Builder` 链式构造；`check()` 返回 `Option<u64>` 语义）
@@ -99,11 +116,13 @@
 - rustdoc：三处文档链接修复 + `invalid-rust-codeblocks` lint 显式声明
 
 ### Fixed
+
 - `src/secure/totp/handler.rs` totp-rs 6 API 编译错误
 - `jwt_modes` 集成测试 secret 长度对齐生产 32 字节校验阈值
 - `oauth2_server` 测试引用 `MockDao` 别名正名
 - `policy-hibp` 常量在 feature 关闭面无 unused 告警
 
 ### Breaking
+
 - `MockDao` → `InMemoryDao`（迁移期 deprecated 别名）
 - `policy-hibp` 关闭时 `check_hibp` 从静默通过改显性错误

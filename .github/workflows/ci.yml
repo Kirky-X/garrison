@@ -248,6 +248,33 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GARRISON_TEST_SQLITE_MEMORY: "1"
+      # R-08：真实外部服务探活使 environment.rs 门控用例（Redis DAO/Postgres 迁移）
+      # 在 CI 真实执行，而非恒为 [SKIP]。
+      GARRISON_TEST_REDIS: "1"
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:16-alpine
+        ports:
+          - 5432:5432
+        env:
+          # 与 tests/acceptance/environment.rs 的 POSTGRES_URL 常量对齐（CI 专用测试凭据）
+          POSTGRES_USER: garrison
+          POSTGRES_PASSWORD: garrison
+          POSTGRES_DB: garrison_test
+        options: >-
+          --health-cmd "pg_isready -U garrison"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -264,6 +291,7 @@ jobs:
         # 遇到 required-features 不满足的（如 db_mysql_testcontainers 需要 db-mysql）会报错。
         # --tests 自动跳过 required-features 不满足的 test target。
         # db_mysql_testcontainers 需要 Docker + testcontainers 拉 MySQL 镜像，本地手动跑。
+        # environment.rs 的 Redis/Postgres 用例经上方 services 真实执行（R-08）。
         run: cargo test --features "full" --tests --no-fail-fast
 
   # === 覆盖率（仅 Linux） ===
@@ -273,6 +301,33 @@ jobs:
     env:
       # llvm-cov 面下 sqlite 文件库 URL 触发 SQLITE_READONLY，回退内存库
       GARRISON_TEST_SQLITE_MEMORY: "1"
+      # R-08：llvm-cov 会运行 lib 测试与验收测试，Redis/Postgres services 让
+      # 环境门控用例（sso channel Redis pub/sub、Redis DAO、Postgres 迁移）真实执行
+      GARRISON_TEST_REDIS: "1"
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: postgres:16-alpine
+        ports:
+          - 5432:5432
+        env:
+          # 与 tests/acceptance/environment.rs 的 POSTGRES_URL 常量对齐（CI 专用测试凭据）
+          POSTGRES_USER: garrison
+          POSTGRES_PASSWORD: garrison
+          POSTGRES_DB: garrison_test
+        options: >-
+          --health-cmd "pg_isready -U garrison"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
