@@ -347,8 +347,8 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
             .map_err(map_limiteron_err)?;
         if count >= LOGIN_FREQUENCY_THRESHOLD as u64 {
             return Err(GarrisonError::Session(format!(
-                "登录频率超限：IP {} 在 1h 内失败 {} 次（阈值 {}）",
-                ip, count, LOGIN_FREQUENCY_THRESHOLD
+                "strategy-login-frequency-exceeded::{}",
+                ip
             )));
         }
         Ok(())
@@ -379,8 +379,8 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
                 .await;
             }
             return Err(GarrisonError::Session(format!(
-                "账号锁定：login_id={} 在 1h 内失败 {} 次（阈值 {}）",
-                ctx.login_id, count, BRUTE_FORCE_THRESHOLD
+                "strategy-account-locked::{}",
+                ctx.login_id
             )));
         }
         Ok(())
@@ -398,7 +398,7 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
         let key = format!("fw:geo:{}", ctx.login_id);
         match self.dao.get(&key).await? {
             Some(stored_geo) if stored_geo != *ctx_geo => Err(GarrisonError::Session(format!(
-                "异地登录检测：login_id={} 上次地理位置 {} 与本次 {} 不符",
+                "strategy-geo-anomaly::{}::{}|{}",
                 ctx.login_id, stored_geo, ctx_geo
             ))),
             _ => Ok(()), // 无记录或与记录一致，通过
@@ -413,7 +413,7 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
         let key = format!("{}blacklist:{}", DaoKeyPrefix::Token, ctx.login_id);
         if self.dao.get(&key).await?.is_some() {
             return Err(GarrisonError::Session(format!(
-                "Token 复用检测：login_id={} 的 Token 已被列入黑名单",
+                "strategy-token-reuse-blocked::{}",
                 ctx.login_id
             )));
         }
@@ -435,7 +435,7 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
                 let known: Vec<&str> = known_list.split(',').map(|s| s.trim()).collect();
                 if !known.contains(&fp.as_str()) {
                     return Err(GarrisonError::Session(format!(
-                        "设备异常检测：login_id={} 的设备指纹 {} 不在已知设备列表",
+                        "strategy-device-anomaly::{}::{}",
                         ctx.login_id, fp
                     )));
                 }
