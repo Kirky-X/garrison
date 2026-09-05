@@ -82,7 +82,8 @@ impl RateLimitState {
     pub fn with_options(capacity: u32, max_entries: usize, trusted_proxies: Vec<IpAddr>) -> Self {
         let capacity = capacity as u64;
         Self {
-            buckets: DashMap::new(),
+            // 初始容量取 max_entries 的 1/64 与 64 的较大值，避免冷启动时频繁 rehash
+            buckets: DashMap::with_capacity((max_entries / 64).max(64)),
             // 桶容量 = 补充速率 = capacity（与原手写实现一致）
             capacity,
             refill_rate: capacity,
