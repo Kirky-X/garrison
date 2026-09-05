@@ -475,7 +475,7 @@ impl GarrisonUtil {
     pub async fn has_permission(permission: &str) -> GarrisonResult<bool> {
         if permission.is_empty() {
             return Err(crate::error::GarrisonError::InvalidParam(
-                "permission 不能为空".to_string(),
+                "stp-permission-empty::".to_string(),
             ));
         }
         crate::manager::GarrisonManager::logic()?
@@ -502,7 +502,7 @@ impl GarrisonUtil {
     pub async fn has_role(role: &str) -> GarrisonResult<bool> {
         if role.is_empty() {
             return Err(crate::error::GarrisonError::InvalidParam(
-                "role 不能为空".to_string(),
+                "stp-role-empty::".to_string(),
             ));
         }
         crate::manager::GarrisonManager::logic()?
