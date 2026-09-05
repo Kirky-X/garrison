@@ -88,6 +88,8 @@ impl PermissionRepository for DbnexusPermissionRepository {
         if sets.is_empty() {
             return Ok(());
         }
+        // 安全性说明：sets 中的元素均为硬编码列名（如 "resource_type = ?"），
+        // 非用户输入，不存在 SQL 注入风险。所有值通过 `?` 占位符参数化传递。
         params.push(v_str(id));
         let sql = format!("UPDATE app_permission SET {} WHERE id = ?", sets.join(", "));
         dao_session!(self.pool, "dao-app-permission-update", session, conn);
