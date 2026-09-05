@@ -287,13 +287,13 @@ impl RateLimitStrategy {
             RateLimitScope::User => match &ctx.login_id {
                 Some(id) => Ok((format!("rl:user:{}", id), id.clone())),
                 None => Err(GarrisonError::InvalidParam(
-                    "firewall-ratelimit-user-none".to_string(),
+                    "firewall-ratelimit-user-none::".to_string(),
                 )),
             },
             RateLimitScope::Tenant => match ctx.tenant_id {
                 Some(id) => Ok((format!("rl:tenant:{}", id), id.to_string())),
                 None => Err(GarrisonError::InvalidParam(
-                    "firewall-ratelimit-tenant-none".to_string(),
+                    "firewall-ratelimit-tenant-none::".to_string(),
                 )),
             },
         }

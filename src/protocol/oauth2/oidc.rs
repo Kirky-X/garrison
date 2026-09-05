@@ -252,13 +252,17 @@ impl OidcHandler {
         // OIDC 规范要求校验 iss 和 aud
         // L6 修复：错误消息不含 claims.iss 实际值（虽 iss 通常公开，但 fail-closed 不泄露任何 token claim）
         if claims.iss != self.issuer {
-            return Err(GarrisonError::InvalidToken("oidc-iss-mismatch".to_string()));
+            return Err(GarrisonError::InvalidToken(
+                "oidc-iss-mismatch::".to_string(),
+            ));
         }
         // vuln-0006 修复：aud 支持String 或数组形式（RFC 7519 §4.1.3）。
         // 校验 `aud` 是否包含本客户端的 `client_id`，与 `sso/oidc.rs` 行为对齐。
         // L6 修复：错误消息不含 claims.aud 实际值（虽 aud 通常公开，但 fail-closed 不泄露任何 token claim）
         if !claims.aud.contains(&self.audience) {
-            return Err(GarrisonError::InvalidToken("oidc-aud-mismatch".to_string()));
+            return Err(GarrisonError::InvalidToken(
+                "oidc-aud-mismatch::".to_string(),
+            ));
         }
         // nonce 校验（防重放）— L2 修复：使用 subtle::ConstantTimeEq 常量时间比较，
         // 避免 nonce 长度/前缀差异导致的 timing side-channel 泄漏 nonce 信息。

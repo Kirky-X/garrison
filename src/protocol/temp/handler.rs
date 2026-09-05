@@ -56,10 +56,14 @@ impl TempCredentialHandler {
         ttl_seconds: i64,
     ) -> GarrisonResult<String> {
         if prefix.contains(':') {
-            return Err(GarrisonError::InvalidParam("temp-prefix-colon".to_string()));
+            return Err(GarrisonError::InvalidParam(
+                "temp-prefix-colon::".to_string(),
+            ));
         }
         if ttl_seconds <= 0 {
-            return Err(GarrisonError::InvalidParam("temp-ttl-invalid".to_string()));
+            return Err(GarrisonError::InvalidParam(
+                "temp-ttl-invalid::".to_string(),
+            ));
         }
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符）
         let random = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());

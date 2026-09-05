@@ -18,7 +18,7 @@ impl GarrisonInterceptor for DefaultGarrisonInterceptor {
             Annotation::CheckLogin => {
                 let logged_in = GarrisonUtil::check_login().await?;
                 if !logged_in {
-                    return Err(GarrisonError::NotLogin("router-not-login".to_string()));
+                    return Err(GarrisonError::NotLogin("router-not-login::".to_string()));
                 }
                 Ok(())
             },

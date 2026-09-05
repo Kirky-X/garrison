@@ -121,7 +121,7 @@ fn haversine_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 impl GarrisonFirewallStrategy for AnomalousLoginStrategy {
     async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         let login_id = ctx.login_id.as_ref().ok_or_else(|| {
-            GarrisonError::InvalidParam("firewall-anomalous-need-login-id".to_string())
+            GarrisonError::InvalidParam("firewall-anomalous-need-login-id::".to_string())
         })?;
 
         // 1. 查询当前 IP 坐标 → 无法定位则放行（不因数据缺失拦截）

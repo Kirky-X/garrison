@@ -44,7 +44,7 @@ impl GarrisonManager {
         GARRISON_MANAGER
             .logic
             .load_full()
-            .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
+            .ok_or_else(|| GarrisonError::Session("manager-not-init::".to_string()))
     }
 
     /// 获取全局 `Strategy` 注册表引用。
@@ -61,7 +61,7 @@ impl GarrisonManager {
         GARRISON_MANAGER
             .strategy
             .load_full()
-            .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
+            .ok_or_else(|| GarrisonError::Session("manager-not-init::".to_string()))
     }
 
     /// 获取全局 `DisableRepository` 引用（v0.6.5 T020）。

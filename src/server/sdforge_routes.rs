@@ -451,7 +451,7 @@ async fn kickout(
     .await
     {
         return Ok(to_api_response(Err(GarrisonError::NotPermission(
-            "server-caller-not-owner-kickout".to_string(),
+            "server-caller-not-owner-kickout::".to_string(),
         ))));
     }
     let result = backend.kickout(&req.login_id).await;
@@ -484,7 +484,7 @@ async fn switch_to(
             .await
             {
                 return Ok(to_api_response(Err(GarrisonError::NotPermission(
-                    "server-caller-not-owner-switch-to".to_string(),
+                    "server-caller-not-owner-switch-to::".to_string(),
                 ))));
             }
             // 校验通过，执行 switch_to（内部还有 target_account_exists + guard 两层防御）

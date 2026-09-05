@@ -294,7 +294,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
         // spec scenario "权限为空字符串"：空字符串抛 InvalidParam
         if permission.is_empty() {
             return Err(GarrisonError::InvalidParam(
-                "strategy-perm-empty".to_string(),
+                "strategy-perm-empty::".to_string(),
             ));
         }
 
@@ -339,7 +339,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
     async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
         if role.is_empty() {
             return Err(GarrisonError::InvalidParam(
-                "strategy-role-empty".to_string(),
+                "strategy-role-empty::".to_string(),
             ));
         }
         let roles = self.get_role_list(login_id).await?;

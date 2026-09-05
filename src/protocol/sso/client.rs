@@ -42,7 +42,7 @@ pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> GarrisonResult<Str
 pub(crate) fn verify_ticket_signature(secret: &str, ticket: &str) -> GarrisonResult<String> {
     let (random_part, sig_b64) = ticket
         .split_once('.')
-        .ok_or_else(|| GarrisonError::InvalidToken("sso-ticket-format-no-sig".to_string()))?;
+        .ok_or_else(|| GarrisonError::InvalidToken("sso-ticket-format-no-sig::".to_string()))?;
     // 常量时间比较：解码 base64 签名后用 mac.verify_slice 验证（与 sign/handler.rs 一致）
     let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
         .map_err(|e| GarrisonError::Internal(format!("sso-ticket-hmac-init::{}", e)))?;
@@ -50,9 +50,9 @@ pub(crate) fn verify_ticket_signature(secret: &str, ticket: &str) -> GarrisonRes
     // 签名解码或验证失败均统一返回 "签名验证失败"，避免向调用方泄露失败原因（防侧信道）
     let sig_bytes = BASE64_STANDARD
         .decode(sig_b64)
-        .map_err(|_| GarrisonError::InvalidToken("sso-ticket-sig-verify".to_string()))?;
+        .map_err(|_| GarrisonError::InvalidToken("sso-ticket-sig-verify::".to_string()))?;
     mac.verify_slice(&sig_bytes)
-        .map_err(|_| GarrisonError::InvalidToken("sso-ticket-sig-verify".to_string()))?;
+        .map_err(|_| GarrisonError::InvalidToken("sso-ticket-sig-verify::".to_string()))?;
     Ok(random_part.to_string())
 }
 
@@ -164,7 +164,7 @@ impl SsoClient {
             .await
             .map_err(|e| GarrisonError::Dao(format!("sso-ticket-read::{}", e)))?;
         let value = value.ok_or_else(|| {
-            GarrisonError::InvalidToken("sso-ticket-missing-or-expired".to_string())
+            GarrisonError::InvalidToken("sso-ticket-missing-or-expired::".to_string())
         })?;
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| GarrisonError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
@@ -184,7 +184,7 @@ impl SsoClient {
             .map_err(|e| GarrisonError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
         if consumed.is_none() {
             return Err(GarrisonError::InvalidToken(
-                "sso-ticket-consumed-by-concurrent".to_string(),
+                "sso-ticket-consumed-by-concurrent::".to_string(),
             ));
         }
         Ok(data.login_id)

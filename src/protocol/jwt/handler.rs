@@ -63,7 +63,7 @@ impl JwtHandler {
     pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> GarrisonResult<String> {
         let login_id: String = login_id.into();
         if self.secret.is_empty() {
-            return Err(GarrisonError::Config("jwt-secret-empty".to_string()));
+            return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
         }
         // H-13: JWT 密钥最小长度校验（防暴力破解）
         if self.secret.len() < MIN_SECRET_BYTES {
@@ -110,7 +110,7 @@ impl JwtHandler {
     /// - `Err(GarrisonError::InvalidToken)`: 签名/格式/算法校验失败。
     pub fn verify(&self, token: &str) -> GarrisonResult<GarrisonJwtClaims> {
         if self.secret.is_empty() {
-            return Err(GarrisonError::Config("jwt-secret-empty".to_string()));
+            return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
         }
         // H-13: JWT 密钥最小长度校验（防暴力破解）
         if self.secret.len() < MIN_SECRET_BYTES {

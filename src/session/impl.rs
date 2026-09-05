@@ -804,7 +804,7 @@ impl GarrisonSession {
     pub async fn set(&self, token: &str, key: &str, value: &str) -> GarrisonResult<()> {
         self.with_token_session_lock(token, async {
             let mut ts = self.get_token_session(token).await?.ok_or_else(|| {
-                GarrisonError::InvalidToken("session-token-not-found".to_string())
+                GarrisonError::InvalidToken("session-token-not-found::".to_string())
             })?;
             ts.attrs.insert(key.to_string(), value.to_string());
             ts.last_active_at = Utc::now().timestamp();
@@ -1082,7 +1082,7 @@ impl GarrisonSession {
     pub async fn set_device(&self, token: &str, device: &str) -> GarrisonResult<()> {
         self.with_token_session_lock(token, async {
             let mut ts = self.get_token_session(token).await?.ok_or_else(|| {
-                GarrisonError::InvalidToken("session-token-not-found".to_string())
+                GarrisonError::InvalidToken("session-token-not-found::".to_string())
             })?;
             ts.device = Some(device.to_string());
             ts.last_active_at = Utc::now().timestamp();

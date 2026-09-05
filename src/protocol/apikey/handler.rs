@@ -96,7 +96,7 @@ pub(crate) fn public_key_ref(key: &str) -> String {
 fn validate_namespace(namespace: &str) -> GarrisonResult<()> {
     if namespace.is_empty() {
         return Err(GarrisonError::InvalidParam(
-            "apikey-namespace-empty".to_string(),
+            "apikey-namespace-empty::".to_string(),
         ));
     }
     if namespace.len() > 64 {
@@ -266,7 +266,7 @@ impl ApiKeyHandler {
         let login_id: String = login_id.into();
         if timeout <= 0 {
             return Err(GarrisonError::InvalidParam(
-                "apikey-timeout-positive".to_string(),
+                "apikey-timeout-positive::".to_string(),
             ));
         }
         validate_namespace(namespace)?;
@@ -351,7 +351,7 @@ impl ApiKeyHandler {
                 Some((key_id, key_secret)) => {
                     let dao_key = format!("garrison:apikey:{}:{}", namespace, key_id);
                     let value = self.dao.get(&dao_key).await?.ok_or_else(|| {
-                        GarrisonError::InvalidToken("apikey-not-found".to_string())
+                        GarrisonError::InvalidToken("apikey-not-found::".to_string())
                     })?;
                     (dao_key, value, Some(key_secret.to_string()))
                 },
@@ -359,7 +359,7 @@ impl ApiKeyHandler {
                     // legacy 单 token
                     let dao_key = format!("garrison:apikey:{}:{}", namespace, key);
                     let value = self.dao.get(&dao_key).await?.ok_or_else(|| {
-                        GarrisonError::InvalidToken("apikey-not-found".to_string())
+                        GarrisonError::InvalidToken("apikey-not-found::".to_string())
                     })?;
                     (dao_key, value, None)
                 },
@@ -403,7 +403,9 @@ impl ApiKeyHandler {
         if let Some(value) = self.dao.get(&old_dao_key).await? {
             return Ok((old_dao_key, value, None));
         }
-        Err(GarrisonError::InvalidToken("apikey-not-found".to_string()))
+        Err(GarrisonError::InvalidToken(
+            "apikey-not-found::".to_string(),
+        ))
     }
 
     /// 解码 ApiKeyInfo 并校验 revoked / expire / secret（verify 内部复用）。
@@ -416,11 +418,11 @@ impl ApiKeyHandler {
         let info: ApiKeyInfo = serde_json::from_str(value)
             .map_err(|e| GarrisonError::Internal(format!("apikey-deserialize::{}", e)))?;
         if info.revoked {
-            return Err(GarrisonError::InvalidToken("apikey-revoked".to_string()));
+            return Err(GarrisonError::InvalidToken("apikey-revoked::".to_string()));
         }
         let now = current_ts()?;
         if info.expire_at <= now {
-            return Err(GarrisonError::ExpiredToken("apikey-expired".to_string()));
+            return Err(GarrisonError::ExpiredToken("apikey-expired::".to_string()));
         }
         // CWE-916：新格式必须校验 secret 哈希（常量时间比较）
         if !info.secret_hash.is_empty() {
@@ -543,7 +545,7 @@ impl ApiKeyHandler {
     async fn revoke_at(&self, dao_key: &str) -> GarrisonResult<()> {
         let value = self.dao.get(dao_key).await?;
         let value =
-            value.ok_or_else(|| GarrisonError::InvalidToken("apikey-not-found".to_string()))?;
+            value.ok_or_else(|| GarrisonError::InvalidToken("apikey-not-found::".to_string()))?;
         let mut info: ApiKeyInfo = serde_json::from_str(&value)
             .map_err(|e| GarrisonError::Internal(format!("apikey-deserialize::{}", e)))?;
         info.revoked = true;
@@ -622,11 +624,11 @@ impl ApiKeyHandler {
             .map_err(|e| GarrisonError::Internal(format!("apikey-deserialize::{}", e)))?;
         // LOW-4：与 verify 对称，不对已吊销/过期的失效 key 写入使用时间
         if info.revoked {
-            return Err(GarrisonError::InvalidToken("apikey-revoked".to_string()));
+            return Err(GarrisonError::InvalidToken("apikey-revoked::".to_string()));
         }
         let now = current_ts()?;
         if info.expire_at <= now {
-            return Err(GarrisonError::ExpiredToken("apikey-expired".to_string()));
+            return Err(GarrisonError::ExpiredToken("apikey-expired::".to_string()));
         }
         info.last_used_at = Some(now);
         let new_value = serde_json::to_string(&info)
@@ -661,7 +663,7 @@ impl ApiKeyHandler {
         let remaining_ttl = info.expire_at - now;
         if remaining_ttl <= 0 {
             return Err(GarrisonError::ExpiredToken(
-                "apikey-expired-cannot-rotate".to_string(),
+                "apikey-expired-cannot-rotate::".to_string(),
             ));
         }
         let new_key = self

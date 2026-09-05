@@ -96,16 +96,18 @@ impl AnomalousAnalyzerConfig {
     pub fn validate(&self) -> GarrisonResult<()> {
         if self.interval_secs == 0 {
             return Err(GarrisonError::Config(
-                "strategy-interval-secs-zero".to_string(),
+                "strategy-interval-secs-zero::".to_string(),
             ));
         }
         if self.burst_threshold == 0 {
             return Err(GarrisonError::Config(
-                "strategy-burst-threshold-zero".to_string(),
+                "strategy-burst-threshold-zero::".to_string(),
             ));
         }
         if self.max_scan == 0 {
-            return Err(GarrisonError::Config("strategy-max-scan-zero".to_string()));
+            return Err(GarrisonError::Config(
+                "strategy-max-scan-zero::".to_string(),
+            ));
         }
         Ok(())
     }
@@ -192,7 +194,7 @@ impl AnomalousLoginAnalyzer {
     pub async fn record_login(&self, record: &AnomalousLoginRecord) -> GarrisonResult<()> {
         if record.login_id.is_empty() {
             return Err(GarrisonError::InvalidParam(
-                "strategy-login-id-empty".to_string(),
+                "strategy-login-id-empty::".to_string(),
             ));
         }
         if record.login_id.contains(':') {
@@ -1291,8 +1293,8 @@ mod tests {
         assert!(result.is_err(), "慢任务应超时返回 Err");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("strategy-analyzer-shutdown-timeout"),
-            "错误信息应包含 'strategy-analyzer-shutdown-timeout'，实际: {}",
+            err_msg.contains("异常分析器关闭超时"),
+            "错误信息应包含翻译后的关闭超时提示，实际: {}",
             err_msg
         );
     }

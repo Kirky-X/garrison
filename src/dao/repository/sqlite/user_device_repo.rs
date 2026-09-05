@@ -69,7 +69,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
             .query_one_raw(stmt)
             .await
             .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
-            .ok_or_else(|| GarrisonError::Dao("dao-app-user-device-count-empty".into()))?;
+            .ok_or_else(|| GarrisonError::Dao("dao-app-user-device-count-empty::".into()))?;
         let current_count: i64 = count_row
             .try_get("", "cnt")
             .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
@@ -159,7 +159,7 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
             .query_one_raw(stmt)
             .await
             .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
-            .ok_or_else(|| GarrisonError::Dao("dao-app-user-device-count-empty".into()))?;
+            .ok_or_else(|| GarrisonError::Dao("dao-app-user-device-count-empty::".into()))?;
         let count: i64 = row
             .try_get("", "cnt")
             .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;

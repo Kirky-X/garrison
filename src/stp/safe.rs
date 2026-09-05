@@ -44,7 +44,9 @@ impl GarrisonLogicDefault {
     /// - DAO 读写失败：透传 GarrisonError。
     pub async fn open_safe(&self, service: &str, duration_secs: u64) -> GarrisonResult<()> {
         if service.is_empty() {
-            return Err(GarrisonError::InvalidParam("stp-service-empty".to_string()));
+            return Err(GarrisonError::InvalidParam(
+                "stp-service-empty::".to_string(),
+            ));
         }
         let token = current_token()?;
         let token_prefix = if token.len() >= 8 {
@@ -85,7 +87,9 @@ impl GarrisonLogicDefault {
     /// "未认证" = "不安全" = `Ok(false)` 是合理的语义。只有 DAO 读写失败才返回 `Err`。
     pub async fn is_safe(&self, service: &str) -> GarrisonResult<bool> {
         if service.is_empty() {
-            return Err(GarrisonError::InvalidParam("stp-service-empty".to_string()));
+            return Err(GarrisonError::InvalidParam(
+                "stp-service-empty::".to_string(),
+            ));
         }
         let token = match current_token() {
             Ok(t) => t,
@@ -149,7 +153,9 @@ impl GarrisonLogicDefault {
     /// - DAO 读写失败：透传 GarrisonError。
     pub async fn close_safe(&self, service: &str) -> GarrisonResult<()> {
         if service.is_empty() {
-            return Err(GarrisonError::InvalidParam("stp-service-empty".to_string()));
+            return Err(GarrisonError::InvalidParam(
+                "stp-service-empty::".to_string(),
+            ));
         }
         let token = current_token()?;
         let token_prefix = if token.len() >= 8 {

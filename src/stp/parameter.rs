@@ -387,7 +387,7 @@ mod tests {
         let builder = ParameterQueryBuilder::new();
         let result = builder.check_permission("user:create").await;
         assert!(
-            matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("login_id not set")),
+            matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("stp-param-login-id-missing")),
             "未设置上下文时应返回 Internal 错误，实际: {:?}",
             result
         );
@@ -504,7 +504,7 @@ mod tests {
         let builder = ParameterQueryBuilder::new();
         let result = builder.check_role("admin").await;
         assert!(
-            matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("login_id not set")),
+            matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("stp-param-login-id-missing")),
             "未设置上下文时 check_role 应返回 Internal 错误，实际: {:?}",
             result
         );

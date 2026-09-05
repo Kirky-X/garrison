@@ -601,7 +601,7 @@ impl GarrisonConfig {
         #[cfg(feature = "session-extra")]
         if self.anon_session_timeout == 0 {
             return Err(GarrisonError::Config(
-                "config-anon-timeout-invalid".to_string(),
+                "config-anon-timeout-invalid::".to_string(),
             ));
         }
         #[cfg(feature = "three-tier-cache")]
@@ -622,7 +622,9 @@ impl GarrisonConfig {
         {
             if let RateLimitBackend::Redis { redis_url } = &self.rate_limit_backend {
                 if redis_url.is_empty() {
-                    return Err(GarrisonError::Config("config-redis-url-empty".to_string()));
+                    return Err(GarrisonError::Config(
+                        "config-redis-url-empty::".to_string(),
+                    ));
                 }
             }
         }
@@ -641,22 +643,22 @@ impl GarrisonConfig {
         {
             if self.sms_hourly_limit == 0 {
                 return Err(GarrisonError::Config(
-                    "config-sms-hourly-invalid".to_string(),
+                    "config-sms-hourly-invalid::".to_string(),
                 ));
             }
             if self.sms_daily_limit < self.sms_hourly_limit {
                 return Err(GarrisonError::Config(
-                    "config-sms-daily-invalid".to_string(),
+                    "config-sms-daily-invalid::".to_string(),
                 ));
             }
             if self.sms_verify_max_attempts == 0 {
                 return Err(GarrisonError::Config(
-                    "config-sms-max-attempts-invalid".to_string(),
+                    "config-sms-max-attempts-invalid::".to_string(),
                 ));
             }
             if self.sms_unverified_threshold == 0 {
                 return Err(GarrisonError::Config(
-                    "config-sms-threshold-invalid".to_string(),
+                    "config-sms-threshold-invalid::".to_string(),
                 ));
             }
         }
@@ -664,12 +666,12 @@ impl GarrisonConfig {
         {
             if self.anomalous_analyzer_interval_secs < 60 {
                 return Err(GarrisonError::Config(
-                    "config-anomalous-interval-invalid".to_string(),
+                    "config-anomalous-interval-invalid::".to_string(),
                 ));
             }
             if self.anomalous_analyzer_burst_threshold == 0 {
                 return Err(GarrisonError::Config(
-                    "config-anomalous-burst-invalid".to_string(),
+                    "config-anomalous-burst-invalid::".to_string(),
                 ));
             }
         }

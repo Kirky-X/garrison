@@ -65,7 +65,9 @@ impl GarrisonDaoDistributedLimiter {
                 let count: u64 = values
                     .first()
                     .ok_or_else(|| {
-                        map_to_limiter_err(GarrisonError::Dao("limiter-eval-lua-empty".to_string()))
+                        map_to_limiter_err(GarrisonError::Dao(
+                            "limiter-eval-lua-empty::".to_string(),
+                        ))
                     })?
                     .parse()
                     .map_err(|e| {
@@ -218,8 +220,8 @@ mod tests {
         assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("limiteron-get-count-parse-failed"),
-            "错误消息应包含 'limiteron-get-count-parse-failed'，实际: {}",
+            err_msg.contains("limiteron 计数读取解析失败"),
+            "错误消息应包含翻译后的解析失败提示，实际: {}",
             err_msg
         );
     }

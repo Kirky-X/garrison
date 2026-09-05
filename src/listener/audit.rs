@@ -1041,10 +1041,9 @@ impl AuditLogListener {
     /// - `row_content` = `timestamp,login_id,tenant_id,event_type`
     #[cfg(feature = "audit-log")]
     fn compute_signature_chain(&self, entries: &[AuditEntry]) -> GarrisonResult<Vec<String>> {
-        let key =
-            self.config.signing_key.as_ref().ok_or_else(|| {
-                GarrisonError::Config("listener-signing-key-not-config".to_string())
-            })?;
+        let key = self.config.signing_key.as_ref().ok_or_else(|| {
+            GarrisonError::Config("listener-signing-key-not-config::".to_string())
+        })?;
         let mut prev_sig = String::new();
         let mut signatures = Vec::with_capacity(entries.len());
         for entry in entries {

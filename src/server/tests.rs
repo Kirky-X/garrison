@@ -448,7 +448,7 @@ async fn test_listen_validates_config_first_external() {
 
     let result = server.listen().await;
     assert!(
-        matches!(&result, Err(GarrisonError::Config(msg)) if msg.contains("internal_api_key")),
+        matches!(&result, Err(GarrisonError::Config(msg)) if msg.contains("server-internal-api-key-missing")),
         "未配置 internal_api_key 时 listen 应返回 Config 错误（validate 短路），实际: {:?}",
         result
     );
@@ -477,7 +477,7 @@ async fn test_listen_validates_config_first_internal() {
 
     let result = server.listen().await;
     assert!(
-        matches!(&result, Err(GarrisonError::Config(msg)) if msg.contains("internal_api_key")),
+        matches!(&result, Err(GarrisonError::Config(msg)) if msg.contains("server-internal-api-key-missing")),
         "未配置 internal_api_key 时 listen 应返回 Config 错误（validate 短路），实际: {:?}",
         result
     );
@@ -1133,7 +1133,7 @@ async fn test_listen_validate_fails_when_internal_api_key_empty() {
 
     let result = server.listen().await;
     assert!(
-        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("internal_api_key")),
+        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("server-internal-api-key-missing")),
         "空 internal_api_key 时 listen 应返回 Config 错误，实际: {:?}",
         result
     );

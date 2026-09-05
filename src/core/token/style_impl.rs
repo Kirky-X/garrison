@@ -105,7 +105,7 @@ impl Token for SimpleTokenStyle {
         // R-sessiontokenconsistency / 对齐 JWT 双向强校验：secret 短于 32 字节拒绝生成 token
         if self.secret.len() < 32 {
             return Err(GarrisonError::Config(
-                "core-simple-secret-too-short".to_string(),
+                "core-simple-secret-too-short::".to_string(),
             ));
         }
         let uuid = Uuid::new_v4();
@@ -155,7 +155,7 @@ impl Token for SimpleTokenStyle {
         // R-sessiontokenconsistency / 对齐 JWT：secret 短于 32 字节拒绝解析
         if self.secret.len() < 32 {
             return Err(GarrisonError::Config(
-                "core-simple-secret-too-short".to_string(),
+                "core-simple-secret-too-short::".to_string(),
             ));
         }
         // 格式：<login_id>\x1f<uuid>.<hmac>（\x1f = ASCII Unit Separator，见 H2）
@@ -168,7 +168,7 @@ impl Token for SimpleTokenStyle {
         // 校验 UUID 部分
         if Uuid::parse_str(uuid_part).is_err() {
             return Err(GarrisonError::Internal(
-                "core-simple-token-uuid-invalid".to_string(),
+                "core-simple-token-uuid-invalid::".to_string(),
             ));
         }
         // 校验 HMAC（常数时间比较）
@@ -177,7 +177,7 @@ impl Token for SimpleTokenStyle {
         let ct_result = expected_hmac.as_bytes().ct_eq(hmac_part.as_bytes());
         if !bool::from(ct_result) {
             return Err(GarrisonError::InvalidToken(
-                "core-simple-token-hmac-failed".to_string(),
+                "core-simple-token-hmac-failed::".to_string(),
             ));
         }
         // Simple token 不包含过期时间，expire_at 设为 0
@@ -194,7 +194,7 @@ impl Token for SimpleTokenStyle {
     fn generate(&self, _login_id: &str, _timeout: i64) -> GarrisonResult<String> {
         // A11 fail-closed：未启用 secure-simple-token feature 时拒绝生成 token
         Err(GarrisonError::Config(
-            "core-simple-requires-feature".to_string(),
+            "core-simple-requires-feature::".to_string(),
         ))
     }
 
@@ -205,7 +205,7 @@ impl Token for SimpleTokenStyle {
 
     fn parse(&self, _token: &str) -> GarrisonResult<TokenClaims> {
         Err(GarrisonError::Config(
-            "core-simple-requires-feature".to_string(),
+            "core-simple-requires-feature::".to_string(),
         ))
     }
 }

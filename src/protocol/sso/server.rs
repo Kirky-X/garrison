@@ -236,7 +236,7 @@ impl SsoServer for DefaultSsoServer {
             .await
             .map_err(|e| GarrisonError::Dao(format!("sso-ticket-read::{}", e)))?;
         let value = value.ok_or_else(|| {
-            GarrisonError::InvalidToken("sso-ticket-missing-or-expired".to_string())
+            GarrisonError::InvalidToken("sso-ticket-missing-or-expired::".to_string())
         })?;
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| GarrisonError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
@@ -254,7 +254,7 @@ impl SsoServer for DefaultSsoServer {
             .map_err(|e| GarrisonError::Dao(format!("sso-ticket-atomic-consume::{}", e)))?;
         if consumed.is_none() {
             return Err(GarrisonError::InvalidToken(
-                "sso-ticket-consumed-by-concurrent".to_string(),
+                "sso-ticket-consumed-by-concurrent::".to_string(),
             ));
         }
         // 委托 converter 将 center_id 转回原始 login_id

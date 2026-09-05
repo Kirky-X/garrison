@@ -670,8 +670,8 @@ mod tests {
             };
             let result = repo.create(0, new_user).await;
             assert!(
-                matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("create not implemented")),
-                "create 应返回 Internal 错误包含 'create not implemented'，实际: {:?}",
+                matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("stp-mock-not-implemented")),
+                "create 应返回 Internal 错误包含 'stp-mock-not-implemented'，实际: {:?}",
                 result
             );
         }

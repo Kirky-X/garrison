@@ -34,7 +34,7 @@ impl SignHandler {
         let app_key = app_key.into();
         let app_secret = app_secret.into();
         if app_key.is_empty() {
-            return Err(GarrisonError::Config("sign-app-key-empty".to_string()));
+            return Err(GarrisonError::Config("sign-app-key-empty::".to_string()));
         }
         // 强制 app_secret 最小 32 字节（256 位）
         if app_secret.len() < MIN_APP_SECRET_LEN {

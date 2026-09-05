@@ -114,14 +114,14 @@ pub fn check_login(
                     .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
-                            "web-not-login".to_string(),
+                            "web-not-login::".to_string(),
                         )))
                     })?;
 
                 let result: GarrisonResult<()> = with_current_token(token, async {
                     let logged_in = crate::stp::GarrisonUtil::check_login().await?;
                     if !logged_in {
-                        return Err(GarrisonError::NotLogin("web-not-login".to_string()));
+                        return Err(GarrisonError::NotLogin("web-not-login::".to_string()));
                     }
                     Ok(())
                 })
@@ -148,7 +148,7 @@ pub fn check_role(
                     .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
-                            "web-not-login".to_string(),
+                            "web-not-login::".to_string(),
                         )))
                     })?;
 
@@ -178,7 +178,7 @@ pub fn check_permission(
                     .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
-                            "web-not-login".to_string(),
+                            "web-not-login::".to_string(),
                         )))
                     })?;
 

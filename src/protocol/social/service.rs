@@ -107,7 +107,7 @@ impl SocialBindingService {
                         .await?
                         .ok_or_else(|| {
                             crate::error::GarrisonError::Dao(
-                                "dao-social-binding-insert-select".into(),
+                                "dao-social-binding-insert-select::".into(),
                             )
                         })
                 } else {

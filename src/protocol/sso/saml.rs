@@ -347,7 +347,7 @@ impl SamlProvider for DefaultSamlProvider {
 
     async fn validate_assertion(&self, _assertion: &SamlAssertion) -> GarrisonResult<bool> {
         Err(GarrisonError::NotImplemented(
-            "sso-saml-signature-not-implemented".to_string(),
+            "sso-saml-signature-not-implemented::".to_string(),
         ))
     }
 }

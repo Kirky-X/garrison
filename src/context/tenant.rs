@@ -115,7 +115,7 @@ pub fn current_tenant_id_strict() -> Option<i64> {
 /// 命中默认租户数据、绕过租户隔离。
 pub fn current_tenant_id_or_error() -> GarrisonResult<i64> {
     current_tenant_id_strict()
-        .ok_or_else(|| GarrisonError::Config("ctx-tenant-context-missing".into()))
+        .ok_or_else(|| GarrisonError::Config("ctx-tenant-context-missing::".into()))
 }
 
 /// 租户解析器 trait。

@@ -56,13 +56,13 @@ impl actix_web::FromRequest for GarrisonPrincipal {
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
-                crate::error::GarrisonError::NotLogin("web-not-login".to_string())
+                crate::error::GarrisonError::NotLogin("web-not-login::".to_string())
             })?;
 
             let login_id = crate::stp::GarrisonUtil::get_login_id_by_token(&token)
                 .await?
                 .ok_or_else(|| {
-                    crate::error::GarrisonError::NotLogin("web-token-invalid".to_string())
+                    crate::error::GarrisonError::NotLogin("web-token-invalid::".to_string())
                 })?;
 
             Ok(GarrisonPrincipal { login_id })
@@ -101,7 +101,7 @@ impl actix_web::FromRequest for super::CheckLogin {
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
-                crate::error::GarrisonError::NotLogin("web-not-login".to_string())
+                crate::error::GarrisonError::NotLogin("web-not-login::".to_string())
             })?;
 
             let result: crate::error::GarrisonResult<()> =
@@ -109,7 +109,7 @@ impl actix_web::FromRequest for super::CheckLogin {
                     let logged_in = crate::stp::GarrisonUtil::check_login().await?;
                     if !logged_in {
                         return Err(crate::error::GarrisonError::NotLogin(
-                            "web-not-login".to_string(),
+                            "web-not-login::".to_string(),
                         ));
                     }
                     Ok(())
@@ -160,7 +160,7 @@ impl actix_web::FromRequest for super::CheckRole {
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
-                crate::error::GarrisonError::NotLogin("web-not-login".to_string())
+                crate::error::GarrisonError::NotLogin("web-not-login::".to_string())
             })?;
 
             let result: crate::error::GarrisonResult<()> =
@@ -213,7 +213,7 @@ impl actix_web::FromRequest for super::CheckPermission {
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
-                crate::error::GarrisonError::NotLogin("web-not-login".to_string())
+                crate::error::GarrisonError::NotLogin("web-not-login::".to_string())
             })?;
 
             let result: crate::error::GarrisonResult<()> =

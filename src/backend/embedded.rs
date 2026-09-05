@@ -130,7 +130,7 @@ impl AuthBackend for BackendEmbedded {
             .get_token_session(token)
             .await?
             .ok_or_else(|| {
-                GarrisonError::InvalidToken("backend-token-invalid-or-expired".to_string())
+                GarrisonError::InvalidToken("backend-token-invalid-or-expired::".to_string())
             })?;
         Ok(TokenInfo {
             token: ts.token,
@@ -146,7 +146,7 @@ impl AuthBackend for BackendEmbedded {
             .get_token_session(token)
             .await?
             .ok_or_else(|| {
-                GarrisonError::InvalidToken("backend-token-invalid-or-expired".to_string())
+                GarrisonError::InvalidToken("backend-token-invalid-or-expired::".to_string())
             })
     }
 
@@ -158,7 +158,7 @@ impl AuthBackend for BackendEmbedded {
     async fn switch_to(&self, token: &str, target_login_id: &str) -> GarrisonResult<()> {
         let logic = GarrisonManager::logic()?;
         let auth_logic = logic.auth_logic.as_ref().ok_or_else(|| {
-            GarrisonError::NotImplemented("backend-auth-logic-not-injected".to_string())
+            GarrisonError::NotImplemented("backend-auth-logic-not-injected::".to_string())
         })?;
         auth_logic.switch_to(token, target_login_id).await
     }
@@ -167,7 +167,7 @@ impl AuthBackend for BackendEmbedded {
     async fn renew_to_equivalent(&self, token: &str) -> GarrisonResult<String> {
         let logic = GarrisonManager::logic()?;
         let auth_logic = logic.auth_logic.as_ref().ok_or_else(|| {
-            GarrisonError::NotImplemented("backend-auth-logic-not-injected-renew".to_string())
+            GarrisonError::NotImplemented("backend-auth-logic-not-injected-renew::".to_string())
         })?;
         auth_logic.renew_to_equivalent(token).await
     }

@@ -109,7 +109,7 @@ const ABAC_EXPR_MAX_LEN: usize = 512;
 pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     let trimmed = expr.trim();
     if trimmed.is_empty() {
-        return Err(GarrisonError::InvalidParam("abac-expr-empty".to_string()));
+        return Err(GarrisonError::InvalidParam("abac-expr-empty::".to_string()));
     }
     if trimmed.len() > ABAC_EXPR_MAX_LEN {
         return Err(GarrisonError::InvalidParam(format!(
@@ -196,7 +196,7 @@ pub async fn check_abac_with_policy(
     // 修复：转义反斜杠和双引号，拒绝控制字符
     if login_id.chars().any(|c| c.is_control()) {
         return Err(GarrisonError::InvalidParam(
-            "abac-principal-control-char".to_string(),
+            "abac-principal-control-char::".to_string(),
         ));
     }
     let sanitized_login_id = login_id.replace('\\', "\\\\").replace('"', "\\\"");

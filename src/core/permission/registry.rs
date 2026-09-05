@@ -109,7 +109,7 @@ impl PermissionRegistry {
     pub fn register(&self, spec: PermissionSpec) -> GarrisonResult<()> {
         if spec.name.is_empty() {
             return Err(GarrisonError::InvalidParam(
-                "core-permission-name-empty".to_string(),
+                "core-permission-name-empty::".to_string(),
             ));
         }
 
