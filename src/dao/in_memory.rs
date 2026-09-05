@@ -347,7 +347,19 @@ impl GarrisonDao for InMemoryDao {
             _ => (0, None),
         };
         if new_value > current_val {
-            // 保留原 TTL：键已存在用原 expire_at；新键用 ttl_seconds
+            // 保留原 TTL：键已存在用原 expire_at；新键/永久键用 ttl_seconds。
+            //
+            //【已知行为不一致——记录不改逻辑】
+            // 当 existing_expire_at = None 时（永久键或新键），代码落入
+            // `ttl_seconds` 分支：若 ttl_seconds > 0 则将永久键「升级」为 TTL 键。
+            // 而 incr/decr 对已存在的永久键保留 expire_at = None（永久语义不变）。
+            //
+            // 影响范围：此方法仅用于 HTTP Digest nc 单调性校验，调用方始终传入
+            // 非零 ttl_seconds（Digest 会话有固定过期窗口），因此永久键被升级在
+            // 当前使用场景中不会引发功能问题。若未来需统一语义，修复点在此分支：
+            // 将 `existing_expire_at = None && key 已存在` 与 `key 不存在` 区分，
+            // 对已存在的永久键保留 None，同时同步更新 mod.rs 中
+            // `in_memory_compare_and_update_if_greater_matrix` 测试的断言。
             let expire_at = if existing_expire_at.is_some() {
                 existing_expire_at
             } else if ttl_seconds == 0 {
@@ -568,4 +580,85 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
         p += 1;
     }
     p == pattern.len()
+}
+
+// ------------------------------------------------------------------------
+// glob_match 单元测试（共享原语：keys() 与 oxcache_impl 复用，只测不改）
+// ------------------------------------------------------------------------
+
+#[cfg(test)]
+mod glob_match_tests {
+    use super::glob_match;
+
+    /// 精确匹配（无通配符）：相等为 true，不等为 false。
+    #[test]
+    fn glob_match_exact() {
+        assert!(glob_match("abc", "abc"));
+        assert!(!glob_match("abc", "xyz"));
+        // pattern 长于 text → false（`else { return false }` 分支）
+        assert!(!glob_match("abcdef", "abc"));
+    }
+
+    /// `*` 匹配 0 个或多个字符：前缀 / 中缀 / 后缀 / 零字符。
+    #[test]
+    fn glob_match_star_variants() {
+        assert!(glob_match("*", "anything"));
+        assert!(glob_match("*", ""));
+        assert!(glob_match("garrison:*", "garrison:apikey:abc"));
+        assert!(glob_match("*:abc", "garrison:apikey:abc"));
+        assert!(glob_match("a*bc", "abc")); // * 匹配 0 字符
+        assert!(glob_match("a*bc", "aXXXbc")); // * 匹配多字符
+        assert!(!glob_match("a*bc", "aXXXbd")); // 尾部不匹配
+    }
+
+    /// 回溯分支：`*` 贪心匹配过头后需回溯再尝试（经典双指针核心路径）。
+    #[test]
+    fn glob_match_star_backtracking() {
+        // * 先吞掉 "XX"，遇 'c' 失败 → 回溯让 * 少吞一个字符
+        assert!(glob_match("ab*cd", "abXXcd"));
+        assert!(glob_match("*aab", "xaab"));
+        // 回溯后仍无法匹配 → false
+        assert!(!glob_match("ab*cd", "abXXce"));
+    }
+
+    /// 连续多个 `*` 等价于单个 `*`。
+    #[test]
+    fn glob_match_multiple_stars() {
+        assert!(glob_match("a**b", "aXXb"));
+        assert!(glob_match("**", "whatever"));
+        assert!(glob_match("a*b*c", "a1b2c"));
+        assert!(!glob_match("a*b*c", "a1b2d"));
+    }
+
+    /// `?` 精确匹配单个字符：任意字符可配，但不可配空 / 不可配多字符。
+    #[test]
+    fn glob_match_question_mark() {
+        assert!(glob_match("key?", "key1"));
+        assert!(!glob_match("key?", "key")); // ? 不可配空
+        assert!(!glob_match("key?", "key12")); // ? 只配 1 字符
+        assert!(glob_match("??", "ab"));
+    }
+
+    /// 末尾 `*` 跳过分支：text 耗尽后 pattern 仅剩 `*` → 匹配成功。
+    #[test]
+    fn glob_match_trailing_star_after_text_exhausted() {
+        assert!(glob_match("abc*", "abc"));
+        assert!(glob_match("a*", "a"));
+    }
+
+    /// 空输入边界：空 pattern 只匹配空 text。
+    #[test]
+    fn glob_match_empty_inputs() {
+        assert!(glob_match("", ""));
+        assert!(!glob_match("", "a"));
+        assert!(glob_match("*", ""));
+    }
+
+    /// Unicode 按字符（而非字节）匹配：多字节字符可被 `?` 匹配单个字符。
+    #[test]
+    fn glob_match_unicode_chars() {
+        assert!(glob_match("用户?", "用户A"));
+        assert!(glob_match("*:租户:*", "garrison:租户:42"));
+        assert!(!glob_match("用户?", "用户AB"));
+    }
 }
