@@ -587,7 +587,7 @@ pub mod atomic_fallback;
 
 /// Redis 部署模式枚举，覆盖生产环境常见拓扑。
 ///
-/// 参阅 Redis 集群部署文档：单节点 / Sentinel / Cluster / Master-Slave。
+/// 参阅 Redis 集群部署文档：单节点 / Sentinel / Cluster / Primary-Replica。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "lowercase")]
 pub enum RedisDeploymentMode {
@@ -599,21 +599,23 @@ pub enum RedisDeploymentMode {
     /// 哨兵模式：通过 Sentinel 集群自动故障转移。
     Sentinel {
         /// Sentinel 集群主节点名称（如 `mymaster`）。
-        master_name: String,
+        #[serde(alias = "master_name")]
+        primary_name: String,
         /// Sentinel 节点 URL 列表。
         urls: Vec<String>,
     },
     /// 集群模式：Redis Cluster 分片存储。
     Cluster {
-        /// Cluster 节点 URL 列表（至少 3 个 master 节点）。
+        /// Cluster 节点 URL 列表（至少 3 个 primary 节点）。
         urls: Vec<String>,
     },
-    /// 主从模式：1 个 master + N 个 slave，读分离需客户端支持。
-    MasterSlave {
-        /// Master 节点 URL。
-        master_url: String,
-        /// Slave 节点 URL 列表。
-        slave_urls: Vec<String>,
+    /// 主从模式：1 个 primary + N 个 replica，读分离需客户端支持。
+    #[serde(alias = "MasterSlave")]
+    PrimaryReplica {
+        /// Primary 节点 URL。
+        primary_url: String,
+        /// Replica 节点 URL 列表。
+        replica_urls: Vec<String>,
     },
 }
 
@@ -2201,7 +2203,7 @@ pub mod tests {
         assert!(format!("{}", single).contains("redis://127.0.0.1:6379"));
 
         let sentinel = RedisDeploymentMode::Sentinel {
-            master_name: "mymaster".to_string(),
+            primary_name: "mymaster".to_string(),
             urls: vec!["redis://s1:26379".to_string()],
         };
         let s = format!("{}", sentinel);
@@ -2215,14 +2217,14 @@ pub mod tests {
         assert!(c.contains("cluster"));
         assert!(c.contains("2 nodes"));
 
-        let ms = RedisDeploymentMode::MasterSlave {
-            master_url: "redis://master:6379".to_string(),
-            slave_urls: vec!["redis://slave1:6379".to_string()],
+        let ms = RedisDeploymentMode::PrimaryReplica {
+            primary_url: "redis://primary:6379".to_string(),
+            replica_urls: vec!["redis://replica1:6379".to_string()],
         };
         let m = format!("{}", ms);
-        assert!(m.contains("master-slave"));
-        assert!(m.contains("master:6379"));
-        assert!(m.contains("1 slaves"));
+        assert!(m.contains("primary-replica"));
+        assert!(m.contains("primary:6379"));
+        assert!(m.contains("1 replicas"));
     }
 
     /// R-001: RedisDeploymentMode PartialEq 比较。
@@ -2252,7 +2254,7 @@ pub mod tests {
         );
         let config = RedisConfig {
             mode: RedisDeploymentMode::Sentinel {
-                master_name: "mymaster".to_string(),
+                primary_name: "mymaster".to_string(),
                 urls: vec![
                     "redis://s1:26379".to_string(),
                     "redis://s2:26379".to_string(),
@@ -2268,8 +2270,8 @@ pub mod tests {
         let stored = dao.redis_config().expect("with_redis_config 后应有配置");
         assert!(matches!(
             &stored.mode,
-            RedisDeploymentMode::Sentinel { master_name, urls }
-            if master_name == "mymaster" && urls.len() == 3
+            RedisDeploymentMode::Sentinel { primary_name, urls }
+            if primary_name == "mymaster" && urls.len() == 3
         ));
         assert_eq!(stored.password, Some("pass123".to_string()));
         assert_eq!(stored.db, 2);

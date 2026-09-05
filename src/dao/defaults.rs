@@ -39,26 +39,26 @@ impl std::fmt::Display for RedisDeploymentMode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             RedisDeploymentMode::Single { url } => write!(f, "single({})", url),
-            RedisDeploymentMode::Sentinel { master_name, urls } => {
+            RedisDeploymentMode::Sentinel { primary_name, urls } => {
                 write!(
                     f,
-                    "sentinel(master={}, {} sentinels)",
-                    master_name,
+                    "sentinel(primary={}, {} sentinels)",
+                    primary_name,
                     urls.len()
                 )
             },
             RedisDeploymentMode::Cluster { urls } => {
                 write!(f, "cluster({} nodes)", urls.len())
             },
-            RedisDeploymentMode::MasterSlave {
-                master_url,
-                slave_urls,
+            RedisDeploymentMode::PrimaryReplica {
+                primary_url,
+                replica_urls,
             } => {
                 write!(
                     f,
-                    "master-slave(master={}, {} slaves)",
-                    master_url,
-                    slave_urls.len()
+                    "primary-replica(primary={}, {} replicas)",
+                    primary_url,
+                    replica_urls.len()
                 )
             },
         }
