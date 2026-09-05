@@ -187,7 +187,7 @@ impl BackupCodeCredential {
                 Some(j) => j,
                 None => {
                     return Err(GarrisonError::InvalidParam(format!(
-                        "backup_code credential not found in DAO: {}",
+                        "credential-backup-code-not-found::{}",
                         key
                     )))
                 },

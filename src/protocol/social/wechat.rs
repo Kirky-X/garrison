@@ -411,10 +411,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         _redirect_uri: &str,
     ) -> GarrisonResult<String> {
         Err(GarrisonError::NotImplemented(
-            loc!(
-                "wechat-mini-app-get-authorization-url-not-supported",
-                "WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）".to_string()
-            )
+            "wechat-mini-app-get-authorization-url-not-supported".to_string(),
         ))
     }
 

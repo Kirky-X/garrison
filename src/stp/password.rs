@@ -38,7 +38,7 @@ use async_trait::async_trait;
 ///
 /// # 安全约束
 ///
-/// 用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，
+/// 用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，
 /// 日志和事件 reason 统一为 "invalid_credentials"（v0.4.2 安全审计 A-014），
 /// 防止攻击者通过返回值或日志差异进行用户枚举。
 #[async_trait]
@@ -56,7 +56,7 @@ pub trait PasswordLogic: SessionLogic {
     /// - 未启用 `account-credential` + `db-sqlite` feature：`GarrisonError::NotImplemented`。
     /// - 未注入 `password_hasher`：`GarrisonError::Config("password hasher not configured")`。
     /// - 未注入 `user_repository`：`GarrisonError::Config("user repository not configured")`。
-    /// - 用户不存在 / 密码错误：`GarrisonError::InvalidParam("invalid password")`
+    /// - 用户不存在 / 密码错误：`GarrisonError::InvalidParam("stp-invalid-password")`
     ///   （不泄露具体原因，防止用户枚举）。
     /// - 哈希格式不支持：`GarrisonError::InvalidParam("unsupported hash format")`。
     /// - DAO 查询失败：透传 `GarrisonError::Dao`。
@@ -65,9 +65,10 @@ pub trait PasswordLogic: SessionLogic {
         _login_id: &str,
         _password: &str,
     ) -> GarrisonResult<String> {
-        Err(GarrisonError::NotImplemented(
-            "login_with_password 未实现：需启用 account-credential + db-sqlite feature".to_string(),
-        ))
+        Err(GarrisonError::NotImplemented(format!(
+            "stp-not-implemented::{}",
+            "login_with_password"
+        )))
     }
 }
 
@@ -80,17 +81,16 @@ impl PasswordLogic for GarrisonLogicDefault {
     /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
     ///
     /// R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
-    /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("invalid password")`，真实原因记录在 tracing 日志。
+    /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，真实原因记录在 tracing 日志。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     async fn login_with_password(&self, login_id: &str, password: &str) -> GarrisonResult<String> {
-        let hasher = self
-            .password_hasher
-            .as_ref()
-            .ok_or_else(|| GarrisonError::Config("password hasher not configured".to_string()))?;
+        let hasher = self.password_hasher.as_ref().ok_or_else(|| {
+            GarrisonError::Config("stp-password-hasher-not-configured::".to_string())
+        })?;
         let repo = self
             .user_repository
             .as_ref()
-            .ok_or_else(|| GarrisonError::Config("user repository not configured".to_string()))?;
+            .ok_or_else(|| GarrisonError::Config("stp-user-repo-not-configured::".to_string()))?;
 
         // 1. 查询用户（login_id 转字符串作为 username 查询）
         let username = login_id.to_string();
@@ -107,7 +107,7 @@ impl PasswordLogic for GarrisonLogicDefault {
                 tracing::warn!(
                     login_id = login_id,
                     reason = EventReason::InvalidCredentials.as_str(),
-                    "login_with_password 失败"
+                    "login_with_password failed"
                 );
                 // 广播 LoginFailure 事件
                 #[cfg(feature = "listener")]
@@ -119,19 +119,21 @@ impl PasswordLogic for GarrisonLogicDefault {
                     })
                     .await;
                 }
-                return Err(GarrisonError::InvalidParam("invalid password".to_string()));
+                return Err(GarrisonError::InvalidParam(
+                    "stp-invalid-password::".to_string(),
+                ));
             },
         };
 
-        // 2. 校验密码（哈希格式不支持返回 "unsupported hash format"，可泄露）
+        // 2. 校验密码（哈希格式不支持返回 "stp-unsupported-hash-format"，可泄露）
         let verified = hasher.verify(password, &user.password_hash).map_err(|e| {
             tracing::warn!(
                 login_id = login_id,
                 reason = EventReason::HashFormatError.as_str(),
                 error = %e,
-                "login_with_password 密码哈希格式不支持"
+                "login_with_password: unsupported password hash format"
             );
-            GarrisonError::InvalidParam("unsupported hash format".to_string())
+            GarrisonError::InvalidParam("stp-unsupported-hash-format::".to_string())
         })?;
 
         if !verified {
@@ -140,7 +142,7 @@ impl PasswordLogic for GarrisonLogicDefault {
             tracing::warn!(
                 login_id = login_id,
                 reason = EventReason::InvalidCredentials.as_str(),
-                "login_with_password 失败"
+                "login_with_password failed"
             );
             // 广播 LoginFailure 事件
             #[cfg(feature = "listener")]
@@ -152,7 +154,9 @@ impl PasswordLogic for GarrisonLogicDefault {
                 })
                 .await;
             }
-            return Err(GarrisonError::InvalidParam("invalid password".to_string()));
+            return Err(GarrisonError::InvalidParam(
+                "stp-invalid-password::".to_string(),
+            ));
         }
 
         // 3. 调用 login 签发 token（触发 plugin/listener auto-wire）
@@ -355,7 +359,7 @@ mod tests {
             GarrisonLogicDefault::new(session, Arc::new(config), firewall)
         }
 
-        /// 未注入 password_hasher 时返回 Config("password hasher not configured")。
+        /// 未注入 password_hasher 时返回 Config("stp-password-hasher-not-configured")。
         ///
         /// 覆盖 password.rs 第 86-89 行 `hasher.as_ref().ok_or_else(...)` 路径。
         #[tokio::test]
@@ -367,13 +371,13 @@ mod tests {
 
             let result = logic.login_with_password("alice", "any").await;
             assert!(
-                matches!(result, Err(GarrisonError::Config(ref msg)) if msg == "password hasher not configured"),
-                "未注入 hasher 应返回 Config(\"password hasher not configured\")，实际: {:?}",
+                matches!(result, Err(GarrisonError::Config(ref msg)) if msg == "stp-password-hasher-not-configured::"),
+                "未注入 hasher 应返回 Config(\"stp-password-hasher-not-configured\")，实际: {:?}",
                 result
             );
         }
 
-        /// 未注入 user_repository 时返回 Config("user repository not configured")。
+        /// 未注入 user_repository 时返回 Config("stp-user-repo-not-configured")。
         ///
         /// 覆盖 password.rs 第 90-93 行 `repo.as_ref().ok_or_else(...)` 路径。
         #[tokio::test]
@@ -385,8 +389,8 @@ mod tests {
 
             let result = logic.login_with_password("alice", "any").await;
             assert!(
-                matches!(result, Err(GarrisonError::Config(ref msg)) if msg == "user repository not configured"),
-                "未注入 repo 应返回 Config(\"user repository not configured\")，实际: {:?}",
+                matches!(result, Err(GarrisonError::Config(ref msg)) if msg == "stp-user-repo-not-configured::"),
+                "未注入 repo 应返回 Config(\"stp-user-repo-not-configured\")，实际: {:?}",
                 result
             );
         }
@@ -411,8 +415,8 @@ mod tests {
 
             let result = logic.login_with_password("missing-user", "any").await;
             assert!(
-                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "invalid password"),
-                "用户不存在应返回 InvalidParam(\"invalid password\")，实际: {:?}",
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+                "用户不存在应返回 InvalidParam(\"stp-invalid-password\")，实际: {:?}",
                 result
             );
 
@@ -464,8 +468,8 @@ mod tests {
 
             let result = logic.login_with_password("1001", "wrong-password").await;
             assert!(
-                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "invalid password"),
-                "错误密码应返回 InvalidParam(\"invalid password\")，实际: {:?}",
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+                "错误密码应返回 InvalidParam(\"stp-invalid-password\")，实际: {:?}",
                 result
             );
 
@@ -486,7 +490,7 @@ mod tests {
             }
         }
 
-        /// 哈希格式不支持 → 返回 InvalidParam("unsupported hash format")。
+        /// 哈希格式不支持 → 返回 InvalidParam("stp-unsupported-hash-format")。
         ///
         /// 覆盖 password.rs 第 127-135 行 `hasher.verify(...).map_err(...)` 返回 Err 路径。
         #[tokio::test]
@@ -504,8 +508,8 @@ mod tests {
 
             let result = logic.login_with_password("1002", "any-password").await;
             assert!(
-                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
-                "哈希格式不支持应返回 InvalidParam(\"unsupported hash format\")，实际: {:?}",
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-unsupported-hash-format::"),
+                "哈希格式不支持应返回 InvalidParam(\"stp-unsupported-hash-format\")，实际: {:?}",
                 result
             );
         }

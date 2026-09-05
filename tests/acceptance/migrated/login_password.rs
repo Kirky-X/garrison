@@ -285,7 +285,7 @@ async fn login_with_password_succeeds() {
     assert!(!token.is_empty(), "返回 token 不应为空");
 }
 
-/// login_with_password 用户不存在：返回 InvalidParam("invalid password")，广播 user_not_found。
+/// login_with_password 用户不存在：返回 InvalidParam("stp-invalid-password")，广播 user_not_found。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn login_with_password_user_not_found() {
@@ -297,7 +297,7 @@ async fn login_with_password_user_not_found() {
     match result.unwrap_err() {
         GarrisonError::InvalidParam(msg) => {
             assert_eq!(
-                msg, "invalid password",
+                msg, "stp-invalid-password::",
                 "用户不存在应统一返回 'invalid password'，不泄露真实原因"
             );
         },
@@ -312,7 +312,7 @@ async fn login_with_password_user_not_found() {
     );
 }
 
-/// login_with_password 密码错误：返回 InvalidParam("invalid password")，广播 wrong_password。
+/// login_with_password 密码错误：返回 InvalidParam("stp-invalid-password")，广播 wrong_password。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn login_with_password_wrong_password() {
@@ -324,7 +324,7 @@ async fn login_with_password_wrong_password() {
     match result.unwrap_err() {
         GarrisonError::InvalidParam(msg) => {
             assert_eq!(
-                msg, "invalid password",
+                msg, "stp-invalid-password::",
                 "密码错误应统一返回 'invalid password'"
             );
         },
@@ -362,8 +362,8 @@ async fn login_with_password_fails_without_hasher() {
     match result.unwrap_err() {
         GarrisonError::Config(msg) => {
             assert!(
-                msg.contains("password hasher not configured"),
-                "错误消息应包含 'password hasher not configured'，实际: {}",
+                msg.contains("stp-password-hasher-not-configured"),
+                "错误消息应包含 'stp-password-hasher-not-configured'，实际: {}",
                 msg
             );
         },
@@ -393,8 +393,8 @@ async fn login_with_password_fails_without_user_repository() {
     match result.unwrap_err() {
         GarrisonError::Config(msg) => {
             assert!(
-                msg.contains("user repository not configured"),
-                "错误消息应包含 'user repository not configured'，实际: {}",
+                msg.contains("stp-user-repo-not-configured"),
+                "错误消息应包含 'stp-user-repo-not-configured'，实际: {}",
                 msg
             );
         },

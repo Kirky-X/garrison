@@ -73,10 +73,10 @@ static CURRENT_BACKEND: std::sync::Mutex<Option<Arc<dyn crate::backend::AuthBack
 pub fn init_backend(backend: Arc<dyn crate::backend::AuthBackend>) -> GarrisonResult<()> {
     let mut guard = CURRENT_BACKEND
         .lock()
-        .map_err(|_| crate::error::GarrisonError::Config("CURRENT_BACKEND lock poisoned".into()))?;
+        .map_err(|_| crate::error::GarrisonError::Config("stp-backend-lock-poisoned::".into()))?;
     if guard.is_some() {
         return Err(crate::error::GarrisonError::Config(
-            "Backend already initialized".into(),
+            "stp-backend-already-init::".into(),
         ));
     }
     *guard = Some(backend);
@@ -93,14 +93,14 @@ pub fn init_backend(backend: Arc<dyn crate::backend::AuthBackend>) -> GarrisonRe
 fn get_backend() -> GarrisonResult<Option<Arc<dyn crate::backend::AuthBackend>>> {
     let guard = CURRENT_BACKEND
         .lock()
-        .map_err(|_| crate::error::GarrisonError::Config("CURRENT_BACKEND lock poisoned".into()))?;
+        .map_err(|_| crate::error::GarrisonError::Config("stp-backend-lock-poisoned::".into()))?;
     if let Some(backend) = guard.as_ref() {
         return Ok(Some(backend.clone()));
     }
     #[cfg(not(feature = "backend-embedded"))]
     {
         Err(crate::error::GarrisonError::Config(
-            "Backend not initialized. Call init_backend() first.".into(),
+            "stp-backend-not-init::".into(),
         ))
     }
     #[cfg(feature = "backend-embedded")]

@@ -43,10 +43,10 @@ static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 pub fn init_abac_engine(engine: AbacEngine) -> GarrisonResult<()> {
     let mut guard = CURRENT_ENGINE
         .lock()
-        .map_err(|_| GarrisonError::Config("CURRENT_ENGINE lock poisoned".into()))?;
+        .map_err(|_| GarrisonError::Config("abac-engine-lock-poisoned::".into()))?;
     if guard.is_some() {
         return Err(GarrisonError::Config(
-            "AbacEngine already initialized".into(),
+            "abac-engine-already-initialized::".into(),
         ));
     }
     *guard = Some(Arc::new(engine));
@@ -58,7 +58,7 @@ pub fn init_abac_engine(engine: AbacEngine) -> GarrisonResult<()> {
 pub(crate) fn get_abac_engine() -> GarrisonResult<Option<Arc<AbacEngine>>> {
     let guard = CURRENT_ENGINE
         .lock()
-        .map_err(|_| GarrisonError::Config("CURRENT_ENGINE lock poisoned".into()))?;
+        .map_err(|_| GarrisonError::Config("abac-engine-lock-poisoned::".into()))?;
     Ok(guard.clone())
 }
 

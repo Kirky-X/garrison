@@ -348,7 +348,7 @@ async fn acc_auth_009_token_context_not_leaked_across_tasks() {
 // ------------------------------------------------------------------------
 
 /// ACC-AUTH-010（异常）：错误密码与用户不存在返回**完全相同**的统一错误
-/// `InvalidParam("invalid password")`——不泄露账号是否存在（防枚举）。
+/// `InvalidParam("stp-invalid-password")`——不泄露账号是否存在（防枚举）。
 #[cfg(all(
     feature = "account-credential",
     feature = "db-sqlite",
@@ -434,7 +434,7 @@ async fn acc_auth_010_wrong_password_and_unknown_user_indistinguishable() {
     };
     assert_eq!(
         unified(&wrong),
-        "invalid password",
+        "stp-invalid-password::",
         "密码错误应返回统一错误（不泄露真实原因）"
     );
     assert_eq!(
@@ -979,7 +979,7 @@ fn test_password_config() -> garrison::config::GarrisonConfig {
 
 /// ACC-AUTH-021（正常+异常）：`login_with_password` 端到端——用户存在 + 密码匹配
 /// 签发非空 token（成功语义去重至 ACC-AUTH-010 的正确密码锚点）；用户不存在 /
-/// 密码错误统一返回 `InvalidParam("invalid password")`（防枚举，去重至
+/// 密码错误统一返回 `InvalidParam("stp-invalid-password")`（防枚举，去重至
 /// ACC-AUTH-010）且 listener 广播 `LoginFailure` 事件各 1 次（本场景增量覆盖：
 /// 原 login_password.rs 的 user_not_found / wrong_password 事件计数断言）。
 #[cfg(all(
@@ -1010,7 +1010,7 @@ async fn acc_auth_021_password_login_success_and_failure_listener_events() {
     let result = logic.login_with_password("9999", "secret").await;
     match result.unwrap_err() {
         GarrisonError::InvalidParam(msg) => assert_eq!(
-            msg, "invalid password",
+            msg, "stp-invalid-password::",
             "用户不存在应统一返回 'invalid password'，不泄露真实原因"
         ),
         other => panic!("期望 InvalidParam，实际: {:?}", other),
@@ -1025,7 +1025,7 @@ async fn acc_auth_021_password_login_success_and_failure_listener_events() {
     let result = logic.login_with_password("1001", "wrong-password").await;
     match result.unwrap_err() {
         GarrisonError::InvalidParam(msg) => assert_eq!(
-            msg, "invalid password",
+            msg, "stp-invalid-password::",
             "密码错误应统一返回 'invalid password'"
         ),
         other => panic!("期望 InvalidParam，实际: {:?}", other),
@@ -1038,7 +1038,7 @@ async fn acc_auth_021_password_login_success_and_failure_listener_events() {
 }
 
 /// ACC-AUTH-022（异常）：`login_with_password` 装配缺失 fail-fast——未配置 hasher
-/// 返回 `Config("password hasher not configured")`；未配置 user_repository 返回
+/// 返回 `Config("stp-password-hasher-not-configured")`；未配置 user_repository 返回
 /// `Config("user repository not configured")`（显性报错，不静默降级）。
 #[cfg(all(
     feature = "account-credential",
@@ -1087,8 +1087,8 @@ async fn acc_auth_022_password_login_fails_without_hasher_or_repository() {
     let result = logic_no_hasher.login_with_password("1001", "secret").await;
     match result.unwrap_err() {
         GarrisonError::Config(msg) => assert!(
-            msg.contains("password hasher not configured"),
-            "错误消息应包含 'password hasher not configured'，实际: {}",
+            msg.contains("stp-password-hasher-not-configured"),
+            "错误消息应包含 'stp-password-hasher-not-configured'，实际: {}",
             msg
         ),
         other => panic!("期望 Config，实际: {:?}", other),
@@ -1102,8 +1102,8 @@ async fn acc_auth_022_password_login_fails_without_hasher_or_repository() {
     let result = logic_no_repo.login_with_password("1001", "secret").await;
     match result.unwrap_err() {
         GarrisonError::Config(msg) => assert!(
-            msg.contains("user repository not configured"),
-            "错误消息应包含 'user repository not configured'，实际: {}",
+            msg.contains("stp-user-repo-not-configured"),
+            "错误消息应包含 'stp-user-repo-not-configured'，实际: {}",
             msg
         ),
         other => panic!("期望 Config，实际: {:?}", other),

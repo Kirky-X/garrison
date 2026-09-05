@@ -112,27 +112,32 @@ impl GarrisonFirewallStrategy for GeoIPStrategy {
             // 白名单模式：仅允许列表内国家，其他（含无法定位）拦截
             match country.as_deref() {
                 Some(c) if Self::is_in_list(c, &self.config.allowed_countries) => Ok(()),
-                Some(c) => Err(GarrisonError::FirewallBlocked(format!(
-                    "geoip: IP {} 国家码 {} 不在白名单 {:?}",
-                    mask_ip(&ctx.ip),
-                    c,
-                    self.config.allowed_countries
-                ))),
-                None => Err(GarrisonError::FirewallBlocked(format!(
-                    "geoip: IP {} 无法定位国家，不在白名单 {:?} 内",
-                    mask_ip(&ctx.ip),
-                    self.config.allowed_countries
-                ))),
+                Some(c) => {
+                    let detail = format!("{} not in {:?}", c, self.config.allowed_countries);
+                    Err(GarrisonError::FirewallBlocked(format!(
+                        "firewall-geoip-not-in-whitelist::{}::{}",
+                        mask_ip(&ctx.ip),
+                        detail
+                    )))
+                },
+                None => {
+                    let detail = format!("{:?}", self.config.allowed_countries);
+                    Err(GarrisonError::FirewallBlocked(format!(
+                        "firewall-geoip-no-country::{}::{}",
+                        mask_ip(&ctx.ip),
+                        detail
+                    )))
+                },
             }
         } else if !self.config.blocked_countries.is_empty() {
             // 黑名单模式：拦截列表内国家，其他放行
             match country.as_deref() {
                 Some(c) if Self::is_in_list(c, &self.config.blocked_countries) => {
+                    let detail = format!("{} in {:?}", c, self.config.blocked_countries);
                     Err(GarrisonError::FirewallBlocked(format!(
-                        "geoip: IP {} 国家码 {} 在黑名单 {:?} 内",
+                        "firewall-geoip-in-blacklist::{}::{}",
                         mask_ip(&ctx.ip),
-                        c,
-                        self.config.blocked_countries
+                        detail
                     )))
                 },
                 _ => Ok(()),

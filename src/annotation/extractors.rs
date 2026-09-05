@@ -270,7 +270,7 @@ impl<S: Send + Sync> FromRequestParts<S> for crate::context::GarrisonPrincipal {
 /// 租户上下文 extractor（从 `X-Tenant-Id` header 解析 `tenant_id`）。
 ///
 /// 与 actix-web / warp 版本完全对齐：
-/// - 缺失 `X-Tenant-Id` → `GarrisonError::Config("X-Tenant-Id header missing")`
+/// - 缺失 `X-Tenant-Id` → `GarrisonError::Config("ctx-tenant-id-missing::")`
 /// - 非数字 → `GarrisonError::Config("X-Tenant-Id 不是合法的 i64: <raw>")`
 /// - 合法 i64 → `Ok(TenantContext { tenant_id, resolved_from: TenantSource::Header })`
 ///
@@ -284,7 +284,7 @@ impl<S: Send + Sync> FromRequestParts<S> for crate::context::tenant::TenantConte
             .headers
             .get("x-tenant-id")
             .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| GarrisonError::Config("X-Tenant-Id header missing".into()))?;
+            .ok_or_else(|| GarrisonError::Config("ctx-tenant-id-missing::".into()))?;
 
         let tenant_id: i64 = raw
             .parse()

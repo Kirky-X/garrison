@@ -110,7 +110,7 @@ impl GeoLookup for MaxMindDbGeoLookup {
             },
             Ok(None) => Ok(None),
             Err(e) => Err(GarrisonError::Internal(format!(
-                "MaxMindDb 解码 City 记录失败 (IP={}): {}",
+                "firewall-maxmind-city-decode-failed::{}::{}",
                 ip, e
             ))),
         }
@@ -192,7 +192,7 @@ impl CountryLookup for MaxMindDbCountryLookup {
             },
             Ok(None) => Ok(None),
             Err(e) => Err(GarrisonError::Internal(format!(
-                "MaxMindDb 解码 Country 记录失败 (IP={}): {}",
+                "firewall-maxmind-country-decode-failed::{}::{}",
                 ip, e
             ))),
         }

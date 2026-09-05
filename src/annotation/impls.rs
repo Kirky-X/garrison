@@ -94,7 +94,7 @@ impl std::str::FromStr for Annotation {
             "CheckAccessToken" => Ok(Annotation::CheckAccessToken),
             "CheckClientToken" => Ok(Annotation::CheckClientToken),
             _ => Err(GarrisonError::InvalidParam(format!(
-                "无法从字符串解析注解（含数据变体需显式构造）: {}",
+                "annotation-parse-failed::{}",
                 s
             ))),
         }

@@ -149,7 +149,7 @@ pub trait TenantResolver: Send + Sync {
 /// # 行为
 ///
 /// - header 存在且为合法 i64：返回 `TenantContext { tenant_id, resolved_from: Header }`
-/// - header 缺失：返回 `GarrisonError::Config("X-Tenant-Id header missing".into())`
+/// - header 缺失：返回 `GarrisonError::Config("ctx-tenant-id-missing::")`
 /// - header 格式非法（非 i64）：返回 `GarrisonError::Config`
 ///
 /// # 设计
@@ -163,13 +163,13 @@ impl TenantResolver for HeaderTenantResolver {
     async fn resolve(&self, headers: &HeaderMap) -> GarrisonResult<TenantContext> {
         let value = headers
             .get("X-Tenant-Id")
-            .ok_or_else(|| GarrisonError::Config("X-Tenant-Id header missing".into()))?;
+            .ok_or_else(|| GarrisonError::Config("ctx-tenant-id-missing::".into()))?;
         let raw = value
             .to_str()
-            .map_err(|e| GarrisonError::Config(format!("X-Tenant-Id not visible ASCII: {e}")))?;
+            .map_err(|e| GarrisonError::Config(format!("ctx-tenant-id-not-ascii::{e}")))?;
         let tenant_id = raw
             .parse::<i64>()
-            .map_err(|e| GarrisonError::Config(format!("invalid X-Tenant-Id `{raw}`: {e}")))?;
+            .map_err(|e| GarrisonError::Config(format!("ctx-tenant-id-invalid::`{raw}`: {e}")))?;
         Ok(TenantContext {
             tenant_id,
             resolved_from: TenantSource::Header,
@@ -184,8 +184,8 @@ impl TenantResolver for HeaderTenantResolver {
 /// # 行为
 ///
 /// - Host 存在且 subdomain 在 mapping 中：返回 `TenantContext { resolved_from: Subdomain }`
-/// - Host 缺失：返回 `GarrisonError::Config("Host header missing")`
-/// - subdomain 未在 mapping 中：返回 `GarrisonError::Config("unknown subdomain")`
+/// - Host 缺失：返回 `GarrisonError::Config("ctx-host-missing::")`
+/// - subdomain 未在 mapping 中：返回 `GarrisonError::Config("ctx-host-unknown-subdomain::...")`
 ///
 /// # 设计
 ///
@@ -202,22 +202,21 @@ impl TenantResolver for SubdomainTenantResolver {
     async fn resolve(&self, headers: &HeaderMap) -> GarrisonResult<TenantContext> {
         let host = headers
             .get("Host")
-            .ok_or_else(|| GarrisonError::Config("Host header missing".into()))?
+            .ok_or_else(|| GarrisonError::Config("ctx-host-missing::".into()))?
             .to_str()
-            .map_err(|e| GarrisonError::Config(format!("Host not visible ASCII: {e}")))?;
+            .map_err(|e| GarrisonError::Config(format!("ctx-host-not-ascii::{e}")))?;
         // strip port: `tenant42.example.com:8080` → `tenant42.example.com`
         let hostname = host.split(':').next().unwrap_or(host);
         // extract first segment as subdomain
         let subdomain = hostname.split('.').next().unwrap_or(hostname);
         if subdomain.is_empty() {
             return Err(GarrisonError::Config(format!(
-                "invalid Host `{host}`: empty subdomain"
+                "ctx-host-empty-subdomain::{host}"
             )));
         }
-        let tenant_id = *self
-            .mapping
-            .get(subdomain)
-            .ok_or_else(|| GarrisonError::Config(format!("unknown subdomain `{subdomain}`")))?;
+        let tenant_id = *self.mapping.get(subdomain).ok_or_else(|| {
+            GarrisonError::Config(format!("ctx-host-unknown-subdomain::{subdomain}"))
+        })?;
         Ok(TenantContext {
             tenant_id,
             resolved_from: TenantSource::Subdomain,
@@ -276,22 +275,20 @@ impl TenantResolver for ClaimTenantResolver {
 
         let auth = headers
             .get("Authorization")
-            .ok_or_else(|| GarrisonError::InvalidToken("Authorization header missing".into()))?
+            .ok_or_else(|| GarrisonError::InvalidToken("ctx-auth-header-missing::".into()))?
             .to_str()
-            .map_err(|e| {
-                GarrisonError::InvalidToken(format!("Authorization not visible ASCII: {e}"))
-            })?;
+            .map_err(|e| GarrisonError::InvalidToken(format!("ctx-auth-not-ascii::{e}")))?;
         // 解析 `<scheme> <token>`，scheme 大小写不敏感（RFC 7235）
         let mut parts = auth.splitn(2, ' ');
         let scheme = parts
             .next()
-            .ok_or_else(|| GarrisonError::InvalidToken("empty Authorization header".into()))?;
-        let jwt = parts.next().ok_or_else(|| {
-            GarrisonError::InvalidToken("missing token in Authorization header".into())
-        })?;
+            .ok_or_else(|| GarrisonError::InvalidToken("ctx-auth-header-empty::".into()))?;
+        let jwt = parts
+            .next()
+            .ok_or_else(|| GarrisonError::InvalidToken("ctx-auth-token-missing::".into()))?;
         if !scheme.eq_ignore_ascii_case("Bearer") {
             return Err(GarrisonError::InvalidToken(format!(
-                "unsupported auth scheme `{scheme}` (expected Bearer)"
+                "ctx-auth-scheme-unsupported::`{scheme}`"
             )));
         }
         // 验证 JWT 签名 + exp，解码 tenant_id claim
@@ -299,8 +296,9 @@ impl TenantResolver for ClaimTenantResolver {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
         validation.leeway = 0;
-        let data = decode::<TenantClaims>(jwt, &key, &validation)
-            .map_err(|e| GarrisonError::InvalidToken(format!("JWT verify failed: {e}")))?;
+        let data = decode::<TenantClaims>(jwt, &key, &validation).map_err(|e| {
+            GarrisonError::InvalidToken(format!("ctx-tenant-jwt-verify-failed::{e}"))
+        })?;
         Ok(TenantContext {
             tenant_id: data.claims.tenant_id,
             resolved_from: TenantSource::Claim,

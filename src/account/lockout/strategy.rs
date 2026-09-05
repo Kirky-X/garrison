@@ -203,7 +203,7 @@ impl GarrisonFirewallStrategy for UserLockoutStrategy {
         // (3) 永久锁定 → 拦截
         if state.permanent_locked {
             return Err(GarrisonError::FirewallBlocked(format!(
-                "user-lockout: 用户 {} 已被永久锁定",
+                "user-lockout-permanent::{}",
                 user_id
             )));
         }
@@ -212,7 +212,7 @@ impl GarrisonFirewallStrategy for UserLockoutStrategy {
         let now = now_timestamp();
         if state.locked_until > now {
             return Err(GarrisonError::FirewallBlocked(format!(
-                "user-lockout: 用户 {} 已被临时锁定，直到 {}",
+                "user-lockout-temporary::{}::{}",
                 user_id, state.locked_until
             )));
         }

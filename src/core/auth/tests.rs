@@ -433,7 +433,7 @@ async fn switch_to_default_guard_denies_all_switches() {
     let _ = auth.login("2002", None).await.unwrap();
     let result = auth.switch_to(&token, "2002").await;
     assert!(
-        matches!(result, Err(GarrisonError::NotPermission(ref msg)) if msg.contains("deny-all")),
+        matches!(result, Err(GarrisonError::NotPermission(ref msg)) if msg.contains("core-switch-to-denied")),
         "默认 guard 应拒绝切换并返回 NotPermission，实际: {:?}",
         result
     );

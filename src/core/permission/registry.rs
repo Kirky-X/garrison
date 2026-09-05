@@ -109,7 +109,7 @@ impl PermissionRegistry {
     pub fn register(&self, spec: PermissionSpec) -> GarrisonResult<()> {
         if spec.name.is_empty() {
             return Err(GarrisonError::InvalidParam(
-                "permission name 不能为空".to_string(),
+                "core-permission-name-empty".to_string(),
             ));
         }
 
@@ -130,7 +130,7 @@ impl PermissionRegistry {
         let mut map = self.permissions.write();
         if map.contains_key(&spec.name) {
             return Err(GarrisonError::InvalidParam(format!(
-                "permission 已注册: {}",
+                "core-permission-already-registered::{}",
                 spec.name
             )));
         }
@@ -147,7 +147,7 @@ impl PermissionRegistry {
         match map.get(permission) {
             Some(spec) => Ok(spec.required_roles.clone()),
             None => Err(GarrisonError::InvalidParam(format!(
-                "权限未在注册表中注册: {}",
+                "core-permission-not-registered::{}",
                 permission
             ))),
         }

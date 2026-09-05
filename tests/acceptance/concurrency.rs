@@ -495,13 +495,15 @@ async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
             Err(err) => {
                 // 重用检测的两种表达（依检测命中时机）：
                 // - detect_reuse 命中已 revoked → TokenRevoked("reuse")
-                // - SELECT...AND revoked=0 落空 → InvalidToken("already consumed")
+                // - SELECT...AND revoked=0 落空 → InvalidToken("jwt-refresh-token-consumed")
                 let msg = format!("{err}");
                 let rejected = matches!(
                     err,
                     garrison::error::GarrisonError::TokenRevoked(_)
                         | garrison::error::GarrisonError::InvalidToken(_)
-                ) && (msg.contains("reuse") || msg.contains("consumed"));
+                ) && (msg.contains("reuse")
+                    || msg.contains("consumed")
+                    || msg.contains("消费"));
                 assert!(
                     rejected,
                     "并发 rotate 失败方应被重用/已消费识别，实际: {msg}"

@@ -492,6 +492,7 @@ server-internal-bind = failed to bind internal port: {$arg0}
 server-internal-task-panic = internal task panicked: {$arg0}
 plugin-on-login-failed = on_login failed
 plugin-on-logout-failed = on_logout failed
+plugin-on-permission-check-failed = on_permission_check failed
 listener-on-event-failed = on_event failed
 listener-signing-key-not-config = signing_key not configured, cannot export signature chain
 listener-get-session = get_session failed: {$arg0}
@@ -905,3 +906,329 @@ alert-rapid-successive = {$arg0} tokens online simultaneously (threshold {$arg1}
 # ABAC principal validation messages (i18n migration)
 # ============================================================================
 abac-principal-control-char = login_id contains control characters
+
+# ============================================================================
+# Core auth / permission messages (i18n migration)
+# ============================================================================
+core-switch-to-denied = switch_to denied: SwitchToGuard not configured, default deny-all
+core-switch-to-not-implemented = switch_to not implemented: {$arg0} does not support identity switching
+core-renew-not-implemented = renew_to_equivalent not implemented: {$arg0} does not support token renewal
+core-account-no-permission = Account {$arg0} does not have permission: {$arg1}
+core-account-no-role = Account {$arg0} does not have role: {$arg1}
+core-permission-name-empty = permission name must not be empty
+core-permission-already-registered = permission already registered: {$arg0}
+core-permission-not-registered = permission not registered: {$arg0}
+
+# ============================================================================
+# Core token style messages (i18n migration)
+# ============================================================================
+core-token-parse-not-supported = {$arg0} token style does not support parse (no payload)
+core-simple-secret-too-short = SimpleTokenStyle secret must be >= 32 bytes (aligned with JWT strong validation)
+core-simple-token-uuid-invalid = Simple token format error: UUID part is invalid
+core-simple-token-hmac-failed = Simple token HMAC verification failed
+core-simple-requires-feature = SimpleTokenStyle requires secure-simple-token feature (A11 security fix)
+
+# ============================================================================
+# DAO not-implemented messages (i18n migration)
+# ============================================================================
+dao-not-implemented = {$arg0} not implemented for this backend
+
+# ============================================================================
+# Config validation messages (i18n migration)
+# ============================================================================
+config-jwt-secret-empty = jwt_secret must not be empty (when token_style=jwt)
+config-jwt-algorithm-unsupported = Unsupported jwt_algorithm: {$arg0} (only HS256/HS384/HS512)
+config-jwt-secret-too-short = jwt_secret length insufficient for {$arg0}, actual {$arg1} bytes
+config-anon-timeout-invalid = anon_session_timeout must be > 0
+config-l1-ttl-invalid = l1_cache_ttl_secs must be > 0
+config-l2-ttl-invalid = l2_cache_ttl_secs must be > 0
+config-l1-capacity-invalid = l1_cache_capacity must be > 0
+config-redis-url-empty = redis_url must not be empty when rate_limit_backend=Redis
+config-waf-method-case = waf_allowed_methods must be uppercase, actual: {$arg0}
+config-sms-hourly-invalid = sms_hourly_limit must be > 0
+config-sms-daily-invalid = sms_daily_limit must be >= sms_hourly_limit
+config-sms-max-attempts-invalid = sms_verify_max_attempts must be > 0
+config-sms-threshold-invalid = sms_unverified_threshold must be > 0
+config-anomalous-interval-invalid = anomalous_analyzer_interval_secs must be >= 60
+config-anomalous-burst-invalid = anomalous_analyzer_burst_threshold must be > 0
+
+# ============================================================================
+# Session search messages (i18n migration)
+# ============================================================================
+session-search-keyword-too-long = keyword length exceeded: {$arg0} > {$arg1}
+session-search-size-exceeded = size exceeded: {$arg0} > {$arg1}
+
+# ============================================================================
+# STP module messages (i18n migration)
+# ============================================================================
+stp-service-empty = service parameter must not be empty
+stp-not-implemented = {$arg0} not implemented
+
+# ============================================================================
+# Strategy firewall messages (i18n migration)
+# ============================================================================
+firewall-anomalous-requires-login-id = AnomalousLogin requires login_id but ctx.login_id is None
+firewall-anomalous-geo-parse-failed = Historical geo coordinate parse failed (key={$arg0}, value={$arg1})
+firewall-anomalous-distance-exceeded = anomalous: user {$arg0} from {$arg1}, {$arg2}
+firewall-geo-lat-out-of-range = GeoCoord: lat {$arg0} out of range [-90, 90]
+firewall-geo-lon-out-of-range = GeoCoord: lon {$arg0} out of range [-180, 180]
+firewall-geoip-not-in-whitelist = geoip: IP {$arg0} country code {$arg1} not in whitelist
+firewall-geoip-no-country = geoip: IP {$arg0} cannot determine country, not in whitelist
+firewall-geoip-in-blacklist = geoip: IP {$arg0} country code {$arg1} in blacklist
+firewall-maxmind-city-decode-failed = MaxMindDb failed to decode City record (IP={$arg0}): {$arg1}
+firewall-maxmind-country-decode-failed = MaxMindDb failed to decode Country record (IP={$arg0}): {$arg1}
+firewall-rate-limit-no-login-id = RateLimit scope=User but ctx.login_id is None
+firewall-rate-limit-no-tenant-id = RateLimit scope=Tenant but ctx.tenant_id is None
+firewall-user-locked-permanent = user-lockout: user {$arg0} has been permanently locked
+firewall-user-locked-temporary = user-lockout: user {$arg0} has been temporarily locked until {$arg1}
+
+# ============================================================================
+# Account module messages (i18n migration)
+# ============================================================================
+account-totp-parse-failed = TOTP secret_data parse failed (expected JSON with secret/step/digits fields): {$arg0}
+account-disable-service-colon = service must not contain ':' (to avoid key injection): {$arg0}
+account-disable-login-id-colon = login_id must not contain ':' (to avoid key injection): {$arg0}
+
+# ============================================================================
+# Protocol module messages (i18n migration)
+# ============================================================================
+oidc-algorithm-unsupported = OidcHandler only supports HS256/HS384/HS512, current algorithm not supported: {$arg0}
+oidc-iss-mismatch = OIDC iss mismatch: token issuer does not match expected
+oidc-aud-mismatch = OIDC aud mismatch: token audience does not include this client's client_id
+temp-prefix-colon = prefix must not contain ':'
+temp-ttl-invalid = ttl_seconds must be > 0
+sso-secret-empty = SSO secret must not be empty (per security audit M5: ticket must be signed)
+
+# ============================================================================
+# Server / HTTP layer messages (i18n migration)
+# ============================================================================
+server-rate-limited = Rate limited
+server-invalid-api-key = Invalid API Key
+server-prometheus-encode-failed = Prometheus metrics encoding failed
+server-internal-api-key-missing = internal_api_key not configured, internal API will reject all requests. Please set a non-empty value via with_internal_api_key()
+
+# ============================================================================
+# Remaining firewall / account / OIDC / OTel messages (i18n migration)
+# ============================================================================
+firewall-anomalous-need-login-id = AnomalousLogin requires login_id but ctx.login_id is None
+firewall-ratelimit-user-none = RateLimit scope=User but ctx.login_id is None
+firewall-ratelimit-tenant-none = RateLimit scope=Tenant but ctx.tenant_id is None
+user-lockout-permanent = user {$arg0} has been permanently locked out
+user-lockout-temporary = user {$arg0} has been temporarily locked out until {$arg1}
+oidc-timeout-negative = timeout must not be negative: {$arg0}
+otel-exporter-failed = OTLP exporter construction failed: {$arg0}
+otel-provider-failed = Tracer provider setup failed: {$arg0}
+
+# ============================================================================
+# Gap report leftovers (config-load / dao-repo / cache / authflow / annotation)
+# ============================================================================
+config-file-size-exceeded = config file actual size exceeds limit [{$arg0}]: {$arg1} bytes
+config-rate-limit-backend-unsupported = GARRISON_RATE_LIMIT_BACKEND unsupported value '{$arg0}', only 'memory' or 'redis'
+dao-user-device-limit-exceeded = user ({$arg0}) device limit reached, max {$arg1}
+cache-l1-ttl-must-positive = UserCacheService::new: l1_ttl_secs must be > 0
+cache-l2-ttl-must-positive = UserCacheService::new: l2_ttl_secs must be > 0
+authflow-required-action-not-implemented = RequiredAction step not implemented in v0.6.0
+annotation-parse-failed = cannot parse annotation from string (data variants require explicit construction): {$arg0}
+stp-stateless-jwt-requires-revocation = token_style=jwt with Stateless mode requires enable_jwt_revocation (option 1: set enable_jwt_revocation=true; option 2: use JwtMode::Mixin; option 3: set allow_stateless_jwt_no_revocation=true)
+config-unknown-token-style-jwt = unknown token_style: jwt (requires protocol-jwt feature)
+
+# ============================================================================
+# i18n audit 2026-09: key:: convention keys missing from FTL (P2 fill-up)
+# ============================================================================
+
+# --- apikey ---
+apikey-namespace-reserved = API key namespace '{$arg0}' is reserved
+apikey-scope-not-allowed = API key scope '{$arg0}' is not allowed
+
+# --- authflow ---
+authflow-unknown-custom-condition = unknown custom condition: {$arg0}
+ip-whitelist-parse-failed = IP whitelist entry '{$arg0}' parse failed: {$arg1}
+
+# --- limiteron circuit breaker ---
+circuit-open = circuit breaker open: {$arg0}
+circuit-limited = request rejected by circuit breaker (limited): {$arg0}
+circuit-breaker = circuit breaker error: {$arg0}
+
+# --- core token ---
+core-simple-token-no-sep = Simple token format error: missing unit separator
+
+# --- credit metering ---
+credit-config-invalid = credit config invalid: {$arg0}
+credit-dao = credit DAO error: {$arg0}
+credit-get-consumed = credit get consumed failed: {$arg0}
+credit-incr-failed = credit increment failed: {$arg0}
+credit-query-history = credit query history failed: {$arg0}
+credit-set-meta-failed = credit set meta failed: {$arg0}
+credit-get-meta = credit get meta failed: {$arg0}
+credit-reset-consumed = credit reset consumed failed: {$arg0}
+credit-reset-meta = credit reset meta failed: {$arg0}
+credit-reset-window-start = credit reset window start failed: {$arg0}
+credit-get-window-start = credit get window start failed: {$arg0}
+credit-set-window-start = credit set window start failed: {$arg0}
+credit-consumed-parse-failed = credit consumed value parse failed: {$arg0}, {$arg1}
+credit-meta-format-error = credit meta format error: {$arg0}, {$arg1}
+credit-meta-consumed-parse-failed = credit meta consumed parse failed: {$arg0}, {$arg1}
+credit-meta-limit-parse-failed = credit meta limit parse failed: {$arg0}, {$arg1}
+credit-meta-window-start-parse-failed = credit meta window start parse failed: {$arg0}, {$arg1}
+credit-meta-window-end-parse-failed = credit meta window end parse failed: {$arg0}, {$arg1}
+credit-meta-cycle-param-parse-failed = credit meta cycle param parse failed: {$arg0}, {$arg1}
+credit-meta-unknown-cycle-type = credit meta unknown cycle type: {$arg0}, {$arg1}
+credit-window-start-parse-failed = credit window start parse failed: {$arg0}, {$arg1}
+
+# --- dao ---
+dao-role-hierarchy-add-edge-connection = role hierarchy add edge connection failed: {$arg0}
+dao-role-hierarchy-delete-edge-session = role hierarchy delete edge session failed: {$arg0}
+dao-role-hierarchy-delete-edge-connection = role hierarchy delete edge connection failed: {$arg0}
+dao-role-hierarchy-delete-edge = role hierarchy delete edge failed: {$arg0}
+dao-social-binding-session = social binding session failed: {$arg0}
+dao-social-binding-conn = social binding connection failed: {$arg0}
+dao-social-binding-insert-session = social binding insert session failed: {$arg0}
+dao-social-binding-insert-conn = social binding insert connection failed: {$arg0}
+dao-social-binding-insert = social binding insert failed: {$arg0}
+embedded-migrations-tempdir = create temp dir for embedded migrations failed: {$arg0}
+embedded-migrations-write = write embedded migration file failed: {$arg0}
+embedded-migrations-readdir = read embedded migrations dir failed: {$arg0}
+embedded-migrations-direntry = read embedded migration dir entry failed: {$arg0}
+dao-app-role-permission-find-by-role-id-query = find role permissions by role id query failed: {$arg0}
+dao-app-role-permission-find-by-permission-id-query = find role permissions by permission id query failed: {$arg0}
+dao-app-role-permission-row-parse-permission-id = parse permission id failed: {$arg0}
+dao-app-user-device-row-parse-device-identifier = parse device identifier failed: {$arg0}
+dao-eval-lua-unsupported-script = eval_lua unsupported script for this backend: {$arg0}
+dao-oxcache-cas-get-sync = oxcache CAS get (sync) failed: {$arg0}
+dao-oxcache-cas-set-sync = oxcache CAS set (sync) failed: {$arg0}
+dao-oxcache-eval-lua = oxcache eval_lua failed: {$arg0}
+dao-oxcache-sync-api-incompatible-with-redis = _sync API (set_if_absent/incr/decr/get_and_delete) is incompatible with the Redis L2 backend; use the async APIs or remove with_redis_config
+
+# --- password policy / HIBP ---
+hibp-client-build-failed = HIBP client build failed: {$arg0}
+hibp-http-status = HIBP request returned unexpected status: {$arg0}, {$arg1}
+hibp-request-failed = HIBP request failed: {$arg0}, {$arg1}
+hibp-body-read-failed = HIBP response body read failed: {$arg0}
+
+# --- jwt ---
+jwt-secret-too-short = jwt secret too short: {$arg0}, {$arg1}
+jwt-refresh-login-id-parse-failed = jwt refresh login id parse failed: {$arg0}, {$arg1}
+jwt-refresh-cleanup-get-session = jwt refresh cleanup: get session failed: {$arg0}
+jwt-refresh-cleanup-get-conn = jwt refresh cleanup: get connection failed: {$arg0}
+jwt-refresh-cleanup-delete = jwt refresh cleanup: delete failed: {$arg0}
+jwt-revoked = JWT has been revoked: {$arg0}
+
+# --- limiteron ---
+limiteron-ban-history-format-error = limiteron ban history format error: {$arg0}, {$arg1}
+limiteron-ban-history-parse-ban-times = limiteron ban history parse ban_times failed: {$arg0}, {$arg1}
+limiteron-ban-history-parse-last-banned = limiteron ban history parse last_banned failed: {$arg0}, {$arg1}
+limiteron-ban-times-parse-failed = limiteron ban times parse failed: {$arg0}, {$arg1}
+limiteron-eval-lua-parse-failed = limiteron eval_lua result parse failed: {$arg0}
+limiteron-get-count-parse-failed = limiteron get count parse failed: {$arg0}, {$arg1}
+limiteron-quota-count-parse-failed = limiteron quota count parse failed: {$arg0}, {$arg1}
+limiteron-quota-meta-format-error = limiteron quota meta format error: {$arg0}, {$arg1}
+limiteron-quota-limit-parse-failed = limiteron quota limit parse failed: {$arg0}, {$arg1}
+limiteron-quota-window-start-parse-failed = limiteron quota window start parse failed: {$arg0}, {$arg1}
+limiteron-quota-window-end-parse-failed = limiteron quota window end parse failed: {$arg0}, {$arg1}
+limiteron-quota-window-start-datetime-failed = limiteron quota window start datetime failed: {$arg0}
+limiteron-quota-window-end-datetime-failed = limiteron quota window end datetime failed: {$arg0}
+
+# --- manager ---
+manager-active-timeout-overflow = active_timeout overflowed u64: {$arg0}
+
+# --- secure ---
+secure-httpbasic-unsupported-scheme = HTTP Basic: unsupported auth scheme: {$arg0}
+secure-httpdigest-unsupported-scheme = HTTP Digest: unsupported auth scheme: {$arg0}
+secure-http-digest-missing-uri = HTTP Digest: missing uri parameter
+
+# --- sso / saml ---
+sso-oidc-body-exceeds-limit = SSO OIDC response body exceeds size limit: {$arg0}
+saml-response-too-large = SAML response too large: {$arg0}, {$arg1}
+sso-saml-assertion-replay = SAML assertion replay detected: {$arg0}
+sso-saml-status-not-success = SAML response status is not Success: {$arg0}
+sso-saml-destination-mismatch = SAML destination mismatch: {$arg0}, {$arg1}
+sso-saml-audience-mismatch = SAML audience mismatch: {$arg0}, {$arg1}
+sso-saml-not-before-parse = SAML NotBefore parse failed: {$arg0}
+sso-saml-assertion-not-yet-valid = SAML assertion not yet valid: {$arg0}
+sso-saml-in-response-to-unknown = SAML InResponseTo unknown or expired: {$arg0}
+sso-saml-signature-value-decode = SAML signature value decode failed: {$arg0}
+sso-saml-signature-bytes-decode = SAML signature bytes decode failed: {$arg0}
+sso-saml-idp-public-key-parse-failed = SAML IdP public key parse failed: {$arg0}, {$arg1}
+
+# --- stp ---
+stp-login-ip-blocked = login blocked: IP {$arg0} is banned
+stp-check-login-ip-blocked = check-login blocked: IP {$arg0} is banned
+stp-apikey-ip-blocked = apikey request blocked: IP {$arg0} is banned
+stp-simple-token-style-requires-secure-simple-token-feature = token_style=simple requires the secure-simple-token feature
+
+# --- strategy / firewall ---
+strategy-firewall-bruteforce-reason = brute force ban reason: attempts {$arg0} exceeds max {$arg1}
+strategy-firewall-bruteforce-locked = IP {$arg0} is locked due to brute force
+strategy-firewall-bruteforce-blocked = brute force blocked: IP {$arg0}, {$arg1}
+strategy-firewall-ratelimit-blocked = rate limit blocked: scope {$arg0}, {$arg1}
+strategy-limiter-eval-lua = rate limiter eval_lua failed: {$arg0}
+strategy-ddos-global-blocked = DDoS global rate limit exceeded ({$arg0} req/s)
+strategy-ddos-ip-blocked = DDoS per-IP rate limit exceeded for {$arg0} ({$arg1} req/s)
+strategy-analyzer-shutdown-timeout = anomalous analyzer shutdown timeout: {$arg0}
+
+# ============================================================================
+# i18n audit 2026-09: loc! keys that referenced missing FTL messages (P3)
+# ============================================================================
+alipay-response-missing-oauth-token-response = alipay response missing alipay_system_oauth_token_response field
+alipay-response-missing-access-token = alipay response missing access_token field
+session-kickout-password-changed = password changed
+
+# ============================================================================
+# i18n audit 2026-09: raw English error messages migrated to key:: convention (P1)
+# ============================================================================
+abac-engine-already-initialized = AbacEngine already initialized
+backend-unknown-error = Unknown error
+config-confers-build-failed = confers build error: {$arg0}
+config-unknown-token-style = unknown token_style: {$arg0}
+config-unknown-cookie-same-site = unknown cookie_same_site: {$arg0} (expected Lax/Strict/None)
+config-unknown-device-binding-mode = unknown device_binding_mode: {$arg0} (expected strict/loose/disabled)
+config-timeout-must-positive = timeout must be positive
+config-remember-me-timeout-mismatch = remember_me_timeout ({$arg0}) must be greater than timeout ({$arg1})
+config-remember-me-timeout-positive = remember_me_timeout must be positive, got: {$arg0}
+credential-already-exists = credential already exists: {$arg0}
+credential-not-found = credential not found: {$arg0}
+credential-backup-code-not-found = backup code credential not found in DAO: {$arg0}
+credential-query-forbidden = caller {$arg0} cannot query credentials of {$arg1}
+credential-update-forbidden = caller {$arg0} cannot update credential {$arg1}
+credential-delete-forbidden = caller {$arg0} cannot delete credential {$arg1}
+credential-transfer-forbidden = cannot transfer credential {$arg0}: {$arg1}
+credential-totp-step-invalid = TOTP step must be > 0
+ctx-invalid-header-name = invalid header name '{$arg0}': {$arg1}
+ctx-invalid-header-value = invalid header value '{$arg0}': {$arg1}
+ctx-invalid-status-code = invalid status code {$arg0}: {$arg1}
+ctx-tenant-id-not-ascii = X-Tenant-Id not visible ASCII: {$arg0}
+ctx-host-missing = Host header missing
+ctx-host-not-ascii = Host not visible ASCII: {$arg0}
+ctx-host-empty-subdomain = invalid Host '{$arg0}': empty subdomain
+ctx-host-unknown-subdomain = unknown subdomain '{$arg0}'
+ctx-auth-header-missing = Authorization header missing
+ctx-auth-not-ascii = Authorization not visible ASCII: {$arg0}
+ctx-auth-token-missing = missing token in Authorization header
+ctx-auth-scheme-unsupported = unsupported auth scheme '{$arg0}' (expected Bearer)
+permission-name-too-long = permission too long: {$arg0} bytes (max 256)
+oauth2-server-client-id-invalid = invalid client_id: {$arg0}
+jwt-refresh-token-consumed = refresh token not found or already consumed
+oauth2-scope-handler-not-registered = scope handler not registered: {$arg0}
+url-scheme-https-required = {$arg0} must be https or localhost, got: {$arg1}
+sso-saml-signature-mismatch = SAML signature verification failed: signature value does not match SignedInfo
+stp-apikey-feature-required = check_api_key requires the protocol-apikey feature (fail-closed: enable the feature or remove the check)
+stp-mock-not-implemented = MockUserRepository::create not implemented
+stp-param-login-id-missing = login_id not set in ParameterQuery context
+stp-password-hasher-not-configured = password hasher not configured
+stp-user-repo-not-configured = user repository not configured
+stp-invalid-password = invalid password
+stp-token-login-id-bound = token already associated with login_id: {$arg0}
+stp-backend-already-init = Backend already initialized
+stp-backend-not-init = Backend not initialized. Call init_backend() first.
+testing-json-parse-error = JSON parse error: {$arg0}
+
+# --- discovered during P1 migration (extra plain-English sites) ---
+stp-unsupported-hash-format = unsupported hash format
+ctx-auth-header-empty = empty Authorization header
+ctx-tenant-jwt-verify-failed = JWT verify failed: {$arg0}
+abac-engine-lock-poisoned = AbacEngine lock poisoned
+config-auto-renewal-threshold-invalid = auto_renewal_threshold must be -1 or 0-100, got: {$arg0}
+config-is-share-requires-concurrent = is_share=true requires is_concurrent=true
+config-session-hover-timeout-exceeds = session_hover_timeout ({$arg0}) exceeds maximum allowed {$arg1} seconds (10 years)
+stp-backend-lock-poisoned = Backend lock poisoned
+session-ip-subnet-changed = IP subnet change detected: token={$arg0}, {$arg1}

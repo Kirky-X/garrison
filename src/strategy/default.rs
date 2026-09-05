@@ -325,7 +325,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
                 .await
             {
                 tracing::warn!(
-                    "权限缓存写入失败 (login_id={}, perm={}): {}",
+                    "permission cache write failed (login_id={}, perm={}): {}",
                     login_id,
                     permission,
                     e

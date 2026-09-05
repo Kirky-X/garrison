@@ -121,9 +121,7 @@ fn haversine_km(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
 impl GarrisonFirewallStrategy for AnomalousLoginStrategy {
     async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         let login_id = ctx.login_id.as_ref().ok_or_else(|| {
-            GarrisonError::InvalidParam(
-                "AnomalousLogin 需要 login_id 但 ctx.login_id 为 None".to_string(),
-            )
+            GarrisonError::InvalidParam("firewall-anomalous-need-login-id".to_string())
         })?;
 
         // 1. 查询当前 IP 坐标 → 无法定位则放行（不因数据缺失拦截）
@@ -143,7 +141,7 @@ impl GarrisonFirewallStrategy for AnomalousLoginStrategy {
             Some(csv) => {
                 let historic_coord = GeoCoord::from_csv(&csv).ok_or_else(|| {
                     GarrisonError::Dao(format!(
-                        "历史 geo 坐标解析失败（key={}, value={})",
+                        "firewall-anomalous-geo-parse-failed::{}::{}",
                         key, csv
                     ))
                 })?;
@@ -154,9 +152,14 @@ impl GarrisonFirewallStrategy for AnomalousLoginStrategy {
                     current_coord.lon,
                 );
                 if distance > self.config.known_geo_threshold as f64 {
+                    let loc = format!("{}f {}", login_id, ctx.ip);
+                    let detail = format!(
+                        "distance {:.0}km exceeds threshold {}km",
+                        distance, self.config.known_geo_threshold
+                    );
                     Err(GarrisonError::FirewallBlocked(format!(
-                        "anomalous: 用户 {} 从 {} 登录，距历史位置 {:.0}km 超阈值 {}km",
-                        login_id, ctx.ip, distance, self.config.known_geo_threshold
+                        "firewall-anomalous-distance-exceeded::{}::{}",
+                        loc, detail
                     )))
                 } else {
                     // 距离未超阈值：更新历史 geo 为当前位置

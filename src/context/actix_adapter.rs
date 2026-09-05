@@ -79,7 +79,7 @@ impl<'a> GarrisonRequest for ActixRequest<'a> {
 
     fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
         let header_name: HeaderName = name.parse().map_err(|e| {
-            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+            GarrisonError::Context(format!("ctx-invalid-header-name::{}::{}", name, e))
         })?;
         Ok(self
             .request
@@ -138,17 +138,18 @@ impl Default for ActixResponse {
 
 impl GarrisonResponse for ActixResponse {
     fn set_status(&mut self, code: u16) -> GarrisonResult<()> {
-        self.status = StatusCode::from_u16(code)
-            .map_err(|e| GarrisonError::Context(format!("invalid status code {}: {}", code, e)))?;
+        self.status = StatusCode::from_u16(code).map_err(|e| {
+            GarrisonError::Context(format!("ctx-invalid-status-code::{}::{}", code, e))
+        })?;
         Ok(())
     }
 
     fn set_header(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
         let header_name: HeaderName = name.parse().map_err(|e| {
-            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+            GarrisonError::Context(format!("ctx-invalid-header-name::{}::{}", name, e))
         })?;
         let header_value = HeaderValue::from_str(value).map_err(|e| {
-            GarrisonError::Context(format!("invalid header value '{}': {}", value, e))
+            GarrisonError::Context(format!("ctx-invalid-header-value::{}::{}", value, e))
         })?;
         self.headers.insert(header_name, header_value);
         Ok(())
@@ -348,7 +349,7 @@ impl GarrisonRequest for ActixRequestWrapper {
 
     fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
         let header_name: HeaderName = name.parse().map_err(|e| {
-            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+            GarrisonError::Context(format!("ctx-invalid-header-name::{}::{}", name, e))
         })?;
         Ok(self
             .headers
@@ -468,7 +469,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, GarrisonError::Context(_)));
-        assert!(err.to_string().contains("invalid header name"));
+        assert!(err.to_string().contains("非法 header 名称"));
     }
 
     // ========================================================================
@@ -630,7 +631,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, GarrisonError::Context(_)));
-        assert!(err.to_string().contains("invalid status code"));
+        assert!(err.to_string().contains("非法状态码"));
     }
 
     /// 验证 set_header 在 header value 非法时返回 Context 错误。
@@ -641,7 +642,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, GarrisonError::Context(_)));
-        assert!(err.to_string().contains("invalid header value"));
+        assert!(err.to_string().contains("非法 header 值"));
     }
 
     /// 验证 set_header 在 header name 非法时返回 Context 错误。

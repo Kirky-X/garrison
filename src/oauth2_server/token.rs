@@ -939,7 +939,7 @@ impl TokenHandler {
                 {
                     tracing::warn!(
                         error = %e,
-                        "revoke_replayed_code_tokens 失败（重放检测），仍返回 invalid_grant"
+                        "revoke_replayed_code_tokens failed (replay detection), still returning invalid_grant"
                     );
                 }
                 return Err(GarrisonError::OAuth2("invalid_grant".into()));
@@ -984,7 +984,7 @@ impl TokenHandler {
         {
             tracing::warn!(
                 error = %e,
-                "record_code_tokens 失败（吊销追踪不可用），本次授权仍成功"
+                "record_code_tokens failed (revocation tracking unavailable), authorization still succeeds"
             );
         }
         Ok(resp)

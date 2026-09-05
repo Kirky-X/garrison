@@ -1491,7 +1491,7 @@ mod tests {
         // generate_token 错误路径
         // --------------------------------------------------------------------
 
-        /// 未知 token_style → Err Config("unknown token_style")。
+        /// 未知 token_style → Err Config("config-unknown-token-style")。
         #[tokio::test]
         async fn generate_token_unknown_style_returns_config_error() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

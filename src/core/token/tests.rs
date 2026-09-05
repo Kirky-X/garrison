@@ -492,7 +492,7 @@ fn factory_rejects_unknown_style() {
     let result = TokenStyleFactory::new("unknown", "secret");
     assert!(result.is_err());
     match result.err() {
-        Some(GarrisonError::Config(msg)) => assert!(msg.contains("unknown token_style")),
+        Some(GarrisonError::Config(msg)) => assert!(msg.contains("config-unknown-token-style")),
         other => panic!("期望 Config 错误，实际: {:?}", other),
     }
 }

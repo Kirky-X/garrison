@@ -146,7 +146,7 @@ impl AbacEngine {
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    "abac-decision-cache-read: 缓存读失败，降级到 Cedar 求值"
+                    "abac-decision-cache-read: cache read failed, falling back to Cedar evaluation"
                 );
             },
         }
@@ -215,7 +215,7 @@ impl AbacEngine {
         if let Err(e) = self.cache.set(&cache_key, &decision).await {
             tracing::warn!(
                 error = %e,
-                "abac-decision-cache-write: 缓存写失败，决策仍返回"
+                    "abac-decision-cache-write: cache write failed, decision still returned"
             );
         }
 

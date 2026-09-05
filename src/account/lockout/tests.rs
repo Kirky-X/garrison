@@ -229,7 +229,7 @@ async fn permanent_lockout_after_max_temporary_lockouts() {
     let ctx = FirewallContext::new("1.1.1.1").with_login_id("user1");
     let result = strategy.check(&ctx).await;
     assert!(
-        matches!(result, Err(GarrisonError::FirewallBlocked(ref msg)) if msg.contains("永久锁定")),
+        matches!(result, Err(GarrisonError::FirewallBlocked(ref msg)) if msg.contains("user-lockout-permanent")),
         "超过 max_temporary_lockouts 应永久锁定，实际: {:?}",
         result
     );

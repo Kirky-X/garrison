@@ -15,6 +15,7 @@
 //! - **parking_lot::Mutex**：比 std::sync::Mutex 更高效，无需 await 持锁
 //! - **from_fn_with_state**：通过 axum middleware state 共享配置
 
+use crate::i18n::translate_detail;
 use axum::extract::ConnectInfo;
 use axum::extract::Request;
 use axum::http::StatusCode;
@@ -179,7 +180,7 @@ pub async fn rate_limit_middleware(
             StatusCode::TOO_MANY_REQUESTS,
             Json(json!({
                 "error": "rate_limited",
-                "message": "请求过于频繁"
+                "message": translate_detail("server-rate-limited", &[])
             })),
         )
             .into_response();
@@ -233,7 +234,7 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
 ///
 /// 不匹配或缺失返回 401 Unauthorized，响应体为 JSON：
 /// ```json
-/// { "error": "unauthorized", "message": "无效的 API Key" }
+/// { "error": "unauthorized", "message": "Invalid API Key" }
 /// ```
 pub async fn api_key_auth_middleware(
     axum::extract::State(state): axum::extract::State<Arc<ApiKeyState>>,
@@ -246,7 +247,7 @@ pub async fn api_key_auth_middleware(
             StatusCode::UNAUTHORIZED,
             Json(json!({
                 "error": "unauthorized",
-                "message": "无效的 API Key"
+                "message": translate_detail("server-invalid-api-key", &[])
             })),
         )
             .into_response();
@@ -265,7 +266,7 @@ pub async fn api_key_auth_middleware(
             StatusCode::UNAUTHORIZED,
             Json(json!({
                 "error": "unauthorized",
-                "message": "无效的 API Key"
+                "message": translate_detail("server-invalid-api-key", &[])
             })),
         )
             .into_response();

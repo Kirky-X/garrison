@@ -149,7 +149,7 @@ impl OidcHandler {
             Ok(())
         } else {
             Err(GarrisonError::Config(format!(
-                "OidcHandler 仅支持 HS256/HS384/HS512 算法，当前算法不支持: {:?}",
+                "oidc-algorithm-unsupported::{:?}",
                 self.algorithm
             )))
         }
@@ -181,7 +181,7 @@ impl OidcHandler {
         let login_id: String = login_id.into();
         if timeout < 0 {
             return Err(GarrisonError::Config(format!(
-                "timeout 不能为负数: {}",
+                "oidc-timeout-negative::{}",
                 timeout
             )));
         }
@@ -252,17 +252,13 @@ impl OidcHandler {
         // OIDC 规范要求校验 iss 和 aud
         // L6 修复：错误消息不含 claims.iss 实际值（虽 iss 通常公开，但 fail-closed 不泄露任何 token claim）
         if claims.iss != self.issuer {
-            return Err(GarrisonError::InvalidToken(
-                "OIDC iss 不匹配: token 中的 issuer 与期望不符".to_string(),
-            ));
+            return Err(GarrisonError::InvalidToken("oidc-iss-mismatch".to_string()));
         }
         // vuln-0006 修复：aud 支持String 或数组形式（RFC 7519 §4.1.3）。
         // 校验 `aud` 是否包含本客户端的 `client_id`，与 `sso/oidc.rs` 行为对齐。
         // L6 修复：错误消息不含 claims.aud 实际值（虽 aud 通常公开，但 fail-closed 不泄露任何 token claim）
         if !claims.aud.contains(&self.audience) {
-            return Err(GarrisonError::InvalidToken(
-                "OIDC aud 不匹配: token 中的 audience 不包含本客户端 client_id".to_string(),
-            ));
+            return Err(GarrisonError::InvalidToken("oidc-aud-mismatch".to_string()));
         }
         // nonce 校验（防重放）— L2 修复：使用 subtle::ConstantTimeEq 常量时间比较，
         // 避免 nonce 长度/前缀差异导致的 timing side-channel 泄漏 nonce 信息。
@@ -455,8 +451,8 @@ mod tests {
         assert!(result.is_err());
         match result.err() {
             Some(GarrisonError::Config(msg)) => assert!(
-                msg.contains("HS256") && msg.contains("RS256"),
-                "错误消息应包含 HS256 与 RS256，实际: {}",
+                msg.contains("oidc-algorithm-unsupported") && msg.contains("RS256"),
+                "错误消息应包含 oidc-algorithm-unsupported 与 RS256，实际: {}",
                 msg
             ),
             other => panic!("期望 Config 错误，实际: {:?}", other),

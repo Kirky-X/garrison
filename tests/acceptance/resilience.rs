@@ -230,7 +230,7 @@ fn acc_res_002_config_validate_fail_fast() {
     c.token_style = "bogus".to_string();
     assert_err!(
         c.validate(),
-        "unknown token_style",
+        "不支持的 token_style",
         "非法 token_style 应被拒绝"
     );
 
@@ -239,7 +239,7 @@ fn acc_res_002_config_validate_fail_fast() {
     c.cookie_same_site = "Bogus".to_string();
     assert_err!(
         c.validate(),
-        "unknown cookie_same_site",
+        "不支持的 cookie_same_site",
         "非法 cookie_same_site 应被拒绝"
     );
 
@@ -701,8 +701,8 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
         "熔断打开后应快速拒绝，实际: {fast_msg}"
     );
     assert!(
-        fast_msg.contains("circuit-"),
-        "熔断拒绝错误信息应包含 circuit 标记，实际: {fast_msg}"
+        fast_msg.contains("熔断器"),
+        "熔断拒绝错误信息应包含熔断标记，实际: {fast_msg}"
     );
     let after = server
         .received_requests()

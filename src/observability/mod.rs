@@ -88,7 +88,7 @@ pub use otlp::init_otlp_tracing;
 ///
 /// M-4: `#[must_use]` 确保 guard 不会被意外丢弃（丢弃后 subscriber 可能注销）。
 #[cfg(feature = "audit-inklog")]
-#[must_use = "InklogInit 包含 LoggerManager guard，丢弃后日志 subscriber 可能注销"]
+#[must_use = "InklogInit holds the LoggerManager guard; dropping it may unregister the log subscriber"]
 pub struct InklogInit {
     /// LoggerManager guard（降级时为 None，guard 不存在）。
     pub(crate) guard: Option<::inklog::LoggerManager>,
@@ -101,10 +101,10 @@ pub struct InklogInit {
 #[derive(Debug, thiserror::Error)]
 pub enum GarrisonOtelError {
     /// OTLP exporter 构造失败
-    #[error("OTLP exporter 构造失败: {0}")]
+    #[error("OTLP exporter construction failed: {0}")]
     Exporter(String),
     /// Tracer provider 设置失败
-    #[error("Tracer provider 设置失败: {0}")]
+    #[error("Tracer provider setup failed: {0}")]
     Provider(String),
 }
 

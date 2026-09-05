@@ -14,7 +14,7 @@ use crate::error::{GarrisonError, GarrisonResult};
 impl SwitchToGuard for DenyAllSwitchToGuard {
     async fn check(&self, _original: &str, _target: &str) -> GarrisonResult<()> {
         Err(GarrisonError::NotPermission(
-            "switch_to 被拒绝：未配置 SwitchToGuard，默认 deny-all".to_string(),
+            "core-switch-to-denied".to_string(),
         ))
     }
 }

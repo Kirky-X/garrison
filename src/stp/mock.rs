@@ -215,7 +215,7 @@ impl UserRepository for MockUserRepository {
     }
     async fn create(&self, _tenant_id: i64, _user: NewUser) -> GarrisonResult<String> {
         Err(GarrisonError::Internal(
-            "MockUserRepository::create not implemented".to_string(),
+            "stp-mock-not-implemented::".to_string(),
         ))
     }
     async fn update(&self, _tenant_id: i64, _id: &str, _user: UpdateUser) -> GarrisonResult<()> {

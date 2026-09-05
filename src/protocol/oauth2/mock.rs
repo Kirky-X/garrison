@@ -20,5 +20,5 @@ pub async fn make_client(server: &MockServer) -> OAuth2Client {
         format!("{}/auth", base),
         format!("{}/token", base),
     )
-    .expect("创建 OAuth2Client 失败")
+    .expect("failed to create OAuth2Client")
 }

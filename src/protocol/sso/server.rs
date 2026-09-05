@@ -171,7 +171,7 @@ impl DefaultSsoServer {
         let secret: String = secret.into();
         assert!(
             !secret.is_empty(),
-            "SSO secret 不能为空（依据安全审计 M5：ticket 必须签名）"
+            "SSO secret must not be empty (per security audit M5: ticket must be signed)"
         );
         Self {
             dao,

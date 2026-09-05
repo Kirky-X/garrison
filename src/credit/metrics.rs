@@ -63,7 +63,7 @@ impl CreditMetrics {
         INSTANCE
             .get_or_init(|| {
                 Self::register_to(prometheus::default_registry())
-                    .expect("CreditMetrics 注册到 default registry 失败：可能已注册")
+                    .expect("failed to register CreditMetrics to the default registry: possibly already registered")
             })
             .clone()
     }

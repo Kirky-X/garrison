@@ -79,7 +79,7 @@ impl AccountMetrics {
         INSTANCE
             .get_or_init(|| {
                 Self::register_to(prometheus::default_registry())
-                    .expect("AccountMetrics 注册到 default registry 失败：可能已注册")
+                    .expect("failed to register AccountMetrics to the default registry: possibly already registered")
             })
             .clone()
     }

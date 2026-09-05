@@ -83,7 +83,7 @@ impl SessionSecurityListener {
         let key = format!("{}ip:{}", DaoKeyPrefix::Session, token);
         self.dao.set(&key, ip, IP_RECORD_TTL).await?;
         tracing::info!(
-            "记录登录 IP (token={}, login_id={}, ip={})",
+            "login IP recorded (token={}, login_id={}, ip={})",
             mask_token(token),
             login_id,
             ip
@@ -121,7 +121,7 @@ impl SessionSecurityListener {
             Err(e) => {
                 // DAO 错误降级：不阻断认证主流程，仅记录警告
                 tracing::warn!(
-                    "check_ip_change DAO 读取失败，降级为不告警 (token={}): {}",
+                    "check_ip_change DAO read failed, degrading to no alert (token={}): {}",
                     mask_token(token),
                     e
                 );
@@ -139,7 +139,7 @@ impl SessionSecurityListener {
                 } else {
                     let masked = mask_token(token);
                     let warning = format!(
-                        "IP 网段变更检测：token={} 初始 IP={} 当前 IP={}（网段 {} -> {}）",
+                        "session-ip-subnet-changed::{}::{} -> {} (subnet {} -> {})",
                         masked, recorded_ip, current_ip, recorded_subnet, current_subnet
                     );
                     tracing::warn!("{}", warning);

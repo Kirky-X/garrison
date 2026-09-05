@@ -220,9 +220,7 @@ mod service {
                 .await
                 .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?
                 .ok_or_else(|| {
-                    GarrisonError::InvalidToken(
-                        "refresh token not found or already consumed".to_string(),
-                    )
+                    GarrisonError::InvalidToken("jwt-refresh-token-consumed::".to_string())
                 })?;
 
             let login_id: String = row
@@ -245,7 +243,7 @@ mod service {
             let kv = *self
                 .key_version
                 .read()
-                .expect("key_version RwLock 不应 poisoned");
+                .expect("key_version RwLock should not be poisoned");
 
             // INSERT new record（parent_token_hash = old_hash, revoked=0, 7 天过期）
             // T005: 继承 OAuth2 扩展字段
@@ -333,7 +331,7 @@ mod service {
             let kv = *self
                 .key_version
                 .read()
-                .expect("key_version RwLock 不应 poisoned");
+                .expect("key_version RwLock should not be poisoned");
 
             let scopes_str = if scopes.is_empty() {
                 None

@@ -247,7 +247,7 @@ impl AuthLogic for AuthLogicDefault {
             original_login_id = %original_login_id,
             target_login_id = %target_login_id,
             token_prefix = %token_prefix,
-            "身份切换: {} -> {}",
+            "identity switch: {} -> {}",
             original_login_id,
             target_login_id
         );
@@ -372,7 +372,7 @@ impl AuthLogic for AuthLogicDefault {
                 tracing::error!(
                     error = %e,
                     new_token_prefix = %new_prefix,
-                    "renew_to_equivalent 创建新 token session 失败，旧 token 仍有效（A9 无 DoS）"
+                    "renew_to_equivalent: failed to create new token session, old token still valid (A9 no DoS)"
                 );
                 return Err(GarrisonError::Internal(
                     "core-auth-token-renew-create-failed".to_string(),
@@ -394,14 +394,14 @@ impl AuthLogic for AuthLogicDefault {
                 tracing::error!(
                     error = %e,
                     new_token_prefix = %new_prefix,
-                    "renew_to_equivalent 添加新 token 到 Account-Session 失败，清理新 token"
+                    "renew_to_equivalent: failed to add new token to Account-Session, cleaning up new token"
                 );
                 // 清理刚创建的新 token session（best-effort）
                 if let Err(rb_err) = self.session.logout(&new_token).await {
                     tracing::error!(
                         rollback_error = %rb_err,
                         new_token_prefix = %new_prefix,
-                        "renew_to_equivalent 清理新 token session 失败，新 token 可能残留"
+                        "renew_to_equivalent: failed to clean up new token session, new token may be orphaned"
                     );
                 }
                 // rule 12：失败显性化 — 旧 token 仍有效，用户可用旧 token 重试
@@ -434,9 +434,9 @@ impl AuthLogic for AuthLogicDefault {
                     error = %e,
                     old_token_prefix = %old_prefix,
                     new_token_prefix = %&new_token[..new_token.len().min(8)],
-                    "renew_to_equivalent 失效旧 token 失败，旧 token 残留（CWE-613 安全风险），\
-                     新 token 已建立无 DoS，但需运维立即清理旧 token 防止被攻击者利用。\
-                     告警规则：error_code=\"renew_old_token_cleanup_failed\" 出现即触发 P2 告警"
+                    "renew_to_equivalent: failed to invalidate old token, old token left behind (CWE-613 security risk), \
+                     new token established with no DoS, but operators must clean up the old token immediately to prevent attacker reuse. \
+                     Alert rule: trigger P2 alert whenever error_code=\"renew_old_token_cleanup_failed\" appears"
                 );
             }
 

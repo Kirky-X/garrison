@@ -25,7 +25,7 @@ impl Token for UuidTokenStyle {
 
     fn parse(&self, _token: &str) -> GarrisonResult<TokenClaims> {
         Err(GarrisonError::Internal(
-            "UUID token 风格不支持 parse（无 payload）".to_string(),
+            "core-token-parse-not-supported::UUID".to_string(),
         ))
     }
 }
@@ -48,7 +48,7 @@ impl Token for Random64TokenStyle {
 
     fn parse(&self, _token: &str) -> GarrisonResult<TokenClaims> {
         Err(GarrisonError::Internal(
-            "random_64 token 风格不支持 parse（无 payload）".to_string(),
+            "core-token-parse-not-supported::random_64".to_string(),
         ))
     }
 }
@@ -105,7 +105,7 @@ impl Token for SimpleTokenStyle {
         // R-sessiontokenconsistency / 对齐 JWT 双向强校验：secret 短于 32 字节拒绝生成 token
         if self.secret.len() < 32 {
             return Err(GarrisonError::Config(
-                "SimpleTokenStyle secret 长度必须 >= 32 字节（对齐 JWT 强校验）".to_string(),
+                "core-simple-secret-too-short".to_string(),
             ));
         }
         let uuid = Uuid::new_v4();
@@ -155,7 +155,7 @@ impl Token for SimpleTokenStyle {
         // R-sessiontokenconsistency / 对齐 JWT：secret 短于 32 字节拒绝解析
         if self.secret.len() < 32 {
             return Err(GarrisonError::Config(
-                "SimpleTokenStyle secret 长度必须 >= 32 字节（对齐 JWT 强校验）".to_string(),
+                "core-simple-secret-too-short".to_string(),
             ));
         }
         // 格式：<login_id>\x1f<uuid>.<hmac>（\x1f = ASCII Unit Separator，见 H2）
@@ -168,7 +168,7 @@ impl Token for SimpleTokenStyle {
         // 校验 UUID 部分
         if Uuid::parse_str(uuid_part).is_err() {
             return Err(GarrisonError::Internal(
-                "Simple token 格式错误：UUID 部分无效".to_string(),
+                "core-simple-token-uuid-invalid".to_string(),
             ));
         }
         // 校验 HMAC（常数时间比较）
@@ -177,7 +177,7 @@ impl Token for SimpleTokenStyle {
         let ct_result = expected_hmac.as_bytes().ct_eq(hmac_part.as_bytes());
         if !bool::from(ct_result) {
             return Err(GarrisonError::InvalidToken(
-                "Simple token HMAC 校验失败".to_string(),
+                "core-simple-token-hmac-failed".to_string(),
             ));
         }
         // Simple token 不包含过期时间，expire_at 设为 0
@@ -194,7 +194,7 @@ impl Token for SimpleTokenStyle {
     fn generate(&self, _login_id: &str, _timeout: i64) -> GarrisonResult<String> {
         // A11 fail-closed：未启用 secure-simple-token feature 时拒绝生成 token
         Err(GarrisonError::Config(
-            "SimpleTokenStyle 需启用 secure-simple-token feature（A11 安全修复）".to_string(),
+            "core-simple-requires-feature".to_string(),
         ))
     }
 
@@ -205,7 +205,7 @@ impl Token for SimpleTokenStyle {
 
     fn parse(&self, _token: &str) -> GarrisonResult<TokenClaims> {
         Err(GarrisonError::Config(
-            "SimpleTokenStyle 需启用 secure-simple-token feature（A11 安全修复）".to_string(),
+            "core-simple-requires-feature".to_string(),
         ))
     }
 }
@@ -277,11 +277,11 @@ impl TokenStyleFactory {
             "jwt" => {
                 let _ = secret; // 避免 unused 警告（jwt 风格需 protocol-jwt feature）
                 Err(GarrisonError::Config(
-                    "unknown token_style: jwt（需启用 protocol-jwt feature）".to_string(),
+                    "config-unknown-token-style-jwt::".to_string(),
                 ))
             },
             other => Err(GarrisonError::Config(format!(
-                "unknown token_style: {}",
+                "config-unknown-token-style::{}",
                 other
             ))),
         }

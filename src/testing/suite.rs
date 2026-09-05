@@ -19,7 +19,7 @@ impl JsonTestSuite {
     /// - 缺失必填字段（`name` / `cases` / `request` / `expected`）：返回 [`GarrisonError::InvalidParam`]
     pub fn from_json(json: &str) -> GarrisonResult<Self> {
         serde_json::from_str::<Self>(json)
-            .map_err(|e| GarrisonError::InvalidParam(format!("JSON parse error: {}", e)))
+            .map_err(|e| GarrisonError::InvalidParam(format!("testing-json-parse-error::{}", e)))
     }
 
     /// 运行测试套件，对每个用例调用 [`Authorizer::authorize`] 并比较决策。

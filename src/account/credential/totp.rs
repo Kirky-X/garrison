@@ -40,12 +40,8 @@ struct TotpSecretData {
 impl TotpSecretData {
     /// 从 `secret_data` JSON 字符串解析。
     fn from_json(secret_data: &str) -> GarrisonResult<Self> {
-        serde_json::from_str(secret_data).map_err(|e| {
-            GarrisonError::InvalidParam(format!(
-                "TOTP secret_data 解析失败（期望 JSON {{secret, step, digits}}）: {}",
-                e
-            ))
-        })
+        serde_json::from_str(secret_data)
+            .map_err(|e| GarrisonError::InvalidParam(format!("account-totp-parse-failed::{}", e)))
     }
 
     /// 构造 `TotpHandler`。
@@ -53,7 +49,7 @@ impl TotpSecretData {
         // Issue 108: 验证 step > 0，防止除零错误
         if self.step == 0 {
             return Err(GarrisonError::InvalidParam(
-                "TOTP step must be > 0".to_string(),
+                "credential-totp-step-invalid::".to_string(),
             ));
         }
         let secret_bytes = TotpHandler::secret_from_base32(&self.secret)?;

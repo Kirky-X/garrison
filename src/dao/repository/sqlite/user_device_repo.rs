@@ -74,9 +74,10 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
             .try_get("", "cnt")
             .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
         if (current_count as usize) >= MAX_DEVICES {
+            let who = format!("tenant_id={}, login_id={}", tenant_id, login_id);
             return Err(GarrisonError::InvalidParam(format!(
-                "用户 (tenant_id={}, login_id={}) 设备数已达上限 {}，无法注册新设备",
-                tenant_id, login_id, MAX_DEVICES
+                "dao-user-device-limit-exceeded::{}::{}",
+                who, MAX_DEVICES
             )));
         }
 
@@ -354,7 +355,9 @@ mod tests {
         match err {
             GarrisonError::InvalidParam(msg) => {
                 assert!(
-                    msg.contains("MAX_DEVICES") || msg.contains("设备数已达上限"),
+                    msg.contains("dao-user-device-limit-exceeded")
+                        || msg.contains("MAX_DEVICES")
+                        || msg.contains("设备数已达上限"),
                     "错误信息应包含设备上限，实际: {}",
                     msg
                 );

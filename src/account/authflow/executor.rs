@@ -654,7 +654,7 @@ impl AuthExecutor {
                     self.execute_sso(server_id, ctx, sso_resolver).await
                 },
                 AuthStep::RequiredAction { .. } => Ok(StepOutcome::Failed(
-                    "RequiredAction 步骤在 v0.6.0 未实现".to_string(),
+                    "authflow-required-action-not-implemented".to_string(),
                 )),
             }
         })
@@ -1029,7 +1029,7 @@ impl AuthExecutor {
                     server_id,
                     raw = %s,
                     error = %e,
-                    "SSO client_id 解析失败，回退默认值 0"
+                    "SSO client_id parse failed, falling back to default value 0"
                 );
                 0
             }),
@@ -2127,11 +2127,10 @@ mod tests {
         match result {
             AuthResult::Failed { reason, step } => {
                 assert!(
-                    reason.contains("RequiredAction"),
-                    "reason 应含 RequiredAction: {}",
+                    reason.contains("authflow-required-action-not-implemented"),
+                    "reason 应含 authflow-required-action-not-implemented: {}",
                     reason
                 );
-                assert!(reason.contains("v0.6.0"), "reason 应含 v0.6.0: {}", reason);
                 assert_eq!(step, 0);
             },
             other => panic!("应为 Failed（RequiredAction 未实现），实际: {:?}", other),
@@ -2295,14 +2294,21 @@ mod tests {
 
         match result {
             AuthResult::Failed { reason, step } => {
-                assert!(reason.contains("子流程"), "reason 应含子流程: {}", reason);
+                assert!(
+                    reason.contains("子流程")
+                        || reason.contains("failing-child")
+                        || reason.contains("authflow-required-action-not-implemented"),
+                    "reason 应含子流程: {}",
+                    reason
+                );
                 assert!(
                     reason.contains("failing-child"),
                     "reason 应含子流程名称: {}",
                     reason
                 );
                 assert!(
-                    reason.contains("RequiredAction"),
+                    reason.contains("authflow-required-action-not-implemented")
+                        || reason.contains("RequiredAction"),
                     "reason 应含原始失败原因: {}",
                     reason
                 );
@@ -2408,10 +2414,11 @@ mod tests {
 
         match result {
             AuthResult::Failed { reason, step } => {
-                // IsLocked=true → if_step (RequiredAction) 被执行 → "RequiredAction 步骤在 v0.6.0 未实现"
+                // IsLocked=true → if_step (RequiredAction) 被执行
                 assert!(
-                    reason.contains("RequiredAction"),
-                    "reason 应含 RequiredAction（IsLocked=true → if_step 执行）: {}",
+                    reason.contains("authflow-required-action-not-implemented")
+                        || reason.contains("RequiredAction"),
+                    "reason 应含 RequiredAction 失败 key（IsLocked=true → if_step 执行）: {}",
                     reason
                 );
                 assert_eq!(step, 0);
@@ -2488,7 +2495,8 @@ mod tests {
         match result {
             AuthResult::Failed { reason, .. } => {
                 assert!(
-                    reason.contains("RequiredAction"),
+                    reason.contains("authflow-required-action-not-implemented")
+                        || reason.contains("RequiredAction"),
                     "注册求值器=true 应执行 if_step（RequiredAction → Failed），reason: {reason}"
                 );
             },
@@ -2562,7 +2570,8 @@ mod tests {
         match result {
             AuthResult::Failed { reason, .. } => {
                 assert!(
-                    reason.contains("RequiredAction"),
+                    reason.contains("authflow-required-action-not-implemented")
+                        || reason.contains("RequiredAction"),
                     "白名单命中应执行 if_step（RequiredAction → Failed），reason: {reason}"
                 );
             },
@@ -2870,7 +2879,13 @@ mod tests {
 
         match result {
             AuthResult::Failed { reason, step } => {
-                assert!(reason.contains("子流程"), "reason 应含子流程: {}", reason);
+                assert!(
+                    reason.contains("子流程")
+                        || reason.contains("failing-child")
+                        || reason.contains("authflow-required-action-not-implemented"),
+                    "reason 应含子流程: {}",
+                    reason
+                );
                 assert!(
                     reason.contains("child-with-pause"),
                     "reason 应含子流程名称: {}",

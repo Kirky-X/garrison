@@ -251,7 +251,7 @@ impl DefaultSamlProvider {
 
 impl Default for DefaultSamlProvider {
     fn default() -> Self {
-        Self::new().expect("DefaultSamlProvider::new 不应失败")
+        Self::new().expect("DefaultSamlProvider::new should not fail")
     }
 }
 
@@ -390,7 +390,7 @@ fn validate_destination(actual: &str, expected: Option<&str>) -> GarrisonResult<
             if !actual.is_empty() {
                 tracing::warn!(
                     actual = %actual,
-                    "SAML Destination 未配置验证（expected_destination=None），存在重定向攻击风险"
+                    "SAML Destination validation not configured (expected_destination=None), open redirect attack risk"
                 );
             }
             Ok(())
@@ -417,7 +417,7 @@ fn validate_audience(actual: &str, expected: Option<&str>) -> GarrisonResult<()>
             if !actual.is_empty() {
                 tracing::warn!(
                     actual = %actual,
-                    "SAML Audience 未配置验证（expected_audience=None），存在跨 SP 重放风险"
+                    "SAML Audience validation not configured (expected_audience=None), cross-SP replay risk"
                 );
             }
             Ok(())
@@ -603,7 +603,7 @@ impl SamlParseContext {
                 {
                     tracing::warn!(
                         attr_name = %self.current_attr_name,
-                        "SAML Assertion 包含重复属性名，可能为属性污染攻击"
+                        "SAML Assertion contains duplicate attribute name, possible attribute pollution attack"
                     );
                 }
                 self.assertion_attributes
@@ -674,7 +674,7 @@ impl SamlParseContext {
                     {
                         tracing::warn!(
                             attr_name = %self.current_attr_name,
-                            "SAML Assertion 包含重复属性名，可能为属性污染攻击"
+                            "SAML Assertion contains duplicate attribute name, possible attribute pollution attack"
                         );
                     }
                     self.assertion_attributes
@@ -893,7 +893,7 @@ pub(crate) async fn enforce_in_response_to(
             }
             if !warned_no_dao.swap(true, Ordering::Relaxed) {
                 tracing::warn!(
-                    "SAML request_dao 未配置：InResponseTo 绑定与 Assertion 重放防护未启用"
+                    "SAML request_dao not configured: InResponseTo binding and Assertion replay protection disabled"
                 );
             }
             Ok(())
@@ -926,7 +926,7 @@ fn check_saml_namespace(qualified: &[u8]) -> bool {
             if !valid {
                 tracing::warn!(
                     qualified = %full,
-                    "SAML XML 元素使用非标准命名空间前缀，可能为命名空间混淆攻击"
+                    "SAML XML element uses non-standard namespace prefix, possible namespace confusion attack"
                 );
             }
             valid
@@ -1295,21 +1295,21 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
         Some(SIG_ALG_ECDSA_SHA256) => {
             tracing::warn!(
                 algorithm = %SIG_ALG_ECDSA_SHA256,
-                "SAML 签名算法 ecdsa-sha256 在白名单内但当前实现不支持验证（待引入 ECDSA 库）"
+                "SAML signature algorithm ecdsa-sha256 is whitelisted but verification is not implemented yet (awaiting an ECDSA library)"
             );
             return Ok(false);
         },
         Some(alg) if alg == SIG_ALG_RSA_1_5 => {
             tracing::warn!(
                 algorithm = %alg,
-                "SAML 签名算法 rsa-1_5 被拒绝（弱算法，Bleichenbacher 攻击风险）"
+                "SAML signature algorithm rsa-1_5 rejected (weak algorithm, Bleichenbacher attack risk)"
             );
             return Ok(false);
         },
         Some(alg) => {
             tracing::warn!(
                 algorithm = %alg,
-                "SAML 签名算法不在白名单内（仅允许 rsa-sha256 / ecdsa-sha256）"
+                "SAML signature algorithm not whitelisted (only rsa-sha256 / ecdsa-sha256 allowed)"
             );
             return Ok(false);
         },

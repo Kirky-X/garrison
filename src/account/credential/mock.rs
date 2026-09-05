@@ -30,7 +30,7 @@ impl CredentialRepository for MockCredentialRepository {
         let mut store = self.store.lock().unwrap();
         if store.contains_key(&credential.id) {
             return Err(GarrisonError::InvalidParam(format!(
-                "credential already exists: {}",
+                "credential-already-exists::{}",
                 credential.id
             )));
         }
@@ -46,7 +46,7 @@ impl CredentialRepository for MockCredentialRepository {
         // IDOR 防护：caller 必须是自己（vuln-0004）
         if caller_login_id != user_id {
             return Err(GarrisonError::NotPermission(format!(
-                "caller {} cannot query credentials of {}",
+                "credential-query-forbidden::{}::{}",
                 caller_login_id, user_id
             )));
         }
@@ -84,7 +84,7 @@ impl CredentialRepository for MockCredentialRepository {
             Some(m) => m.clone(),
             None => {
                 return Err(GarrisonError::InvalidParam(format!(
-                    "credential not found: {}",
+                    "credential-not-found::{}",
                     credential.id
                 )));
             },
@@ -93,7 +93,7 @@ impl CredentialRepository for MockCredentialRepository {
         // IDOR 防护 1：caller 必须是凭证原 owner
         if existing.user_id != caller_login_id {
             return Err(GarrisonError::NotPermission(format!(
-                "caller {} cannot update credential {} owned by {}",
+                "credential-update-forbidden::{}::{} (owner {})",
                 caller_login_id, credential.id, existing.user_id
             )));
         }
@@ -101,7 +101,7 @@ impl CredentialRepository for MockCredentialRepository {
         // IDOR 防护 2：禁止通过 update 改变 user_id（防止跨用户转移）
         if credential.user_id != existing.user_id {
             return Err(GarrisonError::NotPermission(format!(
-                "cannot transfer credential {} from user {} to {}",
+                "credential-transfer-forbidden::{}::{} -> {}",
                 credential.id, existing.user_id, credential.user_id
             )));
         }
@@ -116,7 +116,7 @@ impl CredentialRepository for MockCredentialRepository {
             Some(m) => m.clone(),
             None => {
                 return Err(GarrisonError::InvalidParam(format!(
-                    "credential not found: {}",
+                    "credential-not-found::{}",
                     credential_id
                 )));
             },
@@ -125,7 +125,7 @@ impl CredentialRepository for MockCredentialRepository {
         // IDOR 防护：caller 必须是凭证 owner
         if existing.user_id != caller_login_id {
             return Err(GarrisonError::NotPermission(format!(
-                "caller {} cannot delete credential {} owned by {}",
+                "credential-delete-forbidden::{}::{} (owner {})",
                 caller_login_id, credential_id, existing.user_id
             )));
         }

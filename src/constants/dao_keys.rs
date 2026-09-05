@@ -58,7 +58,7 @@ pub enum DaoKeyPrefix {
     /// 文档明确标注安全风险）。
     #[deprecated(
         since = "0.7.1",
-        note = "启用 db-sqlite feature + RefreshTokenRotation 走统一轮换路径"
+        note = "enable the db-sqlite feature with RefreshTokenRotation for the unified rotation path"
     )]
     OAuth2RefreshToken,
 }

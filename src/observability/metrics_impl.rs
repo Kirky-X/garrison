@@ -17,7 +17,7 @@ impl GarrisonMetrics {
     /// 注册到自定义 registry。
     pub fn new() -> Self {
         Self::register_to(prometheus::default_registry())
-            .expect("GarrisonMetrics 注册到 default registry 失败：可能已注册")
+            .expect("failed to register GarrisonMetrics to the default registry: possibly already registered")
     }
 
     /// 创建并注册到指定 registry（用于自定义 registry 场景）。

@@ -106,7 +106,7 @@ async fn init_rejects_invalid_config() {
     assert!(result.is_err());
     assert!(matches!(
         result.unwrap_err(),
-        GarrisonError::Config(ref msg) if msg.contains("timeout must be positive")
+        GarrisonError::Config(ref msg) if msg.contains("config-timeout-must-positive")
     ));
     assert!(!GarrisonManager::is_initialized());
     GarrisonManager::reset_for_test();
@@ -461,8 +461,8 @@ async fn init_rejects_invalid_token_style() {
         .await;
     assert!(result.is_err());
     assert!(
-        matches!(result.unwrap_err(), GarrisonError::Config(ref msg) if msg.contains("unknown token_style")),
-        "应返回 'unknown token_style' 错误"
+        matches!(result.unwrap_err(), GarrisonError::Config(ref msg) if msg.contains("config-unknown-token-style")),
+        "应返回 'config-unknown-token-style' 错误"
     );
     assert!(!GarrisonManager::is_initialized());
 

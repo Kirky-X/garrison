@@ -548,7 +548,7 @@ async fn acc_oauth2_010_pkce_verifier_mismatch_rejected() {
         .unwrap_err();
     match err {
         GarrisonError::InvalidParam(msg) => {
-            assert!(msg.contains("code_verifier"), "实际: {}", msg)
+            assert!(msg.contains("oauth2-pkce-length-invalid"), "实际: {}", msg)
         },
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
@@ -674,7 +674,7 @@ async fn acc_oauth2_012_scope_privilege_escalation_blocked_client_side() {
     match err {
         GarrisonError::OAuth2(msg) => {
             assert!(
-                msg.contains("scope handler not registered"),
+                msg.contains("oauth2-scope-handler-not-registered"),
                 "实际: {}",
                 msg
             )

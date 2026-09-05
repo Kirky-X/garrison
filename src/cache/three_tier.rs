@@ -90,12 +90,12 @@ impl UserCacheService {
         // Issue 32: 验证 TTL 参数，防止 0 值导致缓存失效或内存泄漏
         if l1_ttl_secs == 0 {
             return Err(GarrisonError::Config(
-                "UserCacheService::new: l1_ttl_secs 必须 > 0".to_string(),
+                "cache-l1-ttl-must-positive".to_string(),
             ));
         }
         if l2_ttl_secs == 0 {
             return Err(GarrisonError::Config(
-                "UserCacheService::new: l2_ttl_secs 必须 > 0".to_string(),
+                "cache-l2-ttl-must-positive".to_string(),
             ));
         }
         let _ = l1_capacity; // oxcache 0.3 Cache::new() 使用默认 capacity（10000）

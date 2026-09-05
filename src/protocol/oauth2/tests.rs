@@ -693,7 +693,7 @@ async fn unregistered_scope_returns_oauth2_error_without_http() {
     assert!(result.is_err());
     match result.err() {
         Some(GarrisonError::OAuth2(msg)) => {
-            assert!(msg.contains("scope handler not registered: unregistered"))
+            assert!(msg.contains("oauth2-scope-handler-not-registered::unregistered"))
         },
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }

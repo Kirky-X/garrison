@@ -131,7 +131,7 @@ impl MathCaptchaProvider {
                 tracing::warn!(
                     challenge_id,
                     error = %e,
-                    "CAPTCHA attempts key 删除失败（非致命，TTL 将自动清理）"
+                    "CAPTCHA attempts key delete failed (non-fatal, TTL will clean it up)"
                 );
             });
             return Ok(true);
@@ -145,7 +145,7 @@ impl MathCaptchaProvider {
                     challenge_id,
                     raw = %s,
                     error = %e,
-                    "CAPTCHA attempts 数据损坏，重置计数器为 0"
+                    "CAPTCHA attempts data corrupted, resetting counter to 0"
                 );
                 0
             }),
@@ -159,14 +159,14 @@ impl MathCaptchaProvider {
                 tracing::warn!(
                     challenge_id,
                     error = %e,
-                    "CAPTCHA attempts key 删除失败（非致命，TTL 将自动清理）"
+                    "CAPTCHA attempts key delete failed (non-fatal, TTL will clean it up)"
                 );
             });
             tracing::warn!(
                 challenge_id,
                 attempts = new_count,
                 max = self.max_attempts,
-                "CAPTCHA challenge 已因超过最大尝试次数被废弃"
+                "CAPTCHA challenge discarded due to exceeding max attempts"
             );
         } else {
             self.dao

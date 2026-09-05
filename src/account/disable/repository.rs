@@ -135,13 +135,13 @@ impl DefaultDisableRepository {
     fn disable_key(service: &str, login_id: &str) -> GarrisonResult<String> {
         if service.contains(':') {
             return Err(GarrisonError::Config(format!(
-                "service 不能包含冒号（避免 key 注入）: {}",
+                "account-disable-service-colon::{}",
                 service
             )));
         }
         if login_id.contains(':') {
             return Err(GarrisonError::Config(format!(
-                "login_id 不能包含冒号（避免 key 注入）: {}",
+                "account-disable-login-id-colon::{}",
                 login_id
             )));
         }

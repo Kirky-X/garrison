@@ -131,13 +131,13 @@ impl ParameterQueryBuilder {
             if let Err(e) = GarrisonUtil::kickout_by_token(&token_for_cleanup).await {
                 tracing::warn!(
                     error = %e,
-                    "ParameterQuery 临时会话清理失败（非致命，TTL 将自动清理）"
+                    "ParameterQuery temporary session cleanup failed (non-fatal, TTL will clean it up)"
                 );
             }
             result
         } else {
             Err(GarrisonError::Internal(
-                "login_id not set in ParameterQuery context".to_string(),
+                "stp-param-login-id-missing::".to_string(),
             ))
         }
     }

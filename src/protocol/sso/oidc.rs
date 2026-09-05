@@ -57,8 +57,7 @@ fn build_safe_http_client() -> GarrisonResult<reqwest::Client> {
 /// 明文 http 可被中间人窃取。规则与 oauth2 client 的 redirect_uri 校验一致：
 /// `https://` 任意 host；`http://localhost` / `http://127.0.0.1`（开发/测试场景）。
 fn validate_endpoint_scheme(url: &str, field: &str) -> GarrisonResult<()> {
-    let reject =
-        || GarrisonError::Config(format!("{field} must be https or localhost, got: {}", url));
+    let reject = || GarrisonError::Config(format!("url-scheme-https-required::{}::{}", field, url));
     let scheme_end = url.find("://").ok_or_else(reject)?;
     let rest = &url[scheme_end + 3..];
     match &url[..scheme_end] {

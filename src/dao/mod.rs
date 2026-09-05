@@ -143,7 +143,7 @@ pub trait GarrisonDao: Send + Sync {
     /// `GarrisonDaoOxcache` 与 `MockDao` 已重写。
     async fn get_timeout(&self, _key: &str) -> GarrisonResult<Option<Duration>> {
         Err(GarrisonError::NotImplemented(format!(
-            "get_timeout 未实现：{} 后端不支持 TTL 查询",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -203,7 +203,7 @@ pub trait GarrisonDao: Send + Sync {
     /// 返回 `GarrisonError::NotImplemented`。
     async fn keys(&self, _pattern: &str) -> GarrisonResult<Vec<String>> {
         Err(GarrisonError::NotImplemented(format!(
-            "keys 未实现：{} 后端不支持 key scan（待 oxcache 提供原生 iter API）",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -338,7 +338,7 @@ pub trait GarrisonDao: Send + Sync {
         _ttl_seconds: u64,
     ) -> GarrisonResult<bool> {
         Err(GarrisonError::NotImplemented(format!(
-            "compare_and_update_if_greater 未实现：{} 后端不支持原子 CAS（HTTP Digest nc 单调性校验必须重写）",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -367,7 +367,7 @@ pub trait GarrisonDao: Send + Sync {
         _provider_user_id: &str,
     ) -> GarrisonResult<Option<String>> {
         Err(GarrisonError::NotImplemented(format!(
-            "find_social_binding 未实现：{} 后端不支持 SQL 查询",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -397,7 +397,7 @@ pub trait GarrisonDao: Send + Sync {
         _created_at: i64,
     ) -> GarrisonResult<()> {
         Err(GarrisonError::NotImplemented(format!(
-            "insert_social_binding 未实现：{} 后端不支持 SQL 插入",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -420,7 +420,7 @@ pub trait GarrisonDao: Send + Sync {
         _tenant_id: i64,
     ) -> GarrisonResult<Vec<(String, String)>> {
         Err(GarrisonError::NotImplemented(format!(
-            "query_role_hierarchy_edges 未实现：{} 后端不支持 SQL 查询",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -445,7 +445,7 @@ pub trait GarrisonDao: Send + Sync {
         _parent_role: &str,
     ) -> GarrisonResult<()> {
         Err(GarrisonError::NotImplemented(format!(
-            "insert_role_hierarchy_edge 未实现：{} 后端不支持 SQL 插入",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -469,7 +469,7 @@ pub trait GarrisonDao: Send + Sync {
         _parent_role: &str,
     ) -> GarrisonResult<()> {
         Err(GarrisonError::NotImplemented(format!(
-            "delete_role_hierarchy_edge 未实现：{} 后端不支持 SQL 删除",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -502,7 +502,7 @@ pub trait GarrisonDao: Send + Sync {
         _args: Vec<String>,
     ) -> GarrisonResult<Vec<String>> {
         Err(GarrisonError::NotImplemented(format!(
-            "eval_lua 未实现：{} 后端不支持 Lua 脚本（仅 Redis 后端支持）",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -551,7 +551,7 @@ pub trait GarrisonDao: Send + Sync {
         _cycle_start: i64,
     ) -> GarrisonResult<()> {
         Err(GarrisonError::NotImplemented(format!(
-            "insert_credit_consumption 未实现：{} 后端不支持 SQL 插入",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -568,7 +568,7 @@ pub trait GarrisonDao: Send + Sync {
         _to_ts: i64,
     ) -> GarrisonResult<Vec<(i64, String, u64, u64, u64, i64, i64)>> {
         Err(GarrisonError::NotImplemented(format!(
-            "query_credit_consumption 未实现：{} 后端不支持 SQL 查询",
+            "dao-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -2023,7 +2023,7 @@ pub mod tests {
         let dao = MinimalDao::new();
         let result = dao.find_social_binding(0, "wechat", "wx_openid").await;
         assert!(
-            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("find_social_binding")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("dao-not-implemented")),
             "find_social_binding 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
@@ -2039,7 +2039,7 @@ pub mod tests {
             .insert_social_binding(0, "1001", "wechat", "wx_openid", None, 1700000000)
             .await;
         assert!(
-            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("insert_social_binding")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("dao-not-implemented")),
             "insert_social_binding 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
@@ -2055,7 +2055,7 @@ pub mod tests {
         let dao = MinimalDao::new();
         let result = dao.compare_and_update_if_greater("key", 1, 60).await;
         assert!(
-            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("compare_and_update_if_greater")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("dao-not-implemented")),
             "compare_and_update_if_greater 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );
@@ -2345,7 +2345,7 @@ pub mod tests {
             .eval_lua("return 1", vec!["k".to_string()], vec!["a".to_string()])
             .await;
         assert!(
-            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("eval_lua")),
+            matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("dao-not-implemented")),
             "eval_lua 默认实现应返回 NotImplemented，实际: {:?}",
             result
         );

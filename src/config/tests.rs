@@ -147,8 +147,8 @@ fn validate_rejects_invalid_token_style() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref msg) if msg.contains("unknown token_style: invalid")),
-        "应返回 'unknown token_style: invalid'，实际: {:?}",
+        matches!(err, GarrisonError::Config(ref msg) if msg.contains("config-unknown-token-style::invalid")),
+        "应返回 'config-unknown-token-style::invalid'，实际: {:?}",
         err
     );
 }
@@ -162,8 +162,8 @@ fn validate_rejects_negative_timeout() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref msg) if msg.contains("timeout must be positive")),
-        "应返回 'timeout must be positive'，实际: {:?}",
+        matches!(err, GarrisonError::Config(ref msg) if msg.contains("config-timeout-must-positive")),
+        "应返回 'config-timeout-must-positive'，实际: {:?}",
         err
     );
 }
@@ -215,8 +215,8 @@ fn validate_rejects_empty_jwt_secret_when_token_style_is_jwt() {
     match result {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("jwt_secret"),
-                "错误消息应包含 jwt_secret，实际: {}",
+                msg.contains("config-jwt-secret-empty"),
+                "错误消息应包含 config-jwt-secret-empty，实际: {}",
                 msg
             );
         },
@@ -237,7 +237,7 @@ fn validate_rejects_short_jwt_secret_hs256() {
     match config.validate() {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("jwt_secret") && msg.contains("≥"),
+                msg.contains("config-jwt-secret-too-short") && msg.contains("min"),
                 "实际: {}",
                 msg
             );
@@ -257,7 +257,7 @@ fn validate_rejects_short_jwt_secret_hs512() {
     match config.validate() {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("HS512") && msg.contains("≥64"),
+                msg.contains("HS512") && msg.contains("min 64"),
                 "HS512 短密钥错误消息应包含算法与最小长度，实际: {}",
                 msg
             );
@@ -277,7 +277,7 @@ fn validate_rejects_short_jwt_secret_hs384() {
     match config.validate() {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("HS384") && msg.contains("≥48"),
+                msg.contains("HS384") && msg.contains("min 48"),
                 "HS384 短密钥错误消息应包含算法与最小长度，实际: {}",
                 msg
             );
@@ -296,8 +296,8 @@ fn validate_rejects_unknown_jwt_algorithm() {
     match config.validate() {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("HS1024") && msg.contains("HS256/HS384/HS512"),
-                "未知算法错误消息应包含输入值与白名单，实际: {}",
+                msg.contains("config-jwt-algorithm-unsupported") && msg.contains("HS1024"),
+                "未知算法错误消息应包含输入值与 key，实际: {}",
                 msg
             );
         },
@@ -384,8 +384,8 @@ fn validate_remember_me_fails_when_timeout_not_greater() {
     match result {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("remember_me_timeout"),
-                "错误消息应包含 remember_me_timeout，实际: {}",
+                msg.contains("config-remember-me-timeout-mismatch"),
+                "错误消息应包含 config-remember-me-timeout-mismatch，实际: {}",
                 msg
             );
         },
@@ -896,8 +896,8 @@ fn env_invalid_token_style_fails_validation() {
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(
-        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("unknown token_style")),
-        "应返回 'unknown token_style' 错误，实际: {:?}",
+        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("config-unknown-token-style")),
+        "应返回 'config-unknown-token-style' 错误，实际: {:?}",
         result
     );
     std::env::remove_var("GARRISON_TOKEN_STYLE");
@@ -911,8 +911,8 @@ fn env_negative_timeout_fails_validation() {
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(
-        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("timeout must be positive")),
-        "应返回 'timeout must be positive' 错误，实际: {:?}",
+        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("config-timeout-must-positive")),
+        "应返回 'config-timeout-must-positive' 错误，实际: {:?}",
         result
     );
     std::env::remove_var("GARRISON_TIMEOUT");
@@ -1063,7 +1063,7 @@ fn validate_rejects_threshold_above_100() {
     match result {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("auto_renewal_threshold must be -1 or 0-100"),
+                msg.contains("config-auto-renewal-threshold-invalid"),
                 "错误消息应包含范围提示，实际: {}",
                 msg
             );
@@ -1272,7 +1272,7 @@ fn validate_rejects_share_without_concurrent() {
     match result {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("is_share=true requires is_concurrent=true"),
+                msg.contains("config-is-share-requires-concurrent"),
                 "错误消息应包含约束提示，实际: {}",
                 msg
             );
@@ -1377,8 +1377,8 @@ fn test_device_binding_mode_invalid() {
     match result {
         Err(GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("device_binding_mode"),
-                "错误消息应包含字段名，实际: {}",
+                msg.contains("config-unknown-device-binding-mode"),
+                "错误消息应包含 config-unknown-device-binding-mode，实际: {}",
                 msg
             );
         },
@@ -1414,7 +1414,7 @@ fn validate_rejects_empty_redis_url() {
     };
     let err = config.validate().unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("redis_url")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-redis-url-empty")),
         "空 redis_url 应被 validate 拒绝，实际错误: {:?}",
         err
     );
@@ -1553,8 +1553,8 @@ fn env_rate_limit_backend_invalid_value_returns_error() {
     match err {
         GarrisonError::Config(msg) => {
             assert!(
-                msg.contains("GARRISON_RATE_LIMIT_BACKEND"),
-                "错误消息应包含变量名"
+                msg.contains("config-rate-limit-backend-unsupported"),
+                "错误消息应包含 config-rate-limit-backend-unsupported"
             );
             assert!(msg.contains("mysql"), "错误消息应包含无效值");
         },
@@ -1731,7 +1731,7 @@ fn validate_rejects_anomalous_interval_below_60() {
     config.anomalous_analyzer_interval_secs = 30;
     let err = config.validate().unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("anomalous_analyzer_interval_secs")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-anomalous-interval-invalid")),
         "interval=30 应被拒绝，实际: {:?}",
         err
     );
@@ -1754,7 +1754,7 @@ fn validate_rejects_zero_burst_threshold() {
     config.anomalous_analyzer_burst_threshold = 0;
     let err = config.validate().unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("anomalous_analyzer_burst_threshold")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-anomalous-burst-invalid")),
         "burst_threshold=0 应被拒绝，实际: {:?}",
         err
     );

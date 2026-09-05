@@ -405,8 +405,8 @@ async fn acc_sec_010_policy_length_rule_rejects_short() {
     let err = rule.validate(&ctx, "short").unwrap_err();
     assert_eq!(err.rule_name, "length", "应报 length 规则");
     assert!(
-        err.message.contains("8"),
-        "错误信息应含最小长度: {}",
+        err.message.contains("policy-length-too-short"),
+        "错误信息应为长度规则的 i18n key: {}",
         err.message
     );
 
@@ -775,7 +775,11 @@ async fn acc_sec_019_sanitize_strips_attack_chars_and_limits_length() {
     assert_eq!(sanitize_input("\u{FEFF}admin", 100).unwrap(), "admin");
     // 超长输入：显性错误
     match sanitize_input("hello world", 5) {
-        Err(GarrisonError::InvalidParam(msg)) => assert!(msg.contains("超过"), "实际: {}", msg),
+        Err(GarrisonError::InvalidParam(msg)) => assert!(
+            msg.contains("sanitize-input-length-exceeded"),
+            "实际: {}",
+            msg
+        ),
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
     // 边界：== max_len 通过

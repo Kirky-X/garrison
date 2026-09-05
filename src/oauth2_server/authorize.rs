@@ -209,7 +209,10 @@ impl AuthorizeHandler {
 
         // 4. 校验 client_id
         let client = self.store.get(&req.client_id).await?.ok_or_else(|| {
-            GarrisonError::OAuth2(format!("invalid client_id: {}", req.client_id))
+            GarrisonError::OAuth2(format!(
+                "oauth2-server-client-id-invalid::{}",
+                req.client_id
+            ))
         })?;
 
         // 5. 校验 redirect_uri 白名单
@@ -347,21 +350,21 @@ impl AuthorizeHandler {
         let record: CodeUsedRecord = match serde_json::from_str(&json) {
             Ok(r) => r,
             Err(e) => {
-                tracing::warn!(error = %e, "revoke_replayed_code_tokens: 反序列化 codeused 记录失败，跳过吊销");
+                tracing::warn!(error = %e, "revoke_replayed_code_tokens: failed to deserialize codeused record, skipping revocation");
                 return Ok(false);
             },
         };
         // 吊销 access token（introspection / 资源服务器按 DAO 记录校验时失效）
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(&record.access_token);
         if let Err(e) = self.dao.delete(&at_key).await {
-            tracing::warn!(error = %e, "revoke_replayed_code_tokens: 删除 access token 记录失败");
+            tracing::warn!(error = %e, "revoke_replayed_code_tokens: failed to delete access token record");
         }
         // 吊销 refresh token（阻止后续 refresh 轮换）
         if let Some(rt) = &record.refresh_token {
             #[allow(deprecated)]
             let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(rt);
             if let Err(e) = self.dao.delete(&rt_key).await {
-                tracing::warn!(error = %e, "revoke_replayed_code_tokens: 删除 refresh token 记录失败");
+                tracing::warn!(error = %e, "revoke_replayed_code_tokens: failed to delete refresh token record");
             }
         }
         Ok(true)

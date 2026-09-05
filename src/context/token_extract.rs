@@ -221,7 +221,7 @@ pub fn extract_token_from_request_parts(
         if !is_body_token_allowed_method(method) {
             tracing::warn!(
                 method = method,
-                "C7: HTTP 方法不允许从 body 提取 token，已跳过 body 读取"
+                "C7: HTTP method does not allow extracting token from body, skipping body read"
             );
             return Ok(None);
         }

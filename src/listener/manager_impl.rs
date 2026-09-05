@@ -14,7 +14,7 @@ impl GarrisonListenerManager {
             .collect();
         for l in &listeners {
             tracing::info!(
-                "已加载监听器: {}",
+                "listener loaded: {}",
                 std::any::type_name::<Arc<dyn GarrisonListener>>()
             );
             let _ = l; // 避免 unused 警告

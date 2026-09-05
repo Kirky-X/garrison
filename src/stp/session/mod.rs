@@ -345,7 +345,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         tracing::warn!(
                             ip = %ip,
                             error = %e,
-                            "brute force reset-on-success 失败（不影响登录结果）"
+                            "brute force reset-on-success failed (does not affect the login result)"
                         );
                     }
                 },
@@ -354,7 +354,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         tracing::warn!(
                             ip = %ip,
                             error = %record_err,
-                            "brute force record_failure 失败（不影响登录结果）"
+                            "brute force record_failure failed (does not affect the login result)"
                         );
                     }
                 },
@@ -389,7 +389,7 @@ impl SessionLogic for GarrisonLogicDefault {
                 if let Some(existing_ts) = session.get_token_session(token).await? {
                     if existing_ts.login_id != login_id {
                         return Err(GarrisonError::InvalidToken(format!(
-                            "token already associated with login_id: {}",
+                            "stp-token-login-id-bound::{}",
                             existing_ts.login_id
                         )));
                     }
@@ -602,7 +602,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         tracing::warn!(
                             ip = %ip,
                             error = %e,
-                            "brute force reset-on-success 失败（不影响校验结果）"
+                            "brute force reset-on-success failed (does not affect the verification result)"
                         );
                     }
                 },
@@ -611,7 +611,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         tracing::warn!(
                             ip = %ip,
                             error = %record_err,
-                            "brute force record_failure 失败（不影响校验结果）"
+                            "brute force record_failure failed (does not affect the verification result)"
                         );
                     }
                 },

@@ -74,12 +74,12 @@ async fn async_main() -> GarrisonResult<()> {
         .unwrap_or(100);
     let internal_api_key = std::env::var("GARRISON_INTERNAL_API_KEY").unwrap_or_else(|_| {
         eprintln!(
-            "FATAL: GARRISON_INTERNAL_API_KEY 环境变量未配置，拒绝启动（fail-closed，M-SAST-1/M-5）"
+            "FATAL: GARRISON_INTERNAL_API_KEY env var not configured, refusing to start (fail-closed, M-SAST-1/M-5)"
         );
         std::process::exit(1);
     });
     if internal_api_key.is_empty() {
-        eprintln!("FATAL: GARRISON_INTERNAL_API_KEY 为空字符串，拒绝启动（fail-closed）");
+        eprintln!("FATAL: GARRISON_INTERNAL_API_KEY is empty, refusing to start (fail-closed)");
         std::process::exit(1);
     }
 
@@ -112,7 +112,7 @@ async fn async_main() -> GarrisonResult<()> {
         feature = "tracing-log"
     )))]
     {
-        eprintln!("WARN: 未启用 observability feature，tracing 日志将丢弃。启用 audit-inklog 或 metrics-prometheus 获取结构化日志。");
+        eprintln!("WARN: no observability feature enabled, tracing logs will be dropped. Enable audit-inklog or metrics-prometheus for structured logging.");
     }
 
     // 创建 BackendEmbedded 作为后端

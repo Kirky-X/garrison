@@ -86,13 +86,13 @@ pub async fn init_inklog_logging_with_fallback() -> InklogInit {
             #[cfg(not(any(feature = "metrics-prometheus", feature = "tracing-log")))]
             {
                 eprintln!(
-                    "WARN: inklog 初始化失败且未启用 observability feature，日志将丢失：{}",
+                    "WARN: inklog init failed and no observability feature enabled, logs will be lost: {}",
                     e
                 );
             }
             tracing::warn!(
                 error = %e,
-                "inklog 初始化失败，已降级到 tracing-subscriber 默认配置（spec R-dep-003）"
+                "inklog init failed, degraded to tracing-subscriber default config (spec R-dep-003)"
             );
             InklogInit {
                 guard: None,

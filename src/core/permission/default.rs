@@ -24,7 +24,7 @@ impl PermissionChecker for PermissionCheckerDefault {
         // P2.4: 长度校验（>256 字节返回 InvalidParam），防止 DoS
         if normalized.len() > 256 {
             return Err(GarrisonError::InvalidParam(format!(
-                "permission too long: {} bytes (max 256)",
+                "permission-name-too-long::{}",
                 normalized.len()
             )));
         }

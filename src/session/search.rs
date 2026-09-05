@@ -97,14 +97,14 @@ pub async fn search_token_value(
 ) -> GarrisonResult<Vec<String>> {
     if keyword.len() > MAX_KEYWORD_LEN {
         return Err(GarrisonError::InvalidParam(format!(
-            "keyword 长度超限：{} > {}",
+            "session-search-keyword-too-long::{}::{}",
             keyword.len(),
             MAX_KEYWORD_LEN
         )));
     }
     if size > MAX_SIZE {
         return Err(GarrisonError::InvalidParam(format!(
-            "size 超限：{} > {}",
+            "session-search-size-exceeded::{}::{}",
             size, MAX_SIZE
         )));
     }
@@ -117,7 +117,7 @@ pub async fn search_token_value(
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
-            "搜索扫描的 key 数量超过上限，已截断"
+            "search scan exceeded the key count limit, truncated"
         );
         keys.truncate(MAX_SCAN);
     }
@@ -148,7 +148,7 @@ pub async fn search_token_value(
                 tracing::warn!(
                     key = %key,
                     error = %e,
-                    "跳过损坏的 TokenSession 记录"
+                    "skipping corrupted TokenSession record"
                 );
                 skipped += 1;
                 continue;
@@ -161,7 +161,7 @@ pub async fn search_token_value(
         tracing::warn!(
             skipped,
             total = entries.len() + skipped,
-            "搜索完成但有记录被跳过"
+            "search completed with skipped records"
         );
     }
 
@@ -208,14 +208,14 @@ pub async fn search_session_id(
 ) -> GarrisonResult<Vec<String>> {
     if keyword.len() > MAX_KEYWORD_LEN {
         return Err(GarrisonError::InvalidParam(format!(
-            "keyword 长度超限：{} > {}",
+            "session-search-keyword-too-long::{}::{}",
             keyword.len(),
             MAX_KEYWORD_LEN
         )));
     }
     if size > MAX_SIZE {
         return Err(GarrisonError::InvalidParam(format!(
-            "size 超限：{} > {}",
+            "session-search-size-exceeded::{}::{}",
             size, MAX_SIZE
         )));
     }
@@ -228,7 +228,7 @@ pub async fn search_session_id(
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
-            "搜索扫描的 key 数量超过上限，已截断"
+            "search scan exceeded the key count limit, truncated"
         );
         keys.truncate(MAX_SCAN);
     }
@@ -255,7 +255,7 @@ pub async fn search_session_id(
                 tracing::warn!(
                     key = %key,
                     error = %e,
-                    "跳过损坏的 AccountSession 记录"
+                    "skipping corrupted AccountSession record"
                 );
                 skipped += 1;
                 continue;
@@ -272,7 +272,7 @@ pub async fn search_session_id(
         tracing::warn!(
             skipped,
             total = entries.len() + skipped,
-            "搜索完成但有记录被跳过"
+            "search completed with skipped records"
         );
     }
 
@@ -320,14 +320,14 @@ pub async fn search_token_session_id(
 ) -> GarrisonResult<Vec<String>> {
     if keyword.len() > MAX_KEYWORD_LEN {
         return Err(GarrisonError::InvalidParam(format!(
-            "keyword 长度超限：{} > {}",
+            "session-search-keyword-too-long::{}::{}",
             keyword.len(),
             MAX_KEYWORD_LEN
         )));
     }
     if size > MAX_SIZE {
         return Err(GarrisonError::InvalidParam(format!(
-            "size 超限：{} > {}",
+            "session-search-size-exceeded::{}::{}",
             size, MAX_SIZE
         )));
     }
@@ -340,7 +340,7 @@ pub async fn search_token_session_id(
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
-            "搜索扫描的 key 数量超过上限，已截断"
+            "search scan exceeded the key count limit, truncated"
         );
         keys.truncate(MAX_SCAN);
     }
@@ -367,7 +367,7 @@ pub async fn search_token_session_id(
                 tracing::warn!(
                     key = %key,
                     error = %e,
-                    "跳过损坏的 TokenSession 记录"
+                    "skipping corrupted TokenSession record"
                 );
                 skipped += 1;
                 continue;
@@ -384,7 +384,7 @@ pub async fn search_token_session_id(
         tracing::warn!(
             skipped,
             total = entries.len() + skipped,
-            "搜索完成但有记录被跳过"
+            "search completed with skipped records"
         );
     }
 
@@ -710,8 +710,8 @@ mod tests {
         match result {
             Err(GarrisonError::InvalidParam(msg)) => {
                 assert!(
-                    msg.contains("keyword 长度超限"),
-                    "错误消息应包含 'keyword 长度超限'，实际: {}",
+                    msg.contains("session-search-keyword-too-long"),
+                    "错误消息应包含 'session-search-keyword-too-long'，实际: {}",
                     msg
                 );
             },
@@ -731,8 +731,8 @@ mod tests {
         match result {
             Err(GarrisonError::InvalidParam(msg)) => {
                 assert!(
-                    msg.contains("size 超限"),
-                    "错误消息应包含 'size 超限'，实际: {}",
+                    msg.contains("session-search-size-exceeded"),
+                    "错误消息应包含 'session-search-size-exceeded'，实际: {}",
                     msg
                 );
             },

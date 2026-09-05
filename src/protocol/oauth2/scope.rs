@@ -81,7 +81,7 @@ impl ScopeRegistry {
         match map.get(scope) {
             Some(handler) => handler.validate(scope, login_id),
             None => Err(GarrisonError::OAuth2(format!(
-                "scope handler not registered: {}",
+                "oauth2-scope-handler-not-registered::{}",
                 scope
             ))),
         }
@@ -175,7 +175,7 @@ mod tests {
         assert!(result.is_err());
         match result.err() {
             Some(GarrisonError::OAuth2(msg)) => {
-                assert!(msg.contains("scope handler not registered: unregistered_scope"))
+                assert!(msg.contains("oauth2-scope-handler-not-registered::unregistered_scope"))
             },
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
         }

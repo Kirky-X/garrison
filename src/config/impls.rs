@@ -367,7 +367,7 @@ impl GarrisonConfig {
             })?;
             if content.len() > MAX_CONFIG_FILE_SIZE as usize {
                 return Err(GarrisonError::Config(format!(
-                    "配置文件实际大小超过上限 [{}]：{} bytes",
+                    "config-file-size-exceeded::{}::{}",
                     display_name(),
                     content.len()
                 )));
@@ -383,7 +383,7 @@ impl GarrisonConfig {
 
         let config = builder
             .build()
-            .map_err(|e| GarrisonError::Config(format!("confers build error: {}", e)))?;
+            .map_err(|e| GarrisonError::Config(format!("config-confers-build-failed::{}", e)))?;
 
         #[cfg_attr(
             not(any(
@@ -425,7 +425,7 @@ impl GarrisonConfig {
                     },
                     _ => {
                         return Err(GarrisonError::Config(format!(
-                            "GARRISON_RATE_LIMIT_BACKEND 不支持的值 '{}'，仅支持 'memory' 或 'redis'",
+                            "config-rate-limit-backend-unsupported::{}",
                             val
                         )));
                     },
@@ -487,18 +487,18 @@ impl GarrisonConfig {
     fn validate_core(&self) -> GarrisonResult<()> {
         if !TOKEN_STYLES.contains(&self.token_style.as_str()) {
             return Err(GarrisonError::Config(format!(
-                "unknown token_style: {}",
+                "config-unknown-token-style::{}",
                 self.token_style
             )));
         }
         if self.timeout <= 0 {
             return Err(GarrisonError::Config(
-                "timeout must be positive".to_string(),
+                "config-timeout-must-positive::".to_string(),
             ));
         }
         if !COOKIE_SAME_SITE_VALUES.contains(&self.cookie_same_site.as_str()) {
             return Err(GarrisonError::Config(format!(
-                "unknown cookie_same_site: {} (expected Lax/Strict/None)",
+                "config-unknown-cookie-same-site::{}",
                 self.cookie_same_site
             )));
         }
@@ -513,7 +513,7 @@ impl GarrisonConfig {
             let secret_len = self.jwt_secret.as_str().len();
             if secret_len == 0 {
                 return Err(GarrisonError::Config(
-                    "jwt_secret 不能为空（当 token_style=jwt 时）".to_string(),
+                    "config-jwt-secret-empty::".to_string(),
                 ));
             }
             let min_len = match self.jwt_algorithm.as_str() {
@@ -522,20 +522,20 @@ impl GarrisonConfig {
                 "HS512" => 64,
                 other => {
                     return Err(GarrisonError::Config(format!(
-                        "不支持的 jwt_algorithm: {}（仅支持 HS256/HS384/HS512）",
+                        "config-jwt-algorithm-unsupported::{}",
                         other
                     )))
                 },
             };
             if secret_len < min_len {
                 return Err(GarrisonError::Config(format!(
-                    "jwt_secret 长度不足：{} 算法要求 ≥{} 字节，实际 {} 字节",
+                    "config-jwt-secret-too-short::{} (min {} bytes)::{}",
                     self.jwt_algorithm, min_len, secret_len
                 )));
             }
         } else if self.token_style == "simple" && self.jwt_secret.as_str().len() < 32 {
             tracing::warn!(
-                "jwt_secret 长度 {} < 32 字节，token_style={} 不强制校验，但建议强化以防 HMAC 爆破",
+                "jwt_secret length {} < 32 bytes, token_style={} skips mandatory check, but hardening is recommended against HMAC brute force",
                 self.jwt_secret.as_str().len(),
                 self.token_style
             );
@@ -547,30 +547,30 @@ impl GarrisonConfig {
     fn validate_session_config(&self) -> GarrisonResult<()> {
         if self.remember_me_enabled && self.remember_me_timeout <= self.timeout {
             return Err(GarrisonError::Config(format!(
-                "remember_me_timeout ({}) must be greater than timeout ({}) when remember_me_enabled is true",
+                "config-remember-me-timeout-mismatch::{}::{}",
                 self.remember_me_timeout, self.timeout
             )));
         }
         if !self.remember_me_enabled && self.remember_me_timeout <= 0 {
             return Err(GarrisonError::Config(format!(
-                "remember_me_timeout must be positive, got: {}",
+                "config-remember-me-timeout-positive::{}",
                 self.remember_me_timeout
             )));
         }
         if self.frontend_separation {
             tracing::info!(
-                "前后端分离模式已启用：Token 从 Authorization Header 读取，不设置 Cookie"
+                "frontend separation mode enabled: token read from Authorization header, no cookie set"
             );
         }
         if self.auto_renewal_threshold != -1 && !(0..=100).contains(&self.auto_renewal_threshold) {
             return Err(GarrisonError::Config(format!(
-                "auto_renewal_threshold must be -1 or 0-100, got: {}",
+                "config-auto-renewal-threshold-invalid::{}",
                 self.auto_renewal_threshold
             )));
         }
         if self.is_share && !self.is_concurrent {
             return Err(GarrisonError::Config(
-                "is_share=true requires is_concurrent=true".to_string(),
+                "config-is-share-requires-concurrent::".to_string(),
             ));
         }
         // session_hover_timeout 上界：10 年（315_360_000 秒），防止 saturating_mul 之外的
@@ -578,7 +578,7 @@ impl GarrisonConfig {
         const MAX_SESSION_HOVER_TIMEOUT_SECS: i64 = 315_360_000;
         if self.session_hover_timeout > MAX_SESSION_HOVER_TIMEOUT_SECS {
             return Err(GarrisonError::Config(format!(
-                "session_hover_timeout ({}) exceeds maximum allowed {} seconds (10 years)",
+                "config-session-hover-timeout-exceeds::{}::{}",
                 self.session_hover_timeout, MAX_SESSION_HOVER_TIMEOUT_SECS
             )));
         }
@@ -589,7 +589,7 @@ impl GarrisonConfig {
     fn validate_device_binding(&self) -> GarrisonResult<()> {
         if !DEVICE_BINDING_MODES.contains(&self.device_binding_mode.as_str()) {
             return Err(GarrisonError::Config(format!(
-                "unknown device_binding_mode: {} (expected strict/loose/disabled)",
+                "config-unknown-device-binding-mode::{}",
                 self.device_binding_mode
             )));
         }
@@ -601,24 +601,20 @@ impl GarrisonConfig {
         #[cfg(feature = "session-extra")]
         if self.anon_session_timeout == 0 {
             return Err(GarrisonError::Config(
-                "anon_session_timeout 必须 > 0".to_string(),
+                "config-anon-timeout-invalid".to_string(),
             ));
         }
         #[cfg(feature = "three-tier-cache")]
         {
             if self.l1_cache_ttl_secs == 0 {
-                return Err(GarrisonError::Config(
-                    "l1_cache_ttl_secs 必须 > 0".to_string(),
-                ));
+                return Err(GarrisonError::Config("config-l1-ttl-invalid".to_string()));
             }
             if self.l2_cache_ttl_secs == 0 {
-                return Err(GarrisonError::Config(
-                    "l2_cache_ttl_secs 必须 > 0".to_string(),
-                ));
+                return Err(GarrisonError::Config("config-l2-ttl-invalid".to_string()));
             }
             if self.l1_cache_capacity == 0 {
                 return Err(GarrisonError::Config(
-                    "l1_cache_capacity 必须 > 0".to_string(),
+                    "config-l1-capacity-invalid".to_string(),
                 ));
             }
         }
@@ -626,9 +622,7 @@ impl GarrisonConfig {
         {
             if let RateLimitBackend::Redis { redis_url } = &self.rate_limit_backend {
                 if redis_url.is_empty() {
-                    return Err(GarrisonError::Config(
-                        "rate_limit_backend=Redis 时 redis_url 不能为空".to_string(),
-                    ));
+                    return Err(GarrisonError::Config("config-redis-url-empty".to_string()));
                 }
             }
         }
@@ -637,7 +631,7 @@ impl GarrisonConfig {
             for method in &self.waf_allowed_methods {
                 if method != &method.to_uppercase() {
                     return Err(GarrisonError::Config(format!(
-                        "waf_allowed_methods 中的方法必须为大写，实际: {}",
+                        "config-waf-method-case::{}",
                         method
                     )));
                 }
@@ -647,22 +641,22 @@ impl GarrisonConfig {
         {
             if self.sms_hourly_limit == 0 {
                 return Err(GarrisonError::Config(
-                    "sms_hourly_limit 必须大于 0".to_string(),
+                    "config-sms-hourly-invalid".to_string(),
                 ));
             }
             if self.sms_daily_limit < self.sms_hourly_limit {
                 return Err(GarrisonError::Config(
-                    "sms_daily_limit 必须 >= sms_hourly_limit".to_string(),
+                    "config-sms-daily-invalid".to_string(),
                 ));
             }
             if self.sms_verify_max_attempts == 0 {
                 return Err(GarrisonError::Config(
-                    "sms_verify_max_attempts 必须大于 0".to_string(),
+                    "config-sms-max-attempts-invalid".to_string(),
                 ));
             }
             if self.sms_unverified_threshold == 0 {
                 return Err(GarrisonError::Config(
-                    "sms_unverified_threshold 必须大于 0".to_string(),
+                    "config-sms-threshold-invalid".to_string(),
                 ));
             }
         }
@@ -670,12 +664,12 @@ impl GarrisonConfig {
         {
             if self.anomalous_analyzer_interval_secs < 60 {
                 return Err(GarrisonError::Config(
-                    "anomalous_analyzer_interval_secs 必须 >= 60".to_string(),
+                    "config-anomalous-interval-invalid".to_string(),
                 ));
             }
             if self.anomalous_analyzer_burst_threshold == 0 {
                 return Err(GarrisonError::Config(
-                    "anomalous_analyzer_burst_threshold 必须大于 0".to_string(),
+                    "config-anomalous-burst-invalid".to_string(),
                 ));
             }
         }

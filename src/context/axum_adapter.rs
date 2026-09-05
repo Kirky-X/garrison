@@ -75,7 +75,7 @@ impl<'a> GarrisonRequest for AxumRequest<'a> {
 
     fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
         let header_name: HeaderName = name.parse().map_err(|e| {
-            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+            GarrisonError::Context(format!("ctx-invalid-header-name::{}::{}", name, e))
         })?;
         Ok(self
             .request
@@ -147,17 +147,18 @@ impl AxumResponse {
 
 impl GarrisonResponse for AxumResponse {
     fn set_status(&mut self, code: u16) -> GarrisonResult<()> {
-        self.status = StatusCode::from_u16(code)
-            .map_err(|e| GarrisonError::Context(format!("invalid status code {}: {}", code, e)))?;
+        self.status = StatusCode::from_u16(code).map_err(|e| {
+            GarrisonError::Context(format!("ctx-invalid-status-code::{}::{}", code, e))
+        })?;
         Ok(())
     }
 
     fn set_header(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
         let header_name: HeaderName = name.parse().map_err(|e| {
-            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+            GarrisonError::Context(format!("ctx-invalid-header-name::{}::{}", name, e))
         })?;
         let header_value = HeaderValue::from_str(value).map_err(|e| {
-            GarrisonError::Context(format!("invalid header value '{}': {}", value, e))
+            GarrisonError::Context(format!("ctx-invalid-header-value::{}::{}", value, e))
         })?;
         self.headers.insert(header_name, header_value);
         Ok(())
@@ -353,7 +354,7 @@ impl GarrisonRequest for AxumRequestWrapper {
 
     fn header(&self, name: &str) -> GarrisonResult<Option<String>> {
         let header_name: HeaderName = name.parse().map_err(|e| {
-            GarrisonError::Context(format!("invalid header name '{}': {}", name, e))
+            GarrisonError::Context(format!("ctx-invalid-header-name::{}::{}", name, e))
         })?;
         Ok(self
             .headers
@@ -745,7 +746,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, GarrisonError::Context(_)));
-        assert!(err.to_string().contains("invalid header name"));
+        assert!(err.to_string().contains("非法 header 名称"));
     }
 
     /// 验证 AxumRequest::cookie() 在没有 Cookie header 时返回 None（空 header 分支）。
@@ -778,7 +779,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, GarrisonError::Context(_)));
-        assert!(err.to_string().contains("invalid status code"));
+        assert!(err.to_string().contains("非法状态码"));
     }
 
     /// 验证 AxumResponse::set_header() 在 header value 非法时返回 Context 错误。
@@ -790,7 +791,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, GarrisonError::Context(_)));
-        assert!(err.to_string().contains("invalid header value"));
+        assert!(err.to_string().contains("非法 header 值"));
     }
 
     /// 验证 AxumResponse::default() 等价于 new()，状态码为 200 OK 且 headers 为空。
@@ -857,7 +858,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, GarrisonError::Context(_)));
-        assert!(err.to_string().contains("invalid header name"));
+        assert!(err.to_string().contains("非法 header 名称"));
     }
 
     /// 验证 AxumContext::request() 返回的 wrapper 在没有 Cookie header 时返回 None。

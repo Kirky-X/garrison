@@ -47,7 +47,7 @@ impl CredentialRepository for DaoCredentialRepository {
         let inserted = self.dao.set_if_absent(&key, &json, 0).await?;
         if !inserted {
             return Err(GarrisonError::InvalidParam(format!(
-                "credential already exists: {}",
+                "credential-already-exists::{}",
                 credential.id
             )));
         }
@@ -67,7 +67,7 @@ impl CredentialRepository for DaoCredentialRepository {
                 "credential find_by_user denied: caller != target (IDOR)"
             );
             return Err(GarrisonError::NotPermission(format!(
-                "caller {} cannot query credentials of {}",
+                "credential-query-forbidden::{}::{}",
                 caller_login_id, user_id
             )));
         }
@@ -113,7 +113,7 @@ impl CredentialRepository for DaoCredentialRepository {
             Some(k) => k,
             None => {
                 return Err(GarrisonError::InvalidParam(format!(
-                    "credential not found: {}",
+                    "credential-not-found::{}",
                     credential.id
                 )));
             },
@@ -122,7 +122,7 @@ impl CredentialRepository for DaoCredentialRepository {
             Some(json) => json,
             None => {
                 return Err(GarrisonError::InvalidParam(format!(
-                    "credential not found: {}",
+                    "credential-not-found::{}",
                     credential.id
                 )));
             },
@@ -138,7 +138,7 @@ impl CredentialRepository for DaoCredentialRepository {
                 "credential update denied: caller != owner (IDOR)"
             );
             return Err(GarrisonError::NotPermission(format!(
-                "caller {} cannot update credential {} owned by {}",
+                "credential-update-forbidden::{}::{} (owner {})",
                 caller_login_id, credential.id, existing.user_id
             )));
         }
@@ -153,7 +153,7 @@ impl CredentialRepository for DaoCredentialRepository {
                 "credential update denied: user_id transfer forbidden (IDOR)"
             );
             return Err(GarrisonError::NotPermission(format!(
-                "cannot transfer credential {} from user {} to {}",
+                "credential-transfer-forbidden::{}::{} -> {}",
                 credential.id, existing.user_id, credential.user_id
             )));
         }
@@ -169,7 +169,7 @@ impl CredentialRepository for DaoCredentialRepository {
         let keys = self.dao.keys(&pattern).await?;
         if keys.is_empty() {
             return Err(GarrisonError::InvalidParam(format!(
-                "credential not found: {}",
+                "credential-not-found::{}",
                 credential_id
             )));
         }
@@ -190,7 +190,7 @@ impl CredentialRepository for DaoCredentialRepository {
                     "credential delete denied: caller != owner (IDOR)"
                 );
                 return Err(GarrisonError::NotPermission(format!(
-                    "caller {} cannot delete credential {} owned by {}",
+                    "credential-delete-forbidden::{}::{} (owner {})",
                     caller_login_id, credential_id, existing.user_id
                 )));
             }

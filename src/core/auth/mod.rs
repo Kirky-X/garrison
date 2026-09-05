@@ -139,7 +139,7 @@ pub trait AuthLogic: Send + Sync {
     /// 返回 `GarrisonError::NotImplemented`，由 `AuthLogicDefault` 覆盖。
     async fn switch_to(&self, _token: &str, _target_login_id: &str) -> GarrisonResult<()> {
         Err(GarrisonError::NotImplemented(format!(
-            "switch_to 未实现: {} 不支持身份切换",
+            "core-switch-to-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }
@@ -162,7 +162,7 @@ pub trait AuthLogic: Send + Sync {
     /// 返回 `GarrisonError::NotImplemented`，由 `AuthLogicDefault` 覆盖。
     async fn renew_to_equivalent(&self, _token: &str) -> GarrisonResult<String> {
         Err(GarrisonError::NotImplemented(format!(
-            "renew_to_equivalent 未实现: {} 不支持 token 置换",
+            "core-renew-not-implemented::{}",
             std::any::type_name::<Self>()
         )))
     }

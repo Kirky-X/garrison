@@ -184,8 +184,8 @@ impl GarrisonDaoOxcache {
         tracing::warn!(
             mode = %config.mode,
             db = config.db,
-            "Redis 配置已存储,但 _sync API（set_if_absent/incr/decr/get_and_delete）与 Redis L2 后端不兼容;\
-             原子操作方法将在调用时返回 Err(配置错误),直到迁移到 async API"
+            "Redis config stored, but the _sync API (set_if_absent/incr/decr/get_and_delete) is incompatible with the Redis L2 backend; \
+             atomic operation methods will return Err(Config) when called until migrated to the async API"
         );
         self.redis_config = Some(config);
         self
@@ -206,10 +206,7 @@ impl GarrisonDaoOxcache {
     fn check_redis_compat(&self) -> GarrisonResult<()> {
         if self.redis_config.is_some() {
             return Err(GarrisonError::Config(
-                "dao-oxcache-sync-api-incompatible-with-redis::\
-                 _sync API（set_if_absent/incr/decr/get_and_delete）与 Redis L2 后端不兼容,\
-                 请改用 async API 或移除 with_redis_config 调用"
-                    .to_string(),
+                "dao-oxcache-sync-api-incompatible-with-redis::".to_string(),
             ));
         }
         Ok(())
@@ -703,7 +700,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
             for key in &expired_keys {
                 index.remove(key);
             }
-            tracing::debug!("keys() 清理了 {} 个过期 key", expired_keys.len());
+            tracing::debug!("keys() cleaned up {} expired keys", expired_keys.len());
         }
 
         Ok(result)

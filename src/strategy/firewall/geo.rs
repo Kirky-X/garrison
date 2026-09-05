@@ -36,13 +36,13 @@ impl GeoCoord {
     pub fn new(lat: f64, lon: f64) -> Result<Self, GarrisonError> {
         if !(-90.0..=90.0).contains(&lat) {
             return Err(GarrisonError::InvalidParam(format!(
-                "GeoCoord: lat {} 越界 [-90, 90]",
+                "firewall-geo-lat-out-of-range::{}",
                 lat
             )));
         }
         if !(-180.0..=180.0).contains(&lon) {
             return Err(GarrisonError::InvalidParam(format!(
-                "GeoCoord: lon {} 越界 [-180, 180]",
+                "firewall-geo-lon-out-of-range::{}",
                 lon
             )));
         }

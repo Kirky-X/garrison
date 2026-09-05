@@ -177,7 +177,8 @@ impl<T> ApiResponse<T> {
             Some(v) => Ok(v),
             None => Err((
                 self.error_code.unwrap_or_else(|| "UNKNOWN".to_string()),
-                self.message.unwrap_or_else(|| "Unknown error".to_string()),
+                self.message
+                    .unwrap_or_else(|| "backend-unknown-error::".to_string()),
             )),
         }
     }
@@ -226,6 +227,6 @@ mod tests {
         };
         let (code, msg) = resp.into_result().unwrap_err();
         assert_eq!(code, "UNKNOWN");
-        assert_eq!(msg, "Unknown error");
+        assert_eq!(msg, "backend-unknown-error::");
     }
 }

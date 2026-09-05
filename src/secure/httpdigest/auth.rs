@@ -261,7 +261,7 @@ impl HttpDigestAuth {
                 if !WARNED_NO_DAO.swap(true, std::sync::atomic::Ordering::Relaxed) {
                     tracing::warn!(
                         realm = %self.realm,
-                        "validate_nc: 未注入 DAO，跳过 nc 单调性校验（fail-open，300s 窗口内可重放）；生产环境请通过 with_dao 注入 DAO 以启用 RFC 7616 §3.4.6 重放防护"
+                        "validate_nc: no DAO injected, skipping nc monotonicity check (fail-open, replay possible within the 300s window); in production inject a DAO via with_dao to enable RFC 7616 §3.4.6 replay protection"
                     );
                 }
                 return true;
@@ -655,7 +655,7 @@ pub(super) fn current_unix_seconds() -> u64 {
 /// 计算 nonce 服务端签名：`hmac_sha256(server_key, "{timestamp}:{uuid}")` 的 hex 编码。
 fn sign_nonce_payload(server_key: &[u8; 32], timestamp: u64, uuid: &str) -> String {
     type HmacSha256 = Hmac<Sha256>;
-    let mut mac = HmacSha256::new_from_slice(server_key).expect("HMAC 接受 32 字节密钥");
+    let mut mac = HmacSha256::new_from_slice(server_key).expect("HMAC accepts 32-byte keys");
     mac.update(timestamp.to_string().as_bytes());
     mac.update(b":");
     mac.update(uuid.as_bytes());

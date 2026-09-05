@@ -119,7 +119,7 @@ pub trait PermissionChecker: Send + Sync {
             Ok(())
         } else {
             Err(GarrisonError::NotPermission(format!(
-                "账号 {} 未持有权限: {}",
+                "core-account-no-permission::{}::{}",
                 login_id, permission
             )))
         }
@@ -131,7 +131,7 @@ pub trait PermissionChecker: Send + Sync {
             Ok(())
         } else {
             Err(GarrisonError::NotRole(format!(
-                "账号 {} 未持有角色: {}",
+                "core-account-no-role::{}::{}",
                 login_id, role
             )))
         }

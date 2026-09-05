@@ -231,10 +231,8 @@ impl From<crate::credit::CreditError> for GarrisonError {
                 requested,
                 remaining,
             },
-            crate::credit::CreditError::ConfigInvalid(msg) => {
-                GarrisonError::Config(format!("credit-config: {}", msg))
-            },
-            crate::credit::CreditError::Dao(msg) => GarrisonError::Dao(format!("credit: {}", msg)),
+            crate::credit::CreditError::ConfigInvalid(msg) => GarrisonError::Config(msg),
+            crate::credit::CreditError::Dao(msg) => GarrisonError::Dao(msg),
             crate::credit::CreditError::CycleExpired => {
                 GarrisonError::Internal("credit-cycle-expired".to_string())
             },

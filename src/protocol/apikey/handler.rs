@@ -500,14 +500,14 @@ impl ApiKeyHandler {
             Ok(Some(v)) => v,
             Ok(None) => return, // key 已删，放弃更新
             Err(e) => {
-                tracing::warn!(dao_key = %dao_key, error = %e, "apikey last_used_at re-read 失败（不影响校验）");
+                tracing::warn!(dao_key = %dao_key, error = %e, "apikey last_used_at re-read failed (does not affect verification)");
                 return;
             },
         };
         let mut updated: ApiKeyInfo = match serde_json::from_str(&current) {
             Ok(i) => i,
             Err(e) => {
-                tracing::warn!(error = %e, "apikey last_used_at 反序列化失败（不影响校验）");
+                tracing::warn!(error = %e, "apikey last_used_at deserialization failed (does not affect verification)");
                 return;
             },
         };
@@ -519,11 +519,11 @@ impl ApiKeyHandler {
         match serde_json::to_string(&updated) {
             Ok(v) => {
                 if let Err(e) = self.dao.update(dao_key, &v).await {
-                    tracing::warn!(dao_key = %dao_key, error = %e, "apikey last_used_at 更新失败（不影响校验）");
+                    tracing::warn!(dao_key = %dao_key, error = %e, "apikey last_used_at update failed (does not affect verification)");
                 }
             },
             Err(e) => {
-                tracing::warn!(error = %e, "apikey last_used_at 序列化失败（不影响校验）");
+                tracing::warn!(error = %e, "apikey last_used_at serialization failed (does not affect verification)");
             },
         }
     }

@@ -1119,7 +1119,7 @@ fn audit_log_written(entry: &AuditEntry) {
     use crate::i18n::icu_enhanced::format_datetime_locale;
     let dt = chrono::DateTime::from_timestamp(entry.created_at, 0).unwrap_or_else(chrono::Utc::now);
     tracing::info!(
-        "审计日志已写入: event_type={}, login_id={:?}, time={}",
+        "audit log written: event_type={}, login_id={:?}, time={}",
         entry.event_type,
         entry.login_id,
         format_datetime_locale(&dt)
@@ -1129,7 +1129,7 @@ fn audit_log_written(entry: &AuditEntry) {
 #[cfg(all(not(feature = "i18n-icu"), feature = "db-sqlite"))]
 fn audit_log_written(entry: &AuditEntry) {
     tracing::info!(
-        "审计日志已写入: event_type={}, login_id={:?}, created_at={}",
+        "audit log written: event_type={}, login_id={:?}, created_at={}",
         entry.event_type,
         entry.login_id,
         entry.created_at

@@ -522,7 +522,7 @@ impl GarrisonLogicDefault {
                 && !self.config.allow_stateless_jwt_no_revocation
             {
                 return Err(GarrisonError::Config(
-                    "stp-stateless-jwt-requires-revocation::token_style=jwt 且 jwt_mode=Stateless 时必须启用 enable_jwt_revocation（三选一：1) 开启 JWT 撤销黑名单 enable_jwt_revocation=true；2) 改用 JwtMode::Mixin；3) 显式风险接受开关 allow_stateless_jwt_no_revocation=true）".to_string(),
+                    "stp-stateless-jwt-requires-revocation::".to_string(),
                 ));
             }
             if self.config.token_style != "jwt" {

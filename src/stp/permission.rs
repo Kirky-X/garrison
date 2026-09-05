@@ -137,8 +137,7 @@ pub trait PermissionLogic: SessionLogic {
     /// 返回 `Err(NotImplemented)`；`GarrisonLogicDefault` 覆写为委托 `firewall.get_permission_list(login_id)`。
     async fn get_permission_list(&self) -> GarrisonResult<Vec<String>> {
         Err(GarrisonError::NotImplemented(
-            "get_permission_list 未实现（默认实现，需在 GarrisonLogicDefault 或业务实现中覆写）"
-                .to_string(),
+            "stp-not-implemented::get_permission_list".to_string(),
         ))
     }
 
@@ -158,8 +157,7 @@ pub trait PermissionLogic: SessionLogic {
     /// 返回 `Err(NotImplemented)`；`GarrisonLogicDefault` 覆写为委托 `firewall.get_role_list(login_id)`。
     async fn get_role_list(&self) -> GarrisonResult<Vec<String>> {
         Err(GarrisonError::NotImplemented(
-            "get_role_list 未实现（默认实现，需在 GarrisonLogicDefault 或业务实现中覆写）"
-                .to_string(),
+            "stp-not-implemented::get_role_list".to_string(),
         ))
     }
 }

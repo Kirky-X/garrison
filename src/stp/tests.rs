@@ -2087,7 +2087,7 @@ async fn login_with_password_correct_returns_token() {
     assert!(!token.is_empty(), "token 应非空");
 }
 
-/// R-001: 错误密码返回 InvalidParam("invalid password")。
+/// R-001: 错误密码返回 InvalidParam("stp-invalid-password")。
 ///
 /// 覆盖 spec auth-password-login R-001 验收 case 2。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
@@ -2107,13 +2107,13 @@ async fn login_with_password_wrong_password_returns_invalid_param() {
 
     let result = logic.login_with_password("1001", "wrong-password").await;
     assert!(
-        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "invalid password"),
-        "错误密码应返回 InvalidParam(\"invalid password\")，实际: {:?}",
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+        "错误密码应返回 InvalidParam(\"stp-invalid-password\")，实际: {:?}",
         result
     );
 }
 
-/// R-001: 用户不存在返回 InvalidParam("invalid password")。
+/// R-001: 用户不存在返回 InvalidParam("stp-invalid-password")。
 ///
 /// 覆盖 spec auth-password-login R-001 验收 case 3。
 /// 注：spec R-001 说"用户不存在返回 NotLogin"，但 Constraints 说"不泄露具体原因"。
@@ -2134,8 +2134,8 @@ async fn login_with_password_user_not_found_returns_invalid_param() {
 
     let result = logic.login_with_password("9999", "any-password").await;
     assert!(
-        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "invalid password"),
-        "用户不存在应返回 InvalidParam(\"invalid password\")（不泄露 NotLogin），实际: {:?}",
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+        "用户不存在应返回 InvalidParam(\"stp-invalid-password\")（不泄露 NotLogin），实际: {:?}",
         result
     );
 }
@@ -2143,7 +2143,7 @@ async fn login_with_password_user_not_found_returns_invalid_param() {
 /// R-001: 密码哈希格式不支持返回 InvalidParam。
 ///
 /// 覆盖 spec auth-password-login R-001 验收 case 4。
-/// 注：此错误可泄露（不暴露用户是否存在），返回 "unsupported hash format"。
+/// 注：此错误可泄露（不暴露用户是否存在），返回 "stp-unsupported-hash-format"。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
 #[serial]
@@ -2160,8 +2160,8 @@ async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
 
     let result = logic.login_with_password("1001", "any-password").await;
     assert!(
-        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "unsupported hash format"),
-        "不支持的哈希格式应返回 InvalidParam(\"unsupported hash format\")，实际: {:?}",
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-unsupported-hash-format::"),
+        "不支持的哈希格式应返回 InvalidParam(\"stp-unsupported-hash-format\")，实际: {:?}",
         result
     );
 }
@@ -2501,7 +2501,7 @@ async fn trait_default_login_with_password_returns_not_implemented() {
     };
     let result = logic.login_with_password("1001", "any-password").await;
     assert!(
-        matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("account-credential")),
+        matches!(result, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("stp-not-implemented")),
         "trait default login_with_password 应返回 NotImplemented（需 account-credential + db-sqlite），实际: {:?}",
         result
     );

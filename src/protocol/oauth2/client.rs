@@ -224,7 +224,7 @@ impl OAuth2Client {
     fn validate_redirect_uri(redirect_uri: &str) -> GarrisonResult<()> {
         let Some(scheme_end) = redirect_uri.find("://") else {
             return Err(GarrisonError::InvalidParam(format!(
-                "redirect_uri must be https or localhost, got: {}",
+                "url-scheme-https-required::redirect_uri::{}",
                 redirect_uri
             )));
         };
@@ -245,7 +245,7 @@ impl OAuth2Client {
         }
 
         Err(GarrisonError::InvalidParam(format!(
-            "redirect_uri must be https or localhost, got: {}",
+            "url-scheme-https-required::redirect_uri::{}",
             redirect_uri
         )))
     }
@@ -257,7 +257,7 @@ impl OAuth2Client {
     /// `https://` 任意 host；`http://localhost` / `http://127.0.0.1`（开发环境）。
     fn validate_endpoint_url(url: &str, field: &str) -> GarrisonResult<()> {
         Self::validate_redirect_uri(url).map_err(|_| {
-            GarrisonError::InvalidParam(format!("{field} must be https or localhost, got: {}", url))
+            GarrisonError::InvalidParam(format!("url-scheme-https-required::{}::{}", field, url))
         })
     }
 

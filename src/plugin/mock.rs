@@ -57,7 +57,7 @@ impl GarrisonPlugin for ErrPlugin {
     }
     fn on_permission_check(&self, _login_id: &str, _permission: &str) -> GarrisonResult<()> {
         Err(GarrisonError::Internal(
-            "on_permission_check 失败".to_string(),
+            "plugin-on-permission-check-failed::".to_string(),
         ))
     }
 }

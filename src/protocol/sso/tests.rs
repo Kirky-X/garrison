@@ -287,7 +287,7 @@ async fn validate_ticket_rejects_different_secret() {
 
 /// M5: 空 secret 应 panic（禁止空 secret）。
 #[test]
-#[should_panic(expected = "SSO secret 不能为空")]
+#[should_panic(expected = "SSO secret must not be empty")]
 fn new_rejects_empty_secret() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let _client = SsoClient::new(dao, "");

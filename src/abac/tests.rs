@@ -118,8 +118,8 @@ async fn init_abac_engine_duplicate_returns_config_error() {
     match result {
         Err(crate::error::GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("already initialized"),
-                "错误消息应包含 'already initialized'，实际: {}",
+                msg.contains("abac-engine-already-initialized"),
+                "错误消息应包含 'abac-engine-already-initialized'，实际: {}",
                 msg
             );
         },
