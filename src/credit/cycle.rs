@@ -357,4 +357,250 @@ mod tests {
     fn test_from_tag_unknown() {
         assert!(CreditCycle::from_tag("unknown", 0).is_none());
     }
+
+    /// Fixed cycle_start 合法边界：day=30 在 31 天月（1 月）无需回退。
+    ///
+    /// from_tag 可构造 day > 28 的 cycle（meta 脏数据 / 手工配置），
+    /// 在含 30 日的月份中应直接取本月 day 日。
+    #[test]
+    fn test_fixed_cycle_start_day30_in_31_day_month() {
+        let cycle = CreditCycle::from_tag("fixed", 30).unwrap();
+        // 2026-01-31：current_day(31) >= 30 → 周期起始 = 2026-01-30
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 1, 31)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let start = cycle.cycle_start(None, now);
+        let expected = chrono::NaiveDate::from_ymd_opt(2026, 1, 30)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(start, expected);
+    }
+
+    /// Fixed cycle_start 当月分支回退：day 超出当月天数（2 月无 30/31 日）。
+    #[test]
+    fn test_fixed_cycle_start_current_month_fallback_feb() {
+        // day=30，now = 2026-02-28（28 >= 30 不成立 → 上月分支）
+        // 需要 current_day >= day 的当月分支：day=0 时恒成立且 from_ymd(day=0) 无效
+        let cycle = CreditCycle::from_tag("fixed", 0).unwrap();
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 10)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let start = cycle.cycle_start(None, now);
+        // day=0 非法 → 回退为当月最后一天 2026-02-28
+        let expected = chrono::NaiveDate::from_ymd_opt(2026, 2, 28)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(start, expected, "day=0 应回退为当月最后一天");
+    }
+
+    /// Fixed cycle_start 上月分支回退：上月无 day 日（3 月回看 2 月 day=30）。
+    #[test]
+    fn test_fixed_cycle_start_prev_month_fallback() {
+        let cycle = CreditCycle::from_tag("fixed", 30).unwrap();
+        // 2026-03-10 < 30 → 上月（2 月）无 30 日 → 回退 2026-02-28
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 10)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let start = cycle.cycle_start(None, now);
+        let expected = chrono::NaiveDate::from_ymd_opt(2026, 2, 28)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(start, expected);
+    }
+
+    /// Fixed cycle_start 上月分支跨年：1 月回看上年 12 月。
+    #[test]
+    fn test_fixed_cycle_start_prev_month_crosses_year() {
+        let cycle = CreditCycle::Fixed { day_of_month: 15 };
+        // 2027-01-10 < 15 → 上月 = 2026-12-15
+        let now = chrono::NaiveDate::from_ymd_opt(2027, 1, 10)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let start = cycle.cycle_start(None, now);
+        let expected = chrono::NaiveDate::from_ymd_opt(2026, 12, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(start, expected);
+    }
+
+    /// Fixed cycle_end 下月分支回退：下月无 day 日（1 月 31 日看 2 月）。
+    #[test]
+    fn test_fixed_cycle_end_next_month_fallback() {
+        let cycle = CreditCycle::from_tag("fixed", 31).unwrap();
+        // 2026-01-31：current_day(31) >= 31 → 下月 2 月无 31 日 → 回退 2026-02-28
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 1, 31)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let end = cycle.cycle_end(None, now);
+        let expected = chrono::NaiveDate::from_ymd_opt(2026, 2, 28)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(end, expected);
+    }
+
+    /// Fixed cycle_end 当月分支回退：当月无 day 日（2 月 day=31）。
+    #[test]
+    fn test_fixed_cycle_end_current_month_fallback() {
+        let cycle = CreditCycle::from_tag("fixed", 31).unwrap();
+        // 2026-02-10 < 31 → 周期结束 = 本月 day 日 → 2 月无 31 日 → 回退 02-28
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 10)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let end = cycle.cycle_end(None, now);
+        let expected = chrono::NaiveDate::from_ymd_opt(2026, 2, 28)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(end, expected);
+    }
+
+    /// Fixed cycle_end 跨年：12 月的下一周期为次年 1 月。
+    #[test]
+    fn test_fixed_cycle_end_crosses_year() {
+        let cycle = CreditCycle::Fixed { day_of_month: 15 };
+        // 2026-12-20 >= 15 → 下月 = 次年 1 月 15 日
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 12, 20)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let end = cycle.cycle_end(None, now);
+        let expected = chrono::NaiveDate::from_ymd_opt(2027, 1, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(end, expected);
+    }
+
+    /// last_day_of_month 十二月分支：12 月回退取 12-31（经 cycle_end 触发，
+    /// day 超出 12 月天数即 > 31，from_tag 可构造）。
+    #[test]
+    fn test_fixed_cycle_end_december_fallback_last_day() {
+        let cycle = CreditCycle::from_tag("fixed", 32).unwrap();
+        // 2026-12-05 < 32 → 周期结束 = 本月 day 日 → 12 月无 32 日 → 回退 12-31
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 12, 5)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let end = cycle.cycle_end(None, now);
+        let expected = chrono::NaiveDate::from_ymd_opt(2026, 12, 31)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap()
+            .and_utc()
+            .timestamp();
+        assert_eq!(end, expected);
+    }
+
+    /// Rolling cycle_start 在 window_start=None 时回退为当前时间。
+    #[test]
+    fn test_rolling_cycle_start_none_falls_back_to_now() {
+        let cycle = CreditCycle::Rolling { days: 7 };
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 8, 20)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        assert_eq!(
+            cycle.cycle_start(None, now),
+            now.and_utc().timestamp(),
+            "window_start=None 应回退为当前时间戳"
+        );
+    }
+
+    /// Rolling is_expired 边界：now == window_start + days 时恰好过期（>= 语义）。
+    #[test]
+    fn test_rolling_is_expired_exact_boundary() {
+        let cycle = CreditCycle::Rolling { days: 30 };
+        let window_start_ts = 1_700_000_000i64;
+        let exact_end = chrono::DateTime::from_timestamp(window_start_ts + 30 * 86400, 0)
+            .unwrap()
+            .naive_utc();
+        assert!(
+            cycle.is_expired(Some(window_start_ts), exact_end),
+            "now == 周期结束点应判定过期"
+        );
+    }
+
+    /// Rolling next_reset_at = window_start + days * 86400。
+    #[test]
+    fn test_rolling_next_reset_at() {
+        let cycle = CreditCycle::Rolling { days: 14 };
+        let window_start_ts = 1_700_000_000i64;
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 8, 20)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        assert_eq!(
+            cycle.next_reset_at(Some(window_start_ts), now),
+            window_start_ts + 14 * 86400
+        );
+    }
+
+    /// Fixed next_reset_at 与 cycle_end 一致（下个重置日）。
+    #[test]
+    fn test_fixed_next_reset_at() {
+        let cycle = CreditCycle::Fixed { day_of_month: 15 };
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 8, 20)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        assert_eq!(cycle.next_reset_at(None, now), cycle.cycle_end(None, now));
+    }
+
+    /// Fixed is_expired 恒为 false：cycle_end 总是返回未来重置日（含重置日当天 00:00）。
+    #[test]
+    fn test_fixed_is_expired_always_false() {
+        let cycle = CreditCycle::Fixed { day_of_month: 15 };
+        // 重置日当天 00:00 整点：end 指向下月 15 日，仍未来
+        let now = chrono::NaiveDate::from_ymd_opt(2026, 9, 15)
+            .unwrap()
+            .and_hms_opt(0, 0, 0)
+            .unwrap();
+        assert!(!cycle.is_expired(None, now));
+    }
+
+    /// CreditCycle serde 往返（JSON）保持变体与参数一致。
+    #[test]
+    fn test_cycle_serde_roundtrip() {
+        let fixed = CreditCycle::Fixed { day_of_month: 28 };
+        let json = serde_json::to_string(&fixed).unwrap();
+        assert_eq!(serde_json::from_str::<CreditCycle>(&json).unwrap(), fixed);
+
+        let rolling = CreditCycle::Rolling { days: 90 };
+        let json = serde_json::to_string(&rolling).unwrap();
+        assert_eq!(serde_json::from_str::<CreditCycle>(&json).unwrap(), rolling);
+    }
+
+    /// Clone 语义：克隆体与原值相等且修改不影响原值（值语义枚举）。
+    #[test]
+    fn test_cycle_clone_eq() {
+        let cycle = CreditCycle::Fixed { day_of_month: 1 };
+        let cloned = cycle.clone();
+        assert_eq!(cycle, cloned);
+        assert_eq!(cloned.param(), 1);
+    }
 }

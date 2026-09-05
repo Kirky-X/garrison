@@ -317,4 +317,278 @@ mod tests {
         let storage = CreditMeterStorage::new(make_dao());
         assert!(storage.get_consumed(999).await.unwrap().is_none());
     }
+
+    /// get_consumed 脏数据（非数字）返回 Err（fail-fast）。
+    #[tokio::test]
+    async fn test_get_consumed_dirty_data_returns_err() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .dao
+            .set("credit:42:consumed", "not-a-number", 0)
+            .await
+            .unwrap();
+        let result = storage.get_consumed(42).await;
+        let err = result.unwrap_err();
+        assert!(
+            format!("{}", err).contains("consumed-parse-failed"),
+            "应报 consumed 解析错误: {}",
+            err
+        );
+    }
+
+    /// get_consumed 负数字符串返回 Err（u64 解析失败）。
+    #[tokio::test]
+    async fn test_get_consumed_negative_value_returns_err() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage.dao.set("credit:7:consumed", "-5", 0).await.unwrap();
+        assert!(storage.get_consumed(7).await.is_err());
+    }
+
+    /// get_meta 在 meta key 不存在时返回 None。
+    #[tokio::test]
+    async fn test_get_meta_missing_returns_none() {
+        let storage = CreditMeterStorage::new(make_dao());
+        assert!(storage.get_meta(12345).await.unwrap().is_none());
+    }
+
+    /// get_meta：consumed 段非数字返回 Err（逐段校验 fail-fast）。
+    #[tokio::test]
+    async fn test_get_meta_consumed_parse_failed() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .dao
+            .set("credit:42:meta", "abc|100|1|2|fixed|1", 0)
+            .await
+            .unwrap();
+        let err = storage.get_meta(42).await.unwrap_err();
+        assert!(
+            format!("{}", err).contains("consumed-parse-failed"),
+            "实际: {}",
+            err
+        );
+    }
+
+    /// get_meta：limit 段非数字返回 Err。
+    #[tokio::test]
+    async fn test_get_meta_limit_parse_failed() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .dao
+            .set("credit:42:meta", "1|abc|1|2|fixed|1", 0)
+            .await
+            .unwrap();
+        let err = storage.get_meta(42).await.unwrap_err();
+        assert!(
+            format!("{}", err).contains("limit-parse-failed"),
+            "实际: {}",
+            err
+        );
+    }
+
+    /// get_meta：window_start 段非数字返回 Err。
+    #[tokio::test]
+    async fn test_get_meta_window_start_parse_failed() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .dao
+            .set("credit:42:meta", "1|100|abc|2|fixed|1", 0)
+            .await
+            .unwrap();
+        let err = storage.get_meta(42).await.unwrap_err();
+        assert!(
+            format!("{}", err).contains("window-start-parse-failed"),
+            "实际: {}",
+            err
+        );
+    }
+
+    /// get_meta：window_end 段非数字返回 Err。
+    #[tokio::test]
+    async fn test_get_meta_window_end_parse_failed() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .dao
+            .set("credit:42:meta", "1|100|1|abc|fixed|1", 0)
+            .await
+            .unwrap();
+        let err = storage.get_meta(42).await.unwrap_err();
+        assert!(
+            format!("{}", err).contains("window-end-parse-failed"),
+            "实际: {}",
+            err
+        );
+    }
+
+    /// get_meta：cycle param 段非数字返回 Err。
+    #[tokio::test]
+    async fn test_get_meta_cycle_param_parse_failed() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .dao
+            .set("credit:42:meta", "1|100|1|2|fixed|abc", 0)
+            .await
+            .unwrap();
+        let err = storage.get_meta(42).await.unwrap_err();
+        assert!(
+            format!("{}", err).contains("cycle-param-parse-failed"),
+            "实际: {}",
+            err
+        );
+    }
+
+    /// get_meta：未知 cycle 类型返回 Err。
+    #[tokio::test]
+    async fn test_get_meta_unknown_cycle_type() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .dao
+            .set("credit:42:meta", "1|100|1|2|biweekly|14", 0)
+            .await
+            .unwrap();
+        let err = storage.get_meta(42).await.unwrap_err();
+        assert!(
+            format!("{}", err).contains("unknown-cycle-type"),
+            "实际: {}",
+            err
+        );
+    }
+
+    /// get_meta：Rolling 周期往返（type_tag = rolling）。
+    #[tokio::test]
+    async fn test_get_meta_rolling_roundtrip() {
+        let storage = CreditMeterStorage::new(make_dao());
+        let meta = CreditMeta {
+            consumed: 7,
+            limit: 0,
+            window_start: 1_700_000_000,
+            window_end: 1_702_592_000,
+            cycle: CreditCycle::Rolling { days: 14 },
+        };
+        storage.set_meta(9, &meta, 86400).await.unwrap();
+        let loaded = storage.get_meta(9).await.unwrap().unwrap();
+        assert_eq!(loaded, meta);
+    }
+
+    /// get_window_start：未设置时返回 None。
+    #[tokio::test]
+    async fn test_get_window_start_missing_returns_none() {
+        let storage = CreditMeterStorage::new(make_dao());
+        assert!(storage.get_window_start(42).await.unwrap().is_none());
+    }
+
+    /// get_window_start：set 后返回写入的时间戳（往返一致）。
+    #[tokio::test]
+    async fn test_set_then_get_window_start_roundtrip() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .set_window_start(42, 1_700_000_000, 3600)
+            .await
+            .unwrap();
+        assert_eq!(
+            storage.get_window_start(42).await.unwrap(),
+            Some(1_700_000_000)
+        );
+    }
+
+    /// get_window_start：脏数据返回 Err。
+    #[tokio::test]
+    async fn test_get_window_start_dirty_data_returns_err() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .dao
+            .set("credit:42:window_start", "oops", 0)
+            .await
+            .unwrap();
+        let err = storage.get_window_start(42).await.unwrap_err();
+        assert!(
+            format!("{}", err).contains("window-start-parse-failed"),
+            "实际: {}",
+            err
+        );
+    }
+
+    /// reset 清除 window_start key（Rolling 周期重置依赖此语义）。
+    #[tokio::test]
+    async fn test_reset_clears_window_start() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage
+            .set_window_start(42, 1_700_000_000, 3600)
+            .await
+            .unwrap();
+        storage.reset(42).await.unwrap();
+        assert!(storage.get_window_start(42).await.unwrap().is_none());
+    }
+
+    /// incr_consumed credits=0 时不执行递增，返回 0。
+    #[tokio::test]
+    async fn test_incr_consumed_zero_credits() {
+        let storage = CreditMeterStorage::new(make_dao());
+        let count = storage.incr_consumed(42, 0, 3600).await.unwrap();
+        assert_eq!(count, 0, "credits=0 应返回 0");
+        assert!(storage.get_consumed(42).await.unwrap().is_none());
+    }
+
+    /// incr_consumed 多次调用累计计数正确。
+    ///
+    /// 注：u32::MAX 量级边界不可行——incr_consumed 按 credits 次数循环递增，
+    /// 40+ 亿次循环运行时长会超过 TTL，键过期导致计数重置（非实现 bug，
+    /// 是测试规模与 TTL 语义的冲突），故以千级累计验证循环与计数正确性。
+    #[tokio::test]
+    async fn test_incr_consumed_accumulates() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage.incr_consumed(42, 600, 3600).await.unwrap();
+        let count = storage.incr_consumed(42, 400, 3600).await.unwrap();
+        assert_eq!(count, 1000);
+        assert_eq!(storage.get_consumed(42).await.unwrap(), Some(1000));
+    }
+
+    /// 租户隔离：不同 tenant_id 的计数互不干扰（键前缀含 tenant_id）。
+    #[tokio::test]
+    async fn test_tenant_isolation_between_counters() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage.incr_consumed(1, 5, 3600).await.unwrap();
+        storage.incr_consumed(2, 10, 3600).await.unwrap();
+        assert_eq!(storage.get_consumed(1).await.unwrap(), Some(5));
+        assert_eq!(storage.get_consumed(2).await.unwrap(), Some(10));
+        // 负数 tenant_id 同样按字符串隔离
+        storage.incr_consumed(-1, 3, 3600).await.unwrap();
+        assert_eq!(storage.get_consumed(-1).await.unwrap(), Some(3));
+        assert_eq!(storage.get_consumed(1).await.unwrap(), Some(5));
+    }
+
+    /// KV 键格式：consumed/meta/window_start 分别落在
+    /// `credit:{tenant_id}:{suffix}` 前缀下（与 reset 删除的键一致）。
+    #[tokio::test]
+    async fn test_key_format_uses_credit_prefix() {
+        let storage = CreditMeterStorage::new(make_dao());
+        storage.incr_consumed(42, 1, 3600).await.unwrap();
+        let consumed = storage.dao.get("credit:42:consumed").await.unwrap();
+        assert_eq!(
+            consumed,
+            Some("1".to_string()),
+            "consumed 键应为 credit:42:consumed"
+        );
+
+        let meta = CreditMeta {
+            consumed: 1,
+            limit: 100,
+            window_start: 1,
+            window_end: 2,
+            cycle: CreditCycle::Fixed { day_of_month: 1 },
+        };
+        storage.set_meta(42, &meta, 3600).await.unwrap();
+        let raw_meta = storage.dao.get("credit:42:meta").await.unwrap().unwrap();
+        assert_eq!(
+            raw_meta, "1|100|1|2|fixed|1",
+            "meta 序列化格式应为 6 段管道分隔"
+        );
+
+        storage.set_window_start(42, 77, 3600).await.unwrap();
+        let ws = storage.dao.get("credit:42:window_start").await.unwrap();
+        assert_eq!(
+            ws,
+            Some("77".to_string()),
+            "window_start 键应为 credit:42:window_start"
+        );
+    }
 }

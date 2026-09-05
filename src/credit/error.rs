@@ -146,4 +146,12 @@ mod tests {
         assert!(msg.contains("credit-config-invalid"));
         assert!(msg.contains("bad limit"));
     }
+
+    /// CreditError::CycleExpired Display。
+    #[test]
+    fn test_credit_cycle_expired_display() {
+        let err = CreditError::CycleExpired;
+        let msg = format!("{}", err);
+        assert!(msg.contains("credit-cycle-expired"), "实际: {}", msg);
+    }
 }

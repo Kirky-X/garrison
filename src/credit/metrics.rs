@@ -343,6 +343,65 @@ mod tests {
         let output = metrics.gather();
         assert!(!output.is_empty(), "gather() 应返回非空字符串");
     }
+
+    /// new() / Default 注册到默认 registry（OnceLock 单例）且实例可用；
+    /// Debug 输出包含类型名与字段类型名。
+    ///
+    /// 注意：OnceLock 保证同进程仅注册一次，多次调用 new()/default() 返回同一实例。
+    #[test]
+    #[serial]
+    fn new_and_default_register_to_default_registry_once() {
+        // 首次调用走 register_to(default_registry)（get_or_init），
+        // 后续调用（含其他测试中的 new/default）直接命中 OnceLock 缓存
+        let m1 = CreditMetrics::new();
+        let m2 = CreditMetrics::default();
+        m1.record_consumed("808", "api_call", 2);
+        m2.set_remaining("808", 7);
+
+        // gather() 从字段收集，不依赖 registry，包含刚记录的值
+        let gathered = m1.gather();
+        assert!(
+            gathered.contains("garrison_credit_consumed_total"),
+            "gather 应含 consumed_total: {}",
+            gathered
+        );
+        assert!(
+            gathered.contains("tenant_id=\"808\""),
+            "gather 应含 tenant 808: {}",
+            gathered
+        );
+
+        // Debug 手写实现：输出类型名与字段类型名
+        let debug = format!("{:?}", m1);
+        assert!(debug.contains("CreditMetrics"), "实际: {}", debug);
+        assert!(debug.contains("CounterVec"), "实际: {}", debug);
+        assert!(debug.contains("GaugeVec"), "实际: {}", debug);
+    }
+
+    /// gather() 输出为合法 Prometheus 文本格式（含 HELP/TYPE 行）。
+    ///
+    /// 注：三个指标均需至少记录一次——prometheus 0.14 的 CounterVec/GaugeVec
+    /// 在仅部分指标有观测值时 collect() 可能返回空 family 集。
+    #[test]
+    #[serial]
+    fn gather_contains_help_and_type_lines() {
+        let registry = prometheus::Registry::new();
+        let metrics = CreditMetrics::register_to(&registry).unwrap();
+        metrics.record_alert("1", 90);
+        metrics.record_consumed("1", "login", 1);
+        metrics.set_remaining("1", 2);
+        let output = metrics.gather();
+        assert!(
+            output.contains("# HELP garrison_credit_alerts_total"),
+            "{}",
+            output
+        );
+        assert!(
+            output.contains("# TYPE garrison_credit_alerts_total counter"),
+            "{}",
+            output
+        );
+    }
 }
 
 /// 无 feature 时的编译验证测试。
