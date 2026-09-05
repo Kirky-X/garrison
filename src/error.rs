@@ -253,6 +253,11 @@ impl GarrisonError {
     // 与 response_parts() 返回的字符串 error_code（如 "DISABLE_SERVICE"）解耦：
     // - response_parts().1 → 面向 HTTP 响应体（既有惯例）
     // - BW_ERR_XXX 常量 → 面向 audit-log / 监控埋点 / FRD §3.4 数值追溯
+    //
+    // 编码规则（项目特定，非 Java 手册 5 位格式）：
+    //   error_code = HTTP_status × 1000 + 序号
+    //   示例：409001 = 409 (Conflict) × 1000 + 01（第一个 409 类错误）
+    //   示例：403003 = 403 (Forbidden) × 1000 + 03
 
     /// BW-ERR-009：并发登录冲突（FRD §3.4）。
     ///

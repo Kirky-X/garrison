@@ -71,8 +71,12 @@ impl GarrisonLocale {
     /// 返回对应的 BCP-47 语言标签。
     fn as_lang_id(self) -> LanguageIdentifier {
         match self {
-            GarrisonLocale::Zh => "zh".parse().expect("valid language identifier"),
-            GarrisonLocale::En => "en".parse().expect("valid language identifier"),
+            GarrisonLocale::Zh => "zh"
+                .parse()
+                .expect("valid BCP-47 language identifier; 若失败请报告 bug"),
+            GarrisonLocale::En => "en"
+                .parse()
+                .expect("valid BCP-47 language identifier; 若失败请报告 bug"),
         }
     }
 }
@@ -144,14 +148,14 @@ fn build_bundle(locale: GarrisonLocale) -> FluentBundle<FluentResource> {
         GarrisonLocale::En => include_str!("../locales/en.ftl"),
     };
     let resource = FluentResource::try_new(ftl.to_string())
-        .expect("Garrison .ftl 资源解析失败（编译期已固化，不应失败）");
+        .expect("Garrison .ftl 资源解析失败（编译期已固化，不应失败；若触发请报告 bug）");
     let lang_id = locale.as_lang_id();
     let mut bundle = FluentBundle::new_concurrent(vec![lang_id]);
     // 关闭 FSI/PDI 隔离标记（U+2068/U+2069），保持错误消息纯净
     bundle.set_use_isolating(false);
     bundle
         .add_resource(resource)
-        .expect("Garrison .ftl 资源添加到 bundle 失败（资源键冲突不应发生）");
+        .expect("Garrison .ftl 资源添加到 bundle 失败（资源键冲突不应发生；若触发请报告 bug）");
     bundle
 }
 
