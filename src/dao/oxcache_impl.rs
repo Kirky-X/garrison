@@ -473,13 +473,10 @@ impl GarrisonDao for GarrisonDaoOxcache {
             Some(v) => {
                 // Rule 12：parse 失败必须显式报错，禁止静默返回 0 导致计数器重置
                 let cur_val: u64 = v.parse().map_err(|_| {
-                    GarrisonError::Dao(format!(
-                        "incr: 现存值非 u64，key={}, value={}",
-                        actual_key, v
-                    ))
+                    GarrisonError::Dao(format!("dao-incr-parse-u64::{}::{}", actual_key, v))
                 })?;
                 let new_val = cur_val.checked_add(1).ok_or_else(|| {
-                    GarrisonError::Dao(format!("counter-overflow::key={}", actual_key))
+                    GarrisonError::Dao(format!("counter-overflow::{}", actual_key))
                 })?;
                 let remaining_ttl = self
                     .cache
@@ -535,10 +532,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
             Some(v) => {
                 // Rule 12：parse 失败必须显式报错（与 incr 一致，禁止静默返回 0）
                 let cur_val: u64 = v.parse().map_err(|_| {
-                    GarrisonError::Dao(format!(
-                        "decr: 现存值非 u64，key={}, value={}",
-                        actual_key, v
-                    ))
+                    GarrisonError::Dao(format!("dao-decr-parse-u64::{}::{}", actual_key, v))
                 })?;
                 if cur_val == 0 {
                     return Ok(0);
@@ -894,8 +888,8 @@ mod tests {
         dao.set("ic_bad", "not-a-number", 60).await.unwrap();
         let result = dao.incr("ic_bad", 60).await;
         assert!(
-            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("现存值非 u64")),
-            "incr 非数字值应返回含'现存值非 u64'的 Dao 错误，实际: {:?}",
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-incr-parse-u64")),
+            "incr 非数字值应返回含'dao-incr-parse-u64'的 Dao 错误，实际: {:?}",
             result
         );
     }
@@ -967,8 +961,8 @@ mod tests {
         dao.set("dc_bad", "not-a-number", 60).await.unwrap();
         let result = dao.decr("dc_bad").await;
         assert!(
-            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("现存值非 u64")),
-            "decr 非数字值应返回含'现存值非 u64'的 Dao 错误，实际: {:?}",
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-decr-parse-u64")),
+            "decr 非数字值应返回含'dao-decr-parse-u64'的 Dao 错误，实际: {:?}",
             result
         );
     }
