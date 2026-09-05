@@ -572,6 +572,7 @@ async fn acc_repo_008_login_log_create_find() {
 
 /// ACC-REPO-009（正常）：UserExt upsert——插入 / 同 key 更新 / 多字段查询。
 /// 迁自 tests/repository/integration.rs::user_ext_repository_upsert_find
+/// BW-AC-013（FRD §8.1）：`app_user_ext` 扩展字段（如 email）存取不影响核心登录鉴权。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_repo_009_user_ext_upsert_find() {
     let pool = setup_db().await;

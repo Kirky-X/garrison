@@ -66,6 +66,8 @@ mod tenant_audit_decision_e2e {
     /// 1. `check_permission("user:read")` 返回 `Ok(())`
     /// 2. `authorize()` 返回 `Decision { allowed: true, reason: ExplicitAllow }`
     /// 3. `audit_logs` 表存在 `tenant_id=42, event_type="permission_check"` 的记录
+    ///
+    /// BW-AC-015（FRD §8.1）：租户 A 的数据对租户 B 不可见（tenant_id 强制过滤）。
     #[tokio::test(flavor = "multi_thread")]
     #[serial]
     async fn tenant_isolation_with_audit_log_and_decision_trace_e2e() {

@@ -9,7 +9,11 @@
 //!   「迁自 tests/auth_server_integration.rs::<测试名>」，Phase 4 迁移追溯）；
 //! - ACC-SRV-013..018：oauth2_server 端点级验收（`#[cfg(feature = "oauth2-server")]`）：
 //!   authorize 重定向 / token 4 种 grant / revoke / introspect（RFC 6749/7009/7662），
-//!   装配参考 `src/oauth2_server/*` 与 `tests/e2e/oauth2_flow.rs`。
+//!   装配参考 `src/oauth2_server/*` 与 `tests/e2e/oauth2_flow.rs`；
+//! - ACC-SRV-019..022：auth_server 二进制 smoke（`#[cfg(feature = "auth-server")]`）：
+//!   以子进程方式验证 `src/bin/auth_server.rs` 的 env 装配 + listen() 真实启动
+//!   与 fail-closed 契约（缺失 / 空串 `GARRISON_INTERNAL_API_KEY` → exit(1)，
+//!   端口被占用 → bind 失败 → 非零退出码）。
 //!
 //! 全局装配同 `tests/auth_server_integration.rs`：随机端口 + `MockAuthBackend`
 //!（in-memory token 表，测试替身）经 HTTP 访问真实端点。本域不触碰
@@ -1220,4 +1224,234 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
         .await
         .unwrap();
     assert_eq!(resp.status(), 400, "revoke 客户端认证失败应返回 400");
+}
+
+// ------------------------------------------------------------------------
+// ACC-SRV-019..021：auth_server 二进制 smoke（#[cfg(feature = "auth-server")]）
+// ------------------------------------------------------------------------
+//
+// `src/bin/auth_server.rs` 是自含二进制：从环境变量装配
+// `GarrisonAuthServer::new(backend).with_*_port().with_rate_limit()
+// .with_internal_api_key()` 后 `listen()`（自含配置校验 + 路由构建 + 端口绑定，
+// 不依赖 GarrisonManager 全局初始化）；fail-closed：`GARRISON_INTERNAL_API_KEY`
+// 缺失或空串时 `std::process::exit(1)`。
+//
+// 实现说明：
+// - 经 `CARGO_BIN_EXE_auth_server` 定位二进制（bin 的 required-features =
+//   auth-server ⊂ 本 target 的 full，测试构建时必然已编译）；
+// - tokio 的 `process` feature 在依赖图中未启用（不为此新增依赖），故用
+//   `std::process::Command` 同步子进程 + 异步 reqwest 轮询的组合，
+//   退出等待以 `try_wait()` 轮询模拟 `tokio::process` 语义；
+// - env 经 Command 注入（默认继承父进程其余环境），不触碰测试进程自身
+//   环境变量，无需 set_var 串行保护；注入的 API Key 均为测试占位串，
+//   禁止写入真实凭据。
+
+/// 探测一个空闲本地端口（绑定 `127.0.0.1:0` 读取端口后立即释放）。
+#[cfg(feature = "auth-server")]
+fn probe_free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("绑定 127.0.0.1:0 应成功")
+        .local_addr()
+        .expect("读取本地端口应成功")
+        .port()
+}
+
+/// 以给定 env 覆盖 / 移除项启动 auth_server 子进程（stdout/stderr 置空，
+/// 避免污染测试输出；其余环境继承自测试进程）。
+#[cfg(feature = "auth-server")]
+fn spawn_auth_server_process(
+    env_overrides: &[(&str, &str)],
+    env_removals: &[&str],
+) -> std::process::Child {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_auth_server"));
+    for &(key, value) in env_overrides {
+        cmd.env(key, value);
+    }
+    for &key in env_removals {
+        cmd.env_remove(key);
+    }
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    cmd.spawn().expect("auth_server 子进程应成功启动")
+}
+
+/// 轮询等待子进程退出（`try_wait` 每 100ms 一次），返回退出状态。
+#[cfg(feature = "auth-server")]
+async fn wait_for_exit(child: &mut std::process::Child) -> std::process::ExitStatus {
+    let deadline = std::time::Duration::from_secs(30);
+    tokio::time::timeout(deadline, async {
+        loop {
+            if let Some(status) = child.try_wait().expect("try_wait 不应失败") {
+                return status;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("auth_server 子进程应在 30s 内退出")
+}
+
+/// ACC-SRV-019（正常）：auth_server 二进制正常启动 smoke——注入双端口与
+/// API Key（测试占位串）环境变量后：
+/// 1. 外网端口 `/api/v1/auth/health` 可达：拿到任意 HTTP 响应即证明
+///    「进程存活且可响应 HTTP」（health 是内网专属端点，外网经 path-filter
+///    返回 404，语义同 ACC-SRV-012，故此处不断言 200）；
+/// 2. 内网端口 `/api/v1/auth/health`（带 x-api-key）返回 200 + `{"data":"ok"}`：
+///    health 不依赖 GarrisonManager，端到端验证 env 装配 + 路由构建 + 中间件。
+#[cfg(feature = "auth-server")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_019_auth_server_bin_startup_smoke() {
+    // 先探测两个空闲端口再释放（子进程稍后绑定；毫秒级竞态窗口测试可接受）
+    let external_port = probe_free_port();
+    let internal_port = probe_free_port();
+    let external_port = external_port.to_string();
+    let internal_port = internal_port.to_string();
+    // 明显的测试占位串，非真实凭据
+    let test_api_key = "test-only-not-a-real-key";
+
+    let mut child = spawn_auth_server_process(
+        &[
+            ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
+            ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
+            ("GARRISON_INTERNAL_API_KEY", test_api_key),
+        ],
+        &[],
+    );
+
+    // 1. 轮询外网端口（最多 20 次 × 500ms）直到拿到任意 HTTP 响应
+    let client = reqwest::Client::new();
+    let external_health = format!("http://127.0.0.1:{}/api/v1/auth/health", external_port);
+    let mut external_up = false;
+    for _ in 0..20 {
+        match client.get(&external_health).send().await {
+            Ok(resp) => {
+                let _ = resp.status(); // 预期 404（path-filter），任意响应即存活
+                external_up = true;
+                break;
+            },
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
+        }
+    }
+    assert!(
+        external_up,
+        "auth_server 进程应在 10s 内于外网端口 {} 响应 HTTP",
+        external_port
+    );
+
+    // 2. 内网 health（带 x-api-key）→ 200 + {"data":"ok"}
+    let resp = client
+        .get(format!(
+            "http://127.0.0.1:{}/api/v1/auth/health",
+            internal_port
+        ))
+        .header("x-api-key", test_api_key)
+        .send()
+        .await
+        .expect("内网 health 请求应送达（进程已确认存活）");
+    assert_eq!(resp.status(), 200, "内网 health 应返回 200");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["data"], "ok", "内网 health 应返回 data=ok");
+
+    // 清理：杀死子进程（避免悬挂进程占用端口）
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// ACC-SRV-020（异常）：fail-closed——缺失 `GARRISON_INTERNAL_API_KEY`
+/// （显式从 env 移除，防父环境已有）时，进程以退出码 1 拒绝启动。
+#[cfg(feature = "auth-server")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_020_auth_server_exits_without_api_key() {
+    let external_port = probe_free_port().to_string();
+    let internal_port = probe_free_port().to_string();
+
+    let mut child = spawn_auth_server_process(
+        &[
+            ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
+            ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
+        ],
+        &["GARRISON_INTERNAL_API_KEY"],
+    );
+
+    let status = wait_for_exit(&mut child).await;
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "缺失 GARRISON_INTERNAL_API_KEY 应以退出码 1 拒绝启动（fail-closed）"
+    );
+    // 子进程已退出，清理无副作用
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// ACC-SRV-021（异常）：fail-closed——`GARRISON_INTERNAL_API_KEY` 为空串时，
+/// 进程以退出码 1 拒绝启动。
+#[cfg(feature = "auth-server")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_021_auth_server_exits_with_empty_api_key() {
+    let external_port = probe_free_port().to_string();
+    let internal_port = probe_free_port().to_string();
+
+    let mut child = spawn_auth_server_process(
+        &[
+            ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
+            ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
+            ("GARRISON_INTERNAL_API_KEY", ""),
+        ],
+        &[],
+    );
+
+    let status = wait_for_exit(&mut child).await;
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "空串 GARRISON_INTERNAL_API_KEY 应以退出码 1 拒绝启动（fail-closed）"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// ACC-SRV-022（异常）：端口冲突 fail-fast——外网端口被测试进程占住
+///（listener 全程保持监听，杜绝"绑定后 drop 再被子进程抢到"的竞态）时，
+/// auth_server 子进程 `listen()` 的 `TcpListener::bind` 返回 `Err`
+///（`server-external-bind::...`）→ `main()` 返回 `Err` → 以非零退出码终止。
+///
+/// 与 ACC-SRV-020/021 的 env fail-closed 不同，本场景验证的是
+/// `GarrisonAuthServer::listen` 的 bind 失败传播契约（bin 层 `if let Err` → 返回 Err）。
+#[cfg(feature = "auth-server")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_022_auth_server_bin_port_conflict_exits_nonzero() {
+    // 1. 占住一个端口并【保持监听不 drop】：std::net::TcpListener 绑定后即进入
+    //    LISTEN 状态，子进程对同端口（含 0.0.0.0 通配）的任何 bind 均 EADDRINUSE
+    let occupier = std::net::TcpListener::bind("127.0.0.1:0").expect("绑定 127.0.0.1:0 应成功");
+    let external_port = occupier.local_addr().expect("读取本地端口应成功").port();
+    // 内网端口用空闲端口，保证失败源唯一（外网 bind 冲突）
+    let internal_port = probe_free_port().to_string();
+    let external_port = external_port.to_string();
+
+    // 2. 启动子进程并注入被占端口；API Key 为明显测试占位串（非真实凭据），
+    //    确保 env 校验通过、失败仅来自端口冲突
+    let mut child = spawn_auth_server_process(
+        &[
+            ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
+            ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
+            ("GARRISON_INTERNAL_API_KEY", "test-only-not-a-real-key"),
+        ],
+        &[],
+    );
+
+    // 3. 断言子进程以非零码退出（bind 失败 → listen 返回 Err → bin 返回 Err）
+    let status = wait_for_exit(&mut child).await;
+    assert_ne!(
+        status.code(),
+        Some(0),
+        "外网端口被占用时 auth_server 应以非零退出码终止，实际: {status:?}"
+    );
+
+    // 4. 测试内监听最后 drop，释放占用的端口
+    drop(occupier);
 }

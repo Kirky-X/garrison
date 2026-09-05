@@ -3,6 +3,9 @@
 
 //! 过程宏注解集成测试：`#[check_login]` / `#[check_permission]` / `#[check_role]`。
 //!
+//! BW-AC-011（FRD §8.1）：12 个注解经过程宏 + inventory SPI 注册后在 axum
+//! handler 上正确加载并按预期执行（本文件 25 例覆盖注解矩阵的运行时语义）。
+//!
 //! 验证 spec annotation-macros R-002 ~ R-004：
 //! - 宏标注的 async fn 编译通过
 //! - 已登录/已授权请求正常执行 fn body
