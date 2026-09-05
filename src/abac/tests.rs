@@ -20,8 +20,8 @@ async fn check_abac_with_policy_no_engine_returns_err() {
     match result {
         Err(crate::error::GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("AbacEngine 未初始化") || msg.contains("fail-closed"),
-                "错误消息应含 'AbacEngine 未初始化' 或 'fail-closed'，实际: {}",
+                msg.contains("abac-engine-not-init"),
+                "错误消息应含 'abac-engine-not-init'，实际: {}",
                 msg
             );
         },
@@ -295,8 +295,8 @@ async fn check_abac_with_policy_engine_initialized_deny() {
     match result {
         Err(crate::error::GarrisonError::NotPermission(msg)) => {
             assert!(
-                msg.contains("ABAC 策略拒绝"),
-                "错误消息应包含 'ABAC 策略拒绝'，实际: {}",
+                msg.contains("abac-policy-denied"),
+                "错误消息应包含 'abac-policy-denied'，实际: {}",
                 msg
             );
         },
@@ -331,8 +331,8 @@ async fn check_abac_with_policy_not_logged_in_returns_not_login() {
     match result {
         Err(crate::error::GarrisonError::NotLogin(msg)) => {
             assert!(
-                msg.contains("未获取到 login_id"),
-                "错误消息应包含 '未获取到 login_id'，实际: {}",
+                msg.contains("abac-login-id-missing"),
+                "错误消息应包含 'abac-login-id-missing'，实际: {}",
                 msg
             );
         },

@@ -113,20 +113,20 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     }
     if trimmed.len() > ABAC_EXPR_MAX_LEN {
         return Err(GarrisonError::InvalidParam(format!(
-            "abac_expr 长度超过 {} 字符（DoS 防御）",
+            "abac-expr-length-exceeded::{}",
             ABAC_EXPR_MAX_LEN
         )));
     }
     // 拒绝策略终止符（闭合 when 块并注入新策略）
     if expr.contains("};") {
         return Err(GarrisonError::InvalidParam(
-            "abac_expr 含非法字符 `};`（疑似策略注入）".to_string(),
+            "abac-expr-illegal-char::".to_string(),
         ));
     }
     // 拒绝显式 permit/forbid 策略声明
     if expr.contains("permit(") || expr.contains("forbid(") {
         return Err(GarrisonError::InvalidParam(
-            "abac_expr 不允许声明 permit/forbid 策略".to_string(),
+            "abac-expr-no-declaration::".to_string(),
         ));
     }
     // 要求至少含 principal/resource/action 之一，拒绝纯字面量
@@ -134,7 +134,7 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     let lower = expr.to_ascii_lowercase();
     if !lower.contains("principal") && !lower.contains("resource") && !lower.contains("action") {
         return Err(GarrisonError::InvalidParam(
-            "abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）".to_string(),
+            "abac-expr-must-reference-context::".to_string(),
         ));
     }
     Ok(())
@@ -179,11 +179,7 @@ pub async fn check_abac_with_policy(
 ) -> GarrisonResult<()> {
     let engine = match get_abac_engine()? {
         Some(e) => e,
-        None => {
-            return Err(GarrisonError::Config(
-                "AbacEngine 未初始化，ABAC 校验失败（fail-closed）".into(),
-            ))
-        }, // R-abac-001: 未初始化 fail-closed
+        None => return Err(GarrisonError::Config("abac-engine-not-init::".into())), // R-abac-001: 未初始化 fail-closed
     };
     // A3: 校验 abac_expr 防止 Cedar 策略注入
     validate_abac_expr(abac_expr)?;
@@ -192,7 +188,7 @@ pub async fn check_abac_with_policy(
         Some(id) => id,
         None => {
             return Err(GarrisonError::NotLogin(
-                "ABAC 校验时未获取到 login_id".to_string(),
+                "abac-login-id-missing::".to_string(),
             ))
         },
     };
@@ -220,7 +216,8 @@ pub async fn check_abac_with_policy(
         Ok(())
     } else {
         Err(GarrisonError::NotPermission(format!(
-            "ABAC 策略拒绝: action={action}, resource={resource}, expr={abac_expr}"
+            "abac-policy-denied::{}::{}",
+            action, resource
         )))
     }
 }
