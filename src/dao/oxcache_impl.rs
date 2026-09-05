@@ -679,8 +679,10 @@ impl GarrisonDao for GarrisonDaoOxcache {
     #[cfg(feature = "dao-key-index")]
     async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
         let actual_pattern = prefixed_key(pattern);
-        let mut result = Vec::new();
-        let mut expired_keys = Vec::new();
+        // 预分配：匹配结果通常占 key_index 的一小部分，取 1/8 与 8 的较大值
+        let estimated_matches = (self.key_index.read().len() / 8).max(8);
+        let mut result = Vec::with_capacity(estimated_matches);
+        let mut expired_keys = Vec::new(); // 过期 key 数量不可预测，不预分配
 
         // 阶段 1：读锁内仅收集匹配 pattern 的 key（无 I/O，避免阻塞写锁）
         let matched_keys: Vec<String> = {
@@ -764,7 +766,8 @@ fn redis_value_to_strings(value: redis::Value) -> Vec<String> {
         redis::Value::Array(items) => items.into_iter().flat_map(redis_value_to_strings).collect(),
         redis::Value::Set(items) => items.into_iter().flat_map(redis_value_to_strings).collect(),
         redis::Value::Map(pairs) => {
-            let mut result = Vec::new();
+            // 预分配：每个 pair 产生 key + value 两个字符串
+            let mut result = Vec::with_capacity(pairs.len() * 2);
             for (k, v) in pairs {
                 result.extend(redis_value_to_strings(k));
                 result.extend(redis_value_to_strings(v));
