@@ -243,7 +243,7 @@ impl actix_web::FromRequest for crate::context::tenant::TenantContext {
                 .get("x-tenant-id")
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| {
-                    crate::error::GarrisonError::Config("X-Tenant-Id header missing".into())
+                    crate::error::GarrisonError::Config("ctx-tenant-id-missing::".into())
                 })?;
 
             let tenant_id: i64 = raw.parse().map_err(|_| {

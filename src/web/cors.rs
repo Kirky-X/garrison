@@ -95,8 +95,7 @@ impl CorsConfig {
     pub fn validate(&self) -> GarrisonResult<()> {
         if self.allow_credentials && self.allowed_origins.iter().any(|o| o == "*") {
             return Err(GarrisonError::Config(
-                "CORS 配置冲突：allow_credentials=true 时不允许 allowed_origins 包含通配符 \"*\""
-                    .to_string(),
+                "cors-credentials-wildcard::".to_string(),
             ));
         }
         Ok(())

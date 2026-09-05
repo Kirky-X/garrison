@@ -62,7 +62,7 @@ pub fn garrison_principal(
                     .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
-                            "web-not-login::未提供 token".to_string(),
+                            "web-not-login::".to_string(),
                         )))
                     })?;
 
@@ -71,7 +71,7 @@ pub fn garrison_principal(
                     .map_err(|e| warp::reject::custom(super::GarrisonRejection(e)))?
                     .ok_or_else(|| {
                         warp::reject::custom(super::GarrisonRejection(GarrisonError::NotLogin(
-                            "web-token-invalid::token 无效或会话不存在".to_string(),
+                            "web-token-invalid::".to_string(),
                         )))
                     })?;
 
@@ -103,13 +103,13 @@ pub fn tenant_context(
                 .and_then(|v| v.to_str().ok())
                 .ok_or_else(|| {
                     warp::reject::custom(super::GarrisonRejection(GarrisonError::Config(
-                        "X-Tenant-Id header missing".into(),
+                        "ctx-tenant-id-missing::".into(),
                     )))
                 })?;
 
             let tenant_id: i64 = raw.parse().map_err(|_| {
                 warp::reject::custom(super::GarrisonRejection(GarrisonError::Config(format!(
-                    "X-Tenant-Id 不是合法的 i64: {}",
+                    "ctx-tenant-id-invalid::{}",
                     raw
                 ))))
             })?;
