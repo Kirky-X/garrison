@@ -51,15 +51,15 @@ impl CreditConfig {
     /// - 违反以上任一规则时返回描述性错误消息。
     pub fn validate(&self) -> Result<(), String> {
         if self.alert_thresholds.is_empty() {
-            return Err("alert_thresholds 不能为空".to_string());
+            return Err("credit-alert-thresholds-empty::".to_string());
         }
         for (i, &t) in self.alert_thresholds.iter().enumerate() {
             if t > 100 {
-                return Err(format!("alert_thresholds[{}] = {} 超出范围 [0, 100]", i, t));
+                return Err(format!("credit-alert-thresholds-range::{}::{}", i, t));
             }
             if i > 0 && t <= self.alert_thresholds[i - 1] {
                 return Err(format!(
-                    "alert_thresholds 必须严格升序: [{}] = {} <= [{}] = {}",
+                    "credit-alert-thresholds-order::[{}]={}::[{}]={}",
                     i,
                     t,
                     i - 1,
@@ -124,7 +124,11 @@ mod tests {
             ..CreditConfig::default()
         };
         let err = config.validate().unwrap_err();
-        assert!(err.contains("不能为空"), "实际错误: {}", err);
+        assert!(
+            err.contains("credit-alert-thresholds-empty"),
+            "实际错误: {}",
+            err
+        );
     }
 
     /// validate() 对超过 100 的阈值返回 Err（>100 边界）。
@@ -136,7 +140,7 @@ mod tests {
         };
         let err = config.validate().unwrap_err();
         assert!(
-            err.contains("超出范围") && err.contains("101"),
+            err.contains("credit-alert-thresholds-range") && err.contains("101"),
             "实际错误: {}",
             err
         );
@@ -150,7 +154,11 @@ mod tests {
             ..CreditConfig::default()
         };
         let err = config.validate().unwrap_err();
-        assert!(err.contains("严格升序"), "实际错误: {}", err);
+        assert!(
+            err.contains("credit-alert-thresholds-order"),
+            "实际错误: {}",
+            err
+        );
     }
 
     /// validate() 对降序阈值返回 Err。
@@ -161,7 +169,11 @@ mod tests {
             ..CreditConfig::default()
         };
         let err = config.validate().unwrap_err();
-        assert!(err.contains("严格升序"), "实际错误: {}", err);
+        assert!(
+            err.contains("credit-alert-thresholds-order"),
+            "实际错误: {}",
+            err
+        );
     }
 
     /// validate() 对默认阈值 [80, 90, 100] 返回 Ok。
