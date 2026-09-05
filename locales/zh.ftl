@@ -832,3 +832,75 @@ credit-insufficient-msg = Credit 不足
 exception-not-login-msg = 未登录
 exception-not-permission-msg = 无权限
 exception-default-msg = 业务异常
+
+# ============================================================================
+# 密码策略规则消息（i18n 迁移）
+# ============================================================================
+policy-length-too-short = 密码长度 {$arg0} 小于最小要求 {$arg1}
+policy-length-too-long = 密码长度 {$arg0} 超过最大限制 {$arg1}
+policy-history-duplicate = 密码与历史密码重复
+policy-blacklist-match = 密码在黑名单中
+policy-contains-username = 密码包含用户名
+policy-common-password = 密码为常见密码
+policy-dictionary-word = 密码为字典单词
+policy-contains-email-prefix = 密码包含邮箱前缀
+policy-hibp-requires-feature = HIBP 检查需要启用 policy-hibp feature
+policy-nist-length-too-short = 密码长度 {$arg0} 小于 NIST SP 800-63B 最小要求 {$arg1}
+
+# ============================================================================
+# 会话劫持检测消息（i18n 迁移）
+# ============================================================================
+session-ip-mismatch = 会话 IP 不一致: 存储={$arg0}, 当前={$arg1}
+
+# ============================================================================
+# WAF 拦截原因消息（i18n 迁移）
+# ============================================================================
+waf-blacklist-path = 路径 {$arg0} 命中黑名单
+waf-danger-char-path = 路径包含危险字符 {$arg0}
+waf-danger-char-param = 参数值包含危险字符 {$arg0}
+waf-danger-char-header = 请求头值包含危险字符 {$arg0}
+waf-banned-char = 路径包含不可打印字符 {$arg0}
+waf-dir-traversal = 路径包含目录遍历模式 {$arg0}
+waf-host-not-allowed = Host {$arg0} 不在白名单中
+waf-method-not-allowed = HTTP 方法 {$arg0} 不在允许列表中
+waf-header-banned = 请求头 {$arg0} 在禁止列表中
+waf-param-banned = 参数 {$arg0} 在禁止列表中
+
+# --- WAF 危险字符描述 ---
+waf-danger-desc-double-slash = 双斜杠 //
+waf-danger-desc-backslash = 反斜杠 \\
+waf-danger-desc-semicolon = 分号 ;
+waf-danger-desc-null-byte = 空字节
+waf-danger-desc-newline = 换行符
+waf-danger-desc-carriage-return = 回车符
+waf-danger-desc-pct-2e = 百分号编码 %2e
+waf-danger-desc-pct-2f = 百分号编码 %2f
+waf-danger-desc-pct-00 = 百分号编码 %00
+waf-danger-desc-pct-5c = 百分号编码 %5c
+waf-danger-desc-pct-3b = 百分号编码 %3b
+waf-danger-desc-pct-0a = 百分号编码 %0a
+waf-danger-desc-pct-0d = 百分号编码 %0d
+
+# ============================================================================
+# 同形异义字检测消息（i18n 迁移）
+# ============================================================================
+confusable-suggestion = 考虑用 '{$arg0}' 替换 '{$arg1}'
+
+# ============================================================================
+# OAuth2 PKCE / state / refresh 消息（i18n 迁移）
+# ============================================================================
+oauth2-pkce-length-invalid = code_verifier 长度必须在 43-128 之间，当前 {$arg0}
+oauth2-pkce-chars-invalid = code_verifier 仅允许 [A-Z]/[a-z]/[0-9]/-/./_/~ 字符
+oauth2-state-mismatch = state 参数不匹配，可能遭受 CSRF 攻击
+oauth2-refresh-token-empty = refresh_token 不可为空
+
+# ============================================================================
+# 安全告警检测消息（i18n 迁移）
+# ============================================================================
+alert-ip-changed = IP 从 {$arg0} 变为 {$arg1}
+alert-rapid-successive = {$arg0} 个 token 同时在线（阈值 {$arg1}）
+
+# ============================================================================
+# ABAC principal 校验消息（i18n 迁移）
+# ============================================================================
+abac-principal-control-char = login_id 包含控制字符

@@ -833,3 +833,75 @@ credit-insufficient-msg = Credit insufficient
 exception-not-login-msg = Not logged in
 exception-not-permission-msg = Permission denied
 exception-default-msg = Business exception
+
+# ============================================================================
+# Password policy rule messages (i18n migration)
+# ============================================================================
+policy-length-too-short = Password length {$arg0} is less than minimum required {$arg1}
+policy-length-too-long = Password length {$arg0} exceeds maximum limit {$arg1}
+policy-history-duplicate = Password matches a previous password
+policy-blacklist-match = Password is in the blacklist
+policy-contains-username = Password contains username
+policy-common-password = Password is a commonly used password
+policy-dictionary-word = Password is a dictionary word
+policy-contains-email-prefix = Password contains email prefix
+policy-hibp-requires-feature = HIBP check requires enabling the policy-hibp feature
+policy-nist-length-too-short = Password length {$arg0} is less than NIST SP 800-63B minimum required {$arg1}
+
+# ============================================================================
+# Session hijack detection messages (i18n migration)
+# ============================================================================
+session-ip-mismatch = Session IP mismatch: stored={$arg0}, current={$arg1}
+
+# ============================================================================
+# WAF deny reason messages (i18n migration)
+# ============================================================================
+waf-blacklist-path = Path {$arg0} matched blacklist
+waf-danger-char-path = Path contains dangerous character {$arg0}
+waf-danger-char-param = Parameter value contains dangerous character {$arg0}
+waf-danger-char-header = Header value contains dangerous character {$arg0}
+waf-banned-char = Path contains non-printable character {$arg0}
+waf-dir-traversal = Path contains directory traversal pattern {$arg0}
+waf-host-not-allowed = Host {$arg0} is not in the whitelist
+waf-method-not-allowed = HTTP method {$arg0} is not in the allowed list
+waf-header-banned = Header {$arg0} is in the banned list
+waf-param-banned = Parameter {$arg0} is in the banned list
+
+# --- WAF danger character descriptions ---
+waf-danger-desc-double-slash = Double slash //
+waf-danger-desc-backslash = Backslash \\
+waf-danger-desc-semicolon = Semicolon ;
+waf-danger-desc-null-byte = Null byte
+waf-danger-desc-newline = Newline
+waf-danger-desc-carriage-return = Carriage return
+waf-danger-desc-pct-2e = Percent-encoded %2e
+waf-danger-desc-pct-2f = Percent-encoded %2f
+waf-danger-desc-pct-00 = Percent-encoded %00
+waf-danger-desc-pct-5c = Percent-encoded %5c
+waf-danger-desc-pct-3b = Percent-encoded %3b
+waf-danger-desc-pct-0a = Percent-encoded %0a
+waf-danger-desc-pct-0d = Percent-encoded %0d
+
+# ============================================================================
+# Confusable character detection messages (i18n migration)
+# ============================================================================
+confusable-suggestion = Consider replacing '{$arg0}' with '{$arg1}'
+
+# ============================================================================
+# OAuth2 PKCE / state / refresh messages (i18n migration)
+# ============================================================================
+oauth2-pkce-length-invalid = code_verifier length must be between 43-128, current {$arg0}
+oauth2-pkce-chars-invalid = code_verifier only allows [A-Z]/[a-z]/[0-9]/-/./_/~ characters
+oauth2-state-mismatch = state parameter mismatch, possible CSRF attack
+oauth2-refresh-token-empty = refresh_token must not be empty
+
+# ============================================================================
+# Security alert detection messages (i18n migration)
+# ============================================================================
+alert-ip-changed = IP changed from {$arg0} to {$arg1}
+alert-rapid-successive = {$arg0} tokens online simultaneously (threshold {$arg1})
+
+# ============================================================================
+# ABAC principal validation messages (i18n migration)
+# ============================================================================
+abac-principal-control-char = login_id contains control characters
