@@ -79,10 +79,7 @@ pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> GarrisonResul
             .checked_add(chunk.len())
             .ok_or_else(|| GarrisonError::Network("oauth2-body-overflow".to_string()))?;
         if new_len > MAX_BODY_BYTES {
-            return Err(GarrisonError::Network(format!(
-                "响应体超过 {} 字节上限（E2）",
-                MAX_BODY_BYTES
-            )));
+            return Err(GarrisonError::Network("oauth2-body-overflow::".to_string()));
         }
         buf.extend_from_slice(&chunk);
     }
@@ -785,8 +782,8 @@ mod tests {
         assert!(result.is_err(), "5 MiB 响应必须被拒绝");
         let err_msg = result.unwrap_err().to_string();
         assert!(
-            err_msg.contains("超过") && err_msg.contains("字节上限"),
-            "错误消息应说明超限，实际: {}",
+            err_msg.contains("oauth2-body-overflow"),
+            "错误消息应含'oauth2-body-overflow'，实际: {}",
             err_msg
         );
     }

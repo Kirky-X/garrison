@@ -75,7 +75,7 @@ impl JwtHandler {
         }
         if timeout < 0 {
             return Err(GarrisonError::Config(format!(
-                "timeout 不能为负数: {}",
+                "jwt-timeout-negative::{}",
                 timeout
             )));
         }
