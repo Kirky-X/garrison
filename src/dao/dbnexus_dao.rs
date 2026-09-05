@@ -365,3 +365,439 @@ impl GarrisonDao for GarrisonDaoDbnexus {
         Ok(())
     }
 }
+
+// ============================================================================
+// 单元测试（GarrisonDaoDbnexus 生产后端实现层）
+// ============================================================================
+//
+// 覆盖两条主线：
+// 1. KV 方法委托正确性（以 `InMemoryDao` 为委托，断言转发与错误透传）；
+// 2. role_hierarchy / social_bindings 的 SQL 读写（sqlite 内存池 + 项目
+//    migrations/sqlite/core 迁移建表，与 tests/common/mod.rs `setup_db` 语义一致）。
+
+#[cfg(all(test, feature = "db-sqlite"))]
+mod tests {
+    use super::*;
+    use crate::dao::{init_dbnexus, GarrisonMigration, InMemoryDao};
+    use sea_orm::Statement;
+    use std::path::PathBuf;
+
+    /// 创建已执行 core 迁移的 sqlite 内存 DAO，KV 委托为 `InMemoryDao`。
+    ///
+    /// 返回 `(dbnexus DAO, kv Arc)` 供委托断言（`Arc::ptr_eq` 等）。
+    /// 迁移目录用 `CARGO_MANIFEST_DIR` 定位项目根 `migrations/sqlite`，
+    /// 与 `tests/common/mod.rs::setup_db` 装配语义一致。
+    async fn setup_dao() -> (GarrisonDaoDbnexus, Arc<InMemoryDao>) {
+        let pool = init_dbnexus("sqlite::memory:")
+            .await
+            .expect("init_dbnexus 应成功");
+        let migrations_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations")
+            .join("sqlite");
+        let migration = GarrisonMigration::with_base_dir(pool.clone(), migrations_dir);
+        migration.migrate_core().await.expect("migrate_core 应成功");
+        let kv = Arc::new(InMemoryDao::new());
+        (GarrisonDaoDbnexus::new(pool, kv.clone()), kv)
+    }
+
+    // ------------------------------------------------------------------------
+    // 访问器：pool() / kv()
+    // ------------------------------------------------------------------------
+
+    /// `kv()` 返回注入的同一委托实例（Arc 指针相等）。
+    #[tokio::test]
+    async fn kv_accessor_returns_injected_delegate() {
+        let (dao, kv) = setup_dao().await;
+        let kv_dyn: Arc<dyn GarrisonDao> = kv.clone();
+        assert!(
+            Arc::ptr_eq(dao.kv(), &kv_dyn),
+            "kv() 应返回注入的同一 Arc 实例"
+        );
+    }
+
+    /// `pool()` 返回可用连接池：执行 `SELECT 1` 验证连通性。
+    #[tokio::test]
+    async fn pool_accessor_returns_usable_pool() {
+        let (dao, _kv) = setup_dao().await;
+        let session = dao
+            .pool()
+            .get_session("admin")
+            .await
+            .expect("get_session 应成功");
+        let conn = session.connection().expect("connection 应可用");
+        let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, "SELECT 1 AS val", vec![]);
+        let row = conn
+            .query_one_raw(stmt)
+            .await
+            .expect("SELECT 1 应成功")
+            .expect("应返回一行");
+        let val: i64 = row.try_get("", "val").expect("val 列应存在");
+        assert_eq!(val, 1);
+    }
+
+    // ------------------------------------------------------------------------
+    // KV 方法委托
+    // ------------------------------------------------------------------------
+
+    /// set / get / update / delete 委托转发；update 缺失 key 错误透传。
+    #[tokio::test]
+    async fn kv_set_get_update_delete_delegate() {
+        let (dao, kv) = setup_dao().await;
+        dao.set("dn_k", "v1", 60).await.unwrap();
+        assert_eq!(dao.get("dn_k").await.unwrap().as_deref(), Some("v1"));
+        // 值写入的是注入的 kv（转发到同一实例）
+        assert_eq!(kv.get("dn_k").await.unwrap().as_deref(), Some("v1"));
+
+        dao.update("dn_k", "v2").await.unwrap();
+        assert_eq!(dao.get("dn_k").await.unwrap().as_deref(), Some("v2"));
+
+        let r = dao.update("dn_missing", "v").await;
+        assert!(
+            matches!(r, Err(GarrisonError::Dao(_))),
+            "update 缺失 key 错误应透传"
+        );
+
+        dao.delete("dn_k").await.unwrap();
+        assert!(dao.get("dn_k").await.unwrap().is_none());
+    }
+
+    /// expire 委托转发：重置 TTL 生效、缺失 key 错误透传。
+    #[tokio::test]
+    async fn kv_expire_delegates() {
+        let (dao, _kv) = setup_dao().await;
+        dao.set("dn_e", "v", 1).await.unwrap();
+        dao.expire("dn_e", 3600).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(
+            dao.get("dn_e").await.unwrap().as_deref(),
+            Some("v"),
+            "expire(3600) 重置 TTL 后原 1s 窗口不应过期"
+        );
+        let r = dao.expire("dn_missing", 3600).await;
+        assert!(
+            matches!(r, Err(GarrisonError::Dao(_))),
+            "expire 缺失 key 错误应透传"
+        );
+    }
+
+    /// set_permanent / set_if_absent 委托转发（SETNX 两次调用 true→false）。
+    #[tokio::test]
+    async fn kv_set_permanent_and_set_if_absent_delegate() {
+        let (dao, _kv) = setup_dao().await;
+        dao.set_permanent("dn_p", "pv").await.unwrap();
+        assert_eq!(dao.get("dn_p").await.unwrap().as_deref(), Some("pv"));
+        assert!(
+            dao.get_timeout("dn_p").await.unwrap().is_none(),
+            "set_permanent 委托后应为永久键"
+        );
+
+        assert!(
+            dao.set_if_absent("dn_sia", "a", 60).await.unwrap(),
+            "首次 SETNX 应成功"
+        );
+        assert!(
+            !dao.set_if_absent("dn_sia", "b", 60).await.unwrap(),
+            "已存在应返回 false"
+        );
+        assert_eq!(
+            dao.get("dn_sia").await.unwrap().as_deref(),
+            Some("a"),
+            "值不应被覆盖"
+        );
+    }
+
+    /// get_timeout / get_with_ttl 委托转发（含缺失 key 返回 None）。
+    #[tokio::test]
+    async fn kv_get_timeout_and_get_with_ttl_delegate() {
+        let (dao, _kv) = setup_dao().await;
+        dao.set("dn_t", "v", 60).await.unwrap();
+        let timeout = dao.get_timeout("dn_t").await.unwrap();
+        assert!(timeout.is_some(), "TTL 键 get_timeout 应返回 Some");
+        assert!(timeout.unwrap() <= Duration::from_secs(60));
+
+        let (value, ttl) = dao
+            .get_with_ttl("dn_t")
+            .await
+            .unwrap()
+            .expect("get_with_ttl 应返回 Some");
+        assert_eq!(value, "v");
+        assert!(ttl.is_some());
+
+        assert!(dao.get_with_ttl("dn_missing").await.unwrap().is_none());
+    }
+
+    /// rename / get_and_delete 委托转发（含 rename 缺失 key 错误透传）。
+    #[tokio::test]
+    async fn kv_rename_and_get_and_delete_delegate() {
+        let (dao, _kv) = setup_dao().await;
+        dao.set("dn_r", "v", 60).await.unwrap();
+        dao.rename("dn_r", "dn_r2").await.unwrap();
+        assert!(
+            dao.get("dn_r").await.unwrap().is_none(),
+            "rename 后 old key 应不存在"
+        );
+        assert_eq!(dao.get("dn_r2").await.unwrap().as_deref(), Some("v"));
+
+        let r = dao.rename("dn_missing", "dn_any").await;
+        assert!(r.is_err(), "rename 缺失 key 错误应透传");
+
+        let got = dao.get_and_delete("dn_r2").await.unwrap();
+        assert_eq!(got.as_deref(), Some("v"));
+        assert!(
+            dao.get("dn_r2").await.unwrap().is_none(),
+            "get_and_delete 后 key 应删除"
+        );
+        assert!(dao.get_and_delete("dn_missing").await.unwrap().is_none());
+    }
+
+    /// incr / decr 委托转发（计数、归零删除、缺失 key 返回 0）。
+    #[tokio::test]
+    async fn kv_incr_decr_delegate() {
+        let (dao, _kv) = setup_dao().await;
+        assert_eq!(
+            dao.incr("dn_c", 60).await.unwrap(),
+            1,
+            "新键 incr 应初始化为 1"
+        );
+        assert_eq!(dao.incr("dn_c", 60).await.unwrap(), 2);
+        assert_eq!(dao.decr("dn_c").await.unwrap(), 1);
+        assert_eq!(dao.decr("dn_c").await.unwrap(), 0);
+        assert!(
+            dao.get("dn_c").await.unwrap().is_none(),
+            "decr 到 0 后 key 应被删除（转发保留该语义）"
+        );
+        assert_eq!(dao.decr("dn_c").await.unwrap(), 0, "缺失 key decr 应返回 0");
+    }
+
+    /// compare_and_swap / compare_and_update_if_greater 委托转发。
+    #[tokio::test]
+    async fn kv_atomic_compare_methods_delegate() {
+        let (dao, _kv) = setup_dao().await;
+        dao.set("dn_cas", "old", 60).await.unwrap();
+
+        let ok = dao
+            .compare_and_swap("dn_cas", Some("mismatch"), "new", 60)
+            .await
+            .unwrap();
+        assert!(!ok, "期望值不匹配时 CAS 应返回 false");
+        // 新值写数字，便于后续 compare_and_update_if_greater 解析
+        let ok = dao
+            .compare_and_swap("dn_cas", Some("old"), "5", 60)
+            .await
+            .unwrap();
+        assert!(ok, "期望值匹配时 CAS 应返回 true");
+        assert_eq!(dao.get("dn_cas").await.unwrap().as_deref(), Some("5"));
+
+        let ok = dao
+            .compare_and_update_if_greater("dn_cas", 10, 60)
+            .await
+            .unwrap();
+        assert!(ok, "10 > 5 应更新");
+        let ok = dao
+            .compare_and_update_if_greater("dn_cas", 5, 60)
+            .await
+            .unwrap();
+        assert!(!ok, "5 <= 10 不应更新");
+        assert_eq!(dao.get("dn_cas").await.unwrap().as_deref(), Some("10"));
+    }
+
+    /// eval_lua 委托转发：不支持的脚本错误从 kv 透传（含原错误标识）。
+    #[tokio::test]
+    async fn kv_eval_lua_delegates() {
+        let (dao, _kv) = setup_dao().await;
+        let r = dao
+            .eval_lua("unsupported-script", vec!["k".to_string()], vec![])
+            .await;
+        assert!(
+            matches!(r, Err(GarrisonError::NotImplemented(ref msg)) if msg.contains("dao-eval-lua-unsupported-script")),
+            "eval_lua 应透传 kv 的 NotImplemented 错误，实际: {:?}",
+            r
+        );
+    }
+
+    /// keys() 委托转发（dao-key-index 启用时编译）。
+    #[cfg(feature = "dao-key-index")]
+    #[tokio::test]
+    async fn kv_keys_delegate() {
+        let (dao, _kv) = setup_dao().await;
+        dao.set("dn_a1", "v", 60).await.unwrap();
+        dao.set("dn_a2", "v", 60).await.unwrap();
+        dao.set("zz", "v", 60).await.unwrap();
+        let mut keys = dao.keys("dn_a*").await.unwrap();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec!["dn_a1".to_string(), "dn_a2".to_string()],
+            "keys() 应委托 kv 并按 pattern 过滤"
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // SQL 方法：role_hierarchy
+    // ------------------------------------------------------------------------
+
+    /// role_hierarchy 写读 roundtrip：多租户隔离 + 空结果路径。
+    #[tokio::test]
+    async fn role_hierarchy_insert_and_query_roundtrip() {
+        let (dao, _kv) = setup_dao().await;
+        // 空结果路径：迁移后空表查询返回空 Vec
+        assert!(dao.query_role_hierarchy_edges(1).await.unwrap().is_empty());
+
+        dao.insert_role_hierarchy_edge(1, "admin", "owner")
+            .await
+            .unwrap();
+        dao.insert_role_hierarchy_edge(1, "manager", "admin")
+            .await
+            .unwrap();
+        dao.insert_role_hierarchy_edge(2, "admin", "owner")
+            .await
+            .unwrap();
+
+        let mut edges = dao.query_role_hierarchy_edges(1).await.unwrap();
+        edges.sort();
+        assert_eq!(
+            edges,
+            vec![
+                ("admin".to_string(), "owner".to_string()),
+                ("manager".to_string(), "admin".to_string()),
+            ],
+            "tenant 1 应查到 2 条层级边"
+        );
+        assert_eq!(
+            dao.query_role_hierarchy_edges(2).await.unwrap().len(),
+            1,
+            "tenant 2 应只查到自己的 1 条（租户隔离）"
+        );
+        assert!(
+            dao.query_role_hierarchy_edges(99).await.unwrap().is_empty(),
+            "无数据租户应返回空 Vec"
+        );
+    }
+
+    /// role_hierarchy 插入幂等：重复插入同一边不报错且不产生重复行。
+    #[tokio::test]
+    async fn role_hierarchy_insert_is_idempotent() {
+        let (dao, _kv) = setup_dao().await;
+        dao.insert_role_hierarchy_edge(0, "admin", "owner")
+            .await
+            .unwrap();
+        dao.insert_role_hierarchy_edge(0, "admin", "owner")
+            .await
+            .unwrap();
+        let edges = dao.query_role_hierarchy_edges(0).await.unwrap();
+        assert_eq!(edges.len(), 1, "重复插入应被 INSERT OR IGNORE 去重");
+    }
+
+    /// role_hierarchy 删除：删除既有边生效；重复删除（不存在的边）幂等不报错。
+    #[tokio::test]
+    async fn role_hierarchy_delete_edge_is_idempotent() {
+        let (dao, _kv) = setup_dao().await;
+        dao.insert_role_hierarchy_edge(1, "admin", "owner")
+            .await
+            .unwrap();
+        dao.insert_role_hierarchy_edge(1, "manager", "admin")
+            .await
+            .unwrap();
+
+        dao.delete_role_hierarchy_edge(1, "admin", "owner")
+            .await
+            .unwrap();
+        let edges = dao.query_role_hierarchy_edges(1).await.unwrap();
+        assert_eq!(edges, vec![("manager".to_string(), "admin".to_string())]);
+
+        // 幂等：删除不存在的边不报错
+        dao.delete_role_hierarchy_edge(1, "admin", "owner")
+            .await
+            .unwrap();
+        dao.delete_role_hierarchy_edge(42, "admin", "owner")
+            .await
+            .unwrap();
+        assert_eq!(dao.query_role_hierarchy_edges(1).await.unwrap().len(), 1);
+    }
+
+    // ------------------------------------------------------------------------
+    // SQL 方法：social_bindings
+    // ------------------------------------------------------------------------
+
+    /// social_bindings 写读 roundtrip：三元组精确匹配（租户 / 平台 / 平台用户）。
+    #[tokio::test]
+    async fn social_binding_insert_and_find_roundtrip() {
+        let (dao, _kv) = setup_dao().await;
+        // 空结果路径：首次登录（无绑定）返回 None
+        let none = dao
+            .find_social_binding(0, "wechat", "openid-1")
+            .await
+            .unwrap();
+        assert!(none.is_none(), "无绑定时应返回 None");
+
+        dao.insert_social_binding(
+            0,
+            "login-1",
+            "wechat",
+            "openid-1",
+            Some("union-1"),
+            1700000000,
+        )
+        .await
+        .unwrap();
+
+        let found = dao
+            .find_social_binding(0, "wechat", "openid-1")
+            .await
+            .unwrap();
+        assert_eq!(found.as_deref(), Some("login-1"));
+
+        // 不存在的 provider_user_id / 错误平台 / 错误租户 → None（三元组精确匹配）
+        assert!(dao
+            .find_social_binding(0, "wechat", "openid-other")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(dao
+            .find_social_binding(0, "alipay", "openid-1")
+            .await
+            .unwrap()
+            .is_none());
+        assert!(dao
+            .find_social_binding(1, "wechat", "openid-1")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    /// social_bindings：union_id 为 NULL 可正常插入查询；重复绑定触发 UNIQUE 约束报 Dao 错误。
+    #[tokio::test]
+    async fn social_binding_null_union_id_and_duplicate_insert_errors() {
+        let (dao, _kv) = setup_dao().await;
+        dao.insert_social_binding(0, "login-1", "wechat", "openid-1", None, 1700000000)
+            .await
+            .unwrap();
+        let found = dao
+            .find_social_binding(0, "wechat", "openid-1")
+            .await
+            .unwrap();
+        assert_eq!(
+            found.as_deref(),
+            Some("login-1"),
+            "union_id 为 NULL 不影响绑定查询"
+        );
+
+        // UNIQUE(tenant_id, provider, provider_user_id)：重复绑定应返回 Dao 错误而非 panic
+        let r = dao
+            .insert_social_binding(0, "login-2", "wechat", "openid-1", None, 1700000001)
+            .await;
+        assert!(
+            matches!(r, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-social-binding-insert::")),
+            "重复绑定应返回含 'dao-social-binding-insert::' 的 Dao 错误，实际: {:?}",
+            r
+        );
+        // 原绑定不被破坏
+        assert_eq!(
+            dao.find_social_binding(0, "wechat", "openid-1")
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("login-1")
+        );
+    }
+}

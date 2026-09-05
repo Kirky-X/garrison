@@ -2462,4 +2462,555 @@ pub mod tests {
             ok2
         );
     }
+
+    // ------------------------------------------------------------------------
+    // 覆盖率补测：RedisDeploymentMode Default + InMemoryDao TTL 边界 /
+    // 原子方法错误路径 / eval_lua 参数校验
+    // ------------------------------------------------------------------------
+
+    /// R-002: RedisDeploymentMode::default() 返回 Single 模式（本机默认地址）。
+    ///
+    /// 覆盖 `defaults.rs` 中 `RedisDeploymentMode` 的 `Default` 实现——
+    /// 与 `RedisConfig::default()` 互补（后者内联构造 Single，不经此 Default）。
+    #[test]
+    fn redis_deployment_mode_default_returns_single_localhost() {
+        let mode = RedisDeploymentMode::default();
+        assert_eq!(
+            mode,
+            RedisDeploymentMode::Single {
+                url: "redis://127.0.0.1:6379".to_string()
+            }
+        );
+        // Display 输出可读（single(<url>) 格式）
+        assert!(
+            format!("{}", mode).starts_with("single("),
+            "默认模式 Display 应以 'single(' 开头，实际: {}",
+            mode
+        );
+    }
+
+    /// get_timeout 对已过期（但尚未被 get 清理）的 TTL 键返回 None。
+    ///
+    /// 覆盖 `in_memory.rs::get_timeout` 的 `*deadline <= now` 过期分支。
+    #[tokio::test]
+    async fn in_memory_get_timeout_returns_none_after_expiry() {
+        let dao = MockDao::new();
+        dao.set("exp_ttl", "v", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let timeout = dao.get_timeout("exp_ttl").await.unwrap();
+        assert!(timeout.is_none(), "已过期键的 get_timeout 应返回 None");
+    }
+
+    /// keys() 跳过已过期的 key，仅返回存活 key。
+    ///
+    /// 覆盖 `in_memory.rs::keys` 的 `*deadline <= now → continue` 分支。
+    #[tokio::test]
+    async fn in_memory_keys_skips_expired_keys() {
+        let dao = MockDao::new();
+        dao.set("expired_key", "v1", 1).await.unwrap();
+        dao.set_permanent("alive_key", "v2").await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let keys = dao.keys("*").await.unwrap();
+        assert!(
+            !keys.iter().any(|k| k == "expired_key"),
+            "已过期 key 不应出现在 keys() 结果中，实际: {:?}",
+            keys
+        );
+        assert!(
+            keys.iter().any(|k| k == "alive_key"),
+            "存活 key 应出现在 keys() 结果中"
+        );
+    }
+
+    /// get_and_delete 对已过期 key 视为不存在（返回 None 且不残留）。
+    ///
+    /// 覆盖 `in_memory.rs::get_and_delete` 的过期守卫分支
+    ///（`Some((_, Some(deadline))) if Instant::now() >= deadline`）。
+    #[tokio::test]
+    async fn in_memory_get_and_delete_expired_returns_none() {
+        let dao = MockDao::new();
+        dao.set("gd_expired", "v", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let got = dao.get_and_delete("gd_expired").await.unwrap();
+        assert!(got.is_none(), "已过期 key 的 get_and_delete 应返回 None");
+    }
+
+    /// set_if_absent 在 key 过期后可重新写入（过期清理分支）。
+    ///
+    /// 覆盖 `in_memory.rs::set_if_absent` 的 `*deadline <= now → remove → false`
+    /// 过期清理分支，随后走写入路径返回 true。
+    #[tokio::test]
+    async fn in_memory_set_if_absent_reclaims_after_expiry() {
+        let dao = MockDao::new();
+        dao.set("sia_key", "old", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let claimed = dao.set_if_absent("sia_key", "new", 3600).await.unwrap();
+        assert!(claimed, "key 过期后 set_if_absent 应重新获准写入");
+        assert_eq!(dao.get("sia_key").await.unwrap().as_deref(), Some("new"));
+    }
+
+    /// set_if_absent 对永久驻留 key 返回 false（Some(_) => true 存在分支）。
+    #[tokio::test]
+    async fn in_memory_set_if_absent_existing_permanent_returns_false() {
+        let dao = MockDao::new();
+        dao.set_permanent("sia_perm", "v").await.unwrap();
+        let claimed = dao.set_if_absent("sia_perm", "w", 3600).await.unwrap();
+        assert!(!claimed, "已存在的永久键 set_if_absent 应返回 false");
+    }
+
+    /// incr 初始化新键为 1 并设置 TTL（None => true 分支）。
+    #[tokio::test]
+    async fn in_memory_incr_initializes_new_key_with_ttl() {
+        let dao = MockDao::new();
+        let v = dao.incr("incr_new", 3600).await.unwrap();
+        assert_eq!(v, 1, "新键 incr 应初始化为 1");
+        let timeout = dao.get_timeout("incr_new").await.unwrap();
+        assert!(timeout.is_some(), "incr 初始化应设置 TTL");
+    }
+
+    /// incr 已有永久键递增且不新增 TTL（`Some((_, None)) => false` 分支）。
+    #[tokio::test]
+    async fn in_memory_increments_permanent_key_keeps_permanent() {
+        let dao = MockDao::new();
+        dao.set_permanent("incr_perm", "5").await.unwrap();
+        let v = dao.incr("incr_perm", 3600).await.unwrap();
+        assert_eq!(v, 6);
+        // 永久键 incr 后应保持无 TTL
+        let timeout = dao.get_timeout("incr_perm").await.unwrap();
+        assert!(timeout.is_none(), "永久键 incr 不应新增 TTL");
+    }
+
+    /// incr 遇到非数字现存值返回 Dao 错误（Rule 12 显性化分支）。
+    #[tokio::test]
+    async fn in_memory_incr_parse_error_returns_dao_error() {
+        let dao = MockDao::new();
+        dao.set("incr_bad", "not-a-number", 3600).await.unwrap();
+        let result = dao.incr("incr_bad", 3600).await;
+        assert!(
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-incr-parse-u64")),
+            "非数字现存值 incr 应返回 dao-incr-parse-u64 错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// incr 在 u64::MAX 溢出时返回 Dao 错误（checked_add 分支）。
+    #[tokio::test]
+    async fn in_memory_incr_overflow_returns_error() {
+        let dao = MockDao::new();
+        dao.set("incr_max", &u64::MAX.to_string(), 3600)
+            .await
+            .unwrap();
+        let result = dao.incr("incr_max", 3600).await;
+        assert!(
+            matches!(
+                result,
+                Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-incr-overflow-u64")
+            ),
+            "u64::MAX 自增应返回 dao-incr-overflow-u64 错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// decr 语义矩阵：不存在 / 已过期 / 值为 0 / 递减到 0 / 递减后保留 TTL。
+    #[tokio::test]
+    async fn in_memory_decr_semantics_matrix() {
+        let dao = MockDao::new();
+
+        // 不存在 → 0（None 分支）
+        assert_eq!(dao.decr("decr_missing").await.unwrap(), 0);
+
+        // 已过期 → 清理并返回 0（`*deadline <= now` 分支）
+        dao.set("decr_expired", "3", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert_eq!(dao.decr("decr_expired").await.unwrap(), 0);
+        assert!(dao.get("decr_expired").await.unwrap().is_none());
+
+        // 值为 0 → 返回 0 不递减为负（cur_val == 0 分支）
+        dao.set_permanent("decr_zero", "0").await.unwrap();
+        assert_eq!(dao.decr("decr_zero").await.unwrap(), 0);
+
+        // 递减到 0 → 删除 key（new_val == 0 分支）
+        dao.set("decr_to_zero", "1", 3600).await.unwrap();
+        assert_eq!(dao.decr("decr_to_zero").await.unwrap(), 0);
+        assert!(dao.get("decr_to_zero").await.unwrap().is_none());
+
+        // 递减后 > 0 → 保留原 expire_at（new_val > 0 分支）
+        dao.set("decr_keep_ttl", "3", 3600).await.unwrap();
+        assert_eq!(dao.decr("decr_keep_ttl").await.unwrap(), 2);
+        let timeout = dao.get_timeout("decr_keep_ttl").await.unwrap();
+        assert!(timeout.is_some(), "decr 后应保留原 TTL");
+    }
+
+    /// decr 对两种存在形态（TTL / 永久键）的现存值 parse 失败都返回 Dao 错误。
+    #[tokio::test]
+    async fn in_memory_decr_parse_error_returns_dao_error() {
+        let dao = MockDao::new();
+
+        // TTL 键形态（Some((v, Some(deadline))) 分支）
+        dao.set("decr_bad_ttl", "abc", 3600).await.unwrap();
+        let result = dao.decr("decr_bad_ttl").await;
+        assert!(
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-decr-parse-u64")),
+            "TTL 键 parse 失败应返回 dao-decr-parse-u64，实际: {:?}",
+            result
+        );
+
+        // 永久键形态（Some((v, None)) 分支）
+        dao.set_permanent("decr_bad_perm", "xyz").await.unwrap();
+        let result = dao.decr("decr_bad_perm").await;
+        assert!(
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-decr-parse-u64")),
+            "永久键 parse 失败应返回 dao-decr-parse-u64，实际: {:?}",
+            result
+        );
+    }
+
+    /// compare_and_update_if_greater：新键初始化 / 不大于时拒绝 / parse 失败显性化 / 过期重置。
+    #[tokio::test]
+    async fn in_memory_compare_and_update_if_greater_matrix() {
+        let dao = MockDao::new();
+
+        // 新键（`_ => (0, None)` 分支）：new_value > 0 → true，写入并设置 TTL
+        assert!(dao
+            .compare_and_update_if_greater("nc_new", 5, 60)
+            .await
+            .unwrap());
+        assert_eq!(dao.get("nc_new").await.unwrap().as_deref(), Some("5"));
+        assert!(dao.get_timeout("nc_new").await.unwrap().is_some());
+
+        // 已存在且 new_value > current → true，保留原 expire_at（TTL 存在分支）
+        assert!(dao
+            .compare_and_update_if_greater("nc_new", 8, 60)
+            .await
+            .unwrap());
+        assert_eq!(dao.get("nc_new").await.unwrap().as_deref(), Some("8"));
+
+        // 已存在但 new_value <= current → false 且不修改（else 分支）
+        assert!(!dao
+            .compare_and_update_if_greater("nc_new", 8, 60)
+            .await
+            .unwrap());
+        assert_eq!(dao.get("nc_new").await.unwrap().as_deref(), Some("8"));
+
+        // 永久键（Some((v, None)) 分支）：值会被更新
+        //【已知行为不一致，记录不改逻辑】incr/decr 对永久键保留"永久"语义
+        //（expire_at 沿用 None），而 compare_and_update_if_greater 的永久键分支
+        // `existing_expire_at = None` 会落入 `ttl_seconds` 分支，把永久键升级为
+        // TTL 键。此测试按现实现断言，如修复语义请同步更新本断言。
+        dao.set_permanent("nc_perm", "1").await.unwrap();
+        assert!(dao
+            .compare_and_update_if_greater("nc_perm", 2, 60)
+            .await
+            .unwrap());
+        assert_eq!(dao.get("nc_perm").await.unwrap().as_deref(), Some("2"));
+        assert!(
+            dao.get_timeout("nc_perm").await.unwrap().is_some(),
+            "现实现将永久键升级为 TTL 键（与 incr 的永久键语义不一致，见注释）"
+        );
+
+        // 非数字现存值（TTL 与永久两种形态）→ Dao 错误（M1 修复，禁止静默按 0）
+        dao.set("nc_bad_ttl", "oops", 3600).await.unwrap();
+        let result = dao.compare_and_update_if_greater("nc_bad_ttl", 9, 60).await;
+        assert!(
+            matches!(
+                result,
+                Err(GarrisonError::Dao(ref msg))
+                    if msg.contains("dao-compare-and-update-parse-u64")
+            ),
+            "TTL 键 parse 失败应显性报错，实际: {:?}",
+            result
+        );
+        dao.set_permanent("nc_bad_perm", "oops").await.unwrap();
+        let result = dao
+            .compare_and_update_if_greater("nc_bad_perm", 9, 60)
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(GarrisonError::Dao(ref msg))
+                    if msg.contains("dao-compare-and-update-parse-u64")
+            ),
+            "永久键 parse 失败应显性报错，实际: {:?}",
+            result
+        );
+
+        // 已过期键视为不存在：重新初始化（过期 `_ => (0, None)` 分支）
+        dao.set("nc_expired", "7", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(dao
+            .compare_and_update_if_greater("nc_expired", 3, 60)
+            .await
+            .unwrap());
+        assert_eq!(dao.get("nc_expired").await.unwrap().as_deref(), Some("3"));
+    }
+
+    /// compare_and_swap：SETNX（None 期望）/ 命中 / 未命中 / 过期清理 / ttl=0 永久。
+    #[tokio::test]
+    async fn in_memory_compare_and_swap_matrix() {
+        let dao = MockDao::new();
+
+        // 期望不存在且确实不存在 → true（None 分支），ttl=3600
+        assert!(dao
+            .compare_and_swap("cas_new", None, "v1", 3600)
+            .await
+            .unwrap());
+        assert!(dao.get_timeout("cas_new").await.unwrap().is_some());
+
+        // 期望值不匹配 → false 且不修改（else 分支）
+        assert!(!dao
+            .compare_and_swap("cas_new", Some("wrong"), "v2", 3600)
+            .await
+            .unwrap());
+        assert_eq!(dao.get("cas_new").await.unwrap().as_deref(), Some("v1"));
+
+        // 期望值匹配 → true 并写入新值
+        assert!(dao
+            .compare_and_swap("cas_new", Some("v1"), "v2", 3600)
+            .await
+            .unwrap());
+        assert_eq!(dao.get("cas_new").await.unwrap().as_deref(), Some("v2"));
+
+        // 期望不存在但 key 存在 → false
+        assert!(!dao
+            .compare_and_swap("cas_new", None, "v3", 3600)
+            .await
+            .unwrap());
+
+        // 已过期 key 视为不存在：期望 None → true（过期清理分支）
+        dao.set("cas_expired", "old", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        assert!(dao
+            .compare_and_swap("cas_expired", None, "fresh", 0)
+            .await
+            .unwrap());
+        // ttl=0 → 永久驻留（`ttl_seconds == 0` 分支）
+        assert!(dao.get_timeout("cas_expired").await.unwrap().is_none());
+        assert_eq!(
+            dao.get("cas_expired").await.unwrap().as_deref(),
+            Some("fresh")
+        );
+    }
+
+    /// eval_lua：INCR + EXPIRE 模式委托 incr（含返回值递增与 TTL）。
+    #[tokio::test]
+    async fn in_memory_eval_lua_incr_mode() {
+        let dao = MockDao::new();
+        let script =
+            "local v = redis.call('INCR', KEYS[1]) redis.call('EXPIRE', KEYS[1], ARGV[2]) return v";
+        let keys = vec!["lua_incr_key".to_string()];
+
+        let r1 = dao
+            .eval_lua(
+                script,
+                keys.clone(),
+                vec!["ignored".to_string(), "600".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(r1, vec!["1".to_string()]);
+        let r2 = dao
+            .eval_lua(
+                script,
+                keys.clone(),
+                vec!["ignored".to_string(), "600".to_string()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(r2, vec!["2".to_string()], "连续 eval_lua 应递增计数");
+        assert!(dao.get_timeout("lua_incr_key").await.unwrap().is_some());
+    }
+
+    /// eval_lua：INCR 模式参数校验——缺 KEYS[1] / 缺 ARGV[2] / ARGV[2] 非数字均报 InvalidParam。
+    #[tokio::test]
+    async fn in_memory_eval_lua_incr_mode_param_validation() {
+        let dao = MockDao::new();
+        let script = "INCR + EXPIRE";
+
+        // 缺 KEYS[1]（keys 为空）
+        let result = dao
+            .eval_lua(script, vec![], vec!["0".to_string(), "600".to_string()])
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("missing-keys-1")),
+            "缺 KEYS[1] 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+
+        // 缺 ARGV[2]（args 长度 1）
+        let result = dao
+            .eval_lua(script, vec!["k".to_string()], vec!["0".to_string()])
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("argv-2-ttl")),
+            "缺 ARGV[2] 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+
+        // ARGV[2] 非数字
+        let result = dao
+            .eval_lua(
+                script,
+                vec!["k".to_string()],
+                vec!["0".to_string(), "not-a-number".to_string()],
+            )
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("parse-failed")),
+            "ARGV[2] 非数字应返回 parse-failed InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// eval_lua：rate_limit_sliding_window 模式——未达阈值放行 "1"，达阈值拦截 "0"，
+    /// 且窗口外的旧时间戳被过滤（不占用阈值额度）。
+    #[tokio::test]
+    async fn in_memory_eval_lua_sliding_window_threshold_and_filter() {
+        let dao = MockDao::new();
+        let script =
+            "return rate_limit_sliding_window(KEYS[1], ARGV[1], ARGV[2], ARGV[3], ARGV[4])";
+        let key = "lua_sliding_key".to_string();
+        let keys = vec![key.clone()];
+        let now_ms: u64 = 10_000;
+        let window_start_ms: u64 = 5_000;
+        // threshold=2：第 1、2 次请求放行，第 3 次拦截
+        let args = |now: u64| -> Vec<String> {
+            vec![
+                now.to_string(),
+                window_start_ms.to_string(),
+                "2".to_string(),
+                "60".to_string(),
+            ]
+        };
+
+        // 窗口外旧时间戳（<= window_start_ms）应被 parse_timestamps 过滤
+        dao.set_permanent(&key, "1,5000,4999").await.unwrap();
+
+        assert_eq!(
+            dao.eval_lua(script, keys.clone(), args(now_ms))
+                .await
+                .unwrap(),
+            vec!["1".to_string()],
+            "旧时间戳被过滤后未达阈值应放行"
+        );
+        assert_eq!(
+            dao.eval_lua(script, keys.clone(), args(now_ms + 1))
+                .await
+                .unwrap(),
+            vec!["1".to_string()],
+            "窗口内第 2 个时间戳仍应放行（threshold=2）"
+        );
+        assert_eq!(
+            dao.eval_lua(script, keys.clone(), args(now_ms + 2))
+                .await
+                .unwrap(),
+            vec!["0".to_string()],
+            "达到阈值后应拦截"
+        );
+    }
+
+    /// eval_lua：sliding window 模式参数校验——缺 KEYS[1] / 缺任一 ARGV / 非数字均报错。
+    #[tokio::test]
+    async fn in_memory_eval_lua_sliding_window_param_validation() {
+        let dao = MockDao::new();
+        let script = "rate_limit_sliding_window";
+
+        // 缺 KEYS[1]
+        let result = dao
+            .eval_lua(
+                script,
+                vec![],
+                vec![
+                    "1".to_string(),
+                    "1".to_string(),
+                    "1".to_string(),
+                    "1".to_string(),
+                ],
+            )
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("rl-missing-keys-1")),
+            "缺 KEYS[1] 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+
+        // 缺 ARGV[4]（仅 3 个参数）
+        let result = dao
+            .eval_lua(
+                script,
+                vec!["k".to_string()],
+                vec!["1".to_string(), "1".to_string(), "1".to_string()],
+            )
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("rl-argv-4-ttl")),
+            "缺 ARGV[4] 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+
+        // ARGV[1] 非数字
+        let result = dao
+            .eval_lua(
+                script,
+                vec!["k".to_string()],
+                vec![
+                    "nan".to_string(),
+                    "1".to_string(),
+                    "1".to_string(),
+                    "1".to_string(),
+                ],
+            )
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("parse-failed")),
+            "ARGV[1] 非数字应返回 parse-failed InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// eval_lua：无法识别的脚本返回 NotImplemented（fail-closed，拒绝静默降级）。
+    #[tokio::test]
+    async fn in_memory_eval_lua_unsupported_script_returns_not_implemented() {
+        let dao = MockDao::new();
+        let result = dao
+            .eval_lua(
+                "return redis.call('GET', KEYS[1])",
+                vec!["k".to_string()],
+                vec![],
+            )
+            .await;
+        assert!(
+            matches!(
+                result,
+                Err(GarrisonError::NotImplemented(ref msg))
+                    if msg.contains("dao-eval-lua-unsupported-script")
+            ),
+            "不支持的脚本应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// eval_lua：sliding window 模式 ttl_seconds=0 时写入永久键（`ttl_seconds == 0` 分支）。
+    #[tokio::test]
+    async fn in_memory_eval_lua_sliding_window_zero_ttl_makes_key_permanent() {
+        let dao = MockDao::new();
+        let script = "rate_limit_sliding_window";
+        let keys = vec!["lua_sliding_perm".to_string()];
+        // threshold=u64::MAX 保证永不拦截，仅验证写入路径
+        let args = vec![
+            "10000".to_string(),
+            "5000".to_string(),
+            u64::MAX.to_string(),
+            "0".to_string(),
+        ];
+
+        assert_eq!(
+            dao.eval_lua(script, keys, args).await.unwrap(),
+            vec!["1".to_string()],
+            "未达阈值应放行"
+        );
+        assert!(
+            dao.get_timeout("lua_sliding_perm").await.unwrap().is_none(),
+            "ttl_seconds=0 时 sliding window 写入的键应为永久键"
+        );
+    }
 }
