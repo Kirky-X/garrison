@@ -49,7 +49,7 @@ impl SignHandler {
         let mut derived_key = [0u8; 32];
         // expand 在 IKM 长度合法时不会失败（32 字节远小于 SHA256 最大输出 255*32）
         hkdf.expand(HKDF_INFO, &mut derived_key)
-            .expect("HKDF expand 32 字节不会失败");
+            .expect("HKDF expand 32 bytes must not fail");
         Ok(Self {
             app_key,
             app_secret,
@@ -92,7 +92,7 @@ impl SignHandler {
         let mut okm = [0u8; 32];
         // expand 在 IKM 长度合法时不会失败（32 字节远小于 SHA256 最大输出 255*32）
         hkdf.expand(HKDF_INFO, &mut okm)
-            .expect("HKDF expand 32 字节不会失败");
+            .expect("HKDF expand 32 bytes must not fail");
         okm
     }
 

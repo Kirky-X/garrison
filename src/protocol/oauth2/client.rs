@@ -363,7 +363,7 @@ impl OAuth2Client {
         // 1. 验证长度 43-128（RFC 7636 §4.1）
         if code_verifier.len() < 43 || code_verifier.len() > 128 {
             return Err(GarrisonError::InvalidParam(format!(
-                "code_verifier 长度必须在 43-128 之间，当前 {}",
+                "oauth2-pkce-length-invalid::{}",
                 code_verifier.len()
             )));
         }
@@ -373,7 +373,7 @@ impl OAuth2Client {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.' || c == '_' || c == '~')
         {
             return Err(GarrisonError::InvalidParam(
-                "code_verifier 仅允许 [A-Z]/[a-z]/[0-9]/-/./_/~ 字符".to_string(),
+                "oauth2-pkce-chars-invalid".to_string(),
             ));
         }
         // 3. S256: SHA-256 → base64url 无填充
@@ -444,9 +444,7 @@ impl OAuth2Client {
     ) -> GarrisonResult<TokenResponse> {
         // CSRF 防护：校验 state 参数
         if expected_state != actual_state {
-            return Err(GarrisonError::OAuth2(
-                "state 参数不匹配，可能遭受 CSRF 攻击".to_string(),
-            ));
+            return Err(GarrisonError::OAuth2("oauth2-state-mismatch".to_string()));
         }
         // 客户端预校验 code_verifier 合法性（即使服务器不校验，客户端也不应发送非法值）
         Self::generate_pkce_challenge(code_verifier)?;
@@ -534,7 +532,7 @@ impl OAuth2Client {
     ) -> GarrisonResult<TokenResponse> {
         if refresh_token.is_empty() {
             return Err(GarrisonError::InvalidParam(
-                "refresh_token 不可为空".to_string(),
+                "oauth2-refresh-token-empty".to_string(),
             ));
         }
         #[cfg(feature = "oauth2-scope-handler")]
