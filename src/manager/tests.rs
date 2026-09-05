@@ -317,6 +317,11 @@ async fn init_overwrites_existing() {
 }
 
 /// 验证 inventory 已注册 default factory。
+///
+/// BW-AC-012（FRD §8.1）：处理器编译期注册（inventory::submit!）+ 运行时单例枚举。
+/// 注：FRD 原文以 `AnnotationHandler` trait 表述，实现中该语义由
+/// `GarrisonLogicFactoryEntry` inventory 注册承载（设计演进，见 specmark
+/// specs/module-structure）。
 #[serial]
 #[test]
 fn default_factory_registered_via_inventory() {

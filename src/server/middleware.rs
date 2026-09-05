@@ -297,7 +297,7 @@ pub async fn audit_log_middleware(req: Request, next: Next) -> Response {
 // path-filter 中间件（C-1：双端口架构路由分离）
 // ============================================================================
 //
-// sdforge::http::build() 收集所有 15 个 #[forge] 路由到单一 Router，
+// sdforge::http::build() 收集所有 16 个 #[forge] 路由到单一 Router，
 // 不支持按 name/path/group/tag 过滤。为在双端口架构中分离外网/内网路由，
 // 用 path-filter 中间件在请求入口处按路径过滤：
 //

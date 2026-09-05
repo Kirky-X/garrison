@@ -405,6 +405,27 @@ mod tests_otlp {
         );
     }
 
+    /// 测试 init_otlp_tracing 对明显非法 endpoint 返回 Err。
+    ///
+    /// 含空格的字符串不是合法 URI → `Endpoint::from_shared` 解析失败 →
+    /// `ExporterBuildError` 经 `From` 转换为 `GarrisonOtelError::Exporter`。
+    /// 此路径在 build() 阶段即失败，不触达 `set_tracer_provider` 全局状态，
+    /// 也不需要真实 OTLP endpoint 可达。
+    #[tokio::test]
+    async fn test_init_otlp_tracing_invalid_endpoint_returns_err() {
+        let result = init_otlp_tracing("not a valid endpoint");
+        assert!(result.is_err(), "非法 endpoint 应返回 Err");
+        let err = result.unwrap_err();
+        assert!(
+            matches!(err, GarrisonOtelError::Exporter(_)),
+            "应映射为 Exporter 变体，实际: {:?}",
+            err
+        );
+        // Display 应包含 exporter 错误前缀（验证 From 转换路径的 message）
+        let msg = format!("{}", err);
+        assert!(msg.contains("OTLP exporter"), "实际: {}", msg);
+    }
+
     /// 测试 GarrisonOtelError 的 Display 实现。
     #[test]
     fn test_otel_error_display() {
@@ -510,5 +531,40 @@ mod tests_inklog {
             degraded: false,
         };
         assert!(!normal.is_degraded());
+    }
+
+    /// M-4/R-dep-003: inklog 初始化失败时 init_inklog_logging 返回 Err。
+    ///
+    /// 通过 RUST_LOG 注入 inklog 非法 level（合法集合仅 trace/debug/info/warn/
+    /// warning/error/fatal/critical），使 builder 校验失败 → build() 返回
+    /// ConfigError。验证原始初始化函数的 Err 路径。
+    #[tokio::test]
+    #[serial]
+    async fn init_inklog_logging_fails_on_invalid_level() {
+        // "not-a-valid-level" 不是 inklog 合法 level，也不是合法 tracing level，
+        // EnvFilter::try_from_default_env 会解析失败（仅影响降级路径分支选择）
+        std::env::set_var("RUST_LOG", "not-a-valid-level");
+        let result = init_inklog_logging().await;
+        std::env::remove_var("RUST_LOG");
+        assert!(result.is_err(), "非法 level 应使 inklog 初始化失败");
+    }
+
+    /// R-dep-003: inklog 初始化失败时 with_fallback 降级（degraded=true, guard=None）。
+    ///
+    /// RUST_LOG 设为 inklog 非法 level → build() 返回 Err → 走降级分支：
+    /// metrics-prometheus 启用时先 try_init tracing-subscriber JSON（全局注册，
+    /// 失败则静默跳过），再返回 degraded 状态。断言不持有 guard。
+    #[tokio::test]
+    #[serial]
+    async fn r_dep003_fallback_degrades_when_inklog_fails() {
+        // inklog 非法 level（EnvFilter 可解析为 target 指令，不产生过滤告警噪音）
+        std::env::set_var("RUST_LOG", "garrison-bogus-level");
+        let result = init_inklog_logging_with_fallback().await;
+        std::env::remove_var("RUST_LOG");
+        assert!(result.is_degraded(), "inklog 失败时应降级（degraded=true）");
+        assert!(
+            result.guard().is_none(),
+            "降级时不应持有 LoggerManager guard"
+        );
     }
 }

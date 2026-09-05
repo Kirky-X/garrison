@@ -366,3 +366,333 @@ fn generate_code_always_in_6_digit_range() {
         );
     }
 }
+
+// ============================================================================
+// SmsRateLimiter::validate_phone 校验分支测试（key 注入 / DoS 防护）
+// ============================================================================
+
+/// 空手机号返回 InvalidParam（secure-phone-empty）。
+#[test]
+fn validate_phone_rejects_empty() {
+    let result = rate_limiter::validate_phone("");
+    assert!(
+        matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-phone-empty")),
+        "空手机号应返回 InvalidParam（secure-phone-empty），实际: {:?}",
+        result
+    );
+}
+
+/// 含 ':' 的手机号返回 InvalidParam（key 注入防护）。
+#[test]
+fn validate_phone_rejects_colon() {
+    let result = rate_limiter::validate_phone("138:00138000");
+    assert!(
+        matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-phone-no-colon")),
+        "含冒号手机号应返回 InvalidParam（secure-phone-no-colon），实际: {:?}",
+        result
+    );
+}
+
+/// 含控制字符的手机号返回 InvalidParam（如 \n / \u{1}）。
+#[test]
+fn validate_phone_rejects_control_char() {
+    for phone in ["138\n00138000", "138\u{1}00138000"] {
+        let result = rate_limiter::validate_phone(phone);
+        assert!(
+            matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-phone-no-control-char")),
+            "含控制字符手机号应返回 InvalidParam（secure-phone-no-control-char），实际: {:?}",
+            result
+        );
+    }
+}
+
+/// 长度超过 20 的手机号返回 InvalidParam；恰好 20 字符放行（边界）。
+#[test]
+fn validate_phone_rejects_over_20_chars() {
+    let result = rate_limiter::validate_phone(&"1".repeat(21));
+    assert!(
+        matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-phone-too-long")),
+        "21 字符手机号应返回 InvalidParam（secure-phone-too-long），实际: {:?}",
+        result
+    );
+    assert!(
+        rate_limiter::validate_phone(&"1".repeat(20)).is_ok(),
+        "恰好 20 字符应放行（边界值）"
+    );
+}
+
+/// 合法手机号通过校验。
+#[test]
+fn validate_phone_accepts_valid() {
+    assert!(rate_limiter::validate_phone("13800138000").is_ok());
+    assert!(rate_limiter::validate_phone("+8613800138000").is_ok());
+}
+
+// ============================================================================
+// SmsRateLimiter 错误路径 / 回滚测试（FaultDao：incr/decr 可独立注入失败）
+// ============================================================================
+
+/// 可注入故障的 DAO：incr / decr 可独立配置失败，其余委托内存 MockDao。
+struct FaultDao {
+    inner: MockDao,
+    /// incr 注入失败（模拟 limiteron incr_with_ttl 上游错误）。
+    fail_incr: bool,
+    /// decr 注入失败（模拟回滚递减失败，触发 warn 日志分支）。
+    fail_decr: bool,
+}
+
+impl FaultDao {
+    fn ok() -> Self {
+        Self {
+            inner: MockDao::new(),
+            fail_incr: false,
+            fail_decr: false,
+        }
+    }
+
+    fn with_fail_incr() -> Self {
+        Self {
+            inner: MockDao::new(),
+            fail_incr: true,
+            fail_decr: false,
+        }
+    }
+
+    fn with_fail_decr() -> Self {
+        Self {
+            inner: MockDao::new(),
+            fail_incr: false,
+            fail_decr: true,
+        }
+    }
+}
+
+#[async_trait]
+impl GarrisonDao for FaultDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
+        self.inner.get(key).await
+    }
+
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
+        self.inner.set(key, value, ttl_seconds).await
+    }
+
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
+        self.inner.update(key, value).await
+    }
+
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
+        self.inner.expire(key, seconds).await
+    }
+
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
+        self.inner.delete(key).await
+    }
+
+    async fn set_if_absent(
+        &self,
+        key: &str,
+        value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        self.inner.set_if_absent(key, value, ttl_seconds).await
+    }
+
+    async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
+        self.inner.rename(old_key, new_key).await
+    }
+
+    async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
+        self.inner.get_and_delete(key).await
+    }
+
+    async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
+        self.inner.keys(pattern).await
+    }
+
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        new_value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        self.inner
+            .compare_and_swap(key, expected, new_value, ttl_seconds)
+            .await
+    }
+
+    async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
+        if self.fail_incr {
+            return Err(GarrisonError::Dao("mock-incr-failed".to_string()));
+        }
+        self.inner.incr(key, ttl_seconds).await
+    }
+
+    async fn decr(&self, key: &str) -> GarrisonResult<u64> {
+        if self.fail_decr {
+            return Err(GarrisonError::Dao("mock-decr-failed".to_string()));
+        }
+        self.inner.decr(key).await
+    }
+}
+
+/// 读取指定手机号当前小时/天窗口计数器值（不存在返回 None）。
+async fn window_counter_value(
+    dao: &Arc<dyn GarrisonDao>,
+    phone: &str,
+    window: &str,
+) -> Option<String> {
+    let pattern = format!("sms:rate:{}:{}:*", phone, window);
+    let keys = dao.keys(&pattern).await.unwrap();
+    assert!(
+        keys.len() <= 1,
+        "同窗口至多 1 个计数器 key，实际: {:?}",
+        keys
+    );
+    match keys.first() {
+        Some(k) => dao.get(k).await.unwrap(),
+        None => None,
+    }
+}
+
+/// 小时窗口超限应回滚本次 incr（计数回到拒绝前的值），返回 hourly 限流错误。
+#[tokio::test]
+async fn check_and_increment_hourly_exceed_rolls_back_counter() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::ok());
+    let limiter = SmsRateLimiter::new(dao.clone(), 1, 100);
+
+    // 第 1 次：hour=1 <= 1，放行
+    limiter.check_and_increment("15800000001").await.unwrap();
+    // 第 2 次：hour=2 > 1，超限 → 回滚 incr → hour 回到 1
+    let result = limiter.check_and_increment("15800000001").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::SmsRateLimitExceeded { window }) if window == "hourly"),
+        "第 2 次应返回 hourly 限流错误，实际: {:?}",
+        result
+    );
+    assert_eq!(
+        window_counter_value(&dao, "15800000001", "hour").await,
+        Some("1".to_string()),
+        "超限请求应回滚：hour 计数应回到拒绝前的 1"
+    );
+}
+
+/// 天窗口超限应回滚天与小时两个计数器，返回 daily 限流错误。
+#[tokio::test]
+async fn check_and_increment_daily_exceed_rolls_back_both_counters() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::ok());
+    let limiter = SmsRateLimiter::new(dao.clone(), 100, 1);
+
+    // 第 1 次：day=1 <= 1，放行
+    limiter.check_and_increment("15800000002").await.unwrap();
+    // 第 2 次：hour=2 <= 100 通过，day=2 > 1 超限 → 回滚 day 与 hour
+    let result = limiter.check_and_increment("15800000002").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::SmsRateLimitExceeded { window }) if window == "daily"),
+        "第 2 次应返回 daily 限流错误，实际: {:?}",
+        result
+    );
+    assert_eq!(
+        window_counter_value(&dao, "15800000002", "day").await,
+        Some("1".to_string()),
+        "超限请求应回滚：day 计数应回到拒绝前的 1"
+    );
+    assert_eq!(
+        window_counter_value(&dao, "15800000002", "hour").await,
+        Some("1".to_string()),
+        "超限请求应回滚：hour 计数应回到拒绝前的 1"
+    );
+}
+
+/// 小时超限且回滚 decr 失败时仅记录 warn，不改变返回的 hourly 限流错误。
+#[tokio::test]
+async fn check_and_increment_hourly_exceed_rollback_failure_only_warns() {
+    // fail_decr：回滚递减失败 → 触发 rollback failed warn 分支
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::with_fail_decr());
+    let limiter = SmsRateLimiter::new(dao, 0, 100);
+    let result = limiter.check_and_increment("15800000003").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::SmsRateLimitExceeded { window }) if window == "hourly"),
+        "回滚失败不应改变返回值，仍应返回 hourly 限流错误，实际: {:?}",
+        result
+    );
+}
+
+/// 天超限且回滚 decr 失败时仅记录 warn（day + hour 两次回滚都吞错），仍返回 daily 限流错误。
+#[tokio::test]
+async fn check_and_increment_daily_exceed_rollback_failure_only_warns() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::with_fail_decr());
+    let limiter = SmsRateLimiter::new(dao, 100, 0);
+    let result = limiter.check_and_increment("15800000004").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::SmsRateLimitExceeded { window }) if window == "daily"),
+        "回滚失败不应改变返回值，仍应返回 daily 限流错误，实际: {:?}",
+        result
+    );
+}
+
+/// limiter incr 上游失败应返回 Internal（secure-limiter-incr 前缀）。
+#[tokio::test]
+async fn check_and_increment_incr_failure_returns_internal() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::with_fail_incr());
+    let limiter = SmsRateLimiter::new(dao, 100, 100);
+    let result = limiter.check_and_increment("15800000005").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Internal(msg)) if msg.contains("secure-limiter-incr")),
+        "incr 失败应返回 Internal（secure-limiter-incr），实际: {:?}",
+        result
+    );
+}
+
+/// 回滚应递减小时与天两个窗口计数器（递减到 0 时计数器被删除）。
+#[tokio::test]
+async fn rollback_decrements_hour_and_day_counters() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::ok());
+    let limiter = SmsRateLimiter::new(dao.clone(), 100, 100);
+
+    // 先 check_and_increment 成功：hour=1, day=1
+    limiter.check_and_increment("15800000006").await.unwrap();
+    assert_eq!(
+        window_counter_value(&dao, "15800000006", "hour").await,
+        Some("1".to_string())
+    );
+    // 回滚：两个计数器递减到 0 → 被删除
+    limiter.rollback("15800000006").await.unwrap();
+    assert_eq!(
+        window_counter_value(&dao, "15800000006", "hour").await,
+        None,
+        "回滚后 hour 计数器应被删除（递减到 0）"
+    );
+    assert_eq!(
+        window_counter_value(&dao, "15800000006", "day").await,
+        None,
+        "回滚后 day 计数器应被删除（递减到 0）"
+    );
+}
+
+/// 回滚非法手机号返回 InvalidParam（校验前置）。
+#[tokio::test]
+async fn rollback_invalid_phone_returns_invalid_param() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::ok());
+    let limiter = SmsRateLimiter::new(dao, 100, 100);
+    let result = limiter.rollback("158:0000007").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-phone-no-colon")),
+        "回滚含冒号手机号应返回 InvalidParam，实际: {:?}",
+        result
+    );
+}
+
+/// 回滚时 decr 失败应透传 Dao 错误（rollback 使用 `?` 传播，不吞错）。
+#[tokio::test]
+async fn rollback_decr_failure_propagates_error() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::with_fail_decr());
+    let limiter = SmsRateLimiter::new(dao, 100, 100);
+    let result = limiter.rollback("15800000008").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Dao(msg)) if msg.contains("mock-decr-failed")),
+        "回滚 decr 失败应透传 Dao 错误，实际: {:?}",
+        result
+    );
+}

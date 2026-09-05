@@ -375,16 +375,26 @@ fn default_equals_new() {
 /// 覆盖 GarrisonListenerManager::new() 中 `tracing::info!` 宏的参数求值路径
 /// （line 117: `std::any::type_name::<Arc<dyn GarrisonListener>>()`）。
 /// tracing::info! 在无 subscriber 时短路不求值参数，需确保 subscriber 已设置。
+///
+/// 使用 `with_default` 作用域 subscriber 而非 `try_init()` 全局注册：
+/// 全局 subscriber 会存活整个测试进程，导致其他模块（如 secure::masking
+/// 非法正则 fail-closed 路径）的 `tracing::error!` 输出噪音到 stderr。
 #[test]
 #[serial]
 fn manager_new_with_tracing_subscriber() {
-    // 确保 tracing subscriber 已初始化（幂等，已设置时返回 Err 被忽略）
     #[cfg(any(feature = "tracing-log", feature = "metrics-prometheus"))]
     {
-        let _ = tracing_subscriber::fmt().try_init();
+        let subscriber = tracing_subscriber::fmt().finish();
+        tracing::subscriber::with_default(subscriber, || {
+            let manager = GarrisonListenerManager::new();
+            assert!(manager.count() >= 2);
+        });
     }
-    let manager = GarrisonListenerManager::new();
-    assert!(manager.count() >= 2);
+    #[cfg(not(any(feature = "tracing-log", feature = "metrics-prometheus")))]
+    {
+        let manager = GarrisonListenerManager::new();
+        assert!(manager.count() >= 2);
+    }
 }
 
 /// 验证 broadcast 对 PermissionCheck 事件正确分发。

@@ -609,3 +609,192 @@ async fn test_health_registry_register_chain() {
     assert_eq!(report.checks.len(), 2);
     assert_eq!(report.overall, HealthStatus::Degraded);
 }
+
+// ============================================================================
+// 覆盖率补测：Default 实现 + 探测成功分支 + warp 合并 filter
+// ============================================================================
+
+/// 探测路径下（`cache-redis` 启用）：`CacheHealthCheck::default()` 创建的检查器
+/// 在 manager 已初始化且 `dao.get` 可达时返回 `Healthy`。
+///
+/// 覆盖 `checks.rs` 中 `CacheHealthCheck` 的 `Default` 实现与探测成功分支
+/// `Ok(Ok(_)) => Healthy`（与超时/未初始化分支互补）。
+#[cfg(feature = "cache-redis")]
+#[tokio::test]
+#[serial_test::serial]
+async fn cache_health_check_default_returns_healthy_when_probe_succeeds() {
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::GarrisonInterface;
+
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .expect("init with InMemoryDao 应成功");
+
+    // Default 实现与 new() 等价
+    //（allow：本测试的目的就是执行 Default impl，改写为单元结构体字面量会使覆盖失效）
+    #[allow(clippy::default_constructed_unit_structs)]
+    let checker = CacheHealthCheck::default();
+    assert_eq!(checker.name(), "cache");
+    let status = checker.check().await.expect("check 应返回 Ok 而非 Err");
+    assert_eq!(
+        status,
+        HealthStatus::Healthy,
+        "dao.get 可达（Ok(Ok(_))）时探测应返回 Healthy"
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 快路径下（仅 `cache-memory`）：`CacheHealthCheck::default()` 等价于 `new()`，
+/// 进程存活即 Healthy。
+#[cfg(all(feature = "cache-memory", not(feature = "cache-redis")))]
+#[tokio::test]
+async fn cache_health_check_default_impl_fast_path() {
+    //（allow：本测试的目的就是执行 Default impl，改写为单元结构体字面量会使覆盖失效）
+    #[allow(clippy::default_constructed_unit_structs)]
+    let checker = CacheHealthCheck::default();
+    assert_eq!(checker.name(), "cache");
+    let result = checker.check().await.unwrap();
+    assert_eq!(result, HealthStatus::Healthy);
+}
+
+/// 快路径下（仅 `db-sqlite`）：`DbHealthCheck::default()` 等价于 `new()`，
+/// SQLite 嵌入式数据库进程存活即 Healthy。
+///
+/// 覆盖 `checks.rs` 中 `DbHealthCheck` 的 `Default` 实现（既有测试仅覆盖 `new()`）。
+#[cfg(all(
+    feature = "db-sqlite",
+    not(any(feature = "db-postgres", feature = "db-mysql"))
+))]
+#[tokio::test]
+async fn db_health_check_default_impl_returns_healthy() {
+    //（allow：本测试的目的就是执行 Default impl，改写为单元结构体字面量会使覆盖失效）
+    #[allow(clippy::default_constructed_unit_structs)]
+    let checker = DbHealthCheck::default();
+    assert_eq!(checker.name(), "database");
+    let result = checker.check().await.unwrap();
+    assert_eq!(result, HealthStatus::Healthy);
+}
+
+/// 测试 warp 合并 filter（`health_filters` = live OR ready）：
+/// `/health/live` 与 `/health/ready` 均可经同一 filter 服务。
+#[cfg(feature = "web-warp")]
+#[tokio::test]
+async fn test_warp_health_filters_serves_live_and_ready() {
+    use super::warp_routes::health_filters;
+    use warp::http::StatusCode;
+
+    let mut registry = HealthRegistry::new();
+    registry.register(Box::new(AlwaysHealthy));
+    let filter = health_filters(Arc::new(registry));
+
+    let resp = warp::test::request()
+        .method("GET")
+        .path("/health/live")
+        .reply(&filter)
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK, "合并 filter 应放行 live");
+
+    let resp = warp::test::request()
+        .method("GET")
+        .path("/health/ready")
+        .reply(&filter)
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK, "合并 filter 应放行 ready");
+}
+
+/// 测试 warp readiness 探针在 Degraded 状态时返回 200（降级但可用）。
+///
+/// 覆盖 `warp_routes.rs` 中 `Healthy | Degraded => OK` match 臂的 Degraded 半边。
+#[cfg(feature = "web-warp")]
+#[tokio::test]
+async fn test_warp_ready_filter_returns_200_when_degraded() {
+    use super::warp_routes::ready_filter;
+    use warp::http::StatusCode;
+
+    let mut registry = HealthRegistry::new();
+    registry.register(Box::new(AlwaysDegraded));
+    let filter = ready_filter(Arc::new(registry));
+    let resp = warp::test::request()
+        .method("GET")
+        .path("/health/ready")
+        .reply(&filter)
+        .await;
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+/// Error DAO：`get` 直接返回 `Err`，用于覆盖探测的 `Ok(Err(_)) → Unhealthy` 分支。
+#[cfg(feature = "cache-redis")]
+struct ErrorDao;
+
+#[cfg(feature = "cache-redis")]
+#[async_trait::async_trait]
+impl crate::dao::GarrisonDao for ErrorDao {
+    async fn get(&self, _key: &str) -> crate::error::GarrisonResult<Option<String>> {
+        Err(crate::error::GarrisonError::Dao(
+            "health-probe-error".to_string(),
+        ))
+    }
+    async fn set(
+        &self,
+        _key: &str,
+        _value: &str,
+        _ttl_seconds: u64,
+    ) -> crate::error::GarrisonResult<()> {
+        Ok(())
+    }
+    async fn update(&self, _key: &str, _value: &str) -> crate::error::GarrisonResult<()> {
+        Ok(())
+    }
+    async fn expire(&self, _key: &str, _seconds: u64) -> crate::error::GarrisonResult<()> {
+        Ok(())
+    }
+    async fn delete(&self, _key: &str) -> crate::error::GarrisonResult<()> {
+        Ok(())
+    }
+
+    crate::atomic_test_fallback!();
+}
+
+/// 探测路径下，`dao.get` 返回 `Err` 时 `CacheHealthCheck` 映射为 `Unhealthy`。
+///
+/// 覆盖 `checks.rs` 中 `Ok(Err(_)) => Unhealthy` 分支（后端显式报错，区别于超时）。
+#[cfg(feature = "cache-redis")]
+#[tokio::test]
+#[serial_test::serial]
+async fn cache_health_check_unhealthy_when_probe_errors() {
+    use crate::dao::GarrisonDao;
+    use crate::manager::GarrisonManager;
+    use crate::stp::GarrisonInterface;
+
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn GarrisonDao> = Arc::new(ErrorDao);
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .expect("init with ErrorDao 应成功（init 不调用 dao.get）");
+
+    let checker = CacheHealthCheck::new();
+    let status = checker.check().await.expect("check 应返回 Ok 而非 Err");
+    assert_eq!(
+        status,
+        HealthStatus::Unhealthy,
+        "dao.get 返回 Err 时探测应映射为 Unhealthy（而非 Err）"
+    );
+
+    GarrisonManager::reset_for_test();
+}

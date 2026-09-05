@@ -2288,6 +2288,7 @@ async fn get_permission_list_with_type_admin_isolated_from_user() {
 /// R-002: 同一 login_id 在不同 login_type 下可拥有不同权限。
 ///
 /// 覆盖 spec login-type-multi-account R-002 验收 case 2。
+/// BW-AC-014（FRD §8.1）：多账号体系（user/admin）隔离，Token 命名空间独立、互不干扰。
 #[tokio::test]
 #[serial]
 async fn same_login_id_different_login_type_different_permissions() {

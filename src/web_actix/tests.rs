@@ -914,3 +914,127 @@ async fn check_role_handler(_auth: CheckRole) -> &'static str {
 async fn check_permission_handler(_auth: CheckPermission) -> &'static str {
     "ok"
 }
+
+// ========================================================================
+// 覆盖率补测：GarrisonRouter::with_interceptor / with_tenant_resolver
+// ========================================================================
+
+/// with_interceptor 注入自定义拦截器，受保护路径鉴权时会执行它。
+///
+/// 覆盖 `router.rs` 中 `with_interceptor` 方法体（替换默认
+/// `DefaultGarrisonInterceptor`），并通过 middleware 真实调用验证拦截器生效。
+#[tokio::test]
+#[serial]
+async fn router_with_interceptor_invoked_on_protected_path() {
+    use crate::error::GarrisonResult;
+    use crate::router::GarrisonInterceptor;
+    use std::sync::Mutex as StdMutex;
+
+    /// 记录调用次数的拦截器（无鉴权语义，仅验证被调用）。
+    struct RecordingInterceptor(std::sync::Arc<StdMutex<usize>>);
+    #[async_trait::async_trait]
+    impl GarrisonInterceptor for RecordingInterceptor {
+        async fn pre_handle(&self, _path: &str, _annotation: &Annotation) -> GarrisonResult<()> {
+            *self.0.lock().unwrap() += 1;
+            Ok(())
+        }
+    }
+
+    init_manager(&[], &[]).await;
+    let calls = std::sync::Arc::new(StdMutex::new(0usize));
+    let router = GarrisonRouter::new(Arc::new(make_config()))
+        .with_interceptor(RecordingInterceptor(calls.clone()))
+        .route_protected("/protected", Annotation::CheckLogin);
+    let middleware = router.into_middleware();
+    let service = <GarrisonMiddleware as Transform<OkService, ServiceRequest>>::new_transform(
+        &middleware,
+        OkService,
+    )
+    .await
+    .unwrap();
+
+    // interceptor 即鉴权决策点：RecordingInterceptor 恒放行 Ok(())，
+    // 受保护路径因此通过（200），证明自定义拦截器完全接管鉴权语义
+    let req = test::TestRequest::get().uri("/protected").to_srv_request();
+    let resp = service.call(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        *calls.lock().unwrap(),
+        1,
+        "自定义拦截器应在鉴权阶段被调用一次"
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
+/// with_tenant_resolver 两态：默认 `None`（不提取租户），注入后为 `Some`。
+///
+/// 覆盖 `router.rs` 中 `with_tenant_resolver` 方法体（`tenant_resolver` 的
+/// None → Some 状态转换）。
+#[tokio::test]
+#[serial]
+async fn router_with_tenant_resolver_states_none_and_some() {
+    init_manager(&[], &[]).await;
+
+    // None 态：默认构造不注入租户解析器
+    let service_none = make_middleware_service(&[]).await;
+    assert!(
+        service_none.tenant_resolver.is_none(),
+        "默认构造不应注入租户解析器"
+    );
+
+    // Some 态：with_tenant_resolver 注入 HeaderTenantResolver
+    let router = GarrisonRouter::new(Arc::new(make_config()))
+        .with_tenant_resolver(crate::context::tenant::HeaderTenantResolver);
+    let middleware = router.into_middleware();
+    let service = <GarrisonMiddleware as Transform<OkService, ServiceRequest>>::new_transform(
+        &middleware,
+        OkService,
+    )
+    .await
+    .unwrap();
+    assert!(
+        service.tenant_resolver.is_some(),
+        "with_tenant_resolver 后应注入租户解析器"
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 验证通用 `with_tenant_resolver(HeaderTenantResolver)` 入口与
+/// `with_header_tenant` 便捷方法行为一致：带 `X-Tenant-Id` 的
+/// `CheckPermission` 请求在 tenant-isolation 下鉴权通过（200）。
+#[cfg(feature = "tenant-isolation")]
+#[tokio::test]
+#[serial]
+async fn middleware_with_tenant_resolver_entry_allows_permission_with_tenant_header() {
+    init_manager(&[("1001", &["data:read"])], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+    let router = GarrisonRouter::new(Arc::new(make_config()))
+        .with_tenant_resolver(crate::context::tenant::HeaderTenantResolver)
+        .route_protected(
+            "/data",
+            Annotation::CheckPermission("data:read".to_string()),
+        );
+    let middleware = router.into_middleware();
+    let service = <GarrisonMiddleware as Transform<OkService, ServiceRequest>>::new_transform(
+        &middleware,
+        OkService,
+    )
+    .await
+    .unwrap();
+
+    let req = test::TestRequest::get()
+        .uri("/data")
+        .insert_header(("Authorization", format!("Bearer {}", token)))
+        .insert_header(("X-Tenant-Id", "42"))
+        .to_srv_request();
+    let resp = service.call(req).await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "with_tenant_resolver 入口注入的解析器应使租户上下文生效"
+    );
+
+    GarrisonManager::reset_for_test();
+}

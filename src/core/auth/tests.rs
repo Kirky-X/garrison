@@ -1185,3 +1185,183 @@ async fn renew_locks_entry_cleaned_after_concurrent_renew() {
         auth.renew_locks.len()
     );
 }
+
+// ========================================================================
+// 覆盖率补测：renew_to_equivalent 错误路径（A9 三步失败分支 + 回滚）
+// ========================================================================
+//
+// `default.rs` 中 renew 流程的步骤 3（创建新 Token-Session）/ 步骤 5（加入
+// Account-Session）/ 步骤 6（失效旧 token）的失败分支在既有测试中未覆盖。
+// 通过 FailingDao 按 key 前缀选择性注入 DAO 故障，验证无 DoS / 可回滚契约。
+
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// 按故障开关选择性失败的 DAO 包装（包装 `super::mock::MockDao`）。
+///
+/// 三个开关分别命中 `renew_to_equivalent` 的三个失败步骤：
+/// - `fail_token_session_set`：`set("token:session:*")` 失败 → 步骤 3 失败
+/// - `fail_account_session_set`：`set("account:session:*")` 失败 → 步骤 5 失败
+/// - `fail_token_session_delete`：`delete("token:session:*")` 失败 → 步骤 6 失败
+struct FailingDao {
+    inner: MockDao,
+    fail_token_session_set: AtomicBool,
+    fail_account_session_set: AtomicBool,
+    fail_token_session_delete: AtomicBool,
+}
+
+impl FailingDao {
+    fn new() -> Self {
+        Self {
+            inner: MockDao::new(),
+            fail_token_session_set: AtomicBool::new(false),
+            fail_account_session_set: AtomicBool::new(false),
+            fail_token_session_delete: AtomicBool::new(false),
+        }
+    }
+}
+
+#[async_trait]
+impl GarrisonDao for FailingDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
+        self.inner.get(key).await
+    }
+
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
+        if key.starts_with("token:session:") && self.fail_token_session_set.load(Ordering::SeqCst) {
+            return Err(GarrisonError::Dao(format!("failing-dao-set::{}", key)));
+        }
+        if key.starts_with("account:session:")
+            && self.fail_account_session_set.load(Ordering::SeqCst)
+        {
+            return Err(GarrisonError::Dao(format!("failing-dao-set::{}", key)));
+        }
+        self.inner.set(key, value, ttl_seconds).await
+    }
+
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
+        self.inner.update(key, value).await
+    }
+
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
+        self.inner.expire(key, seconds).await
+    }
+
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
+        if key.starts_with("token:session:")
+            && self.fail_token_session_delete.load(Ordering::SeqCst)
+        {
+            return Err(GarrisonError::Dao(format!("failing-dao-delete::{}", key)));
+        }
+        self.inner.delete(key).await
+    }
+
+    async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {
+        self.inner.get_timeout(key).await
+    }
+
+    async fn get_with_ttl(&self, key: &str) -> GarrisonResult<Option<(String, Option<Duration>)>> {
+        self.inner.get_with_ttl(key).await
+    }
+    crate::atomic_test_fallback!();
+}
+
+/// 辅助：基于 FailingDao 构建 AuthLogicDefault。
+fn make_auth_logic_with_failing_dao(dao: Arc<FailingDao>) -> AuthLogicDefault {
+    let session = Arc::new(GarrisonSession::new(
+        dao as Arc<dyn GarrisonDao>,
+        3600,
+        86400,
+        0,
+    ));
+    let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
+    AuthLogicDefault::new(session, token_handler, 3600)
+}
+
+/// renew 步骤 3 失败：创建新 Token-Session 的 DAO set 失败时返回 Internal，
+/// 旧 token 仍有效（A9 契约：无 DoS，旧 token 未被触碰）。
+#[tokio::test]
+async fn renew_create_new_token_session_fails_old_token_untouched() {
+    let failing = Arc::new(FailingDao::new());
+    let auth = make_auth_logic_with_failing_dao(failing.clone());
+    let old_token = auth.login("1001", None).await.unwrap();
+
+    // login 完成后启用故障：set("token:session:*") 一律失败
+    failing.fail_token_session_set.store(true, Ordering::SeqCst);
+
+    let result = auth.renew_to_equivalent(&old_token).await;
+    assert!(
+        matches!(result, Err(GarrisonError::Internal(ref msg))
+            if msg.contains("core-auth-token-renew-create-failed")),
+        "创建新 Token-Session 失败应返回 Internal，实际: {:?}",
+        result
+    );
+    // 旧 token 仍有效（步骤 3 失败时旧 token 未被触碰，无 DoS）
+    assert!(
+        auth.is_login(&old_token).await.unwrap(),
+        "步骤 3 失败后旧 token 必须仍有效（A9 无 DoS 契约）"
+    );
+}
+
+/// renew 步骤 5 失败：新 token 加入 Account-Session 失败时返回 Internal，
+/// 并回滚删除新 token（旧 token 仍有效，新 token 不残留）。
+#[tokio::test]
+async fn renew_add_to_account_session_fails_rolls_back_new_token() {
+    let failing = Arc::new(FailingDao::new());
+    let auth = make_auth_logic_with_failing_dao(failing.clone());
+    let old_token = auth.login("1001", None).await.unwrap();
+
+    // login 完成后启用故障：set("account:session:*") 一律失败
+    failing
+        .fail_account_session_set
+        .store(true, Ordering::SeqCst);
+
+    let result = auth.renew_to_equivalent(&old_token).await;
+    assert!(
+        matches!(result, Err(GarrisonError::Internal(ref msg))
+            if msg.contains("core-auth-token-renew-add-to-account-failed")),
+        "加入 Account-Session 失败应返回 Internal，实际: {:?}",
+        result
+    );
+    // 旧 token 仍有效
+    assert!(
+        auth.is_login(&old_token).await.unwrap(),
+        "步骤 5 失败回滚后旧 token 必须仍有效"
+    );
+    // 回滚（best-effort logout new_token）已生效：Account-Session 仅剩旧 token，
+    // 无"双指"残留
+    let account = auth
+        .session
+        .get_account_session("1001")
+        .await
+        .unwrap()
+        .expect("Account-Session 应存在");
+    assert_eq!(
+        account.tokens.len(),
+        1,
+        "回滚后 Account-Session 应仅剩旧 token（无残留），实际: {:?}",
+        account.tokens
+    );
+    assert_eq!(account.tokens[0].token, old_token);
+}
+
+/// renew 步骤 6 失败：失效旧 token 的 DAO delete 失败时**仍返回 Ok(new_token)**
+///（A9 决策：用户已持有新 token，返回 Err 反而制造新 DoS；旧 token 残留交由运维）。
+#[tokio::test]
+async fn renew_old_token_cleanup_failure_still_returns_new_token() {
+    let failing = Arc::new(FailingDao::new());
+    let auth = make_auth_logic_with_failing_dao(failing.clone());
+    let old_token = auth.login("1001", None).await.unwrap();
+
+    // login 完成后启用故障：delete("token:session:*") 一律失败
+    failing
+        .fail_token_session_delete
+        .store(true, Ordering::SeqCst);
+
+    let result = auth.renew_to_equivalent(&old_token).await;
+    let new_token = result.expect("步骤 6 失败不应改变 renew 的 Ok 契约（告警而非失败）");
+    assert_ne!(old_token, new_token);
+    assert!(
+        auth.is_login(&new_token).await.unwrap(),
+        "新 token 必须有效（A9：新 token 已完全建立后才失效旧 token）"
+    );
+}
