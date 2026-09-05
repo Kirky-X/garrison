@@ -748,6 +748,56 @@ stp-refresh-token-jwt-only = refresh_token is only available when token_style=jw
 stp-mfa-not-passed = second factor authentication not passed
 
 # ============================================================================
+# Hardcoded string i18n fix (fix-i18n-hardcoded-strings)
+# ============================================================================
+
+# --- stp/util ---
+stp-permission-empty = permission must not be empty
+stp-role-empty = role must not be empty
+
+# --- protocol/jwt ---
+jwt-timeout-negative = timeout must not be negative: {$arg0}
+
+# --- secure ---
+secure-verify-totp-not-implemented = verify_totp not implemented
+secure-generate-totp-not-implemented = generate_totp not implemented
+secure-verify-sign-not-implemented = verify_sign not implemented
+secure-create-sign-not-implemented = create_sign not implemented
+sanitize-input-length-exceeded = input length {$arg0} exceeds maximum limit {$arg1}
+digest-algo-unsupported = unsupported Digest algorithm: {$arg0}, only MD5 / SHA256 supported
+
+# --- dao ---
+dao-decr-parse-u64 = decr: existing value is not u64, key={$arg0}, value={$arg1}
+counter-overflow = counter overflow: key={$arg0}
+
+# --- strategy ---
+strategy-login-frequency-exceeded = login frequency exceeded: IP {$arg0}
+strategy-account-locked = account locked: login_id={$arg0}
+strategy-geo-anomaly = geo anomaly detected: login_id={$arg0} last location differs from current
+strategy-token-reuse-blocked = token reuse detected: login_id={$arg0} token has been blacklisted
+strategy-device-anomaly = device anomaly: login_id={$arg0} device fingerprint {$arg1} not in known device list
+
+# --- abac ---
+abac-expr-length-exceeded = abac_expr length exceeds {$arg0} characters (DoS defense)
+abac-expr-illegal-char = abac_expr contains policy terminator (suspected policy injection)
+abac-expr-no-declaration = abac_expr must not declare permit/forbid policies
+abac-expr-must-reference-context = abac_expr must reference principal/resource/action (reject pure literals)
+abac-engine-not-init = AbacEngine not initialized, ABAC validation failed (fail-closed)
+abac-login-id-missing = login_id not available during ABAC validation
+abac-policy-denied = ABAC policy denied: action={$arg0}, resource={$arg1}
+
+# --- credit ---
+credit-alert-thresholds-empty = alert_thresholds must not be empty
+credit-alert-thresholds-range = alert_thresholds[{$arg0}] = {$arg1} out of range [0, 100]
+credit-alert-thresholds-order = alert_thresholds must be strictly ascending: {$arg0} <= {$arg1}
+
+# --- web/cors ---
+cors-credentials-wildcard = CORS config conflict: allow_credentials=true disallows wildcard "*" in allowed_origins
+
+# --- context/tenant ---
+ctx-tenant-id-missing = X-Tenant-Id header missing
+
+# ============================================================================
 # response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
 # ============================================================================
 # These keys are used by GarrisonError::response_parts_i18n() to return a

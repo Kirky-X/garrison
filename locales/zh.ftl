@@ -748,6 +748,56 @@ stp-refresh-token-jwt-only = refresh_token 仅在 token_style=jwt 时可用
 stp-mfa-not-passed = 二级认证未通过
 
 # ============================================================================
+# i18n 硬编码字符串修复（fix-i18n-hardcoded-strings）
+# ============================================================================
+
+# --- stp/util ---
+stp-permission-empty = permission 不能为空
+stp-role-empty = role 不能为空
+
+# --- protocol/jwt ---
+jwt-timeout-negative = timeout 不能为负数: {$arg0}
+
+# --- secure ---
+secure-verify-totp-not-implemented = verify_totp 未实现
+secure-generate-totp-not-implemented = generate_totp 未实现
+secure-verify-sign-not-implemented = verify_sign 未实现
+secure-create-sign-not-implemented = create_sign 未实现
+sanitize-input-length-exceeded = 输入长度 {$arg0} 超过最大限制 {$arg1}
+digest-algo-unsupported = 不支持的 Digest 算法: {$arg0}，仅支持 MD5 / SHA256
+
+# --- dao ---
+dao-decr-parse-u64 = decr: 现存值非 u64，key={$arg0}, value={$arg1}
+counter-overflow = 计数器溢出: key={$arg0}
+
+# --- strategy ---
+strategy-login-frequency-exceeded = 登录频率超限：IP {$arg0}
+strategy-account-locked = 账号锁定：login_id={$arg0}
+strategy-geo-anomaly = 异地登录检测：login_id={$arg0} 上次地理位置 {$arg1} 与本次不符
+strategy-token-reuse-blocked = Token 复用检测：login_id={$arg0} 的 Token 已被列入黑名单
+strategy-device-anomaly = 设备异常检测：login_id={$arg0} 的设备指纹 {$arg1} 不在已知设备列表
+
+# --- abac ---
+abac-expr-length-exceeded = abac_expr 长度超过 {$arg0} 字符（DoS 防御）
+abac-expr-illegal-char = abac_expr 含策略终止符（疑似策略注入）
+abac-expr-no-declaration = abac_expr 不允许声明 permit/forbid 策略
+abac-expr-must-reference-context = abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）
+abac-engine-not-init = AbacEngine 未初始化，ABAC 校验失败（fail-closed）
+abac-login-id-missing = ABAC 校验时未获取到 login_id
+abac-policy-denied = ABAC 策略拒绝: action={$arg0}, resource={$arg1}
+
+# --- credit ---
+credit-alert-thresholds-empty = alert_thresholds 不能为空
+credit-alert-thresholds-range = alert_thresholds[{$arg0}] = {$arg1} 超出范围 [0, 100]
+credit-alert-thresholds-order = alert_thresholds 必须严格升序: {$arg0} <= {$arg1}
+
+# --- web/cors ---
+cors-credentials-wildcard = CORS 配置冲突：allow_credentials=true 时不允许 allowed_origins 包含通配符 "*"
+
+# --- context/tenant ---
+ctx-tenant-id-missing = X-Tenant-Id header 缺失
+
+# ============================================================================
 # response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
 # ============================================================================
 # 这些 key 用于 GarrisonError::response_parts_i18n() 方法，返回不含变体 detail
