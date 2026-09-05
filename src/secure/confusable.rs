@@ -18,6 +18,7 @@
 //! 会自动调用 `check_confusable` 检测 permission name，发现可疑字符时通过 `tracing::warn` 上报
 //! （不阻止注册，仅警告）。
 
+use crate::i18n::translate_detail;
 use unicode_security::confusable_detection::skeleton;
 
 /// 单个 Unicode 同形异义字警告。
@@ -77,11 +78,18 @@ pub fn check_confusable(s: &str) -> Vec<ConfusableWarning> {
         let mut skel_chars = skel.chars();
         if let Some(skel_char) = skel_chars.next() {
             if skel_char != c && skel_chars.next().is_none() {
+                let suggestion = translate_detail(
+                    "confusable-suggestion",
+                    &[
+                        ("arg0", skel_char.to_string().as_str()),
+                        ("arg1", c.to_string().as_str()),
+                    ],
+                );
                 warnings.push(ConfusableWarning {
                     position: byte_pos,
                     char: c,
                     confusable_with: skel_char,
-                    suggestion: format!("考虑用 '{}' 替换 '{}'", skel_char, c),
+                    suggestion,
                 });
             }
         }

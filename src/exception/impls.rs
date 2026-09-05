@@ -4,6 +4,7 @@
 //! `NotLoginException` 与 `GarrisonException` 的 impl 块（从 mod.rs 迁移）。
 
 use super::*;
+use crate::i18n::translate_error;
 
 impl NotLoginException {
     /// 创建新的未登录异常。
@@ -29,7 +30,8 @@ impl NotLoginException {
 
 impl std::fmt::Display for NotLoginException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "未登录: {}", self.message)
+        let err = GarrisonError::NotLogin(self.message.clone());
+        f.write_str(&translate_error(&err))
     }
 }
 
@@ -112,7 +114,8 @@ impl From<GarrisonError> for GarrisonException {
 
 impl std::fmt::Display for GarrisonException {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "业务异常[{}]: {}", self.code, self.message)
+        let err = GarrisonError::Exception(Box::new(self.clone()));
+        f.write_str(&translate_error(&err))
     }
 }
 

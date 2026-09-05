@@ -26,6 +26,7 @@
 
 use super::{PasswordPolicyRule, PolicyContext, PolicyError};
 use crate::account::credential::PasswordVerifier;
+use crate::loc;
 
 // ============================================================================
 // LengthRule
@@ -75,13 +76,13 @@ impl PasswordPolicyRule for LengthRule {
         if len < self.min {
             return Err(PolicyError::new(
                 "length",
-                format!("密码长度 {} 小于最小要求 {}", len, self.min),
+                loc!("policy-length-too-short", ""),
             ));
         }
         if len > self.max {
             return Err(PolicyError::new(
                 "length",
-                format!("密码长度 {} 超过最大限制 {}", len, self.max),
+                loc!("policy-length-too-long", ""),
             ));
         }
         Ok(())
@@ -148,7 +149,10 @@ impl PasswordPolicyRule for HistoryRule {
             // - Ok(false): 不匹配 → 继续检查下一条
             // - Err(_): hash 格式无效 → 跳过（不阻塞密码修改）
             if let Ok(true) = PasswordVerifier::verify(password, hash) {
-                return Err(PolicyError::new("history", "密码与历史密码重复"));
+                return Err(PolicyError::new(
+                    "history",
+                    loc!("policy-history-duplicate", ""),
+                ));
             }
         }
         Ok(())
@@ -184,7 +188,10 @@ impl PasswordPolicyRule for BlacklistRule {
 
     fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
         if self.passwords.iter().any(|p| p == password) {
-            return Err(PolicyError::new("blacklist", "密码在黑名单中"));
+            return Err(PolicyError::new(
+                "blacklist",
+                loc!("policy-blacklist-match", ""),
+            ));
         }
         Ok(())
     }
@@ -229,7 +236,10 @@ impl PasswordPolicyRule for NotUsernameRule {
         let password_lower = password.to_lowercase();
         let username_lower = username.to_lowercase();
         if password_lower.contains(&username_lower) {
-            return Err(PolicyError::new("not_username", "密码包含用户名"));
+            return Err(PolicyError::new(
+                "not_username",
+                loc!("policy-contains-username", ""),
+            ));
         }
         Ok(())
     }
@@ -265,7 +275,10 @@ impl PasswordPolicyRule for NotCommonPasswordRule {
 
     fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
         if self.common_list.iter().any(|p| p == password) {
-            return Err(PolicyError::new("not_common_password", "密码为常见密码"));
+            return Err(PolicyError::new(
+                "not_common_password",
+                loc!("policy-common-password", ""),
+            ));
         }
         Ok(())
     }
@@ -345,7 +358,10 @@ impl PasswordPolicyRule for DictionaryRule {
 
     fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
         if self.dictionary.iter().any(|w| w == password) {
-            return Err(PolicyError::new("dictionary", "密码为字典单词"));
+            return Err(PolicyError::new(
+                "dictionary",
+                loc!("policy-dictionary-word", ""),
+            ));
         }
         Ok(())
     }
@@ -395,7 +411,10 @@ impl PasswordPolicyRule for NotEmailRule {
         let password_lower = password.to_lowercase();
         let local_lower = local_part.to_lowercase();
         if password_lower.contains(&local_lower) {
-            return Err(PolicyError::new("not_email", "密码包含邮箱前缀"));
+            return Err(PolicyError::new(
+                "not_email",
+                loc!("policy-contains-email-prefix", ""),
+            ));
         }
         Ok(())
     }
@@ -637,7 +656,7 @@ impl NistComplianceRule {
     pub async fn check_hibp(&self, _password: &str) -> Result<HibpVerdict, PolicyError> {
         Err(PolicyError::new(
             "hibp",
-            "HIBP 检查需要启用 policy-hibp feature".to_string(),
+            loc!("policy-hibp-requires-feature", ""),
         ))
     }
 }
@@ -653,10 +672,7 @@ impl PasswordPolicyRule for NistComplianceRule {
         if len < self.min_length {
             return Err(PolicyError::new(
                 "nist_compliance",
-                format!(
-                    "密码长度 {} 小于 NIST SP 800-63B 最小要求 {}",
-                    len, self.min_length
-                ),
+                format!("policy-nist-length-too-short::{}::{}", len, self.min_length),
             ));
         }
         Ok(())
