@@ -150,24 +150,130 @@ mod tests {
     }
 
     // ========================================================================
-    // 集成测试（需要真实 Redis 连接，默认 #[ignore]）
+    // 错误路径测试（无 Redis 依赖，确定性，任何环境都跑）
+    // ========================================================================
+    //
+    // 利用 `redis::Client::get_connection_manager_lazy`（惰性连接：构造不触发
+    // TCP 连接，首次命令才连接）指向必然拒绝连接的端口（127.0.0.1:1），
+    // 在无 Redis 的环境下确定性触发连接失败分支。
+    // 重试次数压到 1 次、退避压到 1ms，保证测试快速结束。
+
+    /// 构造指向不可达端口（127.0.0.1:1）的 RedisPubSubSsoChannel。
+    ///
+    /// 惰性 ConnectionManager 构造不触发连接，因此本辅助函数在无 Redis
+    /// 环境下也能确定性成功。
+    fn make_channel_with_unreachable_port() -> RedisPubSubSsoChannel {
+        use std::time::Duration;
+
+        let client = redis::Client::open("redis://127.0.0.1:1").unwrap();
+        let connection_manager = client
+            .get_connection_manager_lazy(
+                redis::aio::ConnectionManagerConfig::default()
+                    .set_number_of_retries(1)
+                    .set_min_delay(Duration::from_millis(1)),
+            )
+            .expect("惰性 ConnectionManager 构造不应触发连接");
+        RedisPubSubSsoChannel::new(connection_manager, client)
+    }
+
+    /// push 到不可达端口返回 Err（覆盖 PUBLISH map_err 错误分支）。
+    ///
+    /// 惰性连接在首次 PUBLISH 时才尝试连接 127.0.0.1:1（必然 ECONNREFUSED），
+    /// 错误经 map_err 包装为 `GarrisonError::Internal`（前缀 `sso-redis-publish::`）。
+    #[tokio::test]
+    async fn push_to_unreachable_redis_returns_err() {
+        use std::time::Duration;
+
+        let channel = make_channel_with_unreachable_port();
+        let result = channel
+            .push("garrison-channel-test-push-unreachable", "hello")
+            .await;
+        match result {
+            Err(GarrisonError::Internal(msg)) => assert!(
+                msg.contains("sso-redis-publish::"),
+                "错误应带 sso-redis-publish:: 前缀，实际: {msg}"
+            ),
+            Ok(_) => panic!("push 到不可达端口应返回 Err，实际 Ok"),
+            Err(other) => panic!("期望 Internal 错误，实际: {other:?}"),
+        }
+        // 留出后台重连任务的时间窗口，避免测试结束时产生悬挂告警日志
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    /// subscribe 对不可达端口仍返回 Ok（spec R-005 语义：连接失败仅由后台
+    /// task 记日志，不向调用方传播——覆盖 spawn 后台任务 + get_async_pubsub
+    /// 连接失败早退分支）。
+    #[tokio::test]
+    async fn subscribe_returns_ok_when_redis_unreachable() {
+        use std::time::Duration;
+
+        let channel = make_channel_with_unreachable_port();
+        let result = channel
+            .subscribe(
+                "garrison-channel-test-subscribe-unreachable",
+                Box::new(|_| {}),
+            )
+            .await;
+        assert!(
+            result.is_ok(),
+            "subscribe 本身应返回 Ok（后台任务内部失败仅记日志），实际: {:?}",
+            result
+        );
+        // 留出 spawn 的后台任务时间跑完连接失败分支（get_async_pubsub Err → 早退）
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+
+    /// `redis::Client::open` 对非法 URL 快速失败（构造期确定性校验，
+    /// 不发起任何网络连接）。
+    #[test]
+    fn client_open_rejects_malformed_url() {
+        assert!(redis::Client::open("not-a-redis-url").is_err());
+    }
+
+    // ========================================================================
+    // 深层分支集成测试（运行时探活门控，约定同 tests/acceptance/environment.rs：
+    // Redis 不可达时 eprintln!("[SKIP] …") 并 return——测试通过但不运行）
     // ========================================================================
 
-    /// 构造 RedisPubSubSsoChannel 实例（spec R-005 验收标准）。
-    ///
-    /// 需要真实 Redis 连接，默认忽略。运行方式：
-    /// `cargo test --lib --features cache-redis,protocol-sso-server -- --ignored channel::tests`
-    #[tokio::test]
-    #[ignore = "需要真实 Redis 连接（REDIS_URL 环境变量）"]
-    async fn new_creates_instance_with_redis() {
-        let redis_url =
-            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-        let client = redis::Client::open(redis_url.as_str()).unwrap();
+    /// TCP 探活本地 Redis（127.0.0.1:6379）是否可达。
+    async fn redis_reachable() -> bool {
+        tokio::net::TcpStream::connect("127.0.0.1:6379")
+            .await
+            .is_ok()
+    }
+
+    /// Redis 不可达时的标准 [SKIP] 输出与跳过返回。
+    fn skip_if_unreachable(guard: bool, scenario: &str) {
+        if !guard {
+            eprintln!(
+                "[SKIP] Redis 不可达（127.0.0.1:6379 未监听），跳过 {scenario}（CI 将注入 \
+                 Redis service 真实执行）"
+            );
+        }
+    }
+
+    /// 构造连接本地 Redis 的 RedisPubSubSsoChannel（调用前须探活通过）。
+    async fn make_local_channel() -> RedisPubSubSsoChannel {
+        let client = redis::Client::open("redis://127.0.0.1:6379").unwrap();
         let connection_manager = client
             .get_connection_manager()
             .await
             .expect("连接 Redis 失败");
-        let channel = RedisPubSubSsoChannel::new(connection_manager, client);
+        RedisPubSubSsoChannel::new(connection_manager, client)
+    }
+
+    /// 构造 RedisPubSubSsoChannel 实例（spec R-005 验收标准）。
+    ///
+    /// Redis 不可达时 [SKIP] 跳过（不失败）。
+    #[tokio::test]
+    async fn new_creates_instance_with_redis() {
+        let reachable = redis_reachable().await;
+        skip_if_unreachable(reachable, "new_creates_instance_with_redis");
+        if !reachable {
+            return;
+        }
+
+        let channel = make_local_channel().await;
         // 构造成功即验证
         let _ = &channel.client;
         let _ = &channel.connection_manager;
@@ -175,39 +281,35 @@ mod tests {
 
     /// push 执行 PUBLISH 命令并返回 Ok（spec R-005 验收标准）。
     #[tokio::test]
-    #[ignore = "需要真实 Redis 连接（REDIS_URL 环境变量）"]
     async fn push_executes_publish_command() {
-        let redis_url =
-            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-        let client = redis::Client::open(redis_url.as_str()).unwrap();
-        let connection_manager = client
-            .get_connection_manager()
-            .await
-            .expect("连接 Redis 失败");
-        let channel = RedisPubSubSsoChannel::new(connection_manager, client);
-        let result = channel.push("test-topic", "hello").await;
+        let reachable = redis_reachable().await;
+        skip_if_unreachable(reachable, "push_executes_publish_command");
+        if !reachable {
+            return;
+        }
+
+        let channel = make_local_channel().await;
+        let result = channel.push("garrison-channel-test-push", "hello").await;
         assert!(result.is_ok(), "PUBLISH 应返回 Ok: {:?}", result);
     }
 
     /// subscribe 启动后台 task 并接收消息（spec R-005 验收标准）。
     #[tokio::test]
-    #[ignore = "需要真实 Redis 连接（REDIS_URL 环境变量）"]
     async fn subscribe_receives_published_message() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::Duration;
 
-        let redis_url =
-            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-        let client = redis::Client::open(redis_url.as_str()).unwrap();
-        let connection_manager = client
-            .get_connection_manager()
-            .await
-            .expect("连接 Redis 失败");
-        let channel = Arc::new(RedisPubSubSsoChannel::new(connection_manager, client));
+        let reachable = redis_reachable().await;
+        skip_if_unreachable(reachable, "subscribe_receives_published_message");
+        if !reachable {
+            return;
+        }
+
+        let channel = Arc::new(make_local_channel().await);
 
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
-        let topic = "test-sso-channel-subscribe";
+        let topic = "garrison-channel-test-subscribe-receive";
 
         // 订阅
         channel
@@ -222,36 +324,104 @@ mod tests {
             .await
             .expect("subscribe 失败");
 
-        // 等待订阅就绪
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // 等待订阅就绪（后台 task 建立 SUBSCRIBE 连接）
+        tokio::time::sleep(Duration::from_millis(300)).await;
 
         // 发布消息
         channel.push(topic, "test-payload").await.unwrap();
 
         // 等待消息接收
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(counter.load(Ordering::SeqCst), 1, "应收到 1 条消息");
     }
 
-    /// subscribe 的 handler panic 不中断订阅（spec R-005 约束）。
+    /// payload 非 UTF-8 时走解析失败 warn 分支：handler 不被调用，
+    /// 且订阅不中断（后续合法消息仍可达）。
     #[tokio::test]
-    #[ignore = "需要真实 Redis 连接（REDIS_URL 环境变量）"]
+    async fn subscribe_ignores_non_utf8_payload() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let reachable = redis_reachable().await;
+        skip_if_unreachable(reachable, "subscribe_ignores_non_utf8_payload");
+        if !reachable {
+            return;
+        }
+
+        let channel = Arc::new(make_local_channel().await);
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+        let topic = "garrison-channel-test-payload-parse";
+
+        // 订阅：仅对合法标记消息计数
+        channel
+            .subscribe(
+                topic,
+                Box::new(move |msg: String| {
+                    if msg == "after-invalid" {
+                        counter_clone.fetch_add(1, Ordering::SeqCst);
+                    }
+                }),
+            )
+            .await
+            .expect("subscribe 失败");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // 另建独立 redis 连接发布非 UTF-8 字节（String 解析失败 → warn 分支）
+        let publisher = redis::Client::open("redis://127.0.0.1:6379").unwrap();
+        let mut pub_conn = publisher
+            .get_multiplexed_async_connection()
+            .await
+            .expect("发布用连接应成功");
+        let receivers: i64 = redis::cmd("PUBLISH")
+            .arg(topic)
+            .arg(&b"\xff\xfe\x00not-utf8"[..])
+            .query_async(&mut pub_conn)
+            .await
+            .expect("PUBLISH 非 UTF-8 字节应成功");
+        assert!(receivers >= 1, "消息应送达至少 1 个订阅者（证明订阅在线）");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "非 UTF-8 payload 解析失败，handler 不应被调用"
+        );
+
+        // 后续合法消息仍应收到（解析失败分支不中断订阅）
+        let receivers: i64 = redis::cmd("PUBLISH")
+            .arg(topic)
+            .arg("after-invalid")
+            .query_async(&mut pub_conn)
+            .await
+            .expect("PUBLISH 合法消息应成功");
+        assert!(receivers >= 1, "合法消息应送达订阅者");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            1,
+            "合法 payload 应正常触发 handler（订阅未中断）"
+        );
+    }
+
+    /// subscribe 的 handler panic 不中断订阅（spec R-005 约束，
+    /// 覆盖 catch_unwind panic 恢复分支）。
+    #[tokio::test]
     async fn subscribe_handler_panic_does_not_interrupt() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::Duration;
 
-        let redis_url =
-            std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
-        let client = redis::Client::open(redis_url.as_str()).unwrap();
-        let connection_manager = client
-            .get_connection_manager()
-            .await
-            .expect("连接 Redis 失败");
-        let channel = Arc::new(RedisPubSubSsoChannel::new(connection_manager, client));
+        let reachable = redis_reachable().await;
+        skip_if_unreachable(reachable, "subscribe_handler_panic_does_not_interrupt");
+        if !reachable {
+            return;
+        }
+
+        let channel = Arc::new(make_local_channel().await);
 
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
-        let topic = "test-sso-channel-panic";
+        let topic = "garrison-channel-test-handler-panic";
 
         // 订阅：handler 在第一次调用时 panic，第二次正常计数
         channel
@@ -268,15 +438,15 @@ mod tests {
             .expect("subscribe 失败");
 
         // 等待订阅就绪
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
 
         // 发布第一条消息（触发 panic）
         channel.push(topic, "panic-trigger").await.unwrap();
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
 
         // 发布第二条消息（验证订阅未中断）
         channel.push(topic, "normal").await.unwrap();
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
 
         // counter 应为 2（handler 被调用两次，第一次 panic 但不中断）
         assert_eq!(

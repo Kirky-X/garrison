@@ -340,3 +340,176 @@ async fn temp_namespace_isolated() {
     let apikey_value = dao.get("garrison:apikey:abc").await.unwrap();
     assert_eq!(apikey_value, Some("apikey-value".to_string()));
 }
+
+// ========================================================================
+// DAO 错误路径测试（FailingDao：所有操作返回 Err，验证 handler 错误透传）
+// ========================================================================
+
+/// 总是失败的 DAO（用于 handler 错误路径测试：所有操作返回 `Dao` 错误）。
+struct FailingDao;
+
+#[async_trait]
+impl GarrisonDao for FailingDao {
+    async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
+        Err(GarrisonError::Dao("mock-get-failed".to_string()))
+    }
+
+    async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
+        Err(GarrisonError::Dao("mock-set-failed".to_string()))
+    }
+
+    async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::Dao("mock-update-failed".to_string()))
+    }
+
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
+        Err(GarrisonError::Dao("mock-expire-failed".to_string()))
+    }
+
+    async fn delete(&self, _key: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::Dao("mock-delete-failed".to_string()))
+    }
+
+    async fn get_and_delete(&self, _key: &str) -> GarrisonResult<Option<String>> {
+        Err(GarrisonError::Dao("mock-get-and-delete-failed".to_string()))
+    }
+
+    crate::atomic_test_fallback_no_get_and_delete!();
+}
+
+/// issue 时 dao.set 失败应透传 Dao 错误（错误路径）。
+#[tokio::test]
+async fn issue_dao_set_error_propagates() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
+    let handler = TempCredentialHandler::new(dao);
+    let result = handler.issue("invite", "data", 60).await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Dao(msg)) if msg.contains("mock-set-failed")),
+        "dao.set 失败应透传 Dao 错误，实际: {:?}",
+        result
+    );
+}
+
+/// get 时 dao.get 失败应透传 Dao 错误（错误路径）。
+#[tokio::test]
+async fn get_dao_error_propagates() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
+    let handler = TempCredentialHandler::new(dao);
+    let result = handler.get("garrison:temp:invite:any").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Dao(msg)) if msg.contains("mock-get-failed")),
+        "dao.get 失败应透传 Dao 错误，实际: {:?}",
+        result
+    );
+}
+
+/// revoke 时 dao.delete 失败应透传 Dao 错误（错误路径）。
+#[tokio::test]
+async fn revoke_dao_error_propagates() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
+    let handler = TempCredentialHandler::new(dao);
+    let result = handler.revoke("garrison:temp:invite:any").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Dao(msg)) if msg.contains("mock-delete-failed")),
+        "dao.delete 失败应透传 Dao 错误，实际: {:?}",
+        result
+    );
+}
+
+/// consume 时 dao.get_and_delete 失败应透传 Dao 错误（错误路径）。
+#[tokio::test]
+async fn consume_dao_error_propagates() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
+    let handler = TempCredentialHandler::new(dao);
+    let result = handler.consume("garrison:temp:invite:any").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Dao(msg)) if msg.contains("mock-get-and-delete-failed")),
+        "dao.get_and_delete 失败应透传 Dao 错误，实际: {:?}",
+        result
+    );
+}
+
+// ========================================================================
+// listener 集成测试（feature = "listener"）：consume 广播 TempCredentialConsumed
+// ========================================================================
+
+/// 捕获广播事件的监听器（验证 consume → TempCredentialConsumed 广播链路）。
+#[cfg(feature = "listener")]
+struct RecordingListener {
+    events: parking_lot::Mutex<Vec<crate::listener::GarrisonEvent>>,
+}
+
+#[cfg(feature = "listener")]
+#[async_trait]
+impl crate::listener::GarrisonListener for RecordingListener {
+    async fn on_event(&self, event: &crate::listener::GarrisonEvent) -> GarrisonResult<()> {
+        self.events.lock().push(event.clone());
+        Ok(())
+    }
+}
+
+/// 注入 listener manager 后，consume 命中（value 为 Some）应广播 TempCredentialConsumed
+/// 事件，且事件携带 key 与 value（feature = "listener"）。
+#[cfg(feature = "listener")]
+#[tokio::test]
+async fn with_listener_manager_broadcasts_on_consume() {
+    use crate::listener::{GarrisonEvent, GarrisonListenerManager};
+
+    let recorder = Arc::new(RecordingListener {
+        events: parking_lot::Mutex::new(Vec::new()),
+    });
+    let lm = Arc::new(GarrisonListenerManager::new());
+    lm.register(recorder.clone());
+
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let handler = TempCredentialHandler::new(dao).with_listener_manager(lm);
+
+    let key = handler
+        .issue("invite", "broadcast-value", 60)
+        .await
+        .unwrap();
+    let consumed = handler.consume(&key).await.unwrap();
+    assert_eq!(consumed, Some("broadcast-value".to_string()));
+
+    let events = recorder.events.lock();
+    assert_eq!(events.len(), 1, "consume 命中应广播恰好 1 个事件");
+    match &events[0] {
+        GarrisonEvent::TempCredentialConsumed {
+            key: event_key,
+            value,
+            request_context,
+        } => {
+            assert_eq!(event_key, &key, "事件 key 应与被消费的凭据 key 一致");
+            assert_eq!(value, "broadcast-value", "事件 value 应与凭据载荷一致");
+            assert!(request_context.is_none(), "handler 广播时不携带请求上下文");
+        },
+        other => panic!("应广播 TempCredentialConsumed 事件，实际: {:?}", other),
+    }
+}
+
+/// 注入 listener manager 后，consume 未命中（value 为 None）不应广播事件
+///（feature = "listener"）。
+#[cfg(feature = "listener")]
+#[tokio::test]
+async fn with_listener_manager_no_broadcast_when_value_none() {
+    use crate::listener::GarrisonListenerManager;
+
+    let recorder = Arc::new(RecordingListener {
+        events: parking_lot::Mutex::new(Vec::new()),
+    });
+    let lm = Arc::new(GarrisonListenerManager::new());
+    lm.register(recorder.clone());
+
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let handler = TempCredentialHandler::new(dao).with_listener_manager(lm);
+
+    let value = handler
+        .consume("garrison:temp:invite:nonexistent")
+        .await
+        .unwrap();
+    assert_eq!(value, None);
+    assert!(
+        recorder.events.lock().is_empty(),
+        "consume 未命中不应广播事件"
+    );
+}
