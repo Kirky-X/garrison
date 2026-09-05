@@ -108,7 +108,7 @@ impl HttpDigestAuth {
         let hkdf = Hkdf::<Sha256>::new(Some(self.realm.as_bytes()), secret);
         let mut key = [0u8; 32];
         hkdf.expand(NONCE_HMAC_HKDF_INFO, &mut key)
-            .expect("HKDF-SHA256 派生 32 字节固定长度，不会失败");
+            .expect("HKDF-SHA256 derive 32 bytes must not fail");
         self.server_key = Some(key);
         self
     }
