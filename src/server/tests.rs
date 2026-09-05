@@ -423,13 +423,15 @@ fn test_auth_server_config_default() {
 // listen() 测试（覆盖 listen 方法的主要代码路径）
 // ========================================================================
 
-/// 测试 listen 在外网端口被占用时返回错误。
+/// 测试 listen 在未配置 `internal_api_key` 时被 `validate()` 短路（fail-closed）。
 ///
-/// 先用 TcpListener 占用外网端口，然后调用 listen()，
-/// 外网 task 绑定失败 → select 返回错误。
+/// 注意：本测试**不**触达端口绑定路径。`listen()` 首行调用
+/// `self.config.validate()`，因 `internal_api_key` 为空直接返回 Config 错误，
+/// 外网端口即使被占用也不会触发 bind 失败。
+/// 真正覆盖 bind 失败路径的测试见 `test_listen_bind_failure_external_port_with_valid_config`。
 #[tokio::test]
-async fn test_listen_returns_error_when_external_port_in_use() {
-    // 占用外网端口
+async fn test_listen_validates_config_first_external() {
+    // 占用外网端口（但 validate 短路，此占用无实际影响）
     let external_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
         .await
         .expect("绑定测试端口应成功");
@@ -439,21 +441,26 @@ async fn test_listen_returns_error_when_external_port_in_use() {
         .port();
 
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    // 未调用 with_internal_api_key → validate 失败，listen 在 bind 前短路
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(0); // 内网用随机端口
 
     let result = server.listen().await;
-    assert!(result.is_err(), "外网端口被占用时 listen 应返回错误");
+    assert!(
+        matches!(&result, Err(GarrisonError::Config(msg)) if msg.contains("internal_api_key")),
+        "未配置 internal_api_key 时 listen 应返回 Config 错误（validate 短路），实际: {:?}",
+        result
+    );
     // external_listener 在函数结束时 drop
 }
 
-/// 测试 listen 在内网端口被占用时返回错误。
+/// 测试 listen 在未配置 `internal_api_key` 时被 `validate()` 短路（内网端口场景）。
 ///
-/// 先用 TcpListener 占用内网端口，然后调用 listen()，
-/// 内网 task 绑定失败 → select 返回错误。
+/// 与 `test_listen_validates_config_first_external` 对称，覆盖内网端口场景。
+/// 注意：错误来源是 validate 校验而非 bind 失败。
 #[tokio::test]
-async fn test_listen_returns_error_when_internal_port_in_use() {
+async fn test_listen_validates_config_first_internal() {
     let internal_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
         .await
         .expect("绑定测试端口应成功");
@@ -463,12 +470,17 @@ async fn test_listen_returns_error_when_internal_port_in_use() {
         .port();
 
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    // 未调用 with_internal_api_key → validate 失败，listen 在 bind 前短路
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(0) // 外网用随机端口
         .with_internal_port(internal_port);
 
     let result = server.listen().await;
-    assert!(result.is_err(), "内网端口被占用时 listen 应返回错误");
+    assert!(
+        matches!(&result, Err(GarrisonError::Config(msg)) if msg.contains("internal_api_key")),
+        "未配置 internal_api_key 时 listen 应返回 Config 错误（validate 短路），实际: {:?}",
+        result
+    );
 }
 
 /// 测试 listen 成功启动后持续运行（不立即返回）。
@@ -1101,4 +1113,205 @@ async fn test_with_body_limits() {
         .with_internal_body_limits(2 * 1024 * 1024);
     assert_eq!(server.config.external_body_limit, 512 * 1024);
     assert_eq!(server.config.internal_body_limit, 2 * 1024 * 1024);
+}
+
+// ========================================================================
+// 覆盖率补测：listen 校验失败 / 真实 bind 失败分支 / builder 补充 / 租户解析器两态
+// ========================================================================
+
+/// 测试 listen 在 `internal_api_key` 未配置时被 config validate 短路（fail-closed）。
+///
+/// 覆盖 `listen()` 首行 `self.config.validate().map_err(GarrisonError::Config)?`
+/// 错误分支：校验失败时不进入端口绑定，直接返回 Config 错误。
+#[tokio::test]
+async fn test_listen_validate_fails_when_internal_api_key_empty() {
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    // 不调用 with_internal_api_key → 默认空串 → validate 失败
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_port(0)
+        .with_internal_port(0);
+
+    let result = server.listen().await;
+    assert!(
+        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("internal_api_key")),
+        "空 internal_api_key 时 listen 应返回 Config 错误，实际: {:?}",
+        result
+    );
+}
+
+/// 测试 listen 在配置合法且外网端口被占用时返回 bind 错误。
+///
+/// 与 `test_listen_validates_config_first_external` 的区别：本测试设置
+/// 了合法 api_key，validate 通过后真正进入 tokio::spawn 的 bind 路径，覆盖
+/// 外网 `TcpListener::bind` 失败分支与 select 的 external 错误臂。
+#[tokio::test]
+async fn test_listen_bind_failure_external_port_with_valid_config() {
+    let external_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
+        .await
+        .expect("占用测试端口应成功");
+    let external_port = external_listener.local_addr().unwrap().port();
+
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_port(external_port)
+        .with_internal_port(0)
+        .with_internal_api_key("test-api-key");
+
+    let result = server.listen().await;
+    assert!(
+        matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("server-external-bind")),
+        "外网端口被占用应返回 server-external-bind 错误，实际: {:?}",
+        result
+    );
+}
+
+/// 测试 listen 在配置合法且内网端口被占用时返回 bind 错误。
+///
+/// 覆盖内网 `TcpListener::bind` 失败分支与 select 的 internal 错误臂
+///（M-1：internal 失败时显式 abort external task）。
+#[tokio::test]
+async fn test_listen_bind_failure_internal_port_with_valid_config() {
+    let internal_listener = tokio::net::TcpListener::bind("0.0.0.0:0")
+        .await
+        .expect("占用测试端口应成功");
+    let internal_port = internal_listener.local_addr().unwrap().port();
+
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_port(0)
+        .with_internal_port(internal_port)
+        .with_internal_api_key("test-api-key");
+
+    let result = server.listen().await;
+    assert!(
+        matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("server-internal-bind")),
+        "内网端口被占用应返回 server-internal-bind 错误，实际: {:?}",
+        result
+    );
+}
+
+/// 测试 with_trusted_proxies / with_rate_limit_max_entries builder 存储配置。
+#[tokio::test]
+async fn test_with_trusted_proxies_and_rate_limit_max_entries() {
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let proxies = ["127.0.0.1".parse::<std::net::IpAddr>().unwrap()].to_vec();
+    let server = GarrisonAuthServer::new(backend)
+        .with_trusted_proxies(proxies.clone())
+        .with_rate_limit_max_entries(1234);
+
+    assert_eq!(server.config.rate_limit_trusted_proxies, proxies);
+    assert_eq!(server.config.rate_limit_max_entries, 1234);
+}
+
+/// 测试 with_tenant_resolver 两态（feature = "tenant-isolation"）：
+/// 默认 `None`（不挂载租户中间件），`Some(..)` 时 external / internal 路由
+/// 均挂载租户解析中间件（路由可正常构建）。
+#[cfg(feature = "tenant-isolation")]
+#[tokio::test]
+async fn test_with_tenant_resolver_states_none_and_some() {
+    use crate::context::tenant::HeaderTenantResolver;
+
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+
+    // None 态（默认）
+    let server_none = GarrisonAuthServer::new(backend.clone())
+        .with_internal_api_key("test-api-key")
+        .with_rate_limit(100);
+    assert!(
+        server_none.tenant_resolver.is_none(),
+        "默认不应注入租户解析器"
+    );
+    // None 态路由构建不受影响
+    let _ = server_none.external_router();
+    let _ = server_none.internal_router();
+
+    // Some 态
+    let server_some = GarrisonAuthServer::new(backend)
+        .with_internal_api_key("test-api-key")
+        .with_rate_limit(100)
+        .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
+    assert!(
+        server_some.tenant_resolver.is_some(),
+        "with_tenant_resolver(Some(..)) 后应持有解析器"
+    );
+    // Some 态下 external / internal 路由挂载租户中间件后仍可构建
+    let _ = server_some.external_router();
+    let _ = server_some.internal_router();
+}
+
+/// 测试 with_oauth2 + with_tenant_resolver 组合：OAuth2 router merge 前单独
+/// 注入租户中间件（axum merge 不合并 layer），external / internal 端点均可达。
+#[cfg(all(feature = "tenant-isolation", feature = "oauth2-server"))]
+#[tokio::test]
+async fn test_oauth2_with_tenant_resolver_routes_reachable() {
+    use crate::context::tenant::HeaderTenantResolver;
+
+    let dao: Arc<dyn GarrisonDao> = Arc::new(SimpleMockDao);
+    let store: Arc<dyn crate::oauth2_server::client::OAuth2ClientStore> =
+        Arc::new(SimpleMockClientStore);
+    let oauth2_state = Arc::new(oauth2_routes::OAuth2State::new(
+        store,
+        dao,
+        "http://localhost/login".to_string(),
+    ));
+
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_internal_api_key("test-api-key")
+        .with_rate_limit(100)
+        .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)))
+        .with_oauth2(oauth2_state);
+
+    let external_app = server.external_router();
+    let internal_app = server.internal_router();
+
+    // external：带合法租户头的 authorize 请求不被租户中间件阻断
+    //（SimpleMockClientStore 无注册客户端 → OAuth2 handler 返回业务错误 400；
+    // 若租户中间件缺失/解析失败则表现为 404/500，均视为路由装配失败）
+    let resp = external_app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/oauth2/authorize?response_type=code&client_id=test")
+                .header("x-tenant-id", "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    assert_ne!(
+        status,
+        StatusCode::NOT_FOUND,
+        "oauth2 + 租户中间件组合下 /oauth2/authorize 应存在"
+    );
+    assert_ne!(
+        status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "合法租户头不应被租户中间件拒绝（500），实际: {status}"
+    );
+    assert_ne!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "合法租户头不应触发 401，实际: {status}"
+    );
+
+    // internal：introspect 端点在租户中间件 + merge 后仍存在（OAuth2 handler
+    // 有自己的响应语义，不 404 即证明 merge 与租户中间件注入未破坏路由）
+    let resp = internal_app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/oauth2/introspect")
+                .header("x-tenant-id", "1")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_ne!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "oauth2 + 租户中间件组合下 /oauth2/introspect 应存在"
+    );
 }
