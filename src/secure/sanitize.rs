@@ -122,7 +122,7 @@ pub fn sanitize_input(input: &str, max_len: usize) -> GarrisonResult<String> {
     let char_count = trimmed.chars().count();
     if char_count > max_len {
         return Err(GarrisonError::InvalidParam(format!(
-            "输入长度 {} 超过最大限制 {}",
+            "sanitize-input-length-exceeded::{}::{}",
             char_count, max_len
         )));
     }

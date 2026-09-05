@@ -24,14 +24,14 @@ pub trait TotpVerifier {
     /// - `code`: 用户输入的验证码。
     fn verify_totp(&self, _code: &str) -> GarrisonResult<bool> {
         Err(GarrisonError::NotImplemented(
-            "verify_totp 未实现".to_string(),
+            "secure-verify-totp-not-implemented::".to_string(),
         ))
     }
 
     /// 生成当前 TOTP 验证码。
     fn generate_totp(&self) -> GarrisonResult<String> {
         Err(GarrisonError::NotImplemented(
-            "generate_totp 未实现".to_string(),
+            "secure-generate-totp-not-implemented::".to_string(),
         ))
     }
 }
@@ -50,7 +50,7 @@ pub trait SignVerifier {
     /// - `secret`: 签名密钥。
     fn verify_sign(&self, _data: &str, _sign: &str, _secret: &str) -> GarrisonResult<bool> {
         Err(GarrisonError::NotImplemented(
-            "verify_sign 未实现".to_string(),
+            "secure-verify-sign-not-implemented::".to_string(),
         ))
     }
 
@@ -61,7 +61,7 @@ pub trait SignVerifier {
     /// - `secret`: 签名密钥。
     fn create_sign(&self, _data: &str, _secret: &str) -> GarrisonResult<String> {
         Err(GarrisonError::NotImplemented(
-            "create_sign 未实现".to_string(),
+            "secure-create-sign-not-implemented::".to_string(),
         ))
     }
 }

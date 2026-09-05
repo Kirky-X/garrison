@@ -57,7 +57,7 @@ impl FromStr for DigestAlgorithm {
             "MD5" => Ok(Self::Md5),
             "SHA256" => Ok(Self::Sha256),
             other => Err(GarrisonError::Internal(format!(
-                "不支持的 Digest 算法: {}，仅支持 MD5 / SHA256",
+                "digest-algo-unsupported::{}",
                 other
             ))),
         }
