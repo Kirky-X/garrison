@@ -210,7 +210,7 @@ impl GarrisonAuthServer {
 
     /// 构建外网路由（sdforge + path-filter + rate_limit + audit_log + tenant_resolution）。
     ///
-    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（16 端点），
+    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 基础 + metrics-prometheus 时 +1），
     /// 通过 `external_path_filter` 中间件仅放行 3 个外网路径（login/logout/refresh），
     /// 其余内网路径返回 404。
     ///
@@ -308,7 +308,7 @@ impl GarrisonAuthServer {
 
     /// 构建内网路由（sdforge + path-filter + api_key_auth + audit_log + tenant_resolution）。
     ///
-    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（16 端点），
+    /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 基础 + metrics-prometheus 时 +1），
     /// 通过 `internal_path_filter` 中间件拒绝 3 个外网路径（login/logout/refresh），
     /// 其余内网路径放行（由 api_key_auth 保护）。
     ///

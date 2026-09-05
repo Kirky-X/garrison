@@ -297,7 +297,8 @@ pub async fn audit_log_middleware(req: Request, next: Next) -> Response {
 // path-filter 中间件（C-1：双端口架构路由分离）
 // ============================================================================
 //
-// sdforge::http::build() 收集所有 16 个 #[forge] 路由到单一 Router，
+// sdforge::http::build() 收集所有 #[forge] 路由到单一 Router（15 个基础端点，
+// metrics-prometheus 启用时 +1 = 16），
 // 不支持按 name/path/group/tag 过滤。为在双端口架构中分离外网/内网路由，
 // 用 path-filter 中间件在请求入口处按路径过滤：
 //
@@ -942,7 +943,8 @@ mod tests {
         "/api/v1/auth/health",
     ];
 
-    /// 构建包含所有 15 个 auth 路由的测试 Router（用于 path-filter 测试）。
+    /// 构建包含所有 15 个基础 auth 路由的测试 Router（3 外网 + 12 内网，不含 metrics 端点）。
+    /// 用于 path-filter 中间件测试。
     fn make_all_routes_router() -> Router {
         Router::new()
             .route("/api/v1/auth/login", post(|| async { "ok" }))
