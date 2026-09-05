@@ -12,6 +12,11 @@ use crate::limiteron::GarrisonDaoDistributedLimiter;
 use std::sync::Arc;
 use std::time::Duration;
 
+/// 每小时秒数（用于时间桶计算与 TTL）。
+const SECONDS_PER_HOUR: u64 = 3600;
+/// 每天秒数（用于日窗口 TTL）。
+const SECONDS_PER_DAY: u64 = 86400;
+
 /// 校验手机号格式（key 注入防护 + DoS 防护）。
 ///
 /// spec 约束：phone 不能含 ':'（防止 key 结构破坏）。
@@ -81,14 +86,14 @@ impl SmsRateLimiter {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| GarrisonError::Internal(format!("secure-system-time::{}", e)))?;
-        let hour_bucket = now.as_secs() / 3600;
+        let hour_bucket = now.as_secs() / SECONDS_PER_HOUR;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
         // 小时窗口：1 小时 TTL（limiteron DistributedLimiter.incr_with_ttl 替换 dao.incr）
         let hour_key = format!("sms:rate:{}:hour:{}", phone, hour_bucket);
         let hour_count = self
             .limiter
-            .incr_with_ttl(&hour_key, 1, Duration::from_secs(3600))
+            .incr_with_ttl(&hour_key, 1, Duration::from_secs(SECONDS_PER_HOUR))
             .await
             .map_err(|e| GarrisonError::Internal(format!("secure-limiter-incr::{}", e)))?;
         if hour_count > self.hourly_limit as u64 {
@@ -105,7 +110,7 @@ impl SmsRateLimiter {
         let day_key = format!("sms:rate:{}:day:{}", phone, date);
         let day_count = self
             .limiter
-            .incr_with_ttl(&day_key, 1, Duration::from_secs(86400))
+            .incr_with_ttl(&day_key, 1, Duration::from_secs(SECONDS_PER_DAY))
             .await
             .map_err(|e| GarrisonError::Internal(format!("secure-limiter-incr::{}", e)))?;
         if day_count > self.daily_limit as u64 {
@@ -131,7 +136,7 @@ impl SmsRateLimiter {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_err(|e| GarrisonError::Internal(format!("secure-system-time::{}", e)))?;
-        let hour_bucket = now.as_secs() / 3600;
+        let hour_bucket = now.as_secs() / SECONDS_PER_HOUR;
         let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
 
         // 递减小时窗口计数

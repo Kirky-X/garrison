@@ -31,6 +31,10 @@ const MAX_SCAN: usize = 10_000;
 const RECORD_TTL_SECS: u64 = 86_400;
 /// 扫描时间窗口（秒，1h）。
 const SCAN_WINDOW_SECS: i64 = 3_600;
+/// 扫描耗时告警阈值（秒）。
+const SCAN_SLOW_THRESHOLD: Duration = Duration::from_secs(1);
+/// 默认关闭超时（秒）。
+const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// 登录结果枚举。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -320,7 +324,7 @@ impl AnomalousLoginAnalyzer {
 
         // HIGH-001: 扫描时间监控（Redis 后端 N+1 查询需优化为批量 mget）
         let scan_elapsed = scan_start.elapsed();
-        if scan_elapsed > Duration::from_secs(1) {
+        if scan_elapsed > SCAN_SLOW_THRESHOLD {
             tracing::warn!(
                 elapsed_ms = scan_elapsed.as_millis(),
                 key_count = keys.len(),
@@ -401,7 +405,7 @@ impl AnomalousLoginAnalyzer {
         handle: tokio::task::JoinHandle<()>,
         shutdown_tx: watch::Sender<bool>,
     ) -> GarrisonResult<()> {
-        Self::shutdown_with_timeout(handle, shutdown_tx, Duration::from_secs(5)).await
+        Self::shutdown_with_timeout(handle, shutdown_tx, DEFAULT_SHUTDOWN_TIMEOUT).await
     }
 
     /// 优雅停止分析器任务（自定义超时，T008）。
