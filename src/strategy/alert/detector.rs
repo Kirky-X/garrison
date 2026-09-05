@@ -4,6 +4,7 @@
 //! 异常检测器实现模块，提供 IP 变化检测与快速连续登录检测。
 
 use crate::error::GarrisonResult;
+use crate::i18n::translate_detail;
 use crate::session::GarrisonSession;
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -83,7 +84,10 @@ impl AnomalyDetector for IpChangeDetector {
         Ok(vec![SecurityAlertEvent::AnomalyLogin {
             login_id: login_id.to_string(),
             anomaly_type: AnomalyType::IpChanged,
-            detail: format!("IP 从 {} 变为 {}", historical_ip, current_ip),
+            detail: translate_detail(
+                "alert-ip-changed",
+                &[("arg0", historical_ip.as_str()), ("arg1", current_ip)],
+            ),
             trace_id: Uuid::new_v4().to_string(),
         }])
     }
@@ -174,7 +178,10 @@ impl AnomalyDetector for SessionHijackDetector {
             return Ok(Vec::new());
         }
 
-        let detail = format!("会话 IP 不一致: 存储={}, 当前={}", stored_ip, current_ip);
+        let detail = translate_detail(
+            "session-ip-mismatch",
+            &[("arg0", stored_ip.as_str()), ("arg1", current_ip.as_str())],
+        );
 
         // Kickout 模式: 踢出疑似被劫持的会话
         if self.mode == SessionHijackMode::Kickout {
@@ -250,7 +257,13 @@ impl AnomalyDetector for RapidSuccessiveDetector {
             return Ok(vec![SecurityAlertEvent::AnomalyLogin {
                 login_id: login_id.to_string(),
                 anomaly_type: AnomalyType::RapidSuccessiveLogin,
-                detail: format!("{} 个 token 同时在线（阈值 {}）", count, self.threshold),
+                detail: translate_detail(
+                    "alert-rapid-successive",
+                    &[
+                        ("arg0", &count.to_string()),
+                        ("arg1", &self.threshold.to_string()),
+                    ],
+                ),
                 trace_id: Uuid::new_v4().to_string(),
             }]);
         }

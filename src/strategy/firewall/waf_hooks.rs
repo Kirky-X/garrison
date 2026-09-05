@@ -21,6 +21,7 @@
 //! | `ParameterHook` | `parameter` | 禁止参数黑名单 |
 
 use super::waf::{WafContext, WafHook, WafVerdict};
+use crate::i18n::translate_detail;
 use async_trait::async_trait;
 
 // ============================================================================
@@ -142,7 +143,7 @@ impl WafHook for BlackPathHook {
         }
         if self.paths.iter().any(|p| ctx.path.starts_with(p)) {
             return WafVerdict::Deny {
-                reason: format!("路径 {} 命中黑名单", ctx.path),
+                reason: format!("waf-blacklist-path::{}", ctx.path),
                 hook: "black_path",
             };
         }
@@ -173,44 +174,65 @@ impl Default for DangerCharacterHook {
     }
 }
 
-/// 检测字符串中的危险字符，返回命中的模式描述。
+/// 检测字符串中的危险字符，返回对应的 i18n pattern ID。
 ///
 /// 所有模式均大小写不敏感，统一在 `lower`（小写形式）中检测。
 /// 非编码模式（`//`、`\`、`;`、`\0`、`\n`、`\r`）为符号和控制字符，无大小写之分，
 /// 百分号编码模式（`%2e`、`%2f` 等）通过小写形式统一匹配。
 fn check_danger_chars(lower: &str) -> Option<&'static str> {
-    // (pattern, description) — 所有模式均大小写不敏感，统一用 lower.contains(pattern) 检测
+    // (pattern, i18n_pattern_id) — 所有模式均大小写不敏感，统一用 lower.contains(pattern) 检测
     const PATTERNS: &[(&str, &str)] = &[
-        ("//", "双斜杠 //"),
-        ("\\", "反斜杠 \\"),
-        (";", "分号 ;"),
-        ("\0", "空字节"),
-        ("\n", "换行符"),
-        ("\r", "回车符"),
-        ("%2e", "百分号编码 %2e"),
-        ("%2f", "百分号编码 %2f"),
-        ("%00", "百分号编码 %00"),
-        ("%5c", "百分号编码 %5c"),
-        ("%3b", "百分号编码 %3b"),
-        ("%0a", "百分号编码 %0a"),
-        ("%0d", "百分号编码 %0d"),
+        ("//", "double-slash"),
+        ("\\", "backslash"),
+        (";", "semicolon"),
+        ("\0", "null-byte"),
+        ("\n", "newline"),
+        ("\r", "carriage-return"),
+        ("%2e", "pct-2e"),
+        ("%2f", "pct-2f"),
+        ("%00", "pct-00"),
+        ("%5c", "pct-5c"),
+        ("%3b", "pct-3b"),
+        ("%0a", "pct-0a"),
+        ("%0d", "pct-0d"),
     ];
-    for &(pattern, desc) in PATTERNS {
+    for &(pattern, id) in PATTERNS {
         if lower.contains(pattern) {
-            return Some(desc);
+            return Some(id);
         }
     }
     // 双重编码检测：将 %25 解码为 % 后重新校验
     // 防止 %252e（→ %2e → .）等双重 % 编码绕过
     if lower.contains("%25") {
         let decoded = lower.replace("%25", "%");
-        for &(pattern, desc) in PATTERNS {
+        for &(pattern, id) in PATTERNS {
             if decoded.contains(pattern) {
-                return Some(desc);
+                return Some(id);
             }
         }
     }
     None
+}
+
+/// 将危险字符 pattern ID 翻译为当前 locale 的描述字符串。
+fn danger_char_i18n(pattern_id: &str) -> String {
+    let key = match pattern_id {
+        "double-slash" => "waf-danger-desc-double-slash",
+        "backslash" => "waf-danger-desc-backslash",
+        "semicolon" => "waf-danger-desc-semicolon",
+        "null-byte" => "waf-danger-desc-null-byte",
+        "newline" => "waf-danger-desc-newline",
+        "carriage-return" => "waf-danger-desc-carriage-return",
+        "pct-2e" => "waf-danger-desc-pct-2e",
+        "pct-2f" => "waf-danger-desc-pct-2f",
+        "pct-00" => "waf-danger-desc-pct-00",
+        "pct-5c" => "waf-danger-desc-pct-5c",
+        "pct-3b" => "waf-danger-desc-pct-3b",
+        "pct-0a" => "waf-danger-desc-pct-0a",
+        "pct-0d" => "waf-danger-desc-pct-0d",
+        _ => pattern_id,
+    };
+    translate_detail(key, &[])
 }
 
 #[async_trait]
@@ -222,26 +244,32 @@ impl WafHook for DangerCharacterHook {
     async fn check(&self, ctx: &WafContext<'_>) -> WafVerdict {
         let path = ctx.path;
         let lower = path.to_lowercase();
-        if let Some(desc) = check_danger_chars(&lower) {
+        if let Some(desc_id) = check_danger_chars(&lower) {
+            let desc = danger_char_i18n(desc_id);
+            let combined = format!("{}: {}", ctx.path, desc);
             return WafVerdict::Deny {
-                reason: format!("路径包含危险字符 {}", desc),
+                reason: format!("waf-danger-char-path::{}", combined),
                 hook: "danger_char",
             };
         }
         for (_, value) in ctx.params {
             let lower = value.to_lowercase();
-            if let Some(desc) = check_danger_chars(&lower) {
+            if let Some(desc_id) = check_danger_chars(&lower) {
+                let desc = danger_char_i18n(desc_id);
+                let combined = format!("{}: {}", value, desc);
                 return WafVerdict::Deny {
-                    reason: format!("参数值包含危险字符 {}", desc),
+                    reason: format!("waf-danger-char-param::{}", combined),
                     hook: "danger_char",
                 };
             }
         }
         for (_, value) in ctx.headers {
             let lower = value.to_lowercase();
-            if let Some(desc) = check_danger_chars(&lower) {
+            if let Some(desc_id) = check_danger_chars(&lower) {
+                let desc = danger_char_i18n(desc_id);
+                let combined = format!("{}: {}", value, desc);
                 return WafVerdict::Deny {
-                    reason: format!("请求头值包含危险字符 {}", desc),
+                    reason: format!("waf-danger-char-header::{}", combined),
                     hook: "danger_char",
                 };
             }
@@ -282,7 +310,7 @@ impl WafHook for BannedCharacterHook {
         for &b in ctx.path.as_bytes() {
             if !(0x20..=0x7E).contains(&b) {
                 return WafVerdict::Deny {
-                    reason: format!("路径包含不可打印字符 (0x{:02X})", b),
+                    reason: format!("waf-banned-char::(0x{:02X})", b),
                     hook: "banned_char",
                 };
             }
@@ -324,7 +352,7 @@ impl WafHook for DirectoryTraversalHook {
         for &pattern in PATTERNS {
             if ctx.path.contains(pattern) {
                 return WafVerdict::Deny {
-                    reason: format!("路径包含目录遍历模式 {}", pattern),
+                    reason: format!("waf-dir-traversal::{}", pattern),
                     hook: "dir_traversal",
                 };
             }
@@ -369,7 +397,7 @@ impl WafHook for HostHook {
                     WafVerdict::Allow
                 } else {
                     WafVerdict::Deny {
-                        reason: format!("Host {} 不在白名单中", host),
+                        reason: format!("waf-host-not-allowed::{}", host),
                         hook: "host",
                     }
                 }
@@ -410,7 +438,7 @@ impl WafHook for HttpMethodHook {
             WafVerdict::Allow
         } else {
             WafVerdict::Deny {
-                reason: format!("HTTP 方法 {} 不在允许列表中", ctx.method),
+                reason: format!("waf-method-not-allowed::{}", ctx.method),
                 hook: "http_method",
             }
         }
@@ -451,7 +479,7 @@ impl WafHook for HeaderHook {
             for (name, _) in ctx.headers {
                 if name.to_lowercase() == banned_lower {
                     return WafVerdict::Deny {
-                        reason: format!("请求头 {} 在禁止列表中", name),
+                        reason: format!("waf-header-banned::{}", name),
                         hook: "header",
                     };
                 }
@@ -493,7 +521,7 @@ impl WafHook for ParameterHook {
             for (name, _) in ctx.params {
                 if name == banned {
                     return WafVerdict::Deny {
-                        reason: format!("参数 {} 在禁止列表中", name),
+                        reason: format!("waf-param-banned::{}", name),
                         hook: "parameter",
                     };
                 }

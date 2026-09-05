@@ -94,8 +94,8 @@ impl WafHookChain {
     /// 按注册顺序执行所有 Hook，任一 Deny 则短路返回 `FirewallBlocked` 错误，
     /// `AllowAndSkip` 则短路返回 `Ok(())` 跳过后续 Hook。
     ///
-    /// Deny 时将 hook 名与 reason 编码为 `format!("[{}] {}", hook, reason)`，
-    /// 复用现有 `GarrisonError::FirewallBlocked(String)` 变体。
+    /// Deny 时将 reason 直接编码为结构化 i18n key，复用 `GarrisonError::FirewallBlocked(String)` 变体。
+    /// hook 名仅记录于 tracing 日志，不编码进错误消息（避免破坏 `parse_keyed_detail` 解析）。
     pub async fn check(&self, ctx: &WafContext<'_>) -> GarrisonResult<()> {
         for hook in &self.hooks {
             match hook.check(ctx).await {
@@ -106,10 +106,7 @@ impl WafHookChain {
                 },
                 WafVerdict::Deny { reason, hook: name } => {
                     tracing::warn!(hook = name, reason = %reason, "WAF blocked request");
-                    return Err(GarrisonError::FirewallBlocked(format!(
-                        "[{}] {}",
-                        name, reason
-                    )));
+                    return Err(GarrisonError::FirewallBlocked(reason));
                 },
             }
         }

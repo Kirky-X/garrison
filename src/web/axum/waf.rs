@@ -54,8 +54,29 @@ fn parse_query(query: &str) -> Vec<(String, String)> {
 
 /// 从 `FirewallBlocked` 编码字符串中解析 hook 和 reason。
 ///
-/// 编码格式：`"[hook] reason"`（由 `WafHookChain::check` 生成）。
+/// 支持两种格式：
+/// - 新格式（结构化 i18n key）：`"waf-xxx-key::arg"` — 从 key 前缀映射 hook 名
+/// - 旧格式（向后兼容）：`"[hook] reason"` — 直接提取
 fn parse_firewall_blocked(s: &str) -> (&str, &str) {
+    // 新格式：结构化 i18n key
+    if s.starts_with("waf-") {
+        let key_part = s.split("::").next().unwrap_or(s);
+        let hook = match key_part {
+            "waf-blacklist-path" => "black_path",
+            "waf-danger-char-path" | "waf-danger-char-param" | "waf-danger-char-header" => {
+                "danger_char"
+            },
+            "waf-banned-char" => "banned_char",
+            "waf-dir-traversal" => "dir_traversal",
+            "waf-host-not-allowed" => "host",
+            "waf-method-not-allowed" => "http_method",
+            "waf-header-banned" => "header",
+            "waf-param-banned" => "parameter",
+            _ => "unknown",
+        };
+        return (hook, s);
+    }
+    // 旧格式：[hook] reason
     if s.starts_with('[') {
         if let Some(close) = s.find(']') {
             let hook = &s[1..close];
