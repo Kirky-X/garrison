@@ -321,6 +321,33 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
+    /// 邀请码创建事件。
+    ///
+    /// 在 `InvitationHandler::create` / `batch_create` 成功路径广播。
+    InvitationCreated {
+        /// 邀请码。
+        code: String,
+        /// 签发者 ID。
+        issuer_id: String,
+    },
+    /// 邀请码吊销事件。
+    ///
+    /// 在 `InvitationHandler::revoke` 成功路径广播（首次吊销，幂等跳过）。
+    InvitationRevoked {
+        /// 邀请码。
+        code: String,
+        /// 签发者 ID。
+        issuer_id: String,
+    },
+    /// 邀请码兑换事件。
+    ///
+    /// 在 `InvitationHandler::redeem` 成功路径广播。
+    InvitationRedeemed {
+        /// 邀请码。
+        code: String,
+        /// 兑换者 ID。
+        redeemer_id: String,
+    },
 }
 
 /// 监听器 trait，提供事件订阅抽象。

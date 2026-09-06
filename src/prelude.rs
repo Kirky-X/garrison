@@ -31,6 +31,13 @@ pub use crate::stp::{
 /// 防火墙策略（[GarrisonPermissionStrategy]、[GarrisonPermissionStrategyDefault]）。
 pub use crate::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefault};
 
+/// 邀请码定向注册协议类型（feature: protocol-invitation）。
+#[cfg(feature = "protocol-invitation")]
+pub use crate::protocol::invitation::{
+    InvitationHandler, InvitationInvalidReason, InvitationRecord, InvitationRedeemHook,
+    InvitationSpec, InvitationStatus, InvitationStatusReport,
+};
+
 #[cfg(all(feature = "credit-metering", feature = "listener"))]
 pub use crate::credit::CreditMeteringListener;
 #[cfg(feature = "credit-metering")]

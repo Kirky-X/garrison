@@ -36,6 +36,10 @@ pub mod apikey;
 #[cfg(feature = "protocol-temp")]
 pub mod temp;
 
+/// 邀请码定向注册协议插件模块。
+#[cfg(feature = "protocol-invitation")]
+pub mod invitation;
+
 /// 社交登录协议插件模块。
 ///
 /// 核心类型（`SocialLoginProvider` trait / `SocialUserInfo` / `SocialLoginService` 注册中心 /

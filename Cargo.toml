@@ -261,6 +261,9 @@ protocol-sign = ["dep:sha2", "hmac", "dep:base64", "dep:hkdf"]
 # dao-key-index：启用 GarrisonDaoOxcache::keys() 生产实现，使 list_by_namespace 可用。
 protocol-apikey = ["dep:sha2", "secure-ct-eq", "dao-key-index"]
 protocol-temp = []
+# protocol-invitation：邀请码定向注册（一次性/N 次、TTL、吊销、防爆破、注册编排钩子）。
+# dep:rand：短码随机字符选取（OsRng）；dep:sha2：防爆破计数键的 source 摘要（SHA-256）。
+protocol-invitation = ["dep:rand", "dep:sha2"]
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
 # 启用 rsa/zeroize 让 RsaPrivateKey 实现 Zeroize（AlipayProvider Drop 清零 RSA 私钥大数）
 # NOTE: rsa 0.9.10 没有 zeroize feature，暂时移除以解除编译阻塞
@@ -281,7 +284,7 @@ secure-sign = ["dep:sha2", "hmac", "dep:base64", "dep:subtle"]
 # [v0.9.0] secure-httpbasic → protocol-httpbasic（域统一到协议层）
 protocol-httpbasic = ["dep:base64"]
 # [v0.9.0] secure-httpdigest → protocol-httpdigest（域统一到协议层）
-protocol-httpdigest = ["dep:sha2", "dep:base64", "md5", "dep:subtle", "dep:hkdf", "hmac"]
+protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "dep:subtle", "dep:hkdf", "hmac"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
 # 依赖 regex：Custom mask 真实脱敏（vuln-0010 D6 修复，原 placeholder 实现静默泄露敏感数据）
@@ -444,7 +447,7 @@ testing = []
 full = [
     "cache-memory", "cache-redis",
     "db-sqlite",
-    "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-zeroize",
+    "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-invitation", "protocol-zeroize",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server", "protocol-saml",
     "secure-totp", "secure-sign", "protocol-httpbasic", "protocol-httpdigest", "secure-masking",
     "secure-xss", "secure-sanitize", "sms-rate-limit",
