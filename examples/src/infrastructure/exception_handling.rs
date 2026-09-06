@@ -38,7 +38,7 @@ pub fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     let biz_ex = GarrisonException::new(-1, "会话已过期")
         .with_token("T1-uuid-token")
-        .with_login_id(1001)
+        .with_login_id("1001")
         .with_login_type(1)
         .with_extra("device", "web")
         .with_extra("ip", "192.168.1.100")

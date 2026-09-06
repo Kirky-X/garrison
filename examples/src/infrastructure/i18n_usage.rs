@@ -47,7 +47,7 @@ pub fn sample_errors() -> Vec<(&'static str, GarrisonError)> {
         ),
         (
             "Exception",
-            GarrisonError::Exception(GarrisonException::new(-1, "请先登录")),
+            GarrisonError::Exception(Box::new(GarrisonException::new(-1, "请先登录"))),
         ),
     ]
 }

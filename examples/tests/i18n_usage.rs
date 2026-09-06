@@ -109,14 +109,14 @@ fn test_translate_error_en_all_variants() {
 #[test]
 fn test_translate_error_exception_variant_zh() {
     let _guard = set_locale(GarrisonLocale::Zh);
-    let err = GarrisonError::Exception(GarrisonException::new(-1, "请先登录"));
+    let err = GarrisonError::Exception(Box::new(GarrisonException::new(-1, "请先登录")));
     assert_eq!(translate_error(&err), "业务异常[-1]: 请先登录");
 }
 
 #[test]
 fn test_translate_error_exception_variant_en() {
     let _guard = set_locale(GarrisonLocale::En);
-    let err = GarrisonError::Exception(GarrisonException::new(-1, "please login"));
+    let err = GarrisonError::Exception(Box::new(GarrisonException::new(-1, "please login")));
     assert_eq!(
         translate_error(&err),
         "Business exception[-1]: please login"

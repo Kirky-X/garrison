@@ -79,6 +79,75 @@ impl GarrisonDao for MockDao {
         self.data.lock().await.remove(key);
         Ok(())
     }
+
+    async fn set_if_absent(
+        &self,
+        key: &str,
+        value: &str,
+        _ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        let mut data = self.data.lock().await;
+        if data.contains_key(key) {
+            Ok(false)
+        } else {
+            data.insert(key.to_string(), value.to_string());
+            Ok(true)
+        }
+    }
+
+    async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
+        let mut data = self.data.lock().await;
+        if let Some(value) = data.remove(old_key) {
+            data.insert(new_key.to_string(), value);
+        }
+        Ok(())
+    }
+
+    async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
+        Ok(self.data.lock().await.remove(key))
+    }
+
+    async fn incr(&self, key: &str, _ttl_seconds: u64) -> GarrisonResult<u64> {
+        let mut data = self.data.lock().await;
+        let val = data
+            .get(key)
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0)
+            + 1;
+        data.insert(key.to_string(), val.to_string());
+        Ok(val)
+    }
+
+    async fn decr(&self, key: &str) -> GarrisonResult<u64> {
+        let mut data = self.data.lock().await;
+        let val = data
+            .get(key)
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        if val == 0 {
+            return Ok(0);
+        }
+        let new_val = val - 1;
+        data.insert(key.to_string(), new_val.to_string());
+        Ok(new_val)
+    }
+
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        new_value: &str,
+        _ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        let mut data = self.data.lock().await;
+        let current = data.get(key).map(|s| s.as_str());
+        if current == expected {
+            data.insert(key.to_string(), new_value.to_string());
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 /// 运行认证逻辑示例。

@@ -26,7 +26,7 @@ fn test_not_login_exception_builder() {
 fn test_garrison_exception_builder_chain() {
     let biz_ex = GarrisonException::new(-1, "会话已过期")
         .with_token("T1-uuid-token")
-        .with_login_id(1001)
+        .with_login_id("1001")
         .with_login_type(1)
         .with_extra("device", "web")
         .with_extra("ip", "192.168.1.100")
@@ -34,7 +34,7 @@ fn test_garrison_exception_builder_chain() {
     assert_eq!(biz_ex.code, -1);
     assert_eq!(biz_ex.message, "会话已过期");
     assert_eq!(biz_ex.token_value.as_deref(), Some("T1-uuid-token"));
-    assert_eq!(biz_ex.login_id, Some(1001));
+    assert_eq!(biz_ex.login_id, Some("1001".to_string()));
     assert_eq!(biz_ex.login_type, 1);
     assert_eq!(biz_ex.extras.get("device"), Some(&"web".to_string()));
     assert_eq!(biz_ex.extras.get("ip"), Some(&"192.168.1.100".to_string()));
@@ -57,7 +57,7 @@ fn test_garrison_error_to_exception_roundtrip() {
 fn test_exception_to_error_conversion() {
     let biz_ex = GarrisonException::new(-1, "会话已过期")
         .with_token("T1-uuid-token")
-        .with_login_id(1001)
+        .with_login_id("1001")
         .build();
     let err: GarrisonError = biz_ex.into();
     // GarrisonException → GarrisonError 应产生 NotLogin 或 Session 等变体
