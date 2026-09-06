@@ -519,3 +519,91 @@ fn validate_abac_expr_rejects_injection_with_keywords() {
     let payload = "principal.id == resource.owner }; permit(principal, action, resource);";
     assert!(validate_abac_expr(payload).is_err());
 }
+
+// ========================================================================
+// A3: validate_abac_expr — 防御 Cedar 策略注入
+// 验证 abac_expr 参数中的恶意模式被拒绝，合法表达式被接受
+// ========================================================================
+
+/// 合法 abac_expr 应通过校验。
+#[test]
+fn validate_abac_expr_accepts_legitimate_expressions() {
+    // 引用 principal/resource/action 的合法表达式
+    assert!(validate_abac_expr("resource.owner == principal.id").is_ok());
+    assert!(validate_abac_expr("principal.department == \"eng\"").is_ok());
+    assert!(validate_abac_expr("action in [Action::\"read\"]").is_ok());
+    assert!(validate_abac_expr(
+        "resource.owner == principal.id && principal.department == \"eng\""
+    )
+    .is_ok());
+}
+
+/// 拒绝 `};` 模式（尝试闭合 when 块并注入新策略）。
+#[test]
+fn validate_abac_expr_rejects_policy_termination() {
+    let payloads = [
+        "}; permit(principal, action, resource);",
+        "}; forbid(principal, action, resource);",
+        "1 == 1 }; permit(principal, action, resource);",
+        "resource.owner == principal.id }; forbid(principal);",
+    ];
+    for p in payloads {
+        assert!(
+            validate_abac_expr(p).is_err(),
+            "应拒绝 `}};` 注入 payload: {:?}",
+            p
+        );
+    }
+}
+
+/// 拒绝显式 `permit(` / `forbid(` 关键字（不允许在表达式内声明新策略）。
+#[test]
+fn validate_abac_expr_rejects_policy_declarations() {
+    let payloads = [
+        "permit(principal, action, resource)",
+        "forbid(principal, action, resource)",
+        "true || permit(principal, action, resource)",
+        "forbid(principal)",
+    ];
+    for p in payloads {
+        assert!(
+            validate_abac_expr(p).is_err(),
+            "应拒绝 permit/forbid 声明: {:?}",
+            p
+        );
+    }
+}
+
+/// 拒绝纯字面量（无 principal/resource/action 引用）。
+#[test]
+fn validate_abac_expr_rejects_pure_literal() {
+    let payloads = ["1 == 1", "true", "false", "0", "\"hello\""];
+    for p in payloads {
+        assert!(
+            validate_abac_expr(p).is_err(),
+            "应拒绝纯字面量（无 principal/resource/action 引用）: {:?}",
+            p
+        );
+    }
+}
+
+/// 拒绝空表达式。
+#[test]
+fn validate_abac_expr_rejects_empty() {
+    assert!(validate_abac_expr("").is_err());
+    assert!(validate_abac_expr("   ").is_err());
+}
+
+/// 拒绝超长表达式（>512 字符，DoS 防御）。
+#[test]
+fn validate_abac_expr_rejects_overlong() {
+    let long_expr = "a".repeat(513);
+    assert!(validate_abac_expr(&long_expr).is_err());
+}
+
+/// 包含 principal/resource/action 关键字但含 `};` 仍应被拒绝。
+#[test]
+fn validate_abac_expr_rejects_injection_with_keywords() {
+    let payload = "principal.id == resource.owner }; permit(principal, action, resource);";
+    assert!(validate_abac_expr(payload).is_err());
+}

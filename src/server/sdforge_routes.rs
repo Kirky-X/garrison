@@ -11,7 +11,6 @@
 //!
 //! `#[forge]` 宏自动将 path 前缀化为 `/api/{version}{path}`。
 //! 因此 path 参数只需写 `/auth/login`，version="v1" → 实际路由 `/api/v1/auth/login`。
-//! 注：sdforge 0.4.7 宏不再自动加 v 前缀（直接拼接 `/api/{version}{path}`），故 version 显式写 "v1"。
 //! 使用 `no_prefix = true` 可禁用自动前缀化（本模块未使用）。
 //!
 //! # State 注入
@@ -28,15 +27,12 @@
 
 #![cfg(feature = "auth-server-sdforge")]
 // #[forge] 宏生成的代码含 #[cfg(feature = "mcp")] / #[cfg(feature = "cli")] 等
-// garrison 不具备的 feature cfg，属于外部宏展开的正常现象，抑制 check-cfg 警告。
+// bulwark 不具备的 feature cfg，属于外部宏展开的正常现象，抑制 check-cfg 警告。
 #![allow(unexpected_cfgs)]
-// sdforge #[forge] 宏通过 inventory 自动注册路由，lib 编译时不直接调用这些 handler。
-// 路由注册在 bin（auth_server）中通过 sdforge::http::build() 收集，lib 中为 dead code。
-#![allow(dead_code)]
 
 use crate::backend::types::{
     ApiResponse, CheckApiKeyRequest, CheckLoginRequest, CheckPermissionRequest, CheckRoleRequest,
-    LoginRequest, LogoutRequest, RenewToEquivalentRequest,
+    KickoutRequest, LoginRequest, LogoutRequest, RenewToEquivalentRequest, SwitchToRequest,
 };
 use crate::backend::AuthBackend;
 use crate::error::GarrisonError;
@@ -49,181 +45,32 @@ use std::sync::Arc;
 use super::to_api_response;
 
 // ============================================================================
-// A5: get-session / get-token-info 所有权校验请求类型
+// A5: 内部端点请求结构体（增加 caller_login_id 所有权校验）
 // ============================================================================
-//
-// `caller_login_id` 用于所有权校验：当 caller 非 session 属主时，过滤 PII 字段
-// （ip/user_agent/device）。`caller_token` 可选，用于校验 `admin:sessions` 权限——
-// 有此权限的 caller（如运维/审计）即使非属主也可查看 PII。
-//
-// `#[serde(default)]` 保证 BackendRemote 旧版客户端仅发送 `{"token": "..."}` 时
-// 仍可反序列化：`caller_login_id` 默认为空串 → fail-closed（PII 被过滤）。
 
-/// get-session 请求体（A5 所有权校验）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GetSessionRequest {
-    /// 待查询的目标 token。
-    pub token: String,
-    /// Caller 自身 login_id（用于所有权校验）。
-    /// 空串时 fail-closed（PII 被过滤）。
-    #[serde(default)]
-    pub caller_login_id: String,
-    /// Caller 自身 token（可选，用于 `admin:sessions` 权限校验）。
-    /// 提供且具备 `admin:sessions` 权限时，即使非属主也返回完整 PII。
-    #[serde(default)]
-    pub caller_token: Option<String>,
-}
-
-/// get-token-info 请求体（A5 所有权校验）。
+/// get-session / get-token-info 请求体（A5 增强）。
 ///
-/// TokenInfo 本身不含 PII（仅 token/created_at/last_active_at），
-/// 但仍要求 `caller_login_id` 以保持一致性与未来扩展（如添加 PII 字段时）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GetTokenInfoRequest {
-    /// 待查询的目标 token。
-    pub token: String,
-    /// Caller 自身 login_id（用于所有权校验）。
-    #[serde(default)]
-    pub caller_login_id: String,
-    /// Caller 自身 token（可选，用于 `admin:sessions` 权限校验）。
-    #[serde(default)]
-    pub caller_token: Option<String>,
-}
-
-/// switch_to 请求体（A6 所有权校验）。
+/// 在 `CheckLoginRequest` 基础上增加可选 `caller_login_id` 字段，
+/// 用于校验调用者是否有权访问目标 token 的 session。
 ///
-/// `caller_login_id` 用于所有权校验：caller 必须是 token 的属主（或具备 `admin:sessions`
-/// 权限），防止攻击者用泄露的 token 切换身份。`caller_token` 可选，用于校验
-/// `admin:sessions` 权限。
+/// # 兼容性
 ///
-/// `#[serde(default)]` 保证 BackendRemote 旧版客户端仅发送 `{token, target_login_id}` 时
-/// 仍可反序列化：`caller_login_id` 默认为空串 → fail-closed（请求被拒绝）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SwitchToRequest {
-    /// 当前 token 字符串。
-    pub token: String,
-    /// 待切换到的登录主体标识。
-    pub target_login_id: String,
-    /// Caller 自身 login_id（用于所有权校验）。
-    /// 空串时 fail-closed（请求被拒绝）。
-    #[serde(default)]
-    pub caller_login_id: String,
-    /// Caller 自身 token（可选，用于 `admin:sessions` 权限校验）。
-    /// 提供且具备 `admin:sessions` 权限时，即使非属主也允许切换。
-    #[serde(default)]
-    pub caller_token: Option<String>,
-}
-
-/// kickout 请求体（A7 所有权校验）。
-///
-/// `caller_login_id` 用于所有权校验：caller 必须是目标 `login_id` 的属主（或具备
-/// `admin:sessions` 权限），防止任意用户踢出他人的会话。`caller_token` 可选，用于
-/// 校验 `admin:sessions` 权限。
-///
-/// `#[serde(default)]` 保证 BackendRemote 旧版客户端仅发送 `{login_id}` 时仍可反序列化：
-/// `caller_login_id` 默认为空串 → fail-closed（请求被拒绝）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct KickoutRequest {
-    /// 待踢出的登录主体标识。
-    pub login_id: String,
-    /// Caller 自身 login_id（用于所有权校验）。
-    /// 空串时 fail-closed（请求被拒绝）。
-    #[serde(default)]
-    pub caller_login_id: String,
-    /// Caller 自身 token（可选，用于 `admin:sessions` 权限校验）。
-    /// 提供且具备 `admin:sessions` 权限时，即使非属主也允许踢出。
-    #[serde(default)]
-    pub caller_token: Option<String>,
-}
-
-/// 校验 caller 是否可查看目标 session 的 PII。
-///
-/// 规则：
-/// - `caller_login_id == session_login_id` → 所有人，允许 PII
-/// - 否则检查 `caller_token` 是否有 `admin:sessions` 权限
-/// - 都不满足 → false（PII 应被过滤）
-///
-/// # 错误处理
-///
-/// `check_permission` 失败（如 token 无效/后端不可达）时返回 `false`（fail-closed）。
-async fn can_view_pii(
-    backend: &Arc<dyn AuthBackend>,
-    caller_login_id: &str,
-    session_login_id: &str,
-    caller_token: &Option<String>,
-) -> bool {
-    // 快速路径：caller 即属主
-    if !caller_login_id.is_empty() && caller_login_id == session_login_id {
-        return true;
-    }
-    // 非属主：检查 admin:sessions 权限
-    match caller_token {
-        Some(t) if !t.is_empty() => backend.check_permission(t, "admin:sessions").await.is_ok(),
-        _ => false,
-    }
-}
-
-/// 校验 caller 是否可执行 switch_to（A6 所有权校验）。
-///
-/// 规则与 [`can_view_pii`] 一致，但语义不同：switch_to 是高危写操作，
-/// 校验失败时直接拒绝请求（而非仅过滤 PII）。
+/// `caller_login_id` 使用 `#[serde(default)]`，未传入时为 `None`。
+/// 这样 BackendRemote 发送的 `CheckLoginRequest { token }`（无 caller_login_id）
+/// 仍能反序列化为 `GetSessionRequest { token, caller_login_id: None }`，
+/// 保持向后兼容。
 ///
 /// # 安全语义
 ///
-/// switch_to 是身份切换的高危操作，要求 caller 显式声明身份（`caller_login_id`）。
-/// `caller_login_id` 为空（BackendRemote 旧版客户端）时 fail-closed 拒绝，
-/// 防止攻击者用泄露的 token 在不声明身份的情况下切换身份。
-///
-/// # 错误处理
-///
-/// `check_permission` 失败（如 token 无效/后端不可达）时返回 `false`（fail-closed）。
-async fn can_switch_to(
-    backend: &Arc<dyn AuthBackend>,
-    caller_login_id: &str,
-    session_login_id: &str,
-    caller_token: &Option<String>,
-) -> bool {
-    // 快速路径：caller 即属主
-    if !caller_login_id.is_empty() && caller_login_id == session_login_id {
-        return true;
-    }
-    // 非属主：检查 admin:sessions 权限
-    match caller_token {
-        Some(t) if !t.is_empty() => backend.check_permission(t, "admin:sessions").await.is_ok(),
-        _ => false,
-    }
-}
-
-/// 校验 caller 是否可执行 kickout（A7 所有权校验）。
-///
-/// 规则与 [`can_switch_to`] 一致：caller 必须是目标 `login_id` 的属主，或具备
-/// `admin:sessions` 权限。kickout 是踢出指定登录主体所有会话的高危操作，
-/// 校验失败时直接拒绝请求。
-///
-/// # 安全语义
-///
-/// kickout 影响目标 `login_id` 的所有会话（含其他设备），要求 caller 显式声明身份
-/// （`caller_login_id`）。`caller_login_id` 为空（BackendRemote 旧版客户端）时
-/// fail-closed 拒绝，防止任意用户踢出他人的所有会话。
-///
-/// # 错误处理
-///
-/// `check_permission` 失败（如 token 无效/后端不可达）时返回 `false`（fail-closed）。
-async fn can_kickout(
-    backend: &Arc<dyn AuthBackend>,
-    caller_login_id: &str,
-    target_login_id: &str,
-    caller_token: &Option<String>,
-) -> bool {
-    // 快速路径：caller 即属主（踢自己）
-    if !caller_login_id.is_empty() && caller_login_id == target_login_id {
-        return true;
-    }
-    // 非属主：检查 admin:sessions 权限
-    match caller_token {
-        Some(t) if !t.is_empty() => backend.check_permission(t, "admin:sessions").await.is_ok(),
-        _ => false,
-    }
+/// - `caller_login_id = Some(id)` 且 `id != session.login_id` → 返回 `NotPermission` 错误
+/// - `caller_login_id = None` → 记录 warn 日志，允许访问（兼容 BackendRemote 服务间调用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GetSessionRequest {
+    /// 待查询的 token 字符串。
+    pub token: String,
+    /// 调用者 login_id（用于所有权校验，可选）。
+    #[serde(default)]
+    pub caller_login_id: Option<String>,
 }
 
 // ============================================================================
@@ -236,7 +83,7 @@ async fn can_kickout(
     path = "/auth/login",
     method = "POST",
     tool_name = "auth_login",
-    description = "User login, returns a token"
+    description = "用户登录，返回 token"
 )]
 async fn login(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -252,7 +99,7 @@ async fn login(
     path = "/auth/logout",
     method = "POST",
     tool_name = "auth_logout",
-    description = "Log out a specific token"
+    description = "登出指定 token"
 )]
 async fn logout(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -268,7 +115,7 @@ async fn logout(
     path = "/auth/refresh",
     method = "POST",
     tool_name = "auth_refresh",
-    description = "Refresh a token"
+    description = "刷新 token"
 )]
 async fn refresh(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -288,7 +135,7 @@ async fn refresh(
     path = "/auth/check-login",
     method = "POST",
     tool_name = "auth_check_login",
-    description = "Check login status"
+    description = "校验登录状态"
 )]
 async fn check_login(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -304,7 +151,7 @@ async fn check_login(
     path = "/auth/check-permission",
     method = "POST",
     tool_name = "auth_check_permission",
-    description = "Check permission"
+    description = "校验权限"
 )]
 async fn check_permission(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -320,7 +167,7 @@ async fn check_permission(
     path = "/auth/check-role",
     method = "POST",
     tool_name = "auth_check_role",
-    description = "Check role"
+    description = "校验角色"
 )]
 async fn check_role(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -336,7 +183,7 @@ async fn check_role(
     path = "/auth/check-safe",
     method = "POST",
     tool_name = "auth_check_safe",
-    description = "Check second-factor authentication (safe) status"
+    description = "校验二级认证"
 )]
 async fn check_safe(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -352,7 +199,7 @@ async fn check_safe(
     path = "/auth/check-disable",
     method = "POST",
     tool_name = "auth_check_disable",
-    description = "Check ban/disable status"
+    description = "校验封禁状态"
 )]
 async fn check_disable(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -368,7 +215,7 @@ async fn check_disable(
     path = "/auth/check-api-key",
     method = "POST",
     tool_name = "auth_check_api_key",
-    description = "Verify an API Key"
+    description = "校验 API Key"
 )]
 async fn check_api_key(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -384,12 +231,32 @@ async fn check_api_key(
     path = "/auth/get-token-info",
     method = "POST",
     tool_name = "auth_get_token_info",
-    description = "Get token info"
+    description = "获取 token 信息"
 )]
 async fn get_token_info(
     #[state] backend: Arc<dyn AuthBackend>,
-    req: GetTokenInfoRequest,
+    req: GetSessionRequest,
 ) -> Result<ApiResponse<crate::backend::types::TokenInfo>, ApiError> {
+    // A5: caller 所有权校验——需先获取 session 以比对 login_id
+    let session_result = backend.get_session(&req.token).await;
+    let session = match session_result {
+        Ok(s) => s,
+        Err(e) => return Ok(to_api_response(Err(e))),
+    };
+    if let Some(ref caller) = req.caller_login_id {
+        if caller != &session.login_id {
+            tracing::warn!(
+                caller_login_id = %caller,
+                session_login_id = %session.login_id,
+                "get_token_info 所有权校验失败：跨用户访问"
+            );
+            return Ok(to_api_response(Err(GarrisonError::NotPermission(
+                "caller_login_id 与 session.login_id 不匹配".to_string(),
+            ))));
+        }
+    } else {
+        tracing::warn!("get_token_info 未提供 caller_login_id，跳过所有权校验");
+    }
     let result = backend.get_token_info(&req.token).await;
     Ok(to_api_response(result))
 }
@@ -400,32 +267,36 @@ async fn get_token_info(
     path = "/auth/get-session",
     method = "POST",
     tool_name = "auth_get_session",
-    description = "Get session"
+    description = "获取 session"
 )]
 async fn get_session(
     #[state] backend: Arc<dyn AuthBackend>,
     req: GetSessionRequest,
 ) -> Result<ApiResponse<crate::backend::types::SessionData>, ApiError> {
-    let result = backend.get_session(&req.token).await;
-    match result {
-        Ok(mut session) => {
-            // A5: 所有权校验 — 非属主且无 admin:sessions 权限时过滤 PII（ip/user_agent/device）
-            if !can_view_pii(
-                &backend,
-                &req.caller_login_id,
-                &session.login_id,
-                &req.caller_token,
-            )
-            .await
-            {
-                session.ip = None;
-                session.user_agent = None;
-                session.device = None;
-            }
-            Ok(to_api_response(Ok(session)))
-        },
-        Err(e) => Ok(to_api_response(Err(e))),
+    // A5: caller 所有权校验
+    let mut session = match backend.get_session(&req.token).await {
+        Ok(s) => s,
+        Err(e) => return Ok(to_api_response(Err(e))),
+    };
+    if let Some(ref caller) = req.caller_login_id {
+        if caller != &session.login_id {
+            tracing::warn!(
+                caller_login_id = %caller,
+                session_login_id = %session.login_id,
+                "get_session 所有权校验失败：跨用户访问"
+            );
+            return Ok(to_api_response(Err(GarrisonError::NotPermission(
+                "caller_login_id 与 session.login_id 不匹配".to_string(),
+            ))));
+        }
+    } else {
+        tracing::warn!("get_session 未提供 caller_login_id，跳过所有权校验");
     }
+    // A5: PII 过滤——ip / user_agent / device 不暴露给内部端点调用方
+    session.ip = None;
+    session.user_agent = None;
+    session.device = None;
+    Ok(to_api_response(Ok(session)))
 }
 
 #[forge(
@@ -434,26 +305,12 @@ async fn get_session(
     path = "/auth/kickout",
     method = "POST",
     tool_name = "auth_kickout",
-    description = "Kick out all sessions of a login identity"
+    description = "踢出登录主体"
 )]
 async fn kickout(
     #[state] backend: Arc<dyn AuthBackend>,
     req: KickoutRequest,
 ) -> Result<ApiResponse<()>, ApiError> {
-    // A7: caller 所有权校验 — 防止任意用户踢出他人的所有会话
-    // caller 必须是目标 login_id 的属主，或具备 admin:sessions 权限
-    if !can_kickout(
-        &backend,
-        &req.caller_login_id,
-        &req.login_id,
-        &req.caller_token,
-    )
-    .await
-    {
-        return Ok(to_api_response(Err(GarrisonError::NotPermission(
-            "server-caller-not-owner-kickout::".to_string(),
-        ))));
-    }
     let result = backend.kickout(&req.login_id).await;
     Ok(to_api_response(result))
 }
@@ -464,35 +321,14 @@ async fn kickout(
     path = "/auth/switch-to",
     method = "POST",
     tool_name = "auth_switch_to",
-    description = "Switch login identity"
+    description = "切换登录主体"
 )]
 async fn switch_to(
     #[state] backend: Arc<dyn AuthBackend>,
     req: SwitchToRequest,
 ) -> Result<ApiResponse<()>, ApiError> {
-    // A6: caller 所有权校验 — 先获取 session 校验 caller 身份
-    // 防止攻击者用泄露的 token 在不声明身份的情况下切换身份
-    let session = backend.get_session(&req.token).await;
-    match session {
-        Ok(s) => {
-            if !can_switch_to(
-                &backend,
-                &req.caller_login_id,
-                &s.login_id,
-                &req.caller_token,
-            )
-            .await
-            {
-                return Ok(to_api_response(Err(GarrisonError::NotPermission(
-                    "server-caller-not-owner-switch-to::".to_string(),
-                ))));
-            }
-            // 校验通过，执行 switch_to（内部还有 target_account_exists + guard 两层防御）
-            let result = backend.switch_to(&req.token, &req.target_login_id).await;
-            Ok(to_api_response(result))
-        },
-        Err(e) => Ok(to_api_response(Err(e))),
-    }
+    let result = backend.switch_to(&req.token, &req.target_login_id).await;
+    Ok(to_api_response(result))
 }
 
 #[forge(
@@ -501,7 +337,7 @@ async fn switch_to(
     path = "/auth/renew-to-equivalent",
     method = "POST",
     tool_name = "auth_renew_to_equivalent",
-    description = "Renew a token"
+    description = "续期 token"
 )]
 async fn renew_to_equivalent(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -517,7 +353,7 @@ async fn renew_to_equivalent(
     path = "/auth/health",
     method = "GET",
     tool_name = "auth_health",
-    description = "Health check"
+    description = "健康检查"
 )]
 async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
     Ok(ApiResponse::ok("ok"))
@@ -553,17 +389,13 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
     path = "/metrics",
     method = "GET",
     tool_name = "auth_metrics",
-    description = "Prometheus metrics endpoint"
+    description = "Prometheus 指标端点"
 )]
 async fn metrics() -> Result<String, ApiError> {
     let output = prometheus::TextEncoder::new()
         .encode_to_string(&prometheus::gather())
         .map_err(|e| {
-            ApiError::internal_with_source(
-                "Prometheus metrics encoding failed",
-                "metrics-encode-failure",
-                e,
-            )
+            ApiError::internal_with_source("Prometheus 指标编码失败", "metrics-encode-failure", e)
         })?;
     Ok(output)
 }
@@ -604,14 +436,10 @@ mod tests {
             permission: &str,
         ) -> Result<(), GarrisonError> {
             if token.is_empty() {
-                return Err(GarrisonError::InvalidToken(
-                    "server-token-empty".to_string(),
-                ));
+                return Err(GarrisonError::InvalidToken("token 为空".to_string()));
             }
             if permission == "denied" {
-                return Err(GarrisonError::NotPermission(
-                    "server-no-permission".to_string(),
-                ));
+                return Err(GarrisonError::NotPermission("无权限".to_string()));
             }
             Ok(())
         }
@@ -630,9 +458,7 @@ mod tests {
             _namespace: &str,
         ) -> Result<(), GarrisonError> {
             if api_key == "invalid" {
-                return Err(GarrisonError::InvalidToken(
-                    "server-apikey-invalid".to_string(),
-                ));
+                return Err(GarrisonError::InvalidToken("API Key 无效".to_string()));
             }
             Ok(())
         }
@@ -657,14 +483,13 @@ mod tests {
                 last_active_at: 2000,
                 attrs: std::collections::HashMap::new(),
                 device: Some("web-chrome".to_string()),
-                ip: Some("192.168.1.1".to_string()),
+                ip: Some("127.0.0.1".to_string()),
                 user_agent: Some("Mozilla/5.0".to_string()),
                 safe_services: std::collections::HashMap::new(),
-                #[cfg(feature = "session-extra")]
+                #[cfg(feature = "dynamic-active-timeout")]
                 dynamic_active_timeout: None,
-                #[cfg(feature = "session-extra")]
+                #[cfg(feature = "anonymous-session")]
                 is_anon: false,
-                effective_timeout: None,
             })
         }
         async fn kickout(&self, _login_id: &str) -> Result<(), GarrisonError> {
@@ -823,7 +648,7 @@ mod tests {
     #[tokio::test]
     async fn test_sdforge_get_token_info() {
         let app = make_router();
-        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "mock-user" });
+        let body = serde_json::json!({ "token": "my-token" });
         let resp_json = post_json(app, "/api/v1/auth/get-token-info", body).await;
         assert_eq!(resp_json["data"]["token"], "my-token");
         assert_eq!(resp_json["data"]["created_at"], 1000);
@@ -832,208 +657,112 @@ mod tests {
     #[tokio::test]
     async fn test_sdforge_get_session() {
         let app = make_router();
-        // 属主调用：caller_login_id == session.login_id → PII 保留
-        let body = serde_json::json!({
-            "token": "my-token",
-            "caller_login_id": "mock-user"
-        });
+        let body = serde_json::json!({ "token": "my-token" });
         let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
         assert_eq!(resp_json["data"]["token"], "my-token");
         assert_eq!(resp_json["data"]["login_id"], "mock-user");
-        // 属主应见 PII
-        assert_eq!(resp_json["data"]["ip"], "192.168.1.1");
-        assert_eq!(resp_json["data"]["user_agent"], "Mozilla/5.0");
-        assert_eq!(resp_json["data"]["device"], "web-chrome");
     }
 
-    /// A5: 非属主调用 get-session 时 PII 字段（ip/user_agent/device）被脱敏。
+    // ========================================================================
+    // A5: get-session 所有权校验 + PII 过滤
+    // ========================================================================
+
+    /// A5: get-session 返回数据应过滤 PII 字段（ip/user_agent/device）。
     #[tokio::test]
-    async fn test_sdforge_get_session_masks_pii_for_non_owner() {
+    async fn test_sdforge_get_session_filters_pii_fields() {
         let app = make_router();
-        // 非属主：caller_login_id != session.login_id（"mock-user"）
-        let body = serde_json::json!({
-            "token": "my-token",
-            "caller_login_id": "attacker"
-        });
+        let body = serde_json::json!({ "token": "my-token" });
         let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
-        // 非 PII 字段保留
-        assert_eq!(resp_json["data"]["token"], "my-token");
-        assert_eq!(resp_json["data"]["login_id"], "mock-user");
-        assert_eq!(resp_json["data"]["created_at"], 1000);
-        // PII 字段被脱敏（null）
+        // PII 字段应为 null（被过滤）
         assert!(
             resp_json["data"]["ip"].is_null(),
-            "非属主 ip 应被脱敏，实际: {:?}",
+            "ip 应被过滤为 null，实际: {:?}",
             resp_json["data"]["ip"]
         );
         assert!(
             resp_json["data"]["user_agent"].is_null(),
-            "非属主 user_agent 应被脱敏，实际: {:?}",
+            "user_agent 应被过滤为 null，实际: {:?}",
             resp_json["data"]["user_agent"]
         );
         assert!(
             resp_json["data"]["device"].is_null(),
-            "非属主 device 应被脱敏，实际: {:?}",
+            "device 应被过滤为 null，实际: {:?}",
             resp_json["data"]["device"]
         );
     }
 
-    /// A5: caller_login_id 为空（fail-closed）时 PII 被脱敏。
-    /// 模拟 BackendRemote 旧版客户端仅发送 `{"token": "..."}` 的场景。
+    /// A5: caller_login_id 匹配 session.login_id 时应返回 OK。
     #[tokio::test]
-    async fn test_sdforge_get_session_masks_pii_when_caller_login_id_empty() {
+    async fn test_sdforge_get_session_with_matching_caller() {
         let app = make_router();
-        // 不提供 caller_login_id（serde default = ""）→ fail-closed
-        let body = serde_json::json!({ "token": "my-token" });
+        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "mock-user" });
         let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
         assert_eq!(resp_json["data"]["login_id"], "mock-user");
         assert!(
-            resp_json["data"]["ip"].is_null(),
-            "空 caller_login_id 时 ip 应被脱敏（fail-closed）"
-        );
-        assert!(
-            resp_json["data"]["user_agent"].is_null(),
-            "空 caller_login_id 时 user_agent 应被脱敏（fail-closed）"
-        );
-        assert!(
-            resp_json["data"]["device"].is_null(),
-            "空 caller_login_id 时 device 应被脱敏（fail-closed）"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_sdforge_kickout_succeeds_for_owner() {
-        let app = make_router();
-        // caller_login_id == login_id → 属主，允许踢出自己
-        let body = serde_json::json!({
-            "login_id": "user1",
-            "caller_login_id": "user1"
-        });
-        let resp_json = post_json(app, "/api/v1/auth/kickout", body).await;
-        assert!(
             resp_json.get("error_code").is_none() || resp_json["error_code"].is_null(),
-            "属主应允许 kickout，实际: {:?}",
+            "匹配的 caller_login_id 应返回 OK，实际: {:?}",
             resp_json
         );
     }
 
-    /// A7: 非属主且无 admin:sessions 权限的 caller 被拒绝 kickout。
+    /// A5: caller_login_id 不匹配 session.login_id 时应返回 NotPermission 错误。
     #[tokio::test]
-    async fn test_sdforge_kickout_denies_non_owner() {
+    async fn test_sdforge_get_session_with_mismatched_caller() {
         let app = make_router();
-        // caller_login_id != login_id，无 caller_token
-        let body = serde_json::json!({
-            "login_id": "victim",
-            "caller_login_id": "attacker"
-        });
-        let resp_json = post_json(app, "/api/v1/auth/kickout", body).await;
-        assert!(
-            !resp_json["error_code"].is_null(),
-            "非属主应被拒绝 kickout，实际: {:?}",
+        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "attacker-user" });
+        let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
+        assert_eq!(
+            resp_json["error_code"], "NOT_PERMISSION",
+            "跨用户访问应返回 NOT_PERMISSION，实际: {:?}",
             resp_json
         );
     }
 
-    /// A7: caller_login_id 为空（fail-closed）时 kickout 被拒绝。
-    /// 模拟 BackendRemote 旧版客户端仅发送 `{"login_id": "..."}` 的场景。
+    /// A5: 未提供 caller_login_id 时应仍返回数据（兼容 BackendRemote 服务间调用）。
     #[tokio::test]
-    async fn test_sdforge_kickout_denies_empty_caller_login_id() {
+    async fn test_sdforge_get_session_without_caller_login_id() {
         let app = make_router();
-        // 不提供 caller_login_id（serde default = ""）→ fail-closed
+        let body = serde_json::json!({ "token": "my-token" });
+        let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
+        assert_eq!(resp_json["data"]["login_id"], "mock-user");
+    }
+
+    /// A5: get-token-info 同样应用 caller 所有权校验。
+    #[tokio::test]
+    async fn test_sdforge_get_token_info_with_mismatched_caller() {
+        let app = make_router();
+        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "attacker-user" });
+        let resp_json = post_json(app, "/api/v1/auth/get-token-info", body).await;
+        assert_eq!(
+            resp_json["error_code"], "NOT_PERMISSION",
+            "get-token-info 跨用户访问应返回 NOT_PERMISSION，实际: {:?}",
+            resp_json
+        );
+    }
+
+    /// A5: get-token-info 匹配的 caller_login_id 应正常返回。
+    #[tokio::test]
+    async fn test_sdforge_get_token_info_with_matching_caller() {
+        let app = make_router();
+        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "mock-user" });
+        let resp_json = post_json(app, "/api/v1/auth/get-token-info", body).await;
+        assert_eq!(resp_json["data"]["token"], "my-token");
+    }
+
+    #[tokio::test]
+    async fn test_sdforge_kickout_succeeds() {
+        let app = make_router();
         let body = serde_json::json!({ "login_id": "user1" });
         let resp_json = post_json(app, "/api/v1/auth/kickout", body).await;
-        assert!(
-            !resp_json["error_code"].is_null(),
-            "空 caller_login_id 应 fail-closed 拒绝，实际: {:?}",
-            resp_json
-        );
-    }
-
-    /// A7: 非属主但有 admin:sessions 权限的 caller 允许 kickout。
-    #[tokio::test]
-    async fn test_sdforge_kickout_allows_admin_permission() {
-        let app = make_router();
-        // caller_login_id != login_id，但 caller_token 有 admin:sessions 权限
-        let body = serde_json::json!({
-            "login_id": "victim",
-            "caller_login_id": "admin-user",
-            "caller_token": "admin-token"
-        });
-        let resp_json = post_json(app, "/api/v1/auth/kickout", body).await;
-        assert!(
-            resp_json.get("error_code").is_none() || resp_json["error_code"].is_null(),
-            "有 admin:sessions 权限应允许 kickout，实际: {:?}",
-            resp_json
-        );
+        assert!(resp_json.get("error_code").is_none() || resp_json["error_code"].is_null());
     }
 
     #[tokio::test]
-    async fn test_sdforge_switch_to_succeeds_for_owner() {
+    async fn test_sdforge_switch_to_succeeds() {
         let app = make_router();
-        // caller_login_id == session.login_id ("mock-user") → 属主，允许
-        let body = serde_json::json!({
-            "token": "tok",
-            "target_login_id": "user2",
-            "caller_login_id": "mock-user"
-        });
-        let resp_json = post_json(app, "/api/v1/auth/switch-to", body).await;
-        assert!(
-            resp_json.get("error_code").is_none() || resp_json["error_code"].is_null(),
-            "属主应允许 switch_to，实际: {:?}",
-            resp_json
-        );
-    }
-
-    /// A6: 非属主且无 admin:sessions 权限的 caller 被拒绝 switch_to。
-    #[tokio::test]
-    async fn test_sdforge_switch_to_denies_non_owner() {
-        let app = make_router();
-        // caller_login_id != session.login_id ("mock-user")，无 caller_token
-        let body = serde_json::json!({
-            "token": "tok",
-            "target_login_id": "user2",
-            "caller_login_id": "attacker"
-        });
-        let resp_json = post_json(app, "/api/v1/auth/switch-to", body).await;
-        assert!(
-            !resp_json["error_code"].is_null(),
-            "非属主应被拒绝，实际: {:?}",
-            resp_json
-        );
-    }
-
-    /// A6: caller_login_id 为空（fail-closed）时 switch_to 被拒绝。
-    /// 模拟 BackendRemote 旧版客户端仅发送 `{"token", "target_login_id"}` 的场景。
-    #[tokio::test]
-    async fn test_sdforge_switch_to_denies_empty_caller_login_id() {
-        let app = make_router();
-        // 不提供 caller_login_id（serde default = ""）→ fail-closed
         let body = serde_json::json!({ "token": "tok", "target_login_id": "user2" });
         let resp_json = post_json(app, "/api/v1/auth/switch-to", body).await;
-        assert!(
-            !resp_json["error_code"].is_null(),
-            "空 caller_login_id 应 fail-closed 拒绝，实际: {:?}",
-            resp_json
-        );
-    }
-
-    /// A6: 非属主但有 admin:sessions 权限的 caller 允许 switch_to。
-    #[tokio::test]
-    async fn test_sdforge_switch_to_allows_admin_permission() {
-        let app = make_router();
-        // caller_login_id != session.login_id，但 caller_token 有 admin:sessions 权限
-        let body = serde_json::json!({
-            "token": "tok",
-            "target_login_id": "user2",
-            "caller_login_id": "admin-user",
-            "caller_token": "admin-token"
-        });
-        let resp_json = post_json(app, "/api/v1/auth/switch-to", body).await;
-        assert!(
-            resp_json.get("error_code").is_none() || resp_json["error_code"].is_null(),
-            "有 admin:sessions 权限应允许，实际: {:?}",
-            resp_json
-        );
+        assert!(resp_json.get("error_code").is_none() || resp_json["error_code"].is_null());
     }
 
     #[tokio::test]
@@ -1108,7 +837,7 @@ mod tests {
     ///
     /// `#[forge]` 宏用 `Json(value).into_response()` 包装返回值，
     /// 响应 body 为 JSON 序列化的字符串（含转义换行符）。
-    /// 测试解析 JSON 字符串后验证包含 `garrison_` 前缀指标。
+    /// 测试解析 JSON 字符串后验证包含 `bulwark_` 前缀指标。
     #[cfg(feature = "metrics-prometheus")]
     #[tokio::test]
     #[serial_test::serial]
@@ -1137,8 +866,8 @@ mod tests {
         // #[forge] 宏用 Json(value) 包装返回值，响应是 JSON 字符串
         let body: String = serde_json::from_slice(&bytes).expect("响应应为 JSON 序列化的字符串");
         assert!(
-            body.contains("garrison_login_total"),
-            "/metrics 应包含 garrison_login_total 指标，实际: {}",
+            body.contains("bulwark_login_total"),
+            "/metrics 应包含 bulwark_login_total 指标，实际: {}",
             body
         );
     }

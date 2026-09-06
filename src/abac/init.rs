@@ -33,7 +33,7 @@ static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 /// # 示例
 ///
 /// ```ignore
-/// use garrison::abac::{AbacEngine, EmptyEntityLoader, init_abac_engine};
+/// use bulwark::abac::{AbacEngine, EmptyEntityLoader, init_abac_engine};
 /// use std::sync::Arc;
 ///
 /// let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader)).await.unwrap();
@@ -43,10 +43,10 @@ static CURRENT_ENGINE: Mutex<Option<Arc<AbacEngine>>> = Mutex::new(None);
 pub fn init_abac_engine(engine: AbacEngine) -> GarrisonResult<()> {
     let mut guard = CURRENT_ENGINE
         .lock()
-        .map_err(|_| GarrisonError::Config("abac-engine-lock-poisoned::".into()))?;
+        .map_err(|_| GarrisonError::Config("CURRENT_ENGINE lock poisoned".into()))?;
     if guard.is_some() {
         return Err(GarrisonError::Config(
-            "abac-engine-already-initialized::".into(),
+            "AbacEngine already initialized".into(),
         ));
     }
     *guard = Some(Arc::new(engine));
@@ -58,7 +58,7 @@ pub fn init_abac_engine(engine: AbacEngine) -> GarrisonResult<()> {
 pub(crate) fn get_abac_engine() -> GarrisonResult<Option<Arc<AbacEngine>>> {
     let guard = CURRENT_ENGINE
         .lock()
-        .map_err(|_| GarrisonError::Config("abac-engine-lock-poisoned::".into()))?;
+        .map_err(|_| GarrisonError::Config("CURRENT_ENGINE lock poisoned".into()))?;
     Ok(guard.clone())
 }
 
@@ -71,15 +71,14 @@ pub(crate) fn get_abac_engine() -> GarrisonResult<Option<Arc<AbacEngine>>> {
 #[cfg(feature = "abac")]
 #[cfg(any(test, feature = "testing"))]
 pub fn reset_abac_for_test() {
-    let mut guard = CURRENT_ENGINE
-        .lock()
-        .expect("CURRENT_ENGINE mutex poisoned during test reset");
-    *guard = None;
+    if let Ok(mut guard) = CURRENT_ENGINE.lock() {
+        *guard = None;
+    }
 }
 
 // ============================================================================
 // validate_abac_expr — Cedar 策略注入防御（A3）
-// ============================================================================
+// ========================================================================
 
 /// ABAC 表达式最大长度（512 字符），防止 DoS 攻击。
 #[cfg(feature = "abac")]
@@ -109,32 +108,33 @@ const ABAC_EXPR_MAX_LEN: usize = 512;
 pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     let trimmed = expr.trim();
     if trimmed.is_empty() {
-        return Err(GarrisonError::InvalidParam("abac-expr-empty::".to_string()));
+        return Err(GarrisonError::InvalidParam(
+            "abac_expr 不能为空".to_string(),
+        ));
     }
-    if trimmed.len() > ABAC_EXPR_MAX_LEN {
+    if expr.len() > ABAC_EXPR_MAX_LEN {
         return Err(GarrisonError::InvalidParam(format!(
-            "abac-expr-length-exceeded::{}",
+            "abac_expr 长度超过 {} 字符（DoS 防御）",
             ABAC_EXPR_MAX_LEN
         )));
     }
     // 拒绝策略终止符（闭合 when 块并注入新策略）
     if expr.contains("};") {
         return Err(GarrisonError::InvalidParam(
-            "abac-expr-illegal-char::".to_string(),
+            "abac_expr 含非法字符 `};`（疑似策略注入）".to_string(),
         ));
     }
     // 拒绝显式 permit/forbid 策略声明
     if expr.contains("permit(") || expr.contains("forbid(") {
         return Err(GarrisonError::InvalidParam(
-            "abac-expr-no-declaration::".to_string(),
+            "abac_expr 不允许声明 permit/forbid 策略".to_string(),
         ));
     }
     // 要求至少含 principal/resource/action 之一，拒绝纯字面量
-    // 使用 to_ascii_lowercase 避免 to_lowercase 的 UTF-8 多字节开销
-    let lower = expr.to_ascii_lowercase();
+    let lower = expr.to_lowercase();
     if !lower.contains("principal") && !lower.contains("resource") && !lower.contains("action") {
         return Err(GarrisonError::InvalidParam(
-            "abac-expr-must-reference-context::".to_string(),
+            "abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）".to_string(),
         ));
     }
     Ok(())
@@ -179,7 +179,11 @@ pub async fn check_abac_with_policy(
 ) -> GarrisonResult<()> {
     let engine = match get_abac_engine()? {
         Some(e) => e,
-        None => return Err(GarrisonError::Config("abac-engine-not-init::".into())), // R-abac-001: 未初始化 fail-closed
+        None => {
+            return Err(GarrisonError::Config(
+                "AbacEngine 未初始化，ABAC 校验失败（fail-closed）".into(),
+            ))
+        }, // R-abac-001: 未初始化 fail-closed
     };
     // A3: 校验 abac_expr 防止 Cedar 策略注入
     validate_abac_expr(abac_expr)?;
@@ -188,24 +192,14 @@ pub async fn check_abac_with_policy(
         Some(id) => id,
         None => {
             return Err(GarrisonError::NotLogin(
-                "abac-login-id-missing::".to_string(),
+                "ABAC 校验时未获取到 login_id".to_string(),
             ))
         },
     };
-    // Issue 6/8: login_id 未转义直接插入 Cedar principal 字符串，存在注入风险
-    // 修复：转义反斜杠和双引号，拒绝控制字符
-    if login_id.chars().any(|c| c.is_control()) {
-        return Err(GarrisonError::InvalidParam(
-            "abac-principal-control-char::".to_string(),
-        ));
-    }
-    let sanitized_login_id = login_id.replace('\\', "\\\\").replace('"', "\\\"");
-    let principal = format!(r#"User::"{sanitized_login_id}""#);
-    // 对 action 应用与 login_id 相同的转义，防止 Cedar 策略注入
-    let sanitized_action = action.replace('\\', "\\\\").replace('"', "\\\"");
-    let action_uid = format!(r#"Action::"{sanitized_action}""#);
+    let principal = format!(r#"User::"{login_id}""#);
+    let action_uid = format!(r#"Action::"{action}""#);
     let policy_src = format!(
-        r#"permit(principal, action == Action::"{sanitized_action}", resource) when {{ {abac_expr} }};"#
+        r#"permit(principal, action == Action::"{action}", resource) when {{ {abac_expr} }};"#
     );
     // resource 由调用方显式传入，移除硬编码 Resource::"default"。
     // 非法 resource 字符串（含注入尝试）由 evaluate_with_temp_policy 内部 EntityUid::parse 拒绝。
@@ -216,8 +210,22 @@ pub async fn check_abac_with_policy(
         Ok(())
     } else {
         Err(GarrisonError::NotPermission(format!(
-            "abac-policy-denied::{}::{}",
-            action, resource
+            "ABAC 策略拒绝: action={action}, resource={resource}, expr={abac_expr}"
         )))
     }
+}
+
+/// ABAC 策略校验 stub（`abac` feature 关闭时）。
+///
+/// 始终返回 `Ok(())`，使宏生成的代码在不启用 `abac` feature 时无副作用。
+/// 满足 R-abac-001："`abac` feature 关闭时 stub 仍返回 `Ok(())`（no-op 语义不变）"——
+/// 虽然宏仍生成调用代码，但本 stub 使其成为 no-op。
+/// 注意：`abac` feature 开启时未初始化引擎走 fail-closed 路径（见上方 `#[cfg(feature = "abac")]` 版本）。
+#[cfg(not(feature = "abac"))]
+pub async fn check_abac_with_policy(
+    _action: &str,
+    _resource: &str,
+    _abac_expr: &str,
+) -> crate::error::GarrisonResult<()> {
+    Ok(())
 }

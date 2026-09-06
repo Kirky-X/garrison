@@ -30,21 +30,6 @@ use crate::oauth2_server::introspect::{IntrospectHandler, IntrospectRequest};
 use crate::oauth2_server::revoke::{RevokeHandler, RevokeRequest};
 use crate::oauth2_server::token::{TokenHandler, TokenRequest};
 
-/// 为响应添加 RFC 6749 §5.1 要求的缓存禁止头。
-///
-/// 设置 `Cache-Control: no-store` + `Pragma: no-cache`，
-/// 防止中间代理缓存 OAuth2 token 响应（含错误）。
-fn add_no_cache_headers(response: &mut Response) {
-    response.headers_mut().insert(
-        HeaderName::from_static("cache-control"),
-        HeaderValue::from_static("no-store"),
-    );
-    response.headers_mut().insert(
-        HeaderName::from_static("pragma"),
-        HeaderValue::from_static("no-cache"),
-    );
-}
-
 /// OAuth2 路由共享状态。
 ///
 /// 持有所有 OAuth2 handler，通过 `Arc<OAuth2State>` 注入到 axum Router。
@@ -117,7 +102,7 @@ async fn authorize_endpoint(
             (StatusCode::FOUND, [("Location", login_url)]).into_response()
         },
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts_i18n();
+            let (_, error_code, message, _) = e.response_parts();
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": error_code, "message": message })),
@@ -146,18 +131,24 @@ async fn token_endpoint(
         Ok(resp) => {
             // RFC 6749 §5.1 — token 响应必须含 Cache-Control: no-store + Pragma: no-cache
             let mut response = (StatusCode::OK, Json(resp)).into_response();
-            add_no_cache_headers(&mut response);
+            response.headers_mut().insert(
+                HeaderName::from_static("cache-control"),
+                HeaderValue::from_static("no-store"),
+            );
+            response.headers_mut().insert(
+                HeaderName::from_static("pragma"),
+                HeaderValue::from_static("no-cache"),
+            );
             response
         },
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts_i18n();
+            let (_, error_code, message, _) = e.response_parts();
             // 速率限制错误返回 429 Too Many Requests（RFC 6585 §4）
             //
             // `GarrisonError::OAuth2(_)` 的 error_code 统一为 "OAUTH2_ERROR"，
-            // 需通过错误消息中的 i18n key 前缀 "oauth2-server-token-rate-limited"
-            // 标识区分（与 token handler 中 `PasswordRateLimiter` / `TokenRateLimiter`
-            // 的错误格式一致，迁移至 i18n key 后下划线变为连字符）。
-            let is_rate_limited = e.to_string().contains("oauth2-server-token-rate-limited");
+            // 需通过错误消息中的 "rate_limited" 标识区分（与 token handler 中
+            // `PasswordRateLimiter` / `TokenRateLimiter` 的错误格式一致）。
+            let is_rate_limited = e.to_string().contains("rate_limited");
             let status = if is_rate_limited {
                 StatusCode::TOO_MANY_REQUESTS
             } else {
@@ -168,14 +159,11 @@ async fn token_endpoint(
             } else {
                 error_code
             };
-            // RFC 6749 §5.1 — token 响应（含错误）必须含 Cache-Control: no-store + Pragma: no-cache
-            let mut response = (
+            (
                 status,
                 Json(json!({ "error": body_error, "message": message })),
             )
-                .into_response();
-            add_no_cache_headers(&mut response);
-            response
+                .into_response()
         },
     }
 }
@@ -187,7 +175,7 @@ async fn revoke_endpoint(
     match state.revoke_handler.handle(&req).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts_i18n();
+            let (_, error_code, message, _) = e.response_parts();
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": error_code, "message": message })),
@@ -204,7 +192,7 @@ async fn introspect_endpoint(
     match state.introspect_handler.handle(&req).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts_i18n();
+            let (_, error_code, message, _) = e.response_parts();
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": error_code, "message": message })),
@@ -217,7 +205,7 @@ async fn introspect_endpoint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::{GarrisonDao, InMemoryDao};
+    use crate::dao::{GarrisonDao, MockDao};
     use crate::oauth2_server::client::{
         DaoOAuth2ClientStore, GrantType, OAuth2Client, OAuth2ClientStore,
     };
@@ -228,7 +216,7 @@ mod tests {
 
     /// 创建测试用 OAuth2State + store（用于注册客户端）。
     fn make_state() -> (Arc<OAuth2State>, Arc<dyn OAuth2ClientStore>) {
-        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let state = Arc::new(OAuth2State::new(
             store.clone(),
@@ -606,7 +594,7 @@ mod tests {
     async fn test_token_endpoint_returns_429_on_rate_limit_exceeded() {
         use crate::oauth2_server::token::TokenRateLimiter;
 
-        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(
             store.clone(),
