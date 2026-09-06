@@ -1231,3 +1231,14 @@ config-is-share-requires-concurrent = is_share=true 要求 is_concurrent=true
 config-session-hover-timeout-exceeds = session_hover_timeout（{$arg0}）超过允许上限 {$arg1} 秒（10 年）
 stp-backend-lock-poisoned = Backend 锁已中毒
 session-ip-subnet-changed = 检测到 IP 网段变更：token={$arg0}，{$arg1}
+invitation-code-invalid = 邀请码格式无效：{$arg0}
+invitation-code-collision = 邀请码碰撞，请重试
+invitation-code-not-found = 邀请码不存在
+invitation-code-expired = 邀请码已过期
+invitation-code-revoked = 邀请码 {$arg0} 已被吊销
+invitation-code-exhausted = 邀请码 {$arg0} 已达使用上限
+invitation-too-many-attempts = 来自 {$arg0} 的兑换尝试次数过多
+invitation-ttl-invalid = 邀请码 TTL 值无效
+invitation-max-uses-invalid = 邀请码 max_uses 值无效
+invitation-count-invalid = 邀请码批量数量无效
+invitation-serialize-failed = 邀请码序列化失败：{$arg0}

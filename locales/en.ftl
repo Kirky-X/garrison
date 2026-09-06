@@ -1232,3 +1232,14 @@ config-is-share-requires-concurrent = is_share=true requires is_concurrent=true
 config-session-hover-timeout-exceeds = session_hover_timeout ({$arg0}) exceeds maximum allowed {$arg1} seconds (10 years)
 stp-backend-lock-poisoned = Backend lock poisoned
 session-ip-subnet-changed = IP subnet change detected: token={$arg0}, {$arg1}
+invitation-code-invalid = invalid invitation code format: {$arg0}
+invitation-code-collision = invitation code collision, please retry
+invitation-code-not-found = invitation code not found
+invitation-code-expired = invitation code has expired
+invitation-code-revoked = invitation code {$arg0} has been revoked
+invitation-code-exhausted = invitation code {$arg0} has reached maximum uses
+invitation-too-many-attempts = too many redemption attempts from {$arg0}
+invitation-ttl-invalid = invalid TTL value for invitation
+invitation-max-uses-invalid = invalid max_uses value for invitation
+invitation-count-invalid = invalid batch count for invitation
+invitation-serialize-failed = invitation serialization failed: {$arg0}
