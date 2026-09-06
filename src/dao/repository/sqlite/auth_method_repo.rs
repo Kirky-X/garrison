@@ -463,4 +463,67 @@ mod tests {
         let result = repo.list(1, 0, 100).await.expect("list 应成功");
         assert!(result.is_empty(), "空表应返回空列表");
     }
+
+    /// delete 跨租户不报错也不删除。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_cross_tenant_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let id = repo
+            .create(
+                1,
+                NewAuthMethod {
+                    user_id,
+                    method_type: "webauthn".to_string(),
+                    external_id: None,
+                    metadata: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        repo.delete(2, &id).await.expect("跨租户 delete 应为 no-op");
+
+        let still = repo.find_by_id(1, &id).await.expect("find 应成功");
+        assert!(still.is_some(), "跨租户 delete 不应影响其他租户");
+    }
+
+    /// delete 不存在的 id 不报错（幂等）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_nonexistent_is_idempotent() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool);
+
+        repo.delete(1, "nonexistent-id")
+            .await
+            .expect("delete 不存在应为 no-op");
+    }
+
+    /// find_by_user_id 跨租户返回空。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_cross_tenant_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusAuthMethodRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        repo.create(
+            1,
+            NewAuthMethod {
+                user_id: user_id.clone(),
+                method_type: "totp".to_string(),
+                external_id: Some("ext-cross".to_string()),
+                metadata: None,
+            },
+        )
+        .await
+        .expect("create 应成功");
+
+        let cross = repo
+            .find_by_user_id(2, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(cross.is_empty(), "跨租户 find_by_user_id 应返回空");
+    }
 }

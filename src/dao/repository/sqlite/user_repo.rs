@@ -542,4 +542,153 @@ mod tests {
         let cross = repo.find_by_id(2, &id).await.expect("find_by_id 应成功");
         assert!(cross.is_none(), "跨租户查询应返回 None");
     }
+
+    /// delete 跨租户不报错也不删除。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_cross_tenant_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool.clone());
+
+        let id = repo
+            .create(
+                1,
+                NewUser {
+                    username: "del-cross".to_string(),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        // tenant 2 删 tenant 1 的用户应不报错
+        repo.delete(2, &id).await.expect("跨租户 delete 应为 no-op");
+
+        // tenant 1 的用户应仍存在
+        let still = repo.find_by_id(1, &id).await.expect("find 应成功");
+        assert!(still.is_some(), "跨租户 delete 不应影响其他租户");
+    }
+
+    /// update 跨租户不报错也不更新。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_cross_tenant_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool.clone());
+
+        let id = repo
+            .create(
+                1,
+                NewUser {
+                    username: "upd-cross".to_string(),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        // tenant 2 更新 tenant 1 的用户应不报错
+        repo.update(
+            2,
+            &id,
+            UpdateUser {
+                username: None,
+                password_hash: None,
+                status: None,
+                last_login_at: None,
+            },
+        )
+        .await
+        .expect("跨租户 update 应为 no-op");
+
+        // tenant 1 的用户数据应未变化
+        let still = repo.find_by_id(1, &id).await.expect("find 应成功").unwrap();
+        assert_eq!(still.username, "upd-cross");
+        assert_eq!(still.status, "active");
+    }
+
+    /// find_by_username 跨租户查询应返回 None。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_username_cross_tenant_returns_none() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool);
+
+        repo.create(
+            1,
+            NewUser {
+                username: "unique-cross-name".to_string(),
+                password_hash: "h".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .expect("create 应成功");
+
+        let cross = repo
+            .find_by_username(2, "unique-cross-name")
+            .await
+            .expect("find_by_username 应成功");
+        assert!(cross.is_none(), "跨租户 find_by_username 应返回 None");
+    }
+
+    // ========================================================================
+    // DROP TABLE 错误路径测试：覆盖 map_err 闭包
+    // ========================================================================
+
+    /// 删除 app_user 表后 find_by_id 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_id_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.find_by_id(1, "some-id").await;
+        assert!(result.is_err(), "表删除后 find_by_id 应返回错误");
+    }
+
+    /// 删除 app_user 表后 create 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo
+            .create(
+                1,
+                NewUser {
+                    username: "u1".to_string(),
+                    password_hash: "h".to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await;
+        assert!(result.is_err(), "表删除后 create 应返回错误");
+    }
+
+    /// 删除 app_user 表后 list 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.list(1, 0, 100).await;
+        assert!(result.is_err(), "表删除后 list 应返回错误");
+    }
 }

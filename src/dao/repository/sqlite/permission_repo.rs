@@ -455,4 +455,54 @@ mod tests {
             "返回的 id 应为 UUID v4"
         );
     }
+
+    /// delete 不存在的 id 不报错（幂等）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_nonexistent_is_idempotent() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        repo.delete("nonexistent-id")
+            .await
+            .expect("delete 不存在应为 no-op");
+    }
+
+    /// update 不存在的 id 不报错（幂等）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_nonexistent_is_idempotent() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        repo.update("nonexistent-id", Some("新名".to_string()), None, None)
+            .await
+            .expect("update 不存在应为 no-op");
+    }
+
+    /// create + find_by_code 往返一致。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_and_find_by_code_roundtrip() {
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "user:read".to_string(),
+                name: "读用户".to_string(),
+                resource_type: Some("user".to_string()),
+                action: Some("read".to_string()),
+            })
+            .await
+            .expect("create 应成功");
+
+        let row = repo
+            .find_by_code("user:read")
+            .await
+            .expect("find_by_code 应成功")
+            .expect("应存在");
+        assert_eq!(row.id, id);
+        assert_eq!(row.code, "user:read");
+        assert_eq!(row.name, "读用户");
+        assert_eq!(row.resource_type.as_deref(), Some("user"));
+        assert_eq!(row.action.as_deref(), Some("read"));
+    }
 }

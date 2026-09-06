@@ -712,4 +712,88 @@ mod tests {
         assert_eq!(count_1, 1, "tenant 1 应有 1 个设备");
         assert_eq!(count_2, 1, "tenant 2 应有 1 个设备");
     }
+
+    // ========================================================================
+    // DROP TABLE 错误路径测试：覆盖 map_err 闭包
+    // ========================================================================
+
+    /// 删除 app_user_device 表后 register_device 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn register_device_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user_device")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.register_device(1, "u1", "fp1", "Chrome/120").await;
+        assert!(result.is_err(), "表删除后 register_device 应返回错误");
+    }
+
+    /// 删除 app_user_device 表后 list_user_devices 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_user_devices_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user_device")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.list_user_devices(1, "u1").await;
+        assert!(result.is_err(), "表删除后 list_user_devices 应返回错误");
+    }
+
+    /// 删除 app_user_device 表后 count_user_devices 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn count_user_devices_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user_device")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.count_user_devices(1, "u1").await;
+        assert!(result.is_err(), "表删除后 count_user_devices 应返回错误");
+    }
+
+    /// 删除 app_user_device 表后 block_device 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn block_device_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user_device")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.block_device("some-id").await;
+        assert!(result.is_err(), "表删除后 block_device 应返回错误");
+    }
+
+    /// 删除 app_user_device 表后 unblock_device 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn unblock_device_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user_device")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.unblock_device("some-id").await;
+        assert!(result.is_err(), "表删除后 unblock_device 应返回错误");
+    }
 }

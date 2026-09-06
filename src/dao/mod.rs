@@ -2126,6 +2126,193 @@ pub mod tests {
         assert!(val.is_none());
     }
 
+    /// `set_if_absent` 组合回退：key 不存在时写入成功返回 true。
+    #[tokio::test]
+    async fn fallback_set_if_absent_new_key_returns_true() {
+        let dao = MinimalDao::new();
+        let ok = dao.set_if_absent("k1", "v1", 60).await.unwrap();
+        assert!(ok, "key 不存在时应写入成功返回 true");
+        assert_eq!(dao.get("k1").await.unwrap().as_deref(), Some("v1"));
+    }
+
+    /// `set_if_absent` 组合回退：key 已存在时返回 false 不覆盖。
+    #[tokio::test]
+    async fn fallback_set_if_absent_existing_key_returns_false() {
+        let dao = MinimalDao::new();
+        dao.set("k1", "original", 60).await.unwrap();
+        let ok = dao.set_if_absent("k1", "new_value", 60).await.unwrap();
+        assert!(!ok, "key 已存在时应返回 false");
+        assert_eq!(
+            dao.get("k1").await.unwrap().as_deref(),
+            Some("original"),
+            "值不应被覆盖"
+        );
+    }
+
+    /// `compare_and_swap` 组合回退：key 存在且值匹配时写入成功。
+    #[tokio::test]
+    async fn fallback_cas_match_returns_true() {
+        let dao = MinimalDao::new();
+        dao.set("k1", "old", 60).await.unwrap();
+        let ok = dao
+            .compare_and_swap("k1", Some("old"), "new", 60)
+            .await
+            .unwrap();
+        assert!(ok, "值匹配时 CAS 应返回 true");
+        assert_eq!(dao.get("k1").await.unwrap().as_deref(), Some("new"));
+    }
+
+    /// `compare_and_swap` 组合回退：值不匹配时返回 false。
+    #[tokio::test]
+    async fn fallback_cas_mismatch_returns_false() {
+        let dao = MinimalDao::new();
+        dao.set("k1", "actual", 60).await.unwrap();
+        let ok = dao
+            .compare_and_swap("k1", Some("expected"), "new", 60)
+            .await
+            .unwrap();
+        assert!(!ok, "值不匹配时 CAS 应返回 false");
+        assert_eq!(dao.get("k1").await.unwrap().as_deref(), Some("actual"));
+    }
+
+    /// `compare_and_swap` 组合回退：expected=None 且 key 不存在时写入成功。
+    #[tokio::test]
+    async fn fallback_cas_none_expected_absent_creates() {
+        let dao = MinimalDao::new();
+        let ok = dao
+            .compare_and_swap("k1", None, "initial", 60)
+            .await
+            .unwrap();
+        assert!(ok, "key 不存在 + expected=None 时应成功");
+        assert_eq!(dao.get("k1").await.unwrap().as_deref(), Some("initial"));
+    }
+
+    /// `compare_and_swap` 组合回退：ttl_seconds=0 时走 set_permanent 路径。
+    #[tokio::test]
+    async fn fallback_cas_permanent_ttl_uses_set_permanent() {
+        let dao = MinimalDao::new();
+        let ok = dao.compare_and_swap("k1", None, "perm", 0).await.unwrap();
+        assert!(ok);
+        assert_eq!(dao.get("k1").await.unwrap().as_deref(), Some("perm"));
+    }
+
+    /// `incr` 组合回退：key 不存在时初始化为 1。
+    #[tokio::test]
+    async fn fallback_incr_new_key_initializes_to_one() {
+        let dao = MinimalDao::new();
+        let val = dao.incr("counter", 60).await.unwrap();
+        assert_eq!(val, 1, "新键应初始化为 1");
+    }
+
+    /// `incr` 组合回退：key 存在时递增。
+    #[tokio::test]
+    async fn fallback_incr_existing_key_increments() {
+        let dao = MinimalDao::new();
+        dao.set("counter", "10", 60).await.unwrap();
+        let val = dao.incr("counter", 60).await.unwrap();
+        assert_eq!(val, 11, "已存在键 10 应递增为 11");
+    }
+
+    /// `incr` 组合回退：非数字值返回 Dao 错误（Rule 12）。
+    #[tokio::test]
+    async fn fallback_incr_non_numeric_returns_error() {
+        let dao = MinimalDao::new();
+        dao.set("bad", "not_num", 60).await.unwrap();
+        let result = dao.incr("bad", 60).await;
+        assert!(
+            matches!(result, Err(GarrisonError::Dao(ref m)) if m.contains("dao-incr-parse-u64")),
+            "非数字值应返回 Dao 错误，实际: {:?}",
+            result
+        );
+    }
+
+    /// `decr` 组合回退：key 不存在时返回 0。
+    #[tokio::test]
+    async fn fallback_decr_missing_key_returns_zero() {
+        let dao = MinimalDao::new();
+        let val = dao.decr("nope").await.unwrap();
+        assert_eq!(val, 0, "key 不存在时应返回 0");
+    }
+
+    /// `decr` 组合回退：值为 0 时返回 0（不递减为负）。
+    #[tokio::test]
+    async fn fallback_decr_zero_returns_zero() {
+        let dao = MinimalDao::new();
+        dao.set("counter", "0", 60).await.unwrap();
+        let val = dao.decr("counter").await.unwrap();
+        assert_eq!(val, 0, "值为 0 时应返回 0");
+    }
+
+    /// `rename` 组合回退：key 不存在时返回 InvalidParam。
+    #[tokio::test]
+    async fn fallback_rename_missing_key_errors() {
+        let dao = MinimalDao::new();
+        let result = dao.rename("nope", "new_key").await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("dao-key-missing")),
+            "key 不存在时 rename 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// `get_with_ttl` 默认实现：key 存在但 get_timeout 返回 NotImplemented 时传播错误。
+    #[tokio::test]
+    async fn default_get_with_ttl_existing_key_returns_value() {
+        let dao = MinimalDao::new();
+        dao.set("k1", "v1", 3600).await.unwrap();
+        // MinimalDao 不重写 get_timeout，默认返回 NotImplemented
+        let result = dao.get_with_ttl("k1").await;
+        assert!(
+            matches!(result, Err(GarrisonError::NotImplemented(_))),
+            "MinimalDao get_with_ttl 应传播 get_timeout 的 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// `get_with_ttl` 默认实现：key 不存在时返回 None。
+    #[tokio::test]
+    async fn default_get_with_ttl_missing_key_returns_none() {
+        let dao = MinimalDao::new();
+        let result = dao.get_with_ttl("nope").await.unwrap();
+        assert!(result.is_none(), "不存在的键应返回 None");
+    }
+
+    /// `query_role_hierarchy_edges` 默认实现返回 NotImplemented。
+    #[tokio::test]
+    async fn default_query_role_hierarchy_edges_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        let result = dao.query_role_hierarchy_edges(0).await;
+        assert!(
+            matches!(result, Err(GarrisonError::NotImplemented(ref m)) if m.contains("dao-not-implemented")),
+            "默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// `insert_role_hierarchy_edge` 默认实现返回 NotImplemented。
+    #[tokio::test]
+    async fn default_insert_role_hierarchy_edge_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        let result = dao.insert_role_hierarchy_edge(0, "admin", "owner").await;
+        assert!(
+            matches!(result, Err(GarrisonError::NotImplemented(ref m)) if m.contains("dao-not-implemented")),
+            "默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// `delete_role_hierarchy_edge` 默认实现返回 NotImplemented。
+    #[tokio::test]
+    async fn default_delete_role_hierarchy_edge_returns_not_implemented() {
+        let dao = MinimalDao::new();
+        let result = dao.delete_role_hierarchy_edge(0, "admin", "owner").await;
+        assert!(
+            matches!(result, Err(GarrisonError::NotImplemented(ref m)) if m.contains("dao-not-implemented")),
+            "默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
     // ========================================================================
     // Redis 部署模式配置测试
     // ========================================================================

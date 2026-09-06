@@ -518,4 +518,186 @@ mod tests {
             .expect("find_by_session_id 应成功");
         assert!(cross.is_none(), "跨租户查询应返回 None");
     }
+
+    /// find_by_user_id 跨租户返回空（tenant 2 查 tenant 1 的用户会话）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_cross_tenant_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusSessionRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        repo.create(
+            1,
+            NewSession {
+                session_id: "sess-cross-uid".to_string(),
+                user_id: user_id.clone(),
+                device_id: None,
+                ip: None,
+                user_agent: None,
+                expire_time: None,
+            },
+        )
+        .await
+        .expect("create 应成功");
+
+        // tenant 2 查 tenant 1 的用户会话应返回空
+        let cross = repo
+            .find_by_user_id(2, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(cross.is_empty(), "跨租户 find_by_user_id 应返回空");
+    }
+
+    /// delete 跨租户不报错也不删除（tenant 2 删 tenant 1 的会话）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_cross_tenant_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusSessionRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let session_id = repo
+            .create(
+                1,
+                NewSession {
+                    session_id: "sess-del-cross".to_string(),
+                    user_id,
+                    device_id: None,
+                    ip: None,
+                    user_agent: None,
+                    expire_time: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        // tenant 2 删 tenant 1 的会话应不报错
+        repo.delete(2, &session_id)
+            .await
+            .expect("跨租户 delete 应为 no-op");
+
+        // tenant 1 的会话应仍存在
+        let still = repo
+            .find_by_session_id(1, &session_id)
+            .await
+            .expect("find 应成功");
+        assert!(still.is_some(), "跨租户 delete 不应影响其他租户");
+    }
+
+    /// update_last_active 跨租户不报错（tenant 2 更新 tenant 1 的会话）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_last_active_cross_tenant_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusSessionRepository::new(pool.clone());
+        let user_id = setup_user(&pool, 1).await;
+
+        let session_id = repo
+            .create(
+                1,
+                NewSession {
+                    session_id: "sess-active-cross".to_string(),
+                    user_id,
+                    device_id: None,
+                    ip: None,
+                    user_agent: None,
+                    expire_time: None,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        // tenant 2 更新 tenant 1 的会话应不报错
+        repo.update_last_active(2, &session_id)
+            .await
+            .expect("跨租户 update_last_active 应为 no-op");
+    }
+
+    /// list 空租户返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_empty_tenant_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusSessionRepository::new(pool);
+
+        let result = repo.list(999, 0, 100).await.expect("list 应成功");
+        assert!(result.is_empty(), "空租户 list 应返回空");
+    }
+
+    // ========================================================================
+    // DROP TABLE 错误路径测试：覆盖 map_err 闭包
+    // ========================================================================
+
+    /// 删除 app_session 表后 find_by_user_id 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusSessionRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_session")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.find_by_user_id(1, "u1").await;
+        assert!(result.is_err(), "表删除后 find_by_user_id 应返回错误");
+    }
+
+    /// 删除 app_session 表后 create 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusSessionRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_session")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo
+            .create(
+                1,
+                crate::dao::repository::NewSession {
+                    session_id: "sess-001".to_string(),
+                    user_id: "u1".to_string(),
+                    device_id: None,
+                    ip: None,
+                    user_agent: None,
+                    expire_time: None,
+                },
+            )
+            .await;
+        assert!(result.is_err(), "表删除后 create 应返回错误");
+    }
+
+    /// 删除 app_session 表后 delete 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusSessionRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_session")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.delete(1, "tok").await;
+        assert!(result.is_err(), "表删除后 delete 应返回错误");
+    }
+
+    /// 删除 app_session 表后 list 应返回 Dao 错误。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_returns_error_when_table_dropped() {
+        let pool = setup_db().await;
+        let repo = DbnexusSessionRepository::new(pool.clone());
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_session")
+                .await
+                .expect("DROP TABLE 失败");
+        }
+        let result = repo.list(1, 0, 100).await;
+        assert!(result.is_err(), "表删除后 list 应返回错误");
+    }
 }

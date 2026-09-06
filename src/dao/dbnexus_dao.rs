@@ -800,4 +800,51 @@ mod tests {
             Some("login-1")
         );
     }
+
+    // ------------------------------------------------------------------------
+    // 覆盖率补充：KV 委托方法 + 默认 trait 方法
+    // ------------------------------------------------------------------------
+
+    /// `set_permanent` 委托到 kv 层。
+    #[tokio::test]
+    async fn kv_set_permanent_delegates() {
+        let (dao, kv) = setup_dao().await;
+        dao.set_permanent("perm_k", "perm_v").await.unwrap();
+        assert_eq!(kv.get("perm_k").await.unwrap().as_deref(), Some("perm_v"));
+    }
+
+    /// `get_with_ttl` 委托到 kv 层。
+    #[tokio::test]
+    async fn kv_get_with_ttl_delegates() {
+        let (dao, _kv) = setup_dao().await;
+        dao.set("ttl_k", "ttl_v", 3600).await.unwrap();
+        let result = dao.get_with_ttl("ttl_k").await.unwrap();
+        assert!(result.is_some(), "已存在键应返回 Some");
+    }
+
+    /// `insert_credit_consumption` 默认实现返回 NotImplemented。
+    #[tokio::test]
+    async fn insert_credit_consumption_returns_not_implemented() {
+        let (dao, _kv) = setup_dao().await;
+        let result = dao
+            .insert_credit_consumption(0, "res", 100, 10, 10, 1700000000)
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::NotImplemented(ref m)) if m.contains("dao-not-implemented")),
+            "insert_credit_consumption 默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    /// `query_credit_consumption` 默认实现返回 NotImplemented。
+    #[tokio::test]
+    async fn query_credit_consumption_returns_not_implemented() {
+        let (dao, _kv) = setup_dao().await;
+        let result = dao.query_credit_consumption(0, 0, 9999999999).await;
+        assert!(
+            matches!(result, Err(GarrisonError::NotImplemented(ref m)) if m.contains("dao-not-implemented")),
+            "query_credit_consumption 默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
 }

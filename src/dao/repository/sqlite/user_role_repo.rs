@@ -438,4 +438,61 @@ mod tests {
             .await
             .expect("revoke 不存在的关联应为 no-op");
     }
+
+    /// find_by_user_id 跨租户返回空。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_user_id_cross_tenant_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (user_id, role_id) = setup_user_and_role(&pool, 1).await;
+
+        repo.assign(1, &user_id, &role_id, None)
+            .await
+            .expect("assign 应成功");
+
+        let cross = repo
+            .find_by_user_id(2, &user_id)
+            .await
+            .expect("find_by_user_id 应成功");
+        assert!(cross.is_empty(), "跨租户 find_by_user_id 应返回空");
+    }
+
+    /// find_by_role_id 跨租户返回空。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_role_id_cross_tenant_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (user_id, role_id) = setup_user_and_role(&pool, 1).await;
+
+        repo.assign(1, &user_id, &role_id, None)
+            .await
+            .expect("assign 应成功");
+
+        let cross = repo
+            .find_by_role_id(2, &role_id)
+            .await
+            .expect("find_by_role_id 应成功");
+        assert!(cross.is_empty(), "跨租户 find_by_role_id 应返回空");
+    }
+
+    /// assign 重复分配同一 (user, role) 不报错（幂等）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn assign_duplicate_is_idempotent() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRoleRepository::new(pool.clone());
+        let (user_id, role_id) = setup_user_and_role(&pool, 1).await;
+
+        repo.assign(1, &user_id, &role_id, None)
+            .await
+            .expect("首次 assign 应成功");
+        repo.assign(1, &user_id, &role_id, None)
+            .await
+            .expect("重复 assign 应为 no-op");
+
+        let roles = repo
+            .find_by_user_id(1, &user_id)
+            .await
+            .expect("find 应成功");
+        assert_eq!(roles.len(), 1, "重复 assign 不应产生重复记录");
+    }
 }

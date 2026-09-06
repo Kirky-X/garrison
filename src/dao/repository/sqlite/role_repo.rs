@@ -513,4 +513,91 @@ mod tests {
             "返回的 id 应为 UUID v4"
         );
     }
+
+    /// find_by_code 跨租户查询应返回 None。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn find_by_code_cross_tenant_returns_none() {
+        let pool = setup_db().await;
+        let repo = DbnexusRoleRepository::new(pool);
+
+        repo.create(
+            1,
+            NewRole {
+                code: "cross-role".to_string(),
+                name: "跨租户测试".to_string(),
+                description: None,
+                is_system: false,
+            },
+        )
+        .await
+        .expect("create 应成功");
+
+        let cross = repo
+            .find_by_code(2, "cross-role")
+            .await
+            .expect("find_by_code 应成功");
+        assert!(cross.is_none(), "跨租户 find_by_code 应返回 None");
+    }
+
+    /// delete 跨租户不报错也不删除。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn delete_cross_tenant_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusRoleRepository::new(pool.clone());
+
+        let id = repo
+            .create(
+                1,
+                NewRole {
+                    code: "del-cross".to_string(),
+                    name: "跨租户删".to_string(),
+                    description: None,
+                    is_system: false,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        repo.delete(2, &id).await.expect("跨租户 delete 应为 no-op");
+
+        let still = repo.find_by_id(1, &id).await.expect("find 应成功");
+        assert!(still.is_some(), "跨租户 delete 不应影响其他租户");
+    }
+
+    /// update 跨租户不报错也不更新。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_cross_tenant_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusRoleRepository::new(pool.clone());
+
+        let id = repo
+            .create(
+                1,
+                NewRole {
+                    code: "upd-cross".to_string(),
+                    name: "原名".to_string(),
+                    description: None,
+                    is_system: false,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        repo.update(2, &id, Some("新名".to_string()), None, None)
+            .await
+            .expect("跨租户 update 应为 no-op");
+
+        let still = repo.find_by_id(1, &id).await.expect("find 应成功").unwrap();
+        assert_eq!(still.name, "原名", "跨租户 update 不应影响其他租户");
+    }
+
+    /// list 空租户返回空列表。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_empty_tenant_returns_empty() {
+        let pool = setup_db().await;
+        let repo = DbnexusRoleRepository::new(pool);
+
+        let result = repo.list(999, 0, 100).await.expect("list 应成功");
+        assert!(result.is_empty(), "空租户 list 应返回空");
+    }
 }
