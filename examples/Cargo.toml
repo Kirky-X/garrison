@@ -382,6 +382,11 @@ name = "secure_module"
 required-features = ["secure-masking", "secure-xss", "secure-sanitize", "secure-confusable"]
 path = "src/bin/secure_module.rs"
 
+[[bin]]
+name = "invitation_credential"
+required-features = ["protocol-invitation"]
+path = "src/bin/invitation_credential.rs"
+
 # ====================================================================
 # v0.8.0 新增示例（防火墙防护 / OAuth2 Server / Web 安全 / 状态机 / 健康检查）
 # ====================================================================

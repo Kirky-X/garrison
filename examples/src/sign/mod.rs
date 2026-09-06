@@ -3,6 +3,8 @@
 
 //! 签名协议示例模块。
 
+#[cfg(feature = "protocol-invitation")]
+pub mod invitation_credential;
 #[cfg(feature = "protocol-sign")]
 pub mod sign_protocol;
 #[cfg(feature = "secure-sign")]
