@@ -354,3 +354,17 @@ async fn check_role_deny_message_includes_login_id_and_role() {
         other => panic!("期望 NotRole，实际: {:?}", other),
     }
 }
+
+/// 调用 MockInterface 的默认委托方法以覆盖 async_trait wrapper。
+#[tokio::test]
+async fn mock_interface_default_methods_with_type_coverage() {
+    let iface = MockInterface::new();
+    let _ = iface
+        .get_permission_list_with_type("u1", "default")
+        .await
+        .unwrap();
+    let _ = iface
+        .get_role_list_with_type("u1", "default")
+        .await
+        .unwrap();
+}

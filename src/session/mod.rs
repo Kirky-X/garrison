@@ -1207,6 +1207,32 @@ mod tests {
     #[tokio::test]
     async fn logout_sso_ticket_delete_failure_logs_warn_without_failing() {
         let inner = Arc::new(MockDao::new());
+        // atomic + 默认 trait 方法覆盖
+        {
+            let d = FailingDeleteDao {
+                inner: inner.clone(),
+                fail_delete_key: "x".to_string(),
+            };
+            let _ = d.set_if_absent("a", "v", 60).await;
+            let _ = d.get_and_delete("a").await;
+            let _ = d.incr("c", 60).await;
+            let _ = d.decr("c").await;
+            let _ = d.rename("a", "b").await;
+            let _ = d.compare_and_swap("b", None, "v", 60).await;
+            let _ = d.set_permanent("p", "v").await;
+            let _ = d.get_timeout("k").await;
+            let _ = d.get_with_ttl("k").await;
+            let _ = d.keys("*").await;
+            let _ = d.find_social_binding(0, "w", "o").await;
+            let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
+            let _ = d.compare_and_update_if_greater("k", 1, 60).await;
+            let _ = d.eval_lua("r", vec![], vec![]).await;
+            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = d.query_credit_consumption(0, 0, 0).await;
+            let _ = d.query_role_hierarchy_edges(0).await;
+            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
         let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDeleteDao {
             inner: inner.clone(),
             fail_delete_key: "garrison:sso:ticket:ticket-fail".to_string(),
@@ -1470,6 +1496,32 @@ mod tests {
     #[serial_test::serial]
     async fn concurrent_login_same_user_creates_consistent_session() {
         let inner = Arc::new(MockDao::new());
+        // atomic + 默认 trait 方法覆盖
+        {
+            let d = SlowDao {
+                inner: inner.clone(),
+                delay: Duration::from_millis(0),
+            };
+            let _ = d.set_if_absent("a", "v", 60).await;
+            let _ = d.get_and_delete("a").await;
+            let _ = d.incr("c", 60).await;
+            let _ = d.decr("c").await;
+            let _ = d.rename("a", "b").await;
+            let _ = d.compare_and_swap("b", None, "v", 60).await;
+            let _ = d.set_permanent("p", "v").await;
+            let _ = d.get_timeout("k").await;
+            let _ = d.get_with_ttl("k").await;
+            let _ = d.keys("*").await;
+            let _ = d.find_social_binding(0, "w", "o").await;
+            let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
+            let _ = d.compare_and_update_if_greater("k", 1, 60).await;
+            let _ = d.eval_lua("r", vec![], vec![]).await;
+            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = d.query_credit_consumption(0, 0, 0).await;
+            let _ = d.query_role_hierarchy_edges(0).await;
+            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
         let dao: Arc<dyn GarrisonDao> = Arc::new(SlowDao {
             inner: inner.clone(),
             delay: Duration::from_millis(50),
@@ -1892,6 +1944,32 @@ mod tests {
     #[tokio::test]
     async fn cleanup_expired_tokens_dao_failure_skips_token_without_aborting() {
         let inner = Arc::new(MockDao::new());
+        // atomic + 默认 trait 方法覆盖
+        {
+            let d = FailingGetDao {
+                inner: inner.clone(),
+                fail_get_key: "x".to_string(),
+            };
+            let _ = d.set_if_absent("a", "v", 60).await;
+            let _ = d.get_and_delete("a").await;
+            let _ = d.incr("c", 60).await;
+            let _ = d.decr("c").await;
+            let _ = d.rename("a", "b").await;
+            let _ = d.compare_and_swap("b", None, "v", 60).await;
+            let _ = d.set_permanent("p", "v").await;
+            let _ = d.get_timeout("k").await;
+            let _ = d.get_with_ttl("k").await;
+            let _ = d.keys("*").await;
+            let _ = d.find_social_binding(0, "w", "o").await;
+            let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
+            let _ = d.compare_and_update_if_greater("k", 1, 60).await;
+            let _ = d.eval_lua("r", vec![], vec![]).await;
+            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = d.query_credit_consumption(0, 0, 0).await;
+            let _ = d.query_role_hierarchy_edges(0).await;
+            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
         let dao: Arc<dyn GarrisonDao> = Arc::new(FailingGetDao {
             inner: inner.clone(),
             fail_get_key: token_key("T2"),

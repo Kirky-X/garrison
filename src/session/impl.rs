@@ -2600,4 +2600,103 @@ mod tests {
             "两个 task 都完成后 token_session_locks 应清理为空"
         );
     }
+
+    // ========================================================================
+    // 覆盖率补充：last_active / check_hover_timeout / add_expiry_listener
+    // ========================================================================
+
+    /// `update_last_active` 写入当前时间戳，`get_last_active` 可读回（补充覆盖）。
+    #[tokio::test]
+    async fn update_last_active_and_get_roundtrip_coverage() {
+        let (_dao, session) = make_session(3600, 86400);
+        assert!(
+            session.get_last_active("user1").is_none(),
+            "未更新前应返回 None"
+        );
+        session.update_last_active("user1");
+        let ts = session.get_last_active("user1");
+        assert!(ts.is_some(), "update_last_active 后应可读取");
+        assert!(ts.unwrap() > 0, "时间戳应为正数");
+    }
+
+    /// `update_last_active_at` 写入指定时间戳。
+    #[tokio::test]
+    async fn update_last_active_at_writes_exact_timestamp() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.update_last_active_at("user2", 1700000000000);
+        assert_eq!(session.get_last_active("user2"), Some(1700000000000));
+    }
+
+    /// `check_hover_timeout`: hover_timeout_secs <= 0 时不启用悬停检查，返回 true。
+    #[tokio::test]
+    async fn check_hover_timeout_disabled_returns_true() {
+        let (_dao, session) = make_session(3600, 86400);
+        assert!(
+            session.check_hover_timeout("user1", 0),
+            "hover_timeout=0 应返回 true"
+        );
+        assert!(
+            session.check_hover_timeout("user1", -1),
+            "hover_timeout=-1 应返回 true"
+        );
+    }
+
+    /// `check_hover_timeout`: 无活跃记录时返回 true（首次 check_login 不踢出）。
+    #[tokio::test]
+    async fn check_hover_timeout_no_record_returns_true() {
+        let (_dao, session) = make_session(3600, 86400);
+        assert!(
+            session.check_hover_timeout("new_user", 60),
+            "无记录应返回 true"
+        );
+    }
+
+    /// `check_hover_timeout`: 最近活跃时返回 true（未超时）。
+    #[tokio::test]
+    async fn check_hover_timeout_recent_activity_returns_true() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.update_last_active_at("user1", chrono::Utc::now().timestamp_millis());
+        assert!(
+            session.check_hover_timeout("user1", 60),
+            "最近活跃应返回 true"
+        );
+    }
+
+    /// `check_hover_timeout`: 超时后返回 false（应踢出）。
+    #[tokio::test]
+    async fn check_hover_timeout_expired_returns_false() {
+        let (_dao, session) = make_session(3600, 86400);
+        // 设置活跃时间为 2 分钟前
+        session.update_last_active_at("user1", chrono::Utc::now().timestamp_millis() - 120_000);
+        assert!(
+            !session.check_hover_timeout("user1", 60),
+            "超过 60s 悬停超时后应返回 false"
+        );
+    }
+
+    /// `add_expiry_listener` 注册监听器后 expiry_listeners 非空。
+    #[tokio::test]
+    async fn add_expiry_listener_appends_to_list() {
+        use crate::session::SessionExpiryListener;
+        use async_trait::async_trait;
+
+        struct NoopListener;
+        #[async_trait]
+        impl SessionExpiryListener for NoopListener {
+            async fn on_session_expired(
+                &self,
+                _login_id: &str,
+                _token: &str,
+            ) -> GarrisonResult<()> {
+                Ok(())
+            }
+        }
+
+        let (_dao, mut session) = make_session(3600, 86400);
+        assert!(session.expiry_listeners.is_empty());
+        session.add_expiry_listener(Arc::new(NoopListener));
+        assert_eq!(session.expiry_listeners.len(), 1);
+        session.add_expiry_listener(Arc::new(NoopListener));
+        assert_eq!(session.expiry_listeners.len(), 2);
+    }
 }
