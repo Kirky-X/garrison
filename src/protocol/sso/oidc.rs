@@ -2375,4 +2375,314 @@ mod tests {
             .await;
         assert!(result.is_err(), "超大 token 响应应返回错误");
     }
+
+    // ========================================================================
+    // validate_endpoint_scheme 边界测试
+    // ========================================================================
+
+    /// validate_endpoint_scheme: https URL 始终放行。
+    #[test]
+    fn validate_endpoint_scheme_allows_https() {
+        assert!(
+            validate_endpoint_scheme("https://idp.example.com/authorize", "test_field").is_ok()
+        );
+        assert!(validate_endpoint_scheme("https://127.0.0.1:8443/token", "test_field").is_ok());
+        assert!(validate_endpoint_scheme("https://localhost/callback", "test_field").is_ok());
+    }
+
+    /// validate_endpoint_scheme: http + localhost/127.0.0.1 放行（开发场景）。
+    #[test]
+    fn validate_endpoint_scheme_allows_localhost_http() {
+        assert!(validate_endpoint_scheme("http://localhost:8080/token", "f").is_ok());
+        assert!(validate_endpoint_scheme("http://127.0.0.1/token", "f").is_ok());
+        assert!(validate_endpoint_scheme("http://localhost/authorize", "f").is_ok());
+    }
+
+    /// validate_endpoint_scheme: http + 非 localhost 拒绝。
+    #[test]
+    fn validate_endpoint_scheme_rejects_public_http() {
+        assert!(validate_endpoint_scheme("http://idp.example.com/token", "f").is_err());
+        assert!(validate_endpoint_scheme("http://192.168.1.1/token", "f").is_err());
+        assert!(validate_endpoint_scheme("http://10.0.0.1:443/token", "f").is_err());
+    }
+
+    /// validate_endpoint_scheme: 无 scheme / 未知 scheme / 空字符串拒绝。
+    #[test]
+    fn validate_endpoint_scheme_rejects_missing_or_unknown_scheme() {
+        assert!(validate_endpoint_scheme("idp.example.com/token", "f").is_err());
+        assert!(validate_endpoint_scheme("ftp://idp.example.com/token", "f").is_err());
+        assert!(validate_endpoint_scheme("", "f").is_err());
+    }
+
+    /// validate_endpoint_scheme: 错误信息包含字段名和 URL。
+    #[test]
+    fn validate_endpoint_scheme_error_contains_field_and_url() {
+        let err = validate_endpoint_scheme("http://evil.com/token", "token_endpoint").unwrap_err();
+        match err {
+            GarrisonError::Config(msg) => {
+                assert!(msg.contains("token_endpoint"), "应含字段名: {}", msg);
+                assert!(msg.contains("http://evil.com/token"), "应含 URL: {}", msg);
+            },
+            other => panic!("期望 Config 错误，实际: {:?}", other),
+        }
+    }
+
+    // ========================================================================
+    // state_cache_key / jwks_cache_key 测试
+    // ========================================================================
+
+    /// state_cache_key 格式为 `oidc:state:{state}`。
+    #[test]
+    fn state_cache_key_format() {
+        let key = DefaultOidcProvider::state_cache_key("abc123");
+        assert_eq!(key, "oidc:state:abc123");
+    }
+
+    /// state_cache_key 不同 state 生成不同 key。
+    #[test]
+    fn state_cache_key_unique_per_state() {
+        let k1 = DefaultOidcProvider::state_cache_key("state-1");
+        let k2 = DefaultOidcProvider::state_cache_key("state-2");
+        assert_ne!(k1, k2);
+    }
+
+    /// jwks_cache_key 格式为 `oidc:jwks:{issuer}`。
+    #[cfg(feature = "protocol-jwt")]
+    #[test]
+    fn jwks_cache_key_format() {
+        let config = make_test_config();
+        let provider = DefaultOidcProvider::new(config, "cid", "cs").unwrap();
+        let key = provider.jwks_cache_key();
+        assert_eq!(key, "oidc:jwks:https://idp.example.com");
+    }
+
+    // ========================================================================
+    // with_state_ttl / with_max_state_entries / state_store_len 测试
+    // ========================================================================
+
+    /// with_state_ttl 修改 state TTL 后 state 过期行为正确。
+    #[tokio::test]
+    async fn with_state_ttl_state_expires_after_ttl() {
+        let config = make_test_config();
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(InMemoryDao::new()))
+            .with_state_ttl(Duration::from_millis(50));
+
+        // 注册 state
+        provider
+            .get_authorization_url("https://sp.example.com/cb", "state-ttl-test", &["openid"])
+            .await
+            .unwrap();
+
+        // 等待过期
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // exchange_code 应因 state 过期失败
+        let result = provider
+            .exchange_code("code", "https://sp.example.com/cb", "state-ttl-test")
+            .await;
+        assert!(result.is_err(), "state 过期后 exchange_code 应失败");
+    }
+
+    /// with_max_state_entries 为 no-op，返回的实例可正常使用。
+    #[test]
+    fn with_max_state_entries_is_noop() {
+        let config = make_test_config();
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_max_state_entries(100);
+        assert_eq!(provider.state_store_len(), 0);
+    }
+
+    // ========================================================================
+    // register_state / validate_and_consume_state 测试
+    // ========================================================================
+
+    /// register_state 写入 DAO 后 validate_and_consume_state 消费成功（one-time use）。
+    #[tokio::test]
+    async fn register_and_consume_state_roundtrip() {
+        let config = make_test_config();
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(InMemoryDao::new()));
+
+        // 注册 state
+        provider.register_state("test-state-001").await.unwrap();
+
+        // 消费 state（应成功）
+        provider
+            .validate_and_consume_state("test-state-001")
+            .await
+            .unwrap();
+
+        // 再次消费应失败（one-time use）
+        let result = provider.validate_and_consume_state("test-state-001").await;
+        assert!(result.is_err(), "state 应只能消费一次");
+    }
+
+    /// register_state 未注入 DAO 时返回 Config 错误。
+    #[tokio::test]
+    async fn register_state_without_dao_returns_error() {
+        let config = make_test_config();
+        let provider = DefaultOidcProvider::new(config, "cid", "cs").unwrap();
+        // 不调用 with_dao
+        let result = provider.register_state("test-state-002").await;
+        assert!(result.is_err(), "未注入 DAO 时 register_state 应失败");
+    }
+
+    /// validate_and_consume_state 对未注册的 state 返回错误。
+    #[tokio::test]
+    async fn consume_unregistered_state_returns_error() {
+        let config = make_test_config();
+        let provider = DefaultOidcProvider::new(config, "cid", "cs")
+            .unwrap()
+            .with_dao(Arc::new(InMemoryDao::new()));
+
+        let result = provider
+            .validate_and_consume_state("never-registered")
+            .await;
+        assert!(result.is_err(), "未注册的 state 应返回错误");
+    }
+
+    // ========================================================================
+    // sanitize_kid 边界测试
+    // ========================================================================
+
+    /// sanitize_kid 空字符串返回空字符串。
+    #[test]
+    fn sanitize_kid_empty_string() {
+        assert_eq!(DefaultOidcProvider::sanitize_kid(""), "");
+    }
+
+    /// sanitize_kid 超长 kid 截断至限制长度。
+    #[test]
+    fn sanitize_kid_truncates_long_input() {
+        let long_kid = "a".repeat(1000);
+        let sanitized = DefaultOidcProvider::sanitize_kid(&long_kid);
+        assert!(sanitized.len() <= 256, "sanitize_kid 应限制长度");
+    }
+
+    /// sanitize_kid 过滤控制字符。
+    #[test]
+    fn sanitize_kid_filters_control_chars() {
+        let kid_with_control = "valid\x00\x01\x1Fkid";
+        let sanitized = DefaultOidcProvider::sanitize_kid(kid_with_control);
+        assert!(!sanitized.contains('\x00'));
+        assert!(!sanitized.contains('\x01'));
+        assert!(sanitized.contains("valid"));
+        assert!(sanitized.contains("kid"));
+    }
+
+    // ========================================================================
+    // OidcDiscoveryConfig Clone + Default 边界测试
+    // ========================================================================
+
+    /// OidcDiscoveryConfig 各字段为空字符串时 new 不报错。
+    #[test]
+    fn new_with_empty_strings_in_config_fails_scheme_validation() {
+        let config = OidcDiscoveryConfig {
+            issuer: "".to_string(),
+            authorization_endpoint: "".to_string(),
+            token_endpoint: "".to_string(),
+            userinfo_endpoint: "".to_string(),
+            jwks_uri: "".to_string(),
+        };
+        // 空字符串无 :// → validate_endpoint_scheme 应拒绝
+        let result = DefaultOidcProvider::new(config, "cid", "cs");
+        assert!(result.is_err(), "空端点 URL 应被拒绝");
+    }
+
+    // ========================================================================
+    // build_safe_http_client / validate_endpoint_scheme 覆盖率补充
+    // ========================================================================
+
+    /// `build_safe_http_client` 构造成功（reqwest Client builder 正常返回）。
+    #[test]
+    fn build_safe_http_client_succeeds() {
+        let client = build_safe_http_client();
+        assert!(
+            client.is_ok(),
+            "build_safe_http_client 应成功: {:?}",
+            client.err()
+        );
+    }
+
+    /// `validate_endpoint_scheme`: https 任意 host 通过。
+    #[test]
+    fn validate_endpoint_scheme_https_any_host_ok() {
+        assert!(validate_endpoint_scheme("https://accounts.google.com/oauth", "test").is_ok());
+        assert!(validate_endpoint_scheme("https://idp.example.com:8443/oidc", "test").is_ok());
+    }
+
+    /// `validate_endpoint_scheme`: http + localhost 通过（开发场景）。
+    #[test]
+    fn validate_endpoint_scheme_http_localhost_ok() {
+        assert!(validate_endpoint_scheme("http://localhost/oauth", "test").is_ok());
+        assert!(validate_endpoint_scheme("http://localhost:8080/oauth", "test").is_ok());
+    }
+
+    /// `validate_endpoint_scheme`: http + 127.0.0.1 通过（开发场景）。
+    #[test]
+    fn validate_endpoint_scheme_http_127_ok() {
+        assert!(validate_endpoint_scheme("http://127.0.0.1/oauth", "test").is_ok());
+        assert!(validate_endpoint_scheme("http://127.0.0.1:3000/oidc", "test").is_ok());
+    }
+
+    /// `validate_endpoint_scheme`: http + 非本机 host 拒绝。
+    #[test]
+    fn validate_endpoint_scheme_http_public_host_rejected() {
+        let result = validate_endpoint_scheme("http://idp.example.com/oauth", "test");
+        assert!(result.is_err(), "http + 公共 host 应被拒绝");
+    }
+
+    /// `validate_endpoint_scheme`: 无 scheme 拒绝。
+    #[test]
+    fn validate_endpoint_scheme_no_scheme_rejected() {
+        let result = validate_endpoint_scheme("idp.example.com/oauth", "test");
+        assert!(result.is_err(), "无 scheme 应被拒绝");
+    }
+
+    /// `validate_endpoint_scheme`: ftp 等非法 scheme 拒绝。
+    #[test]
+    fn validate_endpoint_scheme_ftp_rejected() {
+        let result = validate_endpoint_scheme("ftp://idp.example.com/oauth", "test");
+        assert!(result.is_err(), "ftp scheme 应被拒绝");
+    }
+
+    /// `DefaultOidcProvider::new` 所有端点为 https 时构造成功（覆盖 build_safe_http_client 调用路径）。
+    #[test]
+    fn new_with_valid_https_endpoints_succeeds() {
+        let config = OidcDiscoveryConfig {
+            issuer: "https://idp.example.com".to_string(),
+            authorization_endpoint: "https://idp.example.com/auth".to_string(),
+            token_endpoint: "https://idp.example.com/token".to_string(),
+            userinfo_endpoint: "https://idp.example.com/userinfo".to_string(),
+            jwks_uri: "https://idp.example.com/jwks".to_string(),
+        };
+        let result = DefaultOidcProvider::new(config, "client_id", "client_secret");
+        assert!(
+            result.is_ok(),
+            "有效 https 端点应构造成功: {:?}",
+            result.err()
+        );
+    }
+
+    /// `DefaultOidcProvider::new` 端点为 http+localhost 时构造成功。
+    #[test]
+    fn new_with_http_localhost_endpoints_succeeds() {
+        let config = OidcDiscoveryConfig {
+            issuer: "http://localhost:8080".to_string(),
+            authorization_endpoint: "http://localhost:8080/auth".to_string(),
+            token_endpoint: "http://localhost:8080/token".to_string(),
+            userinfo_endpoint: "http://localhost:8080/userinfo".to_string(),
+            jwks_uri: "http://localhost:8080/jwks".to_string(),
+        };
+        let result = DefaultOidcProvider::new(config, "cid", "cs");
+        assert!(
+            result.is_ok(),
+            "http+localhost 端点应构造成功: {:?}",
+            result.err()
+        );
+    }
 }

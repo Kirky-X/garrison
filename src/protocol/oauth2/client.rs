@@ -991,4 +991,118 @@ mod tests {
             Ok(_) => panic!("明文 introspection 端点应在请求前被拒绝"),
         }
     }
+
+    // ========================================================================
+    // validate_redirect_uri 边界测试
+    // ========================================================================
+
+    /// validate_redirect_uri 无 scheme 返回 InvalidParam。
+    #[test]
+    fn validate_redirect_uri_no_scheme() {
+        let result = OAuth2Client::new(
+            "cid",
+            "secret",
+            "no-scheme-here",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        );
+        assert!(result.is_err(), "无 scheme 应报错");
+    }
+
+    /// validate_redirect_uri http + 公网域名返回 InvalidParam。
+    #[test]
+    fn validate_redirect_uri_http_public_host() {
+        let result = OAuth2Client::new(
+            "cid",
+            "secret",
+            "http://evil.com/callback",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        );
+        assert!(result.is_err(), "http + 公网域名应报错");
+    }
+
+    /// validate_redirect_uri http://localhost 放行。
+    #[test]
+    fn validate_redirect_uri_http_localhost_ok() {
+        let result = OAuth2Client::new(
+            "cid",
+            "secret",
+            "http://localhost:3000/callback",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        );
+        assert!(
+            result.is_ok(),
+            "http://localhost 应放行，实际: {:?}",
+            result.err()
+        );
+    }
+
+    /// validate_redirect_uri http://127.0.0.1 放行。
+    #[test]
+    fn validate_redirect_uri_http_127_ok() {
+        let result = OAuth2Client::new(
+            "cid",
+            "secret",
+            "http://127.0.0.1:8080/cb",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        );
+        assert!(
+            result.is_ok(),
+            "http://127.0.0.1 应放行，实际: {:?}",
+            result.err()
+        );
+    }
+
+    // ========================================================================
+    // generate_pkce_challenge 边界测试
+    // ========================================================================
+
+    /// generate_pkce_challenge 长度 < 43 返回 InvalidParam。
+    #[test]
+    fn pkce_challenge_too_short() {
+        let short = "a".repeat(42);
+        let result = OAuth2Client::generate_pkce_challenge(&short);
+        assert!(result.is_err(), "长度 < 43 应报错");
+    }
+
+    /// generate_pkce_challenge 长度 > 128 返回 InvalidParam。
+    #[test]
+    fn pkce_challenge_too_long() {
+        let long = "a".repeat(129);
+        let result = OAuth2Client::generate_pkce_challenge(&long);
+        assert!(result.is_err(), "长度 > 128 应报错");
+    }
+
+    /// generate_pkce_challenge 含非法字符返回 InvalidParam。
+    #[test]
+    fn pkce_challenge_invalid字符() {
+        // 43 字符但包含空格（非法）
+        let invalid = "a b".to_string() + &"c".repeat(40);
+        let result = OAuth2Client::generate_pkce_challenge(&invalid);
+        assert!(result.is_err(), "含非法字符应报错");
+    }
+
+    /// generate_pkce_challenge 合法输入返回正确 challenge。
+    #[test]
+    fn pkce_challenge_valid_input() {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = OAuth2Client::generate_pkce_challenge(verifier).unwrap();
+        assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
+    }
+
+    /// new 空 client_id 返回 Config 错误。
+    #[test]
+    fn new_empty_client_id_returns_config_error() {
+        let result = OAuth2Client::new(
+            "",
+            "secret",
+            "https://localhost/cb",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        );
+        assert!(result.is_err(), "空 client_id 应报错");
+    }
 }
