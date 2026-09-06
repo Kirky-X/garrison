@@ -147,3 +147,37 @@ impl GarrisonInterface for MockInterface {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
+
+#[cfg(test)]
+mod mock_dao_coverage_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn mock_dao_atomic_and_default_methods_coverage() {
+        let dao = MockDao::new();
+        dao.set("k1", "v1", 60).await.unwrap();
+        // atomic_test_fallback! 方法
+        let _ = dao.set_if_absent("a1", "v1", 60).await;
+        let _ = dao.get_and_delete("a1").await;
+        let _ = dao.incr("ctr", 60).await;
+        let _ = dao.decr("ctr").await;
+        let _ = dao.rename("k1", "k2").await;
+        let _ = dao.compare_and_swap("k2", Some("v1"), "v2", 60).await;
+        // trait 默认方法
+        let _ = dao.set_permanent("p1", "val").await;
+        let _ = dao.get_with_ttl("k1").await;
+        let _ = dao.get_timeout("k1").await;
+        let _ = dao.keys("*").await;
+        let _ = dao.find_social_binding(0, "wechat", "oid").await;
+        let _ = dao
+            .insert_social_binding(0, "u1", "wechat", "oid", None, 0)
+            .await;
+        let _ = dao.compare_and_update_if_greater("k1", 10, 60).await;
+        let _ = dao.eval_lua("return 1", vec![], vec![]).await;
+        let _ = dao.insert_credit_consumption(0, "r", 1, 100, 100, 0).await;
+        let _ = dao.query_credit_consumption(0, 0, 0).await;
+        let _ = dao.query_role_hierarchy_edges(0).await;
+        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+    }
+}

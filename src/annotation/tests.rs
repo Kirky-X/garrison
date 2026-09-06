@@ -843,3 +843,17 @@ async fn tenant_context_returns_err_with_non_numeric_x_tenant_id() {
         result
     );
 }
+
+/// 调用 MockInterface 的默认委托方法以覆盖 async_trait wrapper。
+#[tokio::test]
+async fn mock_interface_default_methods_with_type_coverage() {
+    let iface = MockInterface::new();
+    let _ = iface
+        .get_permission_list_with_type("u1", "default")
+        .await
+        .unwrap();
+    let _ = iface
+        .get_role_list_with_type("u1", "default")
+        .await
+        .unwrap();
+}
