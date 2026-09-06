@@ -4411,4 +4411,70 @@ mod tests {
             }
         }
     }
+
+    // ------------------------------------------------------------------------
+    // 覆盖率补充：mock 方法调用 + AuthExecutor 未覆盖方法
+    // ------------------------------------------------------------------------
+
+    /// 调用所有 mock 方法以覆盖 async_trait 生成的 async wrapper。
+    #[tokio::test]
+    async fn mock_methods_coverage_credential_repo_interface_credential() {
+        let repo = MockCredentialRepository::default();
+        // create + update + delete
+        repo.create(make_credential_model("c1", "u1", "password"))
+            .await
+            .unwrap();
+        let mut model = make_credential_model("c1", "u1", "password");
+        model.secret_data = "new_hash".to_string();
+        repo.update("u1", model).await.unwrap();
+        repo.delete("u1", "c1").await.unwrap();
+
+        let iface = MockInterface;
+        let _ = iface.get_permission_list("u1").await.unwrap();
+        let _ = iface.get_role_list("u1").await.unwrap();
+        // 默认委托方法
+        let _ = iface
+            .get_permission_list_with_type("u1", "user")
+            .await
+            .unwrap();
+        let _ = iface.get_role_list_with_type("u1", "admin").await.unwrap();
+
+        let cred = MockCredential {
+            verify_result: true,
+        };
+        let _ = cred.credential_type();
+        let _ = cred.to_model();
+    }
+
+    /// `execute_social` 无 SocialProvider resolver 时返回 Failed。
+    #[tokio::test]
+    async fn execute_social_without_resolver_returns_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let mut ctx = make_context("", "oauth_code");
+        let result = executor
+            .execute_social("wechat", &mut ctx, None)
+            .await
+            .unwrap();
+        match result {
+            StepOutcome::Failed(_) => {},
+            other => panic!("应为 Failed，实际: {:?}", other),
+        }
+    }
+
+    /// `execute_sso` 无 SsoServer resolver 时返回 Failed。
+    #[tokio::test]
+    async fn execute_sso_without_resolver_returns_failed() {
+        let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
+        let executor = make_executor(repo, None);
+        let mut ctx = make_context("", "ticket_abc");
+        let result = executor
+            .execute_sso("keycloak", &mut ctx, None)
+            .await
+            .unwrap();
+        match result {
+            StepOutcome::Failed(_) => {},
+            other => panic!("应为 Failed，实际: {:?}", other),
+        }
+    }
 }

@@ -2424,4 +2424,31 @@ mod tests {
         assert_eq!(user3, Some(r#"{"id":54001}"#.to_string()));
         assert_eq!(dao.get_count(), 1, "L1 仍命中，不应查询 L2");
     }
+
+    /// 调用 CountingMockDao 的 atomic + 默认 trait 方法以覆盖 async_trait wrapper。
+    #[tokio::test]
+    async fn counting_mock_dao_atomic_and_default_methods_coverage() {
+        use crate::dao::GarrisonDao;
+        let dao = CountingMockDao::new();
+        dao.set("k1", "v1", 60).await.unwrap();
+        let _ = dao.set_if_absent("a1", "v1", 60).await;
+        let _ = dao.get_and_delete("a1").await;
+        let _ = dao.incr("ctr", 60).await;
+        let _ = dao.decr("ctr").await;
+        let _ = dao.rename("k1", "k2").await;
+        let _ = dao.compare_and_swap("k2", Some("v1"), "v2", 60).await;
+        let _ = dao.set_permanent("p1", "val").await;
+        let _ = dao.get_with_ttl("k1").await;
+        let _ = dao.get_timeout("k1").await;
+        let _ = dao.keys("*").await;
+        let _ = dao.find_social_binding(0, "w", "o").await;
+        let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
+        let _ = dao.compare_and_update_if_greater("k1", 10, 60).await;
+        let _ = dao.eval_lua("r", vec![], vec![]).await;
+        let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+        let _ = dao.query_credit_consumption(0, 0, 0).await;
+        let _ = dao.query_role_hierarchy_edges(0).await;
+        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+    }
 }

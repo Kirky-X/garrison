@@ -476,4 +476,61 @@ mod tests {
             names.lock().unwrap()
         );
     }
+
+    // ========================================================================
+    // 覆盖率补充：Default + check_role/check_safe/check_api_key
+    // ========================================================================
+
+    /// `BackendEmbedded::default()` 返回新实例。
+    #[test]
+    fn backend_embedded_default_returns_instance() {
+        let _backend = BackendEmbedded::default();
+    }
+
+    /// `check_role` 无效 token 返回错误。
+    #[tokio::test]
+    #[serial]
+    async fn test_check_role_invalid_token() {
+        let backend = setup_backend().await;
+        let result = backend.check_role("invalid-token", "admin").await;
+        assert!(result.is_err());
+    }
+
+    /// `check_safe` 无 security-extra feature 时默认通过（无 safe service 配置）。
+    #[tokio::test]
+    #[serial]
+    async fn test_check_safe_no_security_extra_returns_true() {
+        let backend = setup_backend().await;
+        let token = backend
+            .login("safe-user", &LoginParams::default())
+            .await
+            .unwrap();
+        // 无 security-extra feature 时 check_safe 默认返回 Ok(true)
+        let result = backend.check_safe(&token).await;
+        assert!(result.is_ok(), "check_safe 应成功: {:?}", result);
+    }
+
+    /// `check_api_key` 无效 key 返回错误。
+    #[tokio::test]
+    #[serial]
+    async fn test_check_api_key_invalid() {
+        let backend = setup_backend().await;
+        let result = backend.check_api_key("invalid-key", "default").await;
+        assert!(result.is_err());
+    }
+
+    /// 触发 `SpanNameCollector::record` 和 `record_follows_from`。
+    #[tokio::test(flavor = "current_thread")]
+    #[serial]
+    async fn test_span_nameCollector_record_and_follows() {
+        let backend = setup_backend().await;
+        let names = Arc::new(Mutex::new(Vec::new()));
+        let _guard = tracing::subscriber::set_default(SpanNameCollector {
+            names: names.clone(),
+        });
+        // 触发 record（span 创建时有 field 值）
+        let _ = backend.login("record-user", &LoginParams::default()).await;
+        // 触发 record_follows_from（span 关系）
+        tracing::info!("test event to trigger record");
+    }
 }

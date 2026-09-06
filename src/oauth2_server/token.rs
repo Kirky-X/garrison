@@ -1197,6 +1197,71 @@ mod tests {
         assert_eq!(result, Some(("".to_string(), "secret".to_string())));
     }
 
+    /// parse_basic_auth 正确处理空 client_secret（"cid:"）。
+    #[test]
+    fn parse_basic_auth_handles_empty_client_secret() {
+        // "cid:" → base64 → "Y2lkOg=="
+        let result = parse_basic_auth("Basic Y2lkOg==");
+        assert_eq!(result, Some(("cid".to_string(), "".to_string())));
+    }
+
+    /// parse_basic_auth 正确处理 client_secret 中含冒号（"cid:sec:ret"）。
+    #[test]
+    fn parse_basic_auth_handles_colon_in_secret() {
+        // "cid:sec:ret" → base64 → "Y2lkOnNlYzpyZXQ="
+        let result = parse_basic_auth("Basic Y2lkOnNlYzpyZXQ=");
+        assert_eq!(result, Some(("cid".to_string(), "sec:ret".to_string())));
+    }
+
+    /// parse_basic_auth 正确处理含特殊字符的凭证。
+    #[test]
+    fn parse_basic_auth_handles_special_chars() {
+        // "user@domain:p@ss!word" → base64
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+        let encoded = STANDARD.encode("user@domain:p@ss!word");
+        let header = format!("Basic {}", encoded);
+        let result = parse_basic_auth(&header);
+        assert_eq!(
+            result,
+            Some(("user@domain".to_string(), "p@ss!word".to_string()))
+        );
+    }
+
+    /// parse_basic_auth 对 "Basic" 后无内容返回 None。
+    #[test]
+    fn parse_basic_auth_handles_basic_prefix_only() {
+        // "Basic " 后无编码内容 → decode 空字符串 → 无冒号 → None
+        assert!(parse_basic_auth("Basic ").is_none());
+    }
+
+    /// parse_basic_auth 对 "basic" 小写前缀返回 None（区分大小写）。
+    #[test]
+    fn parse_basic_auth_case_sensitive_prefix() {
+        use base64::engine::general_purpose::STANDARD;
+        use base64::Engine;
+        let encoded = STANDARD.encode("cid:secret");
+        assert!(parse_basic_auth(&format!("basic {}", encoded)).is_none());
+        assert!(parse_basic_auth(&format!("BASIC {}", encoded)).is_none());
+    }
+
+    /// parse_basic_auth 对 "Bearer" 前缀返回 None。
+    #[test]
+    fn parse_basic_auth_rejects_bearer_prefix() {
+        assert!(parse_basic_auth("Bearer Y2lkOnNlY3JldA==").is_none());
+    }
+
+    /// default_issued_at 返回 Unix epoch。
+    #[test]
+    fn default_issued_at_returns_unix_epoch() {
+        let dt = default_issued_at();
+        assert_eq!(
+            dt.timestamp(),
+            0,
+            "default_issued_at 应返回 Unix epoch (timestamp=0)"
+        );
+    }
+
     /// handle_with_authorization 使用 Basic Auth 头认证客户端。
     ///
     /// 场景：client_id/client_secret 通过 Authorization 头传递，body 中为空。

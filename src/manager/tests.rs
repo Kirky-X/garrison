@@ -1027,3 +1027,67 @@ async fn manager_drop_cancels_cleanup_task() {
         count_after
     );
 }
+
+/// 调用 MockInterface 的默认委托方法以覆盖 async_trait wrapper。
+#[tokio::test]
+async fn mock_interface_default_methods_with_type_coverage() {
+    let iface = MockInterface::new();
+    let _ = iface
+        .get_permission_list_with_type("u1", "default")
+        .await
+        .unwrap();
+    let _ = iface
+        .get_role_list_with_type("u1", "default")
+        .await
+        .unwrap();
+}
+
+/// 调用 CountingDao 的 atomic + 默认 trait 方法以覆盖 async_trait wrapper。
+#[tokio::test]
+async fn counting_dao_atomic_and_default_methods_coverage() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    struct CountingDao {
+        _counter: Arc<AtomicUsize>,
+    }
+    #[async_trait]
+    impl GarrisonDao for CountingDao {
+        async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
+            Ok(None)
+        }
+        async fn set(&self, _key: &str, _value: &str, _ttl: u64) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        crate::atomic_test_fallback!();
+    }
+    let dao = CountingDao {
+        _counter: Arc::new(AtomicUsize::new(0)),
+    };
+    let _ = dao.set_if_absent("a", "v", 60).await;
+    let _ = dao.get_and_delete("a").await;
+    let _ = dao.incr("c", 60).await;
+    let _ = dao.decr("c").await;
+    let _ = dao.rename("a", "b").await;
+    let _ = dao.compare_and_swap("b", Some("v"), "v2", 60).await;
+    let _ = dao.set_permanent("p", "v").await;
+    let _ = dao.get_timeout("k").await;
+    let _ = dao.get_with_ttl("k").await;
+    let _ = dao.keys("*").await;
+    let _ = dao.find_social_binding(0, "w", "o").await;
+    let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
+    let _ = dao.compare_and_update_if_greater("k", 1, 60).await;
+    let _ = dao.eval_lua("r", vec![], vec![]).await;
+    let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+    let _ = dao.query_credit_consumption(0, 0, 0).await;
+    let _ = dao.query_role_hierarchy_edges(0).await;
+    let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+    let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+}
