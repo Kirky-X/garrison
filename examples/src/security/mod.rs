@@ -5,6 +5,8 @@
 
 #[cfg(feature = "secure-ct-eq")]
 pub mod constant_time_eq;
+#[cfg(feature = "email-verification")]
+pub mod email_verification;
 #[cfg(any(
     feature = "secure-masking",
     feature = "secure-xss",
