@@ -162,6 +162,7 @@ pub mod dao;
 /// 因 `GarrisonFirewallCheckHookDefault` / `PasswordRateLimiter` 统一使用 limiteron（禁止手写限流实现）。
 #[cfg(any(
     feature = "sms-rate-limit",
+    feature = "email-verification",
     feature = "firewall-ratelimit",
     feature = "firewall-bruteforce",
     feature = "firewall-ddos",
@@ -308,6 +309,7 @@ pub mod credit;
     feature = "secure-sanitize",
     feature = "secure-ct-eq",
     feature = "sms-rate-limit",
+    feature = "email-verification",
 ))]
 pub mod secure;
 

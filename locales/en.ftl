@@ -35,6 +35,12 @@ sms-verify-max-attempts = SMS verification max attempts exceeded
 sms-code-not-found = SMS verification code not found
 sms-channel-recycled = SMS channel recycled
 
+# Email verification code rate limiting exceptions (email-verification)
+email-rate-limit-exceeded = Email rate limit exceeded: {$window} window
+email-verify-max-attempts = Email verification max attempts exceeded
+email-code-not-found = Email verification code not found
+email-channel-recycled = Email channel recycled
+
 # Credit metering insufficient (multi-tenant-credit-metering)
 credit-insufficient = Credit insufficient: tenant={$tenant_id}, requested={$requested}, remaining={$remaining}
 
@@ -549,6 +555,11 @@ secure-http-digest-missing-nc = missing nc param
 secure-http-digest-missing-cnonce = missing cnonce param
 secure-sms-code-wrong = SMS code incorrect
 secure-phone-empty = phone must not be empty
+secure-email-code-wrong = Verification code incorrect
+secure-email-empty = email must not be empty
+secure-email-no-colon = email must not contain colon
+secure-email-no-control-char = email must not contain control characters
+secure-email-invalid-format = email format invalid
 secure-counter-parse = counter value parse failed key={$arg0}: {$arg1}
 secure-system-time = system time error: {$arg0}
 secure-limiter-incr = limiteron incr_with_ttl failed: {$arg0}
@@ -829,6 +840,10 @@ sms-rate-limit-exceeded-msg = SMS rate limit exceeded
 sms-verify-max-attempts-msg = Verification code attempts exceeded
 sms-code-not-found-msg = Verification code not found or expired
 sms-channel-recycled-msg = SMS channel recycled
+email-rate-limit-exceeded-msg = Email sending too frequent
+email-verify-max-attempts-msg = Verification max attempts exceeded
+email-code-not-found-msg = Verification code not found or expired
+email-channel-recycled-msg = Email channel recycled
 credit-insufficient-msg = Credit insufficient
 # Exception 变体依据 code 字段映射的 message
 exception-not-login-msg = Not logged in
@@ -949,6 +964,11 @@ config-sms-hourly-invalid = sms_hourly_limit must be > 0
 config-sms-daily-invalid = sms_daily_limit must be >= sms_hourly_limit
 config-sms-max-attempts-invalid = sms_verify_max_attempts must be > 0
 config-sms-threshold-invalid = sms_unverified_threshold must be > 0
+config-email-hourly-invalid = email_hourly_limit must be > 0
+config-email-daily-invalid = email_daily_limit must be >= email_hourly_limit
+config-email-max-attempts-invalid = email_verify_max_attempts must be > 0
+config-email-threshold-invalid = email_unverified_threshold must be > 0
+config-email-ttl-invalid = email_code_ttl must be > 0
 config-anomalous-interval-invalid = anomalous_analyzer_interval_secs must be >= 60
 config-anomalous-burst-invalid = anomalous_analyzer_burst_threshold must be > 0
 

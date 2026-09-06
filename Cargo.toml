@@ -154,6 +154,8 @@ hkdf = { version = "0.13", optional = true, default-features = false }
 # 供 crates.io 消费者在运行时无需访问 garrison 源码目录即可执行迁移。
 include_dir = { version = "0.7", optional = true }
 tempfile = { version = "3.27", optional = true }
+# 邮件发送（email-verification-smtp feature）：内置 SMTP 实现，业务方也可仅启用 email-verification 自行实现 EmailSender trait
+lettre = { version = "0.11", optional = true, default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls", "hostname"] }
 
 [dev-dependencies]
 once_cell = "1.0"
@@ -292,6 +294,10 @@ secure-masking = ["dep:regex"]
 secure-xss = []
 secure-sanitize = []
 sms-rate-limit = ["dep:rand"]
+# 邮箱验证码（基础 trait + service + rate_limiter，业务方自行实现 EmailSender）
+email-verification = ["dep:rand"]
+# 邮箱验证码 SMTP 内置实现（lettre，含 SmtpEmailSender）
+email-verification-smtp = ["email-verification", "dep:lettre"]
 
 # === 账号安全引擎 ===
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:sha2", "dep:base32"]
@@ -450,7 +456,7 @@ full = [
     "protocol-oauth2", "protocol-sso", "protocol-jwt", "protocol-sign", "protocol-apikey", "protocol-temp", "protocol-invitation", "protocol-zeroize",
     "protocol-oidc", "oauth2-scope-handler", "protocol-sso-server", "protocol-saml",
     "secure-totp", "secure-sign", "protocol-httpbasic", "protocol-httpdigest", "secure-masking",
-    "secure-xss", "secure-sanitize", "sms-rate-limit",
+    "secure-xss", "secure-sanitize", "sms-rate-limit", "email-verification", "email-verification-smtp",
     "account-credential", "credential-zeroize", "account-policy", "account-lockout", "account-authflow",
     "web-axum", "web-actix", "web-warp",
     "web-security",

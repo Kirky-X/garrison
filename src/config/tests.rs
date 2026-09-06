@@ -769,6 +769,16 @@ fn update_without_watcher_is_noop() {
         sms_verify_max_attempts: 3,
         #[cfg(feature = "sms-rate-limit")]
         sms_unverified_threshold: 3,
+        #[cfg(feature = "email-verification")]
+        email_hourly_limit: 5,
+        #[cfg(feature = "email-verification")]
+        email_daily_limit: 10,
+        #[cfg(feature = "email-verification")]
+        email_verify_max_attempts: 3,
+        #[cfg(feature = "email-verification")]
+        email_unverified_threshold: 3,
+        #[cfg(feature = "email-verification")]
+        email_code_ttl: 600,
         #[cfg(feature = "anomalous-detector-dual")]
         anomalous_analyzer_interval_secs: DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS,
         #[cfg(feature = "anomalous-detector-dual")]

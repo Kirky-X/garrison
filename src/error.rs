@@ -137,6 +137,27 @@ pub enum GarrisonError {
     /// SMS 通道已回收（异常发送检测触发）。
     SmsChannelRecycled,
 
+    /// 邮箱限速超出（`email-verification` feature）。
+    ///
+    /// `window` 标识触发的窗口（"hourly" / "daily"）。
+    #[cfg(feature = "email-verification")]
+    EmailRateLimitExceeded {
+        /// 触发限速的窗口标识。
+        window: String,
+    },
+
+    /// 邮箱验证码尝试次数超限（`email-verification` feature）。
+    #[cfg(feature = "email-verification")]
+    EmailVerifyMaxAttempts,
+
+    /// 邮箱验证码不存在（已过期或未发送，`email-verification` feature）。
+    #[cfg(feature = "email-verification")]
+    EmailCodeNotFound,
+
+    /// 邮箱通道已回收（异常发送检测触发，`email-verification` feature）。
+    #[cfg(feature = "email-verification")]
+    EmailChannelRecycled,
+
     /// Credit 不足（多租户配额耗尽，`credit-metering` feature）。
     ///
     /// 对应 `CreditError::Insufficient`，HTTP 402 Payment Required。
@@ -189,6 +210,14 @@ impl std::fmt::Debug for GarrisonError {
             Self::SmsVerifyMaxAttempts => "SmsVerifyMaxAttempts",
             Self::SmsCodeNotFound => "SmsCodeNotFound",
             Self::SmsChannelRecycled => "SmsChannelRecycled",
+            #[cfg(feature = "email-verification")]
+            Self::EmailRateLimitExceeded { .. } => "EmailRateLimitExceeded",
+            #[cfg(feature = "email-verification")]
+            Self::EmailVerifyMaxAttempts => "EmailVerifyMaxAttempts",
+            #[cfg(feature = "email-verification")]
+            Self::EmailCodeNotFound => "EmailCodeNotFound",
+            #[cfg(feature = "email-verification")]
+            Self::EmailChannelRecycled => "EmailChannelRecycled",
             #[cfg(feature = "credit-metering")]
             Self::CreditInsufficient { .. } => "CreditInsufficient",
         };
@@ -432,6 +461,38 @@ impl GarrisonError {
                 "SMS_CHANNEL_RECYCLED",
                 "sms-channel-recycled-msg",
                 "短信通道已回收",
+                None,
+            ),
+            #[cfg(feature = "email-verification")]
+            GarrisonError::EmailRateLimitExceeded { .. } => (
+                429,
+                "EMAIL_RATE_LIMIT_EXCEEDED",
+                "email-rate-limit-exceeded-msg",
+                "邮件发送频繁",
+                None,
+            ),
+            #[cfg(feature = "email-verification")]
+            GarrisonError::EmailVerifyMaxAttempts => (
+                400,
+                "EMAIL_VERIFY_MAX_ATTEMPTS",
+                "email-verify-max-attempts-msg",
+                "验证码尝试次数超限",
+                None,
+            ),
+            #[cfg(feature = "email-verification")]
+            GarrisonError::EmailCodeNotFound => (
+                400,
+                "EMAIL_CODE_NOT_FOUND",
+                "email-code-not-found-msg",
+                "验证码不存在或已过期",
+                None,
+            ),
+            #[cfg(feature = "email-verification")]
+            GarrisonError::EmailChannelRecycled => (
+                403,
+                "EMAIL_CHANNEL_RECYCLED",
+                "email-channel-recycled-msg",
+                "邮件通道已回收",
                 None,
             ),
             #[cfg(feature = "credit-metering")]
@@ -683,6 +744,15 @@ mod tests {
             GarrisonError::SmsCodeNotFound,
             GarrisonError::SmsChannelRecycled,
         ];
+        #[cfg(feature = "email-verification")]
+        samples.extend([
+            GarrisonError::EmailRateLimitExceeded {
+                window: "hourly".into(),
+            },
+            GarrisonError::EmailVerifyMaxAttempts,
+            GarrisonError::EmailCodeNotFound,
+            GarrisonError::EmailChannelRecycled,
+        ]);
         #[cfg(feature = "credit-metering")]
         samples.push(GarrisonError::CreditInsufficient {
             tenant_id: 1,
@@ -692,13 +762,25 @@ mod tests {
 
         // 哨兵（架构审查 A2）：新增 GarrisonError 变体时必须同步加入上方
         // samples 列表，否则本断言失败——防止唯一性/同源性检查静默失去覆盖。
-        #[cfg(feature = "credit-metering")]
+        #[cfg(all(feature = "credit-metering", feature = "email-verification"))]
+        assert_eq!(
+            samples.len(),
+            31,
+            "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
+        );
+        #[cfg(all(feature = "credit-metering", not(feature = "email-verification")))]
         assert_eq!(
             samples.len(),
             27,
             "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
         );
-        #[cfg(not(feature = "credit-metering"))]
+        #[cfg(all(not(feature = "credit-metering"), feature = "email-verification"))]
+        assert_eq!(
+            samples.len(),
+            30,
+            "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
+        );
+        #[cfg(all(not(feature = "credit-metering"), not(feature = "email-verification")))]
         assert_eq!(
             samples.len(),
             26,

@@ -35,6 +35,12 @@ sms-verify-max-attempts = SMS 验证码尝试次数超限
 sms-code-not-found = SMS 验证码不存在
 sms-channel-recycled = SMS 通道已回收
 
+# 邮箱验证码限速异常（email-verification）
+email-rate-limit-exceeded = 邮箱限速超出: {$window} 窗口
+email-verify-max-attempts = 邮箱验证码尝试次数超限
+email-code-not-found = 邮箱验证码不存在
+email-channel-recycled = 邮箱通道已回收
+
 # Credit 计量不足（multi-tenant-credit-metering）
 credit-insufficient = Credit 不足: tenant={$tenant_id}, requested={$requested}, remaining={$remaining}
 
@@ -549,6 +555,11 @@ secure-http-digest-missing-nc = 缺失 nc 参数
 secure-http-digest-missing-cnonce = 缺失 cnonce 参数
 secure-sms-code-wrong = 验证码错误
 secure-phone-empty = phone 不能为空
+secure-email-code-wrong = 验证码错误
+secure-email-empty = email 不能为空
+secure-email-no-colon = email 不能包含冒号
+secure-email-no-control-char = email 不能包含控制字符
+secure-email-invalid-format = email 格式无效
 secure-counter-parse = 计数器值解析失败 key={$arg0}: {$arg1}
 secure-system-time = 系统时间错误: {$arg0}
 secure-limiter-incr = limiteron incr_with_ttl 失败: {$arg0}
@@ -828,6 +839,10 @@ sms-rate-limit-exceeded-msg = 短信发送频繁
 sms-verify-max-attempts-msg = 验证码尝试次数超限
 sms-code-not-found-msg = 验证码不存在或已过期
 sms-channel-recycled-msg = 短信通道已回收
+email-rate-limit-exceeded-msg = 邮件发送频繁
+email-verify-max-attempts-msg = 验证码尝试次数超限
+email-code-not-found-msg = 验证码不存在或已过期
+email-channel-recycled-msg = 邮件通道已回收
 credit-insufficient-msg = Credit 不足
 # Exception 变体依据 code 字段映射的 message
 exception-not-login-msg = 未登录
@@ -948,6 +963,11 @@ config-sms-hourly-invalid = sms_hourly_limit 必须大于 0
 config-sms-daily-invalid = sms_daily_limit 必须 >= sms_hourly_limit
 config-sms-max-attempts-invalid = sms_verify_max_attempts 必须大于 0
 config-sms-threshold-invalid = sms_unverified_threshold 必须大于 0
+config-email-hourly-invalid = email_hourly_limit 必须大于 0
+config-email-daily-invalid = email_daily_limit 必须 >= email_hourly_limit
+config-email-max-attempts-invalid = email_verify_max_attempts 必须大于 0
+config-email-threshold-invalid = email_unverified_threshold 必须大于 0
+config-email-ttl-invalid = email_code_ttl 必须大于 0
 config-anomalous-interval-invalid = anomalous_analyzer_interval_secs 必须 >= 60
 config-anomalous-burst-invalid = anomalous_analyzer_burst_threshold 必须大于 0
 

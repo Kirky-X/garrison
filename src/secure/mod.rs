@@ -117,6 +117,15 @@ pub mod xss;
 #[cfg(feature = "sms-rate-limit")]
 pub mod sms;
 
+/// 邮箱验证码子模块。
+///
+/// 提供 [`EmailVerificationService`](email::EmailVerificationService) 三层抽象：
+/// - `EmailSender` trait（业务方实现邮件发送，`email-verification-smtp` feature 提供内置 SMTP 实现）
+/// - `EmailRateLimiter`（双窗口限速：小时 + 天，含邮箱规范化）
+/// - `EmailVerificationService`（发送/验证/异常发送检测）
+#[cfg(feature = "email-verification")]
+pub mod email;
+
 /// 通用输入消毒子模块。
 ///
 /// 提供 `sanitize::sanitize_input` 对用户输入进行通用消毒：

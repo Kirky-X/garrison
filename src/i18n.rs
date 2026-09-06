@@ -341,6 +341,17 @@ fn error_to_key_args(err: &GarrisonError) -> (&'static str, Vec<(&'static str, S
         GarrisonError::SmsVerifyMaxAttempts => ("sms-verify-max-attempts", vec![]),
         GarrisonError::SmsCodeNotFound => ("sms-code-not-found", vec![]),
         GarrisonError::SmsChannelRecycled => ("sms-channel-recycled", vec![]),
+        #[cfg(feature = "email-verification")]
+        GarrisonError::EmailRateLimitExceeded { window } => (
+            "email-rate-limit-exceeded",
+            vec![("window", window.clone())],
+        ),
+        #[cfg(feature = "email-verification")]
+        GarrisonError::EmailVerifyMaxAttempts => ("email-verify-max-attempts", vec![]),
+        #[cfg(feature = "email-verification")]
+        GarrisonError::EmailCodeNotFound => ("email-code-not-found", vec![]),
+        #[cfg(feature = "email-verification")]
+        GarrisonError::EmailChannelRecycled => ("email-channel-recycled", vec![]),
         #[cfg(feature = "credit-metering")]
         GarrisonError::CreditInsufficient {
             tenant_id,
@@ -398,6 +409,16 @@ fn fallback_display(err: &GarrisonError) -> String {
         GarrisonError::SmsVerifyMaxAttempts => "SMS 验证码尝试次数超限".to_string(),
         GarrisonError::SmsCodeNotFound => "SMS 验证码不存在".to_string(),
         GarrisonError::SmsChannelRecycled => "SMS 通道已回收".to_string(),
+        #[cfg(feature = "email-verification")]
+        GarrisonError::EmailRateLimitExceeded { window } => {
+            format!("邮箱验证码限速超出: {} 窗口", window)
+        },
+        #[cfg(feature = "email-verification")]
+        GarrisonError::EmailVerifyMaxAttempts => "邮箱验证码尝试次数超限".to_string(),
+        #[cfg(feature = "email-verification")]
+        GarrisonError::EmailCodeNotFound => "邮箱验证码不存在".to_string(),
+        #[cfg(feature = "email-verification")]
+        GarrisonError::EmailChannelRecycled => "邮箱通道已回收".to_string(),
         #[cfg(feature = "credit-metering")]
         GarrisonError::CreditInsufficient {
             tenant_id,

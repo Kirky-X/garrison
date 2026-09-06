@@ -598,6 +598,26 @@ pub struct GarrisonConfig {
     #[cfg(feature = "sms-rate-limit")]
     pub sms_unverified_threshold: u32,
 
+    /// 邮箱验证码小时限速阈值（默认 5 次/小时）。
+    #[cfg(feature = "email-verification")]
+    pub email_hourly_limit: u32,
+
+    /// 邮箱验证码天限速阈值（默认 10 次/天）。
+    #[cfg(feature = "email-verification")]
+    pub email_daily_limit: u32,
+
+    /// 邮箱验证码最大验证尝试次数（默认 3）。
+    #[cfg(feature = "email-verification")]
+    pub email_verify_max_attempts: u32,
+
+    /// 邮箱验证码异常发送检测阈值（连续未验证次数，默认 3）。
+    #[cfg(feature = "email-verification")]
+    pub email_unverified_threshold: u32,
+
+    /// 邮箱验证码有效期（秒，默认 600 = 10 分钟）。
+    #[cfg(feature = "email-verification")]
+    pub email_code_ttl: u64,
+
     /// 异常登录分析器扫描间隔秒数（默认 3600 = 1 小时）。
     ///
     /// 仅当 `anomalous-detector-dual` feature 启用时生效。

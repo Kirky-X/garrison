@@ -104,6 +104,16 @@ impl GarrisonConfig {
             sms_verify_max_attempts: 3,
             #[cfg(feature = "sms-rate-limit")]
             sms_unverified_threshold: 3,
+            #[cfg(feature = "email-verification")]
+            email_hourly_limit: 5,
+            #[cfg(feature = "email-verification")]
+            email_daily_limit: 10,
+            #[cfg(feature = "email-verification")]
+            email_verify_max_attempts: 3,
+            #[cfg(feature = "email-verification")]
+            email_unverified_threshold: 3,
+            #[cfg(feature = "email-verification")]
+            email_code_ttl: 600,
             #[cfg(feature = "anomalous-detector-dual")]
             anomalous_analyzer_interval_secs: DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS,
             #[cfg(feature = "anomalous-detector-dual")]
@@ -261,6 +271,16 @@ impl GarrisonConfig {
                 .default("sms_daily_limit", ConfigValue::uint(10))
                 .default("sms_verify_max_attempts", ConfigValue::uint(3))
                 .default("sms_unverified_threshold", ConfigValue::uint(3));
+        }
+
+        #[cfg(feature = "email-verification")]
+        {
+            builder = builder
+                .default("email_hourly_limit", ConfigValue::uint(5))
+                .default("email_daily_limit", ConfigValue::uint(10))
+                .default("email_verify_max_attempts", ConfigValue::uint(3))
+                .default("email_unverified_threshold", ConfigValue::uint(3))
+                .default("email_code_ttl", ConfigValue::uint(600));
         }
 
         #[cfg(feature = "anomalous-detector-dual")]
@@ -659,6 +679,34 @@ impl GarrisonConfig {
             if self.sms_unverified_threshold == 0 {
                 return Err(GarrisonError::Config(
                     "config-sms-threshold-invalid::".to_string(),
+                ));
+            }
+        }
+        #[cfg(feature = "email-verification")]
+        {
+            if self.email_hourly_limit == 0 {
+                return Err(GarrisonError::Config(
+                    "config-email-hourly-invalid::".to_string(),
+                ));
+            }
+            if self.email_daily_limit < self.email_hourly_limit {
+                return Err(GarrisonError::Config(
+                    "config-email-daily-invalid::".to_string(),
+                ));
+            }
+            if self.email_verify_max_attempts == 0 {
+                return Err(GarrisonError::Config(
+                    "config-email-max-attempts-invalid::".to_string(),
+                ));
+            }
+            if self.email_unverified_threshold == 0 {
+                return Err(GarrisonError::Config(
+                    "config-email-threshold-invalid::".to_string(),
+                ));
+            }
+            if self.email_code_ttl == 0 {
+                return Err(GarrisonError::Config(
+                    "config-email-ttl-invalid::".to_string(),
                 ));
             }
         }
