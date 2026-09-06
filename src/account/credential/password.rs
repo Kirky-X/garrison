@@ -29,10 +29,9 @@ use crate::error::{GarrisonError, GarrisonResult};
 // argon2::password_hash::PasswordHasher / PasswordVerifier 与本模块自定义 PasswordHasher 同名，
 // 通过 `as _` 导入 trait 方法可用，但不引入名字，避免冲突。
 use argon2::{
-    password_hash::{PasswordHash, PasswordHasher as _, PasswordVerifier as _, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher as _, PasswordVerifier as _},
     Algorithm, Argon2, Params, Version,
 };
-use rand::rngs::OsRng;
 
 // ============================================================================
 // Trait 定义
@@ -125,13 +124,12 @@ impl PasswordHasher for Argon2Hasher {
         #[cfg(not(feature = "credential-zeroize"))]
         let password_ref: &[u8] = password.as_bytes();
 
-        let salt = SaltString::generate(&mut OsRng);
         // H4: 显式预分配 32 字节输出缓冲区（与 argon2 默认一致，但显式化意图并锁定行为）
         let params = Params::new(self.m_cost, self.t_cost, self.p_cost, Some(32))
             .map_err(|e| GarrisonError::InvalidParam(format!("account-argon2-param::{}", e)))?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
         let hash = argon2
-            .hash_password(password_ref, &salt)
+            .hash_password(password_ref)
             .map_err(|e| GarrisonError::Internal(format!("account-argon2-hash::{}", e)))?
             .to_string();
         Ok(hash)
@@ -153,7 +151,7 @@ impl PasswordHasher for Argon2Hasher {
         let argon2 = Argon2::default();
         match argon2.verify_password(password_ref, &parsed) {
             Ok(()) => Ok(true),
-            Err(argon2::password_hash::Error::Password) => Ok(false),
+            Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
             Err(e) => Err(GarrisonError::Internal(format!(
                 "account-argon2-verify::{}",
                 e

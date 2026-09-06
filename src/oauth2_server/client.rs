@@ -16,7 +16,7 @@ use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
+    password_hash::{phc::PasswordHash, PasswordHasher, PasswordVerifier},
     Algorithm, Argon2, Version,
 };
 use async_trait::async_trait;
@@ -308,14 +308,13 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
 /// 与 `account::credential::Argon2Hasher` 独立（不同能力域，不引入 account-credential 依赖）。
 /// 参数：Argon2id, m=19456, t=2, p=1（与 Argon2Hasher 默认一致）。
 fn hash_secret(secret: &str) -> GarrisonResult<String> {
-    let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::new(
         Algorithm::Argon2id,
         Version::V0x13,
         argon2::Params::default(),
     );
     let hash = argon2
-        .hash_password(secret.as_bytes(), &salt)
+        .hash_password(secret.as_bytes())
         .map_err(|e| GarrisonError::Internal(format!("oauth2-server-client-hash::{}", e)))?;
     Ok(hash.to_string())
 }

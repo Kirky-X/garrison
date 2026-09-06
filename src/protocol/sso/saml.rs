@@ -504,11 +504,11 @@ impl SamlParseContext {
             "Response" => {
                 for attr in event.attributes().flatten() {
                     match attr.key.as_ref() {
-                        b"Destination" => {
-                            self.destination = attr_value_to_string(&attr.value);
+                        "Destination" => {
+                            self.destination = attr.value.to_string();
                         },
-                        b"InResponseTo" => {
-                            self.in_response_to = attr_value_to_string(&attr.value);
+                        "InResponseTo" => {
+                            self.in_response_to = attr.value.to_string();
                         },
                         _ => {},
                     }
@@ -525,8 +525,8 @@ impl SamlParseContext {
                 self.assertion_id.clear();
                 self.assertion_attributes.clear();
                 for attr in event.attributes().flatten() {
-                    if attr.key.as_ref() == b"ID" {
-                        self.assertion_id = attr_value_to_string(&attr.value);
+                    if attr.key.as_ref() == "ID" {
+                        self.assertion_id = attr.value.to_string();
                     }
                 }
             },
@@ -544,22 +544,22 @@ impl SamlParseContext {
                 self.current_attr_name.clear();
                 self.current_text.clear();
                 for attr in event.attributes().flatten() {
-                    if attr.key.as_ref() == b"Name" {
-                        self.current_attr_name = attr_value_to_string(&attr.value);
+                    if attr.key.as_ref() == "Name" {
+                        self.current_attr_name = attr.value.to_string();
                     }
                 }
             },
             "SubjectConfirmationData" => {
                 for attr in event.attributes().flatten() {
-                    if attr.key.as_ref() == b"NotOnOrAfter" {
-                        self.assertion_not_on_or_after = attr_value_to_string(&attr.value);
+                    if attr.key.as_ref() == "NotOnOrAfter" {
+                        self.assertion_not_on_or_after = attr.value.to_string();
                     }
                 }
             },
             "Conditions" => {
                 for attr in event.attributes().flatten() {
-                    if attr.key.as_ref() == b"NotBefore" {
-                        self.assertion_not_before = attr_value_to_string(&attr.value);
+                    if attr.key.as_ref() == "NotBefore" {
+                        self.assertion_not_before = attr.value.to_string();
                     }
                 }
             },
@@ -576,22 +576,22 @@ impl SamlParseContext {
         match local_name.as_str() {
             "StatusCode" => {
                 for attr in event.attributes().flatten() {
-                    if attr.key.as_ref() == b"Value" {
-                        self.status_code = attr_value_to_string(&attr.value);
+                    if attr.key.as_ref() == "Value" {
+                        self.status_code = attr.value.to_string();
                     }
                 }
             },
             "Conditions" => {
                 for attr in event.attributes().flatten() {
-                    if attr.key.as_ref() == b"NotBefore" {
-                        self.assertion_not_before = attr_value_to_string(&attr.value);
+                    if attr.key.as_ref() == "NotBefore" {
+                        self.assertion_not_before = attr.value.to_string();
                     }
                 }
             },
             "SubjectConfirmationData" => {
                 for attr in event.attributes().flatten() {
-                    if attr.key.as_ref() == b"NotOnOrAfter" {
-                        self.assertion_not_on_or_after = attr_value_to_string(&attr.value);
+                    if attr.key.as_ref() == "NotOnOrAfter" {
+                        self.assertion_not_on_or_after = attr.value.to_string();
                     }
                 }
             },
@@ -778,7 +778,7 @@ fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
                 ctx.handle_end_element(&e, pos_after, xml);
             },
             Ok(Event::Text(e)) => {
-                let text = String::from_utf8_lossy(e.as_ref());
+                let text = e.as_ref().to_string();
                 ctx.handle_text(&text);
             },
             _ => {},
@@ -904,11 +904,10 @@ pub(crate) async fn enforce_in_response_to(
 /// 提取 XML 元素的 local name（去除命名空间前缀）。
 ///
 /// 例如 `samlp:Response` → `Response`，`saml:Issuer` → `Issuer`。
-fn extract_local_name(qualified: &[u8]) -> String {
-    let full = String::from_utf8_lossy(qualified);
-    match full.rsplit_once(':') {
+fn extract_local_name(qualified: &str) -> String {
+    match qualified.rsplit_once(':') {
         Some((_, local)) => local.to_string(),
-        None => full.to_string(),
+        None => qualified.to_string(),
     }
 }
 
@@ -918,14 +917,13 @@ fn extract_local_name(qualified: &[u8]) -> String {
 /// 不允许的前缀（如 `evil:Assertion`）记录告警，防止命名空间混淆攻击。
 ///
 /// 返回 true 表示前缀合法，false 表示不合法（调用方可选择跳过该元素）。
-fn check_saml_namespace(qualified: &[u8]) -> bool {
-    let full = String::from_utf8_lossy(qualified);
-    match full.rsplit_once(':') {
+fn check_saml_namespace(qualified: &str) -> bool {
+    match qualified.rsplit_once(':') {
         Some((prefix, _)) => {
             let valid = matches!(prefix, "saml" | "samlp" | "ds");
             if !valid {
                 tracing::warn!(
-                    qualified = %full,
+                    qualified = %qualified,
                     "SAML XML element uses non-standard namespace prefix, possible namespace confusion attack"
                 );
             }
@@ -933,11 +931,6 @@ fn check_saml_namespace(qualified: &[u8]) -> bool {
         },
         None => true,
     }
-}
-
-/// 将 quick-xml 的 attribute value 转为 String。
-fn attr_value_to_string(value: &[u8]) -> String {
-    String::from_utf8_lossy(value).to_string()
 }
 
 // ============================================================================
@@ -2038,9 +2031,9 @@ mod tests {
     /// extract_local_name 正确去除命名空间前缀。
     #[test]
     fn extract_local_name_strips_namespace() {
-        assert_eq!(extract_local_name(b"samlp:Response"), "Response");
-        assert_eq!(extract_local_name(b"saml:Issuer"), "Issuer");
-        assert_eq!(extract_local_name(b"Assertion"), "Assertion");
+        assert_eq!(extract_local_name("samlp:Response"), "Response");
+        assert_eq!(extract_local_name("saml:Issuer"), "Issuer");
+        assert_eq!(extract_local_name("Assertion"), "Assertion");
     }
 
     // ========================================================================
@@ -2050,21 +2043,21 @@ mod tests {
     /// check_saml_namespace 接受合法前缀（saml/samlp/ds/无前缀）。
     #[test]
     fn check_saml_namespace_accepts_valid_prefixes() {
-        assert!(check_saml_namespace(b"samlp:Response"));
-        assert!(check_saml_namespace(b"saml:Assertion"));
-        assert!(check_saml_namespace(b"saml:Issuer"));
-        assert!(check_saml_namespace(b"ds:Signature"));
-        assert!(check_saml_namespace(b"Response")); // 无前缀
-        assert!(check_saml_namespace(b"Assertion")); // 无前缀
+        assert!(check_saml_namespace("samlp:Response"));
+        assert!(check_saml_namespace("saml:Assertion"));
+        assert!(check_saml_namespace("saml:Issuer"));
+        assert!(check_saml_namespace("ds:Signature"));
+        assert!(check_saml_namespace("Response")); // 无前缀
+        assert!(check_saml_namespace("Assertion")); // 无前缀
     }
 
     /// check_saml_namespace 拒绝非标准前缀（evil/foo/xs 等）。
     #[test]
     fn check_saml_namespace_rejects_invalid_prefixes() {
-        assert!(!check_saml_namespace(b"evil:Assertion"));
-        assert!(!check_saml_namespace(b"foo:Response"));
-        assert!(!check_saml_namespace(b"xs:Issuer"));
-        assert!(!check_saml_namespace(b"attack:Attribute"));
+        assert!(!check_saml_namespace("evil:Assertion"));
+        assert!(!check_saml_namespace("foo:Response"));
+        assert!(!check_saml_namespace("xs:Issuer"));
+        assert!(!check_saml_namespace("attack:Attribute"));
     }
 
     /// H-2: 非标准命名空间的 Assertion 被跳过（不解析为 Assertion）。

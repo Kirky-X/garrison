@@ -43,10 +43,10 @@ warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
 oxcache = { version = "0.5.0-rc.1", default-features = false }
 dbnexus = { version = "0.6.0-rc.1", default-features = false }
-md5 = { version = "0.7" }
+md5 = { version = "0.8" }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "env-filter"] }
 rand = { version = "0.8" }
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "rustls-native-certs", "form"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "form"] }
 wiremock = "0.6"
 http-body-util = "0.1"
 tempfile = { version = "3.27" }
@@ -75,7 +75,7 @@ parking_lot = "0.12"
 arc-swap = { version = "1.9", default-features = false }
 dashmap = { version = "6.0", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.0", features = ["v4", "v7", "serde"] }
+uuid = { version = "1.26", features = ["v4", "v7", "serde"] }
 http = "1.0"
 unicode-normalization = "0.1"
 
@@ -85,15 +85,15 @@ axum-server = { version = "0.8", optional = true, default-features = false }
 actix-web = { optional = true, default-features = false, workspace = true }
 warp = { optional = true, default-features = false, workspace = true }
 jsonwebtoken = { version = "11", optional = true, default-features = false, features = ["rust_crypto"] }
-reqwest = { optional = true, default-features = false, features = ["json", "rustls", "rustls-native-certs", "form"], workspace = true }
+reqwest = { optional = true, default-features = false, features = ["json", "rustls", "form"], workspace = true }
 totp-rs = { version = "6", optional = true }
 sha2 = { version = "0.11", optional = true }
 hmac = { version = "0.13", optional = true }
 subtle = { version = "2.6", optional = true, default-features = false, features = ["std"] }
 base64 = { version = "0.23", optional = true }
-md5 = { version = "0.7", optional = true }
+md5 = { version = "0.8", optional = true }
 base32 = { version = "0.5", optional = true }
-argon2 = { version = "0.5", optional = true }
+argon2 = { version = "0.6", optional = true }
 bcrypt = { version = "0.19", optional = true }
 rand = { optional = true, workspace = true }
 zeroize = { version = "1", optional = true, default-features = false, features = ["derive", "serde"] }
@@ -122,12 +122,12 @@ rsa = { version = "0.9", optional = true, default-features = false, features = [
 unicode-security = { version = "0.1", optional = true, default-features = false }
 maxminddb = { version = "0.30", optional = true, default-features = false }
 # IP 白名单 CIDR 解析（account-authflow 的 IpWhitelisted 条件真实求值）
-ipnetwork = { version = "0.20", optional = true, default-features = false }
+ipnetwork = { version = "0.21", optional = true, default-features = false }
 # HIBP k-anonymity 前缀哈希（policy-hibp 使用；sha2 0.11 不再包含 Sha1）
 sha1 = { version = "0.11.0-rc.5", optional = true, default-features = false }
-quick-xml = { version = "0.41", optional = true, default-features = false, features = ["serialize"] }
+quick-xml = { version = "0.42", optional = true, default-features = false, features = ["serialize"] }
 # 版本 ~1.2 与 oxcache 0.3 间接依赖的 redis 保持一致
-redis = { version = "1.2", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
+redis = { version = "1.7", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true }
@@ -159,7 +159,7 @@ lettre = { version = "0.11", optional = true, default-features = false, features
 
 [dev-dependencies]
 once_cell = "1.0"
-toml = "1.0"
+toml = "1.1"
 tokio-test = "0.4"
 mockall = "0.15"
 # tempfile 同时存在于 [dependencies]（optional，由 embedded-migrations feature 启用，供生产代码使用）
@@ -175,11 +175,11 @@ warp = { default-features = false, features = ["test"], workspace = true }
 rsa = "0.9"
 rand = { workspace = true }
 testcontainers = "0.28"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.8", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
 # 集成测试需要直接发送 HTTP 请求到服务器，因此无条件引入 reqwest
-reqwest = { default-features = false, features = ["json", "rustls", "rustls-native-certs"], workspace = true }
+reqwest = { default-features = false, features = ["json", "rustls"], workspace = true }
 
 [features]
 default = ["backend-embedded"]
