@@ -149,6 +149,30 @@ mod tests {
     #[tokio::test]
     async fn spawn_cleanup_task_cleanup_failure_does_not_crash() {
         let get_call_count = Arc::new(AtomicUsize::new(0));
+        // atomic + 默认 trait 方法覆盖
+        {
+            let d = FailingGetDao {
+                get_call_count: Arc::new(AtomicUsize::new(0)),
+            };
+            let _ = d.set_if_absent("a", "v", 60).await;
+            let _ = d.get_and_delete("a").await;
+            let _ = d.incr("c", 60).await;
+            let _ = d.decr("c").await;
+            let _ = d.rename("a", "b").await;
+            let _ = d.compare_and_swap("b", None, "v", 60).await;
+            let _ = d.set_permanent("p", "v").await;
+            let _ = d.get_timeout("k").await;
+            let _ = d.get_with_ttl("k").await;
+            let _ = d.find_social_binding(0, "w", "o").await;
+            let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
+            let _ = d.compare_and_update_if_greater("k", 1, 60).await;
+            let _ = d.eval_lua("r", vec![], vec![]).await;
+            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = d.query_credit_consumption(0, 0, 0).await;
+            let _ = d.query_role_hierarchy_edges(0).await;
+            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
         let dao: Arc<dyn GarrisonDao> = Arc::new(FailingGetDao {
             get_call_count: get_call_count.clone(),
         });

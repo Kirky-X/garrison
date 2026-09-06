@@ -256,4 +256,74 @@ mod tests {
             "锁中毒时应通过 into_inner 恢复内部值而非 panic"
         );
     }
+
+    /// with_current_ip + current_ip 往返测试。
+    #[tokio::test]
+    async fn with_current_ip_and_current_ip_roundtrip() {
+        let result = with_current_ip("192.168.1.1".to_string(), async { current_ip() }).await;
+        assert_eq!(result, Some("192.168.1.1".to_string()));
+    }
+
+    /// 未在 with_current_ip 作用域内调用 current_ip 返回 None。
+    #[test]
+    fn current_ip_outside_scope_returns_none() {
+        assert_eq!(current_ip(), None);
+    }
+
+    /// set_renewed_token 在作用域外调用为 no-op（不 panic）。
+    #[test]
+    fn set_renewed_token_outside_scope_is_noop() {
+        let result = std::panic::catch_unwind(|| set_renewed_token("tok".to_string()));
+        assert!(result.is_ok(), "作用域外 set_renewed_token 不应 panic");
+    }
+
+    /// clear_renewed_token 在作用域外调用为 no-op（不 panic）。
+    #[test]
+    fn clear_renewed_token_outside_scope_is_noop() {
+        let result = std::panic::catch_unwind(clear_renewed_token);
+        assert!(result.is_ok(), "作用域外 clear_renewed_token 不应 panic");
+    }
+
+    /// GarrisonContext::capture 在 with_current_token 作用域内捕获 token。
+    #[tokio::test]
+    async fn garrison_context_capture_with_token() {
+        with_current_token("test-token-xyz".to_string(), async {
+            let ctx = GarrisonContext::capture();
+            assert_eq!(ctx.token.as_deref(), Some("test-token-xyz"));
+        })
+        .await;
+    }
+
+    /// GarrisonContext::capture 在无 token 作用域时 token=None。
+    #[test]
+    fn garrison_context_capture_without_token() {
+        let ctx = GarrisonContext::capture();
+        assert!(ctx.token.is_none(), "无 token 作用域时 token 应为 None");
+    }
+
+    /// GarrisonContext::within 恢复捕获的 token。
+    #[tokio::test]
+    async fn garrison_context_within_restores_token() {
+        let ctx = with_current_token("captured-tok".to_string(), async {
+            GarrisonContext::capture()
+        })
+        .await;
+
+        // within 应恢复 token
+        let recovered = ctx
+            .within(async {
+                // 在 within 作用域内应能读到 token
+                current_token().ok()
+            })
+            .await;
+        assert_eq!(recovered.as_deref(), Some("captured-tok"));
+    }
+
+    /// GarrisonContext::within 无 token 时直接执行 f。
+    #[tokio::test]
+    async fn garrison_context_within_no_token_runs_f() {
+        let ctx = GarrisonContext { token: None };
+        let result = ctx.within(async { 42 }).await;
+        assert_eq!(result, 42, "无 token 时应直接执行 f");
+    }
 }

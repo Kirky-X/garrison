@@ -93,3 +93,76 @@ pub trait GarrisonInterface: Send + Sync {
         self.get_role_list(login_id).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+
+    /// 最小化 Interface 实现：只实现必需方法，不 override `with_type` 默认方法。
+    struct MinimalInterface;
+
+    #[async_trait]
+    impl GarrisonInterface for MinimalInterface {
+        async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
+            Ok(vec![format!("perm:{}:read", login_id)])
+        }
+        async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
+            Ok(vec![format!("role:{}:viewer", login_id)])
+        }
+    }
+
+    /// `get_permission_list_with_type` 默认实现委托 `get_permission_list`（忽略 login_type）。
+    #[tokio::test]
+    async fn default_get_permission_list_with_type_delegates() {
+        let iface = MinimalInterface;
+        let perms = iface
+            .get_permission_list_with_type("user1", "admin")
+            .await
+            .unwrap();
+        assert_eq!(
+            perms,
+            vec!["perm:user1:read"],
+            "默认实现应委托 get_permission_list"
+        );
+    }
+
+    /// `get_role_list_with_type` 默认实现委托 `get_role_list`（忽略 login_type）。
+    #[tokio::test]
+    async fn default_get_role_list_with_type_delegates() {
+        let iface = MinimalInterface;
+        let roles = iface
+            .get_role_list_with_type("user1", "merchant")
+            .await
+            .unwrap();
+        assert_eq!(
+            roles,
+            vec!["role:user1:viewer"],
+            "默认实现应委托 get_role_list"
+        );
+    }
+
+    /// `get_permission_list_with_type` 对不同 login_type 返回相同结果（默认忽略 login_type）。
+    #[tokio::test]
+    async fn default_get_permission_list_with_type_ignores_login_type() {
+        let iface = MinimalInterface;
+        let p1 = iface
+            .get_permission_list_with_type("u1", "admin")
+            .await
+            .unwrap();
+        let p2 = iface
+            .get_permission_list_with_type("u1", "user")
+            .await
+            .unwrap();
+        assert_eq!(p1, p2, "默认实现应忽略 login_type 参数");
+    }
+
+    /// `get_role_list_with_type` 对不同 login_type 返回相同结果（默认忽略 login_type）。
+    #[tokio::test]
+    async fn default_get_role_list_with_type_ignores_login_type() {
+        let iface = MinimalInterface;
+        let r1 = iface.get_role_list_with_type("u1", "admin").await.unwrap();
+        let r2 = iface.get_role_list_with_type("u1", "user").await.unwrap();
+        assert_eq!(r1, r2, "默认实现应忽略 login_type 参数");
+    }
+}

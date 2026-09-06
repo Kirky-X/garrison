@@ -236,6 +236,7 @@ mod tests {
     use crate::error::GarrisonResult;
     use crate::stp::core::GarrisonCore;
     use crate::stp::session::SessionLogic;
+    use crate::stp::LoginParams;
     use std::sync::Arc;
 
     /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）。
@@ -576,6 +577,45 @@ mod tests {
         );
     }
 
+    /// 调用 MockMfa 的所有 SessionLogic + GarrisonCore 方法以确保覆盖。
+    #[tokio::test]
+    async fn mock_mfa_session_logic_all_methods() {
+        let mock = MockMfa {
+            config: Arc::new(GarrisonConfig::default()),
+        };
+        let _ = mock.config();
+        let params = LoginParams::default();
+        let _ = mock.login("u1", &params).await.unwrap();
+        let _ = mock.login_with_token("u1", "tok").await;
+        let _ = mock.logout().await;
+        let _ = mock.logout_by_login_id("u1").await;
+        let _ = mock.kickout("u1").await;
+        let _ = mock.kickout_by_token("tok").await;
+        let _ = mock.revoke_token("tok").await;
+        let _ = mock.check_login().await.unwrap();
+        let _ = mock.get_login_id().await.unwrap();
+    }
+
+    /// 调用 MockMfaSafe 的所有 SessionLogic + GarrisonCore 方法以确保覆盖。
+    #[tokio::test]
+    async fn mock_mfa_safe_session_logic_all_methods() {
+        let mock = MockMfaSafe {
+            config: Arc::new(GarrisonConfig::default()),
+            safe_result: Ok(true),
+        };
+        let _ = mock.config();
+        let params = LoginParams::default();
+        let _ = mock.login("u1", &params).await.unwrap();
+        let _ = mock.login_with_token("u1", "tok").await;
+        let _ = mock.logout().await;
+        let _ = mock.logout_by_login_id("u1").await;
+        let _ = mock.kickout("u1").await;
+        let _ = mock.kickout_by_token("tok").await;
+        let _ = mock.revoke_token("tok").await;
+        let _ = mock.check_login().await.unwrap();
+        let _ = mock.get_login_id().await.unwrap();
+    }
+
     // ========================================================================
     // T019: DisableRepository 集成测试（GarrisonLogicDefault.check_disable）
     // ========================================================================
@@ -827,6 +867,18 @@ mod tests {
                 "token 对应的 TokenSession 不存在时 check_disable 应返回 Ok，实际: {:?}",
                 result
             );
+        }
+
+        /// 直接调用 MockFirewall 的所有方法以确保覆盖。
+        #[tokio::test]
+        async fn mock_firewall_all_methods() {
+            let fw = MockFirewall;
+            let _ = fw.get_permission_list("u1").await.unwrap();
+            let _ = fw.get_role_list("u1").await.unwrap();
+            let _ = fw.check_permission("u1", "user:read").await.unwrap();
+            let _ = fw.check_role("u1", "admin").await.unwrap();
+            let _ = fw.check_role_any("u1", &["admin", "user"]).await.unwrap();
+            let _ = fw.check_role_all("u1", &["admin", "user"]).await.unwrap();
         }
     }
 

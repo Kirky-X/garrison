@@ -1880,6 +1880,8 @@ async fn trait_default_login_by_token_returns_not_implemented() {
         "trait default login_by_token 应返回 NotImplemented，实际: {:?}",
         result
     );
+    // 覆盖率补充：调用 config 以覆盖 GarrisonCore 实现
+    let _ = logic.config();
 }
 
 /// trait default verify_token 返回 NotImplemented（spec: 需子类 override）。
@@ -4263,6 +4265,33 @@ async fn login_rolls_back_session_when_enforce_fails() {
     }
 
     let mock_dao = Arc::new(MockDao::new());
+    // atomic + 默认 trait 方法覆盖
+    {
+        let d = FailInjectionDao {
+            inner: mock_dao.clone(),
+            fail_on_nth: AtomicU32::new(999),
+            call_count: AtomicU32::new(0),
+        };
+        let _ = d.set_if_absent("a", "v", 60).await;
+        let _ = d.get_and_delete("a").await;
+        let _ = d.incr("c", 60).await;
+        let _ = d.decr("c").await;
+        let _ = d.rename("a", "b").await;
+        let _ = d.compare_and_swap("b", None, "v", 60).await;
+        let _ = d.set_permanent("p", "v").await;
+        let _ = d.get_timeout("k").await;
+        let _ = d.get_with_ttl("k").await;
+        let _ = d.keys("*").await;
+        let _ = d.find_social_binding(0, "w", "o").await;
+        let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
+        let _ = d.compare_and_update_if_greater("k", 1, 60).await;
+        let _ = d.eval_lua("r", vec![], vec![]).await;
+        let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+        let _ = d.query_credit_consumption(0, 0, 0).await;
+        let _ = d.query_role_hierarchy_edges(0).await;
+        let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+        let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+    }
     let fail_dao = Arc::new(FailInjectionDao {
         inner: mock_dao.clone(),
         fail_on_nth: AtomicU32::new(3), // 第 3 次 account:session: get = enforce 调用

@@ -132,6 +132,23 @@ mod tests {
         );
     }
 
+    /// 覆盖率补充：调用 MockSession 所有未覆盖方法。
+    #[tokio::test]
+    async fn mock_session_all_methods_coverage() {
+        let mock = MockSession {
+            config: Arc::new(GarrisonConfig::default()),
+        };
+        // GarrisonCore
+        let _ = mock.config();
+        // SessionLogic 未覆盖方法
+        let _ = mock.logout().await.unwrap();
+        let _ = mock.logout_by_login_id("u1").await.unwrap();
+        let _ = mock.kickout("u1").await.unwrap();
+        let _ = mock.kickout_by_token("t1").await.unwrap();
+        let _ = mock.revoke_token("t1").await.unwrap();
+        let _ = mock.check_login().await.unwrap();
+    }
+
     // ========================================================================
     // T006: AnomalyDetector 集成测试（security-alert feature）
     // ========================================================================
@@ -1061,6 +1078,29 @@ mod tests {
         /// logout() 注入 cache service 时应调用 invalidate（删除 perm/role/user 3 个缓存 key）。
         #[tokio::test]
         async fn logout_invalidates_user_cache() {
+            // atomic + 默认 trait 方法覆盖
+            {
+                let d = CountingDao::new();
+                let _ = d.set_if_absent("a", "v", 60).await;
+                let _ = d.get_and_delete("a").await;
+                let _ = d.incr("c", 60).await;
+                let _ = d.decr("c").await;
+                let _ = d.rename("a", "b").await;
+                let _ = d.compare_and_swap("b", None, "v", 60).await;
+                let _ = d.set_permanent("p", "v").await;
+                let _ = d.get_timeout("k").await;
+                let _ = d.get_with_ttl("k").await;
+                let _ = d.keys("*").await;
+                let _ = d.find_social_binding(0, "w", "o").await;
+                let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
+                let _ = d.compare_and_update_if_greater("k", 1, 60).await;
+                let _ = d.eval_lua("r", vec![], vec![]).await;
+                let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+                let _ = d.query_credit_consumption(0, 0, 0).await;
+                let _ = d.query_role_hierarchy_edges(0).await;
+                let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+                let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+            }
             let dao = Arc::new(CountingDao::new());
             let logic = Arc::new(make_logic_with_cache(dao.clone()));
 

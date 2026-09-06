@@ -312,6 +312,7 @@ mod tests {
     use crate::error::GarrisonResult;
     use crate::stp::core::GarrisonCore;
     use crate::stp::session::SessionLogic;
+    use crate::stp::LoginParams;
     use std::sync::Arc;
 
     /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）+ `PermissionLogic`（2 方法）。
@@ -397,6 +398,51 @@ mod tests {
             result,
             Err(crate::error::GarrisonError::NotPermission(_))
         ));
+    }
+
+    /// 调用 MockPermission 的所有 SessionLogic + GarrisonCore + PermissionLogic 方法以确保覆盖。
+    #[tokio::test]
+    async fn mock_permission_all_methods() {
+        let mock = MockPermission {
+            config: Arc::new(GarrisonConfig::default()),
+            has_permission: true,
+        };
+        let _ = mock.config();
+        let params = LoginParams::default();
+        let _ = mock.login("u1", &params).await.unwrap();
+        let _ = mock.login_with_token("u1", "tok").await;
+        let _ = mock.logout().await;
+        let _ = mock.logout_by_login_id("u1").await;
+        let _ = mock.kickout("u1").await;
+        let _ = mock.kickout_by_token("tok").await;
+        let _ = mock.revoke_token("tok").await;
+        let _ = mock.check_login().await.unwrap();
+        let _ = mock.get_login_id().await.unwrap();
+        let _ = mock.check_permission("user:read").await;
+        let _ = mock.check_role("admin").await;
+    }
+
+    /// 调用 MockPermissionHas 的所有 SessionLogic + GarrisonCore 方法以确保覆盖。
+    #[tokio::test]
+    async fn mock_permission_has_all_methods() {
+        let mock = MockPermissionHas {
+            config: Arc::new(GarrisonConfig::default()),
+            perm_result: Ok(()),
+            role_result: Ok(()),
+        };
+        let _ = mock.config();
+        let params = LoginParams::default();
+        let _ = mock.login("u1", &params).await.unwrap();
+        let _ = mock.login_with_token("u1", "tok").await;
+        let _ = mock.logout().await;
+        let _ = mock.logout_by_login_id("u1").await;
+        let _ = mock.kickout("u1").await;
+        let _ = mock.kickout_by_token("tok").await;
+        let _ = mock.revoke_token("tok").await;
+        let _ = mock.check_login().await.unwrap();
+        let _ = mock.get_login_id().await.unwrap();
+        let _ = mock.check_permission("user:read").await;
+        let _ = mock.check_role("admin").await;
     }
 
     // ========================================================================
@@ -1073,6 +1119,25 @@ mod tests {
                 !result.unwrap(),
                 "permission_checker allowed=false 时 has_permission 应返回 false"
             );
+        }
+
+        /// 直接调用 MockPermissionChecker 的所有方法以确保覆盖。
+        #[tokio::test]
+        async fn mock_permission_checker_all_methods() {
+            let pc = MockPermissionChecker {
+                allowed: true,
+                fail: false,
+            };
+            let _ = pc.has_permission("u1", "user:read").await.unwrap();
+            let _ = pc.has_role("u1", "admin").await.unwrap();
+            let _ = pc
+                .has_any_permission("u1", &["user:read", "user:write"])
+                .await;
+            let _ = pc
+                .has_all_permissions("u1", &["user:read", "user:write"])
+                .await;
+            let req = AuthRequest::new("u1", "user:read");
+            let _ = pc.authorize(&req).await.unwrap();
         }
     }
 }

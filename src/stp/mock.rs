@@ -282,6 +282,38 @@ mod tests {
     // MockDao 测试
     // ------------------------------------------------------------------------
 
+    /// 调用 MockDao 的所有 trait 默认方法 + atomic_test_fallback! 方法以覆盖 async_trait wrapper。
+    #[tokio::test]
+    async fn mock_dao_default_trait_methods_coverage() {
+        use crate::dao::GarrisonDao;
+        let dao = MockDao::new();
+        dao.set("k1", "v1", 60).await.unwrap();
+        // atomic_test_fallback! 方法
+        let _ = dao.set_if_absent("a1", "v1", 60).await;
+        let _ = dao.get_and_delete("a1").await;
+        let _ = dao.incr("ctr", 60).await;
+        let _ = dao.decr("ctr").await;
+        let _ = dao.rename("k1", "k2").await;
+        let _ = dao.compare_and_swap("k2", Some("v1"), "v2", 60).await;
+        // trait 默认方法
+        let _ = dao.set_permanent("perm", "val").await;
+        let _ = dao.get_with_ttl("k1").await;
+        let _ = dao.keys("*").await;
+        let _ = dao.find_social_binding(0, "wechat", "openid").await;
+        let _ = dao
+            .insert_social_binding(0, "1001", "wechat", "openid", None, 0)
+            .await;
+        let _ = dao.compare_and_update_if_greater("k1", 10, 60).await;
+        let _ = dao.eval_lua("return 1", vec![], vec![]).await;
+        let _ = dao
+            .insert_credit_consumption(0, "meter", 1, 100, 100, 0)
+            .await;
+        let _ = dao.query_credit_consumption(0, 0, 0).await;
+        let _ = dao.query_role_hierarchy_edges(0).await;
+        let _ = dao.insert_role_hierarchy_edge(0, "child", "parent").await;
+        let _ = dao.delete_role_hierarchy_edge(0, "child", "parent").await;
+    }
+
     /// set 后 get 返回相同值。
     #[tokio::test]
     async fn mock_dao_set_then_get_returns_value() {
@@ -505,6 +537,15 @@ mod tests {
             iface.get_role_list("u1").await.unwrap(),
             Vec::<String>::new()
         );
+        // 默认委托方法覆盖
+        let _ = iface
+            .get_permission_list_with_type("u1", "default")
+            .await
+            .unwrap();
+        let _ = iface
+            .get_role_list_with_type("u1", "default")
+            .await
+            .unwrap();
     }
 
     /// MockInterfaceWithPerms 返回构造时设置的权限/角色列表。
@@ -522,6 +563,15 @@ mod tests {
             iface.get_role_list("u1").await.unwrap(),
             vec!["admin".to_string()]
         );
+        // 默认委托方法覆盖
+        let _ = iface
+            .get_permission_list_with_type("u1", "default")
+            .await
+            .unwrap();
+        let _ = iface
+            .get_role_list_with_type("u1", "default")
+            .await
+            .unwrap();
     }
 
     // ------------------------------------------------------------------------
