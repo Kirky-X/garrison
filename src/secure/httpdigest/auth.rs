@@ -501,7 +501,9 @@ impl HttpDigestAuth {
                 "qop" => qop = Some(value),
                 "nc" => nc = Some(value),
                 "cnonce" => cnonce = Some(value),
-                _ => {},
+                _ => {
+                    tracing::debug!(key = %key, "httpdigest-unknown-param-ignored");
+                },
             }
         }
 
