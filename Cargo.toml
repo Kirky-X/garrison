@@ -112,6 +112,8 @@ opentelemetry-otlp = { version = "0.32", optional = true, default-features = fal
 tonic = { optional = true, default-features = false, features = ["transport"], workspace = true }
 tonic-health = { version = "0.14", optional = true, default-features = false }
 # grpc feature：GarrisonGrpcAuthLayer 的 tower Layer/Service（核心 trait，无 util）
+# [v0.9.0] 桥接 sdforge/grpc：启用后 #[forge] 宏生成的 gRPC 路由注册（cfg(feature = "grpc")）
+# 在 garrison 上下文编译进来，与 GarrisonGrpcAuthLayer 共用同一 tonic 栈（prost/tonic-prost 由 sdforge 引入）
 tower = { version = "0.5", optional = true, default-features = false }
 fluent = { version = "0.17", default-features = false }
 unic-langid = { version = "0.9", default-features = false }
@@ -215,8 +217,9 @@ config-audit = ["confers/audit"]
 config-consul = ["confers/consul"]
 config-etcd = ["confers/etcd"]
 config-distributed = ["confers/distributed"]
+config-schema = ["confers/schema"]
 # 一键启用全部配置增强
-config-full = ["config-encryption", "config-validation", "config-hot-reload", "config-interpolation", "config-dynamic", "config-toggle", "config-yaml", "config-audit", "config-consul", "config-etcd", "config-distributed"]
+config-full = ["config-encryption", "config-validation", "config-hot-reload", "config-interpolation", "config-dynamic", "config-toggle", "config-yaml", "config-audit", "config-consul", "config-etcd", "config-distributed", "config-schema"]
 
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 # `all-defaults` 已于 v0.8.2 移除（ARCH-01/DEP-03 修复）：
@@ -456,7 +459,7 @@ tracing-log = ["tracing/log", "tracing-subscriber"]
 metrics-prometheus = ["prometheus", "tracing-subscriber"]
 # [INTERNAL] OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
 otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
-grpc = ["tonic", "dep:tonic-health", "dep:tower"]
+grpc = ["tonic", "dep:tonic-health", "dep:tower", "sdforge/grpc"]
 # 0.7.x：基础层已无条件编译，此 feature 仅门控 i18n 相关测试代码，不改变运行时行为。
 i18n = []
 # ICU4X 增强层：复数规则 + 日期/数字本地化（依赖 i18n 基础层）
@@ -582,7 +585,7 @@ harness = false
 # 将 unexpected_cfgs 保持为 warn 级别（而非 allow）以便发现真正的意外 cfg。
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "cache-batch", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-quota", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
+    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "cache-batch", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-quota", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
 ] }
 
 # === 本地 base 项目 patch（与 sinnan workspace 对齐）===
