@@ -41,8 +41,8 @@ axum = { version = "0.8", default-features = false, features = ["json"] }
 actix-web = { version = "4.0", default-features = false }
 warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
-oxcache = { version = "0.5.0-rc.1", default-features = false }
-dbnexus = { version = "0.6.0-rc.1", default-features = false }
+oxcache = { version = "0.5.0-rc.2", default-features = false }
+dbnexus = { version = "0.6.0-rc.2", default-features = false }
 md5 = { version = "0.8" }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "env-filter"] }
 rand = { version = "0.8" }
@@ -65,7 +65,7 @@ path = "src/lib.rs"
 # === Required dependencies ===
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-confers = { version = "0.6.0-rc.1" }
+confers = { version = "0.6.0-rc.2" }
 tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time"] }
 inventory = "0.3"
 thiserror = "2.0"
@@ -98,7 +98,7 @@ bcrypt = { version = "0.19", optional = true }
 rand = { optional = true, workspace = true }
 zeroize = { version = "1", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1", optional = true, default-features = false }
-oxcache = { version = "0.5.0-rc.1", default-features = false }
+oxcache = { version = "0.5.0-rc.2", default-features = false }
 # dbnexus 0.4+ 在 src/lib.rs#L51 设置 compile_error!，强制至少启用一个数据库驱动 feature
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
@@ -131,15 +131,15 @@ redis = { version = "1.7", optional = true, default-features = false, features =
 futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true }
-inklog = { version = "0.3.0-rc.1", default-features = false }
-limiteron = { version = "0.3.0-rc.1", default-features = false, features = ["distributed"] }
+inklog = { version = "0.3.0-rc.2", default-features = false }
+limiteron = { version = "0.3.0-rc.2", default-features = false, features = ["distributed"] }
 # sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
 # 始终可用（`server_impl.rs` 无条件调用 `sdforge::http::build()`）。
 # 但 `#[forge]` 宏生成的 `inventory::submit!` 被 `#[cfg(feature = "http")]` 保护，
 # 此 cfg 在 **garrison 上下文** 求值——garrison 必须暴露同名 `http` feature 才能让
 # 路由注册代码编译进来。详见 `[features]` 段的 `http` 桥接 feature。
-sdforge = { version = "0.5.0-rc.1", default-features = false, features = ["http"] }
-trait-kit = { version = "0.5.0-rc.1", default-features = false, features = ["async"] }
+sdforge = { version = "0.5.0-rc.2", default-features = false, features = ["http"] }
+trait-kit = { version = "0.5.0-rc.2", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.11", optional = true, default-features = false }
 icu_plurals = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_datetime = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
@@ -209,8 +209,14 @@ config-hot-reload = ["confers/watch"]
 config-interpolation = ["confers/interpolation"]
 config-dynamic = ["confers/dynamic"]
 config-toggle = ["confers/feature-toggle"]
+# [v0.9.0] 配置增强特性（透传 confers 高级能力）
+config-yaml = ["confers/yaml"]
+config-audit = ["confers/audit"]
+config-consul = ["confers/consul"]
+config-etcd = ["confers/etcd"]
+config-distributed = ["confers/distributed"]
 # 一键启用全部配置增强
-config-full = ["config-encryption", "config-validation", "config-hot-reload", "config-interpolation", "config-dynamic", "config-toggle"]
+config-full = ["config-encryption", "config-validation", "config-hot-reload", "config-interpolation", "config-dynamic", "config-toggle", "config-yaml", "config-audit", "config-consul", "config-etcd", "config-distributed"]
 
 # === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
 # `all-defaults` 已于 v0.8.2 移除（ARCH-01/DEP-03 修复）：
@@ -221,6 +227,7 @@ config-full = ["config-encryption", "config-validation", "config-hot-reload", "c
 cache-memory = ["oxcache/memory", "oxcache/serialization", "oxcache/metrics", "oxcache/bloom"]
 cache-redis = ["cache-memory", "oxcache/redis", "oxcache/lua", "dep:redis", "oxcache/compression"]
 cache-lock = ["cache-redis", "oxcache/lock"]
+cache-batch = ["cache-memory", "oxcache/batch"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
 # [INTERNAL] dbnexus 禁止 embedded 与 server-side 混用。
@@ -246,6 +253,11 @@ db-sqlite = ["db-base", "dbnexus/sqlite"]
 db-postgres = ["db-base", "dbnexus/postgres", "embedded-migrations"]
 db-mysql = ["db-base", "dbnexus/mysql"]
 db-retry = ["db-base", "dbnexus/retry"]
+# [v0.9.0] 数据库增强特性（透传 dbnexus 高级能力）
+# sharding 聚合：分片 + 分布式 ID + scatter-gather 并行查询
+db-sharding = ["db-base", "dbnexus/sharding", "dbnexus/distributed-id", "dbnexus/scatter-gather"]
+db-replica = ["db-base", "dbnexus/replica-routing"]
+db-saga = ["db-sharding", "dbnexus/saga"]
 
 # 嵌入式迁移文件：编译时用 include_dir! 嵌入 postgres 迁移 SQL，
 # 供 crates.io 消费者在运行时无需访问 garrison 源码目录即可执行迁移。
@@ -368,6 +380,14 @@ firewall-ddos = ["firewall"]
 firewall-waf = ["firewall", "web-axum"]
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 anomalous-detector-dual = ["firewall", "listener", "dao-key-index"]
+# [v0.9.0] 防护增强特性（透传 limiteron 高级能力）
+firewall-gcra = ["firewall", "limiteron/gcra"]
+firewall-tower = ["firewall", "limiteron/tower-middleware"]
+firewall-quota = ["firewall", "limiteron/quota-control"]
+firewall-admission = ["firewall", "limiteron/admission-control"]
+firewall-event = ["firewall", "limiteron/event-system"]
+firewall-monitoring = ["firewall", "limiteron/monitoring"]
+firewall-parallel = ["firewall", "limiteron/parallel-checker"]
 # [INTERNAL] dao-key-index：为 GarrisonDaoOxcache 维护 key 索引以提供 keys() 生产实现
 # （oxcache 0.3.3 无原生 iter/keys API）。由 protocol-apikey / anomalous-detector-dual 传递启用。
 dao-key-index = []
@@ -412,6 +432,7 @@ oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "de
 
 # === v0.7.0 inklog 结构化审计日志 ===
 audit-inklog = ["inklog/fast-masking", "inklog/compression"]
+audit-inklog-http = ["audit-inklog", "inklog/http"]
 
 # === v0.7.0 trait-kit typestate DI 构建 ===
 backend-kit = ["backend-embedded", "trait-kit/lifecycle", "trait-kit/health", "trait-kit/observer"]
@@ -482,6 +503,11 @@ full = [
     "config-full",
     "db-retry", "cache-lock",
     "api-docs",
+    # [v0.9.0] 自研库特性吸收
+    "config-yaml", "config-audit", "config-consul", "config-etcd", "config-distributed",
+    "db-sharding", "db-replica", "db-saga",
+    "firewall-gcra", "firewall-tower", "firewall-quota", "firewall-admission", "firewall-event", "firewall-monitoring", "firewall-parallel",
+    "cache-batch", "audit-inklog-http",
 ]
 
 # production 使用 db-postgres（dbnexus 0.3+ 已支持 postgres feature）
@@ -498,6 +524,11 @@ production = [
     "sms-rate-limit",
     "backend-embedded", "backend-kit", "auth-server", "auth-server-sdforge", "abac",
     "api-docs",
+    # [v0.9.0] 自研库特性吸收（生产环境）
+    "config-yaml", "config-distributed", "config-audit",
+    "db-sharding", "db-replica",
+    "firewall-gcra", "firewall-tower", "firewall-monitoring", "firewall-parallel",
+    "cache-batch",
 ]
 
 development = [
@@ -551,7 +582,7 @@ harness = false
 # 将 unexpected_cfgs 保持为 warn 级别（而非 allow）以便发现真正的意外 cfg。
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "cache-memory", "cache-redis", "cli", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-geoip", "firewall-maxminddb", "firewall-ratelimit", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
+    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "cache-batch", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-quota", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
 ] }
 
 # === 本地 base 项目 patch（与 sinnan workspace 对齐）===
