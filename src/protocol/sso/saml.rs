@@ -563,7 +563,9 @@ impl SamlParseContext {
                     }
                 }
             },
-            _ => {},
+            _ => {
+                tracing::trace!(element = %local_name, "saml-unknown-start-element");
+            },
         }
     }
 
@@ -609,7 +611,9 @@ impl SamlParseContext {
                 self.assertion_attributes
                     .push((self.current_attr_name.clone(), String::new()));
             },
-            _ => {},
+            _ => {
+                tracing::trace!(element = %local_name, "saml-unknown-empty-element");
+            },
         }
     }
 
@@ -692,7 +696,9 @@ impl SamlParseContext {
             "AttributeValue" => {
                 // AttributeValue 文本已收集到 current_text，在 Attribute End 时处理
             },
-            _ => {},
+            _ => {
+                tracing::trace!(element = %local_name, "saml-unknown-end-element");
+            },
         }
     }
 
@@ -946,11 +952,16 @@ const SIG_ALG_ECDSA_SHA256: &str = "http://www.w3.org/2001/04/xmldsig-more#ecdsa
 #[cfg(feature = "protocol-saml")]
 const SIG_ALG_RSA_1_5: &str = "http://www.w3.org/2000/09/xmldsig#rsa-1_5";
 
-/// 检查签名算法是否在白名单内（vuln-0001 安全要求）。
+/// 检查签名算法是否在白名单中（vuln-0001 安全要求）。
 ///
 /// 仅允许 RSA-SHA256 / ECDSA-SHA256，禁止 rsa-1_5 等弱算法。
-/// 注意：当前实现仅支持 RSA-SHA256 验证（依赖 `rsa` crate），
-/// ECDSA-SHA256 在算法白名单中通过但实际验证会返回 `Ok(false)`（待引入 ECDSA 库）。
+///
+/// # ECDSA-SHA256 fail-closed 设计
+///
+/// 当前实现仅支持 RSA-SHA256 验证（依赖 `rsa` crate）。
+/// ECDSA-SHA256 在白名单中通过（`is_signature_algorithm_allowed` 返回 `true`），
+/// 但实际签名验证会返回 `Ok(false)`（拒绝），这是 **fail-closed** 设计：
+/// 不认识的算法宁可拒绝也不放行。待引入 `p256`/`ecdsa` crate 后启用完整支持。
 #[cfg(all(feature = "protocol-saml", test))]
 fn is_signature_algorithm_allowed(algorithm: &str) -> bool {
     matches!(algorithm, SIG_ALG_RSA_SHA256 | SIG_ALG_ECDSA_SHA256)
@@ -960,9 +971,17 @@ fn is_signature_algorithm_allowed(algorithm: &str) -> bool {
 ///
 /// 在 signature_xml 中查找 `<SignatureMethod` 元素并提取 `Algorithm` 属性。
 /// 找不到返回 None。
+///
+/// # 安全性
+///
+/// 有意使用字符串查找而非完整 XML 解析（与同文件 `extract_signature_value` 等
+/// 4 个 `extract_*` 函数风格一致）。SAML 响应已在上层由 quick-xml 完整解析，
+/// 此处仅对签名段做快速提取。附加以下防御：
+/// - 拒绝含 XML 特殊字符（`<`、`>`、`&`）的 Algorithm 值（防注入）
+/// - 限制 Algorithm 值最大长度为 128 字符（标准 URI 通常 < 100 字符）
 #[cfg(feature = "protocol-saml")]
 fn extract_signature_method_algorithm(signature_xml: &str) -> Option<String> {
-    // 简化实现：字符串查找 SignatureMethod 元素的 Algorithm 属性
+    // 字符串查找 SignatureMethod 元素的 Algorithm 属性
     let method_start = signature_xml.find("<")?;
     let rest = &signature_xml[method_start..];
     let method_idx = rest.find("SignatureMethod")?;
@@ -971,7 +990,19 @@ fn extract_signature_method_algorithm(signature_xml: &str) -> Option<String> {
     let alg_value_start = alg_key + "Algorithm=\"".len();
     let after_alg = &after_method[alg_value_start..];
     let alg_end = after_alg.find('"')?;
-    Some(after_alg[..alg_end].to_string())
+    let algorithm = &after_alg[..alg_end];
+
+    // 安全防御：拒绝含 XML 特殊字符的 Algorithm 值（防注入）
+    if algorithm.contains('<') || algorithm.contains('>') || algorithm.contains('&') {
+        tracing::warn!("saml-algorithm-contains-xml-special-chars");
+        return None;
+    }
+    // 安全防御：限制 Algorithm 值最大长度（标准 URI 通常 < 100 字符）
+    if algorithm.len() > 128 {
+        tracing::warn!(len = algorithm.len(), "saml-algorithm-exceeds-max-length");
+        return None;
+    }
+    Some(algorithm.to_string())
 }
 
 /// 提取 `<ds:SignatureValue>...</ds:SignatureValue>` 的 base64 文本内容。
