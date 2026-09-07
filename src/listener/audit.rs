@@ -632,6 +632,115 @@ impl AuditLogListener {
                 success: true,
                 created_at: now,
             },
+            GarrisonEvent::Replaced {
+                login_id,
+                token,
+                reason,
+                ..
+            } => AuditEntry {
+                tenant_id,
+                event_type: "replaced".to_string(),
+                login_id: Some(login_id.clone()),
+                token: Some(token.clone()),
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("reason", reason)])),
+                success: false,
+                created_at: now,
+            },
+            GarrisonEvent::InvitationCreated { code, issuer_id } => AuditEntry {
+                tenant_id,
+                event_type: "invitation_created".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("code", code), ("issuer_id", issuer_id)])),
+                success: true,
+                created_at: now,
+            },
+            GarrisonEvent::InvitationRevoked { code, issuer_id } => AuditEntry {
+                tenant_id,
+                event_type: "invitation_revoked".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("code", code), ("issuer_id", issuer_id)])),
+                success: true,
+                created_at: now,
+            },
+            GarrisonEvent::InvitationRedeemed { code, redeemer_id } => AuditEntry {
+                tenant_id,
+                event_type: "invitation_redeemed".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[
+                    ("code", code),
+                    ("redeemer_id", redeemer_id),
+                ])),
+                success: true,
+                created_at: now,
+            },
+            // credit-metering feature-gated 变体
+            #[cfg(feature = "credit-metering")]
+            GarrisonEvent::CreditConsumed {
+                tenant_id: tid,
+                resource,
+                cost,
+                credits,
+                total_consumed,
+                ..
+            } => {
+                let cost_str = cost.to_string();
+                let credits_str = credits.to_string();
+                let total_str = total_consumed.to_string();
+                AuditEntry {
+                    tenant_id: *tid,
+                    event_type: "credit_consumed".to_string(),
+                    login_id: None,
+                    token: None,
+                    ip: None,
+                    user_agent: None,
+                    metadata: Some(json_metadata(&[
+                        ("resource", resource),
+                        ("cost", &cost_str),
+                        ("credits", &credits_str),
+                        ("total_consumed", &total_str),
+                    ])),
+                    success: true,
+                    created_at: now,
+                }
+            },
+            #[cfg(feature = "credit-metering")]
+            GarrisonEvent::CreditAlert {
+                tenant_id: tid,
+                threshold,
+                usage_percent,
+                credit_limit,
+                ..
+            } => {
+                let threshold_str = threshold.to_string();
+                let usage_str = format!("{:.1}", usage_percent);
+                let limit_str = credit_limit.to_string();
+                AuditEntry {
+                    tenant_id: *tid,
+                    event_type: "credit_alert".to_string(),
+                    login_id: None,
+                    token: None,
+                    ip: None,
+                    user_agent: None,
+                    metadata: Some(json_metadata(&[
+                        ("threshold", &threshold_str),
+                        ("usage_percent", &usage_str),
+                        ("credit_limit", &limit_str),
+                    ])),
+                    success: true,
+                    created_at: now,
+                }
+            },
             // feature-gated 变体由 match 后的 if let 覆盖，此处走默认条目
             _ => AuditEntry {
                 tenant_id,
@@ -1367,14 +1476,14 @@ mod db_sqlite_tests {
     // T077-AuditLogListener 覆盖全部 14 事件（spec R-audit-log-006）
     // ========================================================================
 
-    /// T077 Red: AuditLogListener 应为 spec R-audit-log-005 的 14 个变体
+    /// T077 Green: AuditLogListener 应为 spec R-audit-log-005 的 14 个变体
     /// 各生成一行 audit_logs 记录，event_type 对应变体名 snake_case。
     ///
-    /// 对每个变体调用 `on_event(&event).await`，最终断言 `audit_logs` 表有 14 行，
+    /// 对每个变体调用 `on_event(&event).await`，最终断言 `audit_logs` 表行数与变体数匹配，
     /// 且每种 event_type 各一行。
     ///
-    /// 当前 Red 状态：`to_audit_entry` 仅覆盖 Login，其余 13 个走 `_ =>` 返回 Err，
-    /// `on_event` 捕获 Err 后仅 `tracing::warn` 不持久化，因此 audit_logs 仅 1 行（断言 14 失败）。
+    /// Green 状态：`to_audit_entry` 已覆盖全部非 feature-gated 变体（含 Replaced、
+    /// Invitation* 系列），credit-metering feature 启用时还覆盖 CreditConsumed/CreditAlert。
     #[tokio::test(flavor = "multi_thread")]
     async fn audit_log_listener_handles_all_14_events() {
         run_with_tenant_scope(audit_log_listener_handles_all_14_events_inner).await
@@ -1391,8 +1500,8 @@ mod db_sqlite_tests {
         };
         let listener = AuditLogListener::new(pool.clone(), config);
 
-        // 14 个 spec 必需变体（R-audit-log-005）
-        let events: Vec<(GarrisonEvent, &str)> = vec![
+        // 14 个 spec 必需变体（R-audit-log-005）+ 4 个新增变体（Replaced/Invitation*）
+        let mut events: Vec<(GarrisonEvent, &str)> = vec![
             (
                 GarrisonEvent::Login {
                     login_id: "1".to_string(),
@@ -1508,7 +1617,67 @@ mod db_sqlite_tests {
                 },
                 "config_reload",
             ),
+            // 新增变体：Replaced + Invitation 系列
+            (
+                GarrisonEvent::Replaced {
+                    login_id: "1".to_string(),
+                    token: "t".into(),
+                    reason: "max-sessions".into(),
+                    request_context: None,
+                },
+                "replaced",
+            ),
+            (
+                GarrisonEvent::InvitationCreated {
+                    code: "INV-001".to_string(),
+                    issuer_id: "issuer-1".to_string(),
+                },
+                "invitation_created",
+            ),
+            (
+                GarrisonEvent::InvitationRevoked {
+                    code: "INV-002".to_string(),
+                    issuer_id: "issuer-1".to_string(),
+                },
+                "invitation_revoked",
+            ),
+            (
+                GarrisonEvent::InvitationRedeemed {
+                    code: "INV-003".to_string(),
+                    redeemer_id: "redeemer-1".to_string(),
+                },
+                "invitation_redeemed",
+            ),
         ];
+
+        // credit-metering feature 启用时追加 Credit 变体
+        #[cfg(feature = "credit-metering")]
+        events.extend(vec![
+            (
+                GarrisonEvent::CreditConsumed {
+                    tenant_id: 0,
+                    resource: "api-call".to_string(),
+                    cost: 10,
+                    credits: 5,
+                    total_consumed: 100,
+                    request_context: None,
+                },
+                "credit_consumed",
+            ),
+            (
+                GarrisonEvent::CreditAlert {
+                    tenant_id: 0,
+                    threshold: 80,
+                    usage_percent: 85.5,
+                    total_consumed: 850,
+                    credit_limit: 1000,
+                    request_context: None,
+                },
+                "credit_alert",
+            ),
+        ]);
+
+        let expected_count = events.len() as i64;
 
         // 对每个变体调用 on_event
         for (event, _expected_type) in &events {
@@ -1526,9 +1695,9 @@ mod db_sqlite_tests {
         let count_rows = conn.query_all_raw(count_stmt).await.expect("COUNT 应成功");
         let total: i64 = count_rows[0].try_get("", "cnt").expect("cnt 应可读");
         assert_eq!(
-            total, 14,
-            "audit_logs 应有 14 行（每变体一行），实际: {}",
-            total
+            total, expected_count,
+            "audit_logs 应有 {} 行（每变体一行），实际: {}",
+            expected_count, total
         );
 
         // 逐变体验证 event_type 存在
