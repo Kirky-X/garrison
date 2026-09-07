@@ -2,7 +2,7 @@
 
 首先，感谢你对 Garrison 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
-Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：3967+ 个测试通过（3899 lib + 68 E2E）+ doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
+Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：4374+ 个测试通过 + doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
 > 相关文档：[开发规范](./DEVELOPMENT.md) | [架构设计](./ARCHITECTURE.md) | [配置指南](./CONFIGURATION.md)
 
@@ -54,7 +54,7 @@ rustup show  # 验证 toolchain 已就绪
 
 ### 3. 克隆本地依赖（可选）
 
-Garrison 的核心依赖 `oxcache 0.4` 与 `dbnexus 0.5` 均已发布到 crates.io，**无需额外克隆本地依赖**。正常执行 `cargo build` 即可自动拉取。
+Garrison 的核心依赖 `oxcache 0.5` 与 `dbnexus 0.6` 均已发布到 crates.io，**无需额外克隆本地依赖**。正常执行 `cargo build` 即可自动拉取。
 
 > 若需对 `oxcache` / `dbnexus` 上游做本地修改验证，可自行 `git clone` 对应仓库并改用 `path` 依赖，但不要将 `path` 配置提交到 PR。
 
@@ -72,7 +72,7 @@ cargo build --features full
 cargo test --features full
 ```
 
-预期输出：3967+ 个测试通过（3899 lib + 68 E2E）+ doc-tests 全部通过。
+预期输出：4374+ 个测试通过 + doc-tests 全部通过。
 
 ---
 
@@ -194,7 +194,7 @@ Garrison 采用 [Conventional Commits](https://www.conventionalcommits.org/zh-ha
 scope 对应模块或功能域，常用值：
 
 - 协议层：`protocol-jwt`、`protocol-oauth2`、`protocol-sso`、`protocol-sign`、`protocol-apikey`、`protocol-temp`
-- 安全模块：`secure-totp`、`secure-sign`、`secure-httpbasic`、`secure-httpdigest`
+- 安全模块：`secure-totp`、`secure-sign`、`protocol-httpbasic`、`protocol-httpdigest`
 - 缓存/数据库：`cache-memory`、`cache-redis`、`db-sqlite`
 - Web 适配：`web-axum`、`web-actix`、`web-warp`
 - 核心模块：`core`、`stp`、`session`、`config`、`context`、`manager`、`router`、`dao`

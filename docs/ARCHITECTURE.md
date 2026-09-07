@@ -22,7 +22,7 @@ Garrison 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 ### 1.1 双抽象层
 
 - **DAO 抽象层**：`GarrisonDao` trait 屏蔽存储后端差异，底层由 `dbnexus`（数据库）+ `oxcache`（缓存）实现，切换 SQLite / PostgreSQL / MySQL 时上层无需改动。
-- **缓存抽象层**：`oxcache` 0.3 提供 L1（oxcache 内存层）+ L2（redis 分布式）两级缓存，支持 per-entry TTL 精细化过期控制，对上层呈现统一 `get / set / remove` 语义。
+- **缓存抽象层**：`oxcache` 0.5 提供 L1（oxcache 内存层）+ L2（redis 分布式）两级缓存，支持 per-entry TTL 精细化过期控制，对上层呈现统一 `get / set / remove` 语义。
 
 ### 1.2 全局单例
 
@@ -91,8 +91,8 @@ graph TB
     subgraph SecureLayer["安全层（feature 门控）"]
         secure-totp[secure-totp]
         secure-sign[secure-sign]
-        httpbasic[secure-httpbasic]
-        httpdigest[secure-httpdigest]
+        httpbasic[protocol-httpbasic]
+        httpdigest[protocol-httpdigest]
         sms[sms-rate-limit]
         confusable[secure-confusable]
         masking[secure-masking]
@@ -101,10 +101,10 @@ graph TB
     end
 
     subgraph InfraLayer["基础设施"]
-        oxcache[oxcache 0.4<br/>L1 内存 + L2 redis]
-        dbnexus[dbnexus 0.5<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
-        sdforge[sdforge 0.4<br/>声明式路由]
-        trait-kit[trait-kit 0.4<br/>typestate DI]
+        oxcache[oxcache 0.5<br/>L1 内存 + L2 redis]
+        dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
+        sdforge[sdforge 0.5<br/>声明式路由]
+        trait-kit[trait-kit 0.5<br/>typestate DI]
     end
 
     subgraph ServerLayer["服务器层（feature 门控）"]
@@ -118,7 +118,7 @@ graph TB
         web-axum[web-axum<br/>axum 适配]
         web-actix[web-actix<br/>actix-web 适配]
         web-warp[web-warp<br/>warp 适配]
-        waf[web-waf<br/>WAF]
+        waf[firewall-waf<br/>WAF]
         cors[web-cors<br/>CORS]
         csrf[web-csrf<br/>CSRF]
     end
@@ -188,8 +188,8 @@ graph TB
 |------|---------|------|
 | `secure/totp` | `secure-totp` | TOTP 动态验证码（RFC 6238） |
 | `secure/sign` | `secure-sign` | HMAC 签名工具 |
-| `secure/httpbasic` | `secure-httpbasic` | HTTP Basic 认证 |
-| `secure/httpdigest` | `secure-httpdigest` | HTTP Digest 认证 |
+| `secure/httpbasic` | `protocol-httpbasic` | HTTP Basic 认证 |
+| `secure/httpdigest` | `protocol-httpdigest` | HTTP Digest 认证 |
 | `secure/sms` | `sms-rate-limit` | SMS 验证码限速 |
 | `secure/confusable` | `secure-confusable` | Unicode 同形异义字检测 |
 | `secure/masking` | `secure-masking` | 敏感数据脱敏（regex 真实脱敏） |
@@ -231,8 +231,8 @@ graph LR
     BLD --> BCtx
     BS --> BD
     BLD --> BI
-    BD --> oxcache[oxcache 0.4<br/>L1 内存 + L2 redis]
-    BD --> dbnexus[dbnexus 0.5<br/>SQLite / PostgreSQL / MySQL]
+    BD --> oxcache[oxcache 0.5<br/>L1 内存 + L2 redis]
+    BD --> dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL]
 ```
 
 ### trait 职责说明

@@ -169,7 +169,7 @@ Garrison 的 API Key（`protocol-apikey`）采用以下安全设计：
 ### 1. HTTP Digest MD5 算法已不安全
 
 - **说明**：HTTP Digest 认证若使用 MD5 哈希算法，MD5 已被证明存在碰撞攻击，不再具备密码学安全性。
-- **影响**：`secure-httpdigest` 模块若显式指定 MD5 算法，可能受到碰撞攻击或离线字典攻击。
+- **影响**：`protocol-httpdigest` 模块若显式指定 MD5 算法，可能受到碰撞攻击或离线字典攻击。
 - **建议**：使用 **SHA-256** 替代 MD5。`DigestAlgorithm` 枚举已支持 `Sha256` 变体，通过 `HttpDigestAuth::new(realm, "SHA256")` 显式指定。
 - **状态**：0.2.0 起已支持 SHA-256 算法（`DigestAlgorithm::Sha256`）。**自 0.7.0 起 `DigestAlgorithm::default()` 已切换为 `Sha256`**（safe-by-default）；仅当需要兼容旧客户端时，才通过 `HttpDigestAuth::new(realm, "MD5")` 显式指定 MD5。
 
@@ -195,6 +195,7 @@ Garrison 的 API Key（`protocol-apikey`）采用以下安全设计：
 - **建议**：
   - 仅在受信任设备上启用 `remember_me`，公共/共享设备不应使用。
   - 根据业务风险调整 `remember_me_timeout`，高安全场景可缩短至 7 天（604800 秒）或禁用该功能。
+
 ### 5. RUSTSEC-2023-0071（rsa crate Marvin Attack）处置说明
 
 - **说明**：依赖图中的 `rsa` crate 存在 Marvin Attack 定时侧信道通告（RUSTSEC-2023-0071），且当前**无已修复版本**。

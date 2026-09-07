@@ -85,7 +85,7 @@ pub trait GarrisonDao: Send + Sync {
 
 ## 注意事项
 
-- oxcache 0.4 的 `Cache<K,V>::update` 无法保留 per-entry TTL，重置 TTL 时需显式指定
+- oxcache 0.5 的 `Cache<K,V>::update` 无法保留 per-entry TTL，重置 TTL 时需显式指定
 - 多实例部署必须启用 `cache-redis`，否则 Token-Session 不一致
-- dbnexus 0.5 已支持 SQLite / PostgreSQL / MySQL 三种后端，通过 `db-sqlite` / `db-postgres` / `db-mysql` feature 切换
+- dbnexus 0.6 已支持 SQLite / PostgreSQL / MySQL 三种后端，通过 `db-sqlite` / `db-postgres` / `db-mysql` feature 切换
 - `keys()` 方法在 `GarrisonDaoOxcache` 上仅在启用 `anomalous-detector-dual` feature 时返回结果（依赖内部 key_index），否则返回 `NotImplemented`

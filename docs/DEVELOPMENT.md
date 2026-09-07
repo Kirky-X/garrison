@@ -62,7 +62,7 @@ pkg-config --exists openssl && echo "openssl OK"
 
 ### 1.3 克隆仓库与本地依赖
 
-Garrison 使用 crates.io 发布的 `oxcache 0.4`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.5`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
+Garrison 使用 crates.io 发布的 `oxcache 0.5`（支持 per-entry TTL + `ttl_sync()` 查询）与 `dbnexus 0.6`（SQLite / PostgreSQL / MySQL 多后端），无需额外克隆本地依赖：
 
 ```bash
 # 1. 克隆 Garrison
@@ -79,7 +79,7 @@ cargo build --features full
 # 全量编译
 cargo build --features full
 
-# 全量测试（3967+ 个 lib 测试 + 68 E2E 应全部通过）
+# 全量测试（4374+ 个 lib 测试应全部通过）
 cargo test --features full
 
 # Lint（零警告）
@@ -169,8 +169,9 @@ garrison/
 ├── examples/                 # 示例代码（独立 workspace member）
 ├── migrations/               # 数据库迁移脚本
 │   ├── sqlite/core/          # SQLite 迁移
-│   ├── mysql/core/           # MySQL 兼容迁移（v0.5.3 新增）
-│   └── postgres/core/        # PostgreSQL 迁移（v0.7.0 新增）
+│   ├── mysql/core/           # MySQL 兼容迁移
+│   ├── postgres/core/        # PostgreSQL 迁移
+│   └── duckdb/core/          # DuckDB 迁移
 ├── benches/                  # 基准测试（criterion）
 ├── garrison-macros/           # 过程宏 crate（#[check_login] 等）
 ├── locales/                  # i18n 资源文件（zh.ftl / en.ftl）

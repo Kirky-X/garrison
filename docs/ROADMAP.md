@@ -38,6 +38,7 @@
 | 0.7.3 | ✅ 已完成 | 2026-07-22 | `#[check_disable]` 过程宏 + `check_disable_sync()` 同步 API + `dao_session!` 宏消除 53 处样板 + garrison-macros 版本对齐 |
 | 0.8.0 | ✅ 已完成 | 2026-07-24 | 安全加固版：常量时间比较公共原语 + JWT 弱密钥拒绝 + CSPRNG 统一 + API Key 安全迁移（CWE-916 哈希存储 + IP 级暴力破解防护 + IDOR 多租户隔离）+ tech-review 修复批次（健康检查真实探测 / singleflight 锁清理 / SQL 占位符转换）+ CodeQL 误报清理 |
 | 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532）：6 类事件 live token 截断 + TokenRefresh 内置黑名单 + TempCredential 仅记 value_len + SAML 64KB 输入上限 |
+| 0.9.0-rc.1 | ✅ 已完成 | 2026-09-07 | 自研库特性吸收 + 依赖批量升级（oxcache 0.5 / dbnexus 0.6 / sdforge 0.5 / trait-kit 0.5 / confers 0.6 / limiteron 0.3）+ 配置增强特性（config-yaml/audit/consul/etcd/distributed/schema）+ 数据库增强（db-sharding/replica/saga）+ 防火墙增强（gcra/tower/quota/admission/event/monitoring/parallel）+ 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ i18n 硬编码修复 + 函数覆盖率 89.87% → 92.77% |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ---
@@ -467,6 +468,52 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 - security.md 10 维度安全检查全部通过
 
 **里程碑意义**：微服务架构就位，ABAC/Cedar + OAuth2 Server 安全能力补齐，满足生产级安全门禁。
+
+---
+
+### v0.9.0-rc.1 自研库特性吸收 + 依赖升级（✅ 已完成）
+
+完成时间：2026-09-07
+
+聚焦于自研库特性吸收与依赖批量升级，通过多轮 specmark 变更实施。核心工作包括：自研库特性吸收、依赖批量升级、配置/数据库/防火墙增强特性补齐、协议域统一重命名、i18n 硬编码修复、函数覆盖率提升。
+
+#### 依赖批量升级
+
+| 依赖 | 旧版本 | 新版本 |
+|------|--------|--------|
+| oxcache | 0.4 | 0.5.0-rc.2 |
+| dbnexus | 0.5 | 0.6.0-rc.2 |
+| sdforge | 0.4 | 0.5.0-rc.2 |
+| trait-kit | 0.4 | 0.5.0-rc.2 |
+| confers | 0.5 | 0.6.0-rc.2 |
+| limiteron | 0.2 | 0.3.0-rc.2 |
+| inklog | 0.2 | 0.3.0-rc.2 |
+
+#### 新增特性（自研库特性吸收）
+
+- 配置增强：`config-yaml` / `config-audit` / `config-consul` / `config-etcd` / `config-distributed` / `config-schema`
+- 数据库增强：`db-sharding` / `db-replica` / `db-saga`
+- 防火墙增强：`firewall-gcra` / `firewall-tower` / `firewall-quota` / `firewall-admission` / `firewall-event` / `firewall-monitoring` / `firewall-parallel`
+- 缓存增强：`cache-batch`
+- 审计增强：`audit-inklog-http`
+
+#### 协议域统一重命名
+
+- `secure-httpbasic` → `protocol-httpbasic`
+- `secure-httpdigest` → `protocol-httpdigest`
+
+#### i18n 硬编码修复
+
+- 多轮全局错误消息 i18n 硬编码中文修复
+- Fluent 翻译资源补齐（含 invitation 事件翻译）
+
+#### 质量指标
+
+- 函数覆盖率：89.87% → 92.77%
+- lib 测试数量：4374+
+- 0 失败测试
+
+**里程碑意义**：自研库特性全面吸收，依赖版本统一升级至 rc.2 系列，配置/数据库/防火墙能力大幅增强，协议域命名统一，i18n 硬编码问题全面修复。
 
 ---
 

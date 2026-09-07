@@ -8,8 +8,8 @@
 |:---|:---|:---|:---|
 | TOTP | `secure-totp` | `TotpHandler` | `totp-rs` + `base32` |
 | Sign | `secure-sign` | `Signer` / `SignVerifier` trait | `sha2` + `hmac` + `base64` + `md5` |
-| HTTP Basic | `secure-httpbasic` | `HttpBasicAuth` | `base64` |
-| HTTP Digest | `secure-httpdigest` | `HttpDigestAuth` | `sha2` + `base64` + `md5` |
+| HTTP Basic | `protocol-httpbasic` | `HttpBasicAuth` | `base64` |
+| HTTP Digest | `protocol-httpdigest` | `HttpDigestAuth` | `sha2` + `base64` + `md5` |
 | Unicode 同形字 | `secure-confusable` | `check_confusable` 函数 | `unicode-security` |
 | 敏感数据脱敏 | `secure-masking` | `SensitiveDataMasker` | `serde_json` |
 | XSS 防护 | `secure-xss` | `XssProtector` | 零外部依赖 |
@@ -117,9 +117,9 @@ let ok = Signer::verify_hmac_sha256(b"secret", b"data", &sig);  // 常量时间�
 | 场景 | 推荐组合 |
 |:---|:---|
 | Web 应用 2FA | `secure-totp` |
-| 内网 API 网关 | `secure-httpbasic` + `secure-sign` |
-| 兼容遗留系统 | `secure-httpdigest` |
-| 全量安全能力 | `secure-totp` + `secure-sign` + `secure-httpbasic` + `secure-httpdigest` + `secure-sanitize` + `secure-xss` |
+| 内网 API 网关 | `protocol-httpbasic` + `secure-sign` |
+| 兼容遗留系统 | `protocol-httpdigest` |
+| 全量安全能力 | `secure-totp` + `secure-sign` + `protocol-httpbasic` + `protocol-httpdigest` + `secure-sanitize` + `secure-xss` |
 | SMS 验证码业务 | `sms-rate-limit` |
 
 ## 相关章节

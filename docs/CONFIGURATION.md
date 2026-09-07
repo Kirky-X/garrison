@@ -2,7 +2,7 @@
 
 > Garrison 配置由 `GarrisonConfig` 统一管理，支持三级配置源合并与 `tokio::sync::watch` 热更新能力。
 >
-> - 适用版本：0.8.1（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
+> - 适用版本：0.9.0-rc.1（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
 > - 配置类型：`GarrisonConfig`，实现 `serde::Serialize / Deserialize`
 > 架构设计详见 [architecture.md](./ARCHITECTURE.md)；部署配置详见 [deployment.md](./DEPLOYMENT.md)。
 
@@ -19,7 +19,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | 优先级 | 来源 | 说明 |
 |--------|------|------|
 | 高 | 环境变量 | 以 `GARRISON_` 前缀 + 字段名大写下划线形式，例如 `GARRISON_TIMEOUT`、`GARRISON_JWT_SECRET` |
-| 中 | toml 文件 | 通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.5，内部通过 `TomlContentSource` 注入以支持 Windows 绝对路径） |
+| 中 | toml 文件 | 通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.6，内部通过 `TomlContentSource` 注入以支持 Windows 绝对路径） |
 | 低 | 代码默认值 | `GarrisonConfig::default_config()` 内联的默认值 |
 
 > 三源合并在 `GarrisonConfig::load()` 阶段完成：先加载 toml（`None` 时使用代码默认值），再由环境变量覆盖，最后 `validate()` 校验。
@@ -289,15 +289,15 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 | `protocol-temp` | 关 | 临时 token TTL 由调用方指定 |
 | `secure-totp` | 关 | TOTP secret 由用户绑定关系存储 |
 | `secure-sign` | 关 | 复用 `sign_window_seconds` |
-| `secure-httpbasic` | 关 | 凭据由调用方提供 |
-| `secure-httpdigest` | 关 | nonce / opaque 由内部生成 |
+| `protocol-httpbasic` | 关 | 凭据由调用方提供 |
+| `protocol-httpdigest` | 关 | nonce / opaque 由内部生成 |
 
 ### 6.1 启用 JWT + Redis 的组合示例
 
 ```toml
 [dependencies]
 garrison = {
-    version = "0.8",
+    version = "0.9",
     features = [
         "cache-memory",
         "cache-redis",

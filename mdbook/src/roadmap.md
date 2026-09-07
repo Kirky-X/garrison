@@ -110,7 +110,7 @@
 
 ## v0.6.7 安全与性能增强（已完成）
 
-- ✅ forbid 优先语义（`safe-defaults`）：`Forbid` 决策不可被 Allow 覆盖
+- ✅ forbid 优先语义（`safe-defaults`，v0.9.0 改名为 `core-advanced`）：`Forbid` 决策不可被 Allow 覆盖
 - ✅ WAF 级防火墙（`firewall-waf`）：策略层 WAF Hook 链 + axum middleware 适配器
 - ✅ 三层缓存架构（`three-tier-cache`）：L1 oxcache 内存 + L2 DAO 持久化 + L3 interface 回调
 - ✅ SMS 验证码渐进式限速（`sms-rate-limit`）：双窗口限速 + 异常发送检测

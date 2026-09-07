@@ -23,12 +23,12 @@ Caused by:
   No such file or directory (os error 2)
 ```
 
-**原因**：早期版本（≤ 0.5.3）的 `Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖，但该路径下不存在项目。0.6.0 起已切换为 crates.io 发布的 `oxcache = "0.3"`，不再需要本地 path 依赖。
+**原因**：早期版本（≤ 0.5.3）的 `Cargo.toml` 中 `oxcache` 使用本地 `path` 依赖，但该路径下不存在项目。0.9.0 起已切换为 crates.io 发布的 `oxcache = "0.5"`，不再需要本地 path 依赖。
 
-**解决**：升级到 0.6.0+，`Cargo.toml` 中 oxcache 已改为 crates.io 依赖：
+**解决**：升级到 0.9.0+，`Cargo.toml` 中 oxcache 已改为 crates.io 依赖：
 
 ```toml
-oxcache = { version = "0.3", optional = true, default-features = false }
+oxcache = { version = "0.5", optional = true, default-features = false }
 ```
 
 若仍使用旧版本，将 oxcache 仓库克隆到指定路径：
