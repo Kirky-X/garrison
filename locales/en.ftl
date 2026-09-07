@@ -863,6 +863,7 @@ policy-dictionary-word = Password is a dictionary word
 policy-contains-email-prefix = Password contains email prefix
 policy-hibp-requires-feature = HIBP check requires enabling the policy-hibp feature
 policy-nist-length-too-short = Password length {$arg0} is less than NIST SP 800-63B minimum required {$arg1}
+policy-max-age-expired = Password has expired, please change your password
 
 # ============================================================================
 # Session hijack detection messages (i18n migration)

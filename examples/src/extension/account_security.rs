@@ -51,6 +51,7 @@ fn demo_password_policy() {
         username: Some("alice".to_string()),
         email: None,
         password_history: vec![],
+        password_created_at: None,
     };
 
     // 强密码 — 通过

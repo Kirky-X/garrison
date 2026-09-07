@@ -862,6 +862,7 @@ policy-dictionary-word = 密码为字典单词
 policy-contains-email-prefix = 密码包含邮箱前缀
 policy-hibp-requires-feature = HIBP 检查需要启用 policy-hibp feature
 policy-nist-length-too-short = 密码长度 {$arg0} 小于 NIST SP 800-63B 最小要求 {$arg1}
+policy-max-age-expired = 密码已过期，请修改密码
 
 # ============================================================================
 # 会话劫持检测消息（i18n 迁移）

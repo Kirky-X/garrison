@@ -63,21 +63,23 @@ fn password_policy_rule_vec_of_boxed_dyn() {
 // R-002: PolicyContext 构造测试
 // ------------------------------------------------------------------------
 
-/// R-002: `PolicyContext` 5 字段构造（类型与 design.md §3.2 一致）。
+/// R-002: `PolicyContext` 6 字段构造（类型与 design.md §3.2 一致）。
 #[test]
-fn policy_context_constructs_with_5_fields() {
+fn policy_context_constructs_with_6_fields() {
     let ctx = PolicyContext {
         user_id: "alice".to_string(),
         tenant_id: Some("tenant-001".to_string()),
         username: Some("alice".to_string()),
         email: Some("alice@example.com".to_string()),
         password_history: vec!["hash1".to_string(), "hash2".to_string()],
+        password_created_at: Some(1700000000),
     };
     assert_eq!(ctx.user_id, "alice");
     assert_eq!(ctx.tenant_id, Some("tenant-001".to_string()));
     assert_eq!(ctx.username, Some("alice".to_string()));
     assert_eq!(ctx.email, Some("alice@example.com".to_string()));
     assert_eq!(ctx.password_history.len(), 2);
+    assert_eq!(ctx.password_created_at, Some(1700000000));
 }
 
 /// R-002: `PolicyContext` 可选字段为 `None` 时构造正常。
@@ -89,11 +91,13 @@ fn policy_context_optional_fields_none() {
         username: None,
         email: None,
         password_history: Vec::new(),
+        password_created_at: None,
     };
     assert!(ctx.tenant_id.is_none());
     assert!(ctx.username.is_none());
     assert!(ctx.email.is_none());
     assert!(ctx.password_history.is_empty());
+    assert!(ctx.password_created_at.is_none());
 }
 
 // ------------------------------------------------------------------------
@@ -110,6 +114,7 @@ fn engine_empty_rules_returns_ok() {
         username: None,
         email: None,
         password_history: Vec::new(),
+        password_created_at: None,
     };
     assert!(engine.validate(&ctx, "any").is_ok());
 }
@@ -127,6 +132,7 @@ fn engine_all_pass_returns_ok() {
         username: None,
         email: None,
         password_history: Vec::new(),
+        password_created_at: None,
     };
     assert!(engine.validate(&ctx, "password").is_ok());
 }
@@ -148,6 +154,7 @@ fn engine_first_error_mode_short_circuits() {
         username: None,
         email: None,
         password_history: Vec::new(),
+        password_created_at: None,
     };
     let result = engine.validate(&ctx, "password");
     assert!(result.is_err());
@@ -174,6 +181,7 @@ fn engine_all_errors_mode_collects_all() {
         username: None,
         email: None,
         password_history: Vec::new(),
+        password_created_at: None,
     };
     let result = engine.validate(&ctx, "password");
     assert!(result.is_err());
@@ -199,6 +207,7 @@ fn engine_first_error_mode_skips_passing_rules() {
         username: None,
         email: None,
         password_history: Vec::new(),
+        password_created_at: None,
     };
     let result = engine.validate(&ctx, "password");
     assert!(result.is_err());

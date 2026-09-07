@@ -75,7 +75,7 @@ pub trait PasswordPolicyRule: Send + Sync {
 
 /// 策略校验上下文。
 ///
-/// 5 字段 schema（pre-1.0 锁定，与 design.md §3.2 严格一致）。
+/// 6 字段 schema（pre-1.0 锁定，与 design.md §3.2 严格一致）。
 /// 提供规则校验所需的用户上下文信息。
 ///
 /// # 字段说明
@@ -87,6 +87,7 @@ pub trait PasswordPolicyRule: Send + Sync {
 /// | `username` | `Option<String>` | 用户名（用于相似度检测） |
 /// | `email` | `Option<String>` | 邮箱（用于邮箱检测） |
 /// | `password_history` | `Vec<String>` | 密码历史（存 hash，非明文） |
+/// | `password_created_at` | `Option<i64>` | 密码创建时间（Unix 秒，用于 `MaxAgeRule` 过期检测） |
 #[derive(Debug, Clone)]
 pub struct PolicyContext {
     /// 用户 ID。
@@ -99,6 +100,11 @@ pub struct PolicyContext {
     pub email: Option<String>,
     /// 密码历史（hash 列表，非明文，用于 `HistoryRule` 检测）。
     pub password_history: Vec<String>,
+    /// 密码创建时间（Unix 秒，用于 `MaxAgeRule` 过期检测）。
+    ///
+    /// `None` 表示未知（向后兼容未提供此信息的调用方），
+    /// `MaxAgeRule` 在此情况下 fail-open（跳过过期检查，不阻塞密码修改）。
+    pub password_created_at: Option<i64>,
 }
 
 // ============================================================================
@@ -133,6 +139,7 @@ pub enum ErrorMode {
 ///     username: None,
 ///     email: None,
 ///     password_history: Vec::new(),
+///     password_created_at: None,
 /// };
 /// assert!(engine.validate(&ctx, "password").is_ok()); // 空规则集 → Ok
 /// ```

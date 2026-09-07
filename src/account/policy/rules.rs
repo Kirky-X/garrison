@@ -19,7 +19,7 @@
 //!
 //! | 规则 | `name()` | 说明 |
 //! |:---|:---|:---|
-//! | `MaxAgeRule` | `"max_age"` | 密码过期规则（v0.6.0 stub，v0.6.5 启用） |
+//! | `MaxAgeRule` | `"max_age"` | 密码过期规则（检测 `password_created_at`） |
 //! | `DictionaryRule` | `"dictionary"` | 字典规则（精确匹配） |
 //! | `NotEmailRule` | `"not_email"` | 邮箱规则（大小写不敏感子串检测邮箱前缀） |
 //! | `RegexRule` | `"regex"` | 自定义正则规则（匹配即报错） |
@@ -292,24 +292,23 @@ impl PasswordPolicyRule for NotCommonPasswordRule {
 ///
 /// 校验密码是否超过 `days` 天未修改。
 ///
-/// # v0.6.0 stub 实现
+/// # 过期检测
 ///
-/// `PolicyContext` 当前不含密码创建时间字段（`password_created_at`），
-/// 无法校验密码过期。v0.6.0 提供 **安全 no-op stub**（始终返回 `Ok(())`），
-/// 不阻塞密码修改。v0.6.5 将扩展 `PolicyContext` 后实现完整逻辑。
-///
-/// # 安全性
-///
-/// stub 不触发 `(未实现占位)`/`(未实现占位)` panic，可安全调用。
-pub struct MaxAgeRule;
+/// 通过 `PolicyContext::password_created_at`（Unix 秒）判断密码年龄：
+/// - `None` → **fail-open**（向后兼容，不阻塞密码修改）
+/// - `Some(ts)` → 计算 `now - ts > days * 86400`，过期则返回 `PolicyError`
+pub struct MaxAgeRule {
+    /// 密码最大有效天数。
+    days: u32,
+}
 
 impl MaxAgeRule {
     /// 创建密码过期规则。
     ///
     /// # 参数
-    /// - `days`: 密码最大有效天数（v0.6.5 启用校验，当前 stub 不存储）
-    pub fn new(_days: u32) -> Self {
-        Self
+    /// - `days`: 密码最大有效天数（0 表示立即过期）
+    pub fn new(days: u32) -> Self {
+        Self { days }
     }
 }
 
@@ -318,11 +317,20 @@ impl PasswordPolicyRule for MaxAgeRule {
         "max_age"
     }
 
-    fn validate(&self, _ctx: &PolicyContext, _password: &str) -> Result<(), PolicyError> {
-        // v0.6.0 stub: PolicyContext 不含 password_created_at 字段，
-        // 无法校验密码是否超过 self.days 天未修改。
-        // v0.6.5 将扩展 PolicyContext 后实现完整逻辑。
-        // 当前为安全 no-op（始终通过），不阻塞密码修改。
+    fn validate(&self, ctx: &PolicyContext, _password: &str) -> Result<(), PolicyError> {
+        let Some(created_at) = ctx.password_created_at else {
+            // fail-open: PolicyContext 未提供密码创建时间时不阻塞密码修改
+            return Ok(());
+        };
+
+        let now = chrono::Utc::now().timestamp();
+        let max_age_secs = self.days as i64 * 86_400;
+        if now - created_at > max_age_secs {
+            return Err(PolicyError::new(
+                "max_age",
+                loc!("policy-max-age-expired", ""),
+            ));
+        }
         Ok(())
     }
 }
@@ -693,6 +701,7 @@ mod tests {
             username: username.map(|s| s.to_string()),
             email: None,
             password_history: history.into_iter().map(|s| s.to_string()).collect(),
+            password_created_at: None,
         }
     }
 
@@ -970,23 +979,59 @@ mod tests {
     }
 
     // ========================================================================
-    // MaxAgeRule 测试（R-006.7 stub）
+    // MaxAgeRule 测试（R-006.7）
     // ========================================================================
 
-    /// R-006.7: stub 实现 — 任意密码 → 通过（不 panic）。
+    /// R-006.7: `password_created_at=None` → fail-open，通过。
     #[test]
-    fn max_age_rule_stub_always_passes() {
+    fn max_age_rule_no_created_at_passes() {
         let rule = MaxAgeRule::new(90);
-        let ctx = make_ctx(None, vec![]);
+        let mut ctx = make_ctx(None, vec![]);
+        ctx.password_created_at = None;
         assert!(rule.validate(&ctx, "any-password").is_ok());
     }
 
-    /// R-006.7: stub 实现 — 空密码也通过。
+    /// R-006.7: 密码未过期 → 通过。
     #[test]
-    fn max_age_rule_stub_passes_empty_password() {
-        let rule = MaxAgeRule::new(30);
-        let ctx = make_ctx(None, vec![]);
-        assert!(rule.validate(&ctx, "").is_ok());
+    fn max_age_rule_password_not_expired_passes() {
+        let rule = MaxAgeRule::new(90);
+        let mut ctx = make_ctx(None, vec![]);
+        // 密码创建于 30 天前（在 90 天有效期内）
+        ctx.password_created_at = Some(chrono::Utc::now().timestamp() - 30 * 86_400);
+        assert!(rule.validate(&ctx, "any-password").is_ok());
+    }
+
+    /// R-006.7: 密码已过期 → 失败。
+    #[test]
+    fn max_age_rule_password_expired_fails() {
+        let rule = MaxAgeRule::new(90);
+        let mut ctx = make_ctx(None, vec![]);
+        // 密码创建于 100 天前（超过 90 天有效期）
+        ctx.password_created_at = Some(chrono::Utc::now().timestamp() - 100 * 86_400);
+        let result = rule.validate(&ctx, "any-password");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().rule_name, "max_age");
+    }
+
+    /// R-006.7: 边界值 — 恰好到期（超过 1 秒）→ 失败。
+    #[test]
+    fn max_age_rule_boundary_exactly_expired_fails() {
+        let rule = MaxAgeRule::new(90);
+        let mut ctx = make_ctx(None, vec![]);
+        // 密码创建于 90 天 + 1 秒前
+        ctx.password_created_at = Some(chrono::Utc::now().timestamp() - 90 * 86_400 - 1);
+        let result = rule.validate(&ctx, "any-password");
+        assert!(result.is_err());
+    }
+
+    /// R-006.7: 边界值 — 恰好未到期（正好 90 天）→ 通过。
+    #[test]
+    fn max_age_rule_boundary_exactly_not_expired_passes() {
+        let rule = MaxAgeRule::new(90);
+        let mut ctx = make_ctx(None, vec![]);
+        // 密码创建于正好 90 天前（now - created_at == max_age_secs，不大于）
+        ctx.password_created_at = Some(chrono::Utc::now().timestamp() - 90 * 86_400);
+        assert!(rule.validate(&ctx, "any-password").is_ok());
     }
 
     /// R-006.7: `name()` 返回 `"max_age"`。
@@ -1064,6 +1109,7 @@ mod tests {
             username: None,
             email: Some("alice@example.com".to_string()),
             password_history: vec![],
+            password_created_at: None,
         };
         assert!(rule.validate(&ctx, "secure-pw").is_ok());
     }
@@ -1078,6 +1124,7 @@ mod tests {
             username: None,
             email: Some("alice@example.com".to_string()),
             password_history: vec![],
+            password_created_at: None,
         };
         let result = rule.validate(&ctx, "alice123");
         assert!(result.is_err());
@@ -1094,6 +1141,7 @@ mod tests {
             username: None,
             email: Some("Alice@example.com".to_string()),
             password_history: vec![],
+            password_created_at: None,
         };
         assert!(
             rule.validate(&ctx, "ALICE123").is_err(),
@@ -1111,6 +1159,7 @@ mod tests {
             username: None,
             email: Some("alice".to_string()),
             password_history: vec![],
+            password_created_at: None,
         };
         assert!(rule.validate(&ctx, "alice123").is_ok());
     }
