@@ -222,6 +222,10 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&super::RequestConte
         // 上述 match 已穷尽所有变体，此分支不可达。
         // credit-metering 事件无请求上下文
         GarrisonEvent::CreditConsumed { .. } | GarrisonEvent::CreditAlert { .. } => None,
+        // invitation 事件无请求上下文
+        GarrisonEvent::InvitationCreated { .. }
+        | GarrisonEvent::InvitationRevoked { .. }
+        | GarrisonEvent::InvitationRedeemed { .. } => None,
         #[cfg(feature = "anomalous-detector-dual")]
         GarrisonEvent::AnomalousLoginDetected {
             request_context, ..

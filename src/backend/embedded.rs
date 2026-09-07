@@ -522,7 +522,7 @@ mod tests {
     /// 触发 `SpanNameCollector::record` 和 `record_follows_from`。
     #[tokio::test(flavor = "current_thread")]
     #[serial]
-    async fn test_span_nameCollector_record_and_follows() {
+    async fn test_span_name_collector_record_and_follows() {
         let backend = setup_backend().await;
         let names = Arc::new(Mutex::new(Vec::new()));
         let _guard = tracing::subscriber::set_default(SpanNameCollector {

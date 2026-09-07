@@ -3,12 +3,10 @@ mod tests {
     // jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
     // 类型为 Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
     #![allow(clippy::useless_conversion)]
-    use super::*;
     // 显式导入：子模块 `use super::*;` 不导入父模块的私有 `use` 项
     use crate::config::GarrisonConfig;
     use crate::config::ReplacedLoginExitMode;
     use crate::error::{GarrisonError, GarrisonResult};
-    use crate::session::GarrisonSession;
     use crate::stp::core::GarrisonCore;
     use crate::stp::{GarrisonLogicDefault, JwtMode, LoginParams, SessionLogic};
     use async_trait::async_trait;
@@ -3027,15 +3025,12 @@ mod tests {
 
 #[cfg(all(test, feature = "firewall-bruteforce"))]
 mod firewall_tests {
-    use super::*;
     use crate::config::GarrisonConfig;
-    use crate::config::ReplacedLoginExitMode;
     use crate::dao::tests::MockDao;
     use crate::error::GarrisonError;
     use crate::manager::GarrisonManager;
     use crate::stp::mock::MockInterface;
     use crate::stp::{with_current_ip, with_current_token, GarrisonUtil, LoginParams};
-    use async_trait::async_trait;
     // setup() 会 reset_for_test() 覆盖全局单例并替换 DAO：并发线程下彼此的
     // brute-force 计数被清零 → `brute_force_blocks_ip_after_repeated_failed_check_login`
     // 基线 flaky（#5 失败 #4/#6 通过）。按仓库惯例（account/metrics.rs）串行化。

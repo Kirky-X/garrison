@@ -476,7 +476,7 @@ mod tests {
                 1,
                 NewAuthMethod {
                     user_id,
-                    method_type: "webauthn".to_string(),
+                    method_type: "passkey".to_string(),
                     external_id: None,
                     metadata: None,
                 },
@@ -512,7 +512,7 @@ mod tests {
             1,
             NewAuthMethod {
                 user_id: user_id.clone(),
-                method_type: "totp".to_string(),
+                method_type: "password".to_string(),
                 external_id: Some("ext-cross".to_string()),
                 metadata: None,
             },

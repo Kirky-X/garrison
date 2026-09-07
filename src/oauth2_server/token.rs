@@ -2056,8 +2056,8 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("invalid_scope"),
-            "期望 invalid_scope 错误，实际: {}",
+            err.to_string().contains("invalid-scope"),
+            "期望 invalid-scope 错误，实际: {}",
             err
         );
     }
@@ -2086,7 +2086,7 @@ mod tests {
             password: None,
         };
         let err = handler.handle(&req).await.unwrap_err();
-        assert!(err.to_string().contains("invalid_scope"));
+        assert!(err.to_string().contains("invalid-scope"));
     }
 
     /// password grant 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
@@ -2113,8 +2113,8 @@ mod tests {
         };
         let err = handler.handle(&req).await.unwrap_err();
         assert!(
-            err.to_string().contains("invalid_scope"),
-            "期望 invalid_scope 错误，实际: {}",
+            err.to_string().contains("invalid-scope"),
+            "期望 invalid-scope 错误，实际: {}",
             err
         );
     }
@@ -2550,7 +2550,7 @@ mod refresh_rotation_tests {
             dao.clone(),
             "https://auth.example.com/login".into(),
         ));
-        let jwt_handler = Arc::new(JwtHandler::new("test_secret"));
+        let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation = Arc::new(RefreshTokenRotation::new(
             pool,
             jwt_handler,

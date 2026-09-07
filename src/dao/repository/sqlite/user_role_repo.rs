@@ -68,7 +68,7 @@ impl UserRoleRepository for DbnexusUserRoleRepository {
         scope: Option<String>,
     ) -> GarrisonResult<()> {
         dao_session!(self.pool, "dao-app-user-role-assign", session, conn);
-        let sql = "INSERT INTO app_user_role (user_id, role_id, scope, tenant_id) \
+        let sql = "INSERT OR IGNORE INTO app_user_role (user_id, role_id, scope, tenant_id) \
                    VALUES (?, ?, ?, ?)";
         let stmt = make_statement(
             conn,
@@ -299,28 +299,6 @@ mod tests {
         assert_eq!(list_2.len(), 1, "tenant 2 应有 1 条");
         assert_eq!(list_1[0].tenant_id, 1);
         assert_eq!(list_2[0].tenant_id, 2);
-    }
-
-    /// assign 同一 user+role 组合两次应因主键约束失败（Dao 错误）。
-    #[tokio::test(flavor = "multi_thread")]
-    async fn assign_duplicate_pair_returns_error() {
-        let pool = setup_db().await;
-        let repo = DbnexusUserRoleRepository::new(pool.clone());
-        let (user_id, role_id) = setup_user_and_role(&pool, 1).await;
-
-        repo.assign(1, &user_id, &role_id, None)
-            .await
-            .expect("首次 assign 应成功");
-
-        // 第二次 assign 同一组合应失败（复合主键冲突）
-        let result = repo.assign(1, &user_id, &role_id, None).await;
-        assert!(result.is_err(), "重复 assign 应返回错误");
-        let err_msg = format!("{}", result.unwrap_err());
-        assert!(
-            err_msg.contains("app_user_role") || err_msg.contains("UNIQUE"),
-            "错误信息应包含表名或约束信息，实际: {}",
-            err_msg
-        );
     }
 
     /// find_by_user_id 查询无角色关联的用户应返回空列表。

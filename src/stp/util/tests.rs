@@ -1,5 +1,4 @@
 mod tests {
-    use super::*;
     use crate::dao::tests::MockDao;
     use crate::dao::GarrisonDao;
     use crate::error::{GarrisonError, GarrisonResult};
@@ -7,7 +6,7 @@ mod tests {
     #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
     use crate::stp::util::{init_backend, reset_backend_for_test};
     use crate::stp::util::{spawn_cleanup_task, GarrisonUtil, JwtMode};
-    use crate::stp::{LoginParams, SessionLogic};
+    use crate::stp::LoginParams;
     use async_trait::async_trait;
     use serial_test::serial;
     use std::sync::atomic::{AtomicUsize, Ordering};

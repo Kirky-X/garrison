@@ -1105,7 +1105,6 @@ mod hook_tests {
 
 #[cfg(feature = "i18n-icu")]
 mod i18n_tests {
-    use super::*;
     use crate::error::GarrisonError;
     use crate::i18n::{set_locale, translate_error, GarrisonLocale};
 

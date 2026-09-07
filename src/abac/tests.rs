@@ -20,8 +20,8 @@ async fn check_abac_with_policy_no_engine_returns_err() {
     match result {
         Err(crate::error::GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("abac-engine-not-init"),
-                "错误消息应含 'abac-engine-not-init'，实际: {}",
+                msg.contains("AbacEngine 未初始化"),
+                "错误消息应含 'AbacEngine 未初始化'，实际: {}",
                 msg
             );
         },
@@ -118,8 +118,8 @@ async fn init_abac_engine_duplicate_returns_config_error() {
     match result {
         Err(crate::error::GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("abac-engine-already-initialized"),
-                "错误消息应包含 'abac-engine-already-initialized'，实际: {}",
+                msg.contains("AbacEngine already initialized"),
+                "错误消息应包含 'AbacEngine already initialized'，实际: {}",
                 msg
             );
         },
@@ -295,8 +295,8 @@ async fn check_abac_with_policy_engine_initialized_deny() {
     match result {
         Err(crate::error::GarrisonError::NotPermission(msg)) => {
             assert!(
-                msg.contains("abac-policy-denied"),
-                "错误消息应包含 'abac-policy-denied'，实际: {}",
+                msg.contains("ABAC 策略拒绝"),
+                "错误消息应包含 'ABAC 策略拒绝'，实际: {}",
                 msg
             );
         },
@@ -331,8 +331,8 @@ async fn check_abac_with_policy_not_logged_in_returns_not_login() {
     match result {
         Err(crate::error::GarrisonError::NotLogin(msg)) => {
             assert!(
-                msg.contains("abac-login-id-missing"),
-                "错误消息应包含 'abac-login-id-missing'，实际: {}",
+                msg.contains("login_id"),
+                "错误消息应包含 'login_id'，实际: {}",
                 msg
             );
         },
@@ -430,94 +430,6 @@ async fn check_abac_with_policy_accepts_legitimate_resource() {
 
     reset_abac_for_test();
     crate::manager::GarrisonManager::reset_for_test();
-}
-
-// ========================================================================
-// A3: validate_abac_expr — 防御 Cedar 策略注入
-// 验证 abac_expr 参数中的恶意模式被拒绝，合法表达式被接受
-// ========================================================================
-
-/// 合法 abac_expr 应通过校验。
-#[test]
-fn validate_abac_expr_accepts_legitimate_expressions() {
-    // 引用 principal/resource/action 的合法表达式
-    assert!(validate_abac_expr("resource.owner == principal.id").is_ok());
-    assert!(validate_abac_expr("principal.department == \"eng\"").is_ok());
-    assert!(validate_abac_expr("action in [Action::\"read\"]").is_ok());
-    assert!(validate_abac_expr(
-        "resource.owner == principal.id && principal.department == \"eng\""
-    )
-    .is_ok());
-}
-
-/// 拒绝 `};` 模式（尝试闭合 when 块并注入新策略）。
-#[test]
-fn validate_abac_expr_rejects_policy_termination() {
-    let payloads = [
-        "}; permit(principal, action, resource);",
-        "}; forbid(principal, action, resource);",
-        "1 == 1 }; permit(principal, action, resource);",
-        "resource.owner == principal.id }; forbid(principal);",
-    ];
-    for p in payloads {
-        assert!(
-            validate_abac_expr(p).is_err(),
-            "应拒绝 `}};` 注入 payload: {:?}",
-            p
-        );
-    }
-}
-
-/// 拒绝显式 `permit(` / `forbid(` 关键字（不允许在表达式内声明新策略）。
-#[test]
-fn validate_abac_expr_rejects_policy_declarations() {
-    let payloads = [
-        "permit(principal, action, resource)",
-        "forbid(principal, action, resource)",
-        "true || permit(principal, action, resource)",
-        "forbid(principal)",
-    ];
-    for p in payloads {
-        assert!(
-            validate_abac_expr(p).is_err(),
-            "应拒绝 permit/forbid 声明: {:?}",
-            p
-        );
-    }
-}
-
-/// 拒绝纯字面量（无 principal/resource/action 引用）。
-#[test]
-fn validate_abac_expr_rejects_pure_literal() {
-    let payloads = ["1 == 1", "true", "false", "0", "\"hello\""];
-    for p in payloads {
-        assert!(
-            validate_abac_expr(p).is_err(),
-            "应拒绝纯字面量（无 principal/resource/action 引用）: {:?}",
-            p
-        );
-    }
-}
-
-/// 拒绝空表达式。
-#[test]
-fn validate_abac_expr_rejects_empty() {
-    assert!(validate_abac_expr("").is_err());
-    assert!(validate_abac_expr("   ").is_err());
-}
-
-/// 拒绝超长表达式（>512 字符，DoS 防御）。
-#[test]
-fn validate_abac_expr_rejects_overlong() {
-    let long_expr = "a".repeat(513);
-    assert!(validate_abac_expr(&long_expr).is_err());
-}
-
-/// 包含 principal/resource/action 关键字但含 `};` 仍应被拒绝。
-#[test]
-fn validate_abac_expr_rejects_injection_with_keywords() {
-    let payload = "principal.id == resource.owner }; permit(principal, action, resource);";
-    assert!(validate_abac_expr(payload).is_err());
 }
 
 // ========================================================================

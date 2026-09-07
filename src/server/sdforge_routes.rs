@@ -486,10 +486,11 @@ mod tests {
                 ip: Some("127.0.0.1".to_string()),
                 user_agent: Some("Mozilla/5.0".to_string()),
                 safe_services: std::collections::HashMap::new(),
-                #[cfg(feature = "dynamic-active-timeout")]
+                #[cfg(feature = "session-extra")]
                 dynamic_active_timeout: None,
-                #[cfg(feature = "anonymous-session")]
+                #[cfg(feature = "session-extra")]
                 is_anon: false,
+                effective_timeout: None,
             })
         }
         async fn kickout(&self, _login_id: &str) -> Result<(), GarrisonError> {
@@ -866,8 +867,8 @@ mod tests {
         // #[forge] 宏用 Json(value) 包装返回值，响应是 JSON 字符串
         let body: String = serde_json::from_slice(&bytes).expect("响应应为 JSON 序列化的字符串");
         assert!(
-            body.contains("bulwark_login_total"),
-            "/metrics 应包含 bulwark_login_total 指标，实际: {}",
+            body.contains("garrison_login_total"),
+            "/metrics 应包含 garrison_login_total 指标，实际: {}",
             body
         );
     }

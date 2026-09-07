@@ -1045,7 +1045,7 @@ async fn mock_interface_default_methods_with_type_coverage() {
 /// 调用 CountingDao 的 atomic + 默认 trait 方法以覆盖 async_trait wrapper。
 #[tokio::test]
 async fn counting_dao_atomic_and_default_methods_coverage() {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicUsize;
     struct CountingDao {
         _counter: Arc<AtomicUsize>,
     }
