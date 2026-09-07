@@ -157,7 +157,7 @@ email-verification = ["garrison/email-verification"]
 
 # ====================================================================
 # Feature-gated bins（required-features 防止 feature 关闭时编译失败）
-# always-on bins 由 cargo 自动发现 src/bin/*.rs，无需 [[bin]] 段。
+# always-on bins 显式声明（无 required-features），与无 cfg 门控的 tests/<name>.rs 对应。
 # ====================================================================
 
 [[bin]]
@@ -466,3 +466,35 @@ path = "src/bin/keycloak_oidc.rs"
 name = "three_tier_cache"
 required-features = ["three-tier-cache"]
 path = "src/bin/three_tier_cache.rs"
+
+# ====================================================================
+# always-on 示例（无 feature 门控，tests/<name>.rs 同样无 cfg 门控）
+# ====================================================================
+
+[[bin]]
+name = "auth_logic_impl"
+path = "src/bin/auth_logic_impl.rs"
+
+[[bin]]
+name = "config_loader"
+path = "src/bin/config_loader.rs"
+
+[[bin]]
+name = "custom_plugin"
+path = "src/bin/custom_plugin.rs"
+
+[[bin]]
+name = "exception_handling"
+path = "src/bin/exception_handling.rs"
+
+[[bin]]
+name = "json_template"
+path = "src/bin/json_template.rs"
+
+[[bin]]
+name = "permission_check"
+path = "src/bin/permission_check.rs"
+
+[[bin]]
+name = "token_styles"
+path = "src/bin/token_styles.rs"
