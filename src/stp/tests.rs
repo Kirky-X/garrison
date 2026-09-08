@@ -4286,11 +4286,14 @@ async fn login_rolls_back_session_when_enforce_fails() {
         let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = d.compare_and_update_if_greater("k", 1, 60).await;
         let _ = d.eval_lua("r", vec![], vec![]).await;
-        let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = d.query_credit_consumption(0, 0, 0).await;
-        let _ = d.query_role_hierarchy_edges(0).await;
-        let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = d.query_credit_consumption(0, 0, 0).await;
+            let _ = d.query_role_hierarchy_edges(0).await;
+            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
     let fail_dao = Arc::new(FailInjectionDao {
         inner: mock_dao.clone(),

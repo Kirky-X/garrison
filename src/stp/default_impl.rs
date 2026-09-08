@@ -7,6 +7,9 @@ use super::*;
 
 impl GarrisonLogicDefault {
     /// 获取底层 DAO 引用（跨模块逻辑如 firewall 计数/封禁 / JWT 黑名单使用）。
+    ///
+    /// 调用方分布随 feature 组合变化幅度大，无法用 cfg 精确枚举，
+    /// 参照同 impl 块 `firewall_hook_injected` 先例以 allow(dead_code) 处理。
     #[cfg(any(
         feature = "protocol-apikey",
         feature = "db-postgres",
@@ -15,6 +18,7 @@ impl GarrisonLogicDefault {
         feature = "protocol-jwt",
         feature = "firewall-bruteforce"
     ))]
+    #[allow(dead_code)]
     pub(crate) fn dao(&self) -> std::sync::Arc<dyn crate::dao::GarrisonDao> {
         self.session.dao().clone()
     }
@@ -397,7 +401,7 @@ mod no_feature_tests {
 
         let result = GarrisonUtil::check_api_key("any-namespace").await;
         assert!(
-            matches!(result, Err(GarrisonError::Config(ref m)) if m.contains("protocol-apikey")),
+            matches!(result, Err(GarrisonError::Config(ref m)) if m.contains("stp-apikey-feature-required")),
             "feature 关闭时应返回 Err(Config)，实际: {:?}",
             result
         );

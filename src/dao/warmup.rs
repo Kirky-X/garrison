@@ -563,11 +563,14 @@ mod tests {
         let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = dao.compare_and_update_if_greater("k", 1, 60).await;
         let _ = dao.eval_lua("r", vec![], vec![]).await;
-        let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = dao.query_credit_consumption(0, 0, 0).await;
-        let _ = dao.query_role_hierarchy_edges(0).await;
-        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = dao.query_credit_consumption(0, 0, 0).await;
+            let _ = dao.query_role_hierarchy_edges(0).await;
+            let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
 
     /// NoKeysDao 的 get/set/update/expire/delete 方法均返回 Ok(()), get 返回 None。
@@ -595,11 +598,14 @@ mod tests {
         let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = dao.compare_and_update_if_greater("k", 1, 60).await;
         let _ = dao.eval_lua("r", vec![], vec![]).await;
-        let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = dao.query_credit_consumption(0, 0, 0).await;
-        let _ = dao.query_role_hierarchy_edges(0).await;
-        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = dao.query_credit_consumption(0, 0, 0).await;
+            let _ = dao.query_role_hierarchy_edges(0).await;
+            let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
 
     /// ErrorKeysDao 的 get/set/update/expire/delete 方法均返回 Ok(()), keys 返回 Dao 错误。
@@ -627,11 +633,14 @@ mod tests {
         let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = dao.compare_and_update_if_greater("k", 1, 60).await;
         let _ = dao.eval_lua("r", vec![], vec![]).await;
-        let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = dao.query_credit_consumption(0, 0, 0).await;
-        let _ = dao.query_role_hierarchy_edges(0).await;
-        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = dao.query_credit_consumption(0, 0, 0).await;
+            let _ = dao.query_role_hierarchy_edges(0).await;
+            let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
 
     /// ErrorGetDao 的 set/update/expire/delete 方法返回 Ok(()), get 返回 Dao 错误。
@@ -660,11 +669,14 @@ mod tests {
         let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = dao.compare_and_update_if_greater("k", 1, 60).await;
         let _ = dao.eval_lua("r", vec![], vec![]).await;
-        let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = dao.query_credit_consumption(0, 0, 0).await;
-        let _ = dao.query_role_hierarchy_edges(0).await;
-        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = dao.query_credit_consumption(0, 0, 0).await;
+            let _ = dao.query_role_hierarchy_edges(0).await;
+            let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
 
     /// PartialNotImplDao 的 set/update/expire/delete 方法返回 Ok(())。
@@ -700,11 +712,14 @@ mod tests {
         let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = dao.compare_and_update_if_greater("k", 1, 60).await;
         let _ = dao.eval_lua("r", vec![], vec![]).await;
-        let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = dao.query_credit_consumption(0, 0, 0).await;
-        let _ = dao.query_role_hierarchy_edges(0).await;
-        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = dao.query_credit_consumption(0, 0, 0).await;
+            let _ = dao.query_role_hierarchy_edges(0).await;
+            let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
 
     // ========================================================================
@@ -792,11 +807,14 @@ mod tests {
         let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = dao.compare_and_update_if_greater("k", 1, 60).await;
         let _ = dao.eval_lua("r", vec![], vec![]).await;
-        let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = dao.query_credit_consumption(0, 0, 0).await;
-        let _ = dao.query_role_hierarchy_edges(0).await;
-        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = dao.query_credit_consumption(0, 0, 0).await;
+            let _ = dao.query_role_hierarchy_edges(0).await;
+            let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
         let service = CacheWarmupService::new(dao);
         let result = service.warmup().await;
 

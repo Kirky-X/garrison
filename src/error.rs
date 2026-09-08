@@ -706,6 +706,12 @@ mod tests {
     /// 供日志/监控等非 HTTP 场景使用，须与 `response_parts()` 的 error_code 同源防漂移）。
     #[test]
     fn error_code_covers_all_variants_unique_and_stable() {
+        // extend/push 分支分别被 email-verification / credit-metering 门控：
+        // 两者皆关闭时 mut 未被使用，此处显式 allow 以兼容 CI 的 -D warnings。
+        #[cfg_attr(
+            not(any(feature = "email-verification", feature = "credit-metering")),
+            allow(unused_mut)
+        )]
         let mut samples: Vec<GarrisonError> = vec![
             GarrisonError::NotLogin("a".into()),
             GarrisonError::NotPermission("a".into()),
@@ -1279,7 +1285,8 @@ mod tests {
     #[cfg(feature = "miette")]
     #[test]
     fn diagnostic_code_returns_stable_identifier() {
-        use miette::Diagnostic;
+        // 注：不 use miette::Diagnostic——GarrisonError 存在固有 `code() -> &'static str`
+        // 会遮蔽 trait 方法，必须全限定调用（见下方循环体）。
 
         let cases: [(GarrisonError, &str); 5] = [
             (
@@ -1306,7 +1313,10 @@ mod tests {
             ),
         ];
         for (err, expected) in cases {
-            let code = err.code().expect("code() 应返回 Some(Box<dyn Display>)");
+            // 全限定调用：GarrisonError 存在固有 `code() -> &'static str`（error_code），
+            // 方法解析优先固有方法，必须显式指定 miette trait 方法。
+            let code =
+                miette::Diagnostic::code(&err).expect("code() 应返回 Some(Box<dyn Display>)");
             assert_eq!(
                 code.to_string(),
                 expected,

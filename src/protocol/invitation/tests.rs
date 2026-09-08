@@ -7,7 +7,10 @@
 //! 防爆破锁定（T006）、吊销与列出（T007）、事件广播（T008）、注册编排钩子（T009）。
 
 use super::*;
+// T008 事件广播测试依赖 listener feature（未启用时相关测试编译剔除）
+#[cfg(feature = "listener")]
 use crate::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
+#[cfg(feature = "listener")]
 use std::sync::Mutex;
 
 // ============================================================================

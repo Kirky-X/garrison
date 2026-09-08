@@ -2279,6 +2279,7 @@ pub mod tests {
 
     /// `query_role_hierarchy_edges` 默认实现返回 NotImplemented。
     #[tokio::test]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     async fn default_query_role_hierarchy_edges_returns_not_implemented() {
         let dao = MinimalDao::new();
         let result = dao.query_role_hierarchy_edges(0).await;
@@ -2291,6 +2292,7 @@ pub mod tests {
 
     /// `insert_role_hierarchy_edge` 默认实现返回 NotImplemented。
     #[tokio::test]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     async fn default_insert_role_hierarchy_edge_returns_not_implemented() {
         let dao = MinimalDao::new();
         let result = dao.insert_role_hierarchy_edge(0, "admin", "owner").await;
@@ -2303,6 +2305,7 @@ pub mod tests {
 
     /// `delete_role_hierarchy_edge` 默认实现返回 NotImplemented。
     #[tokio::test]
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     async fn default_delete_role_hierarchy_edge_returns_not_implemented() {
         let dao = MinimalDao::new();
         let result = dao.delete_role_hierarchy_edge(0, "admin", "owner").await;

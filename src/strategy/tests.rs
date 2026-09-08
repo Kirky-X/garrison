@@ -960,11 +960,14 @@ async fn check_permission_cache_write_failure_warns_but_returns_result() {
         let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = d.compare_and_update_if_greater("k", 1, 60).await;
         let _ = d.eval_lua("r", vec![], vec![]).await;
-        let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = d.query_credit_consumption(0, 0, 0).await;
-        let _ = d.query_role_hierarchy_edges(0).await;
-        let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = d.query_credit_consumption(0, 0, 0).await;
+            let _ = d.query_role_hierarchy_edges(0).await;
+            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
     let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(Arc::new(FailingDao));
     // 缓存写入失败但 check_permission 仍应返回 true（持有权限）

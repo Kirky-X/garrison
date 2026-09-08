@@ -166,11 +166,14 @@ mod tests {
             let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
             let _ = d.compare_and_update_if_greater("k", 1, 60).await;
             let _ = d.eval_lua("r", vec![], vec![]).await;
-            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-            let _ = d.query_credit_consumption(0, 0, 0).await;
-            let _ = d.query_role_hierarchy_edges(0).await;
-            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
-            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+            #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+            {
+                let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+                let _ = d.query_credit_consumption(0, 0, 0).await;
+                let _ = d.query_role_hierarchy_edges(0).await;
+                let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+                let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+            }
         }
         let dao: Arc<dyn GarrisonDao> = Arc::new(FailingGetDao {
             get_call_count: get_call_count.clone(),

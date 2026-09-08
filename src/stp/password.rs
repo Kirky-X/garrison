@@ -292,7 +292,11 @@ mod tests {
     // 覆盖 hasher/repo 未注入 + listener_manager 广播 LoginFailure 路径
     // ========================================================================
 
-    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
+    #[cfg(all(
+        feature = "account-credential",
+        feature = "db-sqlite",
+        feature = "listener"
+    ))]
     mod default_impl_coverage {
         use super::*;
         use crate::account::credential::{Argon2Hasher, PasswordHasher};

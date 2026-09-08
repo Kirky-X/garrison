@@ -844,11 +844,14 @@ async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
         let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = d.compare_and_update_if_greater("k", 1, 60).await;
         let _ = d.eval_lua("r", vec![], vec![]).await;
-        let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = d.query_credit_consumption(0, 0, 0).await;
-        let _ = d.query_role_hierarchy_edges(0).await;
-        let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = d.query_credit_consumption(0, 0, 0).await;
+            let _ = d.query_role_hierarchy_edges(0).await;
+            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
     let tracking_dao = Arc::new(OrderTrackingDao::new());
     let session = Arc::new(GarrisonSession::new(
@@ -1333,11 +1336,14 @@ async fn renew_create_new_token_session_fails_old_token_untouched() {
         let _ = d.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = d.compare_and_update_if_greater("k", 1, 60).await;
         let _ = d.eval_lua("r", vec![], vec![]).await;
-        let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = d.query_credit_consumption(0, 0, 0).await;
-        let _ = d.query_role_hierarchy_edges(0).await;
-        let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = d.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = d.query_credit_consumption(0, 0, 0).await;
+            let _ = d.query_role_hierarchy_edges(0).await;
+            let _ = d.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = d.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
     let failing = Arc::new(FailingDao::new());
     let auth = make_auth_logic_with_failing_dao(failing.clone());

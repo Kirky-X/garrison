@@ -114,10 +114,13 @@ mod tests {
         let _ = dao.insert_social_binding(0, "u", "w", "o", None, 0).await;
         let _ = dao.compare_and_update_if_greater("k1", 10, 60).await;
         let _ = dao.eval_lua("r", vec![], vec![]).await;
-        let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
-        let _ = dao.query_credit_consumption(0, 0, 0).await;
-        let _ = dao.query_role_hierarchy_edges(0).await;
-        let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
-        let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        {
+            let _ = dao.insert_credit_consumption(0, "r", 1, 1, 1, 0).await;
+            let _ = dao.query_credit_consumption(0, 0, 0).await;
+            let _ = dao.query_role_hierarchy_edges(0).await;
+            let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
+            let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+        }
     }
 }
