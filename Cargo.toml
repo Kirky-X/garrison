@@ -396,14 +396,18 @@ firewall-parallel = ["firewall", "limiteron/parallel-checker"]
 dao-key-index = []
 
 # === 安全告警系统 ===
-# [v0.9.0] security-extra 为 stp 模块 safe-auth 相关门控的聚合特性
+# [v0.9.0] security-extra 为 stp 模块 safe-auth 相关门控的聚合特性。
+# 注意：strategy::alert 模块在代码中实际门控于 security-extra（非 security-alert），
+# security-alert 仅作为兼容别名存在（历史上曾为零依赖死 feature，导致
+# device-binding / session-hijack-detection 单独启用时编译失败——测试代码编译门禁暴露）。
 security-extra = []
-security-alert = []
+security-alert = ["security-extra"]
 device-binding = ["security-alert"]
 # 会话劫持检测：check_login 路径中对比当前请求 IP 与会话创建时存储的 IP，
 # 检测到不一致时广播告警事件（AlertOnly 模式）或额外踢出会话（Kickout 模式）。
-# 依赖 security-alert（复用 AnomalyDetector trait + AlertListenerManager 广播链路）。
-session-hijack-detection = ["security-alert"]
+# 依赖 security-alert（复用 AnomalyDetector trait + AlertListenerManager 广播链路）
+# 与 auth-server（SessionHijackDetector 消费 server 中间件写入的 CLIENT_IP/UA 请求上下文）。
+session-hijack-detection = ["security-alert", "auth-server"]
 
 # === Session 增强 ===
 # [v0.9.0] 合并 anonymous-session + session-search + dynamic-active-timeout + login-token-map-persistence → session-extra
@@ -415,7 +419,7 @@ three-tier-cache = []
 # === 社交登录 ===
 social-wechat = ["protocol-oauth2"]
 # 启用 rsa（RSA2 签名 + PEM 解析）+ base64（签名值编码）
-social-alipay = ["protocol-oauth2", "rsa", "dep:base64"]
+social-alipay = ["protocol-oauth2", "rsa", "dep:base64", "protocol-zeroize"]
 
 # === Keycloak OIDC RP ===
 keycloak-oidc = ["protocol-oidc"]

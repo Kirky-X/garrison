@@ -680,6 +680,7 @@ mod tests {
     #[cfg(feature = "manager-explicit")]
     #[async_trait]
     impl GarrisonDao for CountingDao {
+        crate::atomic_test_fallback!();
         async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
             self.counter
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
