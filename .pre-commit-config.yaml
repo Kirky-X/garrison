@@ -27,6 +27,10 @@ repos:
         args: [--fix=lf]
       - id: check-executables-have-shebangs
       - id: debug-statements
+        # specmark/archive/merge_delta_spec.py 是 bash wrapper，但官方命名契约
+        # 要求 .py 扩展名（archive_change.sh 以 $SCRIPT_DIR/merge_delta_spec.py
+        # 引用），Python AST 解析必然失败，故排除。
+        exclude: ^specmark/archive/merge_delta_spec\.py$
 
   # === 禁止提交 temp/ 第三方参考源码（防御级，阻断 git add -f 绕过 .gitignore） ===
   - repo: local
