@@ -94,6 +94,7 @@ graph TB
         httpbasic[protocol-httpbasic]
         httpdigest[protocol-httpdigest]
         sms[sms-rate-limit]
+        email[email-verification]
         confusable[secure-confusable]
         masking[secure-masking]
         sanitize[secure-sanitize]
@@ -191,6 +192,7 @@ graph TB
 | `secure/httpbasic` | `protocol-httpbasic` | HTTP Basic 认证 |
 | `secure/httpdigest` | `protocol-httpdigest` | HTTP Digest 认证 |
 | `secure/sms` | `sms-rate-limit` | SMS 验证码限速 |
+| `secure/email` | `email-verification` | 邮箱验证码（限速 + 异常检测；`email-verification-smtp` 提供内置 SMTP 发送） |
 | `secure/confusable` | `secure-confusable` | Unicode 同形异义字检测 |
 | `secure/masking` | `secure-masking` | 敏感数据脱敏（regex 真实脱敏） |
 | `secure/sanitize` | `secure-sanitize` | 通用输入消毒 |

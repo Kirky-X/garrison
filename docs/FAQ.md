@@ -215,6 +215,7 @@ garrison = { version = "0.9", features = ["production"] }
 - `firewall-waf`（WAF 请求内容校验）
 - `three-tier-cache`（三层缓存架构）
 - `sms-rate-limit`（SMS 验证码渐进式限速）
+- `email-verification`（邮箱验证码：发送/验证/双窗口限速/异常检测；`email-verification-smtp` 提供内置 SMTP 发送）
 - `backend-embedded`（默认嵌入式后端）
 - `backend-kit`（trait-kit typestate DI 构建）
 - `auth-server`（独立 Auth Server 模式）

@@ -366,6 +366,8 @@ async fn main() -> GarrisonResult<()> {
 | `secure-simple-token`         |  ❌  |  0.7.1   | SimpleTokenStyle HMAC-SHA256 签名                                                                                                                                                                                                |
 | `secure-ct-eq`                |  ❌  |  0.8.0   | 常量时间比较原语（CWE-208 防御，基于 `subtle`）                                                                                                                                                                                   |
 | `sms-rate-limit`              |  ❌  |  0.6.2   | SMS 验证码限速                                                                                                                                                                                                                   |
+| `email-verification`          |  ❌  |  0.9.0   | 邮箱验证码（发送/验证/双窗口限速/异常检测，业务方实现 `EmailSender` 或启用 `email-verification-smtp`）                                                                                                                              |
+| `email-verification-smtp`     |  ❌  |  0.9.0   | 内置 SMTP 邮件发送器（lettre，含 `SmtpEmailSender` + `SmtpConfig`）                                                                                                                                                               |
 | `account-credential`          |  ❌  |  0.6.0   | 凭证模型 SPI（Argon2/Bcrypt）                                                                                                                                                                                                    |
 | `account-credential-zeroize`  |  ❌  |  0.6.0   | 凭证模型 zeroize 扩展                                                                                                                                                                                                            |
 | `account-policy`              |  ❌  |  0.6.0   | 密码策略引擎                                                                                                                                                                                                                     |
@@ -385,7 +387,7 @@ async fn main() -> GarrisonResult<()> {
 > | `secure-httpdigest`  | `protocol-httpdigest`  | HTTP Digest 认证         |
 >
 > 升级时请将 `Cargo.toml` 中的 feature 引用按上表重命名，功能与默认行为不变。
-
+>
 > **可观测性 no-op 契约**：`metrics-prometheus` / `observability-otlp` / `tracing-log` 均未启用时，
 > `observability` 模块仍可导入但所有 API 为 no-op（`None` 短路 / 零开销），避免用户误以为指标或追踪已启用。
 | `audit-inklog`                |  ❌  |  0.7.0   | inklog 结构化审计日志                                                                                                                                                                                                            |

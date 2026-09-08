@@ -32,6 +32,15 @@ pub use password::{Argon2Hasher, PasswordHasher, PasswordVerifier};
 #[cfg(all(feature = "account-credential", feature = "secure-totp"))]
 pub mod totp;
 
+/// 邮箱验证码凭证子模块（复用 `secure::email::EmailVerificationService`）。
+///
+/// 提供动态发送型验证码凭证：`secret_data` 存邮箱地址，验证委托
+/// `EmailVerificationService::verify_code`（KV 一次性消费 + 限速 + 异常检测）。
+///
+/// 需同时启用 `account-credential` + `email-verification` feature。
+#[cfg(all(feature = "account-credential", feature = "email-verification"))]
+pub mod email;
+
 /// 备份码凭证子模块。
 #[cfg(feature = "account-credential")]
 pub mod backup_code;
