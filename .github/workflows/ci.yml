@@ -199,6 +199,14 @@ jobs:
             flags: --no-default-features --features oauth2-server,cache-redis
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # runner 默认可用磁盘 ~14GB，workspace-under-full 的测试编译（本 job 的
+      # default 组合第二步骤）会耗尽——预清理预装工具链释放 ~25GB
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          df -h /
       - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
       - name: Install protoc (sdforge build dep)
         uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc

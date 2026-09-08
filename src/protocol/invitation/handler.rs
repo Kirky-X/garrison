@@ -59,7 +59,7 @@ impl InvitationHandler {
     /// 签发单条邀请码。
     ///
     /// 校验规格（TTL > 0、max_uses >= 1）后生成短码，经 `set_if_absent` 写入
-    /// `garrison:invitation:code:<code>`，碰撞时重试最多 [`MAX_COLLISION_RETRIES`] 次。
+    /// `garrison:invitation:code:<code>`，碰撞时重试最多 `MAX_COLLISION_RETRIES` 次。
     ///
     /// # 错误
     /// - `GarrisonError::InvalidParam`: `ttl_seconds <= 0`、`max_uses == 0` 或碰撞重试耗尽。

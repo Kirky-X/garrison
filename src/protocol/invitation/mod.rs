@@ -6,7 +6,7 @@
 //! 对应 邀请码注册 机制，
 //! 覆盖签发（`create`/`create_batch`）、只读校验（`validate`）、原子消费（`redeem`）、
 //! 吊销（`revoke`）与列出（`list`），并内置防爆破尝试锁定与可选的注册编排钩子
-//! （[`InvitationRedeemHook`](InvitationRedeemHook)）。
+//! （[`InvitationRedeemHook`](crate::protocol::invitation::InvitationRedeemHook)）。
 //!
 //! 仅在启用 `protocol-invitation` 特性时编译。
 //!
