@@ -20,6 +20,8 @@ paths-ignore:
   - "**/examples/**"
   # 基准测试
   - "**/benches/**"
+  # specmark 归档工具（含 bash wrapper 的 .py 文件，Python 解析必然失败）
+  - "specmark/**"
 
 queries:
   - uses: security-and-quality
