@@ -110,15 +110,17 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let wrong = logic.login_with_password("1001", "wrong-password").await;
     assert!(wrong.is_err(), "错误密码应登录失败");
     match &wrong {
-        Err(GarrisonError::InvalidParam(msg)) if msg.contains("invalid password") => {
+        Err(GarrisonError::InvalidParam(msg)) if msg.contains("stp-invalid-password") => {
             println!("\n[4] 错误密码登录失败（预期）");
             println!("    error: InvalidParam(\"{}\")", msg);
             println!("    安全：用户不存在与密码错误返回相同错误，防止用户枚举");
         },
         other => {
-            return Err(
-                format!("期望 InvalidParam(\"invalid password\")，实际: {:?}", other).into(),
-            );
+            return Err(format!(
+                "期望 InvalidParam(\"stp-invalid-password\")，实际: {:?}",
+                other
+            )
+            .into());
         },
     }
 
@@ -126,7 +128,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let not_exist = logic.login_with_password("9999", "any-password").await;
     assert!(not_exist.is_err());
     println!("\n[5] 不存在的用户登录失败（预期）");
-    println!("    error: InvalidParam(\"invalid password\")");
+    println!("    error: InvalidParam(\"stp-invalid-password\")");
     println!("    安全：与错误密码返回相同错误，无法区分用户是否存在");
 
     println!("\n=== 示例完成 ===");

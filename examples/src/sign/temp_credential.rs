@@ -36,6 +36,7 @@ impl MockDao {
 
 #[async_trait]
 impl GarrisonDao for MockDao {
+    garrison::atomic_test_fallback!();
     async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.data.lock().await.get(key).cloned())
     }

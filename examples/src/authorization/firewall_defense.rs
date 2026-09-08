@@ -14,9 +14,11 @@
 //! cargo run -p garrison-examples --bin firewall_defense --features "firewall-bruteforce firewall-ratelimit firewall-ddos cache-memory"
 //! ```
 //!
-//! 本示例使用 oxcache 内存 DAO，无需外部依赖即可运行。
+//! 本示例使用框架 InMemoryDao（支持 limiteron Lua 原子原语），无需外部依赖即可运行。
+//! 注意：oxcache 内存后端不支持 eval_lua，无法承载限流器/封禁的原子计数，
+//! 生产环境请使用 oxcache + Redis 后端。
 
-use garrison::dao::GarrisonDaoOxcache;
+use garrison::dao::InMemoryDao;
 use garrison::error::GarrisonResult;
 use garrison::strategy::firewall::{
     BruteForceConfig, BruteForceStrategy, DDoSConfig, DDoSStrategy, FirewallContext,
@@ -29,8 +31,8 @@ use std::sync::Arc;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 防火墙防护完整流程 ===\n");
 
-    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
-    println!("[0] oxcache 内存 DAO 已初始化\n");
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+    println!("[0] 内存 DAO 已初始化\n");
 
     // ================================================================
     // 场景一：暴力破解防护

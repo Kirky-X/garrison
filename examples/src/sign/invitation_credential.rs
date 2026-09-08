@@ -152,10 +152,12 @@ pub async fn run() -> GarrisonResult<()> {
     let listed = handler.list("admin-1").await?;
     println!("[6] list / revoke:");
     println!(
-        "    admin-1 名下邀请码数 = {}（含 2 个未消费团队码）",
+        "    admin-1 名下邀请码数 = {}（3 个团队码全部在库：2 可用 + 1 已耗尽）",
         listed.len()
     );
-    assert_eq!(listed.len(), 2);
+    // list 为管理面全量视图：批量码耗尽后记录保留（仅单次码消费即删），
+    // 单次码 invitation.code 已在步骤 4 消费删除，故 admin-1 名下共 3 条。
+    assert_eq!(listed.len(), 3);
     // 吊销剩余团队码
     handler.revoke(&batch[1].code, "admin-1").await?;
     let report = handler.validate(&batch[1].code).await?;

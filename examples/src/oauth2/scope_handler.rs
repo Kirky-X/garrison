@@ -74,7 +74,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match registry.validate("unregistered", 0) {
         Err(GarrisonError::OAuth2(msg)) => {
             println!("    validate(\"unregistered\", 0) → Err（未注册）");
-            assert!(msg.contains("not registered"));
+            assert!(msg.contains("oauth2-scope-handler-not-registered"));
         },
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
@@ -137,7 +137,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         Err(GarrisonError::OAuth2(msg)) => {
             println!("    get_client_credentials_token(\"unknown\") → Err（未注册）");
-            assert!(msg.contains("not registered"));
+            assert!(msg.contains("oauth2-scope-handler-not-registered"));
         },
         other => panic!("期望 OAuth2 错误（未注册），实际: {:?}", other),
     }

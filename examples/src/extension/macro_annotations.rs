@@ -85,6 +85,7 @@ impl MockDao {
 
 #[async_trait]
 impl GarrisonDao for MockDao {
+    garrison::atomic_test_fallback!();
     async fn get(&self, key: &str) -> Result<Option<String>, GarrisonError> {
         let mut store = self.store.lock();
         match store.get(key) {

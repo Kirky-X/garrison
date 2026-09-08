@@ -36,6 +36,7 @@ impl InMemoryDao {
 
 #[async_trait]
 impl GarrisonDao for InMemoryDao {
+    garrison::atomic_test_fallback!();
     async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         Ok(self.data.lock().await.get(key).cloned())
     }

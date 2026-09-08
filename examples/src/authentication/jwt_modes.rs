@@ -43,7 +43,10 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
     let mut config = GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
-    config.jwt_secret = "jwt-modes-demo-secret".to_string().into();
+    // ≥32 字符（HS256 最小长度校验，config/impls.rs validate_jwt_secret）
+    config.jwt_secret = "jwt-modes-demo-secret-for-hs256-0123456789"
+        .to_string()
+        .into();
     config.timeout = 3600;
     config.throw_on_not_login = true;
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
@@ -88,7 +91,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 4. 演示 JWT 签发后可被 JwtHandler 独立校验
     println!("[4] JWT 独立校验（使用 protocol::jwt::JwtHandler）");
     use garrison::protocol::jwt::JwtHandler;
-    let handler = JwtHandler::new("jwt-modes-demo-secret-min-32bytes!");
+    // 与 make_logic_with_mode 中 config.jwt_secret 保持一致（同一密钥签发与校验）
+    let handler = JwtHandler::new("jwt-modes-demo-secret-for-hs256-0123456789");
     let claims = handler.verify(&token)?;
     println!(
         "    verify(token) → sub={}, login_id={}",

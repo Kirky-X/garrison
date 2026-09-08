@@ -62,11 +62,15 @@ async fn test_guard_protection() {
     assert_eq!(resp.status(), StatusCode::OK);
 
     // CheckRole 路径 - 有 token 且持有 admin 角色 → 200
-    let resp = warp::test::request()
-        .header("Authorization", format!("Bearer {}", token))
-        .path("/api/admin")
-        .reply(&routes)
-        .await;
+    // （tenant-isolation 启用时角色检查需租户上下文，与 CheckPermission 请求同模式包装）
+    let resp = with_tenant(async {
+        warp::test::request()
+            .header("Authorization", format!("Bearer {}", token))
+            .path("/api/admin")
+            .reply(&routes)
+            .await
+    })
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
 
     // CheckPermission 路径 - 有 token 且持有 data:read 权限 → 200
@@ -139,11 +143,14 @@ async fn test_check_role_filter_accepts_with_role() {
         .and(check_role(config, "admin".to_string()))
         .map(|()| "admin ok");
 
-    let resp = warp::test::request()
-        .header("Authorization", format!("Bearer {}", token))
-        .path("/api/admin")
-        .reply(&route)
-        .await;
+    let resp = with_tenant(async {
+        warp::test::request()
+            .header("Authorization", format!("Bearer {}", token))
+            .path("/api/admin")
+            .reply(&route)
+            .await
+    })
+    .await;
     assert_eq!(resp.status(), StatusCode::OK);
 }
 

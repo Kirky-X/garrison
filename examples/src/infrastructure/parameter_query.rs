@@ -51,6 +51,7 @@ impl Default for InMemoryDao {
 
 #[async_trait]
 impl GarrisonDao for InMemoryDao {
+    garrison::atomic_test_fallback!();
     async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {
@@ -284,7 +285,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "    check_permission(\"user:read\") → Err(Internal(\"{}\"))",
                 msg
             );
-            assert!(msg.contains("login_id not set"));
+            assert!(msg.contains("stp-param-login-id-missing"));
         },
         other => panic!("期望 Internal 错误，实际: {:?}", other),
     }
@@ -296,7 +297,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
                 "    check_role(\"admin\")         → Err(Internal(\"{}\"))",
                 msg
             );
-            assert!(msg.contains("login_id not set"));
+            assert!(msg.contains("stp-param-login-id-missing"));
         },
         other => panic!("期望 Internal 错误，实际: {:?}", other),
     }

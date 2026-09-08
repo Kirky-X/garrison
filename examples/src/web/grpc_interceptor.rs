@@ -54,6 +54,7 @@ impl Default for InMemoryDao {
 
 #[async_trait]
 impl GarrisonDao for InMemoryDao {
+    garrison::atomic_test_fallback!();
     async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut store = self.store.lock();
         match store.get(key) {

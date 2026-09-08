@@ -56,7 +56,7 @@ pub fn run() -> GarrisonResult<()> {
     // 注意：此处 secret 为示例硬编码值，仅用于演示。
     // 生产环境必须从安全配置源（env / secret manager）读取，不可硬编码。
     let simple_style = SimpleTokenStyle::new(
-        "simple-demo-secret".to_string(), // nosemgrep: generic.secrets.security.detected-generic-secret
+        "simple-demo-secret-for-simple-style-0123456789".to_string(), // nosemgrep: generic.secrets.security.detected-generic-secret
     );
     let token = simple_style.generate("2002", 3600)?;
     println!("[3] SimpleTokenStyle:");
@@ -78,7 +78,7 @@ pub fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     println!("[4] TokenStyleFactory 按字符串创建：");
     for style_name in &["uuid", "random_64", "simple"] {
-        let handler = TokenStyleFactory::new(style_name, "unused-secret")?;
+        let handler = TokenStyleFactory::new(style_name, "unused-secret-for-demo-min-32bytes!")?;
         let t = handler.generate("42", 60)?;
         println!("    {:>10} → {}", style_name, t);
     }
@@ -94,7 +94,7 @@ pub fn run() -> GarrisonResult<()> {
     {
         let jwt_handler = TokenStyleFactory::new(
             "jwt",
-            "my-jwt-secret", // nosemgrep: generic.secrets.security.detected-generic-secret
+            "my-jwt-secret-for-token-styles-demo-0123456789", // nosemgrep: generic.secrets.security.detected-generic-secret
         )?;
         let jwt_token = jwt_handler.generate("3003", 3600)?;
         println!("\n    jwt → {}", jwt_token);
