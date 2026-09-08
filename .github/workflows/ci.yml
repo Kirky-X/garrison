@@ -204,7 +204,8 @@ jobs:
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
-            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL || true
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/lib/jvm \
+            /usr/local/share/boost /usr/share/swift || true
           sudo docker image prune --all --force > /dev/null 2>&1 || true
           df -h /
       - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
@@ -217,8 +218,15 @@ jobs:
           shared-key: ci-guard-deps
       - name: Compile tests (lib + integration, no run)
         run: cargo test --no-run ${{ matrix.flags }} --locked
+      # default 组合额外做 workspace 全量验证：先清掉组合编译产物，再以
+      # 无 debuginfo 模式编译（编译门禁不需调试符号，target 体积减半以上）
+      - name: Clean target before workspace compile
+        if: matrix.name == 'default'
+        run: cargo clean
       - name: Compile workspace tests (examples/macros under full)
         if: matrix.name == 'default'
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
         run: cargo test --workspace --no-run --features full --locked
 
   # === 文档构建 ===
