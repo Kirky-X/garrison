@@ -79,10 +79,11 @@ full = [
     "firewall-anomalous", "firewall-geoip", "firewall-waf",
     "oauth2-server", "web-cors", "web-csrf",
     "credit-metering", "sms-rate-limit", "three-tier-cache",
-    "protocol-invitation", "email-verification",
+    "protocol-invitation", "email-verification", "i18n",
 ]
 
 # 单特性转发到 garrison（保持与 garrison feature 名一致）
+i18n = ["garrison/i18n"]
 secure-sign = ["garrison/secure-sign"]
 account-credential = ["garrison/account-credential"]
 protocol-httpbasic = ["garrison/protocol-httpbasic"]

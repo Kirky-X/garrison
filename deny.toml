@@ -32,6 +32,7 @@ allow = [
     # limiteron non-optional 后，oxcache/core 透传引入：
     "BSL-1.0",                # xxhash-rust (via redis → oxcache/core)，OSI/FSF 认可
     "CDLA-Permissive-2.0",    # webpki-root-certs (via reqwest → opentelemetry-otlp → oxcache/core/minimal/metrics)
+    "0BSD",                   # quoted_printable (via lettre → email-verification-smtp)，OSI 认可
 ]
 # 置信度阈值 0.5：自研 crate（sdforge-macros/trait-kit）Cargo.toml 缺 license 字段，
 # 仅 LICENSE 文件可被检测为 MIT（置信度 ~0.57）。正式修复需发布上游 crate 补 license 字段。
