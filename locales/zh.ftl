@@ -560,6 +560,9 @@ secure-email-empty = email 不能为空
 secure-email-no-colon = email 不能包含冒号
 secure-email-no-control-char = email 不能包含控制字符
 secure-email-invalid-format = email 格式无效
+secure-email-code-mail-subject = 验证码
+secure-email-code-mail-body = 您的验证码是：{$code}，{$minutes} 分钟内有效。
+    如非本人操作，请忽略此邮件。
 secure-counter-parse = 计数器值解析失败 key={$arg0}: {$arg1}
 secure-system-time = 系统时间错误: {$arg0}
 secure-limiter-incr = limiteron incr_with_ttl 失败: {$arg0}

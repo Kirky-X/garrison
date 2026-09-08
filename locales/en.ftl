@@ -560,6 +560,9 @@ secure-email-empty = email must not be empty
 secure-email-no-colon = email must not contain colon
 secure-email-no-control-char = email must not contain control characters
 secure-email-invalid-format = email format invalid
+secure-email-code-mail-subject = Verification Code
+secure-email-code-mail-body = Your verification code is: {$code}. It is valid for {$minutes} minutes.
+    If you did not request this code, please ignore this email.
 secure-counter-parse = counter value parse failed key={$arg0}: {$arg1}
 secure-system-time = system time error: {$arg0}
 secure-limiter-incr = limiteron incr_with_ttl failed: {$arg0}

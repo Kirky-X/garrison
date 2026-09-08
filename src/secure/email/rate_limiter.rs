@@ -35,12 +35,12 @@ pub(super) fn validate_email(email: &str) -> GarrisonResult<()> {
     }
     if email.contains(':') {
         return Err(GarrisonError::InvalidParam(
-            "secure-email-no-colon".to_string(),
+            "secure-email-no-colon::".to_string(),
         ));
     }
     if email.chars().any(|c| c.is_control()) {
         return Err(GarrisonError::InvalidParam(
-            "secure-email-no-control-char".to_string(),
+            "secure-email-no-control-char::".to_string(),
         ));
     }
     if email.len() > 254 {

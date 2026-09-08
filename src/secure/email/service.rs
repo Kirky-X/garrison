@@ -81,14 +81,14 @@ impl EmailVerificationService {
             return Err(GarrisonError::EmailChannelRecycled);
         }
 
-        // 发送验证码
-        let subject = "验证码";
-        let body = format!(
-            "您的验证码是：{}，{} 分钟内有效。\n如非本人操作，请忽略此邮件。",
-            code,
-            self.code_ttl / 60
+        // 发送验证码（主题/正文走 FTL 本地化，禁止硬编码文案）
+        let subject = crate::i18n::translate_detail("secure-email-code-mail-subject", &[]);
+        let minutes = (self.code_ttl / 60).to_string();
+        let body = crate::i18n::translate_detail(
+            "secure-email-code-mail-body",
+            &[("code", code.as_str()), ("minutes", minutes.as_str())],
         );
-        if let Err(e) = self.sender.send(&normalized, subject, &body).await {
+        if let Err(e) = self.sender.send(&normalized, &subject, &body).await {
             // 发送失败，回滚限速 + 删除验证码 + 递减未验证计数
             self.rate_limiter.rollback_inner(&normalized).await?;
             self.dao.delete(&code_key).await?;
