@@ -36,7 +36,7 @@ jobs:
   each-feature:
     name: Each-feature check (cargo-hack)
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
@@ -66,6 +66,41 @@ jobs:
           cargo hack check --no-dev-deps --features "auth-server,backend-remote"
           cargo hack check --no-dev-deps --features "oauth2-server,cache-redis"
           cargo hack check --no-dev-deps --features "tenant-isolation,firewall-bruteforce"
+      - name: Targeted two-feature test compile
+        # 与上方组合逐一对应，用 test --no-run 补齐「测试代码」编译维度：
+        # check 不编译 #[cfg(test)]，测试代码的 feature 门控漂移只有编译测试才暴露
+        # （2026-09 实录：sso/annotation mock 缺原子方法、password.rs 引用未启用 listener）。
+        run: |
+          cargo test --lib --no-run --no-default-features --features "db-mysql,embedded-migrations"
+          cargo test --lib --no-run --no-default-features --features "db-sqlite,protocol-apikey"
+          cargo test --lib --no-run --no-default-features --features "db-postgres,three-tier-cache"
+          cargo test --lib --no-run --no-default-features --features "protocol-jwt,secure-ct-eq"
+          cargo test --lib --no-run --no-default-features --features "protocol-saml,protocol-oidc"
+          cargo test --lib --no-run --no-default-features --features "web-warp,annotation-macros"
+          cargo test --lib --no-run --no-default-features --features "web-actix,web-security"
+          cargo test --lib --no-run --no-default-features --features "auth-server,backend-remote"
+          cargo test --lib --no-run --no-default-features --features "oauth2-server,cache-redis"
+          cargo test --lib --no-run --no-default-features --features "tenant-isolation,firewall-bruteforce"
+      - name: Test compile each feature individually
+        # 单 feature 维度的测试编译全量兜底（需要 dev-deps，不用 --no-dev-deps）。
+        # 不用 cargo hack --each-feature：其基线附带 --all-features 运行，而 garrison
+        # 同时启用 db-sqlite 与 db-mysql/db-postgres 会被 dbnexus 的互斥 compile_error
+        # 拒绝（多 DB 共存仅在「部署期选一个」的语义下合法），故显式跳过聚合特性。
+        run: |
+          FEATURES=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "garrison") | .features | keys[]' | grep -vE '^(default|full|production)$')
+          FAILED=0
+          for f in $FEATURES; do
+            if ! cargo test --lib --no-run --no-default-features --features "$f" > /dev/null 2>&1; then
+              echo "❌ feature '$f' 测试编译失败："
+              cargo test --lib --no-run --no-default-features --features "$f" 2>&1 | grep -E "^error" -A 5 || true
+              FAILED=1
+            fi
+          done
+          if [ "$FAILED" -ne 0 ]; then
+            echo "存在测试编译失败的 feature，详见上方"
+            exit 1
+          fi
+          echo "✅ 全部单 feature 测试编译通过"
 
   examples:
     name: Examples tests

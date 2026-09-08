@@ -168,6 +168,51 @@ jobs:
       - name: Test (full)
         run: cargo test --features "full" --lib --locked
 
+  # === 测试编译门禁（feature 组合下的测试代码防漂移） ===
+  # 背景（2026-09 实录）：check 不编译 #[cfg(test)] 代码，test 只覆盖 default/full
+  # 两极——中间 feature 组合下的测试代码腐坏（trait 新增方法后 mock 未同步、
+  # 测试引用未启用 feature 的模块、宏改名遗漏等）无法被现有 job 发现：
+  # 曾因此潜伏 93 个 lib 测试编译错误 + acceptance 旧名残留 + examples DAO 缺方法。
+  # 本 job 用 `--no-run` 只编译不运行，以低成本覆盖代表性中间组合
+  # （与 feature-matrix.yml 的定向组合清单呼应；该工作流每周全量兜底）。
+  test-compile-guard:
+    name: Test compile (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            flags: --no-default-features --features default
+          - name: minimal
+            flags: --no-default-features
+          - name: db-web-policy-listener
+            flags: --no-default-features --features db-sqlite,web-axum,account-policy,listener
+          - name: email-credential-authflow
+            flags: --no-default-features --features email-verification,email-verification-smtp,account-credential,account-authflow
+          - name: jwt-ct-eq
+            flags: --no-default-features --features protocol-jwt,secure-ct-eq
+          - name: tenant-bruteforce
+            flags: --no-default-features --features tenant-isolation,firewall-bruteforce
+          - name: oauth2-redis
+            flags: --no-default-features --features oauth2-server,cache-redis
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
+      - name: Install protoc (sdforge build dep)
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # protoc
+        with:
+          tool: protoc
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci-guard-deps
+      - name: Compile tests (lib + integration, no run)
+        run: cargo test --no-run ${{ matrix.flags }} --locked
+      - name: Compile workspace tests (examples/macros under full)
+        if: matrix.name == 'default'
+        run: cargo test --workspace --no-run --features full --locked
+
   # === 文档构建 ===
   doc:
     name: Documentation
