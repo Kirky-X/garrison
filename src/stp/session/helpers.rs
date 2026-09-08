@@ -207,8 +207,7 @@ impl GarrisonLogicDefault {
             feature = "protocol-sso",
             feature = "protocol-sign",
             feature = "secure-sign",
-            feature = "protocol-httpdigest",
-            feature = "device-binding"
+            feature = "protocol-httpdigest"
         )),
         allow(unused_mut)
     )]

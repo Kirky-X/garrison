@@ -4,7 +4,13 @@
 //! GarrisonUtil 静态方法入口 + JwtMode 校验模式枚举 + AuthBackend 全局桥接。
 use crate::config::GarrisonConfig;
 use crate::error::GarrisonResult;
-#[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+// loc! 使用点分别被 listener（session kickout 提示）与 backend-*（NotSafe 提示）门控，
+// 导入需覆盖三者的并集，否则任一单独组合下要么缺宏、要么 unused import（-D warnings）。
+#[cfg(any(
+    feature = "backend-embedded",
+    feature = "backend-remote",
+    feature = "listener"
+))]
 use crate::loc;
 use crate::session::GarrisonSession;
 use crate::stp::core::GarrisonCore;
