@@ -11,8 +11,8 @@
 //! - 多参数 AND 语义
 //!
 //! 测试策略：
-//! 1. MockDao + MockInterface + BulwarkManager::init 初始化全局单例
-//! 2. `BulwarkUtil::login(id)` 生成 token
+//! 1. InMemoryDao + MockInterface + GarrisonManager::builder 初始化全局单例
+//! 2. `GarrisonUtil::login_simple(id)` 生成 token
 //! 3. `with_current_token(token, async { handler().await })` 设置 task_local 上下文
 //! 4. 直接调用宏标注的 handler，断言 Response 状态码与 body
 
@@ -21,17 +21,16 @@
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::StatusCode;
-use bulwark::{
+use garrison::dao::InMemoryDao;
+use garrison::{
     check_abac, check_access_token, check_client_token, check_login, check_mfa, check_permission,
-    check_role, check_temp_token, BulwarkConfig, BulwarkDao, BulwarkError, BulwarkInterface,
-    BulwarkManager, BulwarkUtil,
+    check_role, check_temp_token, GarrisonConfig, GarrisonDao, GarrisonInterface, GarrisonManager,
+    GarrisonUtil,
 };
 use http_body_util::BodyExt;
-use parking_lot::Mutex;
 use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 // ============================================================================
 // 宏标注的 handler（模块级定义）
@@ -114,84 +113,6 @@ async fn abac_deny_handler() -> &'static str {
 }
 
 // ============================================================================
-// MockDao（HashMap + Instant 模拟 TTL，复用 axum_integration 模式）
-// ============================================================================
-
-struct MockDao {
-    store: Mutex<HashMap<String, (String, Option<Instant>)>>,
-}
-
-impl MockDao {
-    fn new() -> Self {
-        Self {
-            store: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-#[async_trait]
-impl BulwarkDao for MockDao {
-    async fn get(&self, key: &str) -> Result<Option<String>, BulwarkError> {
-        let mut store = self.store.lock();
-        match store.get(key) {
-            Some((value, expire_at)) => {
-                if let Some(deadline) = expire_at {
-                    if Instant::now() >= *deadline {
-                        store.remove(key);
-                        return Ok(None);
-                    }
-                }
-                Ok(Some(value.clone()))
-            },
-            None => Ok(None),
-        }
-    }
-
-    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> Result<(), BulwarkError> {
-        let expire_at = if ttl_seconds == 0 {
-            None
-        } else {
-            Some(Instant::now() + Duration::from_secs(ttl_seconds))
-        };
-        self.store
-            .lock()
-            .insert(key.to_string(), (value.to_string(), expire_at));
-        Ok(())
-    }
-
-    async fn update(&self, key: &str, value: &str) -> Result<(), BulwarkError> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((existing, _)) => {
-                *existing = value.to_string();
-                Ok(())
-            },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn expire(&self, key: &str, seconds: u64) -> Result<(), BulwarkError> {
-        let mut store = self.store.lock();
-        match store.get_mut(key) {
-            Some((_, expire_at)) => {
-                *expire_at = if seconds == 0 {
-                    None
-                } else {
-                    Some(Instant::now() + Duration::from_secs(seconds))
-                };
-                Ok(())
-            },
-            None => Err(BulwarkError::Dao(format!("键不存在: {}", key))),
-        }
-    }
-
-    async fn delete(&self, key: &str) -> Result<(), BulwarkError> {
-        self.store.lock().remove(key);
-        Ok(())
-    }
-}
-
-// ============================================================================
 // MockInterface（权限/角色数据回调）
 // ============================================================================
 
@@ -226,12 +147,12 @@ impl MockInterface {
 }
 
 #[async_trait]
-impl BulwarkInterface for MockInterface {
-    async fn get_permission_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+impl GarrisonInterface for MockInterface {
+    async fn get_permission_list(&self, login_id: &str) -> garrison::GarrisonResult<Vec<String>> {
         Ok(self.permissions.get(login_id).cloned().unwrap_or_default())
     }
 
-    async fn get_role_list(&self, login_id: &str) -> Result<Vec<String>, BulwarkError> {
+    async fn get_role_list(&self, login_id: &str) -> garrison::GarrisonResult<Vec<String>> {
         Ok(self.roles.get(login_id).cloned().unwrap_or_default())
     }
 }
@@ -241,8 +162,8 @@ impl BulwarkInterface for MockInterface {
 // ============================================================================
 
 /// 创建测试配置（throw_on_not_login=true，未登录直接抛异常走 Err 路径）。
-fn make_config_strict() -> BulwarkConfig {
-    let mut config = BulwarkConfig::default_config();
+fn make_config_strict() -> GarrisonConfig {
+    let mut config = GarrisonConfig::default();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = true;
@@ -250,18 +171,21 @@ fn make_config_strict() -> BulwarkConfig {
 }
 
 /// 创建宽松配置（throw_on_not_login=false，未登录返回 Ok(false) 走宏的 Ok(false) 分支）。
-fn make_config_loose() -> BulwarkConfig {
-    let mut config = BulwarkConfig::default_config();
+fn make_config_loose() -> GarrisonConfig {
+    let mut config = GarrisonConfig::default();
     config.timeout = 3600;
     config.active_timeout = -1;
     config.throw_on_not_login = false;
     config
 }
 
-/// 初始化 BulwarkManager（覆盖式更新，带权限/角色数据）。
-fn init_manager(config: BulwarkConfig, permissions: &[(&str, &[&str])], roles: &[(&str, &[&str])]) {
-    let dao: Arc<dyn BulwarkDao> = Arc::new(MockDao::new());
-    let config = Arc::new(config);
+/// 初始化 GarrisonManager（覆盖式更新，带权限/角色数据）。
+async fn init_manager(
+    config: GarrisonConfig,
+    permissions: &[(&str, &[&str])],
+    roles: &[(&str, &[&str])],
+) {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let mut interface = MockInterface::new();
     for (id, perms) in permissions {
         interface = interface.with_permission(id, perms);
@@ -269,8 +193,14 @@ fn init_manager(config: BulwarkConfig, permissions: &[(&str, &[&str])], roles: &
     for (id, roles) in roles {
         interface = interface.with_role(id, roles);
     }
-    let interface: Arc<dyn BulwarkInterface> = Arc::new(interface);
-    BulwarkManager::init(dao, config, interface).unwrap();
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(interface);
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(Arc::new(config))
+        .interface(interface)
+        .build()
+        .await
+        .unwrap();
 }
 
 /// 读取 Response body 为 String。
@@ -290,7 +220,7 @@ async fn with_default_tenant<F, R>(f: F) -> R
 where
     F: std::future::Future<Output = R>,
 {
-    use bulwark::{TenantContext, TenantSource, TENANT};
+    use garrison::{TenantContext, TenantSource, TENANT};
     let ctx = TenantContext {
         tenant_id: 0,
         resolved_from: TenantSource::Header,
@@ -306,10 +236,10 @@ where
 #[tokio::test]
 #[serial]
 async fn check_login_with_valid_token_returns_200_and_body() {
-    init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    init_manager(make_config_strict(), &[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response = bulwark::stp::with_current_token(token, async { login_handler().await }).await;
+    let response = garrison::stp::with_current_token(token, async { login_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = read_body(response).await;
     assert_eq!(body, "login_ok");
@@ -323,9 +253,9 @@ async fn check_login_with_valid_token_returns_200_and_body() {
 #[tokio::test]
 #[serial]
 async fn check_login_without_token_strict_forwards_error() {
-    init_manager(make_config_strict(), &[], &[]);
+    init_manager(make_config_strict(), &[], &[]).await;
     // 不调用 login，直接以无效 token 调用 handler
-    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
         login_handler().await
     })
     .await;
@@ -342,9 +272,9 @@ async fn check_login_without_token_strict_forwards_error() {
 #[tokio::test]
 #[serial]
 async fn check_login_without_token_loose_returns_401() {
-    init_manager(make_config_loose(), &[], &[]);
+    init_manager(make_config_loose(), &[], &[]).await;
     // loose 模式下未登录返回 Ok(false)，宏应将其转为 401
-    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
         login_handler().await
     })
     .await;
@@ -360,11 +290,11 @@ async fn check_login_without_token_loose_returns_401() {
 #[serial]
 async fn check_permission_with_permission_returns_200() {
     with_default_tenant(async {
-        init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]);
-        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]).await;
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let response =
-            bulwark::stp::with_current_token(token, async { perm_handler().await }).await;
+            garrison::stp::with_current_token(token, async { perm_handler().await }).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = read_body(response).await;
         assert_eq!(body, "perm_ok");
@@ -377,11 +307,11 @@ async fn check_permission_with_permission_returns_200() {
 #[serial]
 async fn check_permission_without_permission_returns_403() {
     with_default_tenant(async {
-        init_manager(make_config_strict(), &[], &[]); // 无权限数据
-        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        init_manager(make_config_strict(), &[], &[]).await; // 无权限数据
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let response =
-            bulwark::stp::with_current_token(token, async { perm_handler().await }).await;
+            garrison::stp::with_current_token(token, async { perm_handler().await }).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     })
     .await
@@ -392,11 +322,11 @@ async fn check_permission_without_permission_returns_403() {
 #[serial]
 async fn check_permission_and_partial_returns_403() {
     with_default_tenant(async {
-        init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]); // 缺 user:write
-        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        init_manager(make_config_strict(), &[("1001", &["user:read"])], &[]).await; // 缺 user:write
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let response =
-            bulwark::stp::with_current_token(token, async { perm_and_handler().await }).await;
+            garrison::stp::with_current_token(token, async { perm_and_handler().await }).await;
         assert_eq!(response.status(), StatusCode::FORBIDDEN);
     })
     .await
@@ -411,11 +341,12 @@ async fn check_permission_and_all_returns_200() {
             make_config_strict(),
             &[("1001", &["user:read", "user:write"])],
             &[],
-        );
-        let token = BulwarkUtil::login_simple("1001").await.unwrap();
+        )
+        .await;
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let response =
-            bulwark::stp::with_current_token(token, async { perm_and_handler().await }).await;
+            garrison::stp::with_current_token(token, async { perm_and_handler().await }).await;
         assert_eq!(response.status(), StatusCode::OK);
         let body = read_body(response).await;
         assert_eq!(body, "perm_and_ok");
@@ -431,70 +362,85 @@ async fn check_permission_and_all_returns_200() {
 #[tokio::test]
 #[serial]
 async fn check_role_with_role_returns_200() {
-    init_manager(make_config_strict(), &[], &[("1001", &["admin"])]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[], &[("1001", &["admin"])]).await;
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response = bulwark::stp::with_current_token(token, async { role_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    assert_eq!(body, "role_ok");
+        let response =
+            garrison::stp::with_current_token(token, async { role_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "role_ok");
+    })
+    .await
 }
 
 /// 无角色 → 403。
 #[tokio::test]
 #[serial]
 async fn check_role_without_role_returns_403() {
-    init_manager(make_config_strict(), &[], &[]); // 无角色数据
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[], &[]).await; // 无角色数据
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response = bulwark::stp::with_current_token(token, async { role_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response =
+            garrison::stp::with_current_token(token, async { role_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// AND 语义：仅持有部分角色 → 403。
 #[tokio::test]
 #[serial]
 async fn check_role_and_partial_returns_403() {
-    init_manager(make_config_strict(), &[], &[("1001", &["admin"])]); // 缺 superadmin
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(make_config_strict(), &[], &[("1001", &["admin"])]).await; // 缺 superadmin
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response =
-        bulwark::stp::with_current_token(token, async { role_and_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let response =
+            garrison::stp::with_current_token(token, async { role_and_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    })
+    .await
 }
 
 /// AND 语义：持有全部角色 → 200。
 #[tokio::test]
 #[serial]
 async fn check_role_and_all_returns_200() {
-    init_manager(
-        make_config_strict(),
-        &[],
-        &[("1001", &["admin", "superadmin"])],
-    );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    with_default_tenant(async {
+        init_manager(
+            make_config_strict(),
+            &[],
+            &[("1001", &["admin", "superadmin"])],
+        )
+        .await;
+        let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let response =
-        bulwark::stp::with_current_token(token, async { role_and_handler().await }).await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = read_body(response).await;
-    assert_eq!(body, "role_and_ok");
+        let response =
+            garrison::stp::with_current_token(token, async { role_and_handler().await }).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = read_body(response).await;
+        assert_eq!(body, "role_and_ok");
+    })
+    .await
 }
 
 // ============================================================================
 // #[check_access_token] / #[check_client_token] / #[check_temp_token] 测试
 // ============================================================================
 
-/// `#[check_access_token]` 宏展开后调用 `BulwarkUtil::check_access_token`，无 token 时返回 401。
+/// `#[check_access_token]` 宏展开后调用 `GarrisonUtil::check_access_token`，无 token 时返回 401。
 ///
 /// 依据 tasks.md T004。验证宏展开为 wrapper 调用 `check_access_token`，
 /// loose 模式下未登录返回 401（NotLogin → 401）。
 #[tokio::test]
 #[serial]
 async fn check_access_token_expands_to_wrapper() {
-    init_manager(make_config_loose(), &[], &[]);
+    init_manager(make_config_loose(), &[], &[]).await;
     // 不 login，直接以无效 token 调用 handler
-    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
         access_token_handler().await
     })
     .await;
@@ -505,24 +451,24 @@ async fn check_access_token_expands_to_wrapper() {
 #[tokio::test]
 #[serial]
 async fn check_access_token_with_valid_token_returns_200() {
-    init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    init_manager(make_config_strict(), &[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let response =
-        bulwark::stp::with_current_token(token, async { access_token_handler().await }).await;
+        garrison::stp::with_current_token(token, async { access_token_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = read_body(response).await;
     assert_eq!(body, "access_token_ok");
 }
 
-/// `#[check_client_token]` 宏展开后调用 `BulwarkUtil::check_client_token`，无 token 时返回 401。
+/// `#[check_client_token]` 宏展开后调用 `GarrisonUtil::check_client_token`，无 token 时返回 401。
 ///
 /// 依据 tasks.md T006。
 #[tokio::test]
 #[serial]
 async fn check_client_token_expands_to_wrapper() {
-    init_manager(make_config_loose(), &[], &[]);
-    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+    init_manager(make_config_loose(), &[], &[]).await;
+    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
         client_token_handler().await
     })
     .await;
@@ -533,24 +479,24 @@ async fn check_client_token_expands_to_wrapper() {
 #[tokio::test]
 #[serial]
 async fn check_client_token_with_valid_token_returns_200() {
-    init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    init_manager(make_config_strict(), &[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let response =
-        bulwark::stp::with_current_token(token, async { client_token_handler().await }).await;
+        garrison::stp::with_current_token(token, async { client_token_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = read_body(response).await;
     assert_eq!(body, "client_token_ok");
 }
 
-/// `#[check_temp_token]` 宏展开后调用 `BulwarkUtil::check_temp_token`，无 token 时返回 401。
+/// `#[check_temp_token]` 宏展开后调用 `GarrisonUtil::check_temp_token`，无 token 时返回 401。
 ///
 /// 依据 tasks.md T008。
 #[tokio::test]
 #[serial]
 async fn check_temp_token_expands_to_wrapper() {
-    init_manager(make_config_loose(), &[], &[]);
-    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+    init_manager(make_config_loose(), &[], &[]).await;
+    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
         temp_token_handler().await
     })
     .await;
@@ -561,11 +507,11 @@ async fn check_temp_token_expands_to_wrapper() {
 #[tokio::test]
 #[serial]
 async fn check_temp_token_with_valid_token_returns_200() {
-    init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    init_manager(make_config_strict(), &[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let response =
-        bulwark::stp::with_current_token(token, async { temp_token_handler().await }).await;
+        garrison::stp::with_current_token(token, async { temp_token_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = read_body(response).await;
     assert_eq!(body, "temp_token_ok");
@@ -580,11 +526,11 @@ async fn check_temp_token_with_valid_token_returns_200() {
 #[tokio::test]
 #[serial]
 async fn macro_expands_to_response_return_type() {
-    init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    init_manager(make_config_strict(), &[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let response: axum::response::Response =
-        bulwark::stp::with_current_token(token, async { login_handler().await }).await;
+        garrison::stp::with_current_token(token, async { login_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
 }
 
@@ -602,8 +548,9 @@ async fn handler_works_with_axum_router() {
         make_config_strict(),
         &[("1001", &["user:read"])],
         &[("1001", &["admin"])],
-    );
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    )
+    .await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     // 构建 axum Router，挂载宏标注的 handler
     let app = axum::Router::new()
@@ -612,7 +559,7 @@ async fn handler_works_with_axum_router() {
         .route("/role", get(role_handler));
 
     // 通过 with_current_token 设置 task_local，使 handler 内部 check_login 能读取 token
-    let response = bulwark::stp::with_current_token(token.clone(), async {
+    let response = garrison::stp::with_current_token(token.clone(), async {
         app.oneshot(
             axum::http::Request::builder()
                 .method("GET")
@@ -634,44 +581,36 @@ async fn handler_works_with_axum_router() {
 /// `#[check_mfa]` 已登录 + 已开启二级认证 → 200 + body。
 ///
 /// `check_safe` 依赖 `TokenSession.safe_services`，仅 `login_simple` 不足以通过，
-/// 需先调用 `BulwarkLogicDefault::open_safe("default", ...)` 开启二级认证标记。
+/// 需先调用 `GarrisonLogicDefault::open_safe("default", ...)` 开启二级认证标记。
 #[tokio::test]
 #[serial]
 async fn check_mfa_with_valid_token_returns_200() {
-    init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    init_manager(make_config_strict(), &[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     // 开启 "default" service 的二级认证标记（check_safe 检查此 service）
-    // 仅 safe-auth feature 启用时需要：无 safe-auth 时 is_safe 默认返回 Ok(true)，check_safe 直接通过
-    #[cfg(feature = "safe-auth")]
-    {
-        let logic = BulwarkManager::logic().expect("logic init");
-        bulwark::stp::with_current_token(token.clone(), async {
-            logic.open_safe("default", 3600).await.expect("open_safe");
-        })
-        .await;
-    }
+    let logic = GarrisonManager::logic().expect("logic init");
+    garrison::stp::with_current_token(token.clone(), async {
+        logic.open_safe("default", 3600).await.expect("open_safe");
+    })
+    .await;
 
-    let response = bulwark::stp::with_current_token(token, async { mfa_handler().await }).await;
+    let response = garrison::stp::with_current_token(token, async { mfa_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = read_body(response).await;
     assert_eq!(body, "mfa_ok");
 }
 
 /// `#[check_mfa]` 未登录时返回错误响应（check_safe 依赖 session，未登录时失败）。
-///
-/// 仅 `safe-auth` feature 启用时有效：无 `safe-auth` 时 `is_safe` 默认返回 `Ok(true)`，
-/// `check_safe` 为 no-op，MFA 不拦截。
-#[cfg(feature = "safe-auth")]
 #[tokio::test]
 #[serial]
 async fn check_mfa_without_token_forwards_error() {
-    init_manager(make_config_strict(), &[], &[]);
-    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+    init_manager(make_config_strict(), &[], &[]).await;
+    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
         mfa_handler().await
     })
     .await;
-    // check_safe 内部调用 is_safe，未登录时 session 查找失败 → NotSafe → 400
+    // check_safe 内部调用 is_safe，未登录时 session 查找失败 → 非 200
     assert_ne!(response.status(), StatusCode::OK);
 }
 
@@ -683,17 +622,12 @@ async fn check_mfa_without_token_forwards_error() {
 #[tokio::test]
 #[serial]
 #[cfg(feature = "abac")]
-async fn check_abac_no_engine_returns_200() {
-    // reset_abac_for_test 需要 testing 特性（spec 约束：testing 严禁在 full/production 启用）
-    #[cfg(all(feature = "abac", feature = "testing"))]
-    {
-        bulwark::abac::reset_abac_for_test();
-    }
-    init_manager(make_config_strict(), &[], &[]);
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+async fn check_abac_no_engine_returns_500() {
+    init_manager(make_config_strict(), &[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let response =
-        bulwark::stp::with_current_token(token, async { abac_allow_handler().await }).await;
+        garrison::stp::with_current_token(token, async { abac_allow_handler().await }).await;
     // 未初始化时 fail-closed → 500 CONFIG_ERROR
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
@@ -706,9 +640,9 @@ async fn check_abac_no_engine_returns_200() {
 #[serial]
 #[cfg(feature = "abac")]
 async fn check_abac_without_login_no_engine_passes_through() {
-    init_manager(make_config_strict(), &[], &[]);
+    init_manager(make_config_strict(), &[], &[]).await;
     // 不 login，直接以无效 token 调用 handler
-    let response = bulwark::stp::with_current_token("invalid-token".to_string(), async {
+    let response = garrison::stp::with_current_token("invalid-token".to_string(), async {
         abac_allow_handler().await
     })
     .await;
@@ -724,10 +658,10 @@ async fn check_abac_without_login_no_engine_passes_through() {
 #[tokio::test]
 #[serial]
 async fn check_abac_engine_initialized_allow_returns_200() {
-    use bulwark::abac::{init_abac_engine, reset_abac_for_test, AbacEngine, EmptyEntityLoader};
+    use garrison::abac::{init_abac_engine, reset_abac_for_test, AbacEngine, EmptyEntityLoader};
 
     reset_abac_for_test();
-    init_manager(make_config_strict(), &[], &[]);
+    init_manager(make_config_strict(), &[], &[]).await;
 
     let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
     let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader))
@@ -735,10 +669,10 @@ async fn check_abac_engine_initialized_allow_returns_200() {
         .expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine");
 
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let response =
-        bulwark::stp::with_current_token(token, async { abac_allow_handler().await }).await;
+        garrison::stp::with_current_token(token, async { abac_allow_handler().await }).await;
     assert_eq!(response.status(), StatusCode::OK);
     let body = read_body(response).await;
     assert_eq!(body, "abac_ok");
@@ -753,10 +687,10 @@ async fn check_abac_engine_initialized_allow_returns_200() {
 #[tokio::test]
 #[serial]
 async fn check_abac_engine_initialized_deny_returns_403() {
-    use bulwark::abac::{init_abac_engine, reset_abac_for_test, AbacEngine, EmptyEntityLoader};
+    use garrison::abac::{init_abac_engine, reset_abac_for_test, AbacEngine, EmptyEntityLoader};
 
     reset_abac_for_test();
-    init_manager(make_config_strict(), &[], &[]);
+    init_manager(make_config_strict(), &[], &[]).await;
 
     let schema_json = r#"{"":{"entityTypes":{"User":{"shape":{"type":"Record","attributes":{}}},"Resource":{"shape":{"type":"Record","attributes":{}}}},"actions":{"access":{"appliesTo":{"principalTypes":["User"],"resourceTypes":["Resource"]}}}}}"#;
     let engine = AbacEngine::new(schema_json, Arc::new(EmptyEntityLoader))
@@ -764,10 +698,10 @@ async fn check_abac_engine_initialized_deny_returns_403() {
         .expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine");
 
-    let token = BulwarkUtil::login_simple("1001").await.unwrap();
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
     let response =
-        bulwark::stp::with_current_token(token, async { abac_deny_handler().await }).await;
+        garrison::stp::with_current_token(token, async { abac_deny_handler().await }).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
     reset_abac_for_test();

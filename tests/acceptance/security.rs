@@ -399,6 +399,7 @@ async fn acc_sec_010_policy_length_rule_rejects_short() {
         username: Some("alice".to_string()),
         email: None,
         password_history: vec![],
+        password_created_at: None,
     };
     let rule = LengthRule::new(8, 128);
 
@@ -437,6 +438,7 @@ async fn acc_sec_011_policy_charset_regex_rule_rejects() {
         username: None,
         email: None,
         password_history: vec![],
+        password_created_at: None,
     };
 
     // 禁止空格（字符集约束：password 不得含空白）
@@ -479,6 +481,7 @@ async fn acc_sec_012_policy_common_weak_password_rejected() {
         username: None,
         email: None,
         password_history: vec![],
+        password_created_at: None,
     };
 
     // 常见弱密码（top 列表精确匹配）
