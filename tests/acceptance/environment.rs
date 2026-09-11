@@ -32,20 +32,38 @@ fn tcp_probe(addr: &str) -> bool {
     TcpStream::connect_timeout(&socket_addr, Duration::from_millis(300)).is_ok()
 }
 
+/// redis 探活/连接地址：`GARRISON_TEST_REDIS_ADDR` 可覆盖
+///（默认 `127.0.0.1:6379`；E2E 套件经此指向 compose 拉起的隔离实例）。
+fn redis_addr() -> String {
+    std::env::var("GARRISON_TEST_REDIS_ADDR").unwrap_or_else(|_| "127.0.0.1:6379".to_string())
+}
+
+/// redis 连接 URL：`GARRISON_TEST_REDIS_URL` 可覆盖（默认由 [`redis_addr`] 推导）。
+#[cfg(feature = "cache-redis")]
+fn redis_url() -> String {
+    std::env::var("GARRISON_TEST_REDIS_URL").unwrap_or_else(|_| format!("redis://{}", redis_addr()))
+}
+
 /// redis 是否可用：`GARRISON_TEST_REDIS=1` 强制视为可用（显式测试开关），
-/// 否则 TCP 探活 `127.0.0.1:6379`。
+/// 否则 TCP 探活 [`redis_addr`]。
 fn redis_available() -> bool {
     if std::env::var("GARRISON_TEST_REDIS").as_deref() == Ok("1") {
         return true;
     }
-    tcp_probe("127.0.0.1:6379")
+    tcp_probe(&redis_addr())
 }
 
-/// postgres 是否可用：TCP 探活 `127.0.0.1:5432`
-///（与 tests/repository/postgres_integration.rs 的默认库地址一致）。
+/// postgres 探活地址：`GARRISON_TEST_POSTGRES_ADDR` 可覆盖（默认 `127.0.0.1:5432`）。
+#[cfg(feature = "db-postgres")]
+fn pg_addr() -> String {
+    std::env::var("GARRISON_TEST_POSTGRES_ADDR").unwrap_or_else(|_| "127.0.0.1:5432".to_string())
+}
+
+/// postgres 是否可用：TCP 探活 [`pg_addr`]
+///（默认与 tests/repository/postgres_integration.rs 的库地址一致）。
 #[cfg(feature = "db-postgres")]
 fn pg_available() -> bool {
-    tcp_probe("127.0.0.1:5432")
+    tcp_probe(&pg_addr())
 }
 
 /// docker 是否可用（MySQL testcontainers 前置）：`docker info` 成功
@@ -103,14 +121,17 @@ async fn acc_env_001_redis_probe_helper_semantics() {
     }
 
     // 还原后：结果必须与 TCP 探活一致（无 env 时环境事实决定）
-    let probe = tcp_probe("127.0.0.1:6379");
+    let probe = tcp_probe(&redis_addr());
     assert_eq!(
         redis_available(),
         probe,
         "无 env 覆盖时 redis_available 应等于 TCP 探活结果"
     );
     if !probe {
-        eprintln!("[SKIP] ACC-ENV-001: 本机 127.0.0.1:6379 未监听，redis 相关场景将跳过");
+        eprintln!(
+            "[SKIP] ACC-ENV-001: {} 未监听，redis 相关场景将跳过",
+            redis_addr()
+        );
     }
 }
 
@@ -141,9 +162,7 @@ async fn acc_env_002_redis_dao_basic_io_with_ttl() {
         .await
         .expect("GarrisonDaoOxcache 初始化应成功")
         .with_redis_config(RedisConfig {
-            mode: RedisDeploymentMode::Single {
-                url: "redis://127.0.0.1:6379".to_string(),
-            },
+            mode: RedisDeploymentMode::Single { url: redis_url() },
             ..Default::default()
         });
     let key = "acc-env:002:basic";
@@ -287,6 +306,9 @@ async fn acc_env_003_redis_dao_atomic_six_fail_closed_under_config() {
 /// 成功路径：set_if_absent（SETNX 语义）、incr/decr（TTL 保留、
 /// 归零删 key）、get_and_delete（原子消费）、compare_and_update_if_greater
 /// （单调 CAS）、rename（保留 TTL）。不依赖外部服务，无门控。
+/// 门控：`GarrisonDaoOxcache` 导出要求 cache-memory/cache-redis
+///（src/dao/mod.rs）；db 后端专用 target（acceptance_db_*）下按需启用。
+#[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_env_004_dao_atomic_six_success_path() {
     use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
@@ -399,7 +421,14 @@ async fn acc_env_004_dao_atomic_six_success_path() {
 //（postgres_connects_to_database / postgres_migrate_creates_all_core_tables /
 //  postgres_user_repository_crud），改为运行时探活门控：不可达即 [SKIP]。
 
-/// postgres 连接 URL（与 tests/repository/postgres_integration.rs 默认一致）。
+/// postgres 连接 URL：`GARRISON_TEST_POSTGRES_URL` 可覆盖
+///（默认与 tests/repository/postgres_integration.rs 默认一致）。
+#[cfg(feature = "db-postgres")]
+fn postgres_url() -> String {
+    std::env::var("GARRISON_TEST_POSTGRES_URL").unwrap_or_else(|_| POSTGRES_URL.to_string())
+}
+
+/// postgres 连接 URL 默认值（`GARRISON_TEST_POSTGRES_URL` 未设置时使用）。
 #[cfg(feature = "db-postgres")]
 const POSTGRES_URL: &str = "postgres://garrison:garrison@localhost:5432/garrison_test";
 
@@ -457,9 +486,9 @@ async fn acc_env_005_postgres_connect_and_migrate_core_tables() {
     use garrison::dao::{init_dbnexus, GarrisonMigration};
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
-    let pool = init_dbnexus(POSTGRES_URL)
+    let pool = init_dbnexus(&postgres_url())
         .await
-        .expect("init_dbnexus postgres 应成功（127.0.0.1:5432 可达）");
+        .expect("init_dbnexus postgres 应成功（探活地址可达）");
     let session = pool.get_session("admin").await.expect("get_session 应成功");
     let conn = session.connection().expect("connection 应可用");
     assert_eq!(
@@ -534,7 +563,7 @@ async fn acc_env_006_postgres_user_repository_crud() {
         GarrisonMigration,
     };
 
-    let pool = init_dbnexus(POSTGRES_URL)
+    let pool = init_dbnexus(&postgres_url())
         .await
         .expect("init_dbnexus postgres 应成功");
     reset_postgres_database(&pool).await;
@@ -670,7 +699,7 @@ async fn acc_env_007_mysql_testcontainers_connect_and_migrate() {
     }
 
     use garrison::dao::GarrisonMigration;
-    use sea_orm::{ConnectionTrait, DbBackend};
+    use sea_orm::DbBackend;
 
     let (pool, _container) = setup_mysql_pool().await;
     let session = pool.get_session("admin").await.expect("get_session 应成功");

@@ -1319,11 +1319,14 @@ async fn acc_srv_019_auth_server_bin_startup_smoke() {
         &[],
     );
 
-    // 1. 轮询外网端口（最多 20 次 × 500ms）直到拿到任意 HTTP 响应
+    // 1. 轮询外网端口（最多 60 次 × 500ms = 30s）直到拿到任意 HTTP 响应。
+    // 30s 预算：过载环境（多套件并发 / testcontainers 拉镜像）下 debug 构建
+    // 冷启动可超过 10s——2026-09-11 E2E 实录 acc_srv_019 因此假失败；
+    // 本测试语义是「二进制可启动并可响应」，非启动耗时基线。
     let client = reqwest::Client::new();
     let external_health = format!("http://127.0.0.1:{}/api/v1/auth/health", external_port);
     let mut external_up = false;
-    for _ in 0..20 {
+    for _ in 0..60 {
         match client.get(&external_health).send().await {
             Ok(resp) => {
                 let _ = resp.status(); // 预期 404（path-filter），任意响应即存活
@@ -1335,7 +1338,7 @@ async fn acc_srv_019_auth_server_bin_startup_smoke() {
     }
     assert!(
         external_up,
-        "auth_server 进程应在 10s 内于外网端口 {} 响应 HTTP",
+        "auth_server 进程应在 30s 内于外网端口 {} 响应 HTTP",
         external_port
     );
 

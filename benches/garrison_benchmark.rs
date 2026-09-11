@@ -34,6 +34,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use garrison::context::tenant::{TenantContext, TenantSource, TENANT};
 use garrison::prelude::*;
 use garrison::stp::{with_current_token, LoginParams};
 
@@ -281,10 +282,20 @@ fn bench_permission_check(c: &mut Criterion) {
             let token = token.clone();
             let logic = logic.clone();
             rt.block_on(async move {
-                with_current_token(token, async {
-                    logic.has_permission("bench:read").await.unwrap()
-                })
-                .await
+                // tenant-isolation 启用时 has_permission 经
+                // current_tenant_id_or_error() fail-closed——基准模拟「默认租户
+                // 0 的已登录用户」，与 server 中间件解析 X-Tenant-Id: 0 等价
+                TENANT
+                    .scope(
+                        TenantContext {
+                            tenant_id: 0,
+                            resolved_from: TenantSource::Header,
+                        },
+                        with_current_token(token, async {
+                            logic.has_permission("bench:read").await.unwrap()
+                        }),
+                    )
+                    .await
             })
         });
     });
