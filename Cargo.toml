@@ -570,6 +570,23 @@ name = "acceptance"
 path = "tests/acceptance.rs"
 required-features = ["full"]
 
+# === 数据库后端专用验收（dbnexus embedded/server-side 互斥的覆盖补齐） ===
+# full 聚合只含 db-sqlite（embedded），environment.rs 的 ACC-ENV-005..008
+# （Postgres/MySQL 真实服务路径）在 full 面下被 cfg 剥离、永不可达。
+# 经独立 target 以单 db 特性面执行（拆分为 postgres/mysql 两个 target：
+# required-features 是 AND 语义，单 target 无法表达「二选一」，
+# 且 db-postgres 与 db-mysql 均为 server-side、无需绑定出现）。
+# 由 scripts/e2e_matrix.sh S3 配合 docker-compose.e2e.yml / testcontainers 执行。
+[[test]]
+name = "acceptance_db_postgres"
+path = "tests/acceptance_db_postgres.rs"
+required-features = ["db-postgres"]
+
+[[test]]
+name = "acceptance_db_mysql"
+path = "tests/acceptance_db_mysql.rs"
+required-features = ["db-mysql"]
+
 # === 二进制目标 ===
 [[bin]]
 name = "auth_server"
