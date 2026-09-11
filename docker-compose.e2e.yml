@@ -1,0 +1,95 @@
+# Copyright (c) 2026 Kirky.X. All rights reserved.
+# See LICENSE for full license text.
+
+# Garrison E2E 测试中间件自举（scripts/e2e_matrix.sh 使用）。
+#
+# 设计约束：
+#   1. 端口全部错开常用默认值（6379/5432/3306/8080/8081），与开发机已驻留
+#      服务（sinnan-*、confers-* 等容器）零冲突；
+#   2. 凭据与 tests/acceptance/environment.rs 默认值一致，地址经
+#      GARRISON_TEST_*_ADDR / GARRISON_TEST_*_URL 环境变量注入测试进程；
+#   3. MySQL 8.0 供 db-mysql 手动验证与后续测试扩展（验收矩阵的 MySQL
+#      自动化路径走 testcontainers，见 ACC-ENV-007/008）；
+#   4. Keycloak 仅自动化套件不需要（协议层经 wiremock 模拟，production-mock-purge
+#      T024 裁定豁免），置于 `keycloak` profile 供 OIDC RP 手动联调。
+#
+# 用法：
+#   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e up -d --wait
+#   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e \
+#     --profile keycloak up -d --wait   # 含 Keycloak
+#   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e down -v --remove-orphans
+
+name: garrison-e2e
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: garrison-e2e-redis
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - redis-data:/data
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: garrison-e2e-postgres
+    ports:
+      - "15432:5432"
+    environment:
+      # 与 tests/acceptance/environment.rs 的 POSTGRES_URL 默认凭据对齐
+      POSTGRES_USER: garrison
+      POSTGRES_PASSWORD: garrison
+      POSTGRES_DB: garrison_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U garrison -d garrison_test"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  mysql:
+    image: mysql:8.0
+    container_name: garrison-e2e-mysql
+    ports:
+      - "13306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: garrison_root
+      MYSQL_USER: garrison
+      MYSQL_PASSWORD: garrison
+      MYSQL_DATABASE: garrison_test
+    command: --default-authentication-plugin=mysql_native_password
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-ugarrison", "-pgarrison"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - mysql-data:/var/lib/mysql
+
+  # 手动 OIDC 联调（自动化测试不依赖）：--profile keycloak 启用
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: garrison-e2e-keycloak
+    profiles: ["keycloak"]
+    ports:
+      - "18090:8080"
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    command: start-dev
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET / HTTP/1.1\\nHost: localhost\\nConnection: close\\n\\n' >&3 && cat <&3 | head -1 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      retries: 24
+
+volumes:
+  redis-data:
+  postgres-data:
+  mysql-data:

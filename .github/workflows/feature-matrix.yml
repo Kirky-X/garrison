@@ -53,7 +53,11 @@ jobs:
           tool: cargo-hack
       - name: Check each feature individually
         # --no-dev-deps 跳过测试依赖编译，显著提速；--keep-going 收集全部失败便于一次性 triage。
-        run: cargo hack check --each-feature --no-dev-deps --keep-going
+        # --exclude-all-features：each-feature 基线附带 --all-features 运行，而 dbnexus
+        # 禁止 embedded(sqlite)×server-side(postgres/mysql) feature 共存（compile_error!），
+        # all-features 必然失败——属预期约束而非回归（下方 test-compile 步骤的
+        # 手写循环早已为此绕开同一问题，此处补齐同款处理）。
+        run: cargo hack check --each-feature --no-dev-deps --keep-going --exclude-all-features
       - name: Targeted two-feature combinations
         run: |
           cargo hack check --no-dev-deps --features "db-mysql,embedded-migrations"

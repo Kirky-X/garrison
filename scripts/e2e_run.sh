@@ -4,22 +4,24 @@
 
 # T053: Garrison E2E 测试一键执行脚本。
 #
+# 【2026-09 重写】Phase 4 测试迁移（T040/T042/T043）后，原 tests/e2e target
+# 已并入 tests/acceptance/（pentest → security.rs ACC-SEC-021..030；
+# perf → concurrency.rs 文件尾 #[ignore] 用例），本脚本同步指向现行 target。
+#
 # 流程：
 #   1. export 环境变量（API Key / 端口 / 限速）
-#   2. 后台启动 auth_server_serve（examples bin，full features）
+#   2. 后台启动 auth_server_serve（examples bin，full features）——进程级黑盒
+#      冒烟：验证示例服务真实可启动、health 端点可达（验收套件内的 server.rs /
+#      concurrency.rs 均为自 spawn 进程，不覆盖「外部进程 + health 探活」信号）
 #   3. trap EXIT 信号杀掉子进程
 #   4. curl health check 重试 30 次（每次 1s）
-#   5. 依次跑：
-#      - E2E + API 测试（含 happy path / errors / boundary / authz_boundary）
-#      - 性能测试（#[ignore] perf_*）
-#      - 渗透测试（pentest::*）
-#   6. 调用 scripts/e2e_analyze.py 聚合 logs/ 下的 JSONL 为 Markdown 报告
+#   5. 依次跑（均为 tests/acceptance 现行域）：
+#      - 全量验收（含 pentest 攻击面 security:: 域）
+#      - 性能基线（#[ignore] perf_*，写 logs/perf.jsonl）
+#   6. 调用 scripts/e2e_analyze.py 聚合 logs/ 下 JSONL 为 Markdown 报告
 #
 # 输出文件：
-#   - logs/e2e_http.jsonl：HTTP 交互日志（每行一个 JSON）
 #   - logs/perf.jsonl：性能报告（每行一个 JSON）
-#   - logs/pentest_report.json：渗透测试 finding（每行一个 JSON）
-#   - logs/e2e_summary.json：HTTP 交互统计汇总
 #   - logs/e2e_final_report.md：综合 Markdown 报告
 #
 # 用法：
@@ -93,25 +95,21 @@ if [ "${HEALTH_OK}" != "true" ]; then
     exit 1
 fi
 
-# 5. 依次执行测试套件
-# TODO(MEDIUM-7): 三次 cargo test 串行——可考虑合并为单次 `--include-ignored` 减少 cargo 启动开销
-# 但合并会改变测试过滤语义（ignored perf_* 与 pentest::* 分组语义丢失），需评估后决定
-echo "=== [3/6] E2E + API 测试（happy/errors/boundary/authz_boundary） ==="
-cargo test --test e2e --features "full testing" -- --nocapture --test-threads=1
+# 5. 依次执行测试套件（tests/acceptance 现行 target；`testing` 为验收矩阵
+#    文档约定的配套 feature，garrison/testing 门控测试辅助设施。
+#    套件内服务均为随机端口自 spawn，并行安全——与 CI integration job 同款语义）
+echo "=== [3/5] 全量验收套件（含 pentest 攻击面 security:: 域） ==="
+cargo test --test acceptance --features "full testing"
 
-echo "=== [4/6] 性能测试（#[ignore] perf_*） ==="
-cargo test --test e2e --features "full testing" -- --nocapture --test-threads=1 --ignored perf_
+echo "=== [4/5] 性能基线（#[ignore] perf_*，追加 logs/perf.jsonl） ==="
+cargo test --test acceptance --features "full testing" perf_ -- \
+    --nocapture --test-threads=1 --ignored
 
-echo "=== [5/6] 渗透测试（pentest::*） ==="
-cargo test --test e2e --features "full testing" pentest:: -- --nocapture --test-threads=1
-
-# 6. 聚合生成 Markdown 报告
-echo "=== [6/6] 生成 Markdown 综合报告 ==="
+# 6. 聚合生成 Markdown 报告（缺失的日志源在报告中显性标注「不存在」）
+echo "=== [5/5] 生成 Markdown 综合报告 ==="
 python3 scripts/e2e_analyze.py --log-dir logs
 
 echo ""
 echo "=== 全部完成 ==="
-echo "  - HTTP 交互日志: logs/e2e_http.jsonl"
 echo "  - 性能日志:      logs/perf.jsonl"
-echo "  - 渗透测试日志:  logs/pentest_report.json"
 echo "  - 综合报告:      logs/e2e_final_report.md"
