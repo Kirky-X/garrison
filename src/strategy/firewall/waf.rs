@@ -87,6 +87,15 @@ impl WafHookChain {
     }
 
     /// 追加 Hook 到链尾。
+    ///
+    /// # 注册顺序约束（MED-001）
+    ///
+    /// 链按注册顺序执行，任一 `Deny` 短路拒绝、`AllowAndSkip` 短路放行。
+    /// **安全关键 Hook（`DangerCharacterHook` / `BannedCharacterHook` /
+    /// `DirectoryTraversalHook`）必须先于 `WhitePathHook` 注册**。
+    /// 若 `WhitePathHook` 先注册，白名单匹配返回 `AllowAndSkip` 会短路跳过
+    /// 全部安全校验（`WhitePathHook` 内的可疑模式兜底守卫仅是辅助防线）。
+    /// [`WafHookChain::from_config`](Self::from_config) 已按此顺序注册。
     pub fn register(&mut self, hook: Box<dyn WafHook>) {
         self.hooks.push(hook);
     }
@@ -116,7 +125,10 @@ impl WafHookChain {
     /// 根据配置创建 WAF Hook 链。
     ///
     /// `waf_enabled_hooks` 为空时注册所有可用 Hook。
-    /// 每个 Hook 仅在其对应配置非空时注册。
+    /// 注册顺序：**字符检测类安全 Hook（`danger_char` / `banned_char` / `dir_traversal`，
+    /// 仅按 `waf_enabled_hooks` 开关门控，无配置非空前置条件）先注册**，
+    /// 配置门控 Hook（路径/主机/方法/头/参数，需对应配置非空）后注册——
+    /// 确保安全校验先于可能 `AllowAndSkip` 短路的白名单 Hook 执行。
     pub fn from_config(config: &GarrisonConfig) -> Self {
         let mut chain = Self::new();
 
@@ -128,8 +140,10 @@ impl WafHookChain {
         let all_enabled = enabled.is_empty();
         let is_enabled = |name: &str| all_enabled || enabled.contains(name);
 
-        Self::register_config_gated_hooks(&mut chain, config, &is_enabled);
+        // 安全关键 Hook 先注册：白名单匹配会 AllowAndSkip 短路后续 Hook，
+        // 若 white_path 先注册，双编码路径（旧守卫漏检）可绕过全部安全校验。
         Self::register_unconditional_hooks(&mut chain, &is_enabled);
+        Self::register_config_gated_hooks(&mut chain, config, &is_enabled);
 
         chain
     }

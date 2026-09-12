@@ -57,6 +57,7 @@ impl GarrisonPermissionStrategyDefault {
             permission_checker: None,
             dao: None,
             tenant_id: None,
+            login_type: "default".to_string(),
             role_hierarchy: HashMap::new(),
             plugin_manager: None,
             #[cfg(any(
@@ -100,10 +101,30 @@ impl GarrisonPermissionStrategyDefault {
         self
     }
 
+    /// 设置默认 `login_type`（多账号体系，batch-08 接线 `_with_type` 回调）。
+    ///
+    /// 注入后 `get_permission_list` / `get_role_list`（及其上的
+    /// `check_permission` / `check_role` 等校验）经
+    /// `GarrisonInterface::get_*_list_with_type` 以该 `login_type` 查询数据，
+    /// 业务方覆写 `_with_type` 实现的多账号隔离真正生效。
+    /// 未设置时默认 `"default"`（与 `GarrisonLogicDefault::with_login_type` 默认值一致）。
+    pub fn with_login_type(mut self, login_type: &str) -> Self {
+        self.login_type = login_type.to_string();
+        self
+    }
+
     /// 构造权限缓存键（T023：含租户维度）。
-    fn perm_cache_key(&self, login_id: &str, permission: &str) -> String {
-        let tenant = self
-            .tenant_id
+    ///
+    /// `tenant_override` 用于请求级租户覆盖（`check_permission_in_tenant`），
+    /// 避免未配置 builder 租户时回退路径的跨租户缓存污染。
+    fn perm_cache_key_with(
+        &self,
+        tenant_override: Option<i64>,
+        login_id: &str,
+        permission: &str,
+    ) -> String {
+        let tenant = tenant_override
+            .or(self.tenant_id)
             .map(|t| t.to_string())
             .unwrap_or_else(|| "_".to_string());
         format!("garrison:perm:cache:{}:{}:{}", tenant, login_id, permission)
@@ -121,7 +142,9 @@ impl GarrisonPermissionStrategyDefault {
 
     /// 注入 `GarrisonPluginManager`，启用插件钩子。
     ///
-    /// 注入后 `check_permission` 前后调用 `GarrisonPluginManager::on_permission_check`，
+    /// 注入后 `check_permission` 在**权限判定前**调用一次
+    /// `GarrisonPluginManager::on_permission_check`（缓存命中路径亦如此，
+    /// 无后置调用——与实现一致，issue #6145 修正文档），
     /// 插件返回 Err 仅 `tracing::warn!` 不中断主流程。
     pub fn with_plugin_manager(mut self, pm: Arc<GarrisonPluginManager>) -> Self {
         self.plugin_manager = Some(pm);
@@ -195,8 +218,24 @@ impl GarrisonPermissionStrategyDefault {
         result: bool,
         ttl_seconds: u64,
     ) -> GarrisonResult<()> {
+        self.cache_permission_with(None, login_id, permission, result, ttl_seconds)
+            .await
+    }
+
+    /// 写入权限缓存结果（带请求级租户覆盖，batch-08）。
+    ///
+    /// `tenant_override` 为 `Some(t)` 时缓存键使用该租户（优先于 builder 配置），
+    /// 供 `check_permission_in_tenant` 回退路径隔离不同租户的判定结果。
+    pub async fn cache_permission_with(
+        &self,
+        tenant_override: Option<i64>,
+        login_id: &str,
+        permission: &str,
+        result: bool,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<()> {
         if let Some(dao) = &self.dao {
-            let key = self.perm_cache_key(login_id, permission);
+            let key = self.perm_cache_key_with(tenant_override, login_id, permission);
             dao.set(&key, if result { "true" } else { "false" }, ttl_seconds)
                 .await?;
         }
@@ -220,8 +259,19 @@ impl GarrisonPermissionStrategyDefault {
         login_id: &str,
         permission: &str,
     ) -> GarrisonResult<Option<bool>> {
+        self.get_cached_permission_with(None, login_id, permission)
+            .await
+    }
+
+    /// 读取缓存的权限校验结果（带请求级租户覆盖，batch-08）。
+    pub async fn get_cached_permission_with(
+        &self,
+        tenant_override: Option<i64>,
+        login_id: &str,
+        permission: &str,
+    ) -> GarrisonResult<Option<bool>> {
         if let Some(dao) = &self.dao {
-            let key = self.perm_cache_key(login_id, permission);
+            let key = self.perm_cache_key_with(tenant_override, login_id, permission);
             match dao.get(&key).await? {
                 Some(v) => Ok(Some(v == "true")),
                 None => Ok(None),
@@ -283,57 +333,36 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
     }
 
     async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
-        self.interface.get_permission_list(login_id).await
+        // batch-08 接线（issue #3442/#3444）：改调 `_with_type` 变体传入策略配置的
+        // login_type（默认 "default"）。接口默认实现委托非 typed 方法，
+        // 现有实现者行为不变；覆写了 `_with_type` 的多账号数据源自此生效。
+        self.interface
+            .get_permission_list_with_type(login_id, &self.login_type)
+            .await
     }
 
     async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
-        self.interface.get_role_list(login_id).await
+        // batch-08 接线（issue #3443/#3444）：同 get_permission_list，传入 login_type。
+        self.interface
+            .get_role_list_with_type(login_id, &self.login_type)
+            .await
     }
 
     async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
-        // spec scenario "权限为空字符串"：空字符串抛 InvalidParam
-        if permission.is_empty() {
-            return Err(GarrisonError::InvalidParam(
-                "strategy-perm-empty::".to_string(),
-            ));
-        }
+        self.check_permission_scoped(self.tenant_id, login_id, permission)
+            .await
+    }
 
-        // 插件钩子（before）— 内部已处理 Err 仅 warn 不中断
-        if let Some(pm) = &self.plugin_manager {
-            pm.on_permission_check(login_id, permission);
-        }
-
-        // 优先读取权限缓存
-        if self.dao.is_some() {
-            if let Ok(Some(cached)) = self.get_cached_permission(login_id, permission).await {
-                return Ok(cached);
-            }
-        }
-
-        // 委托 PermissionChecker（若注入），否则回退到 默认行为
-        let result = if let Some(pc) = &self.permission_checker {
-            pc.has_permission(login_id, permission).await?
-        } else {
-            let permissions = self.get_permission_list(login_id).await?;
-            permissions.iter().any(|p| p == permission)
-        };
-
-        // 写入缓存（失败仅 warn 不中断）
-        if let Some(_dao) = &self.dao {
-            if let Err(e) = self
-                .cache_permission(login_id, permission, result, 300)
-                .await
-            {
-                tracing::warn!(
-                    "permission cache write failed (login_id={}, perm={}): {}",
-                    login_id,
-                    permission,
-                    e
-                );
-            }
-        }
-
-        Ok(result)
+    async fn check_permission_in_tenant(
+        &self,
+        tenant_id: i64,
+        login_id: &str,
+        permission: &str,
+    ) -> GarrisonResult<bool> {
+        // 请求级租户覆盖缓存键维度（T023）：firewall 回退路径传入的租户
+        // 优先于 builder 配置，防止未配置 builder 租户时跨租户缓存污染。
+        self.check_permission_scoped(Some(tenant_id), login_id, permission)
+            .await
     }
 
     async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
@@ -426,6 +455,64 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
 }
 
 impl GarrisonPermissionStrategyDefault {
+    /// `check_permission` 的共享实现（batch-08：缓存键租户维度可由请求级租户覆盖）。
+    ///
+    /// `cache_tenant` 为 `Some(t)` 时权限缓存键使用该租户（`check_permission_in_tenant`
+    /// 传入的请求级租户），否则回退 builder 配置的 `self.tenant_id`。
+    async fn check_permission_scoped(
+        &self,
+        cache_tenant: Option<i64>,
+        login_id: &str,
+        permission: &str,
+    ) -> GarrisonResult<bool> {
+        // spec scenario "权限为空字符串"：空字符串抛 InvalidParam
+        if permission.is_empty() {
+            return Err(GarrisonError::InvalidParam(
+                "strategy-perm-empty::".to_string(),
+            ));
+        }
+
+        // 插件钩子（before）— 内部已处理 Err 仅 warn 不中断
+        if let Some(pm) = &self.plugin_manager {
+            pm.on_permission_check(login_id, permission);
+        }
+
+        // 优先读取权限缓存
+        if self.dao.is_some() {
+            if let Ok(Some(cached)) =
+                self.get_cached_permission_with(cache_tenant, login_id, permission)
+                    .await
+            {
+                return Ok(cached);
+            }
+        }
+
+        // 委托 PermissionChecker（若注入），否则回退到 默认行为
+        let result = if let Some(pc) = &self.permission_checker {
+            pc.has_permission(login_id, permission).await?
+        } else {
+            let permissions = self.get_permission_list(login_id).await?;
+            permissions.iter().any(|p| p == permission)
+        };
+
+        // 写入缓存（失败仅 warn 不中断）
+        if let Some(_dao) = &self.dao {
+            if let Err(e) = self
+                .cache_permission_with(cache_tenant, login_id, permission, result, 300)
+                .await
+            {
+                tracing::warn!(
+                    "permission cache write failed (login_id={}, perm={}): {}",
+                    login_id,
+                    permission,
+                    e
+                );
+            }
+        }
+
+        Ok(result)
+    }
+
     /// 广播 FirewallBlock 事件。
     ///
     /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。

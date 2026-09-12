@@ -20,11 +20,26 @@ use async_trait::async_trait;
 pub mod maxminddb;
 
 /// 地理坐标（纬度 / 经度，十进制度）。
+///
+/// # 不变量与构造方式（issue #8028）
+///
+/// `lat ∈ [-90.0, 90.0]`、`lon ∈ [-180.0, 180.0]`、非 NaN 的不变量由
+/// [`GeoCoord::new`] / [`GeoCoord::from_csv`] 在构造时校验。**字段为 `pub`**，
+/// 外部代码可用结构体字面量 `GeoCoord { lat, lon }` 绕过校验（如注入
+/// `NAN` / 越界值，污染 haversine 距离计算与 allow/block 判定）。
+/// 字段无法私有化：crate 内 `anomalous` / `geo::maxminddb` 等模块及外部
+/// 使用方均直接读取字段（破坏性变更超出本修复范围）。
+/// **调用方应始终经 `new` / `from_csv` 构造**；对不可信来源的坐标，
+/// 消费侧可用 [`GeoCoord::new`] 二次校验（`is_err()` 即越界/NaN）。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GeoCoord {
     /// 纬度（-90.0 ~ 90.0）。
+    ///
+    /// 直接字面量构造可绕过 `new` 校验（见类型文档），消费侧勿信任未校验来源。
     pub lat: f64,
     /// 经度（-180.0 ~ 180.0）。
+    ///
+    /// 直接字面量构造可绕过 `new` 校验（见类型文档），消费侧勿信任未校验来源。
     pub lon: f64,
 }
 

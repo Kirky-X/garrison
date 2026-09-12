@@ -15,9 +15,14 @@
 //!
 //! # 一次性使用 + 暴力破解防护
 //!
-//! - `verify` 匹配成功后立即删除 DAO key，防止同一 challenge_id 被复用。
-//! - `verify` 匹配失败时递增尝试计数器（key = `captcha:attempts:{challenge_id}`），
-//!   超过 `max_attempts`（默认 5）后删除 challenge key，防止暴力穷举。
+//! - `verify` 用 `dao.get_and_delete`（GETDEL 原子语义，与 SSO ticket 防回放同款）
+//!   取出答案，并发同 challenge_id 的 verify 仅有一个能取到值，
+//!   消除 get→compare→delete 的 TOCTOU（一次性语义并发下不再被双通过）。
+//! - `verify` 匹配成功后 challenge 已被原子删除，防止同一 challenge_id 被复用。
+//! - `verify` 匹配失败时用 `dao.incr` 原子递增尝试计数器
+//!   （key = `captcha:attempts:{challenge_id}`，消除 get→add→set 读改写竞态），
+//!   超过 `max_attempts`（默认 5）后废弃 challenge（不再回写），防止暴力穷举；
+//!   未超限则回写 challenge 允许重试。
 //! - 不匹配或 key 不存在返回 `Ok(false)`，不报错。
 //!
 //! # 与 [`CaptchaChallenge`](crate::strategy::firewall::CaptchaChallenge) trait 的区分
@@ -112,21 +117,33 @@ impl MathCaptchaProvider {
 
     /// 验证用户提交的答案。
     ///
-    /// - 匹配则删除 DAO key（一次性使用，防止复用）。
-    /// - 不匹配时递增尝试计数器，超过 `max_attempts` 后删除 challenge key（防暴力穷举）。
-    /// - challenge_id 不存在返回 `Ok(false)`。
+    /// - 用 `dao.get_and_delete`（GETDEL 原子）取出存储答案：并发同 challenge_id
+    ///   的 verify 仅有一个取到值，保证一次性使用语义（消除 get→delete TOCTOU）。
+    /// - 匹配则 challenge 已删除（一次性使用，防止复用）。
+    /// - 不匹配时用 `dao.incr` 原子递增尝试计数器（消除 get→add→set 竞态），
+    ///   超过 `max_attempts` 后废弃 challenge（防暴力穷举）；
+    ///   未超限则回写 challenge（TTL 重置），允许继续重试。
+    /// - challenge_id 不存在（已被消费/过期）返回 `Ok(false)`。
+    ///
+    /// # 并发说明
+    ///
+    /// GETDEL 先删、错误答案未超限时后回写，两者之间存在短暂窗口：
+    /// 并发请求在该窗口内会取到 `None` 返回 `Ok(false)`（安全方向失败），
+    /// 不会出现双通过。
     pub async fn verify(&self, challenge_id: &str, answer: &str) -> GarrisonResult<bool> {
         let key = format!("{}math:{}", DaoKeyPrefix::Captcha, challenge_id);
-        let stored = self.dao.get(&key).await?;
+        // 原子 GETDEL：取值同时删除，消除 get→compare→delete 的 TOCTOU
+        // （并发同 challenge_id 仅一个调用取到答案，一次性保证不被并发绕过）
+        let stored = self.dao.get_and_delete(&key).await?;
         let stored = match stored {
             Some(s) => s,
             None => return Ok(false),
         };
 
-        let matched = stored.trim() == answer.trim();
-        if matched {
-            self.dao.delete(&key).await?;
-            let attempts_key = format!("{}attempts:{}", DaoKeyPrefix::Captcha, challenge_id);
+        let attempts_key = format!("{}attempts:{}", DaoKeyPrefix::Captcha, challenge_id);
+
+        if stored.trim() == answer.trim() {
+            // 匹配：challenge 已被 GETDEL 原子删除；清理尝试计数器（非致命）
             let _ = self.dao.delete(&attempts_key).await.map_err(|e| {
                 tracing::warn!(
                     challenge_id,
@@ -137,24 +154,12 @@ impl MathCaptchaProvider {
             return Ok(true);
         }
 
-        // 错误答案：递增尝试计数器
-        let attempts_key = format!("{}attempts:{}", DaoKeyPrefix::Captcha, challenge_id);
-        let current: u32 = match self.dao.get(&attempts_key).await? {
-            Some(s) => s.parse().unwrap_or_else(|e| {
-                tracing::warn!(
-                    challenge_id,
-                    raw = %s,
-                    error = %e,
-                    "CAPTCHA attempts data corrupted, resetting counter to 0"
-                );
-                0
-            }),
-            None => 0,
-        };
-        let new_count = current.saturating_add(1);
+        // 错误答案：dao.incr 原子递增尝试计数器
+        // （替代 get→parse→add→set 读改写，并发下不会少记、可超 max_attempts）
+        let new_count = self.dao.incr(&attempts_key, self.ttl).await?;
 
-        if new_count >= self.max_attempts {
-            self.dao.delete(&key).await?;
+        if new_count >= self.max_attempts as u64 {
+            // 超限：challenge 已被 GETDEL 删除，不再回写（废弃）；清理计数器
             let _ = self.dao.delete(&attempts_key).await.map_err(|e| {
                 tracing::warn!(
                     challenge_id,
@@ -168,11 +173,12 @@ impl MathCaptchaProvider {
                 max = self.max_attempts,
                 "CAPTCHA challenge discarded due to exceeding max attempts"
             );
-        } else {
-            self.dao
-                .set(&attempts_key, &new_count.to_string(), self.ttl)
-                .await?;
+            return Ok(false);
         }
+
+        // 未超限：回写 challenge 允许重试（TTL 重置为 self.ttl）。
+        // 回写与 GETDEL 之间的窗口内并发请求取到 None → 安全方向失败。
+        self.dao.set(&key, &stored, self.ttl).await?;
 
         Ok(false)
     }

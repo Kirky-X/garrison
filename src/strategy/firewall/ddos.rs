@@ -9,12 +9,24 @@
 //!
 //! # 算法（Fixed Window Counter，委托 limiteron）
 //!
-//! 1. 全局桶：`atomic_check_and_incr("ddos:global", threshold=burst, ttl=1s)`
-//!    —— 1 秒窗口内允许 burst 次全局请求
-//! 2. 单 IP 桶：`atomic_check_and_incr("ddos:ip:{ip}", threshold=per_ip_rps, ttl=1s)`
+//! 1. 单 IP 桶：`atomic_check_and_incr("ddos:ip:{ip}", threshold=per_ip_rps, ttl=1s)`
 //!    —— 1 秒窗口内允许 per_ip_rps 次单 IP 请求
-//! 3. 全局桶先检查，per_ip 桶后检查
+//! 2. 全局桶：`atomic_check_and_incr("ddos:global", threshold=burst, ttl=1s)`
+//!    —— 1 秒窗口内允许 burst 次全局请求
+//! 3. **单 IP 桶先检查，全局桶后检查**：被单 IP 拦截的攻击流量不消耗全局额度，
+//!    全局突发余量留给正常用户（语义取舍见下方"计数顺序"）
 //! 4. 窗口 TTL 到期后计数器自动重置（DAO 后端的 TTL 机制保证）
+//!
+//! # 计数顺序（issue #6968）
+//!
+//! 旧实现先 incr 全局桶再查单 IP 桶：被单 IP 拦截的请求已不可逆消耗全局额度，
+//! 实际全局限额比 `burst` 更严格（每次 per-IP 拦截都挤占全局窗口），攻击者可
+//! 借此提前打满全局桶。改为先查单 IP 后 incr 全局后：
+//! - 单 IP 拦截 → 全局桶未被触碰（攻击流量不挤占正常用户额度）；
+//! - 全局拦截 → 该 IP 桶已 +1，但该请求本就被拒绝，仅影响攻击者自身的
+//!   per-IP 计数（惩罚方向正确），无需回滚。
+//! 相比"先全局后回滚"方案，此顺序无需分布式 decr 补偿（避免补偿失败造成
+//! 计数漂移），语义上对正常用户更公平。
 //!
 //! # 与 RateLimit 的区别
 //!
@@ -104,20 +116,8 @@ impl GarrisonFirewallStrategy for DDoSStrategy {
         // 窗口 TTL：1 秒（fixed window counter 语义）
         const WINDOW_TTL: Duration = Duration::from_secs(1);
 
-        // 1. 全局桶检查（threshold=burst，1 秒窗口）
-        let global_ok = self
-            .limiter
-            .atomic_check_and_incr("ddos:global", self.config.burst as u64, WINDOW_TTL)
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("strategy-ddos-global::{}", e)))?;
-        if !global_ok {
-            return Err(GarrisonError::FirewallBlocked(format!(
-                "strategy-ddos-global-blocked::{}",
-                self.config.burst
-            )));
-        }
-
-        // 2. 单 IP 桶检查（threshold=per_ip_rps，1 秒窗口）
+        // 1. 单 IP 桶检查（threshold=per_ip_rps，1 秒窗口）。
+        // 先查单 IP：被 per-IP 拦截的攻击流量不消耗全局额度（issue #6968 修复）
         let ip_key = format!("ddos:ip:{}", ctx.ip);
         let ip_ok = self
             .limiter
@@ -128,6 +128,21 @@ impl GarrisonFirewallStrategy for DDoSStrategy {
             return Err(GarrisonError::FirewallBlocked(format!(
                 "strategy-ddos-ip-blocked::{}::{}",
                 ctx.ip, self.config.per_ip_rps
+            )));
+        }
+
+        // 2. 全局桶检查（threshold=burst，1 秒窗口）。
+        // 全局拦截时该 IP 桶已 +1：请求本就被拒绝，仅影响攻击者自身计数，
+        // 不做回滚（避免分布式 decr 补偿失败造成计数漂移，见模块文档"计数顺序"）
+        let global_ok = self
+            .limiter
+            .atomic_check_and_incr("ddos:global", self.config.burst as u64, WINDOW_TTL)
+            .await
+            .map_err(|e| GarrisonError::Dao(format!("strategy-ddos-global::{}", e)))?;
+        if !global_ok {
+            return Err(GarrisonError::FirewallBlocked(format!(
+                "strategy-ddos-global-blocked::{}",
+                self.config.burst
             )));
         }
 
@@ -278,26 +293,70 @@ mod tests {
         }
     }
 
-    /// 验证错误传播：limiteron 错误映射为 GarrisonError::Dao。
+    /// 验证错误传播：limiteron 错误映射为 GarrisonError::Dao（issue #834 修复：补断言）。
     ///
-    /// 通过注入脏数据（非数字 count）触发 parse 失败，验证错误被正确包装。
+    /// 通过注入脏数据（`ddos:global` 的 count 是非数字字符串）触发 DAO incr 解析失败：
+    /// per-IP 桶先检查通过（key 不存在 → incr=1 <= per_ip_rps），随后全局桶
+    /// `incr` 解析脏数据报错（InMemoryDao Rule 12 显性报错），经
+    /// `atomic_check_and_incr` → limiteron 错误 → `strategy-ddos-global` 前缀的
+    /// `GarrisonError::Dao` 向上传播（Fail Loud）。
     #[tokio::test]
     async fn ddos_limiter_error_maps_to_garrison_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // 注入脏数据：ddos:global 的 count 是非数字字符串
-        // MockDao::eval_lua 识别 INCR+EXPIRE 后调用 incr，incr 内部 parse 失败时 unwrap_or(0)
-        // 但 GarrisonDaoDistributedLimiter::atomic_check_and_incr 的降级路径会调用 dao.incr
-        // （MockDao 的 eval_lua 不会走 NotImplemented 分支，而是模拟 INCR+EXPIRE）
-        // 因此此测试主要验证：当 limiter 返回 Err 时，DDoSStrategy::check 返回 GarrisonError::Dao
         dao.set("ddos:global", "not-a-number", 60).await.unwrap();
 
         let config = DDoSConfig::default();
         let strategy = DDoSStrategy::new(config, dao);
         let ctx = FirewallContext::new("1.2.3.4");
 
-        // eval_lua 模拟 INCR+EXPIRE：内部 incr 调用时 parse "not-a-number" 失败，
-        // MockDao::incr 用 unwrap_or(0) + 1 = 1，所以不会报错而是返回 1
-        // → 验证至少不 panic 且返回确定结果
-        let _ = strategy.check(&ctx).await;
+        let result = strategy.check(&ctx).await;
+        assert!(
+            matches!(&result, Err(GarrisonError::Dao(msg)) if msg.contains("strategy-ddos-global")),
+            "全局桶脏数据应映射为含 strategy-ddos-global 前缀的 GarrisonError::Dao，实际: {:?}",
+            result
+        );
+    }
+
+    /// 验证计数顺序（issue #6968 修复）：单 IP 拦截不消耗全局额度。
+    ///
+    /// burst=3，per_ip_rps=2。攻击 IP 被单 IP 桶拦截的请求不应 incr 全局桶，
+    /// 正常用户（其他 IP）仍能使用完整全局额度：
+    /// - 旧实现（先全局后单 IP）：攻击者第 3 次被单 IP 拦截前已把全局 incr 到 3，
+    ///   正常用户第 1 次就会因全局 4 > 3 被误拦；
+    /// - 新实现（先单 IP 后全局）：攻击者第 3 次在单 IP 桶即被拦截，全局保持 2，
+    ///   正常用户第 1 次通过（全局 3），第 2 次才因全局额度耗尽被拦。
+    #[tokio::test]
+    async fn per_ip_block_does_not_consume_global_quota() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let config = DDoSConfig {
+            global_rps: 100,
+            per_ip_rps: 2,
+            burst: 3,
+        };
+        let strategy = DDoSStrategy::new(config, dao);
+        let attacker = FirewallContext::new("9.9.9.9");
+
+        // 攻击 IP 前 2 次通过（per_ip=1,2；global=1,2）
+        assert!(strategy.check(&attacker).await.is_ok(), "攻击 IP 第 1 次应通过");
+        assert!(strategy.check(&attacker).await.is_ok(), "攻击 IP 第 2 次应通过");
+
+        // 攻击 IP 第 3 次被单 IP 桶拦截（per_ip=3 > 2），全局桶保持 2 不被消耗
+        assert!(matches!(
+            strategy.check(&attacker).await,
+            Err(GarrisonError::FirewallBlocked(msg)) if msg.contains("ddos-ip-blocked")
+        ));
+
+        // 正常 IP：第 1 次通过（旧实现此处会因全局已被消耗到 3、incr 后 4 > 3 被误拦）
+        let victim = FirewallContext::new("7.7.7.7");
+        assert!(
+            strategy.check(&victim).await.is_ok(),
+            "单 IP 拦截不应消耗全局额度，正常 IP 第 1 次应通过"
+        );
+        // 正常 IP 第 2 次：全局额度才真正耗尽（incr 后 4 > 3）
+        assert!(matches!(
+            strategy.check(&victim).await,
+            Err(GarrisonError::FirewallBlocked(msg)) if msg.contains("ddos-global-blocked")
+        ));
     }
 }

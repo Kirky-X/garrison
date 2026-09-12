@@ -59,15 +59,29 @@ impl AnomalyDetector for IpChangeDetector {
             return Ok(Vec::new()); // 无历史 session 不告警
         }
 
-        // 找到 last_active_at 最大的 session
+        // 找到 last_active_at 最大的 session。
+        // issue #8243：单个 token 的 DAO 读取失败不再用 `?` 传播中断整个检测
+        // （那样一个 transient 错误会抑制所有其他 token 的告警），改为
+        // warn 跳过该 token、继续处理剩余（错误聚合）。
         let mut latest_ip: Option<String> = None;
         let mut latest_active_at: i64 = i64::MIN;
         for token in &tokens {
-            if let Some(ts) = self.session.get_token_session(token).await? {
-                if ts.last_active_at > latest_active_at {
-                    latest_active_at = ts.last_active_at;
-                    latest_ip = ts.ip;
-                }
+            match self.session.get_token_session(token).await {
+                Ok(Some(ts)) => {
+                    if ts.last_active_at > latest_active_at {
+                        latest_active_at = ts.last_active_at;
+                        latest_ip = ts.ip;
+                    }
+                },
+                Ok(None) => {},
+                Err(e) => {
+                    tracing::warn!(
+                        login_id,
+                        token = token.get(..8).unwrap_or(token),
+                        error = %e,
+                        "IpChangeDetector: token session read failed, skipping token (detection continues)"
+                    );
+                },
             }
         }
 
@@ -203,15 +217,20 @@ impl AnomalyDetector for SessionHijackDetector {
 ///
 /// 实现 `AnomalyDetector` trait，在 `check_on_login` 时：
 /// 1. 通过 `GarrisonSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
-/// 2. 若 token 数量 >= 阈值，发出 `AnomalyLogin { anomaly_type: RapidSuccessiveLogin }`
+/// 2. 逐个 `get_token_session` 验证存活性（issue #6495：**只统计未过期 token**，
+///    `get_token_session` 对已过期 session 返回 `None` 并顺带触发过期清理，
+///    长期堆积的过期 token 不再造成误报）
+/// 3. 若活跃 token 数量 >= 阈值，发出 `AnomalyLogin { anomaly_type: RapidSuccessiveLogin }`
 ///
 /// 默认阈值为 5，可通过 `with_threshold` 自定义。
 /// `check_on_check_login` 不触发检测，返回空 Vec。
 ///
 /// # 注意：语义与实现
 ///
-/// 此检测器检测同一 `login_id` 的同时在线 token 数量是否超过阈值。
-/// **不区分 token 创建时间**，长期多设备登录的用户也可能触发告警。
+/// 此检测器检测同一 `login_id` 的**同时在线（未过期）** token 数量是否超过阈值。
+/// **不区分 token 创建时间**，长期多设备在线的用户也可能触发告警。
+/// 单个 token 的 DAO 读取失败仅 `tracing::warn!` 跳过，不中断检测
+/// （若全部读取失败则计数为 0、不告警——告警器对 DAO 故障 fail-open）。
 /// 若需基于时间窗口的快速连续登录检测，应扩展此检测器或实现新的 `AnomalyDetector`。
 pub struct RapidSuccessiveDetector {
     /// 会话管理器引用，用于查询 token 列表。
@@ -251,7 +270,25 @@ impl AnomalyDetector for RapidSuccessiveDetector {
         _ip: Option<&str>,
     ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
         let tokens = self.session.get_tokens_by_login_id(login_id);
-        let count = tokens.len();
+
+        // issue #6495：逐个验证 token 存活性，只统计未过期 token
+        // （索引中的过期 token 待周期清理，直接 len() 会把过期项计入造成误报）。
+        // 单 token 读取失败 warn 跳过、不中断检测（与 IpChangeDetector 聚合策略一致）。
+        let mut count = 0usize;
+        for token in &tokens {
+            match self.session.get_token_session(token).await {
+                Ok(Some(_)) => count += 1,
+                Ok(None) => {},
+                Err(e) => {
+                    tracing::warn!(
+                        login_id,
+                        token = token.get(..8).unwrap_or(token),
+                        error = %e,
+                        "RapidSuccessiveDetector: token session read failed, skipping token"
+                    );
+                },
+            }
+        }
 
         if count >= self.threshold {
             return Ok(vec![SecurityAlertEvent::AnomalyLogin {
@@ -576,6 +613,52 @@ mod tests {
             },
             _ => panic!("期望 AnomalyLogin 事件"),
         }
+    }
+
+    /// 过期 token 不计入同时在线数量（issue #6495 修复）。
+    ///
+    /// 6 个索引 token 中将 4 个回拨 last_active_at 到远超 timeout（3600s）之前
+    /// 使其过期：仅剩 2 个活跃 token < 阈值 5，不应告警（旧实现按索引 len()=6
+    /// 会误报）。
+    #[tokio::test]
+    async fn expired_tokens_are_not_counted() {
+        let (dao, session) = make_session();
+        create_n_tokens(&session, "1001", 6).await;
+        for i in 0..4 {
+            set_last_active_at(&dao, &format!("T{}", i), 1000).await;
+        }
+
+        let detector = RapidSuccessiveDetector::new(session);
+        let alerts = detector
+            .check_on_login("1001", "dev-1", None)
+            .await
+            .unwrap();
+        assert!(
+            alerts.is_empty(),
+            "4 个过期 token 不应计入，仅 2 个活跃 < 阈值 5，不应告警"
+        );
+    }
+
+    /// 单个 token session 损坏（读取失败）不中断 IpChangeDetector 检测
+    /// （issue #8243 修复：错误聚合，warn 跳过该 token 继续处理剩余）。
+    #[tokio::test]
+    async fn corrupted_token_session_does_not_break_detection() {
+        let (dao, session) = make_session();
+        create_session_with_ip(&session, "1001", "T1", "1.2.3.4").await;
+        create_session_with_ip(&session, "1001", "T2", "9.9.9.9").await;
+        // 注入损坏 JSON：T2 读取时反序列化失败（get_token_session 返回 Err）
+        dao.set("token:session:T2", "{invalid-json}", 3600)
+            .await
+            .unwrap();
+
+        let detector = IpChangeDetector::new(session);
+        // T1（IP 1.2.3.4）仍可读：应基于 T1 完成检测并告警，
+        // 而不是因 T2 的 Err 中断整个检测（旧实现 `?` 会直接向上传播错误）
+        let alerts = detector
+            .check_on_login("1001", "dev-1", Some("5.6.7.8"))
+            .await
+            .expect("单 token 损坏不应使整个检测失败");
+        assert_eq!(alerts.len(), 1, "应基于可读 token 完成 IP 变化检测");
     }
 
     // ========================================================================

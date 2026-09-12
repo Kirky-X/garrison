@@ -88,21 +88,25 @@ impl WafHook for WhitePathHook {
     /// **警告**：本 Hook 必须注册在所有安全关键 Hook（如
     /// [`DirectoryTraversalHook`] / [`DangerCharacterHook`]）**之后**。
     ///
-    /// 实现细节：匹配白名单前先检查 path 是否含可疑模式（字面量 `..`/`//` 或
-    /// URL 编码形式 `%2e`/`%2f`/`%5c`），若含可疑模式则返回 `Allow`（不短路），
-    /// 交给后续安全 Hook 处理。
+    /// 实现细节：匹配白名单前先检查 path 是否含可疑模式（字面量 `..`/`//`、
+    /// URL 编码形式 `%2e`/`%2f`/`%5c`，以及双重编码标志 `%25`——
+    /// `%252e`/`%25252e` 等多层编码均含 `%25`），若含可疑模式则返回 `Allow`
+    /// （不短路），交给后续安全 Hook 处理。
     ///
     /// [`DirectoryTraversalHook`]: DirectoryTraversalHook
     /// [`DangerCharacterHook`]: DangerCharacterHook
     async fn check(&self, ctx: &WafContext<'_>) -> WafVerdict {
         // 安全兜底：含可疑模式（字面量或 URL 编码）时不短路，返回 Allow 交给后续安全 Hook 处理。
         // 防止 `/api/../admin` 或 `/api/%2e%2e/admin` 通过 `starts_with("/api")` 绕过安全 Hook。
+        // `%25` 是双重编码标志：`%252e`（→%2e）、`%25252e`（三重）等均含 `%25`
+        // 但不含明文 `%2e`，必须一并视为可疑，否则双编码路径可短路跳过安全 Hook。
         let lower = ctx.path.to_lowercase();
         if lower.contains("..")
             || lower.contains("//")
             || lower.contains("%2e")
             || lower.contains("%2f")
             || lower.contains("%5c")
+            || lower.contains("%25")
         {
             return WafVerdict::Allow;
         }
@@ -201,10 +205,18 @@ fn check_danger_chars(lower: &str) -> Option<&'static str> {
             return Some(id);
         }
     }
-    // 双重编码检测：将 %25 解码为 % 后重新校验
-    // 防止 %252e（→ %2e → .）等双重 % 编码绕过
+    // 双重/多重编码检测：迭代将 %25 解码为 % 后重新校验。
+    // 单次 replace 对三重及以上编码失效（%25252e → %252e 仍无 %2e 子串），
+    // 故循环解码直到不再含 %25（上限 5 轮，防恶意超长编码链拖垮检测），
+    // 覆盖 %252e（双重）、%25252e（三重）、%2525252e（四重）等绕过。
     if lower.contains("%25") {
-        let decoded = lower.replace("%25", "%");
+        let mut decoded = lower.to_string();
+        const MAX_DECODE_ROUNDS: usize = 5;
+        let mut rounds = 0;
+        while decoded.contains("%25") && rounds < MAX_DECODE_ROUNDS {
+            decoded = decoded.replace("%25", "%");
+            rounds += 1;
+        }
         for &(pattern, id) in PATTERNS {
             if decoded.contains(pattern) {
                 return Some(id);
@@ -368,7 +380,8 @@ impl WafHook for DirectoryTraversalHook {
 /// Host 头白名单 Hook。
 ///
 /// 空列表始终 Allow。非空时 Host 头必须在白名单中。
-/// 无 Host 头时 Allow（不校验）。
+/// 无 Host 头时 **Deny**（fail-closed）：白名单非空却缺失 Host 头的请求
+/// 若放行将完全绕过 Host 白名单校验（虚拟主机隔离场景下可被利用）。
 pub struct HostHook {
     hosts: Vec<String>,
 }
@@ -391,7 +404,11 @@ impl WafHook for HostHook {
             return WafVerdict::Allow;
         }
         match ctx.host {
-            None => WafVerdict::Allow,
+            // fail-closed：白名单非空时缺失 Host 头视为不匹配（防止绕过白名单）
+            None => WafVerdict::Deny {
+                reason: "waf-host-missing::".to_string(),
+                hook: "host",
+            },
             Some(host) => {
                 if self.hosts.iter().any(|h| h == host) {
                     WafVerdict::Allow
@@ -745,13 +762,16 @@ mod tests {
         assert!(matches!(verdict, WafVerdict::Allow));
     }
 
-    /// 验证无 Host 返回 Allow。
+    /// 验证白名单非空但无 Host 头时 Deny（fail-closed，防止绕过白名单）。
     #[tokio::test]
-    async fn host_none_returns_allow() {
+    async fn host_none_returns_deny_fail_closed() {
         let hook = HostHook::new(vec!["example.com".to_string()]);
         let ctx = make_ctx("/api/test", "GET", None, &[], &[]);
         let verdict = hook.check(&ctx).await;
-        assert!(matches!(verdict, WafVerdict::Allow));
+        assert!(
+            matches!(verdict, WafVerdict::Deny { .. }),
+            "白名单非空且无 Host 头应 Deny（fail-closed）"
+        );
     }
 
     // ========================================================================
@@ -1265,6 +1285,56 @@ mod tests {
         assert!(
             matches!(verdict, WafVerdict::Deny { .. }),
             "%252f 双重编码应被拦截"
+        );
+    }
+
+    /// 验证三重编码 `%25252e` 被检测到（迭代解码修复）。
+    ///
+    /// 旧实现单次 `replace("%25", "%")` 后 `%25252e` → `%252e`，无 `%2e` 子串，
+    /// 会漏检放行；修复后迭代解码至不含 `%25`（上限 5 轮），可检出。
+    #[tokio::test]
+    async fn danger_char_triple_encoding_percent_25252e_detected() {
+        let hook = DangerCharacterHook::new();
+        let ctx = make_ctx("/api/%25252e%25252e/admin", "GET", None, &[], &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(
+            matches!(verdict, WafVerdict::Deny { .. }),
+            "%25252e 三重编码应被拦截"
+        );
+    }
+
+    /// 验证四重编码 `%2525252e` 被检测到（迭代解码修复）。
+    #[tokio::test]
+    async fn danger_char_quadruple_encoding_detected() {
+        let hook = DangerCharacterHook::new();
+        let ctx = make_ctx("/api/%2525252ftest", "GET", None, &[], &[]);
+        let verdict = hook.check(&ctx).await;
+        assert!(
+            matches!(verdict, WafVerdict::Deny { .. }),
+            "%2525252f 四重编码应被拦截"
+        );
+    }
+
+    /// 验证 path 含 `%252e` 双重编码时 WhitePathHook 不短路（不再被白名单绕过）。
+    ///
+    /// `/api/%252e/admin` 不含明文 `%2e`，旧守卫会放行并 AllowAndSkip 短路安全 Hook；
+    /// 修复后 `%25` 双重编码标志使守卫返回 Allow，交给后续安全 Hook。
+    #[tokio::test]
+    async fn white_path_double_encoded_traversal_not_short_circuited() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut chain = WafHookChain::new();
+        chain.register(Box::new(WhitePathHook::new(vec!["/api".to_string()])));
+        chain.register(Box::new(DangerCharacterHook::new()));
+        chain.register(Box::new(RecordingHook {
+            hook_name: "recorder",
+            log: log.clone(),
+        }));
+        let ctx = make_ctx("/api/%252e%252e/admin", "GET", None, &[], &[]);
+        // DangerCharacterHook 应拦截（%252e 双重编码），而非被白名单短路放行
+        let result = chain.check(&ctx).await;
+        assert!(
+            result.is_err(),
+            "含 %252e 的白名单路径不应被短路放行，应被 danger_char 拦截"
         );
     }
 }

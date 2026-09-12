@@ -35,6 +35,22 @@ use super::DeviceBindingPolicy;
 /// `require_secondary_auth` 不再重复调用 `is_new_device`（调用方已先调用过，避免重复 DAO 查询）。
 /// 调用方（`session.rs` login 流程）仅在 `is_new_device == true` 时才调用此方法，
 /// 因此直接返回 `Ok(true)`。
+///
+/// # `require_secondary_auth` 契约（issue #2824/#3460/#3461：显式声明）
+///
+/// 本方法**无条件返回 `Ok(true)`**，完全忽略 `login_id` / `device_id` 参数，
+/// 无任何运行时前置校验——"仅在新设备确认后调用"是**隐式调用方契约**，
+/// 无编译期或运行期强制。语义要点：
+///
+/// - **设计意图**：no-op 断言器。真正的"是否新设备"判定在 `is_new_device`，
+///   本方法只表达"严格模式下新设备必须二级认证"这一常量决策。
+/// - **调用方责任**：必须先调 `is_new_device` 且结果为 `true` 才调用本方法
+///   （stp 层 `check_device_binding` 已按此顺序接线）。每次登录都调用本方法
+///   会导致全部登录被要求二级认证（过度阻断，**fail-closed 方向**——本方法
+///   不可能错误放行，只可能错误拦截）。
+/// - **限制**：`is_new_device` 对空 `device_id` 返回 `Ok(false)`（见 `policies`），
+///   空设备标识的登录不经过本方法即可通过——fail-closed 部署应在上游拒绝
+///   空设备标识。
 pub struct StrictBinding {
     /// 会话管理器引用，用于查询历史 session 的 device 字段。
     session: Arc<GarrisonSession>,
@@ -56,12 +72,24 @@ impl DeviceBindingPolicy for StrictBinding {
         super::policies::check_is_new_device(&self.session, login_id, device_id).await
     }
 
+    /// 是否需要二级认证：**无条件返回 `Ok(true)`**（严格模式常量决策）。
+    ///
+    /// # 契约（no-op 语义，issue #2824/#3460/#3461）
+    ///
+    /// 本方法忽略两个参数、不做任何 DAO 查询——"仅在新设备确认后调用"是隐式
+    /// 调用方契约，无编译期/运行期强制（详见类型文档 `require_secondary_auth` 契约节）。
+    /// 误用后果是过度阻断（所有登录都被要求二级认证），方向为 fail-closed。
     async fn require_secondary_auth(
         &self,
-        _login_id: &str,
+        login_id: &str,
         _device_id: &str,
     ) -> GarrisonResult<bool> {
-        // 调用方已通过 is_new_device 确认是新设备，直接返回 true（强制二级认证）
+        // 调用方已通过 is_new_device 确认是新设备，直接返回 true（强制二级认证）。
+        // debug! 留痕：使该 no-op 决策在审计日志中可观测（含调用方传入的 login_id）。
+        tracing::debug!(
+            login_id,
+            "StrictBinding::require_secondary_auth: unconditional true (new-device confirmed by caller contract)"
+        );
         Ok(true)
     }
 }

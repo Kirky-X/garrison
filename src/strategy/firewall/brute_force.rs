@@ -54,6 +54,33 @@ impl Default for BruteForceConfig {
     }
 }
 
+impl BruteForceConfig {
+    /// 校验配置合法性（issue #3463 修复，对齐 `AnomalousAnalyzerConfig::validate`）。
+    ///
+    /// # 错误
+    /// - `max_attempts` 为 0：计数从 1 开始，`1 > 0` 导致首个请求即被封禁。
+    /// - `window_seconds` 为 0：计数 key TTL=0 立即过期，计数失效。
+    /// - `lock_seconds` 为 0：封禁立即过期，形同虚设。
+    pub fn validate(&self) -> GarrisonResult<()> {
+        if self.max_attempts == 0 {
+            return Err(GarrisonError::InvalidParam(
+                "firewall-bruteforce-max-attempts-zero::".to_string(),
+            ));
+        }
+        if self.window_seconds == 0 {
+            return Err(GarrisonError::InvalidParam(
+                "firewall-bruteforce-window-seconds-zero::".to_string(),
+            ));
+        }
+        if self.lock_seconds == 0 {
+            return Err(GarrisonError::InvalidParam(
+                "firewall-bruteforce-lock-seconds-zero::".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// 暴力破解防护策略，用 limiteron BanStorage + DistributedLimiter 实现。
 ///
 /// # 构造
@@ -85,6 +112,13 @@ impl BruteForceStrategy {
     /// - `config`: 配置（阈值 + 窗口 + 锁定时长）。
     /// - `dao`: DAO（oxcache 抽象，用于计数与锁定）。
     pub fn new(config: BruteForceConfig, dao: Arc<dyn GarrisonDao>) -> Self {
+        // 配置校验：new 签名不返回 Result（不破坏调用方），debug 构建下断言非法配置，
+        // release 下由 check/record_failure 的运行时守卫兜底（见 ensure_valid_config）
+        debug_assert!(
+            config.validate().is_ok(),
+            "invalid BruteForceConfig: {:?} (0 值阈值会导致全拦截/计数失效)",
+            config
+        );
         let ban_storage = Arc::new(GarrisonDaoBanStorage::new(dao.clone()));
         let limiter = Arc::new(GarrisonDaoDistributedLimiter::new(dao));
         Self {
@@ -92,6 +126,11 @@ impl BruteForceStrategy {
             ban_storage,
             limiter,
         }
+    }
+
+    /// 运行时配置守卫（debug_assert 的 release 兜底）：0 值阈值显性返回 InvalidParam。
+    fn ensure_valid_config(&self) -> GarrisonResult<()> {
+        self.config.validate()
     }
 
     /// 检查目标 IP 是否已被封禁（只读，不计数）。
@@ -121,6 +160,7 @@ impl BruteForceStrategy {
     /// # 返回
     /// - `Ok(())`: 已记录（未必触发封禁）。
     pub async fn record_failure(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
+        self.ensure_valid_config()?;
         let target = BanTarget::Ip(ctx.ip.clone());
         let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ctx.ip);
         let new_count = self
@@ -157,6 +197,7 @@ impl BruteForceStrategy {
 #[async_trait]
 impl GarrisonFirewallStrategy for BruteForceStrategy {
     async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
+        self.ensure_valid_config()?;
         let target = BanTarget::Ip(ctx.ip.clone());
         let count_key = format!("{}{}:count", DaoKeyPrefix::BruteForce, ctx.ip);
 

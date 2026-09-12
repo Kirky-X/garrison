@@ -27,6 +27,9 @@ use tokio::sync::watch;
 
 /// 最大扫描 key 数量（DoS 防护）。
 const MAX_SCAN: usize = 10_000;
+/// login_id 最大长度（DoS 防护）：超长 login_id 会构造极端长的 Redis key
+/// （`anomalous:login:{login_id}:{nanos}`），造成 key 膨胀/内存压力。
+const MAX_LOGIN_ID_LEN: usize = 128;
 /// 登录记录 TTL（秒，24h）。
 const RECORD_TTL_SECS: u64 = 86_400;
 /// 扫描时间窗口（秒，1h）。
@@ -190,6 +193,7 @@ impl AnomalousLoginAnalyzer {
     /// # 错误
     /// - `login_id` 为空 → `InvalidParam`
     /// - `login_id` 包含 `:` → `InvalidParam`（破坏 key 解析）
+    /// - `login_id` 长度超过 128 字节 → `InvalidParam`（防超长 key DoS，issue #2828）
     /// - 序列化失败 → `Internal`
     pub async fn record_login(&self, record: &AnomalousLoginRecord) -> GarrisonResult<()> {
         if record.login_id.is_empty() {
@@ -201,6 +205,13 @@ impl AnomalousLoginAnalyzer {
             return Err(GarrisonError::InvalidParam(
                 "strategy-login-id-no-colon".to_string(),
             ));
+        }
+        if record.login_id.len() > MAX_LOGIN_ID_LEN {
+            return Err(GarrisonError::InvalidParam(format!(
+                "strategy-login-id-too-long::{}::{}",
+                record.login_id.len(),
+                MAX_LOGIN_ID_LEN
+            )));
         }
         let key = Self::make_storage_key(&record.login_id, record.timestamp);
         let value = serde_json::to_string(record)
@@ -218,6 +229,15 @@ impl AnomalousLoginAnalyzer {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(timestamp_secs as u128);
+        if nanos == timestamp_secs as u128 {
+            // fallback 命中说明系统时钟异常（before UNIX_EPOCH），纳秒唯一性保证失效，
+            // 同秒同 login_id 的并发写入可能互相覆盖——显式 warn 提示（不中断记录）
+            tracing::warn!(
+                login_id,
+                fallback_ts = timestamp_secs,
+                "anomalous_analyzer: system clock error, storage key falls back to second-precision timestamp (uniqueness not guaranteed)"
+            );
+        }
         format!("anomalous:login:{}:{}", login_id, nanos)
     }
 
@@ -253,6 +273,12 @@ impl AnomalousLoginAnalyzer {
         let keys = dao.keys("anomalous:login:*").await?;
         let keys: Vec<String> = keys.into_iter().take(config.max_scan).collect();
 
+        // 已知性能问题（issue #5635/#5984/#6105，HIGH-001）：keys 后逐 key dao.get
+        // 构成 N+1 查询，Redis 后端在 keys 数接近 max_scan（默认 10000）时产生
+        // 等量网络往返。保持原因：`GarrisonDao` trait 无 mget/get_many 批量接口
+        // （扩 trait 属 breaking change，不在本修复范围），缓解措施为
+        // `max_scan` 上限（本行 take）+ 扫描耗时 > 1s 的 warn 监控（见函数尾部）。
+        // 修复路径：DAO 层提供批量读取接口后改为分批 mget/SCAN 迭代。
         let mut grouped: HashMap<String, Vec<AnomalousLoginRecord>> = HashMap::new();
 
         for key in &keys {
@@ -631,6 +657,39 @@ mod tests {
         assert!(
             matches!(result, Err(GarrisonError::InvalidParam(_))),
             "包含 ':' 的 login_id 应返回 InvalidParam"
+        );
+    }
+
+    /// 超长 login_id 返回 InvalidParam（issue #2828 修复：防超长 key DoS）。
+    #[tokio::test]
+    async fn record_login_overlong_login_id_errors() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let (_tx, rx) = watch::channel(false);
+        let analyzer =
+            AnomalousLoginAnalyzer::new(dao, AnomalousAnalyzerConfig::default(), rx, None);
+        let record = AnomalousLoginRecord {
+            login_id: "a".repeat(129),
+            ip: "1.2.3.4".to_string(),
+            geo: None,
+            device: None,
+            timestamp: 1700000000,
+            result: LoginResult::Success,
+        };
+        let result = analyzer.record_login(&record).await;
+        assert!(
+            matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("too-long")),
+            "超过 128 字节的 login_id 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+
+        // 边界：恰好 128 字节应通过
+        let record_ok = AnomalousLoginRecord {
+            login_id: "b".repeat(128),
+            ..record
+        };
+        assert!(
+            analyzer.record_login(&record_ok).await.is_ok(),
+            "恰好 128 字节的 login_id 应通过"
         );
     }
 

@@ -28,7 +28,7 @@ use serde::{Deserialize, Serialize};
 /// 实际限流逻辑统一委托 `crate::limiteron::GarrisonDaoDistributedLimiter`，
 /// 此 enum 仅作为配置占位与可观测性标记，不再驱动具体实现切换（limiteron
 /// 通过 `GarrisonDao` 后端透明支持 Redis 原子操作）。
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum RateLimitBackend {
     /// 内存限流（基于 GarrisonDaoDistributedLimiter + MockDao/SQLite）。
@@ -39,6 +39,43 @@ pub enum RateLimitBackend {
         /// Redis 连接 URL（如 `redis://127.0.0.1:6379/0`）。
         redis_url: String,
     },
+}
+
+/// 手动实现 `Debug`（ocr #2841/3484）：`redis_url` 可能内嵌凭据
+/// （`redis://user:password@host:6379/0`）或敏感 query（`?password=...`），
+/// 派生 `Debug` 会在日志/错误输出中原样泄露。此处对 URL 脱敏后输出。
+impl std::fmt::Debug for RateLimitBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Memory => f.debug_struct("Memory").finish(),
+            Self::Redis { redis_url } => f
+                .debug_struct("Redis")
+                .field("redis_url", &redact_redis_url(redis_url))
+                .finish(),
+        }
+    }
+}
+
+/// 脱敏 Redis URL：userinfo（`user:pass@`）替换为 `***`，含 query 时整体截断为 `?***`。
+///
+/// 无凭据的 URL 原样返回，便于运维识别实例。
+fn redact_redis_url(url: &str) -> String {
+    // scheme 之后、host 之前的 userinfo（密码可能含未转义的 '@'，取最后一个 '@' 分界）
+    if let Some(scheme_end) = url.find("://") {
+        let rest = &url[scheme_end + 3..];
+        if let Some(at) = rest.rfind('@') {
+            let host_part = &rest[at + 1..];
+            return match host_part.split_once('?') {
+                Some((host, _)) => format!("{}://***@{}?***", &url[..scheme_end], host),
+                None => format!("{}://***@{}", &url[..scheme_end], host_part),
+            };
+        }
+    }
+    // 无 userinfo：可能凭据在 query（如 ?password=...），保守截断
+    match url.split_once('?') {
+        Some((base, _)) => format!("{}?***", base),
+        None => url.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +134,39 @@ mod tests {
             RateLimitBackend::Redis {
                 redis_url: String::new()
             }
+        );
+    }
+
+    /// ocr #2841/3484：Debug 输出必须脱敏凭据（userinfo / query）。
+    #[test]
+    fn debug_redacts_credentials() {
+        let backend = RateLimitBackend::Redis {
+            redis_url: "redis://user:p@ssw0rd@host:6379/0".to_string(),
+        };
+        let dbg = format!("{:?}", backend);
+        assert!(
+            !dbg.contains("p@ssw0rd") && !dbg.contains("redis://user"),
+            "Debug 不得包含 userinfo 凭据，实际: {}",
+            dbg
+        );
+        assert!(dbg.contains("***@host:6379/0"), "应保留 host 便于排查，实际: {}", dbg);
+
+        let query_backend = RateLimitBackend::Redis {
+            redis_url: "redis://host:6379/0?password=secret".to_string(),
+        };
+        let dbg = format!("{:?}", query_backend);
+        assert!(
+            !dbg.contains("secret"),
+            "Debug 不得包含 query 凭据，实际: {}",
+            dbg
+        );
+
+        let plain = RateLimitBackend::Redis {
+            redis_url: "redis://127.0.0.1:6379/0".to_string(),
+        };
+        assert_eq!(
+            format!("{:?}", plain),
+            r#"Redis { redis_url: "redis://127.0.0.1:6379/0" }"#
         );
     }
 }

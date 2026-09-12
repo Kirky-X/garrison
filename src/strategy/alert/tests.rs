@@ -256,6 +256,69 @@ async fn broadcast_alert_listener_failure_does_not_interrupt() {
     );
 }
 
+/// listener panic 行为覆盖（issue #1931/#3685 修复：补测试断言）。
+///
+/// 当前 `broadcast_alert` 实现（manager_impl.rs）**无 catch_unwind/panic 恢复**：
+/// listener 的 `on_alert` panic 会传播出 `broadcast_alert` 并中止广播循环，
+/// 剩余 listener 不再被通知。本测试经 `tokio::spawn` 任务边界捕获 panic
+/// （JoinError::is_panic），固化该行为：
+/// 1. panic 确实传播出 `broadcast_alert`（会中断调用方）；
+/// 2. 剩余 listener 计数为 0（未被通知）。
+///
+/// 该测试同时是行为哨兵：未来若为 `broadcast_alert` 引入 `catch_unwind`
+/// （`AssertUnwindSafe`）恢复逻辑，应同步将断言改为
+/// "panic 被捕获 + 剩余 listener 仍被通知"。
+#[tokio::test]
+async fn broadcast_alert_listener_panic_propagates_and_aborts_broadcast() {
+    static PANIC_CALLS: AtomicUsize = AtomicUsize::new(0);
+    static AFTER_CALLS: AtomicUsize = AtomicUsize::new(0);
+    PANIC_CALLS.store(0, Ordering::SeqCst);
+    AFTER_CALLS.store(0, Ordering::SeqCst);
+
+    struct PanickingListener;
+    #[async_trait]
+    impl AlertListener for PanickingListener {
+        async fn on_alert(&self, _event: &SecurityAlertEvent) -> GarrisonResult<()> {
+            PANIC_CALLS.fetch_add(1, Ordering::SeqCst);
+            panic!("listener on_alert panic");
+        }
+    }
+
+    struct AfterListener;
+    #[async_trait]
+    impl AlertListener for AfterListener {
+        async fn on_alert(&self, _event: &SecurityAlertEvent) -> GarrisonResult<()> {
+            AFTER_CALLS.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    let manager = AlertListenerManager::new();
+    // panic listener 先注册，AfterListener 后注册（panic 后不应被通知）
+    manager.add_listener(Arc::new(PanickingListener));
+    manager.add_listener(Arc::new(AfterListener));
+    let event = SecurityAlertEvent::SensitiveOperation {
+        login_id: "1001".to_string(),
+        operation: "delete".to_string(),
+        resource: "user:1002".to_string(),
+    };
+
+    // 经 tokio::spawn 运行广播：panic 被任务边界捕获为 JoinError，便于断言
+    let handle = tokio::spawn(async move { manager.broadcast_alert(&event).await });
+    let joined = handle.await;
+    assert!(
+        matches!(&joined, Err(e) if e.is_panic()),
+        "listener panic 应传播出 broadcast_alert（当前实现无 panic 恢复），实际: {:?}",
+        joined
+    );
+    assert_eq!(PANIC_CALLS.load(Ordering::SeqCst), 1, "panic listener 应被调用 1 次");
+    assert_eq!(
+        AFTER_CALLS.load(Ordering::SeqCst),
+        0,
+        "panic 中止广播循环，剩余 listener 不被通知（固化当前行为）"
+    );
+}
+
 /// Default trait 实现等价于 new()。
 #[test]
 fn default_equals_new() {

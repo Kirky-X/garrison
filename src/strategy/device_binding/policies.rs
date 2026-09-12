@@ -20,10 +20,14 @@ use super::DeviceBindingPolicy;
 /// 通过遍历 `login_id` 的所有 token session,检查是否有 session 的 `device` 字段
 /// 匹配 `device_id`。任一 session 匹配则视为已知设备,全部不匹配则视为新设备。
 ///
-/// # 空设备标识
+/// # 空设备标识（issue #3687/#2164：显式声明 fail 语义）
 ///
-/// 空 `device_id` 返回 `Ok(false)`（无设备标识不视为新设备）,
-/// 避免无设备信息的登录被错误阻断。
+/// 空 `device_id` 返回 `Ok(false)`（视为已知设备,跳过检测）并 `tracing::warn!`。
+/// **安全语义**：`Ok(false)` 意味着空设备标识的登录会绕过新设备检测与
+/// 二级认证——这是与调用方 `stp` 层 helpers 对齐的既有设计（`check_device_binding`
+/// 对空 `device_id` 直接跳过整个检查,不会走到本函数）,但直接调用方必须意识到：
+/// 攻击者可省略 device 字段规避设备绑定。需要 fail-closed 的部署应在上游
+/// 拒绝空设备标识的登录,而非依赖本函数拦截。
 ///
 /// # 无历史 session
 ///
@@ -33,8 +37,13 @@ pub(super) async fn check_is_new_device(
     login_id: &str,
     device_id: &str,
 ) -> GarrisonResult<bool> {
-    // 空设备标识不视为新设备（避免无设备信息的登录被错误阻断）
+    // 空设备标识不视为新设备（避免无设备信息的登录被错误阻断）。
+    // 注意：此路径同时跳过设备绑定检测（绕过向量,见上方文档）,显式 warn 留痕。
     if device_id.is_empty() {
+        tracing::warn!(
+            login_id,
+            "check_is_new_device: empty device_id treated as known device (device binding check skipped; reject empty device upstream for fail-closed)"
+        );
         return Ok(false);
     }
 

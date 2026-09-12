@@ -31,7 +31,10 @@
 //! ## 跨进程限制
 //!
 //! 降级路径（oxcache 等不支持 Lua 的后端）仅进程内原子：
-//! 多进程共享同一后端时仍存在 TOCTOU。生产环境若需跨进程原子：
+//! 多进程共享同一后端时仍存在 TOCTOU（issue #2837）——`atomic_lock` 是
+//! 进程内 `tokio::sync::Mutex`，各进程独立持锁，跨进程的 read-modify-write
+//! 互相不可见，每个进程都可能在自己的写入可见前通过阈值检查。
+//! 运行时无跨进程强制，缓解手段（二选一，文档化设计）：
 //! - 启用 `rate-limit-redis` feature 切换 Redis 后端（支持 Lua 脚本）
 //! - 或改用 [`crate::strategy::firewall::BruteForceStrategy`]（固定窗口，原子计数）
 //!
@@ -121,6 +124,27 @@ impl Default for RateLimitConfig {
     }
 }
 
+impl RateLimitConfig {
+    /// 校验配置合法性。
+    ///
+    /// # 错误
+    /// - `max_requests` 为 0：Lua 脚本阈值比较恒拦截（所有请求被拒）。
+    /// - `window_seconds` 为 0：Lua `SETEX` TTL=0 在 Redis 报错（写入丢失）。
+    pub fn validate(&self) -> GarrisonResult<()> {
+        if self.max_requests == 0 {
+            return Err(GarrisonError::InvalidParam(
+                "firewall-ratelimit-max-requests-zero::".to_string(),
+            ));
+        }
+        if self.window_seconds == 0 {
+            return Err(GarrisonError::InvalidParam(
+                "firewall-ratelimit-window-seconds-zero::".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// 速率限制策略，用 limiteron `Storage` trait 滑动窗口实现。
 ///
 /// # 构造
@@ -149,6 +173,14 @@ pub struct RateLimitStrategy {
     dao: Arc<dyn GarrisonDao>,
     /// 进程内原子锁（vuln-0009 修复降级路径）：保护 `eval_lua` 不可用时的
     /// read-modify-write。仅进程内原子，跨进程仍存在 TOCTOU（见模块文档）。
+    ///
+    /// # 已知限制：全局串行瓶颈（issue #7888）
+    ///
+    /// 整个策略实例仅此一把锁，`check_fallback` 每请求必获取：不同 key
+    /// （不同 IP/用户/租户）的降级路径检查相互**串行阻塞**，高吞吐下
+    /// 丧失并发能力。这是正确性换吞吐的取舍：按 key 分锁（如 keyed mutex 池）
+    /// 可缓解，但会显著增加复杂度，当前版本不做（保持降级路径简单可靠）。
+    /// 需要并发吞吐的场景应启用支持 Lua 的后端（走原子 `eval_lua` 路径，无锁）。
     atomic_lock: Mutex<()>,
 }
 
@@ -247,6 +279,15 @@ impl RateLimitStrategy {
         let (key, _) = self.build_key(ctx)?;
         let threshold_key = format!("{}:threshold", key);
 
+        // H-5（issue #7876）：以下 read-modify-write（current_threshold → 计算 → set）
+        // 无任何同步保护，动态阈值启用时并发调用存在末写覆盖竞争窗口（保留语义，
+        // 见下方方法文档）。每次实际调整时 warn 提示运维该非原子语义。
+        tracing::warn!(
+            key = %threshold_key,
+            traffic_count,
+            "rate_limit: dynamic threshold adjust uses unsynchronized read-modify-write (H-5), last write wins under concurrency"
+        );
+
         let current = self.current_threshold(ctx).await?;
 
         // 步长：max_requests 的 10%，至少 1（确定性，Rule 5）
@@ -303,6 +344,9 @@ impl RateLimitStrategy {
 #[async_trait]
 impl GarrisonFirewallStrategy for RateLimitStrategy {
     async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
+        // 配置守卫：window/threshold 为 0 时 Lua 路径 SETEX TTL=0 会报错、
+        // 阈值 0 会恒拦截，显性返回 InvalidParam（Rule 12，fail-fast）
+        self.config.validate()?;
         let (key, scope_id) = self.build_key(ctx)?;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -311,7 +355,11 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
         // 阈值提前读取（Lua 路径与降级路径共用）
-        // 注意：current_threshold 自身的 TOCTOU（adjust_threshold 注释中说明）不在本修复范围。
+        // 已知限制（issue #2173，H-5 同族 TOCTOU）：阈值读取在 eval_lua 原子边界之外，
+        // 与并发的 adjust_threshold 之间存在竞争窗口——若 adjust 恰在此间隙持久化
+        // 新阈值，本次 Lua/降级判断仍用旧值（偏高或偏低一个步长，自愈于下一次请求）。
+        // 将阈值读取纳入 Lua 脚本内（KEYS/ARGV 之外读 Dao）超出 Redis 脚本能力，
+        // 当前版本保留该窗口（与 adjust_threshold 的 H-5 处理一致：文档声明，不修复）。
         let threshold = self.current_threshold(ctx).await?;
 
         // 优先尝试 eval_lua 原子路径（vuln-0009 修复）。
@@ -331,7 +379,8 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
             .await;
         match lua_result {
             Ok(vals) => {
-                // eval_lua 成功：返回值 "1" 表示允许，"0" 表示拦截
+                // eval_lua 成功：返回值 "1" 表示允许，"0" 表示拦截。
+                // 空结果 unwrap_or(false)：fail-close——解析异常时宁可误拦不误放（文档化设计）。
                 let allowed = vals.first().map(|s| s == "1").unwrap_or(false);
                 if allowed {
                     return Ok(());
@@ -435,6 +484,8 @@ impl RateLimitStrategy {
 #[async_trait]
 impl CaptchaChallenge for RateLimitStrategy {
     async fn should_challenge(&self, ctx: &FirewallContext) -> GarrisonResult<bool> {
+        // 同 check：0 值配置显性拒绝（Rule 12）
+        self.config.validate()?;
         let (key, _) = self.build_key(ctx)?;
         let now_ms = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -1004,6 +1055,47 @@ mod tests {
         assert!(
             matches!(result, Err(GarrisonError::FirewallBlocked(_))),
             "第 4 次 check 应被拦截，实际: {:?}",
+            result
+        );
+    }
+
+    /// 0 值配置显性拒绝（issue #3474 修复）：max_requests=0 / window_seconds=0
+    /// 时 check 返回 InvalidParam，而非恒拦截 / SETEX TTL=0 报错。
+    #[tokio::test]
+    async fn zero_config_values_rejected_with_invalid_param() {
+        let ctx = FirewallContext::new("10.0.1.1");
+
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let strategy = RateLimitStrategy::new(
+            RateLimitConfig {
+                max_requests: 0,
+                window_seconds: 60,
+                scope: RateLimitScope::Ip,
+                dynamic_threshold: None,
+            },
+            dao,
+        );
+        let result = strategy.check(&ctx).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
+            "max_requests=0 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let strategy = RateLimitStrategy::new(
+            RateLimitConfig {
+                max_requests: 10,
+                window_seconds: 0,
+                scope: RateLimitScope::Ip,
+                dynamic_threshold: None,
+            },
+            dao,
+        );
+        let result = strategy.check(&ctx).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
+            "window_seconds=0 应返回 InvalidParam，实际: {:?}",
             result
         );
     }

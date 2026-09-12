@@ -409,6 +409,19 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
     ///
     /// 通过 `dao.get("{Token}:blacklist:{login_id}")` 检查 token 黑名单是否存在，
     /// 存在则阻断（Fail Loud：DAO 错误向上传播）。
+    ///
+    /// # 黑名单粒度语义（issue #6152：账号级锁定，显式声明）
+    ///
+    /// 黑名单 key 为 `token:blacklist:{login_id}`（**账号级**，由业务方在检测到
+    /// token 泄露/复用后写入，本 crate 内无写入方），而非 `...:{login_id}:{token}`
+    /// 的 token 级 key：**单个 token 被撤销即阻断该账号的全部后续登录**，
+    /// 直至业务方删除该 key（无自动过期时为永久）。这是有意设计——触发条件
+    /// 是"检测到 token 复用"（凭据已泄露的强信号），账号级锁定可阻断攻击者
+    /// 用任意新 token 登录；代价是正常用户也被锁定，需业务方介入解锁。
+    /// token 级检查当前不可实现：`LoginContext` 不携带请求所呈现的 token，
+    /// 扩展 trait 签名属破坏性变更（波及全部实现方与 stp 调用方），超出范围。
+    /// 需要单 token 撤销的业务方应改用 session 层 `logout(token)` /
+    /// `jwt:blacklist:{jti}`（stp 层）等 token 粒度机制。
     async fn check_token_reuse(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let key = format!("{}blacklist:{}", DaoKeyPrefix::Token, ctx.login_id);
         if self.dao.get(&key).await?.is_some() {

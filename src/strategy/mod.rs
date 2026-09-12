@@ -139,6 +139,29 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// - `Err`: 查询失败或权限字符串非法（如空字符串）。
     async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool>;
 
+    /// 校验权限（带租户维度）。
+    ///
+    /// stp 层 `check_permission` 的 firewall 回退路径通过此方法把请求级 `tenant_id`
+    /// 传入策略（batch-08 修复：此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
+    ///
+    /// # 默认实现
+    ///
+    /// 忽略 `tenant_id`，委托 [`check_permission`](Self::check_permission)（向后兼容）。
+    /// 支持租户隔离的策略应覆写此方法，将 `tenant_id` 纳入权限判定或缓存键。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 请求级租户 ID（0 表示单租户/未隔离）。
+    /// - `login_id`: 登录主体标识。
+    /// - `permission`: 权限标识字符串。
+    async fn check_permission_in_tenant(
+        &self,
+        _tenant_id: i64,
+        login_id: &str,
+        permission: &str,
+    ) -> GarrisonResult<bool> {
+        self.check_permission(login_id, permission).await
+    }
+
     /// 校验角色：检查主体是否持有指定角色。
     ///
     /// # 参数
@@ -152,6 +175,29 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// # 错误
     /// - 数据回调失败：透传 `GarrisonError`。
     async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool>;
+
+    /// 校验角色（带租户维度）。
+    ///
+    /// stp 层 `check_role` 的 firewall 回退路径通过此方法把请求级 `tenant_id`
+    /// 传入策略（batch-08 修复：此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
+    ///
+    /// # 默认实现
+    ///
+    /// 忽略 `tenant_id`，委托 [`check_role`](Self::check_role)（向后兼容）。
+    /// 支持租户隔离的策略应覆写此方法，将 `tenant_id` 纳入角色判定。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 请求级租户 ID（0 表示单租户/未隔离）。
+    /// - `login_id`: 登录主体标识。
+    /// - `role`: 角色标识字符串。
+    async fn check_role_in_tenant(
+        &self,
+        _tenant_id: i64,
+        login_id: &str,
+        role: &str,
+    ) -> GarrisonResult<bool> {
+        self.check_role(login_id, role).await
+    }
 
     /// 校验角色（任一匹配）：主体持有 `roles` 中任意一个即通过。
     ///
@@ -260,7 +306,8 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
 /// - `permission_checker`：注入后 `check_permission` 委托到 `PermissionChecker`
 /// - `dao`：注入后启用权限缓存（`cache_permission` / `get_cached_permission`）
 /// - `role_hierarchy`：角色层级映射（如 `"admin" → ["user"]`），空时保持 默认行为
-/// - `plugin_manager`：注入后 `check_permission` 前后触发插件钩子（Err 仅 warn 不中断）
+/// - `plugin_manager`：注入后 `check_permission` 在权限判定前调用一次插件钩子
+///   （缓存命中路径亦如此，无后置调用；Err 仅 warn 不中断）
 pub struct GarrisonPermissionStrategyDefault {
     /// 权限/角色数据回调。
     interface: Arc<dyn GarrisonInterface>,
@@ -273,9 +320,16 @@ pub struct GarrisonPermissionStrategyDefault {
     /// `Some(t)` 时缓存键为 `garrison:perm:cache:<t>:<login_id>:<permission>`；
     /// `None` 时使用占位符 `_`，保持向后兼容（无租户隔离）。
     tenant_id: Option<i64>,
+    /// 默认 login_type（多账号体系，batch-08 接线 `_with_type` 回调）。
+    ///
+    /// 未设置时默认 `"default"`，通过 `with_login_type` builder 设置。
+    /// `get_permission_list` / `get_role_list` 经
+    /// `GarrisonInterface::get_*_list_with_type` 把该值传给业务回调，
+    /// 使覆写了 `_with_type` 的多账号数据源真正生效（此前 `_with_type` 为死 API）。
+    login_type: String,
     /// 角色层级映射（如 "admin" → ["user"]），空时保持 默认行为。
     role_hierarchy: HashMap<String, Vec<String>>,
-    /// 可选插件管理器，注入后 check_permission 前后触发钩子。
+    /// 可选插件管理器，注入后 check_permission 权限判定前调用一次钩子（无后置调用）。
     plugin_manager: Option<Arc<GarrisonPluginManager>>,
     /// 可选防火墙安全钩子，注入后 login 前按序调用 5 个 hook。
     #[cfg(any(

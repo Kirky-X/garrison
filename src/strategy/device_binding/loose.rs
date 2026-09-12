@@ -13,11 +13,19 @@
 //!
 //! `AlertListenerManager` 为 `Option`，`None` 时跳过广播（向后兼容无告警系统场景）。
 //!
-//! # HIGH-001 修复
+//! # HIGH-001 修复 + 新设备校验（issue #2160）
 //!
-//! `require_secondary_auth` 不再重复调用 `is_new_device`（调用方已先调用过，避免重复 DAO 查询）。
-//! 调用方（`session.rs` login 流程）仅在 `is_new_device == true` 时才调用此方法，
-//! 因此直接执行告警广播并返回 `Ok(false)`。
+//! `require_secondary_auth` 不再重复信任调用方的 `is_new_device` 结果：
+//! 本方法**内部自行调用 `is_new_device`**，仅在确认是新设备时才广播
+//! （与文档"新设备时广播"一致）。即使调用方契约被破坏（未先调用
+//! `is_new_device` 就调用本方法），已知设备的登录也不会产生误报广播。
+//! 代价是新设备路径多一次 DAO 查询（换取语义自洽，消除对调用方的隐式依赖）。
+//!
+//! # IP 透传（issue #2159）
+//!
+//! trait 方法 `require_secondary_auth` 签名无 IP 参数（调用方 stp 层契约约束，
+//! 无法破坏性变更），事件中 `ip` 为 `None`；需要携带真实来源 IP 的调用方
+//! 请改用本类型固有的 [`LooseBinding::require_secondary_auth_with_ip`]。
 
 use crate::error::GarrisonResult;
 use crate::session::GarrisonSession;
@@ -70,6 +78,38 @@ impl LooseBinding {
             alert_manager: Some(alert_manager),
         }
     }
+
+    /// 二级认证判定（带请求来源 IP）：新设备时广播 `NewDeviceLogin`（事件携带 `ip`）。
+    ///
+    /// 内部先调用 [`is_new_device`](DeviceBindingPolicy::is_new_device) 确认设备
+    /// 新颖性（issue #2160：不信任调用方契约，已知设备不广播），新设备时经
+    /// `alert_manager` 广播事件（`ip` 为调用方透传的真实来源 IP，issue #2159），
+    /// 并返回 `Ok(false)`（宽松模式不阻断登录）。
+    ///
+    /// trait 方法 [`require_secondary_auth`](DeviceBindingPolicy::require_secondary_auth)
+    /// 因签名无 IP 参数（stp 调用方契约约束）以 `ip=None` 委托本方法；
+    /// 拥有请求 IP 的调用方应直接调用本方法。
+    pub async fn require_secondary_auth_with_ip(
+        &self,
+        login_id: &str,
+        device_id: &str,
+        ip: Option<&str>,
+    ) -> GarrisonResult<bool> {
+        // 新设备校验（issue #2160）：仅新设备才广播，与文档"新设备时广播"一致。
+        let is_new = self.is_new_device(login_id, device_id).await?;
+        if !is_new {
+            return Ok(false);
+        }
+        if let Some(mgr) = &self.alert_manager {
+            let event = SecurityAlertEvent::NewDeviceLogin {
+                login_id: login_id.to_string(),
+                device_id: device_id.to_string(),
+                ip: ip.map(|s| s.to_string()),
+            };
+            mgr.broadcast_alert(&event).await;
+        }
+        Ok(false)
+    }
 }
 
 #[async_trait]
@@ -83,17 +123,10 @@ impl DeviceBindingPolicy for LooseBinding {
         login_id: &str,
         device_id: &str,
     ) -> GarrisonResult<bool> {
-        // HIGH-001 修复：调用方已通过 is_new_device 确认是新设备，不再重复 DAO 查询。
-        // 直接广播 NewDeviceLogin 事件（若注入了 alert_manager），然后返回 false（不阻断）。
-        if let Some(mgr) = &self.alert_manager {
-            let event = SecurityAlertEvent::NewDeviceLogin {
-                login_id: login_id.to_string(),
-                device_id: device_id.to_string(),
-                ip: None,
-            };
-            mgr.broadcast_alert(&event).await;
-        }
-        Ok(false)
+        // trait 签名无 ip 参数（stp 调用方契约约束），ip 透传请用
+        // require_secondary_auth_with_ip；此处内部自行做新设备校验后再广播。
+        self.require_secondary_auth_with_ip(login_id, device_id, None)
+            .await
     }
 }
 
@@ -207,16 +240,16 @@ mod tests {
         }
     }
 
-    /// HIGH-001 修复后 require_secondary_auth 总是广播告警（调用方已通过 is_new_device 确认是新设备）。
+    /// 已知设备调用 require_secondary_auth 不广播（issue #2160 修复：
+    /// 内部自行调用 is_new_device，不信任调用方契约，消除误报广播）。
     #[tokio::test]
-    async fn require_secondary_auth_always_broadcasts_after_high001_fix() {
+    async fn require_secondary_auth_known_device_does_not_broadcast() {
         let (_dao, session) = make_session();
         create_session_with_device(&session, "1001", "T1", "web-chrome").await;
         let (mgr, counter) = make_alert_manager_with_counter();
 
         let policy = LooseBinding::with_alert_manager(session, mgr);
-        // 即使传入已知设备，require_secondary_auth 也广播告警
-        // 因为调用方（session.rs login 流程）仅在 is_new_device == true 时才调用此方法
+        // "web-chrome" 是已知设备（T1），即使调用方未先调 is_new_device 也不广播
         let require = policy
             .require_secondary_auth("1001", "web-chrome")
             .await
@@ -225,8 +258,8 @@ mod tests {
         assert!(!require, "LooseBinding require_secondary_auth 应返回 false");
         assert_eq!(
             counter.call_count(),
-            1,
-            "HIGH-001 修复后总是广播告警（调用方已确认是新设备）"
+            0,
+            "已知设备不应广播告警（issue #2160 修复）"
         );
     }
 
@@ -292,9 +325,9 @@ mod tests {
         );
     }
 
-    /// HIGH-001 修复后多 session 场景下 require_secondary_auth 总是广播（调用方已确认是新设备）。
+    /// 新设备校验后按设备新颖性广播：已知设备不广播，新设备广播（issue #2160 修复）。
     #[tokio::test]
-    async fn multiple_sessions_always_broadcasts_after_high001_fix() {
+    async fn multiple_sessions_broadcast_only_for_new_device() {
         let (_dao, session) = make_session();
         create_session_with_device(&session, "1001", "T1", "web-chrome").await;
         create_session_with_device(&session, "1001", "T2", "mobile-ios").await;
@@ -303,26 +336,65 @@ mod tests {
 
         let policy = LooseBinding::with_alert_manager(session, mgr);
 
-        // HIGH-001 修复后，require_secondary_auth 不再自己调用 is_new_device
-        // 调用方已确认是新设备，因此无论传入什么 device_id 都会广播
+        // "mobile-ios" 是已知设备（T2）→ 不广播
         let _ = policy
             .require_secondary_auth("1001", "mobile-ios")
             .await
             .unwrap();
         assert_eq!(
             counter.call_count(),
-            1,
-            "HIGH-001 修复后第一次调用应广播 1 次"
+            0,
+            "已知设备不应广播（issue #2160 修复）"
         );
 
+        // "tablet-android" 是新设备 → 广播 1 次
         let _ = policy
             .require_secondary_auth("1001", "tablet-android")
             .await
             .unwrap();
         assert_eq!(
             counter.call_count(),
-            2,
-            "HIGH-001 修复后第二次调用应再广播 1 次（总计 2 次）"
+            1,
+            "新设备应广播 1 次（总计 1 次）"
         );
+    }
+
+    /// require_secondary_auth_with_ip 将真实来源 IP 透传到 NewDeviceLogin 事件
+    /// （issue #2159 修复）。
+    #[tokio::test]
+    async fn with_ip_variant_forwards_ip_to_event() {
+        let (_dao, session) = make_session();
+        create_session_with_device(&session, "1001", "T1", "web-chrome").await;
+        let (mgr, counter) = make_alert_manager_with_counter();
+
+        let policy = LooseBinding::with_alert_manager(session, mgr);
+        let require = policy
+            .require_secondary_auth_with_ip("1001", "mobile-ios", Some("203.0.113.9"))
+            .await
+            .unwrap();
+
+        assert!(!require, "宽松模式应返回 false 不阻断");
+        match counter.last_event() {
+            Some(SecurityAlertEvent::NewDeviceLogin { ip, .. }) => {
+                assert_eq!(
+                    ip.as_deref(),
+                    Some("203.0.113.9"),
+                    "事件应携带透传的真实来源 IP"
+                );
+            },
+            other => panic!("期望 NewDeviceLogin 事件，实际: {:?}", other),
+        }
+
+        // trait 方法（无 ip 参数）事件 ip 仍为 None
+        let _ = policy
+            .require_secondary_auth("1001", "tablet-android")
+            .await
+            .unwrap();
+        match counter.last_event() {
+            Some(SecurityAlertEvent::NewDeviceLogin { ip, .. }) => {
+                assert!(ip.is_none(), "trait 方法路径事件 ip 应为 None");
+            },
+            other => panic!("期望 NewDeviceLogin 事件，实际: {:?}", other),
+        }
     }
 }
