@@ -87,12 +87,21 @@ pub struct OidcClaims {
 /// OIDC 处理器，封装 issuer/audience/密钥以供复用。
 ///
 /// 默认采用 HS256 算法，可通过 `with_algorithm` 切换。
+///
+/// # 密钥内存安全（zeroize feature 说明）
+///
+/// `secret`（JWT 签名密钥）以明文 `String` 持有。启用 `protocol-zeroize`
+/// feature 时，`Drop` 会对 `secret` 做零化擦除；**未启用该 feature 时
+/// 密钥在内存中保持明文直至分配器回收**。生产环境建议启用
+/// `protocol-zeroize`（以及 `credential-zeroize`）以缩小密钥在内存中的
+/// 残留窗口，降低内存转储 / swap 提取风险。
 pub struct OidcHandler {
     /// 签发者标识（issuer）。
     issuer: String,
     /// 受众（audience），通常为 client_id。
     audience: String,
-    /// 签名密钥。
+    /// 签名密钥（明文持有；`protocol-zeroize` feature 开启时 Drop 零化，
+    /// 见 struct 文档的密钥内存安全说明）。
     secret: String,
     /// 签名算法（默认 HS256）。
     algorithm: Algorithm,
@@ -276,30 +285,50 @@ impl OidcHandler {
     /// 生成 OIDC discovery endpoint 元数据。
     ///
     /// 返回 OIDC Discovery 1.0 规范定义的 provider metadata JSON。
+    ///
+    /// # 正确性约束
+    ///
+    /// - `OidcHandler` 仅支持 HMAC 对称密钥，**没有 JWKS 端点**，因此
+    ///   不输出 `jwks_uri`（宣告死链会误导客户端按 spec 去 GET 该端点而失败）。
+    /// - `id_token_signing_alg_values_supported` 只输出实际可用的 HMAC 算法；
+    ///   非 HMAC 算法（sign/verify 会返回 Config 错误）输出空数组，
+    ///   绝不输出 `"unknown"` 这类客户端无法使用的伪算法。
     pub fn discovery_metadata(&self) -> serde_json::Value {
+        // 只宣告实际可用的 HMAC 算法；非 HMAC 算法（sign/verify 时返回 Config
+        // 错误）输出空数组，绝不输出 "unknown" 伪算法误导客户端。
+        let supported_algs: Vec<&'static str> = match self.algorithm_str() {
+            "" => Vec::new(),
+            alg => vec![alg],
+        };
         serde_json::json!({
             "issuer": self.issuer,
             "authorization_endpoint": format!("{}/authorize", self.issuer),
             "token_endpoint": format!("{}/token", self.issuer),
             "userinfo_endpoint": format!("{}/userinfo", self.issuer),
-            "jwks_uri": format!("{}/jwks", self.issuer),
             "response_types_supported": ["code"],
             "subject_types_supported": ["public"],
-            "id_token_signing_alg_values_supported": [self.algorithm_str()],
+            "id_token_signing_alg_values_supported": supported_algs,
         })
     }
 
     /// 返回算法字符串表示（用于 discovery metadata）。
+    ///
+    /// 非 HMAC 算法返回空串（discovery 据此输出空数组），
+    /// 绝不输出 `"unknown"`——该值会进入 `id_token_signing_alg_values_supported`
+    /// 误导客户端选择无法使用的算法。
     fn algorithm_str(&self) -> &'static str {
         match self.algorithm {
             Algorithm::HS256 => "HS256",
             Algorithm::HS384 => "HS384",
             Algorithm::HS512 => "HS512",
-            _ => "unknown",
+            _ => "",
         }
     }
 }
 
+// 密钥零化仅在 `protocol-zeroize` feature 下编译生效；未启用该 feature 时
+// `secret` 以明文保留在内存中直至分配器回收（见 struct 文档「密钥内存安全」）。
+// 保持 feature 结构是为了兼容无 zeroize 依赖的默认构建，故不做无条件零化。
 #[cfg(feature = "protocol-zeroize")]
 impl Drop for OidcHandler {
     fn drop(&mut self) {
@@ -518,7 +547,12 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with("/userinfo"));
-        assert!(metadata["jwks_uri"].as_str().unwrap().ends_with("/jwks"));
+        // HMAC-only 提供者没有 JWKS 端点，不得宣告不存在的 jwks_uri（死链）
+        assert!(
+            metadata.get("jwks_uri").is_none(),
+            "HMAC-only handler 不应输出 jwks_uri: {}",
+            metadata
+        );
         assert!(metadata["response_types_supported"]
             .as_array()
             .unwrap()
@@ -597,18 +631,28 @@ mod tests {
     // algorithm_str 非对称算法分支测试
     // ========================================================================
 
-    /// 验证 discovery_metadata 对非 HMAC 算法返回 "unknown"。
-    ///
-    /// 覆盖 algorithm_str 中 `_ => "unknown"` 分支。
+    /// discovery_metadata 对非 HMAC 算法不得输出 "unknown" 伪算法
+    /// （verify 路径会返回 Config 错误，discovery 却宣告其可用会误导客户端）。
+    /// 覆盖 algorithm_str 中 `_ => ""` 分支。
     #[test]
-    fn discovery_metadata_non_hmac_algorithm_returns_unknown() {
+    fn discovery_metadata_non_hmac_algorithm_omits_unknown() {
         let handler = make_handler().with_algorithm(Algorithm::RS256);
         let metadata = handler.discovery_metadata();
-        // algorithm_str 对 RS256 返回 "unknown"
-        assert!(metadata["id_token_signing_alg_values_supported"]
+        let algs = metadata["id_token_signing_alg_values_supported"]
             .as_array()
-            .unwrap()
-            .contains(&serde_json::json!("unknown")));
+            .unwrap();
+        assert!(
+            !algs.contains(&serde_json::json!("unknown")),
+            "discovery 不得宣告 unknown 伪算法: {}",
+            metadata
+        );
+        assert!(
+            algs.is_empty(),
+            "非 HMAC 算法（不可签发）应输出空数组: {}",
+            metadata
+        );
+        // HMAC-only 无 JWKS 端点，非 HMAC 配置下同样不得宣告 jwks_uri
+        assert!(metadata.get("jwks_uri").is_none());
     }
 
     // ========================================================================

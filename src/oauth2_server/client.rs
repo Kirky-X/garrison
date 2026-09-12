@@ -121,6 +121,23 @@ impl OAuth2Client {
                 "oauth2-client-secret-empty".into(),
             ));
         }
+        // redirect_uri 白名单后续按精确匹配被信任，入库前做基本合法性校验：
+        // 拒绝空串、超长（> 2048）与含空白/控制字符的条目（绝对 URI 必含 scheme 分隔 `:`），
+        // 防止畸形 URI 静默进入白名单（R-oauth2-002 纵深防御）。
+        const REDIRECT_URI_MAX_LEN: usize = 2048;
+        for uri in &redirect_uris {
+            if uri.is_empty()
+                || uri.len() > REDIRECT_URI_MAX_LEN
+                || !uri.contains(':')
+                || uri
+                    .chars()
+                    .any(|c| c.is_whitespace() || c.is_control())
+            {
+                return Err(GarrisonError::InvalidParam(format!(
+                    "oauth2-client-redirect-uri-invalid"
+                )));
+            }
+        }
         let client_secret_hash = hash_secret(client_secret)?;
         Ok(Self {
             client_id: client_id.to_string(),
@@ -235,16 +252,18 @@ impl DaoOAuth2ClientStore {
 impl OAuth2ClientStore for DaoOAuth2ClientStore {
     async fn create(&self, client: OAuth2Client) -> GarrisonResult<()> {
         let key = Self::build_key(&client.client_id);
-        if self.dao.get(&key).await?.is_some() {
+        let json = serde_json::to_string(&client).map_err(|e| {
+            GarrisonError::Internal(format!("oauth2-server-client-serialize::{}", e))
+        })?;
+        // 原子 create-if-absent（SETNX 语义）：消除 get→set_permanent 的
+        // check-then-act TOCTOU 竞态（并发同 client_id 仅一个写入成功）。
+        if !self.dao.set_if_absent(&key, &json, 0).await? {
             return Err(GarrisonError::OAuth2(format!(
                 "oauth2-server-client-exists::{}",
                 client.client_id
             )));
         }
-        let json = serde_json::to_string(&client).map_err(|e| {
-            GarrisonError::Internal(format!("oauth2-server-client-serialize::{}", e))
-        })?;
-        self.dao.set_permanent(&key, &json).await
+        Ok(())
     }
 
     async fn get(&self, client_id: &str) -> GarrisonResult<Option<OAuth2Client>> {
@@ -262,16 +281,32 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
 
     async fn update(&self, client: OAuth2Client) -> GarrisonResult<()> {
         let key = Self::build_key(&client.client_id);
-        if self.dao.get(&key).await?.is_none() {
-            return Err(GarrisonError::OAuth2(format!(
-                "oauth2-server-client-not-found::{}",
-                client.client_id
-            )));
-        }
+        let current = self
+            .dao
+            .get(&key)
+            .await?
+            .ok_or_else(|| {
+                GarrisonError::OAuth2(format!(
+                    "oauth2-server-client-not-found::{}",
+                    client.client_id
+                ))
+            })?;
         let json = serde_json::to_string(&client).map_err(|e| {
             GarrisonError::Internal(format!("oauth2-server-client-serialize::{}", e))
         })?;
-        self.dao.update(&key, &json).await
+        // 原子 compare-and-swap：仅当值仍为读取时的内容才写入，
+        // 消除 get→update 的 check-then-act TOCTOU（并发下丢失更新 / 覆盖他人写入）。
+        if !self
+            .dao
+            .compare_and_swap(&key, Some(current.as_str()), &json, 0)
+            .await?
+        {
+            return Err(GarrisonError::OAuth2(format!(
+                "oauth2-server-client-update-conflict::{}",
+                client.client_id
+            )));
+        }
+        Ok(())
     }
 
     async fn delete(&self, client_id: &str) -> GarrisonResult<()> {
@@ -303,28 +338,38 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
 // 内部 Argon2 哈希工具
 // ============================================================================
 
-/// 使用 Argon2id 哈希密钥。
-///
-/// 与 `account::credential::Argon2Hasher` 独立（不同能力域，不引入 account-credential 依赖）。
-/// 参数：Argon2id, m=19456, t=2, p=1（与 Argon2Hasher 默认一致）。
-fn hash_secret(secret: &str) -> GarrisonResult<String> {
-    let argon2 = Argon2::new(
+/// 共享 Argon2 构造：`hash_secret` 与 `verify_secret` 必须使用完全相同的
+/// 算法 / 版本 / 参数。若两侧构造路径不一致（一侧 `Argon2::default()`、
+/// 一侧显式 `Argon2::new`），crate 默认参数一旦调整，存量哈希校验会静默失败。
+/// 参数：Argon2id, V0x13, `Params::default()`（m=19456, t=2, p=1）。
+fn argon2_instance() -> Argon2<'static> {
+    Argon2::new(
         Algorithm::Argon2id,
         Version::V0x13,
         argon2::Params::default(),
-    );
-    let hash = argon2
+    )
+}
+
+/// 使用 Argon2id 哈希密钥。
+///
+/// 与 `account::credential::Argon2Hasher` 独立（不同能力域，不引入 account-credential 依赖）。
+/// 参数与实例构造统一由 [`argon2_instance`] 提供。
+fn hash_secret(secret: &str) -> GarrisonResult<String> {
+    let hash = argon2_instance()
         .hash_password(secret.as_bytes())
         .map_err(|e| GarrisonError::Internal(format!("oauth2-server-client-hash::{}", e)))?;
     Ok(hash.to_string())
 }
 
 /// 验证明文密钥与 Argon2id 哈希是否匹配。
+///
+/// 与 `hash_secret` 共享同一 Argon2 构造（[`argon2_instance`]），保证哈希与
+/// 校验参数永远一致。
 fn verify_secret(secret: &str, hash_str: &str) -> GarrisonResult<bool> {
     let parsed = PasswordHash::new(hash_str).map_err(|e| {
         GarrisonError::InvalidParam(format!("oauth2-server-client-hash-format::{}", e))
     })?;
-    Ok(Argon2::default()
+    Ok(argon2_instance()
         .verify_password(secret.as_bytes(), &parsed)
         .is_ok())
 }
@@ -431,6 +476,28 @@ mod tests {
     fn new_client_rejects_empty_secret() {
         let err = OAuth2Client::new("cid", "", vec![], vec![], vec![]).unwrap_err();
         assert!(matches!(err, GarrisonError::InvalidParam(_)));
+    }
+
+    /// redirect_uri 白名单条目入库前须通过基本合法性校验（R-oauth2-002 纵深防御）。
+    #[test]
+    fn new_client_rejects_invalid_redirect_uris() {
+        // 空 URI
+        let err = OAuth2Client::new("cid", "s", vec!["".into()], vec![], vec![]).unwrap_err();
+        assert!(matches!(err, GarrisonError::InvalidParam(_)));
+        // 缺 scheme（无 `:`）
+        let err = OAuth2Client::new("cid", "s", vec!["app.example.com/cb".into()], vec![], vec![])
+            .unwrap_err();
+        assert!(matches!(err, GarrisonError::InvalidParam(_)));
+        // 含空白字符
+        let err = OAuth2Client::new("cid", "s", vec!["https://app.example.com/ cb".into()], vec![], vec![])
+            .unwrap_err();
+        assert!(matches!(err, GarrisonError::InvalidParam(_)));
+        // 超长（> 2048）
+        let long_uri = format!("https://app.example.com/{}", "a".repeat(2048));
+        let err = OAuth2Client::new("cid", "s", vec![long_uri], vec![], vec![]).unwrap_err();
+        assert!(matches!(err, GarrisonError::InvalidParam(_)));
+        // 合法 URI（含自定义 scheme）不受影响
+        assert!(OAuth2Client::new("cid", "s", vec!["myapp://callback".into()], vec![], vec![]).is_ok());
     }
 
     #[test]
@@ -571,6 +638,28 @@ mod tests {
         store.create(client.clone()).await.expect("首次创建");
         let err = store.create(client).await.unwrap_err();
         assert!(matches!(err, GarrisonError::OAuth2(_)));
+    }
+
+    /// 并发 create 同一 client_id：set_if_absent（SETNX）保证仅一个成功，
+    /// 其余返回 client-exists 错误，杜绝 get→set TOCTOU 静默覆盖。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn store_create_concurrent_only_one_wins() {
+        let store = Arc::new(DaoOAuth2ClientStore::new(Arc::new(InMemoryDao::new())));
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let s = store.clone();
+            let client = make_test_client("conc-001");
+            handles.push(tokio::spawn(async move { s.create(client).await }));
+        }
+        let mut wins = 0usize;
+        for h in handles {
+            if h.await.unwrap().is_ok() {
+                wins += 1;
+            }
+        }
+        assert_eq!(wins, 1, "并发创建同一 client_id 仅一个应成功，实际 {}", wins);
+        // 最终仅存在一个客户端记录
+        assert_eq!(store.list().await.unwrap().len(), 1);
     }
 
     #[tokio::test]

@@ -76,9 +76,18 @@ impl ScopeRegistry {
     /// - `Ok(true/false)`: 委托 handler 返回结果。
     /// - `Err(GarrisonError::OAuth2)`: scope 未注册。
     /// - `Err(GarrisonError)`: handler 内部错误向上传播。
+    ///
+    /// # 并发语义
+    ///
+    /// 读锁仅在克隆 `Arc` 时持有，**不横跨 `handler.validate()` 用户回调**：
+    /// - 慢 handler（I/O / 网络调用）不会阻塞 registry 的并发读与其他操作
+    /// - 消除 handler 内重入 `register` / `unregister`（写锁）导致的自死锁
     pub fn validate(&self, scope: &str, login_id: i64) -> GarrisonResult<bool> {
-        let map = self.handlers.read();
-        match map.get(scope) {
+        let handler = {
+            let map = self.handlers.read();
+            map.get(scope).cloned()
+        };
+        match handler {
             Some(handler) => handler.validate(scope, login_id),
             None => Err(GarrisonError::OAuth2(format!(
                 "oauth2-scope-handler-not-registered::{}",
@@ -282,5 +291,36 @@ mod tests {
         registry.register("b", Arc::new(StubHandler { allowed: true }));
         assert_eq!(registry.len(), 2);
         assert!(!registry.is_empty());
+    }
+
+    /// 读锁不得横跨 handler 用户回调：handler 在 validate 期间重入
+    /// registry.register（写锁）不应死锁（旧实现持读锁调用 handler，
+    /// parking_lot RwLock 同线程 read→write 重入会永久阻塞）。
+    #[test]
+    fn validate_allows_reentrant_register_without_deadlock() {
+        struct ReentrantHandler {
+            registry: Arc<ScopeRegistry>,
+        }
+        impl ScopeHandler for ReentrantHandler {
+            fn validate(&self, scope: &str, _login_id: i64) -> GarrisonResult<bool> {
+                // 用户回调内重入写锁（register/unregister）
+                self.registry
+                    .register(&format!("{scope}-nested"), Arc::new(StubHandler { allowed: true }));
+                Ok(true)
+            }
+        }
+
+        let registry = Arc::new(ScopeRegistry::new());
+        registry.register(
+            "reentrant",
+            Arc::new(ReentrantHandler {
+                registry: registry.clone(),
+            }),
+        );
+        // 旧实现此处会死锁挂起；修复后应正常返回
+        let result = std::thread::spawn(move || registry.validate("reentrant", 1).unwrap())
+            .join()
+            .expect("handler 重入 register 不得死锁");
+        assert!(result);
     }
 }

@@ -9,7 +9,8 @@
 use crate::constants::TokenType;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::oauth2_server::client::OAuth2ClientStore;
-use crate::oauth2_server::token::TokenHandler;
+use crate::oauth2_server::token::{TokenHandler, TokenRecord};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -121,36 +122,57 @@ impl IntrospectHandler {
             ));
         }
 
-        // 2. 查找 token 记录
-        let record = self
-            .token_handler
-            .get_access_token_record(&req.token)
-            .await?;
-        match record {
-            Some(record) => {
-                let scope = if record.scopes.is_empty() {
-                    None
-                } else {
-                    Some(record.scopes.join(" "))
-                };
-                // RFC 7662 §2.3：从 TokenRecord 填充完整字段
-                let iat_ts = record.issued_at.timestamp();
-                Ok(IntrospectResponse {
-                    active: true,
-                    token_type: Some(TokenType::Bearer.to_string()),
-                    scope,
-                    client_id: Some(record.client_id.clone()),
-                    exp: Some(record.expires_at.timestamp()),
-                    sub: record.user_id.map(|id| id.to_string()),
-                    username: record.username,
-                    iat: Some(iat_ts),
-                    nbf: Some(iat_ts), // OAuth2 token 签发即生效，nbf = iat
-                    aud: Some(record.client_id), // 受众为请求该 token 的客户端
-                    iss: Some(OAUTH2_ISSUER.into()),
-                    jti: record.jti,
-                })
+        // 2. 按 token_type_hint 选择查找顺序（RFC 7662 §2.1：hint 仅用于优化
+        //    查找方向，查不到时 MAY 扩展搜索另一种类型）
+        //    refresh token 存储于 `oauth2:rtoken:` 前缀 / rotation SQLite 表，
+        //    必须经 get_refresh_token_record 查找，而非恒查 access 记录。
+        let record = match req.token_type_hint.as_deref() {
+            Some("refresh_token") => {
+                match self.token_handler.get_refresh_token_record(&req.token).await? {
+                    Some(r) => Some(r),
+                    None => self.token_handler.get_access_token_record(&req.token).await?,
+                }
             },
-            None => Ok(IntrospectResponse::inactive()),
+            _ => {
+                match self.token_handler.get_access_token_record(&req.token).await? {
+                    Some(r) => Some(r),
+                    None => self.token_handler.get_refresh_token_record(&req.token).await?,
+                }
+            },
+        };
+
+        // 3. 过期判定：DAO TTL 理论上已剔除过期记录，但 rotation 路径的
+        //    expires_at 不经 TTL 控制，且防御时钟偏差——过期记录一律 inactive。
+        match record {
+            Some(record) if record.expires_at > Utc::now() => {
+                Ok(Self::response_from_record(record))
+            },
+            _ => Ok(IntrospectResponse::inactive()),
+        }
+    }
+
+    /// 从 TokenRecord 构造 active 响应（RFC 7662 §2.3 全字段）。
+    fn response_from_record(record: TokenRecord) -> IntrospectResponse {
+        let scope = if record.scopes.is_empty() {
+            None
+        } else {
+            Some(record.scopes.join(" "))
+        };
+        // RFC 7662 §2.3：从 TokenRecord 填充完整字段
+        let iat_ts = record.issued_at.timestamp();
+        IntrospectResponse {
+            active: true,
+            token_type: Some(TokenType::Bearer.to_string()),
+            scope,
+            client_id: Some(record.client_id.clone()),
+            exp: Some(record.expires_at.timestamp()),
+            sub: record.user_id.map(|id| id.to_string()),
+            username: record.username,
+            iat: Some(iat_ts),
+            nbf: Some(iat_ts), // OAuth2 token 签发即生效，nbf = iat
+            aud: Some(record.client_id), // 受众为请求该 token 的客户端
+            iss: Some(OAUTH2_ISSUER.into()),
+            jti: record.jti,
         }
     }
 }
@@ -158,12 +180,17 @@ impl IntrospectHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::InMemoryDao;
+    use crate::dao::{GarrisonDao, InMemoryDao};
     use crate::oauth2_server::authorize::AuthorizeHandler;
     use crate::oauth2_server::client::{DaoOAuth2ClientStore, GrantType, OAuth2Client};
     use crate::oauth2_server::token::{TokenHandler, TokenRequest};
 
-    fn make_handlers() -> (IntrospectHandler, Arc<InMemoryDao>, Arc<TokenHandler>) {
+    fn make_handlers() -> (
+        IntrospectHandler,
+        Arc<InMemoryDao>,
+        Arc<TokenHandler>,
+        Arc<AuthorizeHandler>,
+    ) {
         let dao = Arc::new(InMemoryDao::new());
         let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(
@@ -174,10 +201,15 @@ mod tests {
         let token_handler = Arc::new(TokenHandler::new(
             store.clone(),
             dao.clone(),
-            authorize_handler,
+            authorize_handler.clone(),
         ));
         let introspect_handler = IntrospectHandler::new(store, token_handler.clone());
-        (introspect_handler, dao, token_handler)
+        (
+            introspect_handler,
+            dao,
+            token_handler,
+            authorize_handler,
+        )
     }
 
     fn make_client(id: &str) -> OAuth2Client {
@@ -189,6 +221,70 @@ mod tests {
             vec!["read".into(), "write".into()],
         )
         .unwrap()
+    }
+
+    /// 创建支持 refresh_token 流程的客户端（authorization_code + refresh_token）。
+    fn make_refresh_client(id: &str) -> OAuth2Client {
+        OAuth2Client::new(
+            id,
+            "secret-123",
+            vec!["https://app.example.com/cb".into()],
+            vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
+            vec!["read".into(), "write".into()],
+        )
+        .unwrap()
+    }
+
+    /// 通过 authorization_code 流程签发 access_token + refresh_token。
+    async fn issue_token_pair(
+        authorize_handler: &AuthorizeHandler,
+        token_handler: &TokenHandler,
+        client_id: &str,
+    ) -> (String, String) {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = crate::oauth2_server::authorize::generate_code_challenge(verifier);
+        let auth_req = crate::oauth2_server::authorize::AuthorizeRequest {
+            response_type: "code".into(),
+            client_id: client_id.into(),
+            redirect_uri: "https://app.example.com/cb".into(),
+            scope: Some("read write".into()),
+            state: None,
+            code_challenge: challenge,
+            code_challenge_method: "S256".into(),
+        };
+        let resp = match authorize_handler
+            .authorize(&auth_req, Some(1001))
+            .await
+            .unwrap()
+        {
+            crate::oauth2_server::authorize::AuthorizeResponse::Redirect { location } => location,
+            _ => panic!("期望 Redirect"),
+        };
+        let code = resp
+            .split("code=")
+            .nth(1)
+            .unwrap()
+            .split('&')
+            .next()
+            .unwrap()
+            .to_string();
+        let req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: client_id.into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let token_resp = token_handler.handle(&req).await.unwrap();
+        (
+            token_resp.access_token,
+            token_resp.refresh_token.expect("应有 refresh_token"),
+        )
     }
 
     async fn issue_token(token_handler: &TokenHandler, client_id: &str) -> String {
@@ -209,7 +305,7 @@ mod tests {
 
     #[tokio::test]
     async fn introspect_active_token() {
-        let (handler, _, token_handler) = make_handlers();
+        let (handler, _, token_handler, _) = make_handlers();
         handler.store.create(make_client("int-001")).await.unwrap();
         let token = issue_token(&token_handler, "int-001").await;
 
@@ -238,7 +334,7 @@ mod tests {
 
     #[tokio::test]
     async fn introspect_nonexistent_token_returns_inactive() {
-        let (handler, _, _) = make_handlers();
+        let (handler, _, _, _) = make_handlers();
         handler.store.create(make_client("int-002")).await.unwrap();
 
         let req = IntrospectRequest {
@@ -255,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn introspect_revoked_token_returns_inactive() {
-        let (handler, _, token_handler) = make_handlers();
+        let (handler, _, token_handler, _) = make_handlers();
         handler.store.create(make_client("int-003")).await.unwrap();
         let token = issue_token(&token_handler, "int-003").await;
 
@@ -274,7 +370,7 @@ mod tests {
 
     #[tokio::test]
     async fn introspect_invalid_client_id() {
-        let (handler, _, _) = make_handlers();
+        let (handler, _, _, _) = make_handlers();
         let req = IntrospectRequest {
             token: "some-token".into(),
             token_type_hint: None,
@@ -289,7 +385,7 @@ mod tests {
 
     #[tokio::test]
     async fn introspect_invalid_client_secret() {
-        let (handler, _, _) = make_handlers();
+        let (handler, _, _, _) = make_handlers();
         handler.store.create(make_client("int-004")).await.unwrap();
         let req = IntrospectRequest {
             token: "some-token".into(),
@@ -319,5 +415,100 @@ mod tests {
         assert!(resp.aud.is_none());
         assert!(resp.iss.is_none());
         assert!(resp.jti.is_none());
+    }
+
+    /// refresh_token 内省：经 `oauth2:rtoken:` 前缀（fallback）/ rotation 表查找，
+    /// 不再恒查 access 记录导致 refresh token 恒返回 active=false（RFC 7662）。
+    #[tokio::test]
+    async fn introspect_refresh_token_returns_active() {
+        let (handler, _, token_handler, authorize_handler) = make_handlers();
+        handler
+            .store
+            .create(make_refresh_client("int-rt-001"))
+            .await
+            .unwrap();
+        let (_access, refresh) =
+            issue_token_pair(&authorize_handler, &token_handler, "int-rt-001").await;
+
+        // hint = refresh_token
+        let req = IntrospectRequest {
+            token: refresh.clone(),
+            token_type_hint: Some("refresh_token".into()),
+            client_id: "int-rt-001".into(),
+            client_secret: "secret-123".into(),
+        };
+        let resp = handler.handle(&req).await.expect("内省");
+        assert!(resp.active, "有效的 refresh_token 应返回 active=true");
+        assert_eq!(resp.client_id.as_deref(), Some("int-rt-001"));
+        assert_eq!(resp.scope.as_deref(), Some("read write"));
+    }
+
+    /// token_type_hint 仅是查找提示：refresh token 即使带 access_token hint
+    /// 也应能被查到（RFC 7662 §2.1 允许扩展搜索），不得因 hint 错误返回 inactive。
+    #[tokio::test]
+    async fn introspect_hint_is_only_a_hint_fallback_still_finds() {
+        let (handler, _, token_handler, authorize_handler) = make_handlers();
+        handler
+            .store
+            .create(make_refresh_client("int-hint-001"))
+            .await
+            .unwrap();
+        let (access, refresh) =
+            issue_token_pair(&authorize_handler, &token_handler, "int-hint-001").await;
+
+        // refresh token + access_token hint → 扩展搜索后仍应 active
+        let req = IntrospectRequest {
+            token: refresh,
+            token_type_hint: Some("access_token".into()),
+            client_id: "int-hint-001".into(),
+            client_secret: "secret-123".into(),
+        };
+        let resp = handler.handle(&req).await.expect("内省");
+        assert!(resp.active, "hint 错误时不得误报 inactive");
+
+        // access token + refresh_token hint → 同理
+        let req = IntrospectRequest {
+            token: access,
+            token_type_hint: Some("refresh_token".into()),
+            client_id: "int-hint-001".into(),
+            client_secret: "secret-123".into(),
+        };
+        let resp = handler.handle(&req).await.expect("内省");
+        assert!(resp.active, "hint 指向 refresh 时 access token 也应可查到");
+    }
+
+    /// 过期 token 内省必须返回 active=false（即使 DAO 记录尚未被 TTL 清理）。
+    #[tokio::test]
+    async fn introspect_expired_token_returns_inactive() {
+        let (handler, dao, _token_handler, _) = make_handlers();
+        handler.store.create(make_client("int-exp-001")).await.unwrap();
+
+        // 直接向 DAO 写入一条已过期的 access token 记录（模拟 TTL 尚未清理的过期记录）
+        let expired_record = TokenRecord {
+            token: "expired-token-001".into(),
+            client_id: "int-exp-001".into(),
+            user_id: None,
+            scopes: vec!["read".into()],
+            token_type: "access".into(),
+            expires_at: Utc::now() - chrono::Duration::hours(1),
+            issued_at: Utc::now() - chrono::Duration::hours(2),
+            jti: Some("expired-jti".into()),
+            username: None,
+        };
+        let key = crate::constants::DaoKeyPrefix::OAuth2AccessToken
+            .build_key("expired-token-001");
+        dao.set(&key, &serde_json::to_string(&expired_record).unwrap(), 600)
+            .await
+            .unwrap();
+
+        let req = IntrospectRequest {
+            token: "expired-token-001".into(),
+            token_type_hint: None,
+            client_id: "int-exp-001".into(),
+            client_secret: "secret-123".into(),
+        };
+        let resp = handler.handle(&req).await.expect("内省");
+        assert!(!resp.active, "过期 token 应返回 active=false");
+        assert!(resp.client_id.is_none(), "inactive 响应不应泄露记录字段");
     }
 }

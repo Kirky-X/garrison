@@ -650,12 +650,12 @@ impl TokenHandler {
     /// - 调用 `rotation.rotate()` 获得 hash chain + reuse detection + 链式撤销
     /// - 返回新 refresh_token（轮换，旧 token revoked=1）
     ///
-    /// 未注入时退化为 DAO 路径（轮换 + 删除旧 token）：
-    /// - 查找 `DaoKeyPrefix::OAuth2RefreshToken` 记录
+    /// 未注入时退化为 DAO 路径（轮换 + 原子消费旧 token）：
+    /// - `get_and_delete` 原子消费 `DaoKeyPrefix::OAuth2RefreshToken` 记录（防并发双花）
     /// - 校验 client_id 一致性
-    /// - 删除旧 refresh_token（防止重放）
     /// - 签发新 access_token + 新 refresh_token（with_refresh=true 轮换）
-    /// - 旧 token 删除后再次使用 → `invalid_grant`（隐式 reuse detection）
+    /// - 签发失败时补偿回写旧 token（剩余 TTL），不丢失用户凭证
+    /// - 旧 token 消费后再次使用 → `invalid_grant`（隐式 reuse detection）
     async fn handle_refresh_token(
         &self,
         client: &OAuth2Client,
@@ -718,14 +718,16 @@ impl TokenHandler {
             }
         }
 
-        // DAO fallback 路径 — refresh_token 轮换 + 删除旧 token
+        // DAO fallback 路径 — refresh_token 轮换 + 原子消费旧 token
         //
-        // 删除旧 refresh_token + 签发新 refresh_token（轮换）
-        // 旧 token 删除后，再次使用会因 dao.get 返回 None 而返回 invalid_grant
+        // 原子消费（get_and_delete）：读取 + 删除在 DAO 单次临界区内完成，
+        // 并发对同一 refresh_token 的刷新仅有一个调用方拿到记录（防双花），
+        // 消除 get→delete 的 TOCTOU 竞态窗口。
+        // 旧 token 删除后，再次使用会因 get_and_delete 返回 None 而返回 invalid_grant
         // （隐式 reuse detection：旧 token 无法重用）
         #[allow(deprecated)]
         let key = DaoKeyPrefix::OAuth2RefreshToken.build_key(refresh_token);
-        let json = self.dao.get(&key).await?.ok_or_else(|| {
+        let json = self.dao.get_and_delete(&key).await?.ok_or_else(|| {
             GarrisonError::OAuth2("invalid_grant: refresh_token 无效或已过期".into())
         })?;
         let record: TokenRecord = serde_json::from_str(&json)
@@ -738,22 +740,38 @@ impl TokenHandler {
             ));
         }
 
-        // 删除旧 refresh_token（轮换核心步骤）
-        // 删除后旧 token 无法再次使用，防止旧 token 泄露后被重放
-        self.dao.delete(&key).await?;
-
         // 签发新 access_token + 新 refresh_token（with_refresh=true 轮换）
         let user_id = record.user_id;
         let scopes = record.scopes.clone();
         let username = record.username.clone();
-        self.issue_tokens(
-            &client.client_id,
-            user_id,
-            &scopes,
-            true, // 轮换 — 签发新 refresh_token
-            username.as_deref(),
-        )
-        .await
+        let resp = match self
+            .issue_tokens(
+                &client.client_id,
+                user_id,
+                &scopes,
+                true, // 轮换 — 签发新 refresh_token
+                username.as_deref(),
+            )
+            .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                // 补偿回写：旧 token 已被原子消费，若签发失败且不回写，
+                // 用户将同时失去旧 token 与新 token（凭据丢失）。
+                // 以原记录剩余寿命为 TTL 回写，签发成功后旧 token 保持已删除。
+                let remaining = (record.expires_at - Utc::now()).num_seconds();
+                if remaining > 0 {
+                    if let Err(set_err) = self.dao.set(&key, &json, remaining as u64).await {
+                        tracing::warn!(
+                            error = %set_err,
+                            "handle_refresh_token: failed to restore refresh token after issue failure"
+                        );
+                    }
+                }
+                return Err(e);
+            },
+        };
+        Ok(resp)
     }
 
     /// client_credentials grant type：服务间认证 token。
@@ -1012,15 +1030,95 @@ impl TokenHandler {
         }
     }
 
+    /// 查找 refresh_token 记录（供 introspect / revoke 端点使用）。
+    ///
+    /// # 存储路径（v0.7.1）
+    ///
+    /// - `db-sqlite` + `RefreshTokenRotation` 注入：refresh token 存 SQLite
+    ///   `refresh_tokens` 表（以 SHA-256 hash 为键），查 rotation.validate()
+    /// - 否则：查 DAO `DaoKeyPrefix::OAuth2RefreshToken`（`oauth2:rtoken:` 前缀）
+    ///
+    /// 过期过滤不在此处完成——返回记录含 `expires_at`，由调用方判定 active
+    /// （rotation.validate 只过滤 `revoked = 0`，不过滤 `expires_at`）。
+    pub async fn get_refresh_token_record(
+        &self,
+        token: &str,
+    ) -> GarrisonResult<Option<TokenRecord>> {
+        #[cfg(feature = "db-sqlite")]
+        {
+            if let Some(rotation) = &self.refresh_rotation {
+                let record = match rotation.validate(token).await? {
+                    Some(r) => r,
+                    None => return Ok(None),
+                };
+                let expires_at =
+                    DateTime::<Utc>::from_timestamp(record.expires_at, 0).ok_or_else(|| {
+                        GarrisonError::Internal("refresh-token-expires-at-invalid".into())
+                    })?;
+                let issued_at = DateTime::<Utc>::from_timestamp(record.created_at, 0)
+                    .unwrap_or(expires_at);
+                return Ok(Some(TokenRecord {
+                    token: token.to_string(),
+                    client_id: record.client_id.unwrap_or_default(),
+                    // 旧记录可能无独立 user_id，回退到 login_id（签发时取自 user_id）
+                    user_id: record.user_id.or(Some(record.login_id)),
+                    scopes: record
+                        .scopes
+                        .as_ref()
+                        .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
+                        .unwrap_or_default(),
+                    token_type: TokenType::Refresh.to_string(),
+                    expires_at,
+                    issued_at,
+                    jti: Some(record.token_hash),
+                    username: record.username,
+                }));
+            }
+        }
+        #[allow(deprecated)]
+        let key = DaoKeyPrefix::OAuth2RefreshToken.build_key(token);
+        let json = self.dao.get(&key).await?;
+        match json {
+            Some(json) => {
+                let record: TokenRecord = serde_json::from_str(&json).map_err(|e| {
+                    GarrisonError::Internal(format!("TokenRecord 反序列化失败: {e}"))
+                })?;
+                Ok(Some(record))
+            },
+            None => Ok(None),
+        }
+    }
+
     /// 撤销 token（供 revoke 端点使用）。
+    ///
+    /// 同时覆盖两种 refresh token 存储路径：
+    /// - DAO fallback：删除 `oauth2:atoken:` / `oauth2:rtoken:` 记录
+    /// - `RefreshTokenRotation` 注入（db-sqlite）：rotation 签发的 refresh token
+    ///   存 SQLite `refresh_tokens` 表，DAO 删除对其无效，需经
+    ///   `rotation.revoke_chain` 撤销（fail-safe：连带撤销该链子代）
     pub async fn revoke_token(&self, token: &str) -> GarrisonResult<()> {
         // 尝试删除 access_token
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(token);
         self.dao.delete(&at_key).await?;
-        // 尝试删除 refresh_token（同一 token 值不会同时是两种类型）
+        // 尝试删除 refresh_token（DAO fallback 路径；同一 token 值不会同时是两种类型）
         #[allow(deprecated)]
         let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(token);
         self.dao.delete(&rt_key).await?;
+        // RefreshTokenRotation 注入时，refresh token 存 SQLite（以 SHA-256 hash 为键），
+        // 上面两条 DAO 删除对其无效——按 RFC 7009 语义撤销 rotation 记录。
+        #[cfg(feature = "db-sqlite")]
+        if let Some(rotation) = &self.refresh_rotation {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(token.as_bytes());
+            let token_hash: String = hasher
+                .finalize()
+                .iter()
+                .map(|b| format!("{:02x}", b))
+                .collect();
+            // access token 的 hash 不在 refresh_tokens 表中 → UPDATE 影响 0 行，无副作用
+            rotation.revoke_chain(&token_hash).await?;
+        }
         Ok(())
     }
 }
@@ -1690,6 +1788,70 @@ mod tests {
             err.to_string().contains("invalid_grant"),
             "VULN-0009: 重用已删除的旧 refresh_token 应返回 invalid_grant，实际: {}",
             err
+        );
+    }
+
+    /// 并发刷新同一 refresh_token：get_and_delete 原子消费保证仅一个请求成功，
+    /// 其余返回 invalid_grant（消除 get→校验→delete 的 TOCTOU 双花竞态）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn handle_refresh_token_concurrent_only_one_wins() {
+        let (handler, _) = make_handler();
+        handler
+            .store
+            .create(make_full_client("rt-conc-001"))
+            .await
+            .unwrap();
+
+        // 签发初始 refresh_token
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code = get_auth_code(&handler, "rt-conc-001", verifier).await;
+        let issue_req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: "rt-conc-001".into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let issue_resp = handler.handle(&issue_req).await.unwrap();
+        let old_token = issue_resp.refresh_token.expect("应有 refresh_token");
+
+        // 16 个并发任务用同一旧 refresh_token 刷新
+        let handler = Arc::new(handler);
+        let mut handles = Vec::new();
+        for _ in 0..16 {
+            let h = handler.clone();
+            let t = old_token.clone();
+            handles.push(tokio::spawn(async move {
+                let req = TokenRequest {
+                    grant_type: "refresh_token".into(),
+                    client_id: "rt-conc-001".into(),
+                    client_secret: "secret-123".into(),
+                    code: None,
+                    redirect_uri: None,
+                    code_verifier: None,
+                    refresh_token: Some(t),
+                    scope: None,
+                    username: None,
+                    password: None,
+                };
+                h.handle(&req).await
+            }));
+        }
+        let mut wins = 0usize;
+        for h in handles {
+            if h.await.unwrap().is_ok() {
+                wins += 1;
+            }
+        }
+        assert_eq!(
+            wins, 1,
+            "并发刷新同一 refresh_token 仅一个应成功（防双花），实际 {}",
+            wins
         );
     }
 
@@ -2773,6 +2935,69 @@ mod refresh_rotation_tests {
             matches!(&result, Err(GarrisonError::TokenRevoked(_))),
             "重用已消费的 refresh token 应返回 TokenRevoked，实际: {:?}",
             result
+        );
+    }
+
+    /// revoke_token 必须能撤销 rotation 路径签发的 refresh token：
+    /// 该路径的 refresh token 存 SQLite refresh_tokens 表（DAO 无对应键），
+    /// 仅删 DAO 两前缀对其无效。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn revoke_token_revokes_rotation_refresh_token() {
+        let handler = make_handler_with_rotation().await;
+        let client = make_full_client("rot-revoke-001");
+        handler.store.create(client.clone()).await.unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code = get_auth_code(&handler, "rot-revoke-001", verifier).await;
+        let issue_req = TokenRequest {
+            grant_type: "authorization_code".into(),
+            client_id: "rot-revoke-001".into(),
+            client_secret: "secret-123".into(),
+            code: Some(code),
+            redirect_uri: Some("https://app.example.com/cb".into()),
+            code_verifier: Some(verifier.into()),
+            refresh_token: None,
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let issue_resp = handler.handle(&issue_req).await.unwrap();
+        let refresh_token = issue_resp.refresh_token.expect("应有 refresh_token");
+
+        // 撤销前：rotation.validate 应查到
+        let rotation = handler.refresh_rotation.as_ref().unwrap();
+        assert!(rotation
+            .validate(&refresh_token)
+            .await
+            .unwrap()
+            .is_some());
+
+        // 撤销
+        handler.revoke_token(&refresh_token).await.unwrap();
+
+        // 撤销后：rotation 记录应已 revoked（validate 返回 None）
+        assert!(
+            rotation.validate(&refresh_token).await.unwrap().is_none(),
+            "revoke_token 应撤销 rotation 路径签发的 refresh token"
+        );
+        // 撤销后再 refresh → invalid_grant
+        let refresh_req = TokenRequest {
+            grant_type: "refresh_token".into(),
+            client_id: "rot-revoke-001".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: Some(refresh_token),
+            scope: None,
+            username: None,
+            password: None,
+        };
+        let err = handler.handle(&refresh_req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("invalid_grant") || err.to_string().contains("revoke"),
+            "已撤销的 refresh token 不得再刷新，实际: {}",
+            err
         );
     }
 

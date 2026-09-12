@@ -638,13 +638,15 @@ impl OAuth2Client {
     /// 推导 introspection 端点 URL。
     ///
     /// - 若 [`with_introspect_url`](Self::with_introspect_url) 已设置 → 使用该 URL。
-    /// - 否则若 `token_url` 末尾为 `/token` → 替换为 `/introspect`。
+    /// - 否则若 `token_url` 以 `/token` 结尾 → 仅替换**末尾**这段为 `/introspect`
+    ///   （不能全局 `replace`：路径中段出现 `/token` 时会把所有出现处都替换，
+    ///   产生畸形端点，如 `/v2/oauth2/token/rotate/token` → `/v2/oauth2/introspect/rotate/introspect`）。
     /// - 否则在 `token_url` 末尾追加 `/introspect`。
     fn introspect_url(&self) -> String {
         if let Some(url) = &self.introspect_url {
             url.clone()
-        } else if self.token_url.ends_with("/token") {
-            self.token_url.replace("/token", "/introspect")
+        } else if let Some(base) = self.token_url.strip_suffix("/token") {
+            format!("{base}/introspect")
         } else {
             format!("{}/introspect", self.token_url)
         }
@@ -683,6 +685,75 @@ mod tests {
             let s = ch.to_string();
             assert_eq!(url_encode(&s), s, "字符 {} 应被保留", ch);
         }
+    }
+
+    // ========================================================================
+    // introspect_url 推导（仅替换末尾 /token 段，防中段 /token 全局替换产生畸形端点）
+    // ========================================================================
+
+    /// token_url 路径中段含 `/token` 时，只应替换末尾那段
+    /// （strip_suffix 而非全局 replace：`/token/rotate/token` → `/token/rotate/introspect`，
+    /// 全局替换会得到 `/introspect/rotate/introspect` 畸形端点）。
+    #[test]
+    fn introspect_url_replaces_only_trailing_token_segment() {
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://localhost/callback",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token/rotate/token",
+        )
+        .expect("client 构建成功");
+        assert_eq!(
+            client.introspect_url(),
+            "https://auth.example.com/token/rotate/introspect",
+        );
+    }
+
+    /// token_url 以 /token 结尾：末尾替换为 /introspect。
+    #[test]
+    fn introspect_url_replaces_trailing_token() {
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://localhost/callback",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        )
+        .expect("client 构建成功");
+        assert_eq!(client.introspect_url(), "https://auth.example.com/introspect");
+    }
+
+    /// token_url 不以 /token 结尾时在末尾追加 /introspect。
+    #[test]
+    fn introspect_url_appends_when_not_ending_with_token() {
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://localhost/callback",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/oauth2/v2/tokenize",
+        )
+        .expect("client 构建成功");
+        assert_eq!(
+            client.introspect_url(),
+            "https://auth.example.com/oauth2/v2/tokenize/introspect",
+        );
+    }
+
+    /// 显式 with_introspect_url 优先于推导。
+    #[test]
+    fn introspect_url_explicit_overrides_derived() {
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://localhost/callback",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        )
+        .expect("client 构建成功")
+        .with_introspect_url("https://introspect.example.com/check");
+        assert_eq!(client.introspect_url(), "https://introspect.example.com/check");
     }
 
     // ========================================================================

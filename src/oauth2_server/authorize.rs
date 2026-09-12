@@ -229,12 +229,20 @@ impl AuthorizeHandler {
             None => {
                 // return_to 中所有参数值必须百分号编码，
                 // 防止 redirect_uri/state 含特殊字符导致参数注入或解析歧义。
-                let return_to = format!(
+                let mut return_to = format!(
                     "/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&code_challenge={}&code_challenge_method=S256",
                     utf8_percent_encode(&req.client_id, QUERY_VALUE_ENCODE_SET),
                     utf8_percent_encode(&req.redirect_uri, QUERY_VALUE_ENCODE_SET),
                     utf8_percent_encode(&req.code_challenge, QUERY_VALUE_ENCODE_SET),
                 );
+                // state 必须随 return_to 带回：登录往返后重新进入 authorize 时
+                // 才能原样回传 CSRF state（缺失会导致授权完成后的回调丢失 state）。
+                if let Some(state) = &req.state {
+                    return_to.push_str("&state=");
+                    return_to.push_str(
+                        &utf8_percent_encode(state, QUERY_VALUE_ENCODE_SET).to_string(),
+                    );
+                }
                 let login_url = format!(
                     "{}?return_to={}",
                     self.login_url,
@@ -273,9 +281,16 @@ impl AuthorizeHandler {
         self.dao.set(&key, &json, AUTH_CODE_TTL_SECONDS).await?;
 
         // 10. 构造重定向 URL
-        // state 参数必须百分号编码，防止含 & = # 等特殊字符导致解析歧义。
-        // code 为 base64url 编码（仅含 [A-Za-z0-9_-]），无需额外编码。
-        let mut location = format!("{}?code={}", req.redirect_uri, code);
+        // redirect_uri 白名单为精确匹配，允许自带 query string（如
+        // `https://app.example.com/cb?existing=param`）。RFC 6749 §4.1.2 /
+        // RFC 3986：追加参数须按是否已有 query 选定界符（? 或 &），
+        // 恒拼 `?` 会产生双 `?` 畸形 URL。
+        let sep = if req.redirect_uri.contains('?') {
+            '&'
+        } else {
+            '?'
+        };
+        let mut location = format!("{}{}code={}", req.redirect_uri, sep, code);
         if let Some(state) = &req.state {
             location.push_str("&state=");
             location.push_str(&utf8_percent_encode(state, QUERY_VALUE_ENCODE_SET).to_string());
@@ -717,6 +732,45 @@ mod tests {
                 );
             },
             _ => panic!("期望 LoginRequired"),
+        }
+    }
+
+    /// redirect_uri 自带 query string（白名单精确匹配允许含 `?` 的 URI）时，
+    /// code 参数必须用 `&` 追加（RFC 6749 §4.1.2 / RFC 3986），
+    /// 恒拼 `?` 会产生双 `?` 畸形跳转 URL。
+    #[tokio::test]
+    async fn authorize_redirect_url_appends_code_with_ampersand_when_query_exists() {
+        let (handler, _) = make_handler();
+        let client = OAuth2Client::new(
+            "auth-encode-003",
+            "secret-123",
+            vec!["https://app.example.com/cb?existing=param".into()],
+            vec![GrantType::AuthorizationCode],
+            vec!["read".into()],
+        )
+        .unwrap();
+        handler.store.create(client).await.unwrap();
+
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = generate_code_challenge(verifier);
+        let req = AuthorizeRequest {
+            response_type: "code".into(),
+            client_id: "auth-encode-003".into(),
+            redirect_uri: "https://app.example.com/cb?existing=param".into(),
+            scope: Some("read".into()),
+            state: Some("xyz".into()),
+            code_challenge: challenge,
+            code_challenge_method: "S256".into(),
+        };
+
+        let resp = handler.authorize(&req, Some(1001)).await.expect("授权");
+        match resp {
+            AuthorizeResponse::Redirect { location } => {
+                assert!(location.starts_with("https://app.example.com/cb?existing=param&code="));
+                assert!(!location.contains("?code="), "不得出现双 ? 畸形 URL: {}", location);
+                assert!(location.ends_with("&state=xyz"));
+            },
+            _ => panic!("期望 Redirect"),
         }
     }
 
