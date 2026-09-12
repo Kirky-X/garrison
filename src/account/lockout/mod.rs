@@ -16,6 +16,7 @@
 //! T012 的 `UserLockoutStrategy` + `GarrisonFirewallStrategy` trait 实现位于 `strategy` 子模块。
 
 use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -54,6 +55,13 @@ pub enum WaitStrategy {
 /// 用户级锁定配置。
 ///
 /// 含 5 个公开字段，控制锁定行为阈值与策略。
+///
+/// # 配置校验（Issue 3178）
+///
+/// 字段均为 pub 以支持外部构造；零值/退化值（如 `max_failure_factor = 0` 会
+/// 导致首败即锁）由 [`validate`](Self::validate) 校验。
+/// [`UserLockoutStrategy::new`](crate::account::lockout::UserLockoutStrategy::new)
+/// 构造时调用本方法，非法配置 warn 后回退默认配置。
 #[derive(Debug, Clone)]
 pub struct UserLockoutConfig {
     /// 触发锁定的失败次数阈值（失败计数达到此值触发临时/永久锁定）。
@@ -66,6 +74,60 @@ pub struct UserLockoutConfig {
     pub wait_strategy: WaitStrategy,
     /// 失败计数窗口（秒），过期后 failure_count 重置。
     pub failure_window_seconds: u64,
+}
+
+impl UserLockoutConfig {
+    /// 校验配置合法性，防止零值退化行为。
+    ///
+    /// # 规则
+    ///
+    /// - `max_failure_factor > 0`：0 会导致首次失败即触发锁定
+    /// - `failure_window_seconds > 0`：0 使窗口判断退化（永不重置计数）
+    /// - `permanent_lockout == true` 时 `max_temporary_lockouts > 0`：
+    ///   0 会在第一次临时锁定时立即升级为永久锁定
+    /// - `wait_strategy` 的 `base_seconds` / `multiplier > 0`：0 会使锁定时长为 0
+    ///   （锁定即刻过期，等于没有锁定）
+    ///
+    /// # 返回
+    /// - `Ok(())`: 配置合法。
+    /// - `Err(GarrisonError::Config)`: 存在退化值，附具体原因。
+    pub fn validate(&self) -> GarrisonResult<()> {
+        if self.max_failure_factor == 0 {
+            return Err(GarrisonError::Config(
+                "lockout-config-max-failure-factor-zero::".to_string(),
+            ));
+        }
+        if self.failure_window_seconds == 0 {
+            return Err(GarrisonError::Config(
+                "lockout-config-failure-window-zero::".to_string(),
+            ));
+        }
+        if self.permanent_lockout && self.max_temporary_lockouts == 0 {
+            return Err(GarrisonError::Config(
+                "lockout-config-max-temporary-lockouts-zero::".to_string(),
+            ));
+        }
+        match &self.wait_strategy {
+            WaitStrategy::Multiple {
+                base_seconds,
+                multiplier,
+            } => {
+                if *base_seconds == 0 || *multiplier == 0 {
+                    return Err(GarrisonError::Config(
+                        "lockout-config-wait-strategy-zero::".to_string(),
+                    ));
+                }
+            },
+            WaitStrategy::Linear { base_seconds } => {
+                if *base_seconds == 0 {
+                    return Err(GarrisonError::Config(
+                        "lockout-config-wait-strategy-zero::".to_string(),
+                    ));
+                }
+            },
+        }
+        Ok(())
+    }
 }
 
 /// 锁定状态，在 DAO 中以 `lockout:{user_id}` 为 key 持久化。

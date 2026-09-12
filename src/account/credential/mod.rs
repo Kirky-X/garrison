@@ -118,11 +118,19 @@ pub trait Credential: Send + Sync {
 /// | `id` | `String` | 凭证 ID（UUID v4） |
 /// | `user_id` | `String` | 用户 ID（关联 login_id） |
 /// | `credential_type` | `String` | 凭证类型（`"password"` / `"totp"` / ...） |
-/// | `secret_data` | `String` | 凭证数据（hash / secret / public key，JSON 编码） |
+    /// | `secret_data` | `String` | 凭证数据（hash / secret / public key，JSON 编码）。**敏感字段**：仅启用 `credential-zeroize` feature 时 drop 后自动清零（见 struct 级安全注意） |
 /// | `label` | `Option<String>` | 用户自定义标签（如 `"iPhone TOTP"`） |
 /// | `created_at` | `i64` | 创建时间（Unix 时间戳） |
 /// | `enabled` | `bool` | 是否启用 |
 /// | `priority` | `i32` | 优先级（多凭证时排序，小值优先） |
+/// # 安全注意（secret_data 默认不清零 — Issue 2467/2737/3521）
+///
+/// `CredentialModel.secret_data` 存储密码哈希 / TOTP secret / WebAuthn 公钥等敏感
+/// 材料。`Zeroize` / `ZeroizeOnDrop` 仅在启用 **`credential-zeroize`** feature 时
+/// 派生——该 feature 是独立 opt-in，**不随 `account-credential` 自动启用**。
+/// 默认构建下，struct drop 后内存中的敏感数据不会被清零，存在内存残留
+/// （heapdump / 冷启动攻击）风险。高安全场景请显式启用 `credential-zeroize`，
+/// 或在业务层自行管理敏感数据生命周期。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(
     feature = "credential-zeroize",
@@ -203,10 +211,16 @@ pub trait CredentialRepository: Send + Sync {
     ///
     /// 在 `find_by_user` 基础上按 `credential_type` 字段过滤。
     ///
-    /// # 安全语义
+    /// # 安全语义（IDOR 设计决策 — 调用方责任）
     ///
-    /// 此方法未显式接收 `caller_login_id`，调用方应在认证上下文中使用，
+    /// # Warning
+    ///
+    /// 此方法**未显式接收 `caller_login_id`，实现层不做 caller-vs-owner 校验**：
+    /// 它是面向认证流程内部的受信接口，调用方必须保证在认证上下文中使用，
     /// 确保 `user_id` 即为当前会话主体（如 `execute_login` / `execute_mfa` 内部调用）。
+    /// 将外部可控的 `user_id` 直接透传给本方法属于 IDOR 漏洞。
+    /// 面向外部请求的查询请使用带 caller 校验的 [`find_by_user`](Self::find_by_user)。
+    ///
     /// 默认实现 (`DaoCredentialRepository`) 内部以 `find_by_user(user_id, user_id)` 调用，
     /// 即假定 caller 即 user_id。
     async fn find_by_user_and_type(
@@ -259,12 +273,15 @@ pub trait CredentialRepository: Send + Sync {
 ///
 /// # 已知限制
 ///
-/// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `GarrisonDao::keys()`。
-///   `GarrisonDaoOxcache` 当前未实现 `keys()`（返回 `NotImplemented`，详见 A-010），
-///   生产环境需使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
+/// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `GarrisonDao::keys()`，
+///   `keys()` 的错误会原样向上传播（保持失败可见，不静默吞掉）。
+///   `GarrisonDaoOxcache` 默认**未启用** `dao-key-index` feature 时不实现 `keys()`
+///   （返回 `NotImplemented`，详见 A-010）——生产环境需启用 `dao-key-index`，
+///   或使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
 /// - `delete(caller_login_id, credential_id)` 通过扫描 `cred:*:{credential_id}` 定位
 ///   完整 key（`credential_id` 为 UUID v4 全局唯一，理论上仅匹配一个 key），
 ///   再反序列化校验 `user_id == caller_login_id` 后删除。
+///   异常多键场景下逐 key 处理：先删除的 key 不回滚（详见 repository_impl 模块文档）。
 pub struct DaoCredentialRepository {
     dao: Arc<dyn GarrisonDao>,
 }

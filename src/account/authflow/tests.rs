@@ -215,14 +215,75 @@ fn auth_result_variants_match() {
     assert!(success && failed && pending && challenge);
 }
 
-/// 验证 AuthenticationFlow 默认 allow_skip=false 的惯例
-/// （未显式设置时为 false）。
+/// 验证 AuthenticationFlow 默认 allow_skip=false 的惯例。
+///
+/// Issue 752: `AuthenticationFlow` 无 `Default` 实现（仅 derive Debug/Clone），
+/// struct 字面量构造必须显式给出 `allow_skip`——"默认值"的实际来源是
+/// [`FlowBuilder`]（`allow_skip` 字段初始为 false，仅显式调用 `.allow_skip()`
+/// 才置 true）。本测试验证真实默认链路：FlowBuilder 构造（未调用 .allow_skip()）
+/// 产出的 flow.allow_skip == false；显式开启后 == true。
 #[test]
 fn authentication_flow_allow_skip_default_false() {
-    let flow = AuthenticationFlow {
-        name: "default".to_string(),
-        steps: vec![],
-        allow_skip: false,
+    // 真实默认路径：FlowBuilder 未显式开启 allow_skip
+    let flow = FlowBuilder::new("default").build();
+    assert!(
+        !flow.allow_skip,
+        "FlowBuilder 默认（未显式开启）allow_skip 应为 false"
+    );
+
+    // 对照组：显式开启后为 true（确认断言不是恒假）
+    let skipped = FlowBuilder::new("default").allow_skip().build();
+    assert!(skipped.allow_skip, "显式调用 .allow_skip() 后应为 true");
+}
+
+/// Issue 2460/2728/3147: AuthContext 手动 Debug 对 input 脱敏。
+#[test]
+fn auth_context_debug_redacts_input() {
+    let ctx = AuthContext {
+        input: "super-secret-password".to_string(),
+        user_id: Some("alice".to_string()),
+        tenant_id: None,
+        ip: "127.0.0.1".to_string(),
+        completed_steps: vec![0],
+        extras: HashMap::new(),
     };
-    assert!(!flow.allow_skip, "默认 allow_skip 应为 false");
+    let debug = format!("{ctx:?}");
+    assert!(
+        debug.contains("<redacted>"),
+        "Debug 输出应含 <redacted>，实际: {debug}"
+    );
+    assert!(
+        !debug.contains("super-secret-password"),
+        "Debug 输出不得包含明文凭证，实际: {debug}"
+    );
+    // 具名字段访问不受影响
+    assert_eq!(ctx.input, "super-secret-password");
+}
+
+/// Issue 2727/3146/3199: AuthResult::Success 手动 Debug 对 token 掩码。
+#[test]
+fn auth_result_success_debug_masks_token() {
+    let result = AuthResult::Success {
+        login_id: "alice".to_string(),
+        token: "raw-session-token-value-12345".to_string(),
+    };
+    let debug = format!("{result:?}");
+    assert!(
+        !debug.contains("raw-session-token-value-12345"),
+        "Debug 输出不得包含明文 token，实际: {debug}"
+    );
+    assert!(
+        debug.contains("<redacted>"),
+        "Debug 输出应含 <redacted> 掩码，实际: {debug}"
+    );
+    // 短 token 全掩码，不泄露任何片段
+    let short = AuthResult::Success {
+        login_id: "bob".to_string(),
+        token: "abc".to_string(),
+    };
+    let debug = format!("{short:?}");
+    assert!(
+        !debug.contains("abc\"") && debug.contains("<redacted>"),
+        "短 token 应全掩码，实际: {debug}"
+    );
 }

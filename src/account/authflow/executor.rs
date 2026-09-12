@@ -904,7 +904,11 @@ impl AuthExecutor {
             .await?;
 
         match result {
-            AuthResult::Success { .. } => Ok(StepOutcome::Success { token: None }),
+            // Issue 6456: 透传子流程生成的会话 token（Login/Social/SSO 步骤产生），
+            // 不再丢弃；子流程未生成 token（空串）时保持 None 语义。
+            AuthResult::Success { token, .. } => Ok(StepOutcome::Success {
+                token: if token.is_empty() { None } else { Some(token) },
+            }),
             AuthResult::Failed { reason, .. } => {
                 let reason_str = reason;
                 Ok(StepOutcome::Failed(loc!(

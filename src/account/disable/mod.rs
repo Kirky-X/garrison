@@ -10,6 +10,15 @@
 //! # 实现层（T016-T018）
 //!
 //! T016-T018 将实现 `DefaultDisableRepository`，持有 `Arc<dyn GarrisonDao>` 委托实现。
+//!
+//! # 过期语义（统一约定，Issue 6468/6660/6661）
+//!
+//! 封禁存在两套过期：DAO key 的存储 TTL（`disable` 的 `duration_secs`，写入时取
+//! `max(duration_secs, until 剩余秒数)` 兜底）与条目 `until` 的逻辑过期。
+//! 三个查询方法（`is_disable` / `get_disable_time` / `get_disable_level`）对
+//! **逻辑已过期**的条目行为一致：一律视为未封禁（false / None / None），
+//! 即使 DAO key 因 TTL=0 仍驻留。诊断错误信息（key 冲突等）会包含原始
+//! `service` / `login_id` 以便定位问题，属有意设计。
 
 pub mod repository;
 

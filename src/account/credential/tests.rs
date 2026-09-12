@@ -677,6 +677,10 @@ async fn dao_delete_succeeds_when_caller_is_owner() {
 // ------------------------------------------------------------------------
 
 /// IDOR: Mock - alice 尝试更新 bob 的凭证应被拒绝。
+///
+/// Issue 757: forged 使用与原凭证不同的 `secret_data`（"attacker-hash"），
+/// 使事后断言（remaining[0].secret_data == "hash"）具备鉴别力——若 update 意外
+/// 成功，secret_data 会变成 attacker-hash 而非 hash，断言即可捕获。
 #[tokio::test]
 async fn mock_update_denied_when_caller_not_owner() {
     let repo = MockCredentialRepository::default();
@@ -684,17 +688,29 @@ async fn mock_update_denied_when_caller_not_owner() {
         .await
         .unwrap();
 
-    // alice 伪造一条 user_id=bob 的更新（典型 IDOR 攻击）
-    let forged = make_model("c1", "bob", "password", 0);
+    // alice 伪造一条 user_id=bob 的更新（典型 IDOR 攻击），携带不同的 secret_data
+    let forged = CredentialModel {
+        id: "c1".to_string(),
+        user_id: "bob".to_string(),
+        credential_type: "password".to_string(),
+        secret_data: "attacker-hash".to_string(),
+        label: None,
+        created_at: 0,
+        enabled: true,
+        priority: 0,
+    };
     let err = repo
         .update("alice", forged)
         .await
         .expect_err("alice 更新 bob 的凭证应被拒绝");
     assert_idor_denied(err, "mock update alice→bob c1");
 
-    // 验证 bob 的凭证未被修改
+    // 验证 bob 的凭证未被修改：secret_data 仍为原值（与 attacker-hash 可区分）
     let remaining = repo.find_by_user("bob", "bob").await.unwrap();
-    assert_eq!(remaining[0].secret_data, "hash", "凭证应未被修改");
+    assert_eq!(
+        remaining[0].secret_data, "hash",
+        "凭证 secret_data 应未被攻击者覆盖（若为 attacker-hash 说明更新意外成功）"
+    );
 }
 
 /// IDOR: DAO - alice 尝试更新 bob 的凭证应被拒绝。
@@ -853,4 +869,101 @@ async fn trait_object_enforces_idor_on_find_by_user() {
         .await
         .expect_err("trait object: alice 查询 bob 凭证应被拒绝");
     assert_idor_denied(err, "trait object find_by_user alice→bob");
+}
+
+// ------------------------------------------------------------------------
+// IDOR: find_by_user_and_type / create 覆盖缺口（Issue 1651/3169/3537/3168）
+// ------------------------------------------------------------------------
+
+/// IDOR: `find_by_user_and_type` 严格按 user_id 隔离，不泄露他人凭证。
+///
+/// Issue 1651/3169/3537: 该方法签名无 `caller_login_id` 参数（认证上下文内部
+/// 受信接口，见 trait 文档「安全语义」），caller-vs-owner 拒绝路径不存在；
+/// 此处验证其可测的安全性质——查询结果严格限定在给定 user_id 内，跨用户
+/// 数据不会泄露（alice/bob 各自的 password 凭证互不可见）。
+#[tokio::test]
+async fn mock_find_by_user_and_type_isolated_per_user() {
+    let repo = MockCredentialRepository::default();
+    repo.create(make_model("c1", "alice", "password", 0))
+        .await
+        .unwrap();
+    repo.create(make_model("c2", "bob", "password", 0))
+        .await
+        .unwrap();
+    repo.create(make_model("c3", "bob", "totp", 1))
+        .await
+        .unwrap();
+
+    // bob 的 password 查询只返回 bob 的凭证（不泄露 alice 的）
+    let bob_passwords = repo
+        .find_by_user_and_type("bob", "password")
+        .await
+        .unwrap();
+    assert_eq!(bob_passwords.len(), 1, "bob 的 password 查询应只含 bob 的凭证");
+    assert_eq!(bob_passwords[0].id, "c2");
+    assert!(
+        bob_passwords.iter().all(|c| c.user_id == "bob"),
+        "find_by_user_and_type 不得返回其他用户的凭证（跨用户泄露）"
+    );
+
+    // alice 的 password 查询同理
+    let alice_passwords = repo
+        .find_by_user_and_type("alice", "password")
+        .await
+        .unwrap();
+    assert_eq!(alice_passwords.len(), 1);
+    assert_eq!(alice_passwords[0].id, "c1");
+}
+
+/// IDOR: DAO 实现 — `find_by_user_and_type` 按 user_id 隔离（同上，DAO 层）。
+#[tokio::test]
+async fn dao_find_by_user_and_type_isolated_per_user() {
+    let repo = make_dao_repo();
+    repo.create(make_model("c1", "alice", "password", 0))
+        .await
+        .unwrap();
+    repo.create(make_model("c2", "bob", "password", 0))
+        .await
+        .unwrap();
+    repo.create(make_model("c3", "bob", "totp", 1))
+        .await
+        .unwrap();
+
+    let bob_passwords = repo
+        .find_by_user_and_type("bob", "password")
+        .await
+        .unwrap();
+    assert_eq!(bob_passwords.len(), 1, "DAO: bob 的 password 查询应只含 bob 的凭证");
+    assert_eq!(bob_passwords[0].id, "c2");
+
+    // carol 无凭证 → 空结果，不报错也不泄露他人凭证
+    let carol = repo.find_by_user_and_type("carol", "password").await.unwrap();
+    assert!(carol.is_empty(), "无凭证用户应返回空 Vec");
+}
+
+/// IDOR: `create` 是受信边界 API——仓库层不做 caller 校验（设计文档化测试）。
+///
+/// Issue 3168: `create(credential)` 签名无 caller 参数，IDOR 边界在**调用方**：
+/// `CredentialModel.user_id` 必须由服务端从认证会话构造，绝不接受外部输入的
+/// user_id 直传（否则即跨用户创建/提权）。仓库层以 `set_if_absent` 保证
+/// key（`cred:{user_id}:{cred_id}`）唯一性。本测试固化该设计行为：
+/// 仓库层按 model 原样落库且可被 owner 查询，调用方校验责任见 trait 文档。
+#[tokio::test]
+async fn dao_create_is_trusted_boundary_stores_model_as_given() {
+    let repo = make_dao_repo();
+    // 服务端代码以 bob 的身份构造 model（合法场景：注册流程）
+    repo.create(make_model("c9", "bob", "password", 0))
+        .await
+        .unwrap();
+
+    // 仅 owner（bob）可通过 find_by_user 查到该凭证；alice 查询 bob 被 IDOR 拒绝
+    let bob_creds = repo.find_by_user("bob", "bob").await.unwrap();
+    assert_eq!(bob_creds.len(), 1);
+    assert_eq!(bob_creds[0].id, "c9");
+
+    let err = repo
+        .find_by_user("alice", "bob")
+        .await
+        .expect_err("alice 查询 bob 凭证应被拒绝");
+    assert_idor_denied(err, "create trusted boundary: alice→bob find_by_user");
 }

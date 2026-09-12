@@ -57,6 +57,28 @@ fn sha256_hex(input: &str) -> String {
     result.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// 常量时间比较两个 SHA-256 hex 字符串（认证关键路径，CWE-208 防御）。
+///
+/// `String ==` 会在首个不匹配字节处短路返回，攻击者可借响应时间逐字节推断
+/// 匹配前缀。此函数逐字节 XOR 折叠，不在不匹配处提前返回。
+///
+/// # 实现说明
+///
+/// 与 `subtle::ConstantTimeEq` 的折叠模式等价；因 `subtle` 为可选依赖且
+/// `account-credential` feature 未引入它（避免新增依赖），故在本地实现。
+/// SHA-256 hex 输出定长 64 字符，长度分支不泄露任何秘密信息。
+fn ct_eq_hex(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// 规范化备份码输入：移除 `-` 分隔符并转为大写。
 fn normalize(input: &str) -> String {
     input.to_uppercase().replace('-', "")
@@ -145,8 +167,11 @@ impl BackupCodeCredential {
     /// 校验并消费备份码（一次性使用）。
     ///
     /// 从 DAO 读取当前 `CredentialModel`，将输入（规范化后）的 SHA-256 哈希
-    /// 与 `secret_data` 中的哈希列表比对。匹配则从列表中移除该哈希并更新 DAO；
-    /// 不匹配返回 `Ok(false)`。
+    /// 与 `secret_data` 中的哈希列表常量时间比对。匹配则从列表中移除该哈希并
+    /// 更新 DAO；不匹配返回 `Ok(false)`。
+    ///
+    /// 成功消费后会同步更新本实例内存中的 `model.secret_data`，
+    /// 使同一实例后续的 [`verify`](Credential::verify) 能看到本次消费。
     ///
     /// # 参数
     /// - `input`: 用户输入的备份码（可能含 `-` 分隔符，自动规范化）。
@@ -168,7 +193,7 @@ impl BackupCodeCredential {
     /// - dbnexus 后端：应重写为 `UPDATE ... WHERE value = expected`
     #[tracing::instrument(skip(self, input, dao), fields(user_id = %self.model.user_id))]
     pub async fn verify_and_consume(
-        &self,
+        &mut self,
         input: &str,
         dao: &dyn GarrisonDao,
     ) -> GarrisonResult<bool> {
@@ -196,14 +221,14 @@ impl BackupCodeCredential {
                 .map_err(|e| GarrisonError::Internal(format!("account-cred-deserialize::{}", e)))?;
             let mut data = BackupCodeSecretData::from_json(&model.secret_data)?;
 
-            // 2. 查找并消费备份码
-            if let Some(idx) = data.codes.iter().position(|h| *h == input_hash) {
+            // 2. 查找并消费备份码（常量时间比较，CWE-208）
+            if let Some(idx) = data.codes.iter().position(|h| ct_eq_hex(h, &input_hash)) {
                 data.codes.remove(idx);
                 let new_secret = serde_json::to_string(&data).map_err(|e| {
                     GarrisonError::Internal(format!("account-backup-serialize::{}", e))
                 })?;
                 let mut updated_model = model.clone();
-                updated_model.secret_data = new_secret;
+                updated_model.secret_data = new_secret.clone();
                 let updated_json = serde_json::to_string(&updated_model).map_err(|e| {
                     GarrisonError::Internal(format!("account-cred-serialize::{}", e))
                 })?;
@@ -213,6 +238,10 @@ impl BackupCodeCredential {
                     .compare_and_swap(&key, Some(&old_json), &updated_json, 0)
                     .await?
                 {
+                    // 4. 同步内存快照（Issue 4695/6292/6458）：消费成功后更新本实例
+                    //    的 model.secret_data，使同一实例的 verify() 不再对已消费码
+                    //    返回 true。
+                    self.model.secret_data = new_secret;
                     tracing::info!(
                         user_id = %self.model.user_id,
                         remaining = data.codes.len(),
@@ -249,9 +278,16 @@ impl Credential for BackupCodeCredential {
     }
 
     async fn verify(&self, input: &str) -> GarrisonResult<bool> {
+        // 内存快照语义（Issue 6292/6458）：本方法只比对实例内存中的
+        // `self.model.secret_data` 快照，不查 DAO。
+        // - 本实例内：`verify_and_consume` 成功后会同步更新该快照，
+        //   已消费的码 verify 返回 false；
+        // - 跨实例/并发消费：本方法不可见（无 DAO 参数），
+        //   权威校验请使用 [`BackupCodeCredential::verify_and_consume`]。
         let data = BackupCodeSecretData::from_json(&self.model.secret_data)?;
         let input_hash = sha256_hex(&normalize(input));
-        Ok(data.codes.contains(&input_hash))
+        // 常量时间比较（CWE-208）：不使用 contains/== 短路比较
+        Ok(data.codes.iter().any(|h| ct_eq_hex(h, &input_hash)))
     }
 }
 
@@ -336,7 +372,7 @@ mod tests {
     /// `verify_and_consume()` 正确备份码返回 `Ok(true)`。
     #[tokio::test]
     async fn verify_and_consume_correct_code() {
-        let (cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
+        let (mut cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
         let dao = MockDao::new();
         store_in_dao(&cred, &dao).await;
 
@@ -350,7 +386,7 @@ mod tests {
     /// `verify_and_consume()` 已使用的备份码返回 `Ok(false)`（一次性使用）。
     #[tokio::test]
     async fn verify_and_consume_rejects_used_code() {
-        let (cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
+        let (mut cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
         let dao = MockDao::new();
         store_in_dao(&cred, &dao).await;
 
@@ -370,7 +406,7 @@ mod tests {
     /// `verify_and_consume()` 错误备份码返回 `Ok(false)`。
     #[tokio::test]
     async fn verify_and_consume_wrong_code_returns_false() {
-        let (cred, _) = BackupCodeCredential::generate("alice").expect("generate 应成功");
+        let (mut cred, _) = BackupCodeCredential::generate("alice").expect("generate 应成功");
         let dao = MockDao::new();
         store_in_dao(&cred, &dao).await;
 
@@ -384,7 +420,7 @@ mod tests {
     /// `verify_and_consume()` 支持含 `-` 和不含 `-` 两种输入形式。
     #[tokio::test]
     async fn verify_and_consume_normalizes_input() {
-        let (cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
+        let (mut cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
         let dao = MockDao::new();
         store_in_dao(&cred, &dao).await;
 
@@ -399,7 +435,7 @@ mod tests {
     /// `verify_and_consume()` 小写输入应通过（规范化转大写）。
     #[tokio::test]
     async fn verify_and_consume_lowercase_input() {
-        let (cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
+        let (mut cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
         let dao = MockDao::new();
         store_in_dao(&cred, &dao).await;
 
@@ -437,11 +473,46 @@ mod tests {
         let verify_result = cred.verify(&codes[0]).await.expect("verify 应成功");
         assert!(verify_result, "verify 应通过");
 
+        let mut cred = cred;
         let consume_result = cred
             .verify_and_consume(&codes[0], &dao)
             .await
             .expect("verify_and_consume 应成功");
         assert!(consume_result, "verify 不应消费备份码");
+    }
+
+    /// Issue 4695/6292/6458: 同一实例消费后，`verify()` 对已消费码应返回 false
+    /// （内存快照与 DAO 同步），对未消费码仍返回 true。
+    #[tokio::test]
+    async fn verify_sees_consumption_by_same_instance() {
+        let (mut cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
+        let dao = MockDao::new();
+        store_in_dao(&cred, &dao).await;
+
+        let consumed = cred
+            .verify_and_consume(&codes[0], &dao)
+            .await
+            .expect("verify_and_consume 应成功");
+        assert!(consumed, "首次消费应通过");
+
+        let verify_consumed = cred.verify(&codes[0]).await.expect("verify 应成功");
+        assert!(
+            !verify_consumed,
+            "已消费码 verify 应返回 false（内存快照已同步）"
+        );
+
+        let verify_remaining = cred.verify(&codes[1]).await.expect("verify 应成功");
+        assert!(verify_remaining, "未消费码 verify 应仍返回 true");
+    }
+
+    /// ct_eq_hex 常量时间比较语义：相等/不等/长度不等。
+    #[test]
+    fn ct_eq_hex_comparison_semantics() {
+        let h = sha256_hex("AAAA-AAAA-AAAA");
+        assert!(ct_eq_hex(&h, &h), "相同哈希应相等");
+        assert!(!ct_eq_hex(&h, &sha256_hex("BBBB-BBBB-BBBB")), "不同哈希应不等");
+        assert!(!ct_eq_hex(&h, "short"), "长度不等应返回 false");
+        assert!(ct_eq_hex("", ""), "空串应相等");
     }
 
     /// `BackupCodeCredential` 可作 `Box<dyn Credential>` 使用（对象安全验证）。
@@ -475,7 +546,7 @@ mod tests {
     /// 消费全部 10 个备份码后，第 11 次校验返回 `Ok(false)`。
     #[tokio::test]
     async fn consume_all_codes_then_reject() {
-        let (cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
+        let (mut cred, codes) = BackupCodeCredential::generate("alice").expect("generate 应成功");
         let dao = MockDao::new();
         store_in_dao(&cred, &dao).await;
 
@@ -508,8 +579,8 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(mock_dao);
 
         let code = codes[0].clone();
-        let cred1 = BackupCodeCredential::new(cred.to_model());
-        let cred2 = BackupCodeCredential::new(cred.to_model());
+        let mut cred1 = BackupCodeCredential::new(cred.to_model());
+        let mut cred2 = BackupCodeCredential::new(cred.to_model());
         let dao1 = dao.clone();
         let dao2 = dao.clone();
         let code1 = code.clone();

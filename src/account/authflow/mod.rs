@@ -155,9 +155,16 @@ pub struct AuthenticationFlow {
 /// 执行上下文，携带认证过程的状态与输入。
 ///
 /// 作为 `AuthExecutor::execute` 的可变引用参数，执行过程中更新 `completed_steps`。
-#[derive(Debug, Clone)]
+///
+/// # 安全（Debug 脱敏 — Issue 2460/2728/3147）
+///
+/// `input` 字段承载密码 / TOTP code / 社交 authorization_code 等敏感凭证。
+/// `Debug` 为手动实现：`input` 一律输出 `<redacted>`，防止 `dbg!(ctx)` /
+/// `format!("{:?}", ctx)` / panic 输出将凭证泄露到日志。
+/// 访问明文请使用具名字段（`ctx.input`）。
+#[derive(Clone)]
 pub struct AuthContext {
-    /// 用户输入（密码/TOTP code/社交 authorization_code 等）。
+    /// 用户输入（密码/TOTP code/社交 authorization_code 等，敏感：Debug 输出脱敏）。
     pub input: String,
     /// 用户 ID（社交登录首步可能无 user_id）。
     pub user_id: Option<String>,
@@ -171,14 +178,34 @@ pub struct AuthContext {
     pub extras: HashMap<String, String>,
 }
 
+impl std::fmt::Debug for AuthContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthContext")
+            .field("input", &"<redacted>")
+            .field("user_id", &self.user_id)
+            .field("tenant_id", &self.tenant_id)
+            .field("ip", &self.ip)
+            .field("completed_steps", &self.completed_steps)
+            .field("extras", &self.extras)
+            .finish()
+    }
+}
+
 /// 认证执行结果。
-#[derive(Debug, Clone)]
+///
+/// # 安全（Debug 脱敏 — Issue 2727/3146/3199）
+///
+/// `Success.token` 为会话 token（敏感）。`Debug` 为手动实现：token 掩码输出
+/// （保留前 4 字符用于问题定位，其余以 `<redacted>` 替代；短 token 全掩码），
+/// 防止 `{:?}` 日志 / panic 输出泄露明文 token。
+/// token 仍可通过具名字段访问与 Clone（成功响应构造需要）。
+#[derive(Clone)]
 pub enum AuthResult {
     /// 认证成功。
     Success {
         /// 登录 ID（用户标识）。
         login_id: String,
-        /// 会话 token。
+        /// 会话 token（敏感：Debug 输出掩码）。
         token: String,
     },
     /// 认证失败。
@@ -204,6 +231,56 @@ pub enum AuthResult {
         /// 挑战消息。
         message: String,
     },
+}
+
+impl std::fmt::Debug for AuthResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        /// token 掩码：保留前 4 字符 + `<redacted>`；过短 token 全掩码。
+        fn mask_token(token: &str) -> String {
+            let prefix_len = 4;
+            if token.chars().count() > prefix_len {
+                let prefix: String = token.chars().take(prefix_len).collect();
+                format!("{prefix}<redacted>")
+            } else {
+                "<redacted>".to_string()
+            }
+        }
+
+        match self {
+            AuthResult::Success { login_id, token } => f
+                .debug_struct("AuthResult")
+                .field("variant", &"Success")
+                .field("login_id", login_id)
+                .field("token", &mask_token(token))
+                .finish(),
+            AuthResult::Failed { reason, step } => f
+                .debug_struct("AuthResult")
+                .field("variant", &"Failed")
+                .field("reason", reason)
+                .field("step", step)
+                .finish(),
+            AuthResult::Pending {
+                completed_step,
+                next_step,
+                challenge,
+            } => f
+                .debug_struct("AuthResult")
+                .field("variant", &"Pending")
+                .field("completed_step", completed_step)
+                .field("next_step", next_step)
+                .field("challenge", challenge)
+                .finish(),
+            AuthResult::ChallengeRequired {
+                challenge_type,
+                message,
+            } => f
+                .debug_struct("AuthResult")
+                .field("variant", &"ChallengeRequired")
+                .field("challenge_type", challenge_type)
+                .field("message", message)
+                .finish(),
+        }
+    }
 }
 
 #[cfg(test)]

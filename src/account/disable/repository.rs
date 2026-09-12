@@ -43,6 +43,15 @@ pub trait DisableRepository: Send + Sync {
     /// - `until`: 封禁到期时间；`None` 表示永久封禁。
     /// - `level`: 封禁级别（0=普通，1+=阶梯）。
     /// - `duration_secs`: DAO 存储 TTL（秒）；0 表示永久驻留（不自动过期）。
+    ///
+    /// # TTL 与 until 双语义（Issue 6294/6467/6662）
+    ///
+    /// `duration_secs` 控制 DAO key 的存储 TTL，`until` 控制业务层封禁到期。
+    /// 两者可能分歧（如 `duration_secs` 小于 `until - now()` 时 key 会被提前
+    /// 淘汰，封禁意外提前解除）。默认实现写入时统一取**更晚过期者**：
+    /// `until` 为 `Some` 时实际 TTL = `max(duration_secs, until 剩余秒数)`；
+    /// 过期条目的语义过滤由查询方法（`is_disable` / `get_disable_time` /
+    /// `get_disable_level`）的活跃性检查兜底。
     async fn disable(
         &self,
         login_id: &str,
@@ -77,8 +86,9 @@ pub trait DisableRepository: Send + Sync {
     /// - `service`: 封禁服务名称。
     ///
     /// # 返回
-    /// - `Ok(Some(time))`: 定时解封时间。
-    /// - `Ok(None)`: 永久封禁或未封禁。
+    /// - `Ok(Some(time))`: 处于活跃封禁中，`time` 为定时解封时间。
+    /// - `Ok(None)`: 未封禁、永久封禁（无到期时间）或封禁**已过期**
+    ///   （与 [`is_disable`](Self::is_disable) 的过期判定一致，Issue 6660/6661）。
     async fn get_disable_time(
         &self,
         login_id: &str,
@@ -92,8 +102,9 @@ pub trait DisableRepository: Send + Sync {
     /// - `service`: 封禁服务名称。
     ///
     /// # 返回
-    /// - `Ok(Some(level))`: 已封禁，level 为封禁级别（0=普通，1+=阶梯）。
-    /// - `Ok(None)`: 未封禁。
+    /// - `Ok(Some(level))`: 处于活跃封禁中，level 为封禁级别（0=普通，1+=阶梯）。
+    /// - `Ok(None)`: 未封禁或封禁**已过期**
+    ///   （与 [`is_disable`](Self::is_disable) 的过期判定一致，Issue 6660/6661）。
     async fn get_disable_level(&self, login_id: &str, service: &str)
         -> GarrisonResult<Option<u32>>;
 }
@@ -147,6 +158,37 @@ impl DefaultDisableRepository {
         }
         Ok(format!("disable:{}:{}", service, login_id))
     }
+
+    /// 读取「当前仍生效」的封禁条目（统一过期语义）。
+    ///
+    /// # 返回 `Ok(None)` 的情况（视为未封禁，Issue 6468/6660/6661）
+    ///
+    /// - DAO 中无 key（未封禁或 DAO TTL 已淘汰）
+    /// - 条目 `until` 已过期（`is_disable` 同样判定为未封禁，
+    ///   `get_disable_time` / `get_disable_level` 与之保持一致）
+    ///
+    /// # 错误
+    /// - 反序列化失败：`GarrisonError::Dao`（数据损坏，不视为未封禁）
+    async fn get_active_entry(
+        &self,
+        login_id: &str,
+        service: &str,
+    ) -> GarrisonResult<Option<DisableEntry>> {
+        let key = Self::disable_key(service, login_id)?;
+        match self.dao.get(&key).await? {
+            Some(json) => {
+                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
+                    GarrisonError::Dao(format!("account-disable-deserialize::{}", e))
+                })?;
+                match entry.until {
+                    // 逻辑已过期 → 视为不存在（与 is_disable 一致）
+                    Some(until) if Utc::now() >= until => Ok(None),
+                    _ => Ok(Some(entry)),
+                }
+            },
+            None => Ok(None),
+        }
+    }
 }
 
 #[async_trait]
@@ -169,10 +211,21 @@ impl DisableRepository for DefaultDisableRepository {
         let json = serde_json::to_string(&entry)
             .map_err(|e| GarrisonError::Internal(format!("account-disable-serialize::{}", e)))?;
         let key = Self::disable_key(service, login_id)?;
-        if duration_secs == 0 {
+        // Issue 6294/6467/6662: TTL 取更晚过期者（max(duration_secs, until 剩余秒数)），
+        // 防止 DAO key 在业务封禁到期前被 TTL 淘汰导致封禁提前解除；
+        // until=None（永久封禁）或 duration_secs=0（永久驻留）语义不变。
+        let effective_ttl = match until {
+            Some(until) => {
+                let remaining = (until - Utc::now()).num_seconds();
+                let remaining = u64::try_from(remaining).unwrap_or(0);
+                duration_secs.max(remaining)
+            },
+            None => duration_secs,
+        };
+        if effective_ttl == 0 {
             self.dao.set_permanent(&key, &json).await
         } else {
-            self.dao.set(&key, &json, duration_secs).await
+            self.dao.set(&key, &json, effective_ttl).await
         }
     }
 
@@ -182,20 +235,8 @@ impl DisableRepository for DefaultDisableRepository {
     }
 
     async fn is_disable(&self, login_id: &str, service: &str) -> GarrisonResult<bool> {
-        let key = Self::disable_key(service, login_id)?;
-        match self.dao.get(&key).await? {
-            Some(json) => {
-                // Issue 20: 检查 until 字段是否已过期，而非仅检查 key 是否存在
-                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
-                    GarrisonError::Dao(format!("account-disable-deserialize::{}", e))
-                })?;
-                match entry.until {
-                    Some(until) => Ok(Utc::now() < until),
-                    None => Ok(true), // 永久封禁
-                }
-            },
-            None => Ok(false),
-        }
+        // Issue 6468/6660/6661: 统一过期语义——活跃性判断收敛到 get_active_entry
+        Ok(self.get_active_entry(login_id, service).await?.is_some())
     }
 
     async fn get_disable_time(
@@ -203,16 +244,10 @@ impl DisableRepository for DefaultDisableRepository {
         login_id: &str,
         service: &str,
     ) -> GarrisonResult<Option<DateTime<Utc>>> {
-        let key = Self::disable_key(service, login_id)?;
-        match self.dao.get(&key).await? {
-            Some(json) => {
-                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
-                    GarrisonError::Dao(format!("account-disable-deserialize::{}", e))
-                })?;
-                Ok(entry.until)
-            },
-            None => Ok(None),
-        }
+        // Issue 6468/6660/6661: 与 is_disable 一致——条目过期时返回 Ok(None)，
+        // 不再返回已失效的到期时间误导调用方
+        let entry = self.get_active_entry(login_id, service).await?;
+        Ok(entry.and_then(|e| e.until))
     }
 
     async fn get_disable_level(
@@ -220,16 +255,10 @@ impl DisableRepository for DefaultDisableRepository {
         login_id: &str,
         service: &str,
     ) -> GarrisonResult<Option<u32>> {
-        let key = Self::disable_key(service, login_id)?;
-        match self.dao.get(&key).await? {
-            Some(json) => {
-                let entry: DisableEntry = serde_json::from_str(&json).map_err(|e| {
-                    GarrisonError::Dao(format!("account-disable-deserialize::{}", e))
-                })?;
-                Ok(Some(entry.level))
-            },
-            None => Ok(None),
-        }
+        // Issue 6468/6660/6661: 与 is_disable 一致——条目过期时返回 Ok(None)，
+        // 不再返回已失效的封禁级别误导调用方
+        let entry = self.get_active_entry(login_id, service).await?;
+        Ok(entry.map(|e| e.level))
     }
 }
 
@@ -654,5 +683,102 @@ mod tests {
         let repo = DefaultDisableRepository::new(dao);
         let result = repo.disable("evil:login", "default", None, 0, 0).await;
         assert!(result.is_err(), "login_id 含冒号应被拒绝（避免 key 注入）");
+    }
+
+    // ========================================================================
+    // Issue 6468/6660/6661: 过期条目三方法语义统一
+    // ========================================================================
+
+    /// 过期封禁（key 仍存在）：is_disable=false 且 get_disable_time /
+    /// get_disable_level 均返回 None（三方法对过期条目行为一致）。
+    #[tokio::test]
+    async fn expired_entry_all_queries_treated_as_not_disabled() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        // until 为 1 小时前（已过期），duration_secs=0 → key 永久驻留，
+        // 逻辑过期只由查询方法的活跃性检查识别
+        let past = Utc::now() - chrono::Duration::hours(1);
+        repo.disable("user-expired", "default", Some(past), 3, 0)
+            .await
+            .unwrap();
+        // 前置条件：key 仍在 DAO 中
+        let key = "disable:default:user-expired";
+        assert!(dao.get(key).await.unwrap().is_some(), "key 应仍存在（TTL=0）");
+
+        assert!(
+            !repo.is_disable("user-expired", "default").await.unwrap(),
+            "过期条目 is_disable 应为 false"
+        );
+        assert_eq!(
+            repo.get_disable_time("user-expired", "default").await.unwrap(),
+            None,
+            "过期条目 get_disable_time 应返回 None（与 is_disable 一致）"
+        );
+        assert_eq!(
+            repo.get_disable_level("user-expired", "default")
+                .await
+                .unwrap(),
+            None,
+            "过期条目 get_disable_level 应返回 None（与 is_disable 一致）"
+        );
+    }
+
+    // ========================================================================
+    // Issue 6294/6467/6662: duration_secs TTL 与 until 双语义统一（取更晚过期者）
+    // ========================================================================
+
+    /// duration_secs 小于 until 剩余时长时，实际写入的 TTL 应取更晚过期者
+    /// （= until 剩余秒数），封禁期内 DAO key 不被提前淘汰。
+    #[tokio::test]
+    async fn disable_ttl_uses_max_of_duration_and_until() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        // until 在 1 小时后，duration_secs=60：若按 duration_secs 直写，
+        // key 会在封禁到期前 3540 秒消失（封禁提前解除）
+        let until = Utc::now() + chrono::Duration::hours(1);
+        repo.disable("user-ttl", "default", Some(until), 0, 60)
+            .await
+            .unwrap();
+
+        let key = "disable:default:user-ttl";
+        let ttl = dao
+            .get_timeout(key)
+            .await
+            .unwrap()
+            .expect("key 应有 TTL")
+            .as_secs();
+        assert!(
+            ttl > 3540,
+            "实际 TTL 应取 max(60, until 剩余≈3600) ≈ 3600 秒，实际: {} 秒",
+            ttl
+        );
+    }
+
+    /// duration_secs 大于 until 剩余时长时，实际写入的 TTL 取 duration_secs
+    /// （仍是更晚过期者）；逻辑过期由查询方法过滤，不受影响。
+    #[tokio::test]
+    async fn disable_ttl_longer_than_until_uses_duration() {
+        let dao = Arc::new(MockDao::new());
+        let repo = DefaultDisableRepository::new(dao.clone());
+        // until 在 60 秒后，duration_secs=3600 → TTL 取 3600
+        let until = Utc::now() + chrono::Duration::seconds(60);
+        repo.disable("user-ttl2", "default", Some(until), 0, 3600)
+            .await
+            .unwrap();
+
+        let key = "disable:default:user-ttl2";
+        let ttl = dao
+            .get_timeout(key)
+            .await
+            .unwrap()
+            .expect("key 应有 TTL")
+            .as_secs();
+        assert!(
+            (3595..=3600).contains(&ttl),
+            "实际 TTL 应为 max(3600, ≈60) = 3600 秒，实际: {} 秒",
+            ttl
+        );
+        // until 未到：仍处于活跃封禁
+        assert!(repo.is_disable("user-ttl2", "default").await.unwrap());
     }
 }

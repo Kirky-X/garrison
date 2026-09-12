@@ -93,6 +93,13 @@ impl PasswordPolicyRule for LengthRule {
 // HistoryRule
 // ============================================================================
 
+/// `HistoryRule` 允许的最大历史比对条数（硬上限，DoS 防护 — Issue 2755/5824）。
+///
+/// 每条历史 hash 的比对是 Argon2/Bcrypt KDF（数十毫秒/次）；`count` 无上限时，
+/// 攻击者触发频繁密码修改可放大为 CPU 耗尽。超过上限的 `count` 被钳制到 24
+/// （业界常见密码历史窗口 10~24 条）。
+const MAX_HISTORY_COUNT: u32 = 24;
+
 /// 密码历史规则。
 ///
 /// 校验密码不允许与 `ctx.password_history` 最近 `count` 条 hash 相同。
@@ -102,7 +109,14 @@ impl PasswordPolicyRule for LengthRule {
 ///
 /// `password_history` 存储 hash（非明文），规则使用 `PasswordVerifier::verify`
 /// 逐一校验明文密码与历史 hash 是否匹配。无效格式的 hash 会被跳过
-/// （不阻塞密码修改，避免历史数据损坏影响正常使用）。
+/// （不阻塞密码修改，避免历史数据损坏影响正常使用），跳过时记录
+/// `tracing::warn` 保持可观测（fail-open 但不静默）。
+///
+/// # 性能上限（Issue 2755/5824）
+///
+/// 每条比对为同步 KDF 校验（Argon2id m=19456 约数十毫秒），`count` 在
+/// [`HistoryRule::new`] 中被钳制到 [`MAX_HISTORY_COUNT`]（24），单次密码修改
+/// 的最坏校验耗时可控。
 ///
 /// # 示例
 ///
@@ -115,7 +129,8 @@ impl PasswordPolicyRule for LengthRule {
 /// assert!(rule.validate(&ctx, "new-password").is_ok());
 /// ```
 pub struct HistoryRule {
-    /// 比对的历史 hash 数量（从 `password_history` 末尾取最近 `count` 条）。
+    /// 比对的历史 hash 数量（从 `password_history` 末尾取最近 `count` 条，
+    /// 上限 [`MAX_HISTORY_COUNT`]）。
     count: u32,
 }
 
@@ -123,9 +138,13 @@ impl HistoryRule {
     /// 创建密码历史规则。
     ///
     /// # 参数
-    /// - `count`: 比对的历史 hash 数量（从 `password_history` 末尾取最近 `count` 条）
+    /// - `count`: 比对的历史 hash 数量（从 `password_history` 末尾取最近
+    ///   `count` 条）。超过 [`MAX_HISTORY_COUNT`]（24）时钳制到上限，
+    ///   防止热路径无上限循环 KDF 校验（DoS/阻塞风险）。
     pub fn new(count: u32) -> Self {
-        Self { count }
+        Self {
+            count: count.min(MAX_HISTORY_COUNT),
+        }
     }
 }
 
@@ -147,12 +166,23 @@ impl PasswordPolicyRule for HistoryRule {
             // PasswordVerifier::verify 返回 GarrisonResult<bool>:
             // - Ok(true): 密码匹配历史 hash → 规则失败
             // - Ok(false): 不匹配 → 继续检查下一条
-            // - Err(_): hash 格式无效 → 跳过（不阻塞密码修改）
-            if let Ok(true) = PasswordVerifier::verify(password, hash) {
-                return Err(PolicyError::new(
-                    "history",
-                    loc!("policy-history-duplicate", ""),
-                ));
+            // - Err(_): hash 格式无效 → 跳过（fail-open，不阻塞密码修改），
+            //   但记录 warn 保持可观测（Issue 2755：不静默吞掉）
+            match PasswordVerifier::verify(password, hash) {
+                Ok(true) => {
+                    return Err(PolicyError::new(
+                        "history",
+                        loc!("policy-history-duplicate", ""),
+                    ));
+                },
+                Ok(false) => {},
+                Err(e) => {
+                    tracing::warn!(
+                        rule = "history",
+                        error = %e,
+                        "password history hash verify failed, skipping entry (fail-open)"
+                    );
+                },
             }
         }
         Ok(())
@@ -825,6 +855,19 @@ mod tests {
         let rule = HistoryRule::new(0);
         let ctx = make_ctx(None, vec![&hash]);
         assert!(rule.validate(&ctx, "same").is_ok());
+    }
+
+    /// Issue 2755/5824: count 超上限被钳制到 MAX_HISTORY_COUNT（DoS 防护）。
+    #[test]
+    fn history_rule_count_clamped_to_max() {
+        let clamped = HistoryRule::new(10_000);
+        assert_eq!(
+            clamped.count, MAX_HISTORY_COUNT,
+            "count 超上限应被钳制到 MAX_HISTORY_COUNT"
+        );
+        // 上限以内不钳制
+        assert_eq!(HistoryRule::new(5).count, 5);
+        assert_eq!(HistoryRule::new(MAX_HISTORY_COUNT).count, MAX_HISTORY_COUNT);
     }
 
     /// R-005.3: `name()` 返回 `"history"`。

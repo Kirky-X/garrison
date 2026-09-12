@@ -334,16 +334,37 @@ async fn wait_strategy_linear_record_failure_duration() {
     );
 }
 
-/// 验证 record_success 重置 failure_count 但不修改锁定字段。
+/// 验证 record_success 重置 failure_count，并清除**已触发**的临时锁定状态。
+///
+/// Issue 1619/1620: 旧版仅用 3 次失败（默认阈值 5，未触发锁定）断言"锁定字段
+/// 不变"，注释与生产行为矛盾（strategy.rs 的 record_success 会清零
+/// temporary_lockout_count / locked_until）。现改为先以 max_failure_factor=1
+/// 触发一次真实临时锁定，再调 record_success，验证锁定字段被清零、
+/// permanent_locked 不受影响（永久锁定不可通过登录成功解除）。
 #[tokio::test]
 async fn record_success_resets_failure_count() {
-    let (strategy, _) = make_strategy();
-    for _ in 0..3 {
-        strategy.record_failure("user1").await.unwrap();
-    }
-    let state = strategy.get_state("user1").await.unwrap();
-    assert_eq!(state.failure_count, 3);
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let config = UserLockoutConfig {
+        max_failure_factor: 1, // 首败即锁
+        permanent_lockout: true,
+        max_temporary_lockouts: 3,
+        wait_strategy: WaitStrategy::Linear { base_seconds: 60 },
+        failure_window_seconds: 300,
+    };
+    let strategy = UserLockoutStrategy::new(config, dao);
 
+    // 1 次失败即触发临时锁定
+    strategy.record_failure("user1").await.unwrap();
+    let state = strategy.get_state("user1").await.unwrap();
+    assert_eq!(state.failure_count, 1);
+    assert!(
+        state.locked_until > now_timestamp(),
+        "前置条件：应已处于临时锁定（locked_until > now），实际: {}",
+        state.locked_until
+    );
+    assert_eq!(state.temporary_lockout_count, 1, "前置条件：临时锁定次数应为 1");
+
+    // 登录成功 → 清零 failure_count + 临时锁定状态
     strategy.record_success("user1").await.unwrap();
     let state = strategy.get_state("user1").await.unwrap();
     assert_eq!(
@@ -352,10 +373,145 @@ async fn record_success_resets_failure_count() {
     );
     assert_eq!(
         state.temporary_lockout_count, 0,
-        "temporary_lockout_count 不应变"
+        "record_success 应清除临时锁定次数"
     );
-    assert!(!state.permanent_locked, "permanent_locked 不应变");
-    assert_eq!(state.locked_until, 0, "locked_until 不应变");
+    assert_eq!(
+        state.locked_until, 0,
+        "record_success 应清除 locked_until"
+    );
+    assert!(
+        !state.permanent_locked,
+        "record_success 不得解除 permanent_locked"
+    );
+
+    // 清除后 check 应放行
+    let ctx = FirewallContext::new("1.1.1.1").with_login_id("user1");
+    assert!(
+        strategy.check(&ctx).await.is_ok(),
+        "record_success 后应解除临时锁定"
+    );
+}
+
+/// Issue 7806: 并发 record_failure 丢失更新回归测试。
+///
+/// 多任务并发对同一用户 record_failure（每次 +1），CAS 原子读改写保证
+/// 全部自增不丢失：最终 failure_count == 并发任务数。
+/// （旧实现 get→mutate→set 非原子，并发下会丢失自增、延迟锁定触发。）
+#[tokio::test]
+async fn concurrent_record_failure_no_lost_updates() {
+    use std::sync::Arc as StdArc;
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    // 阈值调高避免中途触发锁定改变状态形状（失败计数仍持续累加）
+    let config = UserLockoutConfig {
+        max_failure_factor: 1000,
+        permanent_lockout: false,
+        max_temporary_lockouts: 99,
+        wait_strategy: WaitStrategy::Linear { base_seconds: 60 },
+        failure_window_seconds: 300,
+    };
+    let strategy = StdArc::new(UserLockoutStrategy::new(config, dao));
+
+    const TASKS: u32 = 20;
+    let mut handles = Vec::with_capacity(TASKS as usize);
+    for _ in 0..TASKS {
+        let s = strategy.clone();
+        handles.push(tokio::spawn(async move {
+            s.record_failure("user1").await.expect("record_failure 不应报错");
+        }));
+    }
+    for h in handles {
+        h.await.expect("并发任务不应 panic");
+    }
+
+    let state = strategy.get_state("user1").await.unwrap();
+    assert_eq!(
+        state.failure_count, TASKS,
+        "并发 {} 次 record_failure 后 failure_count 应恰好为 {}（无丢失更新）",
+        TASKS, TASKS
+    );
+}
+
+/// Issue 3178: UserLockoutConfig::validate 拒绝零值退化配置。
+#[test]
+fn config_validate_rejects_degenerate_values() {
+    // max_failure_factor = 0 → 首败即锁，应拒绝
+    let config = UserLockoutConfig {
+        max_failure_factor: 0,
+        permanent_lockout: false,
+        max_temporary_lockouts: 3,
+        wait_strategy: WaitStrategy::Linear { base_seconds: 60 },
+        failure_window_seconds: 300,
+    };
+    assert!(config.validate().is_err(), "max_failure_factor=0 应被拒绝");
+
+    // failure_window_seconds = 0 → 窗口判断退化，应拒绝
+    let config = UserLockoutConfig {
+        max_failure_factor: 5,
+        permanent_lockout: false,
+        max_temporary_lockouts: 3,
+        wait_strategy: WaitStrategy::Linear { base_seconds: 60 },
+        failure_window_seconds: 0,
+    };
+    assert!(config.validate().is_err(), "failure_window_seconds=0 应被拒绝");
+
+    // permanent_lockout + max_temporary_lockouts = 0 → 首次临时锁定即永久，应拒绝
+    let config = UserLockoutConfig {
+        max_failure_factor: 5,
+        permanent_lockout: true,
+        max_temporary_lockouts: 0,
+        wait_strategy: WaitStrategy::Linear { base_seconds: 60 },
+        failure_window_seconds: 300,
+    };
+    assert!(
+        config.validate().is_err(),
+        "permanent_lockout + max_temporary_lockouts=0 应被拒绝"
+    );
+
+    // wait_strategy 零值（锁定时长为 0）应拒绝
+    let config = UserLockoutConfig {
+        max_failure_factor: 5,
+        permanent_lockout: false,
+        max_temporary_lockouts: 3,
+        wait_strategy: WaitStrategy::Linear { base_seconds: 0 },
+        failure_window_seconds: 300,
+    };
+    assert!(config.validate().is_err(), "base_seconds=0 应被拒绝");
+
+    let config = UserLockoutConfig {
+        max_failure_factor: 5,
+        permanent_lockout: false,
+        max_temporary_lockouts: 3,
+        wait_strategy: WaitStrategy::Multiple {
+            base_seconds: 60,
+            multiplier: 0,
+        },
+        failure_window_seconds: 300,
+    };
+    assert!(config.validate().is_err(), "multiplier=0 应被拒绝");
+
+    // 合法配置应通过
+    assert!(UserLockoutConfig::default().validate().is_ok());
+}
+
+/// Issue 3178: UserLockoutStrategy::new 对非法配置回退默认值（退化行为不生效）。
+#[tokio::test]
+async fn new_with_invalid_config_falls_back_to_default() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let config = UserLockoutConfig {
+        max_failure_factor: 0, // 非法：首败即锁
+        permanent_lockout: false,
+        max_temporary_lockouts: 3,
+        wait_strategy: WaitStrategy::Linear { base_seconds: 60 },
+        failure_window_seconds: 300,
+    };
+    let strategy = UserLockoutStrategy::new(config, dao);
+    // 回退默认配置（阈值 5）：1 次失败不应触发锁定（若未回退，首败即锁）
+    strategy.record_failure("user1").await.unwrap();
+    let ctx = FirewallContext::new("1.1.1.1").with_login_id("user1");
+    assert!(
+        strategy.check(&ctx).await.is_ok(),
+        "非法配置回退默认后（阈值 5），首次失败不应触发锁定"
+    );
 }
 
 /// 验证 failure_window_seconds 窗口过期后 failure_count 重置。

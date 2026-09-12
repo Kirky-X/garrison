@@ -8,6 +8,16 @@
 //! `find_by_user` / `update` / `delete` 在执行前先校验 `caller_login_id` 与目标
 //! 凭证的 `user_id` 一致，否则返回 `GarrisonError::NotPermission`（HTTP 403）。
 //! 拒绝事件通过 `tracing::warn!` 记录，便于安全审计订阅。
+//!
+//! # 并发语义（已知限制）
+//!
+//! - `update` 使用 `compare_and_swap`（expected = 读取值）写入，并发修改会显式
+//!   返回 `credential-concurrent-modification` 错误，不静默覆盖（Issue 2743）。
+//! - `delete` 采用两阶段（先全量校验 ownership 再删除，Issue 6852），消除混合
+//!   IDOR 结果下的部分删除；但校验与删除之间仍存在理论窗口——`GarrisonDao`
+//!   trait 暂无 compare-and-delete 原语，需要强一致删除时请在 DAO 后端层实现。
+//! - `keys()` 的错误原样向上传播（不静默吞掉）；`GarrisonDaoOxcache` 默认
+//!   （未启用 `dao-key-index`）不支持 `keys()`，见 mod.rs「已知限制」。
 
 use super::*;
 
@@ -160,7 +170,25 @@ impl CredentialRepository for DaoCredentialRepository {
 
         // user_id 不可变 ⇒ existing_key 与新 key 一致，复用 existing_key 写回
         let json = Self::serialize_credential(&credential)?;
-        self.dao.set_permanent(&existing_key, &json).await
+        // Issue 2743: 用 CAS（expected = 读取时的值）替代 set_permanent 直写，
+        // 消除 keys→get→set TOCTOU 竞态下的静默覆盖：并发修改/删除本凭证时
+        // CAS 失败，显式报错而非覆盖他方写入（CAS 重试会覆盖他人更新，不适用）。
+        let swapped = self
+            .dao
+            .compare_and_swap(&existing_key, Some(&existing_json), &json, 0)
+            .await?;
+        if !swapped {
+            tracing::warn!(
+                caller_login_id = caller_login_id,
+                credential_id = %credential.id,
+                "credential update aborted: concurrent modification detected (CAS mismatch)"
+            );
+            return Err(GarrisonError::Internal(format!(
+                "credential-concurrent-modification::{}",
+                credential.id
+            )));
+        }
+        Ok(())
     }
 
     async fn delete(&self, caller_login_id: &str, credential_id: &str) -> GarrisonResult<()> {
@@ -174,8 +202,12 @@ impl CredentialRepository for DaoCredentialRepository {
             )));
         }
 
-        // IDOR 防护：逐个反序列化校验 owner 后才删除（vuln-0004）
-        // credential_id 全局唯一，正常情况下 keys 仅 1 个；保留循环以处理异常多键场景。
+        // Issue 6852: 两阶段删除——先校验全部命中 key 的 ownership，全部通过后才
+        // 进入删除阶段。避免异常多键场景下「先删了本人的 key、后遇他人 key 返回
+        // NotPermission」的部分删除无回滚问题。
+        // 注意：校验与删除之间仍存在窗口（DAO trait 无 compare-and-delete 原语），
+        // 该残余 TOCTOU 见模块文档「已知限制」。
+        let mut verified_keys = Vec::with_capacity(keys.len());
         for key in keys {
             let json = match self.dao.get(&key).await? {
                 Some(j) => j,
@@ -194,6 +226,11 @@ impl CredentialRepository for DaoCredentialRepository {
                     caller_login_id, credential_id, existing.user_id
                 )));
             }
+            verified_keys.push(key);
+        }
+
+        // 阶段 2：全部校验通过后删除（任一删除失败即中断并向上传播错误）
+        for key in verified_keys {
             self.dao.delete(&key).await?;
         }
         Ok(())

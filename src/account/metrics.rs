@@ -67,21 +67,38 @@ pub struct AccountMetrics {
 
 #[cfg(feature = "metrics-prometheus")]
 impl AccountMetrics {
-    /// 创建新的指标集合，注册到默认 registry。
+    /// 创建新的指标集合，注册到默认 registry（进程级单例，OnceLock 缓存）。
     ///
-    /// # 错误
-    /// 若指标已注册（如多次调用 `new`），返回注册错误。生产环境建议使用 [`Self::register_to`]
+    /// # Panics
+    ///
+    /// 本方法**不会 panic**（Issue 3181）：若默认 registry 已存在同名指标
+    /// （重复调用 `new` / 与 `register_to(default_registry)` 混用），以
+    /// `tracing::warn` 记录后返回一个未注册的本地实例（`observe_*` /
+    /// `record_*` / `gather()` 均可用，仅默认 registry 不再新增采集——
+    /// 已注册实例不受影响）。生产环境建议使用 [`Self::register_to`]
     /// 注册到自定义 registry。
     pub fn new() -> Self {
-        // Issue 25/112: 避免 panic，使用 OnceLock 确保只注册一次
+        // Issue 25/112: 使用 OnceLock 确保只注册一次
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<AccountMetrics> = OnceLock::new();
-        INSTANCE
-            .get_or_init(|| {
-                Self::register_to(prometheus::default_registry())
-                    .expect("failed to register AccountMetrics to the default registry: possibly already registered")
-            })
-            .clone()
+        INSTANCE.get_or_init(Self::init_default).clone()
+    }
+
+    /// new() 的单例初始化：注册默认 registry，冲突时 warn + 回退本地实例
+    /// （与 `credit::metrics::CreditMetrics::new` 修复方式一致）。
+    fn init_default() -> Self {
+        match Self::register_to(prometheus::default_registry()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "AccountMetrics 已注册到 prometheus 默认 registry（重复 new 或与 \
+                     register_to 混用），返回未注册的本地实例；已注册实例不受影响"
+                );
+                // build() 仅在指标名/帮助文本非法时失败——静态字面量下不可达
+                Self::build().expect("AccountMetrics: static metric opts are valid (unreachable)")
+            },
+        }
     }
 
     /// 创建并注册到指定 registry（用于自定义 registry 场景，测试隔离）。
@@ -89,6 +106,16 @@ impl AccountMetrics {
     /// # 错误
     /// - 指标已注册：返回 `Err(prometheus::Error::AlreadyReg)`。
     pub fn register_to(registry: &prometheus::Registry) -> Result<Self, prometheus::Error> {
+        let metrics = Self::build()?;
+        registry.register(Box::new(metrics.credential_verify_duration.clone()))?;
+        registry.register(Box::new(metrics.policy_validate_duration.clone()))?;
+        registry.register(Box::new(metrics.lockout_triggered_total.clone()))?;
+        registry.register(Box::new(metrics.authflow_execute_duration.clone()))?;
+        Ok(metrics)
+    }
+
+    /// 构建指标集合（不注册到任何 registry）。
+    fn build() -> Result<Self, prometheus::Error> {
         // Histogram buckets 与 GarrisonMetrics 一致
         let buckets = vec![0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0];
 
@@ -123,11 +150,6 @@ impl AccountMetrics {
             .buckets(buckets),
             &["flow_name"],
         )?;
-
-        registry.register(Box::new(credential_verify_duration.clone()))?;
-        registry.register(Box::new(policy_validate_duration.clone()))?;
-        registry.register(Box::new(lockout_triggered_total.clone()))?;
-        registry.register(Box::new(authflow_execute_duration.clone()))?;
 
         Ok(Self {
             credential_verify_duration,
@@ -198,11 +220,16 @@ impl AccountMetrics {
         metric_families.extend(self.authflow_execute_duration.collect());
         let mut buffer = Vec::new();
         let encoder = prometheus::TextEncoder::new();
-        // Rule 12：编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）
-        if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
-            tracing::warn!(error = %e, "AccountMetrics::gather prometheus encode failed");
+        // Rule 12：编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）。
+        // Issue 6664/6857：编码失败时返回显式错误标记（Prometheus 文本注释行），
+        // 调用方可区分「无指标记录」与「编码失败」，不再静默返回空串。
+        match encoder.encode(&metric_families, &mut buffer) {
+            Ok(()) => String::from_utf8_lossy(&buffer).into_owned(),
+            Err(e) => {
+                tracing::warn!(error = %e, "AccountMetrics::gather prometheus encode failed");
+                format!("# garrison account-metrics gather encode failed: {e}")
+            },
         }
-        String::from_utf8_lossy(&buffer).into_owned()
     }
 }
 

@@ -198,13 +198,33 @@ impl BcryptHasher {
 
 impl PasswordHasher for BcryptHasher {
     fn hash(&self, password: &str) -> GarrisonResult<String> {
-        bcrypt::hash(password, self.cost)
+        // P2.1（Issue 2740/3160/3203）: 与 Argon2Hasher 对称——credential-zeroize
+        // feature 启用时，将密码字节拷贝到 Zeroizing<String>，函数返回时 wrapper
+        // Drop 清零内部字节（bcrypt crate 直接消费 &str，无法清零调用方的 String）。
+        #[cfg(feature = "credential-zeroize")]
+        let password_bytes = zeroize::Zeroizing::new(password.to_string());
+        #[cfg(feature = "credential-zeroize")]
+        let password_ref: &str = &password_bytes;
+        #[cfg(not(feature = "credential-zeroize"))]
+        let password_ref: &str = password;
+
+        bcrypt::hash(password_ref, self.cost)
             .map_err(|e| GarrisonError::Internal(format!("account-bcrypt-hash::{}", e)))
+        // password_bytes drops here (if zeroize on); Zeroizing<String>::drop zeroes bytes
     }
 
     fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool> {
-        bcrypt::verify(password, hash)
+        // P2.1（Issue 2740/3160/3203）: 同 hash，verify 后清零内部密码字节副本
+        #[cfg(feature = "credential-zeroize")]
+        let password_bytes = zeroize::Zeroizing::new(password.to_string());
+        #[cfg(feature = "credential-zeroize")]
+        let password_ref: &str = &password_bytes;
+        #[cfg(not(feature = "credential-zeroize"))]
+        let password_ref: &str = password;
+
+        bcrypt::verify(password_ref, hash)
             .map_err(|e| GarrisonError::InvalidParam(format!("account-bcrypt-format::{}", e)))
+        // password_bytes drops here (if zeroize on); Zeroizing<String>::drop zeroes bytes
     }
 }
 
