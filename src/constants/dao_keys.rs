@@ -90,12 +90,40 @@ impl DaoKeyPrefix {
 
     /// 构造完整 key：`prefix + id`。
     ///
+    /// # ⚠️ id 冒号约束（解析歧义）
+    ///
+    /// 多段前缀（`perm:cache:` / `role:cache:` / `user:cache:` / `oauth2:client:` 等）
+    /// 与含 `:` 的 id 直接拼接会产生**解析歧义**：结果 key 无法唯一反解出
+    /// (前缀, id) 二元组。例如 `Cred.build_key("user:pass")` 得到
+    /// `cred:user:pass`——它既可解读为前缀 `cred:` + id `user:pass`，也可被
+    /// 误解读为某个更长的多段前缀 + 剩余 id，不同解读会碰撞出相同 key。
+    ///
+    /// 约定：
+    /// - `id` **不得含 `:`**（UUID / 数字 ID / 无冒号用户名等）。debug 构建下
+    ///   以 `debug_assert!` 强制校验（release 构建零开销，不做校验）；
+    /// - 含 `:` 的复合 id（如 `cred:{user}:{cred}` 场景）请调用方先行编码
+    ///   （URL-safe base64 / 十六进制等），或改用自定义前缀拼接并自行负责
+    ///   反解与碰撞排查。
+    ///
+    /// # Panics（仅 debug 构建）
+    ///
+    /// `id` 含 `:` 时 `debug_assert!` 触发 panic——歧义 key 在开发期即暴露，
+    /// 而非静默写入存储层。
+    ///
     /// # 示例
     /// ```
     /// use garrison::constants::DaoKeyPrefix;
     /// assert_eq!(DaoKeyPrefix::Session.build_key("abc"), "session:abc");
     /// ```
     pub fn build_key(&self, id: &str) -> String {
+        // 冒号歧义防护：多段前缀（perm:cache: / role:cache: / user:cache: 等）
+        // 与含 `:` 的 id 拼接后无法唯一反解（Role+"cache:x" 与 RoleCache+"x"
+        // 同得 "role:cache:x"）。debug 构建直接拒绝，release 不校验（零开销）。
+        debug_assert!(
+            !id.contains(':'),
+            "dao_keys::build_key: id must not contain ':' (ambiguous key) — got {:?}",
+            id
+        );
         format!("{}{}", self.as_str(), id)
     }
 }
@@ -134,7 +162,10 @@ mod tests {
             DaoKeyPrefix::Captcha.build_key("img_001"),
             "captcha:img_001"
         );
-        assert_eq!(DaoKeyPrefix::Cred.build_key("user:pass"), "cred:user:pass");
+        assert_eq!(
+            DaoKeyPrefix::Cred.build_key("user_pass"),
+            "cred:user_pass"
+        );
         assert_eq!(
             DaoKeyPrefix::BruteForce.build_key("192.168.1.1"),
             "bf:192.168.1.1"
@@ -151,5 +182,16 @@ mod tests {
     fn dao_key_prefix_display_matches_as_str() {
         assert_eq!(format!("{}", DaoKeyPrefix::Session), "session:");
         assert_eq!(format!("{}", DaoKeyPrefix::Token), "token:");
+    }
+
+    /// build_key 冒号歧义防护（debug_assert 契约）：含 `:` 的 id 在 debug 构建
+    /// 下被拒绝——多段前缀 + 含冒号 id 会碰撞出无法唯一反解的 key
+    ///（`Role` + `"cache:x"` 与 `RoleCache` + `"x"` 同得 `role:cache:x`）。
+    /// 仅 debug 构建校验（release 下 `debug_assert!` 编译期消除，不 panic）。
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "id must not contain ':'")]
+    fn dao_key_prefix_build_key_rejects_colon_id_in_debug() {
+        let _ = DaoKeyPrefix::Role.build_key("cache:x");
     }
 }

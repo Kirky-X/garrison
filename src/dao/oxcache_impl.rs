@@ -270,7 +270,11 @@ impl GarrisonDao for GarrisonDaoOxcache {
             };
         self.cache
             .set_with_ttl_sync(&actual_key, &value.to_string(), remaining_ttl)
-            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-update-set-with-ttl-sync::{}", e)))
+            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-update-set-with-ttl-sync::{}", e)))?;
+        // key_index 维护：update 只写 cache 不写索引会使 keys() 漏报该 key
+        #[cfg(feature = "dao-key-index")]
+        self.key_index.write().insert(actual_key);
+        Ok(())
     }
 
     async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
@@ -346,6 +350,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// 进程内原子：整体置于 `atomic_mutex` 临界区（T025）。
     /// `ttl_sync` 返回 None 时追加 `exists_sync` 甄别永久键 / 已消失键，
     /// 已消失返回 `Dao("dao-key-missing")` 而非写入永久值（T025）。
+    /// 同步迁移 `key_index`：移除旧键条目、插入新键条目（否则 `keys()` 会
+    /// 漏报新键且残留旧键陈旧条目）。
     async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
         let _guard = self.atomic_mutex.lock();
         let actual_old = prefixed_key(old_key);
@@ -376,7 +382,14 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e)))?;
         self.cache
             .delete_sync(&actual_old)
-            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))
+            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
+        #[cfg(feature = "dao-key-index")]
+        {
+            let mut index = self.key_index.write();
+            index.remove(&actual_old);
+            index.insert(actual_new);
+        }
+        Ok(())
     }
 
     /// get_and_delete 用 `parking_lot::Mutex` + `_sync` API 保护 get+delete。
@@ -384,6 +397,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// 进程内原子：同一进程内并发调用同一 key 仅一个返回 `Some`。
     /// `delete_sync` 是同步删除（已由 `oxcache_get_and_delete_concurrent`
     /// 测试验证），无需额外状态追踪。
+    /// 删除成功时同步清理 `key_index` 条目（与 `delete()` 一致，
+    /// 否则 `keys()` 会持续返回已删除 key 的陈旧条目）。
     /// 跨进程限制：多进程共享 Redis L2 时，仍存在 TOCTOU 竞态
     /// （需 Redis Lua 脚本 `redis.call('GET',K[1]);redis.call('DEL',K[1])` 修复，待引入 Redis L2 后端）。
     async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
@@ -399,6 +414,8 @@ impl GarrisonDao for GarrisonDaoOxcache {
             self.cache
                 .delete_sync(&actual_key)
                 .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-delete-sync::{}", e)))?;
+            #[cfg(feature = "dao-key-index")]
+            self.key_index.write().remove(&actual_key);
         }
         Ok(value)
     }
@@ -497,6 +514,9 @@ impl GarrisonDao for GarrisonDaoOxcache {
                     .map_err(|e| {
                         GarrisonError::Dao(format!("dao-oxcache-set-with-ttl-sync::{}", e))
                     })?;
+                // key_index 维护：incr 新建 key 时插入索引，否则 keys() 漏报该 key
+                #[cfg(feature = "dao-key-index")]
+                self.key_index.write().insert(actual_key);
                 Ok(1)
             },
         }
@@ -657,6 +677,10 @@ impl GarrisonDao for GarrisonDaoOxcache {
             self.cache
                 .set_with_ttl_sync(&actual_key, &new_value.to_string(), ttl)
                 .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-cas-set-sync::{}", e)))?;
+            // key_index 维护：CAS 可创建新 key（expected=None 且 key 不存在），
+            // 与 set/set_if_absent 一致地插入索引，否则 keys() 漏报该 key
+            #[cfg(feature = "dao-key-index")]
+            self.key_index.write().insert(actual_key);
             Ok(true)
         } else {
             Ok(false)
@@ -667,6 +691,13 @@ impl GarrisonDao for GarrisonDaoOxcache {
     ///
     /// 遍历 key_index，过滤匹配 pattern 的 key，同时惰性清理已过期的 key。
     /// pattern 支持 `*` 通配符（与 MockDao::keys 一致）。
+    ///
+    /// # 错误语义
+    ///
+    /// `exists_sync` 返回 `Err`（backend 故障 / IO 错误）**不等于键不存在**：
+    /// 此类 key 保留在 `key_index` 中（不参与惰性清理、不计入本次返回结果），
+    /// 并记录 `warn` 日志。绝不将错误静默按 `false` 处理——否则每次 `keys()`
+    /// 都会把有效 key 误判为过期并从索引中永久删除。
     #[cfg(feature = "dao-key-index")]
     async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
         let actual_pattern = prefixed_key(pattern);
@@ -687,10 +718,18 @@ impl GarrisonDao for GarrisonDaoOxcache {
 
         // 阶段 2：无锁检查存在性 + 分类（exists_sync 是无锁读，不阻塞写锁）
         for key in &matched_keys {
-            if self.cache.exists_sync(key).unwrap_or(false) {
-                result.push(strip_prefix(key));
-            } else {
-                expired_keys.push(key.clone());
+            match self.cache.exists_sync(key) {
+                Ok(true) => result.push(strip_prefix(key)),
+                Ok(false) => expired_keys.push(key.clone()),
+                Err(e) => {
+                    // backend 故障 ≠ 键不存在：保留索引条目，仅 warn
+                    // （不误删有效 key 的索引条目，下次 keys() 重试）
+                    tracing::warn!(
+                        key = %key,
+                        error = %e,
+                        "keys() exists_sync failed; keep key_index entry"
+                    );
+                },
             }
         }
 
@@ -1222,6 +1261,50 @@ mod tests {
             );
             let none = dao.keys("kx_no_such_*").await.unwrap();
             assert!(none.is_empty(), "无匹配应返回空 Vec");
+        }
+
+        /// key_index 维护：incr 新建的 key 应出现在 keys() 结果中。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn keys_includes_key_created_by_incr() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            assert_eq!(dao.incr("ki_incr_key", 60).await.unwrap(), 1);
+            let keys = dao.keys("ki_incr_key").await.unwrap();
+            assert_eq!(
+                keys,
+                vec!["ki_incr_key".to_string()],
+                "incr 新建的 key 应被 key_index 收录"
+            );
+        }
+
+        /// key_index 维护：rename 应迁移索引条目（旧键移除、新键收录）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn keys_rename_migrates_index_entry() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            dao.set("kr_old", "v", 3600).await.unwrap();
+            dao.rename("kr_old", "kr_new").await.unwrap();
+
+            let old_keys = dao.keys("kr_old").await.unwrap();
+            assert!(old_keys.is_empty(), "rename 后旧键应从 key_index 移除");
+            let new_keys = dao.keys("kr_new").await.unwrap();
+            assert_eq!(
+                new_keys,
+                vec!["kr_new".to_string()],
+                "rename 后新键应被 key_index 收录"
+            );
+        }
+
+        /// key_index 维护：get_and_delete 应清理索引条目（与 delete 一致）。
+        #[tokio::test(flavor = "multi_thread")]
+        async fn keys_get_and_delete_cleans_index_entry() {
+            let dao = GarrisonDaoOxcache::new().await.unwrap();
+            dao.set("kg_k", "v", 3600).await.unwrap();
+            let v = dao.get_and_delete("kg_k").await.unwrap();
+            assert_eq!(v.as_deref(), Some("v"));
+            let keys = dao.keys("kg_k").await.unwrap();
+            assert!(
+                keys.is_empty(),
+                "get_and_delete 后 key 不应残留在 key_index 中"
+            );
         }
 
         /// keys() 在 TENANT 上下文内返回去前缀的原始 key 名

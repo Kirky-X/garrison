@@ -61,33 +61,21 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
             return Ok(existing_id);
         }
 
-        // 2. 检查是否超过 MAX_DEVICES
-        let count_sql =
-            "SELECT COUNT(*) AS cnt FROM app_user_device WHERE tenant_id = ? AND login_id = ?";
-        let stmt = make_statement(conn, count_sql, vec![v_i64(tenant_id), v_str(login_id)]);
-        let count_row = conn
-            .query_one_raw(stmt)
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-count-query::{}", e)))?
-            .ok_or_else(|| GarrisonError::Dao("dao-app-user-device-count-empty::".into()))?;
-        let current_count: i64 = count_row
-            .try_get("", "cnt")
-            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-parse-count::{}", e)))?;
-        if (current_count as usize) >= MAX_DEVICES {
-            let who = format!("tenant_id={}, login_id={}", tenant_id, login_id);
-            return Err(GarrisonError::InvalidParam(format!(
-                "dao-user-device-limit-exceeded::{}::{}",
-                who, MAX_DEVICES
-            )));
-        }
-
-        // 3. 插入新设备
+        // 2+3. MAX_DEVICES 上限检查 + 插入合并为单条条件 INSERT（原子，消除
+        //      check-then-act TOCTOU）：WHERE 子查询与 INSERT 同语句执行，
+        //      SQLite（单写者）下无并发窗口；PG/MySQL 在 READ COMMITTED 下
+        //      仍存在语句级快照窗口（见 `UserDeviceRepository::register_device` 文档）。
+        //      `FROM (SELECT 1) AS _g` 为占位 derived table：MySQL 不支持无 FROM
+        //      的 SELECT...WHERE，SQLite/PG/MySQL 三方言均兼容该写法。
+        //      rows_affected == 0 表示条件未满足（计数已达上限，含并发下被抢先填满）。
         let device_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp();
         let device_name = parse_device_name(ua);
         let insert_sql = "INSERT INTO app_user_device \
                           (id, tenant_id, login_id, device_identifier, device_name, user_agent, is_blocked, last_seen_at, created_at) \
-                          VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)";
+                          SELECT ?, ?, ?, ?, ?, ?, 0, ?, ? FROM (SELECT 1) AS _g \
+                          WHERE (SELECT COUNT(*) FROM app_user_device \
+                                 WHERE tenant_id = ? AND login_id = ?) < ?";
         let stmt = make_statement(
             conn,
             insert_sql,
@@ -100,11 +88,22 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
                 v_opt_str(&Some(ua.to_string())),
                 v_i64(now),
                 v_i64(now),
+                v_i64(tenant_id),
+                v_str(login_id),
+                v_i64(MAX_DEVICES as i64),
             ],
         );
-        conn.execute_raw(stmt)
+        let result = conn
+            .execute_raw(stmt)
             .await
             .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-insert::{}", e)))?;
+        if result.rows_affected() == 0 {
+            let who = format!("tenant_id={}, login_id={}", tenant_id, login_id);
+            return Err(GarrisonError::InvalidParam(format!(
+                "dao-user-device-limit-exceeded::{}::{}",
+                who, MAX_DEVICES
+            )));
+        }
         Ok(device_id)
     }
 
@@ -191,7 +190,7 @@ fn parse_user_device_row(row: &QueryResult) -> GarrisonResult<UserDeviceRow> {
         user_agent: row.try_get("", "user_agent").map_err(|e| {
             GarrisonError::Dao(format!("dao-app-user-device-row-parse-user-agent::{}", e))
         })?,
-        is_blocked: read_bool(row, "is_blocked"),
+        is_blocked: read_bool(row, "is_blocked")?,
         last_seen_at: row.try_get("", "last_seen_at").map_err(|e| {
             GarrisonError::Dao(format!("dao-app-user-device-row-parse-last-seen-at::{}", e))
         })?,

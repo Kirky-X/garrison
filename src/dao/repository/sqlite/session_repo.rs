@@ -116,10 +116,11 @@ impl SessionRepository for DbnexusSessionRepository {
         limit: i64,
     ) -> GarrisonResult<Vec<SessionRow>> {
         dao_session!(self.pool, "dao-app-session-list", session, conn);
+        // ORDER BY session_id：LIMIT/OFFSET 分页需要稳定排序，否则并发变更下可能重行/漏行
         let sql =
             "SELECT session_id, user_id, device_id, ip, user_agent, login_time, last_active, \
                    expire_time, tenant_id \
-                   FROM app_session WHERE tenant_id = ? LIMIT ? OFFSET ?";
+                   FROM app_session WHERE tenant_id = ? ORDER BY session_id LIMIT ? OFFSET ?";
         let stmt = make_statement(
             conn,
             sql,

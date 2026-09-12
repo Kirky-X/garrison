@@ -123,8 +123,15 @@ mod service {
         ///
         /// # 算法
         /// 1. 查询所有 `role_hierarchy` 记录，构建 `child → parents` 邻接表
-        /// 2. 对每个 child，DFS 遍历收集所有祖先（避免环：用 visited 集合）
+        /// 2. 对每个 child，DFS 遍历收集所有祖先（避免环：用 visited 集合；
+        ///    并以备忘录复用无环子图的完整祖先集合，线性链从 O(n²) 降为 O(n+e)）
         /// 3. 返回闭包表
+        ///
+        /// # 语义（自环 / 环）
+        ///
+        /// 闭包中任何角色的祖先集合都**不含该角色自身**：自环（A→A）与环路
+        /// （A→B→A）均不会把起始角色写入自身祖先集（`dfs_ancestors` 先检查
+        /// visited 再插入）。
         ///
         /// # 错误
         /// - `GarrisonError::Dao`：SQL 查询失败。
@@ -142,10 +149,13 @@ mod service {
                     .push(edge.parent_role.clone());
             }
 
-            // 对每个 child DFS 收集所有祖先
+            // 对每个 child DFS 收集所有祖先（备忘录在同一闭包计算内跨 child 复用：
+            // 仅缓存未因环截断的完整祖先集合，含环节点的结果不缓存，行为不变）
             let mut closure: HashMap<String, HashSet<String>> = HashMap::new();
+            let mut memo: HashMap<String, HashSet<String>> = HashMap::new();
             for child in adj.keys() {
-                let ancestors = Self::dfs_ancestors(child, &adj, &mut HashSet::new());
+                let (ancestors, _complete) =
+                    Self::dfs_ancestors(child, &adj, &mut HashSet::new(), &mut memo);
                 closure.insert(child.clone(), ancestors);
             }
 
@@ -157,32 +167,55 @@ mod service {
         /// # 参数
         /// - `role`: 起始角色
         /// - `adj`: child → parents 邻接表
-        /// - `visited`: 已访问角色集合（防止环）
+        /// - `visited`: 当前 DFS 路径上的角色集合（防止环）
+        /// - `memo`: 备忘录（仅缓存未因环截断的完整祖先集合，跨起始角色复用）
         ///
         /// # 返回
-        /// `role` 的所有祖先集合（不含 `role` 自身）。
+        /// `(ancestors, complete)`：
+        /// - `ancestors`: `role` 的祖先集合（**不含 `role` 自身**——自环 A→A 与
+        ///   环路均不会把 `role` 写入自身祖先集）
+        /// - `complete`: 结果是否为全图完整祖先集（未因环截断）。
+        ///   仅 `complete == true` 的结果可安全写入 `memo` 复用。
         fn dfs_ancestors(
             role: &str,
             adj: &HashMap<String, Vec<String>>,
             visited: &mut HashSet<String>,
-        ) -> HashSet<String> {
+            memo: &mut HashMap<String, HashSet<String>>,
+        ) -> (HashSet<String>, bool) {
             let mut ancestors = HashSet::new();
             if visited.contains(role) {
-                return ancestors; // 防止环
+                return (ancestors, false); // 防止环（截断，结果不完整）
+            }
+            if let Some(cached) = memo.get(role) {
+                // 备忘录条目均为完整祖先集合（与当前 DFS 路径无关），可直接复用
+                return (cached.clone(), true);
             }
             visited.insert(role.to_string());
 
+            let mut complete = true;
             if let Some(parents) = adj.get(role) {
                 for parent in parents {
+                    if visited.contains(parent) {
+                        // 环 / 自环（parent == role）：先检查 visited 再决定是否插入，
+                        // 保证「祖先集合不含 role 自身」契约（原实现先 insert 后递归，
+                        // 自环 A→A 会把 A 错误地写入自身祖先集）
+                        complete = false;
+                        continue;
+                    }
                     ancestors.insert(parent.clone());
                     // 递归收集 parent 的祖先
-                    let indirect = Self::dfs_ancestors(parent, adj, visited);
+                    let (indirect, sub_complete) =
+                        Self::dfs_ancestors(parent, adj, visited, memo);
+                    complete &= sub_complete;
                     ancestors.extend(indirect);
                 }
             }
 
             visited.remove(role); // 回溯（允许不同路径访问同一节点）
-            ancestors
+            if complete {
+                memo.insert(role.to_string(), ancestors.clone());
+            }
+            (ancestors, complete)
         }
 
         /// T048 Green: 获取指定角色的所有祖先（先查 oxcache，未命中则 `compute_closure` 并缓存 1 小时）。
@@ -231,12 +264,32 @@ mod service {
         ///
         /// 委托 `dao.insert_role_hierarchy_edge()` 实现（幂等，后端自适应）。
         /// 缓存失效：插入成功后立即删除 `tenant:{tenant_id}:role_closure`。
+        ///
+        /// # 自环防护
+        ///
+        /// `child == parent`（自环边 A→A）直接返回 `GarrisonError::InvalidParam`
+        /// 且不入库——角色不能继承自身（与 `get_ancestors` / `get_descendants`
+        /// 「集合不含 role 自身」契约一致）。
+        ///
+        /// # 并发窗口（已知限制）
+        ///
+        /// 「写库 + 失效缓存」为两步非原子操作：并发读者可在「写库成功后、
+        /// 缓存失效前」的窗口内未命中缓存，计算并回写一份**不含新边**的陈旧
+        /// 闭包，该回写会在缓存 TTL（3600 秒，见 `get_ancestors`）窗口内存活。
+        /// 对一致性要求更强的调用方应在写入后主动再调用一次幂等的
+        /// `invalidate_cache`，或接受最长一个 TTL 周期的陈旧读。
         pub async fn add_edge(
             &self,
             child: &str,
             parent: &str,
             tenant_id: i64,
         ) -> GarrisonResult<()> {
+            if child == parent {
+                return Err(GarrisonError::InvalidParam(format!(
+                    "dao-role-hierarchy-self-loop::{}",
+                    child
+                )));
+            }
             self.dao
                 .insert_role_hierarchy_edge(tenant_id, child, parent)
                 .await?;
@@ -247,6 +300,12 @@ mod service {
         ///
         /// 删除 oxcache key `tenant:{tenant_id}:role_closure`。
         /// 幂等：若 key 不存在，`dao.delete` 不报错。
+        ///
+        /// # 并发窗口（已知限制）
+        ///
+        /// 本方法与并发读者之间无同步：删除前后到达的 `get_ancestors` 缓存
+        /// 未命中回写（TTL 3600 秒）可能覆盖本次失效（TOCTOU），
+        /// 详见 [`RoleHierarchyService::add_edge`] 文档「并发窗口」。
         ///
         /// # 参数
         /// - `tenant_id`: 租户 ID
@@ -298,10 +357,11 @@ mod service {
         /// # 参数
         /// - `role`: 起始角色
         /// - `reverse_adj`: parent → children 邻接表
-        /// - `visited`: 已访问角色集合（防止环）
+        /// - `visited`: 当前 DFS 路径上的角色集合（防止环）
         ///
         /// # 返回
-        /// `role` 的所有后代集合（不含 `role` 自身）。
+        /// `role` 的所有后代集合（**不含 `role` 自身**——自环 A→A 与环路均
+        /// 不会把 `role` 写入自身后代集）。
         fn dfs_descendants(
             role: &str,
             reverse_adj: &HashMap<String, Vec<String>>,
@@ -309,12 +369,18 @@ mod service {
         ) -> HashSet<String> {
             let mut descendants = HashSet::new();
             if visited.contains(role) {
-                return descendants;
+                return descendants; // 防止环
             }
             visited.insert(role.to_string());
 
             if let Some(children) = reverse_adj.get(role) {
                 for child in children {
+                    if visited.contains(child) {
+                        // 环 / 自环（child == role）：先检查 visited 再决定是否插入，
+                        // 保证「后代集合不含 role 自身」契约（原实现先 insert 后递归，
+                        // 自环 A→A 会把 A 错误地写入自身后代集）
+                        continue;
+                    }
                     descendants.insert(child.clone());
                     let indirect = Self::dfs_descendants(child, reverse_adj, visited);
                     descendants.extend(indirect);
@@ -1047,6 +1113,37 @@ mod db_sqlite_tests {
         assert_eq!(count, 1, "重复插入后应只有 1 条记录（INSERT OR IGNORE）");
     }
 
+    /// `add_edge` 拒绝自环边：child == parent 返回 InvalidParam 且不入库。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn add_edge_rejects_self_loop() {
+        let pool = setup_db().await;
+        let dao = setup_dao(pool.clone()).await;
+
+        let svc = RoleHierarchyService::new(dao);
+        let result = svc.add_edge("A", "A", 0).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::error::GarrisonError::InvalidParam(ref msg))
+                    if msg.contains("dao-role-hierarchy-self-loop")
+            ),
+            "自环边应返回含 'dao-role-hierarchy-self-loop' 的 InvalidParam 错误，实际: {:?}",
+            result
+        );
+
+        // 自环边不应入库
+        let session = pool.get_session("admin").await.unwrap();
+        let conn = session.connection().unwrap();
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            "SELECT COUNT(*) as cnt FROM role_hierarchy WHERE child_role = 'A' AND parent_role = 'A'",
+            vec![],
+        );
+        let rows = conn.query_all_raw(stmt).await.expect("COUNT 查询应成功");
+        let count: i64 = rows[0].try_get::<i64>("", "cnt").expect("读取 cnt 应成功");
+        assert_eq!(count, 0, "自环边不应入库");
+    }
+
     // ========================================================================
     // 补充测试：compute_closure 菱形继承 / 自环 / 多分量 / 多层链
     // ========================================================================
@@ -1096,9 +1193,8 @@ mod db_sqlite_tests {
 
     /// `compute_closure` 处理自环（A -> A）。
     ///
-    /// 自环 A -> A 时，A 被插入为自身的祖先（`ancestors.insert(parent)` 先于
-    /// 递归调用执行），但 `visited` 防止无限递归。
-    /// 此测试验证自环不会 stack overflow，并记录实际行为。
+    /// 自环 A -> A 不应把 A 加入自身祖先集合（角色不能是自身的祖先，
+    /// `dfs_ancestors` 先检查 visited 再插入），也不应 stack overflow / 无限递归。
     #[tokio::test(flavor = "multi_thread")]
     async fn compute_closure_self_loop_does_not_infinite_recurse() {
         let pool = setup_db().await;
@@ -1112,15 +1208,16 @@ mod db_sqlite_tests {
             .await
             .expect("compute_closure 应成功");
 
-        // A 在邻接表中（有自环边），所以 closure 应包含 A
+        // A 在邻接表中（有自环边），所以 closure 应包含 A 的条目
         let a_ancestors = closure
             .get("A")
             .expect("closure 应包含 A（自环边使 A 在 adj 中）");
-        // 自环导致 A 被插入为自身的祖先（当前实现行为）
+        // 自环不会把 A 加入自身祖先集合（「不含 role 自身」契约）
         assert!(
-            a_ancestors.contains("A"),
-            "自环 A->A 时 A 出现在自身祖先集合中（实现行为）"
+            !a_ancestors.contains("A"),
+            "自环 A->A 时 A 不应出现在自身祖先集合中"
         );
+        assert!(a_ancestors.is_empty(), "自环 A 的祖先集合应为空");
     }
 
     /// `compute_closure` 处理多个不连通分量。
@@ -1303,8 +1400,8 @@ mod db_sqlite_tests {
 
     /// `get_descendants` 处理自环（A -> A）。
     ///
-    /// 自环 A -> A 时，A 被插入为自身的后代（`descendants.insert(child)` 先于
-    /// 递归调用执行），但 `visited` 防止无限递归。
+    /// 自环 A -> A 不应把 A 加入自身后代集合（角色不能是自身的后代，
+    /// `dfs_descendants` 先检查 visited 再插入），也不应 stack overflow / 无限递归。
     #[tokio::test(flavor = "multi_thread")]
     async fn get_descendants_self_loop_does_not_infinite_recurse() {
         let pool = setup_db().await;
@@ -1319,11 +1416,12 @@ mod db_sqlite_tests {
             .await
             .expect("get_descendants 应成功");
 
-        // 自环导致 A 出现在自身的后代集合中（当前实现行为）
+        // 自环不会把 A 加入自身后代集合（「不含 role 自身」契约）
         assert!(
-            descendants.contains("A"),
-            "自环 A->A 时 A 出现在自身后代集合中（实现行为）"
+            !descendants.contains("A"),
+            "自环 A->A 时 A 不应出现在自身后代集合中"
         );
+        assert!(descendants.is_empty(), "自环 A 的后代集合应为空");
     }
 
     /// `get_descendants` 处理多父节点（一个 child 继承多个 parent）。

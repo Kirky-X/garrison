@@ -129,7 +129,7 @@ fn parse_login_log_row(row: &QueryResult) -> GarrisonResult<LoginLogRow> {
         device_id: row.try_get("", "device_id").map_err(|e| {
             GarrisonError::Dao(format!("dao-app-login-log-row-parse-device-id::{}", e))
         })?,
-        success: read_bool(row, "success"),
+        success: read_bool(row, "success")?,
         fail_reason: row.try_get("", "fail_reason").map_err(|e| {
             GarrisonError::Dao(format!("dao-app-login-log-row-parse-fail-reason::{}", e))
         })?,

@@ -79,6 +79,16 @@ impl GarrisonDao for InMemoryDao {
 
     async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut store = self.store.lock();
+        // 过期键视为不存在（与 get()/keys() 语义一致）：先做过期检查，
+        // 避免已过期键被 update 改值「复活」。
+        let expired = match store.get(key) {
+            Some((_, Some(deadline))) => Instant::now() >= *deadline,
+            _ => false,
+        };
+        if expired {
+            store.remove(key);
+            return Err(GarrisonError::Dao(format!("dao-key-missing::{}", key)));
+        }
         match store.get_mut(key) {
             Some((existing, _)) => {
                 *existing = value.to_string();
@@ -90,6 +100,16 @@ impl GarrisonDao for InMemoryDao {
 
     async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
         let mut store = self.store.lock();
+        // 过期键视为不存在（与 get()/keys() 语义一致）：先做过期检查，
+        // 避免已过期键被 expire 续期「复活」。
+        let expired = match store.get(key) {
+            Some((_, Some(deadline))) => Instant::now() >= *deadline,
+            _ => false,
+        };
+        if expired {
+            store.remove(key);
+            return Err(GarrisonError::Dao(format!("dao-key-missing::{}", key)));
+        }
         match store.get_mut(key) {
             Some((_, expire_at)) => {
                 *expire_at = if seconds == 0 {
@@ -590,6 +610,7 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
 mod glob_match_tests {
     use super::glob_match;
 
+
     /// 精确匹配（无通配符）：相等为 true，不等为 false。
     #[test]
     fn glob_match_exact() {
@@ -660,5 +681,71 @@ mod glob_match_tests {
         assert!(glob_match("用户?", "用户A"));
         assert!(glob_match("*:租户:*", "garrison:租户:42"));
         assert!(!glob_match("用户?", "用户AB"));
+    }
+}
+
+// ------------------------------------------------------------------------
+// TTL 语义测试（update / expire 对已过期键视为不存在）
+// ------------------------------------------------------------------------
+
+#[cfg(test)]
+mod ttl_semantics_tests {
+    use super::*;
+
+    /// update 对已过期 key 视为不存在：报 dao-key-missing 且不改值（不复活）。
+    ///
+    /// TTL 契约一致性：`get()` / `keys()` 视过期键为不存在，
+    /// `update()` 不得通过改值让过期键复活。
+    #[tokio::test]
+    async fn update_expired_key_returns_missing_without_reviving() {
+        let dao = InMemoryDao::new();
+        dao.set("upd_expired", "old", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let result = dao.update("upd_expired", "new").await;
+        assert!(
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-key-missing")),
+            "已过期 key 的 update 应返回 dao-key-missing，实际: {:?}",
+            result
+        );
+        assert!(
+            dao.get("upd_expired").await.unwrap().is_none(),
+            "update 过期键后键应保持不存在（不得复活）"
+        );
+    }
+
+    /// expire 对已过期 key 视为不存在：报 dao-key-missing 且不续期（不复活）。
+    ///
+    /// TTL 契约一致性：`get()` / `keys()` 视过期键为不存在，
+    /// `expire()` 不得通过续期让过期键复活。
+    #[tokio::test]
+    async fn expire_expired_key_returns_missing_without_reviving() {
+        let dao = InMemoryDao::new();
+        dao.set("exp_expired", "v", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        let result = dao.expire("exp_expired", 3600).await;
+        assert!(
+            matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-key-missing")),
+            "已过期 key 的 expire 应返回 dao-key-missing，实际: {:?}",
+            result
+        );
+        assert!(
+            dao.get("exp_expired").await.unwrap().is_none(),
+            "expire 过期键后键应保持不存在（不得复活）"
+        );
+    }
+
+    /// 存活键的 update / expire 行为不受影响（回归：过期检查不误伤未过期键）。
+    #[tokio::test]
+    async fn update_and_expire_still_work_for_alive_keys() {
+        let dao = InMemoryDao::new();
+        dao.set("alive", "old", 3600).await.unwrap();
+        dao.update("alive", "new").await.unwrap();
+        assert_eq!(dao.get("alive").await.unwrap().as_deref(), Some("new"));
+        dao.expire("alive", 120).await.unwrap();
+        let ttl = dao.get_timeout("alive").await.unwrap();
+        assert!(
+            ttl.is_some() && ttl.unwrap() <= Duration::from_secs(120),
+            "expire 应重置存活键 TTL"
+        );
     }
 }

@@ -91,8 +91,10 @@ impl AuthMethodRepository for DbnexusAuthMethodRepository {
         limit: i64,
     ) -> GarrisonResult<Vec<AuthMethodRow>> {
         dao_session!(self.pool, "dao-app-auth-method-list", session, conn);
+        // ORDER BY create_time, id：LIMIT/OFFSET 分页需要稳定排序，
+        // 否则并发变更下可能重行/漏行（create_time 同秒时以 id 决胜）
         let sql = "SELECT id, user_id, method_type, external_id, metadata, create_time, tenant_id \
-                   FROM app_auth_method WHERE tenant_id = ? LIMIT ? OFFSET ?";
+                   FROM app_auth_method WHERE tenant_id = ? ORDER BY create_time, id LIMIT ? OFFSET ?";
         let stmt = make_statement(
             conn,
             sql,

@@ -5,7 +5,9 @@
 
 use super::{v_i64, v_str, DbnexusUserRepository};
 use crate::dao::dao_session;
-use crate::dao::repository::{make_statement, NewUser, UpdateUser, UserRepository, UserRow};
+use crate::dao::repository::{
+    make_statement, NewUser, UpdateUser, UserListRow, UserRepository, UserRow,
+};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use dbnexus::DbPool;
@@ -115,17 +117,23 @@ impl UserRepository for DbnexusUserRepository {
         Ok(())
     }
 
-    /// 分页查询租户下的用户列表。
+    /// 分页查询租户下的用户列表（按 `id` 稳定排序）。
     ///
-    /// # ⚠️ 安全说明（Issue 67）
+    /// # ⚠️ 安全说明（Issue 67，已修复）
     ///
-    /// 返回的 `UserRow` 包含 `password_hash` 字段。此方法应用于管理后台展示用户列表，
-    /// **禁止**将 `password_hash` 直接序列化到 API 响应或日志中。
-    /// 若仅需用户元数据（不含密码哈希），应在上层投影时排除 `password_hash` 字段。
-    async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> GarrisonResult<Vec<UserRow>> {
+    /// 返回 [`UserListRow`]（不含 `password_hash` 的投影）：SELECT 明确排除
+    /// `password_hash` 列，从类型上杜绝凭证数据经分页/浏览接口被序列化到
+    /// API 响应或日志。需要哈希的认证查询请使用 `find_by_id` / `find_by_username`。
+    async fn list(
+        &self,
+        tenant_id: i64,
+        offset: i64,
+        limit: i64,
+    ) -> GarrisonResult<Vec<UserListRow>> {
         dao_session!(self.pool, "dao-app-user-list", session, conn);
-        let sql = "SELECT id, username, password_hash, status, tenant_id, created_at, updated_at, last_login_at \
-                   FROM app_user WHERE tenant_id = ? LIMIT ? OFFSET ?";
+        // ORDER BY id：LIMIT/OFFSET 分页需要稳定排序，否则并发变更下可能重行/漏行
+        let sql = "SELECT id, username, status, tenant_id, created_at, updated_at, last_login_at \
+                   FROM app_user WHERE tenant_id = ? ORDER BY id LIMIT ? OFFSET ?";
         let stmt = make_statement(
             conn,
             sql,
@@ -135,8 +143,35 @@ impl UserRepository for DbnexusUserRepository {
             .query_all_raw(stmt)
             .await
             .map_err(|e| GarrisonError::Dao(format!("dao-app-user-list-query::{}", e)))?;
-        rows.iter().map(parse_user_row).collect()
+        rows.iter().map(parse_user_list_row).collect()
     }
+}
+
+/// 解析 app_user 列表行（不含 password_hash 投影）。
+fn parse_user_list_row(row: &QueryResult) -> GarrisonResult<UserListRow> {
+    Ok(UserListRow {
+        id: row
+            .try_get("", "id")
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-row-parse-id::{}", e)))?,
+        username: row
+            .try_get("", "username")
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-row-parse-username::{}", e)))?,
+        status: row
+            .try_get("", "status")
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-row-parse-status::{}", e)))?,
+        tenant_id: row
+            .try_get("", "tenant_id")
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-row-parse-tenant-id::{}", e)))?,
+        created_at: row
+            .try_get("", "created_at")
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-row-parse-created-at::{}", e)))?,
+        updated_at: row
+            .try_get("", "updated_at")
+            .map_err(|e| GarrisonError::Dao(format!("dao-app-user-row-parse-updated-at::{}", e)))?,
+        last_login_at: row.try_get("", "last_login_at").map_err(|e| {
+            GarrisonError::Dao(format!("dao-app-user-row-parse-last-login-at::{}", e))
+        })?,
+    })
 }
 
 /// 解析 app_user 行。
@@ -436,6 +471,38 @@ mod tests {
 
         let empty = repo.list(1, 100, 10).await.expect("list 超范围应成功");
         assert!(empty.is_empty(), "超出范围的 offset 应返回空");
+    }
+
+    /// list 返回 UserListRow（不含 password_hash 的投影）：
+    /// 行结构上无该字段，序列化结果也不含 password_hash 键。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_returns_rows_without_password_hash() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool);
+
+        repo.create(
+            1,
+            NewUser {
+                username: "hash-leak-check".to_string(),
+                password_hash: "$argon2id$secret-hash".to_string(),
+                status: "active".to_string(),
+            },
+        )
+        .await
+        .expect("create 应成功");
+
+        let rows = repo.list(1, 0, 100).await.expect("list 应成功");
+        assert_eq!(rows.len(), 1, "应有 1 条记录");
+        // UserListRow 类型上没有 password_hash 字段（编译期防护）；
+        // 序列化结果也不得出现该键
+        let json = serde_json::to_string(&rows[0]).expect("UserListRow 应可序列化");
+        assert!(
+            !json.contains("password_hash"),
+            "list 行序列化结果不应包含 password_hash，实际: {}",
+            json
+        );
+        assert_eq!(rows[0].username, "hash-leak-check");
+        assert_eq!(rows[0].tenant_id, 1);
     }
 
     /// find_by_username 跨租户查询应返回 None（同一 username 可在不同租户存在）。

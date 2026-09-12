@@ -18,6 +18,7 @@
 //! - **bool 字段**：SQLite 用 INTEGER 0/1 存储，Row struct 用 bool，读取时 i64→bool 转换。
 //! - **时间字段**：SQLite 用 CURRENT_TIMESTAMP 默认生成，读取为 String。
 
+use crate::error::{GarrisonError, GarrisonResult};
 use dbnexus::DbPool;
 use sea_orm::{QueryResult, Value};
 
@@ -60,9 +61,24 @@ fn v_bool(b: bool) -> Value {
     Value::BigInt(Some(if b { 1 } else { 0 }))
 }
 
+/// 生成与 SQL `CURRENT_TIMESTAMP` 同格式的当前时间串（`YYYY-MM-DD HH:MM:SS`）。
+///
+/// 供 UPDATE 语句以参数绑定刷新 `updated_at` 列（TEXT/VARCHAR），三方言
+/// （SQLite / PostgreSQL / MySQL）通用，且与 DEFAULT CURRENT_TIMESTAMP 产生
+/// 的既有值格式一致（保持字典序可比）。
+pub(crate) fn now_timestamp() -> String {
+    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 /// 读取 bool 列（SQLite INTEGER 0/1 → bool）。
-fn read_bool(row: &QueryResult, col: &str) -> bool {
-    row.try_get::<i64>("", col).map(|v| v != 0).unwrap_or(false)
+///
+/// 列缺失 / 类型不符时返回 `GarrisonError::Dao`，**不再静默吞错为 `false`**：
+/// schema 漂移（列改名/缺列）时直接显性报错，而非把缺列误读为 `false`
+/// 掩盖数据完整性问题。
+fn read_bool(row: &QueryResult, col: &str) -> GarrisonResult<bool> {
+    row.try_get::<i64>("", col)
+        .map(|v| v != 0)
+        .map_err(|e| GarrisonError::Dao(format!("dao-repo-read-bool::{}::{}", col, e)))
 }
 
 // ============================================================================

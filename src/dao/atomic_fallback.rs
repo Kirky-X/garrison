@@ -19,6 +19,22 @@
 //!
 //! 仅适用于单线程 / `serial_test` 串行化测试环境。生产后端**禁止**使用
 //! （参阅 [`crate::dao::GarrisonDao`] trait 文档「原子性编译期契约」）。
+//!
+//! # 门控状态（架构审查 A1 遗留缺口，已知限制）
+//!
+//! 本模块宣称的 `testing` feature 门控**尚未落地**：下方三个 `#[macro_export]`
+//! 宏（`atomic_test_fallback!` / `atomic_test_fallback_no_get_and_delete!` /
+//! `__atomic_test_fallback_get_and_delete!`）目前**没有**
+//! `#[cfg(any(test, feature = "testing"))]` 编译期门控。原因：`testing`
+//! feature 虽已在 Cargo.toml 定义，但 CI 测试命令仍为 full-only，
+//! tests/acceptance 与 benches 在未启用 `testing` 的情况下直接使用这些宏，
+//! 立即门控会使其编译失败（已记录为后续 change——架构审查 A1）。
+//! 因此当前**仅以文档约定约束**：
+//!
+//! - 这三个宏是**测试回退专用**，任何生产 DAO 实现 / 业务代码**严禁**调用；
+//! - 外部 crate 仅应在集成测试 / bench 目标中使用；
+//! - 待 CI 追加 `testing` feature 后，将补上 `#[cfg(any(test, feature = "testing"))]`
+//!   门控，使生产构建无法触及（届时无需改动宏展开体）。
 
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
@@ -139,8 +155,12 @@ pub mod impls {
 /// - garrison crate 内部（测试代码）：`crate::atomic_test_fallback!();`
 /// - 外部集成测试 / bench：`garrison::atomic_test_fallback!();`
 ///
+/// # ⚠️ 仅供测试（禁止生产使用）
+///
 /// 展开体为 `async_trait` 脱糖后的签名（`Pin<Box<dyn Future>>`），逻辑委托
-/// [`impls`] 单点实现。生产后端禁止使用（模块经 testing 门控，release 无效）。
+/// [`impls`] 单点实现。生产后端禁止使用——本宏当前**未做**
+/// `#[cfg(any(test, feature = "testing"))]` 编译期门控（原因与后续计划见
+/// 模块文档「门控状态」），生产代码不得依赖此约定之外的行为。
 #[macro_export]
 #[doc(hidden)]
 macro_rules! atomic_test_fallback {
@@ -152,6 +172,12 @@ macro_rules! atomic_test_fallback {
 
 /// 仅供**测试 mock**：展开 5 个原子必需方法（保留实现方自定义的原子
 /// `get_and_delete`，如 SSO ticket 单锁消费场景）。
+///
+/// # ⚠️ 仅供测试（禁止生产使用）
+///
+/// 本宏当前未做 `#[cfg(any(test, feature = "testing"))]` 编译期门控
+///（原因与后续计划见模块文档「门控状态」）；组合回退实现非原子
+///（TOCTOU / TTL 丢失），生产 DAO 实现严禁展开本宏。
 #[macro_export]
 #[doc(hidden)]
 macro_rules! atomic_test_fallback_no_get_and_delete {
@@ -282,6 +308,13 @@ macro_rules! atomic_test_fallback_no_get_and_delete {
 
 /// 内部宏：`get_and_delete` 薄壳（由 [`atomic_test_fallback!`] 组合引用，
 /// 不对外承诺独立使用）。
+///
+/// # ⚠️ 仅供测试（禁止生产使用）
+///
+/// 虽然正常情况下仅经 [`atomic_test_fallback!`] 间接展开，但本宏为
+/// `#[macro_export]`，其他 crate 可直接调用——当前未做
+/// `#[cfg(any(test, feature = "testing"))]` 编译期门控（原因与后续计划见
+/// 模块文档「门控状态」）。生产 DAO 实现严禁直接展开本宏。
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __atomic_test_fallback_get_and_delete {

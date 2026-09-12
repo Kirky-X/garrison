@@ -112,9 +112,27 @@ impl RolePermissionRepository for DbnexusRolePermissionRepository {
         offset: i64,
         limit: i64,
     ) -> GarrisonResult<Vec<RolePermissionRow>> {
+        // 负 limit 校验：SQLite/PG/MySQL 中负 LIMIT 语义为「无上限」，
+        // 传入负值会静默返回该租户全部行（数据泄漏 / DoS 风险），必须显式拒绝
+        if limit < 0 {
+            return Err(GarrisonError::InvalidParam(format!(
+                "dao-role-permission-list-invalid-limit::{}",
+                limit
+            )));
+        }
+        // 负 offset 校验：负 OFFSET 在 SQLite 中按 0 处理、PG/MySQL 报错，
+        // 行为不一致且无合法场景，统一显式拒绝
+        if offset < 0 {
+            return Err(GarrisonError::InvalidParam(format!(
+                "dao-role-permission-list-invalid-offset::{}",
+                offset
+            )));
+        }
         dao_session!(self.pool, "dao-app-role-permission-list", session, conn);
+        // ORDER BY role_id, permission_id：LIMIT/OFFSET 分页需要稳定排序，
+        // 否则并发变更下可能重行/漏行（(tenant_id, role_id, permission_id) 唯一，排序确定）
         let sql = "SELECT role_id, permission_id, tenant_id \
-                   FROM app_role_permission WHERE tenant_id = ? LIMIT ? OFFSET ?";
+                   FROM app_role_permission WHERE tenant_id = ? ORDER BY role_id, permission_id LIMIT ? OFFSET ?";
         let stmt = make_statement(
             conn,
             sql,
@@ -402,6 +420,43 @@ mod tests {
 
         let result = repo.list(1, 0, 100).await.expect("list 应成功");
         assert!(result.is_empty(), "空表应返回空列表");
+    }
+
+    /// list 负 limit 校验：负 LIMIT 在 SQL 中语义为「无上限」，必须显式拒绝
+    /// （否则调用方传 -1 会静默返回该租户全部行，形成数据泄漏 / DoS 向量）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_negative_limit_returns_invalid_param() {
+        let pool = setup_db().await;
+        let repo = DbnexusRolePermissionRepository::new(pool);
+
+        let result = repo.list(1, 0, -1).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::error::GarrisonError::InvalidParam(ref msg))
+                    if msg.contains("dao-role-permission-list-invalid-limit")
+            ),
+            "负 limit 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// list 负 offset 校验：负 OFFSET 无合法场景，统一显式拒绝。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn list_negative_offset_returns_invalid_param() {
+        let pool = setup_db().await;
+        let repo = DbnexusRolePermissionRepository::new(pool);
+
+        let result = repo.list(1, -1, 10).await;
+        assert!(
+            matches!(
+                result,
+                Err(crate::error::GarrisonError::InvalidParam(ref msg))
+                    if msg.contains("dao-role-permission-list-invalid-offset")
+            ),
+            "负 offset 应返回 InvalidParam，实际: {:?}",
+            result
+        );
     }
 
     /// revoke 对不存在的关联不报错（幂等）。

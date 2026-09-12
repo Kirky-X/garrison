@@ -57,6 +57,31 @@ pub struct UserRow {
     pub last_login_at: Option<String>,
 }
 
+/// 用户列表行（app_user，不含 password_hash 的投影）。
+///
+/// [`UserRepository::list`] 专用于管理后台分页展示等场景，返回本类型
+/// 而非 [`UserRow`]——从类型上排除 `password_hash`，杜绝凭证数据经
+/// 分页/浏览接口被意外序列化到 API 响应或日志（编译期防护，替代此前
+/// 仅文档警告的做法）。需要哈希的认证查询请使用 `find_by_id` /
+/// `find_by_username`（返回 [`UserRow`]）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct UserListRow {
+    /// 用户 ID（UUID 字符串）。
+    pub id: String,
+    /// 用户名。
+    pub username: String,
+    /// 状态（pending/active/suspended/inactive/deleted）。
+    pub status: String,
+    /// 租户 ID。
+    pub tenant_id: i64,
+    /// 创建时间（ISO 8601 字符串）。
+    pub created_at: String,
+    /// 更新时间。
+    pub updated_at: String,
+    /// 最后登录时间（可空）。
+    pub last_login_at: Option<String>,
+}
+
 /// 新建用户参数。
 #[derive(Debug, Clone)]
 pub struct NewUser {
@@ -361,8 +386,17 @@ pub trait UserRepository: Send + Sync {
     /// 删除用户（幂等，不存在返回 Ok(())）。
     async fn delete(&self, tenant_id: i64, id: &str) -> GarrisonResult<()>;
 
-    /// 分页查询用户。
-    async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> GarrisonResult<Vec<UserRow>>;
+    /// 分页查询用户（按 `id` 稳定排序，保证 LIMIT/OFFSET 分页确定性）。
+    ///
+    /// 返回 [`UserListRow`]（不含 `password_hash` 的投影）：分页/浏览场景
+    /// 无需凭证数据，从类型上排除密码哈希泄漏。需要哈希的认证查询请使用
+    /// `find_by_id` / `find_by_username`。
+    async fn list(
+        &self,
+        tenant_id: i64,
+        offset: i64,
+        limit: i64,
+    ) -> GarrisonResult<Vec<UserListRow>>;
 }
 
 /// 角色表 Repository trait。
@@ -649,6 +683,15 @@ pub trait UserDeviceRepository: Send + Sync {
     ///
     /// - 若 (tenant_id, login_id, identifier) 已存在，更新 last_seen_at 并返回已有 ID（幂等）。
     /// - 若当前设备数 >= [`MAX_DEVICES`]，返回 `GarrisonError::InvalidParam`。
+    ///
+    /// # 原子性（MAX_DEVICES 上限）
+    ///
+    /// 参考实现（`DbnexusUserDeviceRepository`）将「设备计数检查 + 插入」合并为
+    /// 单条条件 `INSERT ... SELECT ... WHERE (SELECT COUNT(*)) < MAX_DEVICES` 语句，
+    /// 消除 check-then-act TOCTOU：SQLite（单写者）下完全原子；PostgreSQL / MySQL
+    /// 在 READ COMMITTED 及以上隔离级别下，两条并发语句仍可能各自看到语句级快照
+    /// 而同时插入（极小窗口）——彻底封死需 DB 级触发器 / 计数约束或更高隔离级别，
+    /// DAO 层无跨语句事务 API，故按此最小化方案实现并在此声明剩余窗口。
     async fn register_device(
         &self,
         tenant_id: i64,
@@ -715,6 +758,13 @@ pub mod role_hierarchy;
 /// - `DbBackend::Postgres`：将第 n 个 `?` 替换为 `$n`
 /// - 其他后端：保留 `?`（由调用方确保兼容性）
 ///
+/// # 跳过的上下文
+///
+/// 以下上下文中的 `?` 不被替换（避免参数序号错位）：
+/// - 单引号字符串字面量（含 `''` 转义）
+/// - `--` 行注释（至行尾）
+/// - `/* */` 块注释（支持嵌套，与 PostgreSQL 语义一致）
+///
 /// # 示例
 ///
 /// ```
@@ -733,12 +783,60 @@ pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
     }
     let mut result = String::with_capacity(sql.len() + 16);
     let mut n = 0u32;
-    // in_string 状态机：跳过单引号字符串字面量内的 `?`，避免参数序号错位。
-    // `''` 在 SQL 标准中是字符串内转义单引号（一个字面 `'`），保持 in_string=true。
+    // 状态机：跳过字符串字面量与注释内的 `?`，避免参数序号错位。
+    // - `''` 在 SQL 标准中是字符串内转义单引号（一个字面 `'`），保持 in_string=true。
+    // - `--` 行注释：跳过至行尾（含换行符）。
+    // - `/* */` 块注释：支持嵌套（PostgreSQL 语义），首个未匹配的 `*/` 结束最内层。
     let mut in_string = false;
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut block_depth = 0usize;
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
+        if in_line_comment {
+            // 行注释：原样输出直到行尾
+            if c == '\n' {
+                in_line_comment = false;
+            }
+            result.push(c);
+            continue;
+        }
+        if in_block_comment {
+            // 块注释：原样输出，支持嵌套
+            if c == '/' && chars.peek() == Some(&'*') {
+                result.push('/');
+                result.push('*');
+                chars.next();
+                block_depth += 1;
+            } else if c == '*' && chars.peek() == Some(&'/') {
+                result.push('*');
+                result.push('/');
+                chars.next();
+                block_depth -= 1;
+                if block_depth == 0 {
+                    in_block_comment = false;
+                }
+            } else {
+                result.push(c);
+            }
+            continue;
+        }
         match c {
+            '-' if !in_string && chars.peek() == Some(&'-') => {
+                // 行注释开始：`--` 至行尾，注释内的 `?` 不替换
+                result.push('-');
+                result.push('-');
+                chars.next();
+                in_line_comment = true;
+            },
+            '/' if !in_string && chars.peek() == Some(&'*') => {
+                // 块注释开始：`/*` 至匹配的 `*/`，注释内的 `?` 不替换
+                result.push('/');
+                result.push('*');
+                chars.next();
+                in_block_comment = true;
+                block_depth = 1;
+            },
             '\'' if in_string => {
                 // 在字符串内遇 `'`，look-ahead 判断是否为 `''` 转义
                 if chars.peek() == Some(&'\'') {
@@ -1225,6 +1323,61 @@ mod tests {
         assert_eq!(
             result, "SELECT 'a''b' AS s, $1 AS v",
             "字符串字面量内 '' 转义分支：状态机应保持 in_string=true，转义后 ? 应替换为 $1"
+        );
+    }
+
+    /// T003：`--` 行注释内的 `?` 不被替换，注释后的 `?` 正常编号。
+    ///
+    /// 场景：`SELECT ? -- comment with ?` 若注释内 `?` 被替换，
+    /// 会导致参数序号错位（绑定值与占位符不匹配）。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[test]
+    fn convert_placeholders_skips_question_mark_in_line_comment() {
+        use sea_orm::DbBackend;
+        let sql = "SELECT ? -- comment with ? here\nWHERE id = ?";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(
+            result, "SELECT $1 -- comment with ? here\nWHERE id = $2",
+            "行注释内 ? 不应替换，注释结束后 ? 应继续编号为 $2"
+        );
+    }
+
+    /// T004：`/* */` 块注释内的 `?` 不被替换。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[test]
+    fn convert_placeholders_skips_question_mark_in_block_comment() {
+        use sea_orm::DbBackend;
+        let sql = "SELECT ?, /* hint: ? not a placeholder */ ? AS b";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(
+            result, "SELECT $1, /* hint: ? not a placeholder */ $2 AS b",
+            "块注释内 ? 不应替换，注释外 ? 正常编号"
+        );
+    }
+
+    /// T004-supplement：嵌套块注释（PostgreSQL 语义）内层的 `?` 也不替换。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[test]
+    fn convert_placeholders_handles_nested_block_comments() {
+        use sea_orm::DbBackend;
+        let sql = "SELECT ? /* outer /* inner ? */ still comment ? */ , ? AS b";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(
+            result, "SELECT $1 /* outer /* inner ? */ still comment ? */ , $2 AS b",
+            "嵌套块注释内的 ? 均不应替换，第一个未匹配 */ 结束内层、第二个结束外层"
+        );
+    }
+
+    /// 字符串字面量内的 `--` / `/*` 不应被误判为注释开始。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[test]
+    fn convert_placeholders_comment_markers_inside_string_are_literal() {
+        use sea_orm::DbBackend;
+        let sql = "SELECT '-- not a comment /* neither */ ?' AS s, ? AS v";
+        let result = convert_placeholders(sql, DbBackend::Postgres);
+        assert_eq!(
+            result, "SELECT '-- not a comment /* neither */ ?' AS s, $1 AS v",
+            "字符串字面量内的注释标记应按字面量处理，其中 ? 不替换也不计数"
         );
     }
 

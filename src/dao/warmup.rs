@@ -40,8 +40,12 @@ impl CacheWarmupService {
     /// 扫描 DAO 中所有 `role:*` 和 `tenant:*` 键，逐个 `get()` 触发缓存填充，
     /// 返回加载统计。空数据库返回零统计，不报错。
     ///
+    /// # 部分失败语义
+    ///
     /// 当 DAO 后端不支持 `keys()`（返回 `NotImplemented`，如生产环境
-    /// `GarrisonDaoOxcache`）时，记录 `warn` 日志并返回零统计，不传播错误。
+    /// `GarrisonDaoOxcache` 的部分部署形态）时，对应部分记 `warn` 日志并按
+    /// 零键处理，**其余部分继续预热**（例如仅 tenant keys 不支持时，role keys
+    /// 已成功获取的结果不会被丢弃），不传播错误。两者都不支持时返回零统计。
     pub async fn warmup(&self) -> GarrisonResult<WarmupStats> {
         let role_pattern = format!("{}*", DaoKeyPrefix::Role.as_str());
         let tenant_pattern = format!("{}*", DaoKeyPrefix::Tenant.as_str());
@@ -49,22 +53,20 @@ impl CacheWarmupService {
         let role_keys = match self.dao.keys(&role_pattern).await {
             Ok(keys) => keys,
             Err(crate::error::GarrisonError::NotImplemented(_)) => {
-                tracing::warn!("DAO backend does not support keys(), cache warmup skipped");
-                return Ok(WarmupStats {
-                    roles_loaded: 0,
-                    tenants_loaded: 0,
-                });
+                tracing::warn!(
+                    "DAO backend does not support role keys(), role warmup skipped (tenants still warmed)"
+                );
+                Vec::new()
             },
             Err(e) => return Err(e),
         };
         let tenant_keys = match self.dao.keys(&tenant_pattern).await {
             Ok(keys) => keys,
             Err(crate::error::GarrisonError::NotImplemented(_)) => {
-                tracing::warn!("DAO backend does not support keys(), cache warmup skipped");
-                return Ok(WarmupStats {
-                    roles_loaded: 0,
-                    tenants_loaded: 0,
-                });
+                tracing::warn!(
+                    "DAO backend does not support tenant keys(), tenant warmup skipped (roles still warmed)"
+                );
+                Vec::new()
             },
             Err(e) => return Err(e),
         };
@@ -474,11 +476,12 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// warmup 在 role keys 成功但 tenant keys 返回 NotImplemented 时应返回零统计。
+    /// warmup 在 role keys 成功但 tenant keys 返回 NotImplemented 时继续加载 roles。
     ///
-    /// 验证 tenant keys() 的 NotImplemented 分支被正确捕获（role keys 成功后的第二个 keys 调用）。
+    /// 部分失败语义：tenant keys() 的 NotImplemented 仅跳过租户预热，
+    /// 已成功获取的 role keys 不被丢弃（修复前整体提前返回零统计）。
     #[tokio::test]
-    async fn warmup_tenant_keys_not_implemented_returns_zero() {
+    async fn warmup_tenant_keys_not_implemented_still_loads_roles() {
         let dao = Arc::new(PartialNotImplDao::new(vec![
             "role:admin".to_string(),
             "role:user".to_string(),
@@ -486,7 +489,7 @@ mod tests {
         let service = CacheWarmupService::new(dao);
         let result = service.warmup().await;
 
-        // tenant keys() 返回 NotImplemented 时，整个 warmup 返回零统计
+        // tenant keys() 返回 NotImplemented 时不应报错，roles 继续加载
         assert!(
             result.is_ok(),
             "NotImplemented 应被捕获: {:?}",
@@ -494,8 +497,8 @@ mod tests {
         );
         let stats = result.unwrap();
         assert_eq!(
-            stats.roles_loaded, 0,
-            "tenant NotImplemented 时 roles 也应为 0"
+            stats.roles_loaded, 2,
+            "tenant NotImplemented 时已获取的 role keys 应继续加载"
         );
         assert_eq!(stats.tenants_loaded, 0);
     }

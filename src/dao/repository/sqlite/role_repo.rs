@@ -3,7 +3,7 @@
 
 //! DbnexusRoleRepository 实现（app_role 表）。
 
-use super::{read_bool, v_bool, v_i64, v_opt_str, v_str, DbnexusRoleRepository};
+use super::{now_timestamp, read_bool, v_bool, v_i64, v_opt_str, v_str, DbnexusRoleRepository};
 use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, NewRole, RoleRepository, RoleRow};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -94,6 +94,10 @@ impl RoleRepository for DbnexusRoleRepository {
         if sets.is_empty() {
             return Ok(());
         }
+        // updated_at 随每次成功 UPDATE 刷新（CURRENT_TIMESTAMP 同款格式，
+        // 以字符串参数绑定写入 TEXT/VARCHAR 列，三方言通用）
+        sets.push("updated_at = ?");
+        params.push(v_str(&now_timestamp()));
         params.push(v_i64(tenant_id));
         params.push(v_str(id));
         let sql = format!(
@@ -120,9 +124,10 @@ impl RoleRepository for DbnexusRoleRepository {
 
     async fn list(&self, tenant_id: i64, offset: i64, limit: i64) -> GarrisonResult<Vec<RoleRow>> {
         dao_session!(self.pool, "dao-app-role-list", session, conn);
+        // ORDER BY id：LIMIT/OFFSET 分页需要稳定排序，否则并发变更下可能重行/漏行
         let sql =
             "SELECT id, code, name, description, tenant_id, is_system, created_at, updated_at \
-                   FROM app_role WHERE tenant_id = ? LIMIT ? OFFSET ?";
+                   FROM app_role WHERE tenant_id = ? ORDER BY id LIMIT ? OFFSET ?";
         let stmt = make_statement(
             conn,
             sql,
@@ -154,7 +159,7 @@ fn parse_role_row(row: &QueryResult) -> GarrisonResult<RoleRow> {
         tenant_id: row
             .try_get("", "tenant_id")
             .map_err(|e| GarrisonError::Dao(format!("dao-app-role-row-parse-tenant-id::{}", e)))?,
-        is_system: read_bool(row, "is_system"),
+        is_system: read_bool(row, "is_system")?,
         created_at: row
             .try_get("", "created_at")
             .map_err(|e| GarrisonError::Dao(format!("dao-app-role-row-parse-created-at::{}", e)))?,
@@ -335,6 +340,45 @@ mod tests {
             row.description.as_deref(),
             Some("保留描述"),
             "description 不应变"
+        );
+    }
+
+    /// update 应刷新 updated_at（不再保留 create 时的旧值）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_refreshes_updated_at() {
+        use std::time::Duration;
+        let pool = setup_db().await;
+        let repo = DbnexusRoleRepository::new(pool);
+
+        let id = repo
+            .create(
+                1,
+                NewRole {
+                    code: "ts-role".to_string(),
+                    name: "旧名".to_string(),
+                    description: None,
+                    is_system: false,
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        // created_at 与 updated_at 均为秒级时间戳，间隔 2s 保证可区分
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        repo.update(1, &id, None, Some("新名".to_string()), None)
+            .await
+            .expect("update 应成功");
+
+        let row = repo
+            .find_by_id(1, &id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("角色应存在");
+        assert!(
+            row.updated_at > row.created_at,
+            "update 后 updated_at 应刷新（{} 应晚于 {}）",
+            row.updated_at,
+            row.created_at
         );
     }
 

@@ -132,8 +132,9 @@ impl UserExtRepository for DbnexusUserExtRepository {
         limit: i64,
     ) -> GarrisonResult<Vec<UserExtRow>> {
         dao_session!(self.pool, "dao-app-user-ext-list", session, conn);
+        // ORDER BY id：LIMIT/OFFSET 分页需要稳定排序，否则并发变更下可能重行/漏行
         let sql = "SELECT id, user_id, field_key, field_value, field_type, created_at, updated_at, tenant_id \
-                   FROM app_user_ext WHERE tenant_id = ? LIMIT ? OFFSET ?";
+                   FROM app_user_ext WHERE tenant_id = ? ORDER BY id LIMIT ? OFFSET ?";
         let stmt = make_statement(
             conn,
             sql,

@@ -107,8 +107,10 @@ impl UserRoleRepository for DbnexusUserRoleRepository {
         limit: i64,
     ) -> GarrisonResult<Vec<UserRoleRow>> {
         dao_session!(self.pool, "dao-app-user-role-list", session, conn);
+        // ORDER BY user_id, role_id：LIMIT/OFFSET 分页需要稳定排序，
+        // 否则并发变更下可能重行/漏行（(tenant_id, user_id, role_id) 唯一，排序确定）
         let sql = "SELECT user_id, role_id, scope, grant_time, tenant_id \
-                   FROM app_user_role WHERE tenant_id = ? LIMIT ? OFFSET ?";
+                   FROM app_user_role WHERE tenant_id = ? ORDER BY user_id, role_id LIMIT ? OFFSET ?";
         let stmt = make_statement(
             conn,
             sql,

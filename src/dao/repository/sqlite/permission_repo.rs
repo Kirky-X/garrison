@@ -3,7 +3,7 @@
 
 //! DbnexusPermissionRepository 实现（app_permission 表，全局表无 tenant_id）。
 
-use super::{v_i64, v_opt_str, v_str, DbnexusPermissionRepository};
+use super::{now_timestamp, v_i64, v_opt_str, v_str, DbnexusPermissionRepository};
 use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, NewPermission, PermissionRepository, PermissionRow};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -88,6 +88,10 @@ impl PermissionRepository for DbnexusPermissionRepository {
         if sets.is_empty() {
             return Ok(());
         }
+        // updated_at 随每次成功 UPDATE 刷新（CURRENT_TIMESTAMP 同款格式，
+        // TEXT/VARCHAR 列在三方言下均以字符串参数绑定，避免 timestamp→text 隐式转换）
+        sets.push("updated_at = ?");
+        params.push(v_str(&now_timestamp()));
         // 安全性说明：sets 中的元素均为硬编码列名（如 "resource_type = ?"），
         // 非用户输入，不存在 SQL 注入风险。所有值通过 `?` 占位符参数化传递。
         params.push(v_str(id));
@@ -112,8 +116,9 @@ impl PermissionRepository for DbnexusPermissionRepository {
 
     async fn list(&self, offset: i64, limit: i64) -> GarrisonResult<Vec<PermissionRow>> {
         dao_session!(self.pool, "dao-app-permission-list", session, conn);
+        // ORDER BY id：LIMIT/OFFSET 分页需要稳定排序，否则并发变更下可能重行/漏行
         let sql = "SELECT id, code, name, resource_type, action, created_at, updated_at \
-                   FROM app_permission LIMIT ? OFFSET ?";
+                   FROM app_permission ORDER BY id LIMIT ? OFFSET ?";
         let stmt = make_statement(conn, sql, vec![v_i64(limit), v_i64(offset)]);
         let rows = conn
             .query_all_raw(stmt)
@@ -430,6 +435,42 @@ mod tests {
 
         let result = repo.list(0, 100).await.expect("list 应成功");
         assert!(result.is_empty(), "空表应返回空列表");
+    }
+
+    /// update 应刷新 updated_at（不再保留 create 时的旧值）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_refreshes_updated_at() {
+        use std::time::Duration;
+        let pool = setup_db().await;
+        let repo = DbnexusPermissionRepository::new(pool);
+
+        let id = repo
+            .create(NewPermission {
+                code: "audit:updated_at".to_string(),
+                name: "旧名称".to_string(),
+                resource_type: None,
+                action: None,
+            })
+            .await
+            .expect("create 应成功");
+
+        // created_at 与 updated_at 均为秒级时间戳，间隔 2s 保证可区分
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        repo.update(&id, Some("新名称".to_string()), None, None)
+            .await
+            .expect("update 应成功");
+
+        let row = repo
+            .find_by_id(&id)
+            .await
+            .expect("find_by_id 应成功")
+            .expect("权限应存在");
+        assert!(
+            row.updated_at > row.created_at,
+            "update 后 updated_at 应刷新（{} 应晚于 {}）",
+            row.updated_at,
+            row.created_at
+        );
     }
 
     /// create 生成合法 UUID v4。
