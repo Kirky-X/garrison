@@ -179,7 +179,14 @@ impl std::fmt::Debug for GarrisonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let display = self.to_string();
         let truncated = if display.len() > 200 {
-            format!("{}...", &display[..197])
+            // ocr #2130/#6138：不能用 &display[..197] 按字节硬切——截断点落在
+            // 多字节 UTF-8 字符（中文/emoji）中间会 panic（经 into_response 的
+            // error=?self 日志路径可达，构成远程 DoS）。回退到最近的 char boundary。
+            let mut end = 197;
+            while end > 0 && !display.is_char_boundary(end) {
+                end -= 1;
+            }
+            format!("{}...", &display[..end])
         } else {
             display
         };

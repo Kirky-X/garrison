@@ -344,11 +344,14 @@ impl AuditLogListener {
         Self { pool, config }
     }
 
-    /// 将 `GarrisonEvent` 转换为 `AuditEntry`（全 19 变体穷尽 match）。
+    /// 将 `GarrisonEvent` 转换为 `AuditEntry`（全变体穷尽 match，无 `_ =>` 兜底）。
     ///
-    /// spec R-audit-log-006 要求：`match` 无 `_ =>` 兜底，新增变体时编译错误提醒补实现。
+    /// spec R-audit-log-006 要求：`match` 穷尽所有变体，新增变体（含 feature-gated）
+    /// 时产生编译错误提醒补实现（ocr #4834：原实现存在 `_ =>` 兜底 + match 后 if-let
+    /// 补丁，会把新变体静默归为 `"other"`，与 spec 矛盾，已改为各变体显式映射）。
     ///
-    /// 14 个 spec 必需变体（R-audit-log-005）+ 5 个既有安全变体，全部转换为 AuditEntry。
+    /// 14 个 spec 必需变体（R-audit-log-005）+ 既有安全变体 + feature-gated 变体
+    /// （`anomalous-detector-dual` / `credit-metering`），全部转换为 AuditEntry。
     /// `event_type` 使用变体名 snake_case（如 `LoginFailure` → `"login_failure"`）。
     ///
     /// 转换后对 `metadata` 调用 `mask_metadata` 进行字段掩码。
@@ -741,29 +744,15 @@ impl AuditLogListener {
                     created_at: now,
                 }
             },
-            // feature-gated 变体由 match 后的 if let 覆盖，此处走默认条目
-            _ => AuditEntry {
-                tenant_id,
-                event_type: "other".to_string(),
-                login_id: None,
-                token: None,
-                ip: None,
-                user_agent: None,
-                metadata: None,
-                success: true,
-                created_at: now,
-            },
-        };
-        // 覆盖 anomalous-detector-dual feature 的 AnomalousLoginDetected 变体
-        #[cfg(feature = "anomalous-detector-dual")]
-        if let GarrisonEvent::AnomalousLoginDetected {
-            login_id,
-            reason,
-            detail,
-            ..
-        } = event
-        {
-            entry = AuditEntry {
+            // anomalous-detector-dual feature-gated 变体显式映射
+            //（原为 match 后 if-let 覆盖 + `_` 兜底，ocr #4834 改为穷尽分支）
+            #[cfg(feature = "anomalous-detector-dual")]
+            GarrisonEvent::AnomalousLoginDetected {
+                login_id,
+                reason,
+                detail,
+                ..
+            } => AuditEntry {
                 tenant_id,
                 event_type: "anomalous_login_detected".to_string(),
                 login_id: Some(login_id.clone()),
@@ -779,8 +768,12 @@ impl AuditLogListener {
                 ),
                 success: false,
                 created_at: now,
-            };
-        }
+            },
+            // feature-gated 变体由上方 #[cfg] 分支覆盖，此处不再设 `_ =>` 兜底：
+            // spec R-audit-log-006 要求穷尽 match——新增变体（无论是否 feature-gated）
+            // 必须在此显式映射，否则编译错误提醒补实现（ocr #4834：原 `_` 兜底
+            // 会把新变体静默归为 event_type="other"，与文档矛盾）。
+        };
         // HIGH-1 (CWE-532): token 列截断（前 8 字符 + "…"），live session token 不得原样落审计
         entry.token = entry.token.take().as_deref().map(mask_audit_token);
         // 对 metadata 进行字段掩码（如 password → ***），含 BUILTIN 黑名单兜底（HIGH-2/LOW-1）
@@ -1040,6 +1033,15 @@ impl AuditLogListener {
     ///
     /// 列：`timestamp,login_id,tenant_id,event_type,signature`
     ///
+    /// # CSV 注入防护（ocr #3281）
+    ///
+    /// `login_id` / `event_type` 为调用方可控字符串，含逗号、双引号或换行时
+    /// 按 RFC 4180 转义（引号包裹 + 内嵌双引号翻倍），防止列错位与公式注入
+    /// 下游解析器。简单字段输出保持与历史格式逐字节一致。
+    /// 注意：签名链的 `row_content` 仍使用**原始未转义**字段拼接
+    /// （见 [`Self::compute_signature_chain`]），`verify_signature_chain` 从
+    /// entries 重算，不受导出侧转义影响。
+    ///
     /// 签名链：每行的 `signature` = HMAC-SHA256(key, prev_signature + row_content)，
     /// 其中 `row_content` = `timestamp,login_id,tenant_id,event_type`，
     /// `prev_signature` 初始为空字符串，之后为上一行的 signature。
@@ -1062,7 +1064,11 @@ impl AuditLogListener {
             csv.push('\n');
             csv.push_str(&format!(
                 "{},{},{},{},{}",
-                entry.created_at, login_id_str, entry.tenant_id, entry.event_type, sig
+                entry.created_at,
+                escape_csv_field(login_id_str),
+                entry.tenant_id,
+                escape_csv_field(&entry.event_type),
+                sig
             ));
         }
         Ok(csv)
@@ -1185,6 +1191,23 @@ impl AuditLogListener {
     }
 }
 
+/// CSV 字段转义（ocr #3281，RFC 4180）。
+///
+/// 含逗号 / 双引号 / 换行 / 回车的字段用双引号包裹，内嵌双引号转义为两个双引号；
+/// 简单字段原样返回（与历史输出格式逐字节一致，不破坏既有消费者）。
+#[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
+fn escape_csv_field(field: &str) -> String {
+    if field.contains(',')
+        || field.contains('"')
+        || field.contains('\n')
+        || field.contains('\r')
+    {
+        format!("\"{}\"", field.replace('"', "\"\""))
+    } else {
+        field.to_string()
+    }
+}
+
 #[cfg(feature = "db-sqlite")]
 #[async_trait]
 impl GarrisonListener for AuditLogListener {
@@ -1192,11 +1215,22 @@ impl GarrisonListener for AuditLogListener {
     ///
     /// "失败时 `tracing::warn` 不传播错误"——
     /// 监听器失败不中断主流程。
+    ///
+    /// # 异步写入的可观测性取舍（ocr #3594）
+    ///
+    /// `async_write=true` 时通过 `tokio::spawn` 派发写入并**即弃 JoinHandle**：
+    /// 任务内失败仅有单条 `tracing::warn`，任务的 panic / 取消以及关停前的
+    /// 完成状态无法被调用方 await 观测。这是保持审计写入不阻塞主流程的
+    /// 性能取舍（审计写入允许"尽力而为"语义）；如需可靠投递（关停前 flush、
+    /// 背压感知、失败重试），请使用 `async_write=false` 的同步路径，或在
+    /// 业务侧自建有界队列 worker。
     async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
         match self.to_audit_entry(event) {
             Ok(entry) => {
                 if self.config.async_write {
-                    // 异步写入：tokio::spawn 不阻塞主流程
+                    // 异步写入：tokio::spawn 不阻塞主流程。
+                    // 取舍说明见本方法 doc（ocr #3594）：句柄即弃，失败仅任务内 warn，
+                    // panic/关停不可观测；关停前丢窗口期内未落库的审计条目属已知取舍。
                     let pool = self.pool.clone();
                     let config = self.config.clone();
                     tokio::spawn(async move {
@@ -1994,6 +2028,67 @@ mod db_sqlite_tests {
         assert_eq!(data_fields[2], "42", "tenant_id 应为 42");
         assert_eq!(data_fields[3], "login", "event_type 应为 login");
         assert!(!data_fields[4].is_empty(), "signature 不应为空");
+    }
+
+    /// ocr #3281 回归：含逗号 / 双引号 / 换行的 login_id 在 CSV 导出时
+    /// 必须 RFC 4180 转义（引号包裹 + 内嵌双引号翻倍），防止列错位与公式注入。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn export_csv_escapes_special_characters() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: Some("test-secret-key".to_string()),
+            audit_mask_mode: AuditMaskMode::Partial,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let make_entry = |login_id: &str| AuditEntry {
+            tenant_id: 1,
+            event_type: "login".to_string(),
+            login_id: Some(login_id.to_string()),
+            token: None,
+            ip: None,
+            user_agent: None,
+            metadata: None,
+            success: true,
+            created_at: 1700000000,
+        };
+
+        // 逗号 + 双引号 + 换行三种危险字符
+        let entries = [
+            make_entry("a,b"),
+            make_entry("say \"hi\""),
+            make_entry("line1\nline2"),
+        ];
+        let csv = listener.export_csv(&entries).expect("export_csv 应成功");
+
+        let data_lines: Vec<&str> = csv.lines().skip(1).collect();
+        assert_eq!(data_lines.len(), 3, "应有 3 条数据行");
+        // RFC 4180：包裹 + 双引号翻倍
+        assert!(
+            data_lines[0].contains("\"a,b\""),
+            "含逗号的 login_id 应被引号包裹，实际: {}",
+            data_lines[0]
+        );
+        assert!(
+            data_lines[1].contains("\"say \"\"hi\"\"\""),
+            "内嵌双引号应翻倍转义，实际: {}",
+            data_lines[1]
+        );
+        assert!(
+            data_lines[2].contains("\"line1\nline2\""),
+            "含换行的 login_id 应被引号包裹，实际: {}",
+            data_lines[2]
+        );
+        // 简单字段不引入多余引号（历史格式兼容）
+        let plain = listener.export_csv(&[make_entry("1001")]).unwrap();
+        assert!(
+            plain.lines().nth(1).unwrap().contains(",1001,"),
+            "简单 login_id 应保持未包裹格式，实际: {}",
+            plain
+        );
     }
 
     /// T100 Red: `export_json` 应返回有效 JSON 数组字符串。

@@ -165,6 +165,9 @@ impl GarrisonResponse for AxumResponse {
     }
 
     fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
+        // 注入防护（ocr #3106/#6873）：name/value 先经合法性校验，
+        // 拒绝控制字符与 `;`、`,` 等分隔符，防止注入 Domain 等恶意 Cookie 属性
+        crate::context::validate_cookie_name_value(name, value)?;
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
         let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
         self.set_header("Set-Cookie", &cookie_value)
@@ -176,6 +179,8 @@ impl GarrisonResponse for AxumResponse {
         value: &str,
         config: &crate::config::GarrisonConfig,
     ) -> GarrisonResult<()> {
+        // 注入防护（ocr #3107）：同 set_cookie，name/value 校验后再拼接
+        crate::context::validate_cookie_name_value(name, value)?;
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
         let cookie_value = format!(
@@ -594,6 +599,39 @@ mod tests {
         assert!(set_cookie.contains("Secure"));
         assert!(set_cookie.contains("SameSite=Lax"));
         assert!(set_cookie.contains("Path=/"));
+    }
+
+    /// ocr #3106/#3107/#6873 回归：含 `;`、控制字符等非法字符的 cookie name/value
+    /// 必须被拒绝，不得拼入 Set-Cookie 头（防 Domain 等属性注入）。
+    #[test]
+    fn response_set_cookie_rejects_injection() {
+        let mut resp = AxumResponse::new();
+        // value 注入额外属性
+        let result = resp.set_cookie("token", "abc; Domain=evil.com");
+        assert!(
+            matches!(result, Err(GarrisonError::Context(_))),
+            "value 含 ';' 应返回错误，实际: {:?}",
+            result.map(|_| ())
+        );
+        // name 注入
+        let result = resp.set_cookie("to;ken", "v");
+        assert!(matches!(result, Err(GarrisonError::Context(_))));
+        // 控制字符
+        let result = resp.set_cookie("token", "bad\nvalue");
+        assert!(matches!(result, Err(GarrisonError::Context(_))));
+        // 空格与逗号
+        let result = resp.set_cookie("token", "a b");
+        assert!(matches!(result, Err(GarrisonError::Context(_))));
+        let result = resp.set_cookie("token", "a,b");
+        assert!(matches!(result, Err(GarrisonError::Context(_))));
+        // 被拒绝的调用不得写入任何 Set-Cookie 头
+        assert!(
+            resp.headers.get("Set-Cookie").is_none(),
+            "校验失败时不应产生 Set-Cookie 头"
+        );
+        // 合法值不受影响
+        let mut resp2 = AxumResponse::new();
+        assert!(resp2.set_cookie("token", "abc123_def-.~").is_ok());
     }
 
     /// 验证 set_cookie_with_config 依据 config 调整 Secure/SameSite（dev 场景关闭 Secure）。

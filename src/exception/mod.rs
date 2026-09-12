@@ -35,6 +35,17 @@ pub struct NotLoginException {
 ///
 /// `GarrisonException` 使用手动 `Debug` 实现，对 `token_value` 默认脱敏
 /// （仅输出前 8 字符 + `***`）。避免敏感信息通过 `{:?}` 格式化泄露到日志。
+///
+/// # 字段可见性说明（ocr #2637）
+///
+/// 字段保持 `pub`（pre-1.0 兼容既有构造/断言用法）：构造后仍可原地修改字段值。
+/// 已知风险与既有缓解：
+/// - `token_value` / `login_id` 即使被改写，`Debug` 输出仍统一走脱敏
+///   （`mask_preview`），不因后改绕过日志脱敏；
+/// - `extras` 在日志与 HTTP 响应体两条路径均经 `sanitize_extras` 过滤；
+/// - 需要不可变保证的场景应使用 `new(..).with_*(..).build()` 链式构造并不再暴露
+///   `&mut` 访问。若 1.0 前评估需封装，改为 `pub(crate)` + accessor 属破坏性变更，
+///   需配套迁移说明。
 #[derive(Clone)]
 pub struct GarrisonException {
     /// 业务错误码（如 -1 表示未登录）。

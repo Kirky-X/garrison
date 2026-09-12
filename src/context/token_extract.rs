@@ -61,15 +61,22 @@ impl HeaderLookup for HeaderMap {
 /// - `auth_str`: Authorization header 值（如 `"Bearer my_token"`）。
 ///
 /// # 返回
-/// - `Some(token)`: 成功剥离前缀后的 token 字符串切片。
-/// - `None`: 前缀不匹配或字符串过短。
+/// - `Some(token)`: 成功剥离前缀后的 token 字符串切片（保证非空）。
+/// - `None`: 前缀不匹配、字符串过短，或前缀后为空
+///   （如 `"Bearer "`——返回 `Some("")` 会让下游拿到空 token，
+///   构成认证旁路风险，ocr #3113）。
 pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     let prefix = "bearer ";
     // 用 get(..n) 而非 auth_str[..n]：当 n 落在多字节 UTF-8 字符中间时
     // get 返回 None（而非 panic），避免恶意非 ASCII header 触发 DoS（T117）。
     let head = auth_str.get(..prefix.len())?;
     if head.eq_ignore_ascii_case(prefix) {
-        Some(&auth_str[prefix.len()..])
+        let rest = &auth_str[prefix.len()..];
+        if rest.is_empty() {
+            // "Bearer " 空前缀：无实际 token，返回 None 而非 Some("")（ocr #3113）
+            return None;
+        }
+        Some(rest)
     } else {
         None
     }
@@ -225,8 +232,22 @@ pub fn extract_token_from_request_parts(
             );
             return Ok(None);
         }
+        // DoS 防护（ocr #3114）：解析前限制 body 大小。超大 body（数十 MB JSON）
+        // 会在 token 校验前引发过量堆分配；超过上限直接跳过 body 提取。
+        // 上限固定 1MB（与常见网关 body 限制对齐）；如需调整请修改本常量。
+        const MAX_BODY_TOKEN_PARSE_BYTES: usize = 1024 * 1024; // 1MB
+        if body_bytes.len() > MAX_BODY_TOKEN_PARSE_BYTES {
+            tracing::warn!(
+                size = body_bytes.len(),
+                limit = MAX_BODY_TOKEN_PARSE_BYTES,
+                "request body exceeds token-extraction parse limit, skipping body token read"
+            );
+            return Ok(None);
+        }
         let content_type = header_fn("Content-Type")?.unwrap_or_default();
-        if content_type.contains("application/json") {
+        // 大小写不敏感匹配（RFC 9110：media type 不区分大小写，ocr #6437），
+        // `Application/JSON` 等非常规大小写不应静默跳过 body 提取
+        if content_type.to_ascii_lowercase().contains("application/json") {
             if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
                 if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
                     return Ok(Some(token.to_string()));
@@ -304,10 +325,11 @@ mod tests {
         assert_eq!(strip_bearer_prefix(auth_str), None);
     }
 
-    /// 仅前缀无 token 返回空切片。
+    /// 仅前缀无 token 返回 None（ocr #3113：空 token 不得下发给下游）。
     #[test]
     fn strip_bearer_prefix_only_prefix() {
-        assert_eq!(strip_bearer_prefix("Bearer "), Some(""));
+        // 原固化行为为 Some("")，构成认证旁路风险（下游拿到空 token），已修正为 None
+        assert_eq!(strip_bearer_prefix("Bearer "), None);
     }
 
     // ========================================================================
@@ -588,5 +610,96 @@ mod tests {
         assert!(!is_body_token_allowed_method("unknown"));
         assert!(!is_body_token_allowed_method("POST ")); // 带空格
         assert!(!is_body_token_allowed_method(" POST")); // 带空格
+    }
+
+    // ========================================================================
+    // extract_token_from_request_parts 补充测试（ocr #6437 / #3113 / #3114）
+    // ========================================================================
+
+    /// ocr #6437 回归：Content-Type 大小写不敏感（RFC 9110）。
+    /// `Application/JSON` 不应静默跳过 body 提取。
+    #[test]
+    fn extract_from_body_content_type_case_insensitive() {
+        let config = GarrisonConfig::default_config();
+        let mut config = config;
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        config.token_name = "token".to_string();
+        let body = br#"{"token":"case_tok"}"#;
+        for ct in &["application/json", "Application/JSON", "APPLICATION/JSON; charset=utf-8"] {
+            let token = extract_token_from_request_parts(
+                &config,
+                body,
+                "POST",
+                |name| {
+                    if name == "Content-Type" {
+                        Ok(Some(ct.to_string()))
+                    } else {
+                        Ok(None)
+                    }
+                },
+                |_| Ok(None),
+            )
+            .unwrap();
+            assert_eq!(
+                token,
+                Some("case_tok".to_string()),
+                "Content-Type '{ct}' 应大小写不敏感地命中 body 提取"
+            );
+        }
+    }
+
+    /// ocr #3114 回归：超过 1MB 上限的 body 不进入 JSON 解析，直接跳过 body 提取。
+    #[test]
+    fn extract_from_body_skips_oversized_body() {
+        let mut config = GarrisonConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = false;
+        config.is_read_body = true;
+        config.token_name = "token".to_string();
+        // 构造 > 1MB 的合法 JSON body
+        let mut body = String::from(r#"{"pad":""#);
+        body.push_str(&"a".repeat(1024 * 1024 + 1));
+        body.push_str(r#"","token":"big_tok"}"#);
+        let token = extract_token_from_request_parts(
+            &config,
+            body.as_bytes(),
+            "POST",
+            |name| {
+                if name == "Content-Type" {
+                    Ok(Some("application/json".to_string()))
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(None),
+        )
+        .unwrap();
+        assert_eq!(
+            token, None,
+            "超过 1MB 的 body 不应解析（防 DoS），应返回 None"
+        );
+    }
+
+    /// ocr #3113 回归：`Authorization: Bearer `（空前缀）不再返回空 token。
+    #[test]
+    fn extract_from_parts_empty_bearer_returns_none() {
+        let config = GarrisonConfig::default_config();
+        let token = extract_token_from_request_parts(
+            &config,
+            &[],
+            "GET",
+            |name| {
+                if name == "Authorization" {
+                    Ok(Some("Bearer ".to_string()))
+                } else {
+                    Ok(None)
+                }
+            },
+            |_| Ok(None),
+        )
+        .unwrap();
+        assert_eq!(token, None, "空前缀 Bearer 应返回 None 而非 Some(\"\")");
     }
 }

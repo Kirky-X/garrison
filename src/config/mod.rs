@@ -60,6 +60,13 @@ pub const DEFAULT_COOKIE_SAME_SITE: &str = "Lax";
 /// 默认 JWT 签名算法（HS256，兼容 HS512 可选）。
 pub const DEFAULT_JWT_ALGORITHM: &str = "HS256";
 
+/// JWT 签名算法白名单（ocr #3123）。
+///
+/// `validate_core` 无论 `token_style` 是否为 `jwt`，都先按本白名单校验
+/// `jwt_algorithm`，防止非法值（如 "RS256" / 拼写错误）在非 JWT 模式下
+/// 静默通过配置校验、切换 token_style 后才暴露。
+pub const JWT_ALGORITHMS: &[&str] = &["HS256", "HS384", "HS512"];
+
 /// 默认签名校验时间窗口秒数（5 分钟）。
 pub const DEFAULT_SIGN_WINDOW_SECONDS: i64 = 300;
 
@@ -311,7 +318,9 @@ pub type JwtSecret = String;
 /// let new_config = rx.borrow_and_update();
 /// assert_eq!(new_config.timeout, 3600);
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `Debug` 为手动实现（见 `impls.rs`）：非 derive——`jwt_secret` 在 `{:?}` 输出中
+/// 脱敏为 `"<redacted>"`，防止密钥经日志/调试打印明文泄露（ocr #2440/#2441）。
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GarrisonConfig {
     /// Token 名称（对应 HTTP Header / Cookie 字段名）。
@@ -364,6 +373,11 @@ pub struct GarrisonConfig {
     ///
     /// `protocol-zeroize` feature 下类型为 `Zeroizing<String>`，
     /// Drop 时自动 zeroize buffer，防止内存泄露。
+    ///
+    /// # 安全性
+    ///
+    /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`
+    /// （ocr #2440/#2441：`Zeroizing` 的 Debug 是透明的，derive(Debug) 会打印明文）。
     pub jwt_secret: JwtSecret,
 
     /// 签名校验时间窗口秒数（默认 300 秒）。

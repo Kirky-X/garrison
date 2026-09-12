@@ -12,6 +12,33 @@ use super::*;
 use crate::error::GarrisonError;
 use serial_test::serial;
 
+/// panic 安全的环境变量守卫（ocr #1257）。
+///
+/// 原环境变量测试在测试末尾手动 `remove_var`：一旦断言 panic，清理被跳过，
+/// 变量残留会污染后续（共享进程 env 的）serial 测试。守卫在 Drop（含 unwind）
+/// 时移除变量，保证 panic 路径同样清理。仅限 `#[serial]` 测试中使用。
+struct EnvVarGuard {
+    keys: Vec<String>,
+}
+
+impl EnvVarGuard {
+    /// set_var 并返回守卫；Drop 时 remove_var。
+    fn set(key: impl Into<String>, value: &str) -> Self {
+        let key = key.into();
+        // 安全性：config 测试全部 #[serial] 单线程执行，无并发 set_var 竞争
+        std::env::set_var(&key, value);
+        Self { keys: vec![key] }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        for k in &self.keys {
+            std::env::remove_var(k);
+        }
+    }
+}
+
 // === FMEA #8 测试（kueiku RPN=336）：jwt_secret 用 Zeroizing<String> 自动 zeroize on Drop ===
 
 /// 编译期断言：protocol-zeroize feature 下 jwt_secret 字段类型为 Zeroizing<String>，
@@ -431,16 +458,15 @@ remember_me_timeout = 9999999
 #[test]
 #[serial]
 fn env_overrides_remember_me() {
-    std::env::set_var("GARRISON_REMEMBER_ME_ENABLED", "true");
-    std::env::set_var("GARRISON_REMEMBER_ME_TIMEOUT", "9999999");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_REMEMBER_ME_ENABLED", "true"));
+    env_guards.push(EnvVarGuard::set("GARRISON_REMEMBER_ME_TIMEOUT", "9999999"));
 
     let config = GarrisonConfig::load(None).unwrap();
 
     assert!(config.remember_me_enabled);
     assert_eq!(config.remember_me_timeout, 9999999);
 
-    std::env::remove_var("GARRISON_REMEMBER_ME_ENABLED");
-    std::env::remove_var("GARRISON_REMEMBER_ME_TIMEOUT");
 }
 
 // ========================================================================
@@ -492,10 +518,10 @@ fn config_default_frontend_separation_is_false() {
 #[test]
 #[serial]
 fn env_overrides_frontend_separation() {
-    std::env::set_var("GARRISON_FRONTEND_SEPARATION", "true");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_FRONTEND_SEPARATION", "true"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert!(config.frontend_separation);
-    std::env::remove_var("GARRISON_FRONTEND_SEPARATION");
 }
 
 /// R-frontend-003: `frontend_separation=true` 时 `validate()` 不报错。
@@ -578,8 +604,9 @@ fn toml_invalid_token_style_rejected() {
 #[test]
 #[serial]
 fn env_overrides_toml() {
-    std::env::set_var("GARRISON_TIMEOUT", "3600");
-    std::env::set_var("GARRISON_TOKEN_STYLE", "jwt");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_TIMEOUT", "3600"));
+    env_guards.push(EnvVarGuard::set("GARRISON_TOKEN_STYLE", "jwt"));
 
     let temp = write_temp_toml(
         r#"timeout = 1800
@@ -590,47 +617,44 @@ jwt_secret = "test-secret-0123456789abcdefghij""#,
     assert_eq!(config.timeout, 3600);
     assert_eq!(config.token_style, "jwt");
 
-    std::env::remove_var("GARRISON_TIMEOUT");
-    std::env::remove_var("GARRISON_TOKEN_STYLE");
 }
 
 /// 验证布尔环境变量解析。
 #[test]
 #[serial]
 fn env_boolean_parsing() {
-    std::env::set_var("GARRISON_IS_READ_COOKIE", "false");
-    std::env::set_var("GARRISON_THROW_ON_NOT_LOGIN", "false");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_IS_READ_COOKIE", "false"));
+    env_guards.push(EnvVarGuard::set("GARRISON_THROW_ON_NOT_LOGIN", "false"));
 
     let config = GarrisonConfig::load(None).unwrap();
 
     assert!(!config.is_read_cookie);
     assert!(!config.throw_on_not_login);
 
-    std::env::remove_var("GARRISON_IS_READ_COOKIE");
-    std::env::remove_var("GARRISON_THROW_ON_NOT_LOGIN");
 }
 
 /// 验证环境变量非法值抛错。
 #[test]
 #[serial]
 fn env_invalid_value_errors() {
-    std::env::set_var("GARRISON_TIMEOUT", "not-a-number");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_TIMEOUT", "not-a-number"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
-    std::env::remove_var("GARRISON_TIMEOUT");
 }
 
 /// 验证完整加载流程 load()：默认值 + toml + 环境变量。
 #[test]
 #[serial]
 fn load_full_pipeline() {
-    std::env::set_var("GARRISON_TOKEN_NAME", "custom_token");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_TOKEN_NAME", "custom_token"));
     let temp = write_temp_toml(r#"timeout = 3600"#);
     let config = GarrisonConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
     assert_eq!(config.token_name, "custom_token");
     assert_eq!(config.timeout, 3600);
     assert_eq!(config.token_style, "uuid");
-    std::env::remove_var("GARRISON_TOKEN_NAME");
 }
 
 // ========================================================================
@@ -698,99 +722,14 @@ fn update_rejects_negative_timeout() {
 }
 
 /// 验证无 watcher 的实例 update() 是 no-op。
+///
+/// ocr #5061：不再手动罗列全部字段构造 `GarrisonConfig`（新增字段即编译失败），
+/// 改为 `default_config()` 后移除 watcher（字段对本 crate 子模块可见）。
 #[test]
 fn update_without_watcher_is_noop() {
-    let config = GarrisonConfig {
-        token_name: "x".to_string(),
-        timeout: 100,
-        active_timeout: -1,
-        is_read_cookie: true,
-        is_read_header: true,
-        is_read_body: DEFAULT_IS_READ_BODY,
-        is_write_header: true,
-        is_write_cookie: false,
-        token_style: "uuid".to_string(),
-        throw_on_not_login: true,
-        cookie_secure: true,
-        cookie_same_site: "Lax".to_string(),
-        jwt_algorithm: "HS256".to_string(),
-        jwt_secret: default_jwt_secret(),
-        sign_window_seconds: 300,
-        sso_ticket_ttl_seconds: 60,
-        remember_me_enabled: false,
-        remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
-        session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
-        frontend_separation: DEFAULT_FRONTEND_SEPARATION,
-        auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
-        token_map_cleanup_interval_secs: DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL,
-        #[cfg(feature = "three-tier-cache")]
-        l1_cache_ttl_secs: DEFAULT_L1_CACHE_TTL_SECS,
-        #[cfg(feature = "three-tier-cache")]
-        l2_cache_ttl_secs: DEFAULT_L2_CACHE_TTL_SECS,
-        #[cfg(feature = "three-tier-cache")]
-        l1_cache_capacity: DEFAULT_L1_CACHE_CAPACITY,
-        #[cfg(feature = "session-extra")]
-        login_token_map_persist_interval_secs: DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS,
-        #[cfg(feature = "session-extra")]
-        anon_session_timeout: DEFAULT_ANON_SESSION_TIMEOUT_SECS,
-        is_concurrent: DEFAULT_IS_CONCURRENT,
-        is_share: DEFAULT_IS_SHARE,
-        max_login_count: DEFAULT_MAX_LOGIN_COUNT,
-        device_binding_mode: DEFAULT_DEVICE_BINDING_MODE.to_string(),
-        replaced_login_exit_mode: ReplacedLoginExitMode::default(),
-        overflow_logout_mode: OverflowLogoutMode::default(),
-        audit_mask_mode: AuditMaskMode::default(),
-        tenant_isolation: TenantIsolationConfig::default(),
-        #[cfg(feature = "web-cors")]
-        cors_config: crate::web::cors::CorsConfig::default(),
-        #[cfg(feature = "web-csrf")]
-        csrf_config: crate::web::csrf::CsrfConfig::default(),
-        #[cfg(feature = "rate-limit-redis")]
-        rate_limit_backend: crate::strategy::rate_limiter_backend::RateLimitBackend::default(),
-        #[cfg(feature = "firewall-waf")]
-        waf_enabled_hooks: Vec::new(),
-        #[cfg(feature = "firewall-waf")]
-        waf_white_paths: Vec::new(),
-        #[cfg(feature = "firewall-waf")]
-        waf_black_paths: Vec::new(),
-        #[cfg(feature = "firewall-waf")]
-        waf_allowed_hosts: Vec::new(),
-        #[cfg(feature = "firewall-waf")]
-        waf_allowed_methods: Vec::new(),
-        #[cfg(feature = "firewall-waf")]
-        waf_banned_headers: Vec::new(),
-        #[cfg(feature = "firewall-waf")]
-        waf_banned_params: Vec::new(),
-        #[cfg(feature = "sms-rate-limit")]
-        sms_hourly_limit: 5,
-        #[cfg(feature = "sms-rate-limit")]
-        sms_daily_limit: 10,
-        #[cfg(feature = "sms-rate-limit")]
-        sms_verify_max_attempts: 3,
-        #[cfg(feature = "sms-rate-limit")]
-        sms_unverified_threshold: 3,
-        #[cfg(feature = "email-verification")]
-        email_hourly_limit: 5,
-        #[cfg(feature = "email-verification")]
-        email_daily_limit: 10,
-        #[cfg(feature = "email-verification")]
-        email_verify_max_attempts: 3,
-        #[cfg(feature = "email-verification")]
-        email_unverified_threshold: 3,
-        #[cfg(feature = "email-verification")]
-        email_code_ttl: 600,
-        #[cfg(feature = "anomalous-detector-dual")]
-        anomalous_analyzer_interval_secs: DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS,
-        #[cfg(feature = "anomalous-detector-dual")]
-        anomalous_analyzer_burst_threshold: DEFAULT_ANOMALOUS_BURST_THRESHOLD,
-        enable_jwt_revocation: false,
-        allow_stateless_jwt_no_revocation: false,
-        #[cfg(feature = "session-hijack-detection")]
-        session_hijack_mode: crate::config::SessionHijackMode::default(),
-        #[cfg(feature = "credit-metering")]
-        credit: None,
-        watcher: None,
-    };
+    let mut config = GarrisonConfig::default_config();
+    // 移除 default_config() 附加的 watcher，构造"未启用 watcher"实例
+    config.watcher = None;
     assert!(config.update(|c| c.timeout = 999).is_ok());
     assert!(config.watch().is_none());
 }
@@ -848,61 +787,62 @@ fn watcher_not_serialized() {
 #[test]
 #[serial]
 fn env_invalid_is_read_cookie_errors() {
-    std::env::set_var("GARRISON_IS_READ_COOKIE", "maybe");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_IS_READ_COOKIE", "maybe"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err(), "非法布尔值应导致 load 失败");
     assert!(matches!(result, Err(GarrisonError::Config(_))));
-    std::env::remove_var("GARRISON_IS_READ_COOKIE");
 }
 
 /// 验证 GARRISON_IS_READ_HEADER 非法布尔值时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_is_read_header_errors() {
-    std::env::set_var("GARRISON_IS_READ_HEADER", "yesno");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_IS_READ_HEADER", "yesno"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(matches!(result, Err(GarrisonError::Config(_))));
-    std::env::remove_var("GARRISON_IS_READ_HEADER");
 }
 
 /// 验证 GARRISON_IS_WRITE_HEADER 非法布尔值时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_is_write_header_errors() {
-    std::env::set_var("GARRISON_IS_WRITE_HEADER", "unknown");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_IS_WRITE_HEADER", "unknown"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(matches!(result, Err(GarrisonError::Config(_))));
-    std::env::remove_var("GARRISON_IS_WRITE_HEADER");
 }
 
 /// 验证 GARRISON_THROW_ON_NOT_LOGIN 非法布尔值时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_throw_on_not_login_errors() {
-    std::env::set_var("GARRISON_THROW_ON_NOT_LOGIN", "yes_no");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_THROW_ON_NOT_LOGIN", "yes_no"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(matches!(result, Err(GarrisonError::Config(_))));
-    std::env::remove_var("GARRISON_THROW_ON_NOT_LOGIN");
 }
 
 /// 验证 GARRISON_ACTIVE_TIMEOUT 非数字时 load 抛错。
 #[test]
 #[serial]
 fn env_invalid_active_timeout_errors() {
-    std::env::set_var("GARRISON_ACTIVE_TIMEOUT", "not-a-number");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_ACTIVE_TIMEOUT", "not-a-number"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
-    std::env::remove_var("GARRISON_ACTIVE_TIMEOUT");
 }
 
 /// 验证 GARRISON_TOKEN_STYLE 非法值导致 load 校验失败。
 #[test]
 #[serial]
 fn env_invalid_token_style_fails_validation() {
-    std::env::set_var("GARRISON_TOKEN_STYLE", "unknown_style");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_TOKEN_STYLE", "unknown_style"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(
@@ -910,14 +850,14 @@ fn env_invalid_token_style_fails_validation() {
         "应返回 'config-unknown-token-style' 错误，实际: {:?}",
         result
     );
-    std::env::remove_var("GARRISON_TOKEN_STYLE");
 }
 
 /// 验证 GARRISON_TIMEOUT 负值导致 load 校验失败。
 #[test]
 #[serial]
 fn env_negative_timeout_fails_validation() {
-    std::env::set_var("GARRISON_TIMEOUT", "-100");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_TIMEOUT", "-100"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(
@@ -925,7 +865,6 @@ fn env_negative_timeout_fails_validation() {
         "应返回 'config-timeout-must-positive' 错误，实际: {:?}",
         result
     );
-    std::env::remove_var("GARRISON_TIMEOUT");
 }
 
 // ========================================================================
@@ -936,56 +875,56 @@ fn env_negative_timeout_fails_validation() {
 #[test]
 #[serial]
 fn env_overrides_jwt_algorithm() {
-    std::env::set_var(format!("{}JWT_ALGORITHM", ENV_PREFIX), "HS512");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set(format!("{}JWT_ALGORITHM", ENV_PREFIX), "HS512"));
     let config = GarrisonConfig::load(None).unwrap();
     assert_eq!(config.jwt_algorithm, "HS512");
-    std::env::remove_var(format!("{}JWT_ALGORITHM", ENV_PREFIX));
 }
 
 /// 验证 `GARRISON_SIGN_WINDOW_SECONDS` 环境变量覆盖 sign_window_seconds 字段。
 #[test]
 #[serial]
 fn env_overrides_sign_window_seconds() {
-    std::env::set_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "600");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "600"));
     let config = GarrisonConfig::load(None).unwrap();
     assert_eq!(config.sign_window_seconds, 600);
-    std::env::remove_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX));
 }
 
 /// 验证 `GARRISON_SSO_TICKET_TTL_SECONDS` 环境变量覆盖 sso_ticket_ttl_seconds 字段。
 #[test]
 #[serial]
 fn env_overrides_sso_ticket_ttl_seconds() {
-    std::env::set_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "120");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "120"));
     let config = GarrisonConfig::load(None).unwrap();
     assert_eq!(config.sso_ticket_ttl_seconds, 120);
-    std::env::remove_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX));
 }
 
 /// 验证 `GARRISON_SIGN_WINDOW_SECONDS` 非数字时 load 抛错。
 #[test]
 #[serial]
 fn env_overrides_sign_window_seconds_invalid() {
-    std::env::set_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "not-a-number");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "not-a-number"));
     let result = GarrisonConfig::load(None);
     assert!(
         result.is_err(),
         "非数字 SIGN_WINDOW_SECONDS 应导致 load 失败"
     );
-    std::env::remove_var(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX));
 }
 
 /// 验证 `GARRISON_SSO_TICKET_TTL_SECONDS` 非数字时 load 抛错。
 #[test]
 #[serial]
 fn env_overrides_sso_ticket_ttl_seconds_invalid() {
-    std::env::set_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "abc");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "abc"));
     let result = GarrisonConfig::load(None);
     assert!(
         result.is_err(),
         "非数字 SSO_TICKET_TTL_SECONDS 应导致 load 失败"
     );
-    std::env::remove_var(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX));
 }
 
 // ========================================================================
@@ -1109,10 +1048,10 @@ fn validate_accepts_threshold_boundaries() {
 #[test]
 #[serial]
 fn env_overrides_auto_renewal_threshold() {
-    std::env::set_var("GARRISON_AUTO_RENEWAL_THRESHOLD", "20");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_AUTO_RENEWAL_THRESHOLD", "20"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(config.auto_renewal_threshold, 20);
-    std::env::remove_var("GARRISON_AUTO_RENEWAL_THRESHOLD");
 }
 
 // ========================================================================
@@ -1171,13 +1110,13 @@ fn token_map_cleanup_interval_negative_disables() {
 #[test]
 #[serial]
 fn token_map_cleanup_interval_env_var_overrides() {
-    std::env::set_var("GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS", "600");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS", "600"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.token_map_cleanup_interval_secs, 600,
         "GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS=600 应覆盖默认值"
     );
-    std::env::remove_var("GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS");
 }
 
 // ========================================================================
@@ -1204,13 +1143,13 @@ fn login_token_map_persist_interval_default_is_zero() {
 #[test]
 #[serial]
 fn login_token_map_persist_interval_env_var_overrides() {
-    std::env::set_var("GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS", "10");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS", "10"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.login_token_map_persist_interval_secs, 10,
         "GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS=10 应覆盖默认值"
     );
-    std::env::remove_var("GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS");
 }
 
 // ========================================================================
@@ -1237,13 +1176,13 @@ fn anon_session_timeout_default_is_1800() {
 #[test]
 #[serial]
 fn anon_session_timeout_env_var_overrides() {
-    std::env::set_var("GARRISON_ANON_SESSION_TIMEOUT", "3600");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_ANON_SESSION_TIMEOUT", "3600"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.anon_session_timeout, 3600,
         "GARRISON_ANON_SESSION_TIMEOUT=3600 应覆盖默认值"
     );
-    std::env::remove_var("GARRISON_ANON_SESSION_TIMEOUT");
 }
 
 // ========================================================================
@@ -1305,20 +1244,20 @@ fn validate_accepts_share_with_concurrent() {
 #[test]
 #[serial]
 fn env_overrides_is_concurrent() {
-    std::env::set_var("GARRISON_IS_CONCURRENT", "false");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_IS_CONCURRENT", "false"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert!(!config.is_concurrent);
-    std::env::remove_var("GARRISON_IS_CONCURRENT");
 }
 
 /// R-concurrent-004: `GARRISON_MAX_LOGIN_COUNT=3` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_max_login_count() {
-    std::env::set_var("GARRISON_MAX_LOGIN_COUNT", "3");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_MAX_LOGIN_COUNT", "3"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(config.max_login_count, 3);
-    std::env::remove_var("GARRISON_MAX_LOGIN_COUNT");
 }
 
 // ========================================================================
@@ -1343,13 +1282,13 @@ fn config_default_is_read_body_is_false() {
 #[test]
 #[serial]
 fn env_overrides_is_read_body() {
-    std::env::set_var("GARRISON_IS_READ_BODY", "true");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_IS_READ_BODY", "true"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert!(
         config.is_read_body,
         "GARRISON_IS_READ_BODY=true 应覆盖为 true"
     );
-    std::env::remove_var("GARRISON_IS_READ_BODY");
 }
 
 // ========================================================================
@@ -1401,13 +1340,13 @@ fn test_device_binding_mode_invalid() {
 #[test]
 #[serial]
 fn test_device_binding_mode_env_override() {
-    std::env::set_var("GARRISON_DEVICE_BINDING_MODE", "loose");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_DEVICE_BINDING_MODE", "loose"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.device_binding_mode, "loose",
         "环境变量应覆盖 device_binding_mode 为 'loose'"
     );
-    std::env::remove_var("GARRISON_DEVICE_BINDING_MODE");
 }
 
 // ========================================================================
@@ -1459,16 +1398,16 @@ fn validate_memory_backend_skips_redis_url_check() {
 #[test]
 #[serial]
 fn env_overrides_cors_allowed_origins() {
-    std::env::set_var(
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set(
         "GARRISON_CORS_ALLOWED_ORIGINS",
         "https://a.com,https://b.com",
-    );
+    ));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.cors_config.allowed_origins,
         vec!["https://a.com", "https://b.com"]
     );
-    std::env::remove_var("GARRISON_CORS_ALLOWED_ORIGINS");
 }
 
 /// R-cors-001: `GARRISON_CORS_ALLOWED_ORIGINS` 过滤空值（连续逗号）。
@@ -1476,17 +1415,17 @@ fn env_overrides_cors_allowed_origins() {
 #[test]
 #[serial]
 fn env_cors_origins_filters_empty_values() {
-    std::env::set_var(
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set(
         "GARRISON_CORS_ALLOWED_ORIGINS",
         "https://a.com,,https://b.com,",
-    );
+    ));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.cors_config.allowed_origins,
         vec!["https://a.com", "https://b.com"],
         "空值应被过滤"
     );
-    std::env::remove_var("GARRISON_CORS_ALLOWED_ORIGINS");
 }
 
 /// R-csrf-003: `GARRISON_CSRF_ENABLED=true` 覆盖 CSRF 启用状态。
@@ -1494,13 +1433,13 @@ fn env_cors_origins_filters_empty_values() {
 #[test]
 #[serial]
 fn env_overrides_csrf_enabled() {
-    std::env::set_var("GARRISON_CSRF_ENABLED", "true");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_CSRF_ENABLED", "true"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert!(
         config.csrf_config.enabled,
         "GARRISON_CSRF_ENABLED=true 应启用 CSRF"
     );
-    std::env::remove_var("GARRISON_CSRF_ENABLED");
 }
 
 /// R-redis-ratelimit-004: `GARRISON_RATE_LIMIT_BACKEND=redis` 覆盖限流后端为 Redis。
@@ -1508,8 +1447,9 @@ fn env_overrides_csrf_enabled() {
 #[test]
 #[serial]
 fn env_overrides_rate_limit_backend_to_redis() {
-    std::env::set_var("GARRISON_RATE_LIMIT_BACKEND", "redis");
-    std::env::set_var("GARRISON_REDIS_URL", "redis://localhost:6379/0");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "redis"));
+    env_guards.push(EnvVarGuard::set("GARRISON_REDIS_URL", "redis://localhost:6379/0"));
     let config = GarrisonConfig::load(None).expect("load with env");
     match config.rate_limit_backend {
         RateLimitBackend::Redis { redis_url } => {
@@ -1517,8 +1457,6 @@ fn env_overrides_rate_limit_backend_to_redis() {
         },
         _ => panic!("应为 Redis 后端"),
     }
-    std::env::remove_var("GARRISON_RATE_LIMIT_BACKEND");
-    std::env::remove_var("GARRISON_REDIS_URL");
 }
 
 /// R-redis-ratelimit-004: `GARRISON_RATE_LIMIT_BACKEND=memory` 覆盖限流后端为 Memory。
@@ -1526,14 +1464,14 @@ fn env_overrides_rate_limit_backend_to_redis() {
 #[test]
 #[serial]
 fn env_overrides_rate_limit_backend_to_memory() {
-    std::env::set_var("GARRISON_RATE_LIMIT_BACKEND", "memory");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "memory"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.rate_limit_backend,
         RateLimitBackend::Memory,
         "应为 Memory 后端"
     );
-    std::env::remove_var("GARRISON_RATE_LIMIT_BACKEND");
 }
 
 /// R-redis-ratelimit-004: 仅设置 `GARRISON_REDIS_URL`（不设 backend）不改变 Memory 后端。
@@ -1541,14 +1479,14 @@ fn env_overrides_rate_limit_backend_to_memory() {
 #[test]
 #[serial]
 fn env_redis_url_alone_does_not_change_memory_backend() {
-    std::env::set_var("GARRISON_REDIS_URL", "redis://localhost:6379/0");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_REDIS_URL", "redis://localhost:6379/0"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.rate_limit_backend,
         RateLimitBackend::Memory,
         "仅设 REDIS_URL 不应改变 Memory 后端"
     );
-    std::env::remove_var("GARRISON_REDIS_URL");
 }
 
 /// R-redis-ratelimit-004: `GARRISON_RATE_LIMIT_BACKEND` 无效值返回 Config 错误（规则12：失败必须显性化）。
@@ -1556,7 +1494,8 @@ fn env_redis_url_alone_does_not_change_memory_backend() {
 #[test]
 #[serial]
 fn env_rate_limit_backend_invalid_value_returns_error() {
-    std::env::set_var("GARRISON_RATE_LIMIT_BACKEND", "mysql");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "mysql"));
     let result = GarrisonConfig::load(None);
     assert!(result.is_err(), "无效 backend 值应返回错误");
     let err = result.unwrap_err();
@@ -1570,7 +1509,6 @@ fn env_rate_limit_backend_invalid_value_returns_error() {
         },
         _ => panic!("应为 GarrisonError::Config，实际: {:?}", err),
     }
-    std::env::remove_var("GARRISON_RATE_LIMIT_BACKEND");
 }
 
 // ========================================================================
@@ -1655,28 +1593,28 @@ fn overflow_logout_mode_serde_snake_case() {
 #[test]
 #[serial]
 fn env_overrides_replaced_login_exit_mode() {
-    std::env::set_var("GARRISON_REPLACED_LOGIN_EXIT_MODE", "new_device");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_REPLACED_LOGIN_EXIT_MODE", "new_device"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.replaced_login_exit_mode,
         ReplacedLoginExitMode::NewDevice,
         "GARRISON_REPLACED_LOGIN_EXIT_MODE=new_device 应覆盖为 NewDevice"
     );
-    std::env::remove_var("GARRISON_REPLACED_LOGIN_EXIT_MODE");
 }
 
 /// R-004: `GARRISON_OVERFLOW_LOGOUT_MODE=kickout` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_overflow_logout_mode() {
-    std::env::set_var("GARRISON_OVERFLOW_LOGOUT_MODE", "kickout");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_OVERFLOW_LOGOUT_MODE", "kickout"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.overflow_logout_mode,
         OverflowLogoutMode::Kickout,
         "GARRISON_OVERFLOW_LOGOUT_MODE=kickout 应覆盖为 Kickout"
     );
-    std::env::remove_var("GARRISON_OVERFLOW_LOGOUT_MODE");
 }
 
 // ========================================================================
@@ -1719,14 +1657,14 @@ fn audit_mask_mode_serde_snake_case() {
 #[test]
 #[serial]
 fn env_overrides_audit_mask_mode() {
-    std::env::set_var("GARRISON_AUDIT_MASK_MODE", "full");
+    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
+    env_guards.push(EnvVarGuard::set("GARRISON_AUDIT_MASK_MODE", "full"));
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.audit_mask_mode,
         AuditMaskMode::Full,
         "GARRISON_AUDIT_MASK_MODE=full 应覆盖为 Full"
     );
-    std::env::remove_var("GARRISON_AUDIT_MASK_MODE");
 }
 
 // ========================================================================

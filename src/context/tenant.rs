@@ -206,7 +206,16 @@ impl TenantResolver for SubdomainTenantResolver {
             .to_str()
             .map_err(|e| GarrisonError::Config(format!("ctx-host-not-ascii::{e}")))?;
         // strip port: `tenant42.example.com:8080` → `tenant42.example.com`
-        let hostname = host.split(':').next().unwrap_or(host);
+        // IPv6 字面量（RFC 3986）：`[::1]:8080` 先取方括号内地址，
+        // 不能用 `split(':').next()`（会截断出 `[`，导致 IPv6 请求必然 unknown subdomain）。
+        let hostname = if host.starts_with('[') {
+            host.split_once(']')
+                .map(|(inner, _)| inner)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(host)
+        } else {
+            host.split(':').next().unwrap_or(host)
+        };
         // extract first segment as subdomain
         let subdomain = hostname.split('.').next().unwrap_or(hostname);
         if subdomain.is_empty() {
@@ -236,24 +245,71 @@ impl TenantResolver for SubdomainTenantResolver {
 /// - 非 Bearer scheme：返回 `GarrisonError::InvalidToken`
 /// - JWT 签名验证失败：返回 `GarrisonError::InvalidToken`
 /// - `tenant_id` claim 缺失：返回 `GarrisonError::InvalidToken`
+/// - 配置了 `expected_issuers` / `expected_audiences` 时，同时校验 `iss` / `aud` claim
 ///
 /// # 设计
 ///
 /// - 门控在 `protocol-jwt` feature 下（依赖 `jsonwebtoken` crate）
 /// - Bearer scheme 大小写不敏感（RFC 7235：`Bearer`/`bearer`/`BEARER` 均合法）
 /// - 不默认 0（Rule 12 失败显性化），任何失败均返回 `InvalidToken`
+/// - **多租户安全建议**（ocr #2434/#3556）：多服务共享同一 HS256 secret 时，
+///   务必通过 `with_expected_issuers` 配置期望的 `iss`，防止其他服务签发的合法 JWT
+///   被跨服务重放。`aud` 同理（jsonwebtoken 对 token 携带 `aud` 而本地未配置期望值的
+///   情况默认 fail-closed 拒绝）。
 #[cfg(feature = "protocol-jwt")]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClaimTenantResolver {
     /// JWT 验签密钥（HS256）。
+    ///
+    /// # 安全性
+    ///
+    /// 手动实现 `Debug`（非 derive）：`{:?}` 输出时 `jwt_secret` 脱敏为 `<redacted>`，
+    /// 防止密钥经日志/调试输出明文泄露（ocr #3110）。`Clone` 保留（构造方按值持有）。
     pub jwt_secret: String,
+    /// 可选：期望的 `iss`（issuer）claim 集合。非空时启用 issuer 校验（fail-closed）。
+    pub expected_issuers: Vec<String>,
+    /// 可选：期望的 `aud`（audience）claim 集合。非空时启用 audience 校验（fail-closed）。
+    pub expected_audiences: Vec<String>,
+}
+
+#[cfg(feature = "protocol-jwt")]
+impl std::fmt::Debug for ClaimTenantResolver {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 手动脱敏：jwt_secret 不得以明文出现在 Debug 输出（ocr #3110）
+        f.debug_struct("ClaimTenantResolver")
+            .field("jwt_secret", &"<redacted>")
+            .field("expected_issuers", &self.expected_issuers)
+            .field("expected_audiences", &self.expected_audiences)
+            .finish()
+    }
 }
 
 #[cfg(feature = "protocol-jwt")]
 impl ClaimTenantResolver {
     /// 构造 ClaimTenantResolver。
     pub fn new(jwt_secret: String) -> Self {
-        Self { jwt_secret }
+        Self {
+            jwt_secret,
+            expected_issuers: Vec::new(),
+            expected_audiences: Vec::new(),
+        }
+    }
+
+    /// 配置期望的 `iss`（issuer）claim 集合（builder 模式）。
+    ///
+    /// 非空时 JWT 校验启用 issuer 白名单：token 的 `iss` 缺失或不匹配即拒绝。
+    /// 多服务共享 secret 时建议配置，防止跨服务 token 重放（ocr #2434/#3556）。
+    pub fn with_expected_issuers(mut self, issuers: Vec<String>) -> Self {
+        self.expected_issuers = issuers;
+        self
+    }
+
+    /// 配置期望的 `aud`（audience）claim 集合（builder 模式）。
+    ///
+    /// 非空时 JWT 校验启用 audience 白名单：token 的 `aud` 缺失或不匹配即拒绝。
+    pub fn with_expected_audiences(mut self, audiences: Vec<String>) -> Self {
+        self.expected_audiences = audiences;
+        self
     }
 }
 
@@ -296,6 +352,17 @@ impl TenantResolver for ClaimTenantResolver {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
         validation.leeway = 0;
+        // issuer 校验（ocr #2434/#3556）：配置了期望 iss 才启用；
+        // 启用后 token 的 iss 缺失或不匹配均拒绝（jsonwebtoken fail-closed）。
+        if !self.expected_issuers.is_empty() {
+            validation.set_issuer(&self.expected_issuers);
+        }
+        // audience 校验（ocr #2434/#3556）：配置了期望 aud 才显式设置白名单。
+        // 未配置时保留库默认（validate_aud=true 且期望为 None）：
+        // token 不带 aud 可通过；token 带 aud 而本地未配置期望值时拒绝（fail-closed）。
+        if !self.expected_audiences.is_empty() {
+            validation.set_audience(&self.expected_audiences);
+        }
         let data = decode::<TenantClaims>(jwt, &key, &validation).map_err(|e| {
             GarrisonError::InvalidToken(format!("ctx-tenant-jwt-verify-failed::{e}"))
         })?;
@@ -576,6 +643,49 @@ mod tests {
         assert_eq!(ctx.tenant_id, 42);
     }
 
+    /// ocr #6435 回归：IPv6 字面量 Host（`[::1]:8080`）不得被 `split(':').next()`
+    /// 截断出 `[`。IPv6 主机无 subdomain 语义，应报 unknown-subdomain 类错误而非 panic/误配。
+    #[tokio::test]
+    async fn subdomain_tenant_resolver_handles_ipv6_host_without_panic() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Host", "[::1]:8080".parse().unwrap());
+        let resolver = SubdomainTenantResolver {
+            mapping: std::collections::HashMap::from([("tenant42".to_string(), 42)]),
+        };
+        // 修复前：hostname 被解析为 "["，行为与普通 unknown subdomain 混淆且无法命中 IPv6 场景；
+        // 修复后：hostname 为 "::1"，返回 unknown-subdomain 错误（IPv6 地址不在 mapping 属预期路径）。
+        let result = resolver.resolve(&headers).await;
+        match result {
+            Err(GarrisonError::Config(msg)) => {
+                assert!(
+                    msg.contains("ctx-host-unknown-subdomain"),
+                    "IPv6 Host 应走 unknown-subdomain 路径，实际: {msg}"
+                );
+                assert!(
+                    msg.contains("::1"),
+                    "错误消息应包含完整 IPv6 地址而非 '['，实际: {msg}"
+                );
+            },
+            Err(other) => panic!("期望 Config 错误，实际: {:?}", other),
+            Ok(_) => panic!("IPv6 地址不在 mapping 中应报错"),
+        }
+    }
+
+    /// ocr #6435 回归：裸 IPv6 Host（无端口 `[::1]`）同样正确解析。
+    #[tokio::test]
+    async fn subdomain_tenant_resolver_handles_ipv6_host_without_port() {
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Host", "[2001:db8::1]".parse().unwrap());
+        let resolver = SubdomainTenantResolver {
+            mapping: std::collections::HashMap::new(),
+        };
+        let result = resolver.resolve(&headers).await;
+        assert!(
+            matches!(result, Err(GarrisonError::Config(_))),
+            "裸 IPv6 Host 不应 panic，应返回 Config 错误"
+        );
+    }
+
     /// R-tenant-isolation-002: ClaimTenantResolver 从 Authorization Bearer JWT 提取 tenant_id claim。
     ///
     /// 构造含 `Authorization: Bearer <jwt>` 的 headers（JWT payload 含 `tenant_id: 42`），
@@ -714,5 +824,126 @@ mod tests {
             .await
             .expect("小写 bearer scheme 应被接受");
         assert_eq!(ctx.tenant_id, 42);
+    }
+
+    /// ocr #3110 回归：ClaimTenantResolver 的 Debug 输出必须脱敏 jwt_secret。
+    #[cfg(feature = "protocol-jwt")]
+    #[test]
+    fn claim_tenant_resolver_debug_redacts_jwt_secret() {
+        let resolver = ClaimTenantResolver::new("super-secret-value".to_string());
+        let debug = format!("{:?}", resolver);
+        assert!(
+            !debug.contains("super-secret-value"),
+            "Debug 输出不得包含明文 jwt_secret，实际: {debug}"
+        );
+        assert!(
+            debug.contains("<redacted>"),
+            "Debug 输出应包含脱敏占位符，实际: {debug}"
+        );
+    }
+
+    /// ocr #2434/#3556：配置了 expected_issuers 时，iss 不匹配的 JWT 应被拒绝。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn claim_tenant_resolver_rejects_wrong_issuer_when_configured() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+
+        #[derive(serde::Serialize)]
+        struct Claims {
+            tenant_id: i64,
+            exp: i64,
+            iss: String,
+        }
+
+        let secret = "test-secret-issuer";
+        let jwt = encode(
+            &Header::new(Algorithm::HS256),
+            &Claims {
+                tenant_id: 42,
+                exp: 9999999999,
+                iss: "attacker-service".to_string(),
+            },
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("encode jwt");
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Authorization", format!("Bearer {jwt}").parse().unwrap());
+        let resolver = ClaimTenantResolver::new(secret.to_string())
+            .with_expected_issuers(vec!["garrison-auth".to_string()]);
+        let result = resolver.resolve(&headers).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
+            "iss 不匹配的 JWT 应被拒绝（防跨服务 token 重放）"
+        );
+    }
+
+    /// ocr #2434/#3556：配置了 expected_issuers 时，iss 匹配的 JWT 应通过。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn claim_tenant_resolver_accepts_matching_issuer_when_configured() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+
+        #[derive(serde::Serialize)]
+        struct Claims {
+            tenant_id: i64,
+            exp: i64,
+            iss: String,
+        }
+
+        let secret = "test-secret-issuer-ok";
+        let jwt = encode(
+            &Header::new(Algorithm::HS256),
+            &Claims {
+                tenant_id: 7,
+                exp: 9999999999,
+                iss: "garrison-auth".to_string(),
+            },
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("encode jwt");
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Authorization", format!("Bearer {jwt}").parse().unwrap());
+        let resolver = ClaimTenantResolver::new(secret.to_string())
+            .with_expected_issuers(vec!["garrison-auth".to_string()]);
+        let ctx = resolver.resolve(&headers).await.expect("iss 匹配应通过");
+        assert_eq!(ctx.tenant_id, 7);
+    }
+
+    /// ocr #2434/#3556：配置了 expected_audiences 时，aud 不匹配的 JWT 应被拒绝。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn claim_tenant_resolver_rejects_wrong_audience_when_configured() {
+        use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+
+        #[derive(serde::Serialize)]
+        struct Claims {
+            tenant_id: i64,
+            exp: i64,
+            aud: String,
+        }
+
+        let secret = "test-secret-aud";
+        let jwt = encode(
+            &Header::new(Algorithm::HS256),
+            &Claims {
+                tenant_id: 42,
+                exp: 9999999999,
+                aud: "other-service".to_string(),
+            },
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .expect("encode jwt");
+
+        let mut headers = http::HeaderMap::new();
+        headers.insert("Authorization", format!("Bearer {jwt}").parse().unwrap());
+        let resolver = ClaimTenantResolver::new(secret.to_string())
+            .with_expected_audiences(vec!["tenant-service".to_string()]);
+        let result = resolver.resolve(&headers).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
+            "aud 不匹配的 JWT 应被拒绝"
+        );
     }
 }

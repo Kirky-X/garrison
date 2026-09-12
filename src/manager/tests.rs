@@ -944,13 +944,20 @@ async fn manager_init_cleanup_task_runs_after_init() {
         "清理前 token 应存在于 login_token_map"
     );
 
-    // 等待 token TTL 过期 + 至少 2 次清理周期
-    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-
-    // 验证 token 已被 cleanup task 清理
+    // 等待 token TTL 过期 + 清理周期。
+    // ocr #1758：不用固定 sleep（CI 慢机器上 3s 余量不足导致 flaky），
+    // 改为轮询断言：最长等 10s，token 被清理即提前返回。
+    let mut cleaned = false;
+    for _ in 0..50 {
+        if logic.session.get_token_by_login_id("1001").is_none() {
+            cleaned = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
     assert!(
-        logic.session.get_token_by_login_id("1001").is_none(),
-        "清理后 token 应从 login_token_map 移除"
+        cleaned,
+        "清理后 token 应从 login_token_map 移除（TTL=1s + 每秒清理）"
     );
 
     GarrisonManager::reset_for_test();

@@ -23,6 +23,31 @@ impl Default for TenantIsolationConfig {
     }
 }
 
+// 手动 Debug 实现（非 derive，ocr #2440/#2441）：
+// GarrisonConfig 含 `jwt_secret`（`Zeroizing<String>` 的 Debug 是透明的），
+// derive(Debug) 会把密钥明文打印进日志。此处借 derived Serialize 输出完整字段映射
+// （新增字段自动纳入，不会漏），并将 `jwt_secret` 覆写为 `"<redacted>"`。
+impl std::fmt::Debug for GarrisonConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let mut value = match serde_json::to_value(self) {
+            Ok(v) => v,
+            Err(_) => serde_json::json!({
+                "token_name": self.token_name,
+                "token_style": self.token_style,
+                "timeout": self.timeout,
+            }),
+        };
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert(
+                "jwt_secret".to_string(),
+                serde_json::Value::String("<redacted>".to_string()),
+            );
+        }
+        f.write_str("GarrisonConfig ")?;
+        std::fmt::Debug::fmt(&value, f)
+    }
+}
+
 impl GarrisonConfig {
     /// 创建符合 spec 的默认配置实例。
     ///
@@ -30,6 +55,15 @@ impl GarrisonConfig {
     /// - token_style = "uuid"
     /// - timeout = 2592000（30 天）
     /// - throw_on_not_login = true
+    ///
+    /// # 校验语义（ocr #2440 系列 / 安全默认）
+    ///
+    /// 本方法**不调用 `validate()`**：返回的是未经校验的原始默认值，
+    /// 允许调用方在运行前逐字段改写（如测试把 `timeout` 置为非法值后再断言
+    /// `validate()` 失败）。生产入口 `GarrisonConfig::load()` 与
+    /// `GarrisonManagerBuilder::build()` 均会调用 `validate()`；
+    /// 直接以 `default_config()` 驱动生产时，调用方必须在启动前自行调用
+    /// `config.validate()`（fail-fast，避免非法配置延迟到请求路径才暴露）。
     pub fn default_config() -> Self {
         let config = Self {
             token_name: DEFAULT_TOKEN_NAME.to_string(),
@@ -405,6 +439,10 @@ impl GarrisonConfig {
             .build()
             .map_err(|e| GarrisonError::Config(format!("config-confers-build-failed::{}", e)))?;
 
+        // ocr #6283：显式环境变量覆盖必须在 `with_watcher()` 之前完成——watch channel
+        // 的初值取自 `with_watcher()` 时的配置快照；若先建 watcher 再覆盖字段，
+        // `watch()` 订阅者会先收到覆盖前的旧配置，`update()` 亦从旧值起步。
+        // 覆盖完成后再统一 `with_watcher()` + `validate()`。
         #[cfg_attr(
             not(any(
                 feature = "web-cors",
@@ -413,7 +451,7 @@ impl GarrisonConfig {
             )),
             allow(unused_mut)
         )]
-        let mut config = config.with_watcher();
+        let mut config = config;
 
         // T039: 环境变量覆盖（spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）。
         // confers 通用收集无法处理枚举结构变体，故 CORS/CSRF/RateLimit 的环境变量
@@ -457,6 +495,10 @@ impl GarrisonConfig {
                 }
             }
         }
+
+        // ocr #6283：watcher 在全部环境变量覆盖完成后附加，保证 watch channel 初值
+        // 即最终生效配置（订阅者首次 `borrow_and_update()` 拿到的不是覆盖前的旧值）。
+        let config = config.with_watcher();
 
         config.validate()?;
         Ok(config)
@@ -503,7 +545,7 @@ impl GarrisonConfig {
         self.validate_feature_gated()
     }
 
-    /// 核心字段校验：`token_style` / `timeout` / `cookie_same_site`。
+    /// 核心字段校验：`token_style` / `timeout` / `cookie_same_site` / `jwt_algorithm`。
     fn validate_core(&self) -> GarrisonResult<()> {
         if !TOKEN_STYLES.contains(&self.token_style.as_str()) {
             return Err(GarrisonError::Config(format!(
@@ -520,6 +562,17 @@ impl GarrisonConfig {
             return Err(GarrisonError::Config(format!(
                 "config-unknown-cookie-same-site::{}",
                 self.cookie_same_site
+            )));
+        }
+        // ocr #3123：jwt_algorithm 白名单校验移入核心校验，不再仅在 token_style=jwt
+        // 时（经 validate_jwt_secret）检查——非 JWT 模式下非法算法（如 "RS256"）此前
+        // 会静默通过，待切换 token_style 后才暴露。
+        if !JWT_ALGORITHMS.contains(&self.jwt_algorithm.as_str()) {
+            // 复用既有 locale 键 `config-jwt-algorithm-unsupported`（en/zh 均有翻译，
+            // 且与 validate_jwt_secret 的同场景错误保持一致），不新造未翻译键
+            return Err(GarrisonError::Config(format!(
+                "config-jwt-algorithm-unsupported::{}",
+                self.jwt_algorithm
             )));
         }
         Ok(())
@@ -722,6 +775,12 @@ impl GarrisonConfig {
                     "config-anomalous-burst-invalid::".to_string(),
                 ));
             }
+        }
+        // CORS 配置合法性：credentials 与 wildcard origin 冲突校验
+        // （此前 CorsConfig::validate 仅测试调用，生产路径从不校验，ocr #3711）
+        #[cfg(feature = "web-cors")]
+        {
+            crate::web::cors::CorsConfig::validate(&self.cors_config)?;
         }
         Ok(())
     }

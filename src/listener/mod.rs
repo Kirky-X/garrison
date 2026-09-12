@@ -33,18 +33,29 @@ pub mod audit;
 ///
 /// - `ip`: 客户端 IP 地址（可选，未知时为 `None`）
 /// - `user_agent`: 客户端 User-Agent（可选，未知时为 `None`）
+///
+/// # ⚠️ PII 说明（ocr #3028）
+///
+/// `ip` 与 `user_agent` 属于**个人身份信息（PII）**：任何 listener / audit sink
+/// 若将其持久化或输出到日志，即把 PII 写入存储层。实现方应：
+/// - 遵循所在司法辖区的数据保护法规（如 GDPR / 个保法）确定留存期限与合法 basis；
+/// - 优先使用部分掩码（如 `203.0.113.*`）或聚合统计；
+/// - 审计场景参考 `AuditLogListener` 的 `mask_metadata` / `audit_mask_mode` 脱敏管线。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RequestContext {
-    /// 客户端 IP 地址（可选）。
+    /// 客户端 IP 地址（可选）。⚠️ 含 PII，持久化/输出前应脱敏（见类型级文档）。
     pub ip: Option<String>,
-    /// 客户端 User-Agent（可选）。
+    /// 客户端 User-Agent（可选）。⚠️ 含 PII，持久化/输出前应脱敏（见类型级文档）。
     pub user_agent: Option<String>,
 }
 
 /// 事件枚举，定义框架广播的所有事件变体。
 ///
-/// 派生 `Debug`、`Clone`、`PartialEq`，便于在监听器中复制、打印与比较。
-#[derive(Debug, Clone, PartialEq)]
+/// 派生 `Clone`、`PartialEq`；**`Debug` 为手动实现（非 derive）**：
+/// `token` / `old_token` / `new_token` / `old_key` / `new_key` 等敏感字段在
+/// `{:?}` 输出中脱敏（仅保留前 8 字节 + `***`，短密钥整体掩码），防止监听器或
+/// 框架代码用 `{:?}` 打日志时泄露明文 token（ocr #2370）。
+#[derive(Clone, PartialEq)]
 pub enum GarrisonEvent {
     /// 登录成功事件。
     Login {
@@ -348,6 +359,301 @@ pub enum GarrisonEvent {
         /// 兑换者 ID。
         redeemer_id: String,
     },
+}
+
+/// Debug 脱敏 helper（ocr #2370）：敏感字符串不输出明文。
+///
+/// 超过 8 字节保留前 8 字节 + `***`（保留可识别前缀供排障关联）；
+/// 不超过 8 字节整体掩码为 `***`（短密钥全量输出即泄露）。
+/// 用 `get(..8)` 而非字节切片：非 char boundary 时退化为整体掩码，不 panic。
+fn redact_secret_for_debug(s: &str) -> String {
+    match s.get(..8) {
+        Some(prefix) if s.len() > 8 => format!("{prefix}***"),
+        _ => "***".to_string(),
+    }
+}
+
+impl std::fmt::Debug for GarrisonEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 脱敏范围：token 类字段（token/old_token/new_token/old_key/new_key）、
+        // 凭据载荷（TempCredentialConsumed.value）与邀请码（code，兑换即凭据）。
+        // login_id / device / ip 等保留明文（排障关联标识，PII 处理见 RequestContext 文档）。
+        match self {
+            GarrisonEvent::Login {
+                login_id,
+                token,
+                device,
+                request_context,
+            } => f
+                .debug_struct("Login")
+                .field("login_id", login_id)
+                .field("token", &redact_secret_for_debug(token))
+                .field("device", device)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::Logout {
+                login_id,
+                token,
+                request_context,
+            } => f
+                .debug_struct("Logout")
+                .field("login_id", login_id)
+                .field("token", &redact_secret_for_debug(token))
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::Kickout {
+                login_id,
+                token,
+                reason,
+                request_context,
+            } => f
+                .debug_struct("Kickout")
+                .field("login_id", login_id)
+                .field("token", &redact_secret_for_debug(token))
+                .field("reason", reason)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::PermissionCheck {
+                login_id,
+                permission,
+                request_context,
+            } => f
+                .debug_struct("PermissionCheck")
+                .field("login_id", login_id)
+                .field("permission", permission)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::RoleCheck {
+                login_id,
+                role,
+                request_context,
+            } => f
+                .debug_struct("RoleCheck")
+                .field("login_id", login_id)
+                .field("role", role)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::TokenExpired {
+                token,
+                request_context,
+            } => f
+                .debug_struct("TokenExpired")
+                .field("token", &redact_secret_for_debug(token))
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::LoginFailure {
+                login_id,
+                reason,
+                request_context,
+            } => f
+                .debug_struct("LoginFailure")
+                .field("login_id", login_id)
+                .field("reason", reason)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::TokenRefresh {
+                login_id,
+                old_token,
+                new_token,
+                request_context,
+            } => f
+                .debug_struct("TokenRefresh")
+                .field("login_id", login_id)
+                .field("old_token", &redact_secret_for_debug(old_token))
+                .field("new_token", &redact_secret_for_debug(new_token))
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::RevokeToken {
+                token,
+                request_context,
+            } => f
+                .debug_struct("RevokeToken")
+                .field("token", &redact_secret_for_debug(token))
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::SessionTimeout {
+                login_id,
+                token,
+                request_context,
+            } => f
+                .debug_struct("SessionTimeout")
+                .field("login_id", login_id)
+                .field("token", &redact_secret_for_debug(token))
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::AccountLocked {
+                login_id,
+                reason,
+                request_context,
+            } => f
+                .debug_struct("AccountLocked")
+                .field("login_id", login_id)
+                .field("reason", reason)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::FirewallBlock {
+                login_id,
+                reason,
+                request_context,
+            } => f
+                .debug_struct("FirewallBlock")
+                .field("login_id", login_id)
+                .field("reason", reason)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::TokenRotate {
+                old_key,
+                new_key,
+                request_context,
+            } => f
+                .debug_struct("TokenRotate")
+                .field("old_key", &redact_secret_for_debug(old_key))
+                .field("new_key", &redact_secret_for_debug(new_key))
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::TempCredentialConsumed {
+                key,
+                value,
+                request_context,
+            } => f
+                .debug_struct("TempCredentialConsumed")
+                .field("key", key)
+                .field("value", &redact_secret_for_debug(value))
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::SocialLogin {
+                provider,
+                user_id,
+                login_id,
+                request_context,
+            } => f
+                .debug_struct("SocialLogin")
+                .field("provider", provider)
+                .field("user_id", user_id)
+                .field("login_id", login_id)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::TenantSwitch {
+                login_id,
+                from_tenant,
+                to_tenant,
+                request_context,
+            } => f
+                .debug_struct("TenantSwitch")
+                .field("login_id", login_id)
+                .field("from_tenant", from_tenant)
+                .field("to_tenant", to_tenant)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::DeviceBlock {
+                login_id,
+                device,
+                request_context,
+            } => f
+                .debug_struct("DeviceBlock")
+                .field("login_id", login_id)
+                .field("device", device)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::DeviceUnblock {
+                login_id,
+                device,
+                request_context,
+            } => f
+                .debug_struct("DeviceUnblock")
+                .field("login_id", login_id)
+                .field("device", device)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::ConfigReload {
+                config_version,
+                request_context,
+            } => f
+                .debug_struct("ConfigReload")
+                .field("config_version", config_version)
+                .field("request_context", request_context)
+                .finish(),
+            #[cfg(feature = "anomalous-detector-dual")]
+            GarrisonEvent::AnomalousLoginDetected {
+                login_id,
+                reason,
+                detail,
+                timestamp,
+                request_context,
+            } => f
+                .debug_struct("AnomalousLoginDetected")
+                .field("login_id", login_id)
+                .field("reason", reason)
+                .field("detail", detail)
+                .field("timestamp", timestamp)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::Replaced {
+                login_id,
+                token,
+                reason,
+                request_context,
+            } => f
+                .debug_struct("Replaced")
+                .field("login_id", login_id)
+                .field("token", &redact_secret_for_debug(token))
+                .field("reason", reason)
+                .field("request_context", request_context)
+                .finish(),
+            #[cfg(feature = "credit-metering")]
+            GarrisonEvent::CreditConsumed {
+                tenant_id,
+                resource,
+                cost,
+                credits,
+                total_consumed,
+                request_context,
+            } => f
+                .debug_struct("CreditConsumed")
+                .field("tenant_id", tenant_id)
+                .field("resource", resource)
+                .field("cost", cost)
+                .field("credits", credits)
+                .field("total_consumed", total_consumed)
+                .field("request_context", request_context)
+                .finish(),
+            #[cfg(feature = "credit-metering")]
+            GarrisonEvent::CreditAlert {
+                tenant_id,
+                threshold,
+                usage_percent,
+                total_consumed,
+                credit_limit,
+                request_context,
+            } => f
+                .debug_struct("CreditAlert")
+                .field("tenant_id", tenant_id)
+                .field("threshold", threshold)
+                .field("usage_percent", usage_percent)
+                .field("total_consumed", total_consumed)
+                .field("credit_limit", credit_limit)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::InvitationCreated { code, issuer_id } => f
+                .debug_struct("InvitationCreated")
+                .field("code", &redact_secret_for_debug(code))
+                .field("issuer_id", issuer_id)
+                .finish(),
+            GarrisonEvent::InvitationRevoked { code, issuer_id } => f
+                .debug_struct("InvitationRevoked")
+                .field("code", &redact_secret_for_debug(code))
+                .field("issuer_id", issuer_id)
+                .finish(),
+            GarrisonEvent::InvitationRedeemed {
+                code,
+                redeemer_id,
+            } => f
+                .debug_struct("InvitationRedeemed")
+                .field("code", &redact_secret_for_debug(code))
+                .field("redeemer_id", redeemer_id)
+                .finish(),
+        }
+    }
 }
 
 /// 监听器 trait，提供事件订阅抽象。

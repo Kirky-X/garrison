@@ -156,6 +156,9 @@ impl GarrisonResponse for ActixResponse {
     }
 
     fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
+        // 注入防护（ocr #2431）：name/value 先经合法性校验，
+        // 拒绝控制字符与 `;`、`,` 等分隔符，防止注入 Domain 等恶意 Cookie 属性
+        crate::context::validate_cookie_name_value(name, value)?;
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
         let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
         self.set_header("Set-Cookie", &cookie_value)
@@ -167,6 +170,8 @@ impl GarrisonResponse for ActixResponse {
         value: &str,
         config: &crate::config::GarrisonConfig,
     ) -> GarrisonResult<()> {
+        // 注入防护（同 ocr #2431）：同 set_cookie，name/value 校验后再拼接
+        crate::context::validate_cookie_name_value(name, value)?;
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
         let cookie_value = format!(

@@ -102,6 +102,15 @@ impl Default for GarrisonManagerBuilder {
     }
 }
 
+/// `build()` 全局串行锁（ocr #6334/#7774）。
+///
+/// `build()` 对 `GARRISON_MANAGER` 单例的更新由多个独立锁保护的字段组成
+/// （logic / strategy 两次 `ArcSwapOption::store` + cleanup/anomalous handle 写入），
+/// 字段间非原子：两个并发 `build()` 可能交错执行，产生 `(logic_B, strategy_A)` 错配对，
+/// 或 A 的 analyzer shutdown_tx 被 B 误取走 drop，提前杀死对方刚启动的后台任务。
+/// 以进程级 `Mutex` 串行化单例写入段，保证分步写入对并发调用方原子可见。
+static BUILD_LOCK: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+
 impl GarrisonManagerBuilder {
     /// 创建空的 builder 实例（所有字段为 None）。
     pub fn new() -> Self {
@@ -190,11 +199,20 @@ impl GarrisonManagerBuilder {
     ///
     /// task handle 归 `GARRISON_MANAGER` 单例，`GarrisonUtil` 静态 API 可用。
     ///
+    /// # 并发安全（ocr #6334/#7774）
+    ///
+    /// 单例写入段（logic / strategy / task handle）由进程级 `BUILD_LOCK` 串行化：
+    /// 并发调用 `build()` 时按获取锁顺序依次完成各自的"写入 + 换 task"，后一次
+    /// build 覆盖前一次，不会出现字段交错错配或误杀对方后台任务。
+    /// 允许重复 build（便于测试），但单例最终只保留最后一次 build 的组件。
+    ///
     /// # 错误
     /// - 必填字段缺失（dao/config/interface 任一为 None）：`GarrisonError::Config`
     /// - 配置非法：透传 `config.validate()` 的错误
     /// - factory 构造失败：透传 factory 返回的 `GarrisonError`
     pub async fn build(self) -> GarrisonResult<()> {
+        // 串行化对全局单例的写入段（锁内无 await，不跨 .await 持锁）
+        let _build_guard = BUILD_LOCK.lock();
         let (logic, task_handles) = self.build_logic()?;
 
         // 覆盖式更新全局单例（允许重复 build，便于测试）

@@ -36,9 +36,18 @@ use std::cell::RefCell;
 use std::sync::OnceLock;
 use unic_langid::LanguageIdentifier;
 
-/// 构造本地化错误文案：优先按 `key` 查 FTL 翻译，缺失时回退 `$fallback` 字符串。
+/// 构造本地化错误文案：优先按 `key` 查 FTL 翻译；key 缺失或格式化失败时
+/// 回退到 `$fallback` 字符串；`$fallback` 为空串时维持旧行为返回 `key` 本身。
 ///
 /// i18n 基础层已无条件编译，本宏始终委托 [`translate_detail`]，无需 feature 门控。
+///
+/// # 回退语义（ocr #6139）
+///
+/// 历史实现丢弃了 `$fallback` 参数（缺 key 时直接返回 key）。现行为：
+/// 1. `translate_detail` 命中 key → 返回翻译；
+/// 2. 未命中且 `$fallback` 非空 → 返回 `$fallback`；
+/// 3. 未命中且 `$fallback` 为空（大量既有调用点传 `""`）→ 返回 `key`
+///    （与旧行为逐字节一致，不破坏既有断言）。
 ///
 /// # 示例
 ///
@@ -51,7 +60,19 @@ use unic_langid::LanguageIdentifier;
 #[macro_export]
 macro_rules! loc {
     ($key:expr, $fallback:expr $(, ($arg_k:expr, $arg_v:expr))*) => {{
-        $crate::i18n::translate_detail($key, &[$(($arg_k, $arg_v)),*])
+        let translated = $crate::i18n::translate_detail($key, &[$(($arg_k, $arg_v)),*]);
+        if translated == $key {
+            // 缺 key（translate_detail 回退为 key 本身）：应用调用方 fallback；
+            // fallback 为空串时保持返回 key（向后兼容既有行为）
+            let fallback = $fallback.to_string();
+            if fallback.is_empty() {
+                translated
+            } else {
+                fallback
+            }
+        } else {
+            translated
+        }
     }};
 }
 
@@ -206,7 +227,8 @@ pub fn translate_error(err: &GarrisonError) -> String {
 /// # 返回
 ///
 /// - 找到 key 且格式化成功：返回格式化后的本地化字符串
-/// - 未找到 key 或格式化出错：返回 `key` 本身（由调用方在 `loc!` 宏中提供 fallback）
+/// - 未找到 key 或格式化出错：返回 `key` 本身（[`loc!`] 宏在此基础上
+///   应用调用方提供的 fallback；fallback 为空时保持返回 key）
 pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
     let locale = current_locale();
     let bundle = get_bundle(locale);
@@ -757,6 +779,42 @@ mod tests {
         let _guard = set_locale(GarrisonLocale::Zh);
         let msg = translate_detail("nonexistent-key-xyz", &[]);
         assert_eq!(msg, "nonexistent-key-xyz");
+    }
+
+    // ========================================================================
+    // loc! 宏 fallback 语义测试（ocr #6139）
+    // ========================================================================
+
+    /// loc! 缺 key 且 fallback 非空时使用 fallback（而非丢弃参数返回 key）。
+    #[test]
+    fn loc_macro_uses_fallback_when_key_missing() {
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let msg = loc!("nonexistent-key-xyz", "human readable fallback");
+        assert_eq!(msg, "human readable fallback");
+    }
+
+    /// loc! 缺 key 且 fallback 为 String 时同样使用 fallback。
+    #[test]
+    fn loc_macro_uses_string_fallback_when_key_missing() {
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let msg = loc!("nonexistent-key-xyz", "owned fallback".to_string());
+        assert_eq!(msg, "owned fallback");
+    }
+
+    /// loc! 缺 key 且 fallback 为空串时维持旧行为返回 key（向后兼容）。
+    #[test]
+    fn loc_macro_empty_fallback_keeps_key() {
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let msg = loc!("nonexistent-key-xyz", "");
+        assert_eq!(msg, "nonexistent-key-xyz");
+    }
+
+    /// loc! 命中 key 时返回翻译，fallback 不参与。
+    #[test]
+    fn loc_macro_translated_key_ignores_fallback() {
+        let _guard = set_locale(GarrisonLocale::Zh);
+        let msg = loc!("sms-verify-max-attempts", "unused fallback");
+        assert_eq!(msg, "SMS 验证码尝试次数超限");
     }
 
     /// translate_detail 无参数时正常翻译。

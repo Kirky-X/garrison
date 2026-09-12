@@ -173,6 +173,9 @@ impl GarrisonResponse for WarpResponse {
     }
 
     fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
+        // 注入防护（联动 ocr #2431/#3106）：与 axum/actix 适配器一致的 name/value 校验，
+        // 拒绝控制字符与 `;`、`,` 等分隔符，防止注入 Domain 等恶意 Cookie 属性
+        crate::context::validate_cookie_name_value(name, value)?;
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
         let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
         self.set_header("Set-Cookie", &cookie_value)
@@ -184,6 +187,8 @@ impl GarrisonResponse for WarpResponse {
         value: &str,
         config: &crate::config::GarrisonConfig,
     ) -> GarrisonResult<()> {
+        // 注入防护（联动 ocr #2431/#3107）：同 set_cookie，name/value 校验后再拼接
+        crate::context::validate_cookie_name_value(name, value)?;
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
         let cookie_value = format!(
@@ -245,16 +250,16 @@ impl GarrisonStorage for WarpStorage {
 /// - 持有 `WarpRequest`（owned）+ `WarpResponse` + `WarpStorage`
 /// - 通过 `raw_response_mut()` 写入 status / headers / cookies
 /// - 通过 `raw_storage_mut()` 写入请求级临时数据
+///
+/// # body 单一存储（ocr #4010/#6691）
+///
+/// `body_bytes` 仅存储在 `request_data: WarpRequest` 内部（单一事实来源），
+/// `WarpContext` 不再另行保存外层副本——`with_body()` 将字节直接注入 `WarpRequest::with_body`，
+/// `request()` 从 `request_data` 读取并传递，消除双存储互不一致的脆弱性。
 pub struct WarpContext {
     request_data: WarpRequest,
     response: WarpResponse,
     storage: WarpStorage,
-    /// 预读的 body 字节（用于 `is_read_body=true` 时从 JSON 提取 token）。
-    ///
-    /// body 读取是 async 操作，但 `get_token` 是 sync 方法，故由调用方在
-    /// async 上下文中预读 body 字节后通过 `with_body` 注入。
-    /// 默认空 `Vec`（`new` 构造时），此时 body 读取分支静默跳过。
-    body_bytes: Vec<u8>,
 }
 
 impl WarpContext {
@@ -273,7 +278,6 @@ impl WarpContext {
             request_data: WarpRequest::new(path, method, headers),
             response: WarpResponse::new(),
             storage: WarpStorage::new(),
-            body_bytes: Vec::new(),
         }
     }
 
@@ -286,7 +290,8 @@ impl WarpContext {
     /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中读取后传入）。
     ///
     /// # 返回
-    /// 包含请求数据与 body 字节的 `WarpContext` 实例。
+    /// 包含请求数据与 body 字节的 `WarpContext` 实例（body 存储于 `request_data` 内，
+    /// 单一事实来源，ocr #4010/#6691）。
     pub fn with_body(
         path: String,
         method: String,
@@ -294,10 +299,9 @@ impl WarpContext {
         body_bytes: Vec<u8>,
     ) -> Self {
         Self {
-            request_data: WarpRequest::new(path, method, headers),
+            request_data: WarpRequest::with_body(path, method, headers, body_bytes),
             response: WarpResponse::new(),
             storage: WarpStorage::new(),
-            body_bytes,
         }
     }
 
@@ -324,12 +328,13 @@ impl WarpContext {
 
 impl GarrisonContext for WarpContext {
     fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>> {
-        // WarpRequest 已 owned，直接克隆数据构造新实例（含 body_bytes）
+        // WarpRequest 已 owned，直接克隆数据构造新实例。
+        // body_bytes 从 request_data（单一事实来源）读取并正确传递（ocr #4010/#6691）。
         Ok(Box::new(WarpRequest::with_body(
             self.request_data.path.clone(),
             self.request_data.method.clone(),
             self.request_data.headers.clone(),
-            self.body_bytes.clone(),
+            self.request_data.body_bytes.clone(),
         )))
     }
 }

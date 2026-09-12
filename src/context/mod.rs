@@ -34,7 +34,7 @@
 //! - `WarpResponse` 持有 `HeaderMap + StatusCode`
 //! - `WarpStorage` 用 `HashMap<String, String>`
 
-use crate::error::GarrisonResult;
+use crate::error::{GarrisonError, GarrisonResult};
 
 // ============================================================================
 // 多租户隔离上下文
@@ -165,11 +165,18 @@ pub trait GarrisonResponse {
     /// 安全默认：调用此方法不需要任何额外参数即可获得安全属性。
     /// 如需自定义 Secure/SameSite（如 dev HTTP 环境关闭 Secure），使用 `set_cookie_with_config`。
     ///
+    /// # 前后端分离模式
+    ///
+    /// 本便捷方法无 `config` 参数，`frontend_separation` 检查基于
+    /// `GarrisonConfig::default_config()`（对齐 [`GarrisonResponse::set_cookie_with_frontend_check`]，
+    /// ocr #2680）。需要 per-request 配置时，请使用
+    /// `set_cookie_with_frontend_check(name, value, &config)`。
+    ///
     /// # 参数
     /// - `name`: Cookie 名称。
     /// - `value`: Cookie 值。
     fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
-        self.set_cookie_with_config(
+        self.set_cookie_with_frontend_check(
             name,
             value,
             &crate::config::GarrisonConfig::default_config(),
@@ -247,6 +254,69 @@ pub trait GarrisonStorage {
 
 mod helpers;
 pub use helpers::{effective_is_read_cookie, effective_is_read_header};
+
+// ============================================================================
+// Set-Cookie 注入防护（供各框架适配器共用，ocr #3106/#3107/#6873/#2431）
+// ============================================================================
+
+/// 校验 Set-Cookie 的 name/value 合法性，防止 Cookie 头注入。
+///
+/// `Set-Cookie` 头按 `name=value; attr1; attr2` 拼接：若 name/value 含 `;`、
+/// 控制字符或空格等分隔符，攻击者可注入 `Domain=` / `HttpOnly` 移除等恶意属性，
+/// 或破坏头部结构。本函数不引入 percent-encoding 依赖，直接拒绝非法输入。
+///
+/// # 规则
+///
+/// - `name`：非空，且仅允许 RFC 6265 `token` 字符（字母数字与 `!#$%&'*+-.^_`|~`），
+///   拒绝 `=`、`;`、空格与控制字符。
+/// - `value`：允许空串（用于清除 cookie），但拒绝控制字符（< 0x21 或 0x7F）、
+///   空格、`;`、`,`、`\`、`"`。
+///
+/// # 错误
+///
+/// - `GarrisonError::Context`：name 或 value 含非法字符时返回。
+#[cfg_attr(
+    not(any(feature = "web-axum", feature = "web-actix", feature = "web-warp")),
+    allow(dead_code)
+)]
+pub(crate) fn validate_cookie_name_value(name: &str, value: &str) -> GarrisonResult<()> {
+    let name_ok = !name.is_empty()
+        && name.bytes().all(|b| {
+            b.is_ascii_alphanumeric()
+                || matches!(
+                    b,
+                    b'!' | b'#'
+                        | b'$'
+                        | b'%'
+                        | b'&'
+                        | b'\''
+                        | b'*'
+                        | b'+'
+                        | b'-'
+                        | b'.'
+                        | b'^'
+                        | b'_'
+                        | b'`'
+                        | b'|'
+                        | b'~'
+                )
+        });
+    if !name_ok {
+        return Err(GarrisonError::Context(format!(
+            "ctx-invalid-cookie-name::{name}"
+        )));
+    }
+    // value：拒绝控制字符/空格（< 0x21、0x7F）与 RFC 6265 排除字符 ; , \ "
+    let value_ok = !value
+        .bytes()
+        .any(|b| b < 0x21 || b == 0x7F || matches!(b, b';' | b',' | b'\\' | b'"'));
+    if !value_ok {
+        return Err(GarrisonError::Context(
+            "ctx-invalid-cookie-value::cookie value must not contain control chars, space, ';', ',', '\\\\' or '\"'".to_string(),
+        ));
+    }
+    Ok(())
+}
 
 // ============================================================================
 // axum 适配器（feature = "web-axum"）

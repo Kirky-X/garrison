@@ -44,6 +44,30 @@ fn display_formats_correctly() {
     assert_eq!(format!("{}", ex), "未登录: token 已过期");
 }
 
+/// ocr #621 回归：`with_login_type` 后 Display 输出必须跟随 login_type 变化。
+///
+/// 若 Display 硬编码"未登录"前缀而忽略 login_type 字段，此测试将失败。
+#[test]
+fn display_includes_custom_login_type() {
+    let ex = NotLoginException::new("请先登录").with_login_type("wechat");
+    let rendered = format!("{}", ex);
+    assert!(
+        rendered.contains("wechat"),
+        "Display 应包含自定义 login_type，实际: {rendered}"
+    );
+    assert!(
+        rendered.contains("请先登录"),
+        "Display 应包含异常消息，实际: {rendered}"
+    );
+    // 默认（空 login_type）路径不追加标注，保持既有格式
+    let default_ex = NotLoginException::new("token 已过期");
+    assert_eq!(
+        format!("{}", default_ex),
+        "未登录: token 已过期",
+        "空 login_type 时 Display 格式不得变化"
+    );
+}
+
 /// 验证 `NotLoginException` 实现 `std::error::Error` trait。
 #[test]
 fn implements_std_error() {
@@ -125,6 +149,42 @@ fn garrison_exception_debug_masks_login_id() {
     assert!(
         !debug.contains("13800138000"),
         "login_id 全文不得出现在 Debug 输出，实际: {debug}"
+    );
+}
+
+/// ocr #2382 回归：短 token / 短 login_id 不得全量明文输出（统一整体掩码）。
+#[test]
+fn garrison_exception_debug_masks_short_values() {
+    let ex = GarrisonException::new(-1, "请先登录")
+        .with_token("T1")
+        .with_login_id("1001");
+    let debug = format!("{:?}", ex);
+    assert!(
+        !debug.contains("\"T1\""),
+        "短 token 应整体掩码而非原样输出，实际: {debug}"
+    );
+    assert!(
+        !debug.contains("\"1001\""),
+        "短 login_id 应整体掩码而非原样输出，实际: {debug}"
+    );
+    assert!(debug.contains("***"), "掩码占位符应出现，实际: {debug}");
+}
+
+/// ocr #2383/#2635 回归：Debug 与响应体中 extras 的敏感 key 值必须掩码、
+/// 超长值截断（web-axum 未启用时仅验证 Debug 路径）。
+#[test]
+fn garrison_exception_debug_sanitizes_extras() {
+    let ex = GarrisonException::new(-1, "请先登录")
+        .with_extra("password", "super-secret")
+        .with_extra("device", "web");
+    let debug = format!("{:?}", ex);
+    assert!(
+        !debug.contains("super-secret"),
+        "extras 敏感 key 值不得明文进入 Debug 输出，实际: {debug}"
+    );
+    assert!(
+        debug.contains("\"device\": \"web\""),
+        "非敏感 extras 应保留，实际: {debug}"
     );
 }
 
@@ -288,4 +348,29 @@ fn garrison_exception_into_response_500() {
     let ex = GarrisonException::new(500, "业务异常").build();
     let response = ex.into_response();
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+/// ocr #2635 回归：into_response 响应体中 extras 的敏感 key 值必须掩码，
+/// 不得原样序列化给客户端。
+#[cfg(feature = "web-axum")]
+#[tokio::test]
+async fn garrison_exception_into_response_masks_extras() {
+    use axum::http::StatusCode;
+    use axum::response::IntoResponse;
+    let ex = GarrisonException::new(-1, "请先登录")
+        .with_extra("password", "super-secret")
+        .with_extra("device", "web")
+        .build();
+    let response = ex.into_response();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("读取响应体");
+    let text = String::from_utf8(bytes.to_vec()).expect("响应体应为 UTF-8");
+    assert!(
+        !text.contains("super-secret"),
+        "响应体不得包含未掩码的 extras 敏感值，实际: {text}"
+    );
+    assert!(text.contains("***"), "extras 敏感值应掩码为 ***，实际: {text}");
+    assert!(text.contains("web"), "非敏感 extras 应保留，实际: {text}");
 }

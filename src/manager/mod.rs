@@ -72,7 +72,15 @@ pub use builder::GarrisonManagerBuilder;
 /// # 初始化
 ///
 /// 业务方启动时调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`
-/// 注入依赖。未初始化时调用 `GarrisonUtil::login(id)` 等返回 `GarrisonError::Session`。
+/// 注入依赖。未初始化时调用 `GarrisonUtil::login(id)` 等返回 `GarrisonError::Session`
+/// （错误码 `manager-not-init`，与 locales 键一致）。
+///
+/// # 并发写入契约（ocr #7774/#6334）
+///
+/// `logic` 与 `strategy` 是两个独立的 `ArcSwapOption`，单次 `store` 原子但两者成对
+/// 非原子；并发调用 `GarrisonManagerBuilder::build()` 可能产生 `(logic_B, strategy_A)`
+/// 错配对。该风险由 builder 内进程级 `BUILD_LOCK` 串行化单例写入段消除——
+/// 不要绕过 builder 直接 `store` 全局单例字段。
 pub struct GarrisonManager {
     /// 全局 `GarrisonLogicDefault` 引用（ArcSwapOption 支持测试时重复 init 与 reset）。
     logic: ArcSwapOption<GarrisonLogicDefault>,
