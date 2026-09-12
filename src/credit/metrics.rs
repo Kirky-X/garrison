@@ -18,6 +18,12 @@
 //!
 //! - `CreditMeter::consume_credit`：消费成功后调用 `record_consumed` + `set_remaining`
 //! - `CreditMeter::consume_credit`：告警阈值触发时调用 `record_alert`
+//!
+//! # 标签基数（cardinality）
+//!
+//! `tenant_id` / `resource` 等标签值必须来自有限集合（数字 ID、内部资源白名单）；
+//! Prometheus 标签基数无上界，直接拼接用户可控字符串（动态路径、请求参数）会
+//! 导致内存膨胀。本模块不做白名单校验，契约见 `record_consumed` 文档。
 
 // ============================================================================
 // CreditMetrics：Credit 计量指标集合（feature = "metrics-prometheus"）
@@ -27,6 +33,19 @@
 ///
 /// 模式与 `crate::account::metrics::AccountMetrics` 一致：3 个指标注册到指定 registry，
 /// 通过 `CreditMeter` 内部持有 `Option<Arc<CreditMetrics>>` 注入。
+///
+/// # 构造语义（new 与 register_to 不可混用）
+///
+/// - [`Self::new`] / `Default`：绑定 **prometheus 默认 registry** 的进程级单例
+///   （`OnceLock` 缓存）。所有后续 `new()` 调用返回同一实例，**忽略调用方期望的
+///   registry**——不要在 `register_to(custom)` 之后调用 `new()` 并期望指标落在
+///   custom registry 上。
+/// - [`Self::register_to`]：注册到指定 registry（测试隔离 / 多 registry 场景）。
+///   对同一 registry 重复调用返回 `AlreadyReg` 错误；对**不同** registry 各自
+///   独立注册互不冲突。
+/// - 两个构造器混用的后果：先 `register_to(custom)` 后 `new()` → 默认 registry
+///   与 custom registry 各有一套同名指标（重复采集）；先 `new()` 后
+///   `register_to(default_registry)` → 后者返回 `AlreadyReg`。
 ///
 /// # 使用示例
 ///
@@ -52,20 +71,34 @@ pub struct CreditMetrics {
 
 #[cfg(feature = "metrics-prometheus")]
 impl CreditMetrics {
-    /// 创建新的指标集合，注册到默认 registry。
+    /// 创建新的指标集合，注册到默认 registry（进程级单例，语义见类型文档）。
     ///
-    /// # 错误
-    /// 若指标已注册（如多次调用 `new`），返回注册错误。生产环境建议使用 [`Self::register_to`]
-    /// 注册到自定义 registry。
+    /// # Panics
+    ///
+    /// 本方法**不会 panic**：若默认 registry 已存在同名指标（重复调用 `new` /
+    /// 与 `register_to(default_registry)` 混用），以 `tracing::warn` 记录后返回
+    /// 一个未注册的本地实例（`record_*` / `gather()` 均可用，仅默认 registry
+    /// 不再新增采集——已注册实例仍正常工作）。
     pub fn new() -> Self {
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<CreditMetrics> = OnceLock::new();
-        INSTANCE
-            .get_or_init(|| {
-                Self::register_to(prometheus::default_registry())
-                    .expect("failed to register CreditMetrics to the default registry: possibly already registered")
-            })
-            .clone()
+        INSTANCE.get_or_init(Self::init_default).clone()
+    }
+
+    /// new() 的单例初始化：注册默认 registry，冲突时 warn + 回退本地实例。
+    fn init_default() -> Self {
+        match Self::register_to(prometheus::default_registry()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "CreditMetrics 已注册到 prometheus 默认 registry（重复 new 或与 \
+                     register_to 混用），返回未注册的本地实例；已注册实例不受影响"
+                );
+                // build() 仅在指标名/帮助文本非法时失败——静态字面量下不可达
+                Self::build().expect("CreditMetrics: static metric opts are valid (unreachable)")
+            },
+        }
     }
 
     /// 创建并注册到指定 registry（用于自定义 registry 场景，测试隔离）。
@@ -73,6 +106,15 @@ impl CreditMetrics {
     /// # 错误
     /// - 指标已注册：返回 `Err(prometheus::Error::AlreadyReg)`。
     pub fn register_to(registry: &prometheus::Registry) -> Result<Self, prometheus::Error> {
+        let metrics = Self::build()?;
+        registry.register(Box::new(metrics.consumed_total.clone()))?;
+        registry.register(Box::new(metrics.remaining.clone()))?;
+        registry.register(Box::new(metrics.alerts_total.clone()))?;
+        Ok(metrics)
+    }
+
+    /// 构建指标集合（不注册到任何 registry）。
+    fn build() -> Result<Self, prometheus::Error> {
         let consumed_total = prometheus::CounterVec::new(
             prometheus::Opts::new(
                 "garrison_credit_consumed_total",
@@ -95,10 +137,6 @@ impl CreditMetrics {
             &["tenant_id", "threshold"],
         )?;
 
-        registry.register(Box::new(consumed_total.clone()))?;
-        registry.register(Box::new(remaining.clone()))?;
-        registry.register(Box::new(alerts_total.clone()))?;
-
         Ok(Self {
             consumed_total,
             remaining,
@@ -112,6 +150,13 @@ impl CreditMetrics {
     /// - `tenant_id`: 租户 ID（字符串化标签）。
     /// - `resource`: 消费的资源类型（如 `"login"` / `"api_call"`）。
     /// - `credits`: 本次消耗的 credit 数。
+    ///
+    /// # 标签基数（cardinality）契约
+    ///
+    /// Prometheus 标签值基数无上界会导致内存/存储膨胀：`tenant_id` 与
+    /// `resource` **必须来自有限集合**（数字 ID、内部资源白名单）。本方法不做
+    /// 白名单校验——调用方若将用户可控的任意字符串（动态 API 路径、请求参数等）
+    /// 直接作为标签值传入，会撑爆 Prometheus，责任在调用方。
     pub fn record_consumed(&self, tenant_id: &str, resource: &str, credits: u64) {
         self.consumed_total
             .with_label_values(&[tenant_id, resource])
@@ -376,6 +421,23 @@ mod tests {
         assert!(debug.contains("CreditMetrics"), "实际: {}", debug);
         assert!(debug.contains("CounterVec"), "实际: {}", debug);
         assert!(debug.contains("GaugeVec"), "实际: {}", debug);
+    }
+
+    /// new() 在默认 registry 已注册同名指标时不再 panic（旧实现 expect panic）：
+    /// warn 后返回可用的本地实例（record/gather 正常）。
+    ///
+    /// 注：与本文件其他测试共享进程级默认 registry，执行顺序不定——
+    /// register_to 可能成功（本测试先行）或返回 AlreadyReg（new() 先行），均可。
+    #[test]
+    #[serial]
+    fn new_does_not_panic_when_already_registered_to_default_registry() {
+        let _ = CreditMetrics::register_to(prometheus::default_registry());
+        let m = CreditMetrics::new();
+        m.record_consumed("909", "login", 3);
+        assert!(
+            m.gather().contains("tenant_id=\"909\""),
+            "回退实例应可正常记录与收集"
+        );
     }
 
     /// gather() 输出为合法 Prometheus 文本格式（含 HELP/TYPE 行）。

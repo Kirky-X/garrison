@@ -14,13 +14,15 @@
 //! 包裹在熔断器逻辑中：
 //! - 操作成功 → `on_success`（重置/递增成功计数）
 //! - 操作失败 → `on_failure`（通过 `GarrisonErrorClassifier` 判断是否计入失败）
-//! - 熔断器打开 → 立即返回 `GarrisonError::CircuitOpen`
+//! - 熔断器打开 → 立即返回 `GarrisonError::Network`（消息带 `circuit-open::` 前缀）
 //!
-//! # 错误分类
+//! # 错误语义（`circuit-open::` 前缀约定）
 //!
-//! `GarrisonErrorClassifier` 将以下错误视为失败（计入熔断计数）：
-//! - `Network` 错误（连接超时、DNS 失败等）
-//! - 其他非客户端错误（非 `InvalidParam`、`NotFound`）
+//! `GarrisonError` 无专用 `CircuitOpen` 变体，熔断打开的快速拒绝映射为
+//! `GarrisonError::Network`，以 `circuit-open::` 消息前缀区分：
+//! - 调用方不应将 `circuit-open::` 前缀的 Network 错误视作瞬时故障重试
+//!   （熔断打开意味着上游已判定不可用，重试应等待半开探测）；
+//! - 无前缀的 `Network` 错误才是真正的网络层失败，可按常规退避重试。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use limiteron::circuit::{CircuitBreaker, CircuitBreakerConfig, ErrorClassifier};
@@ -117,7 +119,8 @@ impl CircuitBreakerWrapper {
     /// 在熔断器保护下执行异步操作。
     ///
     /// - 熔断器关闭/半开 → 执行 `operation`，根据结果更新状态
-    /// - 熔断器打开 → 立即返回 `GarrisonError::CircuitOpen`
+    /// - 熔断器打开 → 立即返回 `GarrisonError::Network`（消息带 `circuit-open::`
+    ///   前缀，见模块文档「错误语义」；`GarrisonError` 无专用 `CircuitOpen` 变体）
     ///
     /// # 参数
     /// - `operation`: 要保护的异步操作

@@ -20,7 +20,9 @@
 //!
 //! - `GarrisonDao::incr` 默认实现非原子（get→parse→+1→update），`MockDao` 重写为进程内原子
 //! - `QuotaStorage::consume` 通过循环 `dao.incr` 实现，cost > 1 时非原子
-//! - `BanStorage::list_bans` / `cleanup_expired_bans` 无法实现（GarrisonDao 无 iter API），返回空/0
+//! - `BanStorage::list_bans` / `cleanup_expired_bans` 无法实现（GarrisonDao 无 iter API），
+//!   返回空/0，且调用时以 `tracing::warn` 留痕——调用方不得依赖其做封禁审计/枚举/清理
+//!   （返回值是假阴性，非真实状态）
 
 #[cfg(feature = "firewall-ddos")]
 pub mod ban;

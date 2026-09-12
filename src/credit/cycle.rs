@@ -171,12 +171,20 @@ impl CreditCycle {
     /// # 参数
     /// - `type_tag`: "fixed" 或 "rolling"
     /// - `param`: fixed 模式为 day_of_month，rolling 模式为 days
+    ///
+    /// # 参数校验
+    ///
+    /// 违反文档约定时返回 `None`（调用方如 [`crate::credit::storage`] 的 meta
+    /// 反序列化将其转为脏数据错误，fail-fast）：
+    /// - `fixed`：`day_of_month` 必须在 `1..=28`。0 会使 `from_ymd_opt` 恒失败
+    ///   并静默回退月末；29/30/31 有「月末漂移」问题（见变体文档）。
+    /// - `rolling`：`days` 必须 >= 1。0 会产生立即过期的空窗口。
     pub fn from_tag(type_tag: &str, param: u32) -> Option<Self> {
         match type_tag {
-            "fixed" => Some(CreditCycle::Fixed {
+            "fixed" if (1..=28).contains(&param) => Some(CreditCycle::Fixed {
                 day_of_month: param,
             }),
-            "rolling" => Some(CreditCycle::Rolling { days: param }),
+            "rolling" if param >= 1 => Some(CreditCycle::Rolling { days: param }),
             _ => None,
         }
     }
@@ -358,13 +366,32 @@ mod tests {
         assert!(CreditCycle::from_tag("unknown", 0).is_none());
     }
 
+    /// from_tag 参数校验：fixed 拒绝 0 与 >28，rolling 拒绝 0（返回 None，
+    /// 调用方转为脏数据错误 fail-fast）。
+    #[test]
+    fn test_from_tag_validates_param() {
+        // fixed：day_of_month 必须在 1..=28
+        assert!(CreditCycle::from_tag("fixed", 0).is_none(), "day=0 应被拒绝");
+        assert!(CreditCycle::from_tag("fixed", 29).is_none(), "day=29 应被拒绝");
+        assert!(CreditCycle::from_tag("fixed", 31).is_none(), "day=31 应被拒绝");
+        assert!(CreditCycle::from_tag("fixed", u32::MAX).is_none());
+        assert!(CreditCycle::from_tag("fixed", 1).is_some());
+        assert!(CreditCycle::from_tag("fixed", 28).is_some());
+        // rolling：days 必须 >= 1（0 会产生立即过期的空窗口）
+        assert!(
+            CreditCycle::from_tag("rolling", 0).is_none(),
+            "days=0 应被拒绝"
+        );
+        assert!(CreditCycle::from_tag("rolling", 1).is_some());
+    }
+
     /// Fixed cycle_start 合法边界：day=30 在 31 天月（1 月）无需回退。
     ///
-    /// from_tag 可构造 day > 28 的 cycle（meta 脏数据 / 手工配置），
-    /// 在含 30 日的月份中应直接取本月 day 日。
+    /// from_tag 已拒绝 day > 28，此处直接构造以覆盖回退逻辑的边界行为
+    /// （meta 脏数据 / 手工构造的越界值在含 30 日的月份中应直接取本月 day 日）。
     #[test]
     fn test_fixed_cycle_start_day30_in_31_day_month() {
-        let cycle = CreditCycle::from_tag("fixed", 30).unwrap();
+        let cycle = CreditCycle::Fixed { day_of_month: 30 };
         // 2026-01-31：current_day(31) >= 30 → 周期起始 = 2026-01-30
         let now = chrono::NaiveDate::from_ymd_opt(2026, 1, 31)
             .unwrap()
@@ -383,9 +410,9 @@ mod tests {
     /// Fixed cycle_start 当月分支回退：day 超出当月天数（2 月无 30/31 日）。
     #[test]
     fn test_fixed_cycle_start_current_month_fallback_feb() {
-        // day=30，now = 2026-02-28（28 >= 30 不成立 → 上月分支）
-        // 需要 current_day >= day 的当月分支：day=0 时恒成立且 from_ymd(day=0) 无效
-        let cycle = CreditCycle::from_tag("fixed", 0).unwrap();
+        // day=0，now = 2026-02-10（10 >= 0 成立 → 当月分支）
+        // from_tag 已拒绝 day=0，此处直接构造越界值验证回退行为
+        let cycle = CreditCycle::Fixed { day_of_month: 0 };
         let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 10)
             .unwrap()
             .and_hms_opt(12, 0, 0)
@@ -404,7 +431,7 @@ mod tests {
     /// Fixed cycle_start 上月分支回退：上月无 day 日（3 月回看 2 月 day=30）。
     #[test]
     fn test_fixed_cycle_start_prev_month_fallback() {
-        let cycle = CreditCycle::from_tag("fixed", 30).unwrap();
+        let cycle = CreditCycle::Fixed { day_of_month: 30 };
         // 2026-03-10 < 30 → 上月（2 月）无 30 日 → 回退 2026-02-28
         let now = chrono::NaiveDate::from_ymd_opt(2026, 3, 10)
             .unwrap()
@@ -442,7 +469,7 @@ mod tests {
     /// Fixed cycle_end 下月分支回退：下月无 day 日（1 月 31 日看 2 月）。
     #[test]
     fn test_fixed_cycle_end_next_month_fallback() {
-        let cycle = CreditCycle::from_tag("fixed", 31).unwrap();
+        let cycle = CreditCycle::Fixed { day_of_month: 31 };
         // 2026-01-31：current_day(31) >= 31 → 下月 2 月无 31 日 → 回退 2026-02-28
         let now = chrono::NaiveDate::from_ymd_opt(2026, 1, 31)
             .unwrap()
@@ -461,7 +488,7 @@ mod tests {
     /// Fixed cycle_end 当月分支回退：当月无 day 日（2 月 day=31）。
     #[test]
     fn test_fixed_cycle_end_current_month_fallback() {
-        let cycle = CreditCycle::from_tag("fixed", 31).unwrap();
+        let cycle = CreditCycle::Fixed { day_of_month: 31 };
         // 2026-02-10 < 31 → 周期结束 = 本月 day 日 → 2 月无 31 日 → 回退 02-28
         let now = chrono::NaiveDate::from_ymd_opt(2026, 2, 10)
             .unwrap()
@@ -497,10 +524,10 @@ mod tests {
     }
 
     /// last_day_of_month 十二月分支：12 月回退取 12-31（经 cycle_end 触发，
-    /// day 超出 12 月天数即 > 31，from_tag 可构造）。
+    /// day 超出 12 月天数即 > 31，直接构造越界值）。
     #[test]
     fn test_fixed_cycle_end_december_fallback_last_day() {
-        let cycle = CreditCycle::from_tag("fixed", 32).unwrap();
+        let cycle = CreditCycle::Fixed { day_of_month: 32 };
         // 2026-12-05 < 32 → 周期结束 = 本月 day 日 → 12 月无 32 日 → 回退 12-31
         let now = chrono::NaiveDate::from_ymd_opt(2026, 12, 5)
             .unwrap()

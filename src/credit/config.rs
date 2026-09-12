@@ -43,31 +43,15 @@ impl CreditConfig {
     /// 校验配置合法性。
     ///
     /// # 校验规则
-    /// - `alert_thresholds` 非空
+    /// - `alert_thresholds` 非空（空阈值表会静默禁用所有告警）
     /// - 每个值 ∈ [0, 100]（百分比语义）
     /// - 严格升序排列
+    /// - [`CreditAlertConfig`] 的告警阈值同样满足以上规则（若作为告警配置使用）
     ///
     /// # 错误
     /// - 违反以上任一规则时返回描述性错误消息。
     pub fn validate(&self) -> Result<(), String> {
-        if self.alert_thresholds.is_empty() {
-            return Err("credit-alert-thresholds-empty::".to_string());
-        }
-        for (i, &t) in self.alert_thresholds.iter().enumerate() {
-            if t > 100 {
-                return Err(format!("credit-alert-thresholds-range::{}::{}", i, t));
-            }
-            if i > 0 && t <= self.alert_thresholds[i - 1] {
-                return Err(format!(
-                    "credit-alert-thresholds-order::[{}]={}::[{}]={}",
-                    i,
-                    t,
-                    i - 1,
-                    self.alert_thresholds[i - 1]
-                ));
-            }
-        }
-        Ok(())
+        validate_thresholds(&self.alert_thresholds, "credit-alert-thresholds")
     }
 }
 
@@ -80,6 +64,46 @@ pub struct CreditAlertConfig {
     pub thresholds: Vec<u8>,
     /// 同一阈值的最小触发间隔（秒），避免重复广播。
     pub cooldown_seconds: u64,
+}
+
+impl CreditAlertConfig {
+    /// 校验告警配置合法性。
+    ///
+    /// # 校验规则（与 [`CreditConfig::validate`] 的阈值规则同源）
+    /// - `thresholds` 非空（空阈值表会静默禁用所有告警）
+    /// - 每个值 ∈ [0, 100]（百分比语义）
+    /// - 严格升序排列
+    ///
+    /// # 错误
+    /// - 违反以上任一规则时返回描述性错误消息。
+    pub fn validate(&self) -> Result<(), String> {
+        validate_thresholds(&self.thresholds, "credit-alert-thresholds")
+    }
+}
+
+/// 告警阈值表的共享校验（`CreditConfig` 与 `CreditAlertConfig` 同源）。
+///
+/// `prefix` 用于错误消息前缀，便于定位来自哪个配置结构。
+fn validate_thresholds(thresholds: &[u8], prefix: &str) -> Result<(), String> {
+    if thresholds.is_empty() {
+        return Err(format!("{}-empty::", prefix));
+    }
+    for (i, &t) in thresholds.iter().enumerate() {
+        if t > 100 {
+            return Err(format!("{}-range::{}::{}", prefix, i, t));
+        }
+        if i > 0 && t <= thresholds[i - 1] {
+            return Err(format!(
+                "{}-order::[{}]={}::[{}]={}",
+                prefix,
+                i,
+                t,
+                i - 1,
+                thresholds[i - 1]
+            ));
+        }
+    }
+    Ok(())
 }
 
 impl Default for CreditAlertConfig {
@@ -182,11 +206,52 @@ mod tests {
         assert!(CreditConfig::default().validate().is_ok());
     }
 
+    /// CreditAlertConfig::validate 对合法阈值返回 Ok。
+    #[test]
+    fn test_alert_config_validate_ok() {
+        let alert = CreditAlertConfig {
+            thresholds: vec![10, 50, 100],
+            cooldown_seconds: 60,
+        };
+        assert!(alert.validate().is_ok());
+    }
+
+    /// CreditAlertConfig::validate 拒绝空 thresholds（空表会静默禁用所有告警）。
+    #[test]
+    fn test_alert_config_validate_empty_err() {
+        let alert = CreditAlertConfig {
+            thresholds: vec![],
+            cooldown_seconds: 60,
+        };
+        let err = alert.validate().unwrap_err();
+        assert!(
+            err.contains("credit-alert-thresholds-empty"),
+            "实际错误: {}",
+            err
+        );
+    }
+
+    /// CreditAlertConfig::validate 拒绝越界与乱序阈值。
+    #[test]
+    fn test_alert_config_validate_range_and_order_err() {
+        let over = CreditAlertConfig {
+            thresholds: vec![50, 101],
+            cooldown_seconds: 60,
+        };
+        assert!(over.validate().unwrap_err().contains("credit-alert-thresholds-range"));
+
+        let unsorted = CreditAlertConfig {
+            thresholds: vec![90, 80],
+            cooldown_seconds: 60,
+        };
+        assert!(unsorted.validate().unwrap_err().contains("credit-alert-thresholds-order"));
+    }
+
     /// CreditConfig serde 往返（TOML）保持字段一致。
     #[test]
     fn test_credit_config_serde_roundtrip() {
-        let mut schedule = CreditSchedule::with_default(2);
-        schedule.insert("sms", 5);
+        let mut schedule = CreditSchedule::with_default(2).unwrap();
+        schedule.insert("sms", 5).unwrap();
         let config = CreditConfig {
             credit_limit: u64::MAX,
             cycle: CreditCycle::Rolling { days: 7 },

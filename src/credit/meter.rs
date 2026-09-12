@@ -69,13 +69,23 @@ impl CreditMeter {
     /// 消费 credit（热路径）。
     ///
     /// 1. 从 `CreditSchedule` 获取 resource weight → `credits = cost * weight`
+    ///    （`checked_mul`，溢出返回 [`CreditError::ConfigInvalid`]，不再静默回绕）
     /// 2. 检查周期是否过期，过期则重置
-    /// 3. KV incr 递增 consumed
-    /// 4. 检查是否超过 credit_limit
+    /// 3. **预检**：已消费 + credits 超限时直接拒绝，**不递增计数**
+    ///    （被拒请求不消耗配额，租户可继续用剩余额度发起小额请求）
+    /// 4. KV incr 递增 consumed；并发交错导致超限时 decr 回滚本次递增并拒绝
     /// 5. 计算 usage_percent，检查 alert_thresholds
     /// 6. 更新 meta
-    /// 7. 广播事件（若 listener 已注入）
+    /// 7. 广播事件（若 listener 已注入；拒绝路径不广播——无新消耗即无新告警）
     /// 8. 异步写入 SQL 流水（若 persist_history = true）
+    ///
+    /// # 一致性语义
+    ///
+    /// - 拒绝路径不消耗配额：预检拒绝零副作用；并发交错超限时回滚本次扣减
+    ///   （decr 为 best-effort，单次失败仅 `tracing::warn`，见
+    ///   [`CreditMeterStorage::decr_consumed`]）；
+    /// - 回滚后 `total_consumed` / `usage_percent` 基于回滚后的已消费量，
+    ///   `alerts_triggered` 为空（无新消耗即不触发新告警）。
     pub async fn consume_credit(
         &self,
         tenant_id: i64,
@@ -83,7 +93,15 @@ impl CreditMeter {
         cost: u64,
     ) -> CreditResult<CreditConsumeResult> {
         let config = self.config.read().clone();
-        let credits = cost * config.schedule.weight_for(resource);
+        let weight = config.schedule.weight_for(resource);
+        // 溢出防护：cost * weight 静默回绕会让超大消费被记为极小 credit，
+        // 绕过限额（权重是可配置项，此处必须显式报错而非回绕）。
+        let credits = cost.checked_mul(weight).ok_or_else(|| {
+            CreditError::ConfigInvalid(format!(
+                "credit-credits-overflow::cost={}::weight={}",
+                cost, weight
+            ))
+        })?;
 
         // 检查并执行周期重置
         self.check_and_reset_cycle(tenant_id).await?;
@@ -94,11 +112,53 @@ impl CreditMeter {
         let cycle_end = config.cycle.cycle_end(window_start, now);
         let ttl = (cycle_end - now.and_utc().timestamp()).max(1) as u64;
 
-        // 递增 consumed
-        let new_count = self.storage.incr_consumed(tenant_id, credits, ttl).await?;
+        // 拒绝路径的重置时间：纯计算（Rolling 未初始化 window_start 时按
+        // now + days 估算），不在拒绝路径产生任何存储副作用。
+        let denied_cycle_reset_at = cycle_end;
 
-        // 检查限额
         let credit_limit = config.credit_limit;
+
+        // ---- 预检：已消费 + credits 超限时直接拒绝，不递增计数 ----
+        //（修复旧实现「先 incr 后判 allowed、拒绝不回滚」导致的配额被拒绝
+        //  请求永久消耗的问题）
+        let current = self.storage.get_consumed(tenant_id).await?.unwrap_or(0);
+        if credit_limit != 0 && current.saturating_add(credits) > credit_limit {
+            return Ok(Self::denied_result(
+                credit_limit,
+                current,
+                credits,
+                denied_cycle_reset_at,
+            ));
+        }
+
+        // ---- 扣减：credits=0 无消耗直接复用当前值；>0 循环 incr（见
+        //      CreditMeterStorage::incr_consumed 非原子声明）----
+        let new_count = if credits == 0 {
+            current
+        } else {
+            let n = self.storage.incr_consumed(tenant_id, credits, ttl).await?;
+            // ---- 确认：并发交错导致超限时回滚本次扣减并拒绝 ----
+            if credit_limit != 0 && n > credit_limit {
+                tracing::warn!(
+                    tenant_id,
+                    resource,
+                    credits,
+                    new_count = n,
+                    credit_limit,
+                    "credit: 并发交错导致超限扣减，回滚本次消费"
+                );
+                self.storage.decr_consumed(tenant_id, credits).await;
+                return Ok(Self::denied_result(
+                    credit_limit,
+                    n.saturating_sub(credits),
+                    credits,
+                    denied_cycle_reset_at,
+                ));
+            }
+            n
+        };
+
+        // 检查限额（预检+确认后此处必为允许；credit_limit = 0 不限制）
         let allowed = credit_limit == 0 || new_count <= credit_limit;
         let remaining = credit_limit.saturating_sub(new_count);
         let usage_percent = if credit_limit == 0 {
@@ -118,15 +178,14 @@ impl CreditMeter {
         // 获取/初始化 window_start（Rolling 模式）
         let actual_window_start = match &config.cycle {
             crate::credit::cycle::CreditCycle::Rolling { .. } => {
-                let ws = match self.storage.get_window_start(tenant_id).await? {
+                match self.storage.get_window_start(tenant_id).await? {
                     Some(ts) => ts,
                     None => {
                         let ts = now.and_utc().timestamp();
                         self.storage.set_window_start(tenant_id, ts, ttl).await?;
                         ts
                     },
-                };
-                ws
+                }
             },
             _ => config.cycle.cycle_start(window_start, now),
         };
@@ -215,6 +274,34 @@ impl CreditMeter {
         })
     }
 
+    /// 构造拒绝结果（配额未被本次请求消耗）。
+    ///
+    /// `total_consumed` / `remaining` / `usage_percent` 基于回滚后的已消费量；
+    /// `alerts_triggered` 为空（拒绝请求无新消耗，不触发新告警，避免与已成功
+    /// 消费触发的告警重复广播）。
+    fn denied_result(
+        credit_limit: u64,
+        consumed: u64,
+        credits: u64,
+        cycle_reset_at: i64,
+    ) -> CreditConsumeResult {
+        let remaining = credit_limit.saturating_sub(consumed);
+        let usage_percent = if credit_limit == 0 {
+            0.0
+        } else {
+            (consumed as f64 / credit_limit as f64) * 100.0
+        };
+        CreditConsumeResult {
+            allowed: false,
+            consumed_credits: credits,
+            total_consumed: consumed,
+            remaining,
+            usage_percent,
+            alerts_triggered: Vec::new(),
+            cycle_reset_at,
+        }
+    }
+
     /// 查询当前周期 credit 使用情况。
     pub async fn get_credit_usage(&self, tenant_id: i64) -> CreditResult<CreditUsage> {
         let config = self.config.read().clone();
@@ -252,6 +339,15 @@ impl CreditMeter {
     /// 检查并执行周期重置（若当前时间已超过周期边界）。
     ///
     /// 返回 `true` 表示已执行重置，`false` 表示周期未过期。
+    ///
+    /// # 一致性语义（check-then-reset 非原子）
+    ///
+    /// 「读 window_start → 判断过期 → reset」无锁/CAS：并发调用可能同时观察到
+    /// 过期并各自执行一次 reset。reset 为删除操作，重复执行幂等；最坏情况是
+    /// 清掉并发消费刚写入的新计数（窗口内计数少量低估），属可接受的降级。
+    /// Rolling 模式重置后的 window_start 删除为 best-effort：delete 失败仅
+    /// `tracing::warn`（残留 key 带 TTL 自动过期；下次消费按 get_window_start
+    /// 读到旧值时会因再次过期判断重新触发重置）。
     pub async fn check_and_reset_cycle(&self, tenant_id: i64) -> CreditResult<bool> {
         let config = self.config.read().clone();
         let now = Utc::now().naive_utc();
@@ -262,7 +358,14 @@ impl CreditMeter {
             // Rolling 模式下重置后清除 window_start，下次消费时重新设置
             if let crate::credit::cycle::CreditCycle::Rolling { .. } = &config.cycle {
                 let ws_key = format!("credit:{}:window_start", tenant_id);
-                let _ = self.dao.delete(&ws_key).await;
+                if let Err(e) = self.dao.delete(&ws_key).await {
+                    tracing::warn!(
+                        tenant_id,
+                        error = %e,
+                        "credit: Rolling 周期重置后删除 window_start 失败（best-effort，\
+                         残留 key 由 TTL 过期或下次重置兜底）"
+                    );
+                }
             }
             Ok(true)
         } else {
@@ -484,7 +587,8 @@ mod tests {
         assert!((result.usage_percent - 100.0).abs() < f64::EPSILON);
     }
 
-    /// 超限后 usage_percent > 100%，remaining 饱和到 0。
+    /// 超限后拒绝路径不消耗配额：usage_percent 基于回滚后的已消费量（100%），
+    /// remaining 饱和到 0，total_consumed 不被拒绝请求推高。
     #[tokio::test]
     async fn test_consume_over_limit_usage_percent_and_remaining() {
         let meter = CreditMeter::new(make_dao(), make_config(10));
@@ -493,11 +597,68 @@ mod tests {
         assert!(!result.allowed);
         assert_eq!(result.remaining, 0, "remaining 应饱和为 0");
         assert!(
-            result.usage_percent > 100.0,
-            "usage: {}",
+            (result.usage_percent - 100.0).abs() < f64::EPSILON,
+            "拒绝路径 usage 应基于已消费 10 → 100%，实际: {}",
             result.usage_percent
         );
-        assert_eq!(result.total_consumed, 15);
+        assert_eq!(
+            result.total_consumed, 10,
+            "被拒绝的请求不应推高 total_consumed"
+        );
+    }
+
+    /// 拒绝路径不消耗配额：被拒后计数不变，剩余额度可供小额请求使用。
+    #[tokio::test]
+    async fn test_consume_denied_does_not_consume_quota() {
+        let meter = CreditMeter::new(make_dao(), make_config(10));
+        // 消费 8/10
+        let r1 = meter.consume_credit(42, "login", 8).await.unwrap();
+        assert!(r1.allowed);
+
+        // cost=5：8+5 > 10 → 预检拒绝，不扣减
+        let denied = meter.consume_credit(42, "login", 5).await.unwrap();
+        assert!(!denied.allowed, "8+5 > 10 应拒绝");
+        assert_eq!(denied.remaining, 2, "拒绝路径 remaining 基于已消费 8 计算");
+        assert!(
+            (denied.usage_percent - 80.0).abs() < f64::EPSILON,
+            "拒绝路径 usage 应为 80%，实际: {}",
+            denied.usage_percent
+        );
+        assert!(denied.alerts_triggered.is_empty(), "拒绝路径不触发新告警");
+
+        // 计数未被拒绝请求推高
+        let usage = meter.get_credit_usage(42).await.unwrap();
+        assert_eq!(usage.consumed, 8, "被拒绝的请求不应消耗配额");
+
+        // 剩余 2 额度仍可供小额请求使用
+        let ok = meter.consume_credit(42, "login", 2).await.unwrap();
+        assert!(ok.allowed, "拒绝后剩余额度应可用");
+        assert_eq!(ok.total_consumed, 10);
+    }
+
+    /// cost * weight 溢出时返回 ConfigInvalid 错误（不再静默回绕放行）。
+    #[tokio::test]
+    async fn test_consume_overflow_returns_config_invalid() {
+        let mut schedule = CreditSchedule::new();
+        schedule.insert("big", 2).unwrap();
+        let config = CreditConfig {
+            credit_limit: 100,
+            cycle: CreditCycle::Rolling { days: 30 },
+            schedule,
+            alert_thresholds: vec![80],
+            persist_history: false,
+        };
+        let meter = CreditMeter::new(make_dao(), config);
+        let result = meter.consume_credit(42, "big", u64::MAX).await;
+        let err = result.unwrap_err();
+        assert!(
+            format!("{}", err).contains("credit-credits-overflow"),
+            "溢出应返回 credit-credits-overflow 错误，实际: {}",
+            err
+        );
+        // 溢出错误不产生任何消费副作用
+        let usage = meter.get_credit_usage(42).await.unwrap();
+        assert_eq!(usage.consumed, 0, "溢出错误不应产生计数");
     }
 
     /// cost = 0 的消费：credits = 0，不递增计数，允许通过。
@@ -512,20 +673,22 @@ mod tests {
         assert!(result.alerts_triggered.is_empty(), "0% 不应触发任何告警");
     }
 
-    /// 权重为 0 的 schedule：credits = cost * 0 = 0，允许通过。
+    /// 未配置 resource 使用默认权重（1）：cost=5 → credits=5。
+    ///（weight=0 已被 `CreditSchedule::insert` / `with_default` 校验拒绝，
+    /// 不存在「零权重免费」路径）
     #[tokio::test]
-    async fn test_consume_zero_weight_resource() {
+    async fn test_consume_unknown_resource_default_weight() {
         let config = CreditConfig {
             credit_limit: 10,
             cycle: CreditCycle::Rolling { days: 30 },
-            schedule: CreditSchedule::with_default(0),
+            schedule: CreditSchedule::new(),
             alert_thresholds: vec![80],
             persist_history: false,
         };
         let meter = CreditMeter::new(make_dao(), config);
         let result = meter.consume_credit(42, "anything", 5).await.unwrap();
         assert!(result.allowed);
-        assert_eq!(result.consumed_credits, 0);
+        assert_eq!(result.consumed_credits, 5, "默认权重 1 → credits=cost");
     }
 
     /// credit_limit = 0（不限额）时 usage_percent 恒为 0.0。
