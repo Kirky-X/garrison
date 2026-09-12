@@ -6,7 +6,7 @@
 use super::mock::MockDao;
 use super::*;
 use crate::error::GarrisonError;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// 测试用 app_secret（32 字节，满足最小长度要求）。
 const TEST_APP_SECRET: &str = "test-secret-key-with-32-bytes!!!";
@@ -171,24 +171,50 @@ async fn validate_success_stores_nonce() {
 }
 
 /// 签名不匹配返回错误（spec Scenario）。
+///
+/// 伪造签名必须是**合法 Base64**（用不同 body 真实算出一个"算法正确但内容
+/// 不匹配"的签名）：若传入含 `-` 等非法 Base64 字符的串，会先在 Base64 解码处
+/// 失败（`sign-base64-decode`），根本走不到 HMAC 常量时间比较——那验证的是
+/// 解码失败路径而非签名不匹配路径。此处精确断言 `sign-mismatch`，确保覆盖
+/// 的确是签名比较失败。
 #[tokio::test]
 async fn validate_signature_mismatch_returns_error() {
     let handler = make_handler();
     let ts = now_ts();
+    // 用篡改的 body 计算真实签名（合法 Base64，44 字符），再对原始 body 校验
+    let forged = handler.sign("POST", "/api", ts, "nonce-mismatch", "tampered-body");
+    assert_eq!(forged.len(), 44);
     let result = handler
-        .validate(
-            "POST",
-            "/api",
-            ts,
-            "nonce-mismatch",
-            "body",
-            "forged-signature",
-        )
+        .validate("POST", "/api", ts, "nonce-mismatch", "body", &forged)
         .await;
     assert!(result.is_err());
     match result.err() {
-        Some(GarrisonError::InvalidToken(_)) => {},
-        other => panic!("期望 InvalidToken 错误，实际: {:?}", other),
+        Some(GarrisonError::InvalidToken(msg)) => {
+            assert_eq!(msg, "sign-mismatch", "应命中 HMAC 签名不匹配路径");
+        },
+        other => panic!("期望 InvalidToken(sign-mismatch)，实际: {:?}", other),
+    }
+}
+
+/// 非法 Base64 签名在解码阶段即被拒（`sign-base64-decode` 路径）。
+#[tokio::test]
+async fn validate_malformed_base64_signature_returns_error() {
+    let handler = make_handler();
+    let ts = now_ts();
+    // '-' 不是合法 Base64 字符，STANDARD.decode 必然失败
+    let result = handler
+        .validate("POST", "/api", ts, "nonce-b64", "body", "forged-signature")
+        .await;
+    assert!(result.is_err());
+    match result.err() {
+        Some(GarrisonError::InvalidToken(msg)) => {
+            assert!(
+                msg.starts_with("sign-base64-decode::"),
+                "应命中 Base64 解码失败路径，实际: {}",
+                msg
+            );
+        },
+        other => panic!("期望 InvalidToken(sign-base64-decode)，实际: {:?}", other),
     }
 }
 
@@ -309,4 +335,30 @@ async fn validate_nonce_isolated_by_app_key() {
         .validate("POST", "/api", ts, "shared-nonce", "body", &sig1)
         .await
         .is_err());
+}
+
+/// TTL 过期语义：nonce 跨窗口过期后可重新使用（经 MockDao 真实 TTL 验证）。
+///
+/// MockDao 的 `expire`/TTL 此前为 no-op，nonce 永不过期，任何依赖 TTL 过期
+/// 的测试都会"假通过"。现 mock 实现真实过期时刻：`timestamp_window = 1s`
+/// 时 nonce 以 1s TTL 写入，等待过期后同一 nonce 在新窗口内应可再次校验
+/// 成功（若 mock 无 TTL，此处会得到 nonce 重放错误）。
+#[tokio::test]
+async fn validate_nonce_reusable_after_ttl_expiry() {
+    let handler = make_handler().with_timestamp_window(1);
+    let ts1 = now_ts();
+    let sig1 = handler.sign("POST", "/api", ts1, "nonce-cross", "body");
+    handler
+        .validate("POST", "/api", ts1, "nonce-cross", "body", &sig1)
+        .await
+        .unwrap();
+    // 等待 nonce TTL（= timestamp_window = 1s）过期（sleep 下限保证 >= 1.2s）
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    // 同一 nonce 在新窗口内重新签名后应再次成功（旧 nonce 记录已过期清除）
+    let ts2 = now_ts();
+    let sig2 = handler.sign("POST", "/api", ts2, "nonce-cross", "body");
+    let result = handler
+        .validate("POST", "/api", ts2, "nonce-cross", "body", &sig2)
+        .await;
+    assert_eq!(result.unwrap(), (), "nonce TTL 过期后应可在新窗口重新使用");
 }

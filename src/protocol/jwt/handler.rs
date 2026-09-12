@@ -58,7 +58,8 @@ impl JwtHandler {
     ///
     /// # 返回
     /// - `Ok(String)`: JWT 字符串（三段 Base64URL 通过 `.` 连接）。
-    /// - `Err(GarrisonError::Config)`: 密钥为空或 timeout 为负。
+    /// - `Err(GarrisonError::Config)`: 密钥为空、过短或 timeout 为负。
+    /// - `Err(GarrisonError::InvalidParam)`: `now + timeout` 溢出（timeout 过大）。
     /// - `Err(GarrisonError::Internal)`: 签发失败。
     pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> GarrisonResult<String> {
         let login_id: String = login_id.into();
@@ -83,10 +84,16 @@ impl JwtHandler {
             .duration_since(UNIX_EPOCH)
             .map_err(|e| GarrisonError::Internal(format!("system-clock-error::{}", e)))?
             .as_secs() as i64;
+        // 溢出防护：`now + timeout` 在 timeout 接近 i64::MAX 时会溢出
+        // （debug panic / release 回绕为负 exp，产生立即过期的 token）。
+        // 溢出视为非法参数，fail-fast 返回 InvalidParam。
+        let exp = now.checked_add(timeout).ok_or_else(|| {
+            GarrisonError::InvalidParam(format!("jwt-timeout-overflow::{}", timeout))
+        })?;
         let claims = GarrisonJwtClaims {
             sub: login_id.clone(),
             iat: now,
-            exp: now + timeout,
+            exp,
             login_id,
             device: self.device.clone(),
             jti: Some(uuid::Uuid::new_v4().to_string()),
@@ -156,6 +163,11 @@ impl JwtHandler {
     }
 }
 
+// Drop 零化仅在 `protocol-zeroize` feature 下编译：启用后密钥内存在 handler 析构时
+// 被覆写；未启用时为普通 `String` 释放，内存内容不保证被清除（可能残留于已释放
+// 堆块 / swap / core dump）。保持 feature 结构（零开销默认构建），对密钥卫生有
+// 要求的部署应显式启用 `protocol-zeroize`；`secret` 字段的可读性风险见
+// `JwtHandler::secret` 字段文档。
 #[cfg(feature = "protocol-zeroize")]
 impl Drop for JwtHandler {
     fn drop(&mut self) {

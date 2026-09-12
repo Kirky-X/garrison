@@ -173,24 +173,33 @@ mod service {
         ///
         /// 流程：
         /// 1. 计算 `old_hash = SHA-256(old_token)`
-        /// 2. 查表验证 `old_hash` 存在且 `revoked=0`，读取 login_id / tenant_id
-        ///    及 OAuth2 扩展字段（client_id / scopes / username / user_id）
-        /// 3. 生成新 refresh token（UUID v4）+ 签发新 access token（JwtHandler，1 小时有效期）
-        /// 4. 计算 `new_hash = SHA-256(new_refresh)`
-        /// 5. INSERT new record（`parent_token_hash = old_hash`, `revoked=0`，7 天过期，
-        ///    继承 OAuth2 扩展字段）
-        /// 6. UPDATE old record `revoked=1`
+        /// 2. 预检 reuse：`old_hash` 已 revoked 则吊销整个链后返回 `TokenRevoked`
+        /// 3. **原子消费**：条件 UPDATE（`revoked = 0 → 1`）作为 compare-and-swap，
+        ///    并发对同一 old_token 的 rotate 仅有一个调用方 `rows_affected = 1`；
+        ///    未抢到的调用方直接返回 `InvalidToken`（不吊销链——并发落败方与
+        ///    胜者是同一客户端的同时请求/网络重试，误吊销会击落胜者的新
+        ///    session；真正的重用由步骤 2 预检识别）。据此消除 SELECT/UPDATE
+        ///    分离的 TOCTOU 双花窗口：并发同 token 刷新只能一个成功
+        /// 4. SELECT 读取 login_id / tenant_id 及 OAuth2 扩展字段（此时已独占持有
+        ///    消费权，无需再过滤 `revoked = 0`）
+        /// 5. 生成新 refresh token（UUID v4）+ 签发新 access token（JwtHandler，1 小时有效期）
+        /// 6. 计算 `new_hash = SHA-256(new_refresh)`，INSERT new record
+        ///    （`parent_token_hash = old_hash`, `revoked=0`，7 天过期，继承 OAuth2 扩展字段）
         /// 7. 返回 `(new_access, new_refresh)`
         ///
+        /// 崩溃语义（fail-closed）：若在原子消费后、INSERT 前进程崩溃，旧 token 已
+        /// 吊销而无新 token——用户需重新登录，绝不出现新旧 token 同时有效。
+        ///
         /// # 错误
-        /// - `GarrisonError::InvalidToken`: old_token 不存在或已 revoked
+        /// - `GarrisonError::TokenRevoked`: old_token 已被消费（reuse，整链吊销）
+        /// - `GarrisonError::InvalidToken`: old_token 不存在
         /// - `GarrisonError::Dao`: SQL 查询/INSERT/UPDATE 失败
         /// - `GarrisonError::Internal`: JwtHandler 签发失败（由 sign 透传）
         pub async fn rotate(&self, old_token: &str) -> GarrisonResult<(String, String)> {
             let old_hash = Self::sha256_hex(old_token);
 
-            // reuse detection——若 old_hash 已 revoked，说明 token 被重用，
-            // 吊销整个链（old_hash 及其所有子代）后返回 InvalidToken
+            // reuse 预检——若 old_hash 已 revoked，说明 token 被重用，
+            // 吊销整个链（old_hash 及其所有子代）后返回 TokenRevoked
             if self.detect_reuse(&old_hash).await? {
                 self.revoke_chain(&old_hash).await?;
                 return Err(GarrisonError::TokenRevoked(
@@ -198,8 +207,6 @@ mod service {
                 ));
             }
 
-            // 查表验证 old_hash 存在且 revoked=0
-            // T005: 扩展 SELECT 读取 OAuth2 字段以便继承到新记录
             let session = self
                 .pool
                 .get_session("admin")
@@ -209,10 +216,39 @@ mod service {
                 .connection()
                 .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-get-conn::{}", e)))?;
 
+            // 原子消费（compare-and-swap）：仅当仍 revoked=0 时置为 revoked=1，
+            // 并发竞争同一 old_token 的 rotate 恰有一个调用方 rows_affected=1
+            let claim_stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                "UPDATE refresh_tokens SET revoked = 1 \
+                 WHERE token_hash = ? AND revoked = 0",
+                vec![Value::String(Some(old_hash.clone()))],
+            );
+            let claimed = conn
+                .execute_raw(claim_stmt)
+                .await
+                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-claim::{}", e)))?;
+            if claimed.rows_affected() == 0 {
+                // 未抢到消费权：token 不存在，或已被并发 rotate 消费。
+                // 先释放本调用方持有的连接再返回（避免单连接池下占用）。
+                // 此处**不**吊销整链：并发落败方与胜者是同一客户端的同时请求
+                // （网络重试是常态），若按重用吊销链会误杀胜者刚签发的新 token；
+                // 真正的「消费后再次呈现」重用由入口处的 detect_reuse 预检
+                // （本函数第 2 步）负责识别并吊销整链。
+                drop(conn);
+                drop(session);
+                return Err(GarrisonError::InvalidToken(
+                    "jwt-refresh-token-consumed::".to_string(),
+                ));
+            }
+
+            // 本调用方已独占持有该 token 的消费权，读取会话数据
+            // （无需再过滤 revoked=0——上方条件 UPDATE 已将其置 1）
+            // T005: 扩展 SELECT 读取 OAuth2 字段以便继承到新记录
             let select_stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT login_id, tenant_id, client_id, scopes, username, user_id \
-                 FROM refresh_tokens WHERE token_hash = ? AND revoked = 0",
+                 FROM refresh_tokens WHERE token_hash = ?",
                 vec![Value::String(Some(old_hash.clone()))],
             );
             let row = conn
@@ -247,6 +283,7 @@ mod service {
 
             // INSERT new record（parent_token_hash = old_hash, revoked=0, 7 天过期）
             // T005: 继承 OAuth2 扩展字段
+            // （旧 record 已在原子消费步置 revoked=1，无需再 UPDATE）
             let insert_stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "INSERT INTO refresh_tokens \
@@ -282,16 +319,6 @@ mod service {
             conn.execute_raw(insert_stmt)
                 .await
                 .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-insert::{}", e)))?;
-
-            // UPDATE old record revoked=1
-            let update_stmt = Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                "UPDATE refresh_tokens SET revoked = 1 WHERE token_hash = ?",
-                vec![Value::String(Some(old_hash))],
-            );
-            conn.execute_raw(update_stmt)
-                .await
-                .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-update::{}", e)))?;
 
             Ok((new_access, new_refresh))
         }
@@ -527,6 +554,15 @@ mod service {
         /// 2. 出栈一个 hash，UPDATE 它 revoked=1
         /// 3. 查所有 `parent_token_hash == hash` 的 record（子代），入栈
         /// 4. 重复直到栈空
+        ///
+        /// # 并发窗口（剩余风险，文档化）
+        ///
+        /// `rotate` 的原子消费保证：子 record 只能在其 parent 被置 `revoked=1`
+        /// 之后 INSERT。因此本方法"UPDATE 后再扫子代"的循环可能漏掉一个
+        /// 已抢到消费权、INSERT 尚未落库的在途子代——该子代落下后其 parent
+        /// 必已 revoked，后续对它的任何 `validate`/`rotate` 均可见链被破坏
+        /// 状态；如需强一致收口，调用方应在 reuse 响应路径上层加互斥
+        /// （与 apikey rotate LOW-5 同风格：库层不内置分布式锁）。
         ///
         /// # 错误
         /// - `GarrisonError::Dao`: SQL 查询/UPDATE 失败

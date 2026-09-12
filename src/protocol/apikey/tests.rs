@@ -998,6 +998,21 @@ async fn stored_value_contains_no_plaintext_secret() {
     assert_eq!(info.secret_hash.len(), 64, "secret_hash 应为 64 hex");
     assert!(info.secret_hash.chars().all(|c| c.is_ascii_hexdigit()));
     assert_ne!(info.secret_hash, *key_secret, "存储的应是哈希而非明文");
+    // 真值断言：secret_hash 必须恰为 sha256(key_secret) 的 hex 编码。
+    // 仅验 64 位 hex 格式无法发现哈希逻辑损坏（如存错字段、用错哈希函数）——
+    // 那样的缺陷下格式断言依然全通过。
+    use sha2::{Digest, Sha256};
+    use std::fmt::Write;
+    let mut hasher = Sha256::new();
+    hasher.update(key_secret.as_bytes());
+    let mut expected_hash = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        let _ = write!(expected_hash, "{:02x}", byte);
+    }
+    assert_eq!(
+        info.secret_hash, expected_hash,
+        "secret_hash 应等于 sha256(key_secret) 的 hex 编码"
+    );
 }
 
 /// CWE-916: key_id 正确但 key_secret 错误时校验失败（哈希不匹配）。

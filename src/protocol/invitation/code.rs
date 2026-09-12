@@ -10,7 +10,7 @@ use crate::error::{GarrisonError, GarrisonResult};
 use rand::rngs::OsRng;
 use rand::Rng;
 
-/// 码字符集：32 个去歧义大写字母数字（排除 `0/O`、`1/I/L`）。
+/// 码字符集：31 个去歧义大写字母数字（36 个字母数字排除 `0/O`、`1/I/L` 共 5 个歧义字符）。
 pub const CHARSET: &str = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
 
 /// 随机段长度（不含连字符）。

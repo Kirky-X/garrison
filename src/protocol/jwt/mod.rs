@@ -66,6 +66,14 @@ pub type JwtClaims = GarrisonJwtClaims;
 /// 通过 `with_device` 设置设备标识，签发时写入 claims。
 pub struct JwtHandler {
     /// 签名密钥。
+    ///
+    /// # 安全注意（pre-1.0 兼容保留 `pub`）
+    ///
+    /// 任何持有 `JwtHandler` 的代码都能直接读出原始密钥——调用方应将 handler
+    /// 视为敏感对象，仅在可信边界内传递，不要写入日志或序列化输出。
+    /// Drop 零化仅在 `protocol-zeroize` feature 下生效（见 `handler.rs` 的
+    /// `Drop` impl）：未启用该 feature 时，密钥内存随普通 `String` 释放，
+    /// 不保证被覆写。
     pub secret: String,
     /// 签名算法（默认 HS256）。
     pub algorithm: Algorithm,

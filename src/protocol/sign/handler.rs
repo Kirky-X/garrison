@@ -153,7 +153,15 @@ impl SignHandler {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs() as i64)
             .map_err(|e| GarrisonError::Internal(format!("sign-clock::{}", e)))?;
-        if (now - timestamp).abs() > self.timestamp_window {
+        // 溢出防护：timestamp 为外部可控 i64，`now - timestamp` 在 timestamp 接近
+        // i64::MIN 时溢出（debug panic / release 回绕为负值）。用 checked_sub 显式
+        // 处理：减法溢出意味着 |now - timestamp| 必然远超任何合理窗口，直接按
+        // 窗口外拒绝（与窗口校验失败同语义，不泄露额外信息）。checked_sub 成功后
+        // diff 不可能等于 i64::MIN（那要求 timestamp > i64::MAX），abs() 无二次溢出。
+        let diff = now.checked_sub(timestamp).ok_or_else(|| {
+            GarrisonError::ExpiredToken("sign-timestamp-window".to_string())
+        })?;
+        if diff.abs() > self.timestamp_window {
             return Err(GarrisonError::ExpiredToken(
                 "sign-timestamp-window".to_string(),
             ));
@@ -199,6 +207,11 @@ impl SignHandler {
     }
 }
 
+// Drop 零化仅在 `protocol-zeroize` feature 下编译：启用后 `app_secret` 与
+// `derived_key` 在 handler 析构时被覆写；未启用时为普通内存释放，HMAC 密钥
+// 材料不保证被清除（可能残留于已释放堆块 / swap / core dump）。保持 feature
+// 结构（零开销默认构建），对密钥卫生有要求的部署应显式启用 `protocol-zeroize`
+// （`full` feature 已包含）。字段级安全说明见 `sign/mod.rs` 的 `SignHandler`。
 #[cfg(feature = "protocol-zeroize")]
 impl Drop for SignHandler {
     fn drop(&mut self) {

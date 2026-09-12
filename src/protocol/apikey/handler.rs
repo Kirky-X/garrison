@@ -302,10 +302,32 @@ impl ApiKeyHandler {
         let value = serde_json::to_string(&info)
             .map_err(|e| GarrisonError::Internal(format!("apikey-serialize::{}", e)))?;
         let dao_key = format!("garrison:apikey:{}:{}", namespace, key_id);
-        self.dao.set(&dao_key, &value, timeout as u64).await?;
-        // 反向索引（TTL 与主 key 一致），O(1) verify/revoke
+        // set_if_absent 原子创建：key_id 为 32 位随机 hex，碰撞即显式报错，
+        // 不允许覆盖既有 key（GarrisonDao 无 mset，主 key/索引双写无法单事务）
+        if !self
+            .dao
+            .set_if_absent(&dao_key, &value, timeout as u64)
+            .await?
+        {
+            return Err(GarrisonError::Dao(format!(
+                "apikey-generate-key-collision::{}",
+                dao_key
+            )));
+        }
+        // 反向索引（TTL 与主 key 一致），O(1) verify/revoke。
+        // 补偿：索引写失败时回删主 key——否则留下 verify（走索引）找不到、
+        // 而 verify_with_namespace（直查）仍能命中的孤儿 key，两条校验路径行为不一致。
         let idx_key = idx_key_for(&key_id);
-        self.dao.set(&idx_key, &dao_key, timeout as u64).await?;
+        if let Err(e) = self
+            .dao
+            .set_if_absent(&idx_key, &dao_key, timeout as u64)
+            .await
+        {
+            if let Err(del_err) = self.dao.delete(&dao_key).await {
+                tracing::warn!(dao_key = %dao_key, error = %del_err, "apikey generate compensation delete failed (orphan key may remain)");
+            }
+            return Err(e);
+        }
         // 对外返回双段 token；key_secret 仅此一次可见
         Ok(format!("{}.{}", key_id, key_secret))
     }
@@ -322,6 +344,12 @@ impl ApiKeyHandler {
     /// # 错误
     /// - `GarrisonError::InvalidToken`: key 不存在、secret 不匹配或已吊销。
     /// - `GarrisonError::ExpiredToken`: key 已过期。
+    ///
+    /// # 归属校验（owner_id / IDOR，应用层契约）
+    ///
+    /// 本方法**不校验** `ApiKeyInfo::owner_id` 与调用方主体的关系（框架不持有
+    /// 主体上下文）：A 的 key 在此通过校验后，授权决策由应用层完成。调用方应
+    /// 在业务入口自行比较返回的 `info.owner_id` 与请求主体，再放行资源访问。
     pub async fn verify(&self, key: &str) -> GarrisonResult<ApiKeyInfo> {
         let (dao_key, value, secret) = self.lookup(key).await?;
         let info = self.decode_and_check(&value, secret.as_deref())?;
@@ -615,37 +643,57 @@ impl ApiKeyHandler {
     ///
     /// 供调用方在校验之外的场景（如异步审计）主动记录使用时间。
     ///
+    /// # 安全语义（CWE-916）
+    ///
+    /// 必须先通过 [`Self::verify`] 的完整校验（secret 常量时间比较 + revoked/expire
+    /// fail-closed）才允许写回——**不校验 secret、仅凭 `key_id` 即可更新**会构成
+    /// 越权写：任何持有裸 `key_id`（或 legacy 单 token）的调用方都能篡改使用记录。
+    ///
     /// # 错误
-    /// - `GarrisonError::InvalidToken`: key 不存在或已吊销。
+    /// - `GarrisonError::InvalidToken`: key 不存在、secret 不匹配或已吊销。
     /// - `GarrisonError::ExpiredToken`: key 已过期。
     pub async fn update_last_used(&self, key: &str) -> GarrisonResult<()> {
-        let (dao_key, value, _secret) = self.lookup(key).await?;
-        let mut info: ApiKeyInfo = serde_json::from_str(&value)
+        // CWE-916：走 verify 全量校验（含 secret 哈希常量时间比较），不得绕过
+        let info = self.verify(key).await?;
+        // verify 成功 ⇒ 必为新格式双段 key（legacy 空 secret_hash 已被 fail-closed
+        // 拒绝），`key_id` 非空，可由 namespace + key_id 重建 dao_key
+        let dao_key = format!("garrison:apikey:{}:{}", info.namespace, info.key_id);
+        // MEDIUM-1：写回前 re-read 最新值，避免用 verify 时的旧快照把并发 revoke 回退
+        let current = self
+            .dao
+            .get(&dao_key)
+            .await?
+            .ok_or_else(|| GarrisonError::InvalidToken("apikey-not-found::".to_string()))?;
+        let mut updated: ApiKeyInfo = serde_json::from_str(&current)
             .map_err(|e| GarrisonError::Internal(format!("apikey-deserialize::{}", e)))?;
-        // LOW-4：与 verify 对称，不对已吊销/过期的失效 key 写入使用时间
-        if info.revoked {
+        if updated.revoked {
+            // 已被并发吊销，绝不回退 revoked 状态（与 maybe_touch_last_used 同防护）
             return Err(GarrisonError::InvalidToken("apikey-revoked::".to_string()));
         }
-        let now = current_ts()?;
-        if info.expire_at <= now {
-            return Err(GarrisonError::ExpiredToken("apikey-expired::".to_string()));
-        }
-        info.last_used_at = Some(now);
-        let new_value = serde_json::to_string(&info)
+        updated.last_used_at = Some(current_ts()?);
+        let new_value = serde_json::to_string(&updated)
             .map_err(|e| GarrisonError::Internal(format!("apikey-serialize::{}", e)))?;
         self.dao.update(&dao_key, &new_value).await
     }
 
     /// 轮换 API Key。
     ///
-    /// 轮换逻辑：(1) 校验 old_key 有效；(2) 吊销 old_key；(3) 生成新 key
-    /// （保留 login_id/scopes/owner_id/rate_limit/剩余 TTL）；(4) 返回新 key（双段格式）。
+    /// 轮换逻辑：(1) 校验 old_key 有效；(2) 生成新 key（保留
+    /// login_id/scopes/owner_id/rate_limit/剩余 TTL）并持久化；(3) 吊销 old_key；
+    /// (4) 返回新 key（双段格式）。
     ///
     /// v0.4.2 扩展：成功时若注入了 `listener_manager`，广播 `GarrisonEvent::TokenRotate`
     ///
+    /// # 失败顺序（先 generate 后 revoke）
+    ///
+    /// 新 key 生成并持久化成功后才吊销旧 key：若 generate 失败/任务在 generate
+    /// 处被取消，旧 key 仍完整有效，调用方可直接重试——消除"revoke 成功后
+    /// generate 失败 → 旧 key 永久丢失且无替代"的不可恢复窗口。代价是吊销前
+    /// 存在极短的 double-valid 窗口，安全性远优于单向丢 key。
+    ///
     /// # 并发警告（LOW-5）
     ///
-    /// `rotate` 非原子（verify → revoke → generate 跨 await）。并发 rotate 同一 old_key
+    /// `rotate` 非原子（verify → generate → revoke 跨 await）。并发 rotate 同一 old_key
     /// 会各自成功并生成不同新 key（old_key 被吊销一次）。调用方应在 rotate 入口加
     /// 分布式锁/互斥，避免重复轮换。库层不内置锁（rotate 属低频管理操作，加全局锁
     /// 反而引入竞争与死锁面）。
@@ -656,9 +704,6 @@ impl ApiKeyHandler {
     pub async fn rotate(&self, old_key: &str) -> GarrisonResult<String> {
         // (1) 校验 old_key
         let info = self.verify(old_key).await?;
-        // (2) 吊销 old_key
-        self.revoke(old_key).await?;
-        // (3) 生成新 key（保留 login_id/scopes/owner_id/rate_limit/剩余 TTL）
         let now = current_ts()?;
         let remaining_ttl = info.expire_at - now;
         if remaining_ttl <= 0 {
@@ -666,6 +711,7 @@ impl ApiKeyHandler {
                 "apikey-expired-cannot-rotate::".to_string(),
             ));
         }
+        // (2) 先生成并持久化新 key（失败时旧 key 仍有效，可安全重试）
         let new_key = self
             .generate_internal(
                 info.login_id,
@@ -676,6 +722,8 @@ impl ApiKeyHandler {
                 info.rate_limit,
             )
             .await?;
+        // (3) 再吊销旧 key
+        self.revoke(old_key).await?;
         // 广播 TokenRotate 事件
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {

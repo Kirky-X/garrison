@@ -68,6 +68,10 @@ pub struct ApiKeyInfo {
     /// 归属主体标识（IDOR 防护，#3）。
     ///
     /// 生成时默认等于 `login_id`。用于标识 key 的拥有者，供审计与归属校验。
+    ///
+    /// **注意**：`verify` / `verify_with_namespace` **不校验**该字段与请求主体的
+    /// 关系（框架不持有主体上下文）。归属（IDOR）校验属应用层契约：调用方取得
+    /// 返回的 `ApiKeyInfo` 后，应自行比较 `info.owner_id` 与请求主体再做授权决策。
     #[serde(default)]
     pub owner_id: Option<String>,
     /// 最后使用时间戳（秒）。

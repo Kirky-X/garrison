@@ -58,6 +58,14 @@ pub struct SignHandler {
     app_key: String,
     /// 应用密钥（原始，HKDF 输入材料）。
     /// 保留用于 `protocol-zeroize` feature 下的 Drop 零化；非 zeroize 构建中不再被读取。
+    ///
+    /// # 安全注意（明文存储 + 零化 feature 门控）
+    ///
+    /// 本字段以明文 `String` 持有原始密钥：默认构建（未启用 `protocol-zeroize`）
+    /// 下 Drop 不做零化，内存随普通 `String` 释放，内容不保证被清除——可能残留于
+    /// 已释放堆块 / swap / core dump；且 `String` 扩容或所有权转移还可能在旧堆块
+    /// 留下密钥碎片。保持 feature 结构（零开销默认构建），对密钥卫生有要求的部署
+    /// 应显式启用 `protocol-zeroize`（见 `handler.rs` 的 `Drop` impl）。
     #[cfg_attr(not(feature = "protocol-zeroize"), allow(dead_code))]
     app_secret: String,
     /// DAO 抽象层，用于 nonce 存储。
@@ -65,5 +73,11 @@ pub struct SignHandler {
     /// 时间戳窗口（秒）。
     timestamp_window: i64,
     /// HKDF 派生密钥（构造时一次性计算，sign/validate 直接使用）。
+    ///
+    /// # 安全注意（明文存储 + 零化 feature 门控）
+    ///
+    /// HMAC 密钥材料以明文 `[u8; 32]` 存储：仅在 `protocol-zeroize` feature 下
+    /// Drop 时被覆写（见 `handler.rs` 的 `Drop` impl），默认构建中释放后内容不
+    /// 保证被清除——可能残留于已释放堆块 / swap / core dump。
     derived_key: [u8; 32],
 }
