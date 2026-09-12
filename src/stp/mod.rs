@@ -253,6 +253,10 @@ pub struct GarrisonLogicDefault {
     /// 独立于 `GarrisonSession::login_locks`，避免 `check_and_renew` 持有
     /// `login_locks` 后调用 `renew_to_equivalent`（内部 `logout` 再次获取
     /// `login_locks`）导致死锁。续签锁仅序列化并发 `check_and_renew` 调用。
+    ///
+    /// 生命周期（batch-08 修复）：`check_and_renew` 完成后会在安全点
+    /// `remove_if(strong_count == 1)` 清理无等待者的条目，防止条目随
+    /// 唯一 login_id 数量无界增长（OOM / CWE-770）。
     renewal_locks: DashMap<String, Arc<TokioMutex<()>>>,
     /// 可注入时钟（默认 SystemClock，测试可替换为 MockClock）。
     ///
@@ -291,6 +295,14 @@ pub struct GarrisonLogicDefault {
     /// 用于测试 / 工厂扩展点标记 logic 来源（如自定义 factory 构造的实例），
     /// 默认 `None`，不影响运行时行为。
     pub(crate) marker: Option<&'static str>,
+    /// 复用的 IP 级暴力破解防护策略（`check_api_key` 专用）。
+    ///
+    /// batch-08 修复（#5264）：此前每次 `check_api_key` 都
+    /// `BruteForceStrategy::new(BruteForceConfig::default(), dao)` 重新分配两个
+    /// `Arc<dyn ...>` 适配器并丢弃已配置实例；改为惰性初始化一次、全实例复用。
+    #[cfg(all(feature = "protocol-apikey", feature = "firewall-bruteforce"))]
+    brute_force_strategy:
+        std::sync::OnceLock<Arc<crate::strategy::firewall::brute_force::BruteForceStrategy>>,
 }
 
 mod default_impl;
@@ -300,3 +312,63 @@ pub(crate) mod mock;
 
 #[cfg(test)]
 mod tests;
+
+// ============================================================================
+// T026: security-extra（safe-auth）关闭时的 MfaLogic trait default 行为验证
+// ============================================================================
+
+// batch-08 修复（issue #857 死测试）：原测试 `t026_safe_auth_not_in_scope_when_disabled`
+// 置于 safe.rs（`security-extra` 门控模块）内且标注
+// `#[cfg(not(feature = "security-extra"))]`——条件矛盾，任何配置下都不编译。
+// 移至非门控的 mod.rs 并保持 `cfg(not(security-extra))` 门控，
+// 使 `security-extra` 关闭的构建真正编译并运行该验证。
+#[cfg(test)]
+#[cfg(not(feature = "security-extra"))]
+mod safe_feature_gate_tests {
+    use super::*;
+    use crate::dao::GarrisonDao;
+    use crate::stp::mock::{MockDao, MockFirewall};
+    use crate::strategy::GarrisonPermissionStrategy;
+    use std::sync::Arc;
+
+    /// T026: security-extra 禁用时，GarrisonLogicDefault 没有 open_safe inherent method，
+    /// 调用解析到 MfaLogic trait default（open_safe=Ok(()), is_safe=Ok(true), close_safe=Ok(())）。
+    #[tokio::test]
+    async fn t026_safe_auth_not_in_scope_when_disabled() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+        let mut config = GarrisonConfig::default_config();
+        config.throw_on_not_login = false;
+        config.token_style = "uuid".to_string();
+        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+            has_permission: true,
+            has_role: true,
+        });
+        let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+
+        let token = logic
+            .login("user-t026-002", &LoginParams::default())
+            .await
+            .unwrap();
+
+        // security-extra 禁用时，open_safe/is_safe/close_safe 解析到 MfaLogic trait default
+        with_current_token(token, async {
+            // open_safe trait default: Ok(()) (no-op)
+            assert!(
+                logic.open_safe("default", 3600).await.is_ok(),
+                "security-extra 禁用时 open_safe 应走 trait default 返回 Ok(())"
+            );
+            // is_safe trait default: Ok(true) (always safe)
+            assert!(
+                logic.is_safe("default").await.unwrap_or(false),
+                "security-extra 禁用时 is_safe 应走 trait default 返回 Ok(true)"
+            );
+            // close_safe trait default: Ok(()) (no-op)
+            assert!(
+                logic.close_safe("default").await.is_ok(),
+                "security-extra 禁用时 close_safe 应走 trait default 返回 Ok(())"
+            );
+        })
+        .await;
+    }
+}

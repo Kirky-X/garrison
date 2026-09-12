@@ -41,7 +41,8 @@ const ACCOUNT_SESSION_PREFIX: &str = "account:session:";
 
 /// 单次搜索最大扫描 key 数量（防止 DoS）。
 ///
-/// 超出时截断并记录 warn 日志。这是性能与可用性的权衡：
+/// 超出时截断、记录 warn 日志，并在返回值中携带 `truncated=true` 截断标志
+/// （调用方可感知结果不完整）。这是性能与可用性的权衡：
 /// 生产环境应通过维护反向索引（如 login_token_map）替代全量扫描。
 const MAX_SCAN: usize = 10000;
 
@@ -64,6 +65,22 @@ fn sort_entries(entries: &mut [(String, i64, i64)], sort_type: SearchSortType) {
     }
 }
 
+/// 脱敏 DAO key：仅保留前缀（最后一个 `:` 及之前）与值的前 4 字符，其余以 `***` 掩码。
+///
+/// 损坏记录的 warn 日志不得输出完整 key（key 含 token / login_id 等敏感值）。
+fn mask_key(key: &str) -> String {
+    match key.rfind(':') {
+        Some(idx) => {
+            let (prefix, value) = key.split_at(idx + 1);
+            match value.get(..4) {
+                Some(v4) if value.len() > 4 => format!("{}{}***", prefix, v4),
+                _ => format!("{}***", prefix),
+            }
+        },
+        None => "***".to_string(),
+    }
+}
+
 /// 按 token 值搜索 Token-Session。
 ///
 /// 搜索 token 值包含 `keyword` 的登录 Session（排除匿名 Session）。空 `keyword` 匹配所有。
@@ -76,7 +93,8 @@ fn sort_entries(entries: &mut [(String, i64, i64)], sort_type: SearchSortType) {
 /// - `sort_type`: 排序方式。
 ///
 /// # 返回
-/// 匹配的 token 值列表。
+/// `(items, truncated)` 元组：匹配的 token 值列表 + 截断标志。
+/// `truncated=true` 表示扫描 key 数超过 `MAX_SCAN` 被截断，结果可能不完整（分页语义不保证）。
 ///
 /// # 性能警告
 ///
@@ -94,7 +112,7 @@ pub async fn search_token_value(
     start: usize,
     size: usize,
     sort_type: SearchSortType,
-) -> GarrisonResult<Vec<String>> {
+) -> GarrisonResult<(Vec<String>, bool)> {
     if keyword.len() > MAX_KEYWORD_LEN {
         return Err(GarrisonError::InvalidParam(format!(
             "session-search-keyword-too-long::{}::{}",
@@ -113,7 +131,9 @@ pub async fn search_token_value(
         .dao
         .keys(&format!("{}*", TOKEN_SESSION_PREFIX))
         .await?;
+    let mut truncated = false;
     if keys.len() > MAX_SCAN {
+        truncated = true;
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
@@ -145,8 +165,9 @@ pub async fn search_token_value(
         let ts: TokenSession = match serde_json::from_str(&json) {
             Ok(ts) => ts,
             Err(e) => {
+                // 脱敏：不输出完整 key（含 token 值）
                 tracing::warn!(
-                    key = %key,
+                    key = %mask_key(&key),
                     error = %e,
                     "skipping corrupted TokenSession record"
                 );
@@ -167,12 +188,15 @@ pub async fn search_token_value(
 
     sort_entries(&mut entries, sort_type);
 
-    Ok(entries
-        .into_iter()
-        .skip(start)
-        .take(size)
-        .map(|(id, _, _)| id)
-        .collect())
+    Ok((
+        entries
+            .into_iter()
+            .skip(start)
+            .take(size)
+            .map(|(id, _, _)| id)
+            .collect(),
+        truncated,
+    ))
 }
 
 /// 按 login_id 搜索 Account-Session。
@@ -187,7 +211,8 @@ pub async fn search_token_value(
 /// - `sort_type`: 排序方式。
 ///
 /// # 返回
-/// 匹配的 login_id 列表。
+/// `(items, truncated)` 元组：匹配的 login_id 列表 + 截断标志。
+/// `truncated=true` 表示扫描 key 数超过 `MAX_SCAN` 被截断，结果可能不完整（分页语义不保证）。
 ///
 /// # 性能警告
 ///
@@ -205,7 +230,7 @@ pub async fn search_session_id(
     start: usize,
     size: usize,
     sort_type: SearchSortType,
-) -> GarrisonResult<Vec<String>> {
+) -> GarrisonResult<(Vec<String>, bool)> {
     if keyword.len() > MAX_KEYWORD_LEN {
         return Err(GarrisonError::InvalidParam(format!(
             "session-search-keyword-too-long::{}::{}",
@@ -224,7 +249,9 @@ pub async fn search_session_id(
         .dao
         .keys(&format!("{}*", ACCOUNT_SESSION_PREFIX))
         .await?;
+    let mut truncated = false;
     if keys.len() > MAX_SCAN {
+        truncated = true;
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
@@ -252,8 +279,9 @@ pub async fn search_session_id(
         let account_session: AccountSession = match serde_json::from_str(&json) {
             Ok(as_v) => as_v,
             Err(e) => {
+                // 脱敏：不输出完整 key（含 login_id）
                 tracing::warn!(
-                    key = %key,
+                    key = %mask_key(&key),
                     error = %e,
                     "skipping corrupted AccountSession record"
                 );
@@ -278,12 +306,15 @@ pub async fn search_session_id(
 
     sort_entries(&mut entries, sort_type);
 
-    Ok(entries
-        .into_iter()
-        .skip(start)
-        .take(size)
-        .map(|(id, _, _)| id)
-        .collect())
+    Ok((
+        entries
+            .into_iter()
+            .skip(start)
+            .take(size)
+            .map(|(id, _, _)| id)
+            .collect(),
+        truncated,
+    ))
 }
 
 /// 按 login_id 搜索 Token-Session 的 token。
@@ -299,7 +330,8 @@ pub async fn search_session_id(
 /// - `sort_type`: 排序方式。
 ///
 /// # 返回
-/// 匹配的 token 值列表。
+/// `(items, truncated)` 元组：匹配的 token 值列表 + 截断标志。
+/// `truncated=true` 表示扫描 key 数超过 `MAX_SCAN` 被截断，结果可能不完整（分页语义不保证）。
 ///
 /// # 性能警告
 ///
@@ -317,7 +349,7 @@ pub async fn search_token_session_id(
     start: usize,
     size: usize,
     sort_type: SearchSortType,
-) -> GarrisonResult<Vec<String>> {
+) -> GarrisonResult<(Vec<String>, bool)> {
     if keyword.len() > MAX_KEYWORD_LEN {
         return Err(GarrisonError::InvalidParam(format!(
             "session-search-keyword-too-long::{}::{}",
@@ -336,7 +368,9 @@ pub async fn search_token_session_id(
         .dao
         .keys(&format!("{}*", TOKEN_SESSION_PREFIX))
         .await?;
+    let mut truncated = false;
     if keys.len() > MAX_SCAN {
+        truncated = true;
         tracing::warn!(
             actual = keys.len(),
             max = MAX_SCAN,
@@ -364,8 +398,9 @@ pub async fn search_token_session_id(
         let ts: TokenSession = match serde_json::from_str(&json) {
             Ok(ts) => ts,
             Err(e) => {
+                // 脱敏：不输出完整 key（含 token 值）
                 tracing::warn!(
-                    key = %key,
+                    key = %mask_key(&key),
                     error = %e,
                     "skipping corrupted TokenSession record"
                 );
@@ -390,12 +425,15 @@ pub async fn search_token_session_id(
 
     sort_entries(&mut entries, sort_type);
 
-    Ok(entries
-        .into_iter()
-        .skip(start)
-        .take(size)
-        .map(|(id, _, _)| id)
-        .collect())
+    Ok((
+        entries
+            .into_iter()
+            .skip(start)
+            .take(size)
+            .map(|(id, _, _)| id)
+            .collect(),
+        truncated,
+    ))
 }
 
 #[cfg(test)]
@@ -489,7 +527,7 @@ mod tests {
         session.create("u2", "alpha-2").await.unwrap();
         session.create("u3", "beta-1").await.unwrap();
 
-        let result = session
+        let (result, _truncated) = session
             .search_token_value("alpha", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -510,7 +548,7 @@ mod tests {
         put_token_session(&dao, "tok-4", "u4", 400, 400).await;
         put_token_session(&dao, "tok-5", "u5", 500, 500).await;
 
-        let result = session
+        let (result, _truncated) = session
             .search_token_value("", 1, 2, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -528,26 +566,26 @@ mod tests {
         put_token_session(&dao, "tok-b", "u2", 200, 100).await;
         put_token_session(&dao, "tok-c", "u3", 300, 250).await;
 
-        let asc = session
+        let (asc, _truncated) = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
         assert_eq!(asc, vec!["tok-a", "tok-b", "tok-c"]);
 
-        let desc = session
+        let (desc, _truncated) = session
             .search_token_value("", 0, 100, SearchSortType::CreatedDesc)
             .await
             .unwrap();
         assert_eq!(desc, vec!["tok-c", "tok-b", "tok-a"]);
 
         // last_active_at: tok-b=100, tok-a=150, tok-c=250
-        let last_asc = session
+        let (last_asc, _truncated) = session
             .search_token_value("", 0, 100, SearchSortType::LastActiveAsc)
             .await
             .unwrap();
         assert_eq!(last_asc, vec!["tok-b", "tok-a", "tok-c"]);
 
-        let last_desc = session
+        let (last_desc, _truncated) = session
             .search_token_value("", 0, 100, SearchSortType::LastActiveDesc)
             .await
             .unwrap();
@@ -566,7 +604,7 @@ mod tests {
         session.create("user2", "t2").await.unwrap();
         session.create("admin1", "t3").await.unwrap();
 
-        let result = session
+        let (result, _truncated) = session
             .search_session_id("user", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -582,7 +620,7 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         session.create("user1", "t1").await.unwrap();
 
-        let result = session
+        let (result, _truncated) = session
             .search_session_id("nonexistent", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -606,7 +644,7 @@ mod tests {
         put_token_session(&dao, "tok-3", "admin-1", 300, 300).await;
 
         // search_token_session_id("user") 按 login_id 过滤
-        let result = session
+        let (result, _truncated) = session
             .search_token_session_id("user", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -615,7 +653,7 @@ mod tests {
         assert!(result.contains(&"tok-2".to_string()));
 
         // 对比：search_token_value("user") 按 token 过滤，返回空
-        let result2 = session
+        let (result2, _truncated) = session
             .search_token_value("user", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -628,11 +666,11 @@ mod tests {
         put_token_session(&dao, "shared-1", "shared-a", 400, 400).await;
         put_token_session(&dao, "shared-2", "shared-b", 500, 500).await;
 
-        let by_token = session
+        let (by_token, _truncated) = session
             .search_token_value("shared", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
-        let by_login = session
+        let (by_login, _truncated) = session
             .search_token_session_id("shared", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -675,7 +713,7 @@ mod tests {
         dao.set(&anon_key, &json, 3600).await.unwrap();
 
         // search_token_value 不应返回匿名 token
-        let result = session
+        let (result, _truncated) = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -683,7 +721,7 @@ mod tests {
         assert!(!result.contains(&"anon-tok".to_string()));
 
         // search_token_session_id 不应返回匿名 token
-        let result2 = session
+        let (result2, _truncated) = session
             .search_token_session_id("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -798,7 +836,7 @@ mod tests {
         put_token_session(&dao, "tok-1", "u1", 100, 100).await;
         put_token_session(&dao, "tok-2", "u2", 200, 200).await;
 
-        let result = session
+        let (result, _truncated) = session
             .search_token_value("", 10, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -811,7 +849,7 @@ mod tests {
         let (dao, session) = make_session(3600, 86400);
         put_token_session(&dao, "tok-1", "u1", 100, 100).await;
 
-        let result = session
+        let (result, _truncated) = session
             .search_token_value("", 0, 0, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -822,13 +860,13 @@ mod tests {
     #[tokio::test]
     async fn search_empty_db_empty_keyword_returns_empty() {
         let (_dao, session) = make_session(3600, 86400);
-        let result = session
+        let (result, _truncated) = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
         assert!(result.is_empty());
 
-        let result2 = session
+        let (result2, _truncated) = session
             .search_session_id("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -849,7 +887,7 @@ mod tests {
         let corrupt_key = format!("{}{}", TOKEN_SESSION_PREFIX, "corrupt-tok");
         dao.set(&corrupt_key, "{invalid json}", 3600).await.unwrap();
 
-        let result = session
+        let (result, _truncated) = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -870,7 +908,7 @@ mod tests {
             .await
             .unwrap();
 
-        let result = session
+        let (result, _truncated) = session
             .search_session_id("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -887,7 +925,7 @@ mod tests {
         let corrupt_key = format!("{}{}", TOKEN_SESSION_PREFIX, "corrupt-tok");
         dao.set(&corrupt_key, "broken json", 3600).await.unwrap();
 
-        let result = session
+        let (result, _truncated) = session
             .search_token_session_id("user", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -908,7 +946,7 @@ mod tests {
             .unwrap();
         dao.delete(&expired_key).await.unwrap();
 
-        let result = session
+        let (result, _truncated) = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
@@ -968,18 +1006,20 @@ mod tests {
 
     /// MAX_SCAN 截断：keys() 返回超过 MAX_SCAN 条 key 时被截断为 MAX_SCAN。
     ///
-    /// 验证 DoS 防护：大量 key 不会导致搜索耗时过长。
+    /// 验证 DoS 防护：大量 key 不会导致搜索耗时过长；
+    /// 同时验证返回值携带截断标志（truncated=true），调用方可感知结果不完整。
     #[tokio::test]
     async fn search_truncates_keys_exceeding_max_scan() {
         let dao = Arc::new(LargeKeyDao::new(MAX_SCAN + 100));
         let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
         // 搜索应成功完成（截断后所有 key 的 get() 返回 None，结果为空）
-        let result = session
+        let (result, truncated) = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
         assert!(result.is_empty(), "所有 key 的 get() 返回 None，结果应为空");
+        assert!(truncated, "超过 MAX_SCAN 截断后应返回 truncated=true");
     }
 
     /// MAX_SCAN 边界：keys() 返回恰好 MAX_SCAN 条 key 时不截断。
@@ -988,12 +1028,13 @@ mod tests {
         let dao = Arc::new(LargeKeyDao::new(MAX_SCAN));
         let session = GarrisonSession::new(dao, 3600, 86400, 0);
 
-        let result = session
+        let (result, truncated) = session
             .search_token_value("", 0, 100, SearchSortType::CreatedAsc)
             .await
             .unwrap();
         // 恰好 MAX_SCAN 条不截断，但 get() 返回 None，结果为空
         assert!(result.is_empty());
+        assert!(!truncated, "恰好 MAX_SCAN 条不应截断");
     }
 
     // ========================================================================

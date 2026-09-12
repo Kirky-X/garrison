@@ -405,8 +405,10 @@ impl GarrisonLogicDefault {
             match self.session.get_token_session(token).await? {
                 Some(ts) => self.session.logout_inner(token, &ts).await?,
                 None => {
-                    // 脱敏：只打印 token 前 8 字符，避免完整 token 泄露到日志
-                    let token_preview = if token.len() > 8 { &token[..8] } else { token };
+                    // 脱敏：只打印 token 前 8 字符，避免完整 token 泄露到日志。
+                    // 用 get(..8) 字符安全截取：&token[..8] 在字节 8 落于多字节
+                    // UTF-8 字符中间时会 panic（token 不强制 ASCII，warn 路径 panic = DoS）
+                    let token_preview = token.get(..8).unwrap_or(token);
                     tracing::warn!(
                         token = %token_preview,
                         "enforce_max_login_count: token not found, skipping logout_inner"
@@ -834,6 +836,13 @@ impl GarrisonLogicDefault {
 
         // 持有 per-login_id **续签锁**（独立于 GarrisonSession::login_locks）执行续签。
         // 不能用 login_locks：renew_to_equivalent 内部调用 logout 会再次获取 login_locks → 死锁。
+        //
+        // batch-08 修复（#5269/#5653/#5966/#8331）：
+        // 1. 条目泄漏——续签完成后在安全点（guard 与本地 Arc clone 均已 drop）用
+        //    remove_if(strong_count==1) 移除无等待者的条目，防止 renewal_locks 随
+        //    唯一 login_id 数量无界增长（OOM / CWE-770）；
+        // 2. 取消安全——TokioMutex guard 取消时自动释放，但条目此前永不移除；
+        //    续签流程收敛进内部 async block，所有提前返回路径都经过统一清理。
         let lock = self
             .renewal_locks
             .entry(login_id.clone())
@@ -841,46 +850,60 @@ impl GarrisonLogicDefault {
             .clone();
         let _guard = lock.lock().await;
 
-        // 二次检查 TTL：可能已被另一并发调用续签
-        let remaining = match self.session.get_token_timeout(token).await? {
-            Some(d) => d,
-            None => return Ok(None),
-        };
-        if remaining.is_zero() {
-            return Ok(None);
-        }
-        let remaining_pct = (remaining.as_millis() as i64 * 100) / (total * 1000);
-        if remaining_pct >= threshold {
-            return Ok(None);
-        }
+        // 续签流程（在锁内执行，保证二次检查与续签的原子性）
+        let renew_flow = async {
+            // 二次检查 TTL：可能已被另一并发调用续签
+            let remaining = match self.session.get_token_timeout(token).await? {
+                Some(d) => d,
+                None => return Ok(None),
+            };
+            if remaining.is_zero() {
+                return Ok(None);
+            }
+            let remaining_pct = (remaining.as_millis() as i64 * 100) / (total * 1000);
+            if remaining_pct >= threshold {
+                return Ok(None);
+            }
 
-        // 续签：非 JWT 用 renew_to_equivalent，JWT 用 refresh_token
-        #[cfg(feature = "protocol-jwt")]
-        {
-            let new_token = if self.config.token_style == "jwt" {
-                self.refresh_token(token).await?
-            } else {
+            // 续签：非 JWT 用 renew_to_equivalent，JWT 用 refresh_token
+            #[cfg(feature = "protocol-jwt")]
+            {
+                let new_token = if self.config.token_style == "jwt" {
+                    self.refresh_token(token).await?
+                } else {
+                    let auth = self.auth_logic.as_ref().ok_or_else(|| {
+                        GarrisonError::Config("stp-auto-renewal-no-auth-logic::".to_string())
+                    })?;
+                    auth.renew_to_equivalent(token).await?
+                };
+                set_renewed_token(new_token.clone());
+                Ok(Some(new_token))
+            }
+            #[cfg(not(feature = "protocol-jwt"))]
+            {
+                if self.config.token_style == "jwt" {
+                    return Err(GarrisonError::Config(
+                        "stp-auto-renewal-jwt-requires-protocol-jwt::".to_string(),
+                    ));
+                }
                 let auth = self.auth_logic.as_ref().ok_or_else(|| {
                     GarrisonError::Config("stp-auto-renewal-no-auth-logic::".to_string())
                 })?;
-                auth.renew_to_equivalent(token).await?
-            };
-            set_renewed_token(new_token.clone());
-            Ok(Some(new_token))
-        }
-        #[cfg(not(feature = "protocol-jwt"))]
-        {
-            if self.config.token_style == "jwt" {
-                return Err(GarrisonError::Config(
-                    "stp-auto-renewal-jwt-requires-protocol-jwt::".to_string(),
-                ));
+                let new_token = auth.renew_to_equivalent(token).await?;
+                set_renewed_token(new_token.clone());
+                Ok(Some(new_token))
             }
-            let auth = self.auth_logic.as_ref().ok_or_else(|| {
-                GarrisonError::Config("stp-auto-renewal-no-auth-logic::".to_string())
-            })?;
-            let new_token = auth.renew_to_equivalent(token).await?;
-            set_renewed_token(new_token.clone());
-            Ok(Some(new_token))
-        }
+        };
+        let result = renew_flow.await;
+
+        // 安全点清理（与 GarrisonSession::with_token_session_lock 同模式）：
+        // 先 drop guard 再 drop 本地 Arc clone，使 strong_count 降到 1
+        //（仅剩 DashMap entry），remove_if 才会真正移除。
+        // 若仍有等待者（strong_count >= 2）则保留条目，由最后一个使用者清理。
+        drop(_guard);
+        drop(lock);
+        self.renewal_locks
+            .remove_if(&login_id, |_, l| Arc::strong_count(l) == 1);
+        result
     }
 }

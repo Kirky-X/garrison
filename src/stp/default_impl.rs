@@ -74,6 +74,8 @@ impl GarrisonLogicDefault {
             #[cfg(feature = "three-tier-cache")]
             user_cache_service: None,
             marker: None,
+            #[cfg(all(feature = "protocol-apikey", feature = "firewall-bruteforce"))]
+            brute_force_strategy: std::sync::OnceLock::new(),
         }
     }
 
@@ -330,8 +332,15 @@ impl GarrisonLogicDefault {
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
             use crate::strategy::firewall::FirewallContext;
-            let strategy =
-                BruteForceStrategy::new(BruteForceConfig::default(), self.session.dao().clone());
+            // batch-08 修复（#5264）：复用惰性初始化的 BruteForceStrategy 实例，
+            // 不再每次调用 `BruteForceStrategy::new(BruteForceConfig::default(), dao)`
+            // 重新分配 ban_storage / limiter 两个 Arc 适配器并丢弃已配置实例。
+            let strategy = self.brute_force_strategy.get_or_init(|| {
+                Arc::new(BruteForceStrategy::new(
+                    BruteForceConfig::default(),
+                    self.session.dao().clone(),
+                ))
+            });
             let fw_ctx = FirewallContext::new(&ip);
             if strategy.is_blocked(&fw_ctx).await? {
                 return Err(GarrisonError::FirewallBlocked(format!(

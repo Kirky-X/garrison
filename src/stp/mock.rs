@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
-use crate::dao::repository::{NewUser, UpdateUser, UserRepository, UserRow};
+use crate::dao::repository::{NewUser, UpdateUser, UserListRow, UserRepository, UserRow};
 
 // ------------------------------------------------------------------------
 // MockDao：复用 dao/session 测试的 HashMap + Instant 模拟 TTL
@@ -229,7 +229,7 @@ impl UserRepository for MockUserRepository {
         _tenant_id: i64,
         _offset: i64,
         _limit: i64,
-    ) -> GarrisonResult<Vec<UserRow>> {
+    ) -> GarrisonResult<Vec<UserListRow>> {
         Ok(vec![])
     }
 }

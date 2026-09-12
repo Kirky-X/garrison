@@ -789,6 +789,8 @@ async fn kickout_by_device_accepts_login_id_numeric() {
 /// 验证 kickout_by_device 注入 listener_manager 后广播 Kickout 事件。
 ///
 /// 对应 spec session-kickout-device R-002 验收标准。
+/// 通过 `GarrisonListenerManager::register`（运行时注册 API）注入计数监听器，
+/// 真实断言 Kickout 事件被派发（而非仅验证不 panic）。
 #[cfg(feature = "listener")]
 #[tokio::test]
 async fn kickout_by_device_broadcasts_kickout_events() {
@@ -796,10 +798,6 @@ async fn kickout_by_device_broadcasts_kickout_events() {
     use async_trait::async_trait;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    #[allow(
-        dead_code,
-        reason = "test helper: 测试用计数器，部分断言场景暂未使用全部字段"
-    )]
     struct KickoutCounter {
         count: AtomicUsize,
     }
@@ -813,10 +811,15 @@ async fn kickout_by_device_broadcasts_kickout_events() {
         }
     }
 
+    let counter = Arc::new(KickoutCounter {
+        count: AtomicUsize::new(0),
+    });
     let mgr = Arc::new(GarrisonListenerManager::new());
-    // 注入自定义监听器（直接 push 到 listeners，需要扩展 API）
-    // 由于 GarrisonListenerManager 通过 inventory 收集，测试中无法直接注入
-    // 改为验证 with_listener_manager 链式构造成功，且 kickout 不报错
+    assert_eq!(mgr.count(), 0, "初始无监听器");
+    // 运行时注册计数监听器（register 为 listener 模块公开 API）
+    mgr.register(counter.clone());
+    assert_eq!(mgr.count(), 1, "register 后应有 1 个监听器");
+
     let (_dao, session) = make_session(3600, 86400);
     let session = session.with_listener_manager(mgr);
 
@@ -828,6 +831,12 @@ async fn kickout_by_device_broadcasts_kickout_events() {
     assert!(result.is_ok());
     // T1 应被踢出
     assert!(session.get_token_session("T1").await.unwrap().is_none());
+    // R-002：被踢出的 1 个 token 应广播 1 次 Kickout 事件
+    assert_eq!(
+        counter.count.load(Ordering::SeqCst),
+        1,
+        "kickout_by_device 应回广播 1 次 Kickout 事件"
+    );
 }
 
 /// 验证 with_listener_manager builder 注入字段。

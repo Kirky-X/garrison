@@ -94,8 +94,15 @@ impl PasswordLogic for GarrisonLogicDefault {
 
         // 1. 查询用户（login_id 转字符串作为 username 查询）
         let username = login_id.to_string();
+        // batch-08 修复（#2188/#2852/#3446/#3448）：tenant_id 不再硬编码 0，
+        // 从租户上下文读取真实租户（多租户部署按调用方租户查询；
+        // 无租户上下文时回退默认租户 0，与旧单租户行为兼容）
+        let tenant_id = crate::context::tenant::TENANT
+            .try_get()
+            .map(|ctx| ctx.tenant_id)
+            .unwrap_or(0);
         let user = repo
-            .find_by_username(0, &username)
+            .find_by_username(tenant_id, &username)
             .await
             .map_err(|e| GarrisonError::Dao(format!("stp-dao-find-by-id::{}", e)))?;
 
@@ -301,7 +308,7 @@ mod tests {
         use super::*;
         use crate::account::credential::{Argon2Hasher, PasswordHasher};
         use crate::config::GarrisonConfig;
-        use crate::dao::repository::{NewUser, UpdateUser, UserRepository, UserRow};
+        use crate::dao::repository::{NewUser, UpdateUser, UserListRow, UserRepository, UserRow};
         use crate::dao::GarrisonDao;
         use crate::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
         use crate::session::GarrisonSession;
@@ -592,7 +599,7 @@ mod tests {
                 _tenant_id: i64,
                 _offset: i64,
                 _limit: i64,
-            ) -> GarrisonResult<Vec<UserRow>> {
+            ) -> GarrisonResult<Vec<UserListRow>> {
                 Err(GarrisonError::Dao("list 模拟失败".to_string()))
             }
         }

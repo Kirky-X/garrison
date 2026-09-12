@@ -152,15 +152,21 @@ impl SessionSecurityListener {
     }
 }
 
-/// 脱敏 token：仅输出前 8 字符 + `***`，防止敏感信息泄露到日志。
+/// 脱敏 token：长 token 输出前 8 字符 + `***`；短 token 输出固定占位 `***`。
+///
+/// 安全敏感日志绝不输出完整 token（无论长度）：长度不足 8 字符（或 `get(..8)`
+/// 因 UTF-8 字符边界失败）时返回固定占位，防止短 token 完整泄露到日志。
 ///
 /// # 参数
 /// - `token`: token 字符串。
 ///
 /// # 返回
-/// 脱敏后的 token 字符串切片（前 8 字符或完整 token，取较短者）。
-fn mask_token(token: &str) -> &str {
-    token.get(..8).unwrap_or(token)
+/// 脱敏后的 token 字符串（前 8 字符 + `***`，或固定占位 `***`）。
+fn mask_token(token: &str) -> String {
+    match token.get(..8) {
+        Some(prefix) if token.len() > 8 => format!("{}***", prefix),
+        _ => "***".to_string(),
+    }
 }
 
 /// 提取 IPv4 地址的 /24 网段标识（前 3 段）。
@@ -317,9 +323,26 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // extract_ipv4_subnet 单元测试
+    // mask_token 脱敏（短 token 固定占位）
     // ------------------------------------------------------------------------
 
+    /// 长 token（>8 字符）输出前 8 字符 + `***`。
+    #[test]
+    fn mask_token_long_token_prefixes_eight_chars() {
+        assert_eq!(mask_token("T1abcdefgh2"), "T1abcdef***");
+    }
+
+    /// 短 token（<=8 字符）输出固定占位 `***`，绝不输出完整 token。
+    #[test]
+    fn mask_token_short_token_returns_placeholder() {
+        assert_eq!(mask_token("T1"), "***");
+        assert_eq!(mask_token("12345678"), "***");
+        assert_eq!(mask_token(""), "***");
+    }
+
+    // ------------------------------------------------------------------------
+    // extract_ipv4_subnet 单元测试
+    // ------------------------------------------------------------------------
     /// 验证 extract_ipv4_subnet 对有效 IPv4 返回前 3 段。
     #[test]
     fn extract_ipv4_subnet_valid_ipv4() {

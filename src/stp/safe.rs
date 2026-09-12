@@ -904,43 +904,14 @@ mod tests {
         .await;
     }
 
-    /// T026: safe-auth feature 禁用时，GarrisonLogicDefault 没有 open_safe inherent method，
-    /// 调用解析到 MfaLogic trait default（open_safe=Ok(()), is_safe=Ok(true), close_safe=Ok(())）。
+    /// T026: safe-auth（security-extra）feature 禁用时的 trait default 行为验证。
     ///
-    /// 注意：本测试位于 safe.rs（`#[cfg(feature = "security-extra")]` 门控）内部，
-    /// `#[cfg(not(feature = "security-extra"))]` 使其在任何配置下都不会编译。
-    /// 此测试作为 feature gate 配置正确性的文档化验证：
-    /// 若将本测试移至非 feature-gated 模块并在 `--lib`（无 safe-auth）下运行，
-    /// 应验证 trait default 行为（open_safe=Ok, is_safe=Ok(true), close_safe=Ok）。
-    #[cfg(not(feature = "security-extra"))]
-    #[tokio::test]
-    async fn t026_safe_auth_not_in_scope_when_disabled() {
-        let (logic, _dao) = make_logic();
-        let token = logic
-            .login("user-t026-002", &LoginParams::default())
-            .await
-            .unwrap();
-
-        // safe-auth 禁用时，open_safe/is_safe/close_safe 解析到 MfaLogic trait default
-        with_current_token(token, async {
-            // open_safe trait default: Ok(()) (no-op)
-            assert!(
-                logic.open_safe("default", 3600).await.is_ok(),
-                "safe-auth 禁用时 open_safe 应走 trait default 返回 Ok(())"
-            );
-            // is_safe trait default: Ok(true) (always safe)
-            assert!(
-                logic.is_safe("default").await.unwrap_or(false),
-                "safe-auth 禁用时 is_safe 应走 trait default 返回 Ok(true)"
-            );
-            // close_safe trait default: Ok(()) (no-op)
-            assert!(
-                logic.close_safe("default").await.is_ok(),
-                "safe-auth 禁用时 close_safe 应走 trait default 返回 Ok(())"
-            );
-        })
-        .await;
-    }
+    /// batch-08 修复（issue #857）：本测试原置于 safe.rs（`security-extra` 门控模块内）
+    /// 且标注 `#[cfg(not(feature = "security-extra"))]`——条件矛盾导致任何配置下都不编译
+    /// （死测试）。已迁移至 `stp/mod.rs` 的 `safe_feature_gate_tests` 模块
+    /// （非 feature 门控），在该模块内用 `cfg(not(security-extra))` 门控，
+    /// 使 `security-extra` 关闭时测试真正编译运行：验证 open_safe/is_safe/close_safe
+    /// 解析到 `MfaLogic` trait default（open_safe=Ok(()), is_safe=Ok(true), close_safe=Ok(())）。
 
     /// T026: full feature 启用时 safe-auth 也启用（Cargo.toml full 列表包含 "safe-auth"）。
     ///

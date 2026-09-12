@@ -205,20 +205,42 @@ impl MfaLogic for GarrisonLogicDefault {
     /// - `GarrisonError::DisableService`: 账号已封禁。
     /// - DAO/反序列化失败：透传 `GarrisonError`。
     async fn check_disable(&self) -> GarrisonResult<()> {
-        // 无 disable_repository 时返回 Ok（向后兼容 0.6.4 之前）
+        // 无 disable_repository 时返回 Ok（向后兼容 0.6.4 之前）。
+        // batch-08 修复（#3445）：fail-open 跳过必须可观测——调用方无法从返回值
+        // 区分"账号正常"与"功能未启用"，此处以 warn 日志区分三种跳过原因。
         let repo = match &self.disable_repository {
             Some(r) => r,
-            None => return Ok(()),
+            None => {
+                tracing::warn!(
+                    reason = "disable_repository_not_injected",
+                    "check_disable skipped (fail-open): DisableRepository not injected, \
+                     ban checks are disabled"
+                );
+                return Ok(());
+            },
         };
         // 获取当前 token（未登录时返回 Ok）
         let token = match current_token() {
             Ok(t) => t,
-            Err(_) => return Ok(()),
+            Err(_) => {
+                tracing::warn!(
+                    reason = "no_current_token",
+                    "check_disable skipped (fail-open): no current token (not logged in)"
+                );
+                return Ok(());
+            },
         };
         // 获取 login_id（TokenSession 不存在时返回 Ok）
         let ts = match self.session.get_token_session(&token).await? {
             Some(ts) => ts,
-            None => return Ok(()),
+            None => {
+                tracing::warn!(
+                    reason = "token_session_not_found",
+                    token = %token.get(..8).unwrap_or("***"),
+                    "check_disable skipped (fail-open): TokenSession not found for current token"
+                );
+                return Ok(());
+            },
         };
         // 检查封禁状态
         if repo.is_disable(&ts.login_id, "default").await? {

@@ -229,14 +229,17 @@ impl PermissionLogic for GarrisonLogicDefault {
 
         // 回退到 firewall 路径（permission_checker 未注入时）
         // firewall 路径同样需要租户隔离校验，否则 tenant-isolation 启用 +
-        // permission_checker 未注入时租户隔离被绕过
+        // permission_checker 未注入时租户隔离被绕过。
+        // 修复（batch-08 #2190/#2192）：tenant_id 计算后不再弃用，经
+        // `check_permission_in_tenant` 传入策略（支持租户的策略可据此隔离判定，
+        // 默认实现将请求级租户纳入权限缓存键）。
         #[cfg(not(feature = "tenant-isolation"))]
-        let _tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
+        let tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
         #[cfg(feature = "tenant-isolation")]
-        let _tenant_id = current_tenant_id_or_error()?;
+        let tenant_id = current_tenant_id_or_error()?;
         let has_perm = self
             .firewall
-            .check_permission(&login_id, permission)
+            .check_permission_in_tenant(tenant_id, &login_id, permission)
             .await?;
         // emit metrics：权限查询结果
         #[cfg(feature = "metrics-prometheus")]
@@ -268,13 +271,50 @@ impl PermissionLogic for GarrisonLogicDefault {
                 };
             },
         };
-        // 租户隔离：与 check_permission 对齐，防止跨租户角色检查绕过
+        // 优先委托 PermissionChecker（若注入），走 has_role + RoleCheck 事件路径——
+        // 与 check_permission 的 checker 分支对齐（修复 batch-08 #2191/#2193/#2855/#2858：
+        // check_role 此前绕过 permission_checker 直调 firewall）。
+        // 角色判定用 `has_role`（角色语义）而非 `authorize`（action 为权限语义）。
+        if let Some(pc) = &self.permission_checker {
+            // tenant-isolation feature 启用时强制 fail-closed（与 firewall 回退路径对齐）
+            #[cfg(feature = "tenant-isolation")]
+            current_tenant_id_or_error()?;
+            let has_role = pc.has_role(&login_id, role).await?;
+
+            // 广播 RoleCheck 事件（audit listener 据此写审计日志）
+            #[cfg(feature = "listener")]
+            if let Some(lm) = &self.listener_manager {
+                lm.broadcast(&GarrisonEvent::RoleCheck {
+                    login_id,
+                    role: role.to_string(),
+                    request_context: None,
+                })
+                .await;
+            }
+
+            #[cfg(feature = "metrics-prometheus")]
+            if let Some(m) = &self.metrics {
+                m.record_role_query(has_role);
+            }
+
+            return if has_role {
+                Ok(())
+            } else {
+                Err(GarrisonError::NotRole(role.to_string()))
+            };
+        }
+
+        // 租户隔离：与 check_permission 对齐，防止跨租户角色检查绕过。
+        // 修复（batch-08）：tenant_id 不再弃用，经 `check_role_in_tenant` 传入策略。
         #[cfg(not(feature = "tenant-isolation"))]
-        let _tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
+        let tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
         #[cfg(feature = "tenant-isolation")]
-        let _tenant_id = current_tenant_id_or_error()?;
+        let tenant_id = current_tenant_id_or_error()?;
         // 委托 GarrisonPermissionStrategy 做角色校验
-        let has_role = self.firewall.check_role(&login_id, role).await?;
+        let has_role = self
+            .firewall
+            .check_role_in_tenant(tenant_id, &login_id, role)
+            .await?;
         // emit metrics：角色查询结果
         #[cfg(feature = "metrics-prometheus")]
         if let Some(m) = &self.metrics {

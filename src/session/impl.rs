@@ -378,6 +378,78 @@ impl GarrisonSession {
         Ok(())
     }
 
+    /// 双重检查后删除过期 Token-Session（TOCTOU 防护）。
+    ///
+    /// 「读取 → 过期检查 → 删除」非原子：并发 `touch` 可能在检查与删除之间
+    /// 刷新 `last_active_at` 使会话重新有效。删除前重读最新记录，
+    /// 仅当仍然过期时才删除，避免误删刚续期的有效会话。
+    /// 过期回调（`trigger_expiry_listeners`）也仅在确认仍过期后触发。
+    async fn delete_token_session_if_still_expired(&self, token: &str) {
+        let json = match self.dao.get(&token_key(token)).await {
+            Ok(Some(json)) => json,
+            Ok(None) => return, // 已被并发删除
+            Err(e) => {
+                tracing::warn!(
+                    "double-check reread failed, skip deleting expired Token-Session (token={}...): {}",
+                    token.get(..8).unwrap_or(token),
+                    e
+                );
+                return;
+            },
+        };
+        let Ok(ts) = serde_json::from_str::<TokenSession>(&json) else {
+            return; // 记录已损坏，交由对应读取路径的报错逻辑处理
+        };
+        let now = Utc::now().timestamp();
+        let ttl = ts
+            .effective_timeout
+            .unwrap_or(self.timeout.min(i64::MAX as u64) as i64);
+        if ts.last_active_at + ttl < now {
+            self.trigger_expiry_listeners(&ts.login_id, token).await;
+            if let Err(e) = self.dao.delete(&token_key(token)).await {
+                tracing::warn!(
+                    "failed to delete expired Token-Session (token={}...): {}",
+                    token.get(..8).unwrap_or(token),
+                    e
+                );
+            }
+        }
+    }
+
+    /// 双重检查后删除过期 Account-Session（TOCTOU 防护）。
+    ///
+    /// 与 [`delete_token_session_if_still_expired`](Self::delete_token_session_if_still_expired)
+    /// 对称：删除前重读最新 Account-Session，仅当仍然过期才删除，
+    /// 避免并发 `touch` 刷新后误删。
+    async fn delete_account_session_if_still_expired(&self, login_id: &str) {
+        let json = match self.dao.get(&account_key(login_id)).await {
+            Ok(Some(json)) => json,
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(
+                    "double-check reread failed, skip deleting expired Account-Session (login_id={}): {}",
+                    login_id,
+                    e
+                );
+                return;
+            },
+        };
+        let Ok(as_) = serde_json::from_str::<AccountSession>(&json) else {
+            return;
+        };
+        let now = Utc::now().timestamp();
+        if as_.last_active_at + (self.active_timeout.min(i64::MAX as u64) as i64) < now {
+            self.trigger_expiry_listeners(login_id, "").await;
+            if let Err(e) = self.dao.delete(&account_key(login_id)).await {
+                tracing::warn!(
+                    "failed to delete expired Account-Session (login_id={}): {}",
+                    login_id,
+                    e
+                );
+            }
+        }
+    }
+
     /// 获取 Token-Session。
     ///
     ///
@@ -405,17 +477,8 @@ impl GarrisonSession {
                     .effective_timeout
                     .unwrap_or(self.timeout.min(i64::MAX as u64) as i64);
                 if ts.last_active_at + ttl < now {
-                    // 触发过期回调
-                    self.trigger_expiry_listeners(&ts.login_id, token).await;
-                    // 从 DAO 删除过期 session（清理）
-                    if let Err(e) = self.dao.delete(&token_key(token)).await {
-                        let token_preview = token.get(..8).unwrap_or(token);
-                        tracing::warn!(
-                            "failed to delete expired Token-Session (token={}...): {}",
-                            token_preview,
-                            e
-                        );
-                    }
+                    // 双重检查后删除：并发 touch 可能已在检查间隙刷新会话（TOCTOU 防护）
+                    self.delete_token_session_if_still_expired(token).await;
                     return Ok(None);
                 }
                 Ok(Some(ts))
@@ -456,17 +519,8 @@ impl GarrisonSession {
                     .effective_timeout
                     .unwrap_or(self.timeout.min(i64::MAX as u64) as i64);
                 if ts.last_active_at + effective_ttl < now {
-                    // 触发过期回调
-                    self.trigger_expiry_listeners(&ts.login_id, token).await;
-                    // 从 DAO 删除过期 session（清理）
-                    if let Err(e) = self.dao.delete(&key).await {
-                        let token_preview = token.get(..8).unwrap_or(token);
-                        tracing::warn!(
-                            "failed to delete expired Token-Session (token={}...): {}",
-                            token_preview,
-                            e
-                        );
-                    }
+                    // 双重检查后删除：并发 touch 可能已在检查间隙刷新会话（TOCTOU 防护）
+                    self.delete_token_session_if_still_expired(token).await;
                     return Ok(None);
                 }
                 Ok(Some((ts, ttl)))
@@ -500,16 +554,8 @@ impl GarrisonSession {
                 // R-session-lifecycle-003: 检查 session 级过期（last_active_at + active_timeout < now）
                 let now = Utc::now().timestamp();
                 if as_.last_active_at + (self.active_timeout.min(i64::MAX as u64) as i64) < now {
-                    // 触发过期回调（Account-Session 级过期，token 为空字符串）
-                    self.trigger_expiry_listeners(&login_id, "").await;
-                    // 从 DAO 删除过期 session（清理）
-                    if let Err(e) = self.dao.delete(&account_key(&login_id)).await {
-                        tracing::warn!(
-                            "failed to delete expired Account-Session (login_id={}): {}",
-                            login_id,
-                            e
-                        );
-                    }
+                    // 双重检查后删除：并发 touch 可能已在检查间隙刷新 Account-Session（TOCTOU 防护）
+                    self.delete_account_session_if_still_expired(&login_id).await;
                     return Ok(None);
                 }
                 Ok(Some(as_))
@@ -1185,6 +1231,15 @@ impl GarrisonSession {
     ///
     /// 同时更新 Token-Session 与 Account-Session 的 last_active_at 和 TTL。
     ///
+    /// # 并发安全（锁序：login → token）
+    ///
+    /// `touch` 对 Account-Session 的 read-modify-write 必须持有 per-login_id 锁，
+    /// 否则会与 `logout` / `logout_by_login_id`（持 login 锁删除 Account-Session）
+    /// 交错，把已删除的 token 写回 Account-Session（lost update / 复活已删会话）。
+    /// 同时同一 login_id 的不同 token 并发 `touch` 也会互覆盖 Account-Session。
+    /// 因此先取 login 锁，再在锁内取 token 锁修改 Token-Session（统一锁序，
+    /// 全库无「先 token 锁后 login 锁」路径，无死锁风险）。
+    ///
     /// # 参数
     /// - `token`: 待续期的 token 字符串。
     ///
@@ -1194,45 +1249,54 @@ impl GarrisonSession {
     /// # 错误
     /// - 若 token 不存在，返回 `GarrisonError::InvalidToken`。
     pub async fn touch(&self, token: &str) -> GarrisonResult<()> {
-        self.with_token_session_lock(token, async {
-            let mut ts = self.get_token_session(token).await?.ok_or_else(|| {
-                GarrisonError::InvalidToken(format!("session-token-not-found::{}", token))
-            })?;
-            let now = Utc::now().timestamp();
-            ts.last_active_at = now;
-            let json = serde_json::to_string(&ts).map_err(|e| {
-                GarrisonError::Session(format!("session-sim-token-serialize::{}", e))
-            })?;
-            // R-sessiontokenconsistency-001/013：touch 不再无条件把 TTL 压回基础 timeout。
-            // 优先读取旧键剩余 TTL 回写以保持语义（remember-me 长 TTL 不被缩水）；
-            // 读不到 TTL 时（DAO 不支持 TTL 或键已无 TTL）按 effective_timeout.unwrap_or(self.timeout) 重置。
-            let ttl = match self.dao.get_with_ttl(&token_key(token)).await? {
-                Some((_, Some(remaining))) => remaining.as_secs(),
-                _ => ts.effective_timeout.unwrap_or(self.timeout as i64).max(0) as u64,
-            };
-            // 更新值 + 重置 TTL（用 set 覆盖，重置 TTL）
-            self.dao.set(&token_key(token), &json, ttl).await?;
-
-            // 同时更新 Account-Session 的 last_active_at + 对应 TokenInfo + 重置 TTL
-            if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
-                account.last_active_at = now;
-                for ti in &mut account.tokens {
-                    if ti.token == token {
-                        ti.last_active_at = now;
-                    }
-                }
-                let account_json = serde_json::to_string(&account).map_err(|e| {
-                    GarrisonError::Session(format!("session-sim-account-serialize::{}", e))
+        // 预读会话确定 login_id（仅用于锁粒度；真正的读取在双锁内重做）
+        let ts = self.get_token_session(token).await?.ok_or_else(|| {
+            GarrisonError::InvalidToken(format!("session-token-not-found::{}", token))
+        })?;
+        let login_id = ts.login_id;
+        self.with_login_lock(&login_id, async {
+            self.with_token_session_lock(token, async {
+                let mut ts = self.get_token_session(token).await?.ok_or_else(|| {
+                    GarrisonError::InvalidToken(format!("session-token-not-found::{}", token))
                 })?;
-                self.dao
-                    .set(
-                        &account_key(&ts.login_id),
-                        &account_json,
-                        self.active_timeout,
-                    )
-                    .await?;
-            }
-            Ok(())
+                let now = Utc::now().timestamp();
+                ts.last_active_at = now;
+                let json = serde_json::to_string(&ts).map_err(|e| {
+                    GarrisonError::Session(format!("session-sim-token-serialize::{}", e))
+                })?;
+                // R-sessiontokenconsistency-001/013：touch 不再无条件把 TTL 压回基础 timeout。
+                // 优先读取旧键剩余 TTL 回写以保持语义（remember-me 长 TTL 不被缩水）；
+                // 读不到 TTL 时（DAO 不支持 TTL 或键已无 TTL）按 effective_timeout.unwrap_or(self.timeout) 重置。
+                let ttl = match self.dao.get_with_ttl(&token_key(token)).await? {
+                    Some((_, Some(remaining))) => remaining.as_secs(),
+                    _ => ts.effective_timeout.unwrap_or(self.timeout as i64).max(0) as u64,
+                };
+                // 更新值 + 重置 TTL（用 set 覆盖，重置 TTL）
+                self.dao.set(&token_key(token), &json, ttl).await?;
+
+                // 同时更新 Account-Session 的 last_active_at + 对应 TokenInfo + 重置 TTL
+                //（已持有 login 锁，与 logout/kickout 及其他 token 的 touch 串行化）
+                if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
+                    account.last_active_at = now;
+                    for ti in &mut account.tokens {
+                        if ti.token == token {
+                            ti.last_active_at = now;
+                        }
+                    }
+                    let account_json = serde_json::to_string(&account).map_err(|e| {
+                        GarrisonError::Session(format!("session-sim-account-serialize::{}", e))
+                    })?;
+                    self.dao
+                        .set(
+                            &account_key(&ts.login_id),
+                            &account_json,
+                            self.active_timeout,
+                        )
+                        .await?;
+                }
+                Ok(())
+            })
+            .await
         })
         .await
     }
@@ -1523,14 +1587,15 @@ impl GarrisonSession {
     /// - `sort_type`: 排序方式。
     ///
     /// # 返回
-    /// 匹配的 token 值列表。
+    /// `(items, truncated)` 元组：匹配的 token 值列表 + 截断标志
+    /// （`truncated=true` 表示扫描超过 `MAX_SCAN` 被截断，结果可能不完整）。
     pub async fn search_token_value(
         &self,
         keyword: &str,
         start: usize,
         size: usize,
         sort_type: SearchSortType,
-    ) -> GarrisonResult<Vec<String>> {
+    ) -> GarrisonResult<(Vec<String>, bool)> {
         search::search_token_value(self, keyword, start, size, sort_type).await
     }
 
@@ -1545,14 +1610,15 @@ impl GarrisonSession {
     /// - `sort_type`: 排序方式。
     ///
     /// # 返回
-    /// 匹配的 login_id 列表。
+    /// `(items, truncated)` 元组：匹配的 login_id 列表 + 截断标志
+    /// （`truncated=true` 表示扫描超过 `MAX_SCAN` 被截断，结果可能不完整）。
     pub async fn search_session_id(
         &self,
         keyword: &str,
         start: usize,
         size: usize,
         sort_type: SearchSortType,
-    ) -> GarrisonResult<Vec<String>> {
+    ) -> GarrisonResult<(Vec<String>, bool)> {
         search::search_session_id(self, keyword, start, size, sort_type).await
     }
 
@@ -1567,14 +1633,15 @@ impl GarrisonSession {
     /// - `sort_type`: 排序方式。
     ///
     /// # 返回
-    /// 匹配的 token 值列表。
+    /// `(items, truncated)` 元组：匹配的 token 值列表 + 截断标志
+    /// （`truncated=true` 表示扫描超过 `MAX_SCAN` 被截断，结果可能不完整）。
     pub async fn search_token_session_id(
         &self,
         keyword: &str,
         start: usize,
         size: usize,
         sort_type: SearchSortType,
-    ) -> GarrisonResult<Vec<String>> {
+    ) -> GarrisonResult<(Vec<String>, bool)> {
         search::search_token_session_id(self, keyword, start, size, sort_type).await
     }
 }

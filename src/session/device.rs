@@ -88,7 +88,7 @@ impl DeviceManager {
     }
 }
 
-/// 生成设备指纹：SHA-256(UA + IP)，截断 16 字节 hex = 32 字符。
+/// 生成设备指纹：SHA-256(UA `\x1f` IP)，截断 16 字节 hex = 32 字符。
 ///
 /// # 参数
 /// - `user_agent`: 客户端 User-Agent 字符串。
@@ -96,17 +96,22 @@ impl DeviceManager {
 ///
 /// # 返回
 /// 32 字符的十六进制字符串（SHA-256 前 16 字节）。
+///
+/// # 破坏性变更说明
+///
+/// 自本版本起 UA 与 IP 以 `\x1f`（Unit Separator）分隔后参与哈希，修复维度拼接歧义
+///（`ua="ab"+ip="c"` 与 `ua="a"+ip="bc"` 在无分隔符时哈希相同，可伪造同指纹）。
+/// 输入相同的情况下本函数返回值与旧版本**不同**：若有外部调用方持久化了旧指纹
+///（如设备白名单），升级后需重新计算或迁移。生产登录路径已默认使用
+/// [`device_fingerprint_rich`]（自带分隔符），不受影响。
 pub fn device_fingerprint(user_agent: &str, ip: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(user_agent.as_bytes());
+    // \x1f 分隔符防止维度拼接歧义（与 device_fingerprint_rich 对齐）
+    hasher.update([0x1f]);
     hasher.update(ip.as_bytes());
     let result = hasher.finalize();
-    // 取前 16 字节，hex 编码 = 32 字符
-    result
-        .iter()
-        .take(16)
-        .map(|b| format!("{:02x}", b))
-        .collect()
+    hex_prefix_16(&result)
 }
 
 /// 设备指纹输入维度（A10 强化：防止攻击者仅伪造部分 header 即可复用指纹）。
@@ -159,6 +164,20 @@ impl<'a> DeviceFingerprintInput<'a> {
     }
 }
 
+/// 将哈希结果的前 16 字节编码为 32 字符小写 hex。
+///
+/// 使用查找表 + `push`（避免逐字节 `format!` 的临时分配，登录热路径每次调用
+/// 均会执行指纹计算）。
+fn hex_prefix_16(hash: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(32);
+    for b in hash.iter().take(16) {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
+}
+
 /// 生成强化设备指纹：SHA-256(ua | ip | accept_language | sec_ch_ua | sec_ch_ua_platform)，
 /// 截断 16 字节 hex = 32 字符（A10 修复）。
 ///
@@ -193,11 +212,7 @@ pub fn device_fingerprint_rich(input: &DeviceFingerprintInput<'_>) -> String {
         None => hasher.update([0x00]),
     }
     let result = hasher.finalize();
-    result
-        .iter()
-        .take(16)
-        .map(|b| format!("{:02x}", b))
-        .collect()
+    hex_prefix_16(&result)
 }
 
 #[cfg(test)]
@@ -225,6 +240,19 @@ mod tests {
     fn device_fingerprint_length_is_32() {
         let fp = device_fingerprint("TestAgent", "127.0.0.1");
         assert_eq!(fp.len(), 32, "指纹应为 32 字符（16 字节 hex）");
+    }
+
+    /// legacy 指纹分隔符：ua="ab"+ip="c" 与 ua="a"+ip="bc" 应产生不同指纹。
+    ///
+    /// 验证 `\x1f` 分隔符消除维度拼接歧义（与 rich 版对齐）。
+    #[test]
+    fn device_fingerprint_delimiter_prevents_concat_ambiguity() {
+        let fp1 = device_fingerprint("ab", "c");
+        let fp2 = device_fingerprint("a", "bc");
+        assert_ne!(
+            fp1, fp2,
+            "分隔符应防止 legacy 指纹的维度拼接歧义"
+        );
     }
 
     // ------------------------------------------------------------------------

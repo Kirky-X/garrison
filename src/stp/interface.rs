@@ -44,6 +44,12 @@ pub trait GarrisonInterface: Send + Sync {
     /// 多账号体系下，不同 `login_type`（如 "admin"/"user"/"merchant"）的权限相互隔离。
     /// 业务方可 override 此方法以接入按 `login_type` 隔离的权限数据源。
     ///
+    /// # 生产接线（batch-08，修复死 API）
+    ///
+    /// `GarrisonPermissionStrategyDefault::get_permission_list` 现已改调本方法，
+    /// 传入策略配置的 `login_type`（`with_login_type` builder 设置，默认 `"default"`）——
+    /// 此前本方法仅测试调用（死 API），默认策略静默忽略 `login_type`。
+    ///
     /// # 向后兼容
     ///
     /// 默认实现委托 [`get_permission_list`](Self::get_permission_list)（忽略 `login_type` 参数），
@@ -70,6 +76,12 @@ pub trait GarrisonInterface: Send + Sync {
     ///
     /// 多账号体系下，不同 `login_type`（如 "admin"/"user"/"merchant"）的角色相互隔离。
     /// 业务方可 override 此方法以接入按 `login_type` 隔离的角色数据源。
+    ///
+    /// # 生产接线（batch-08，修复死 API）
+    ///
+    /// `GarrisonPermissionStrategyDefault::get_role_list` 现已改调本方法
+    /// （`check_role` / `check_role_any` / `check_role_all` 均经此路径），
+    /// 传入策略配置的 `login_type`——此前本方法仅测试调用（死 API）。
     ///
     /// # 向后兼容
     ///

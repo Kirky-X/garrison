@@ -240,6 +240,15 @@ impl GarrisonUtil {
     /// - 会话销毁失败：透传 `GarrisonError`。
     pub async fn logout_by_login_id(login_id: impl Into<String>) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
+        // batch-08 修复（#6157）：与同族 login/kickout 对齐补 backend 分发——
+        // backend 模式下认证状态由后端持有，本地直调 GarrisonManager 会落空。
+        // backend.kickout 为 login_id 维度销毁（语义等同 logout_by_login_id）。
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        {
+            if let Some(backend) = get_backend()? {
+                return backend.kickout(&login_id).await;
+            }
+        }
         crate::manager::GarrisonManager::logic()?
             .logout_by_login_id(&login_id)
             .await
@@ -281,6 +290,14 @@ impl GarrisonUtil {
     /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
     /// - 会话销毁失败：透传 `GarrisonError`。
     pub async fn kickout_by_token(token: &str) -> GarrisonResult<()> {
+        // batch-08 修复（#6157/#6159）：与同族 kickout 对齐补 backend 分发。
+        // backend.logout 为 token 维度销毁，与 kickout_by_token 语义一致。
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        {
+            if let Some(backend) = get_backend()? {
+                return backend.logout(token).await;
+            }
+        }
         crate::manager::GarrisonManager::logic()?
             .kickout_by_token(token)
             .await
@@ -347,6 +364,14 @@ impl GarrisonUtil {
     /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
     /// - 会话销毁失败：透传 `GarrisonError`。
     pub async fn revoke_token(token: &str) -> GarrisonResult<()> {
+        // batch-08 修复（#6157/#6160）：与同族 logout 对齐补 backend 分发。
+        // backend.logout 为 token 维度销毁，与 revoke_token 语义一致。
+        #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+        {
+            if let Some(backend) = get_backend()? {
+                return backend.logout(token).await;
+            }
+        }
         crate::manager::GarrisonManager::logic()?
             .revoke_token(token)
             .await
