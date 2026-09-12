@@ -204,7 +204,8 @@ async fn run_returns_failures_when_some_cases_dont_match() {
     let failure = &report.failures[0];
     assert_eq!(failure.case_name, "u2_allow_but_actual_deny");
     assert!(failure.expected.allowed);
-    assert!(!failure.actual.allowed);
+    let actual = failure.actual.as_ref().expect("决策不匹配时 actual 应为 Some");
+    assert!(!actual.allowed);
     assert!(
         failure.error.is_none(),
         "无 authorize error 时 error 应为 None"
@@ -239,6 +240,13 @@ async fn run_handles_authorizer_error() {
     assert_eq!(report.failed, 1);
     let failure = &report.failures[0];
     assert_eq!(failure.case_name, "u2_errors");
+    // ocr #8250/6143：authorize Err 时 actual 为 None（不再用 deny 占位），
+    // 与真实拒绝明确区分
+    assert!(
+        failure.actual.is_none(),
+        "authorize 返回 Err 时 actual 应为 None，实际: {:?}",
+        failure.actual
+    );
     assert!(
         failure.error.is_some(),
         "authorize 返回 Err 时 error 应填充"

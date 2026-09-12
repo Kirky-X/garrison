@@ -17,6 +17,10 @@ pub async fn live() -> impl Responder {
 }
 
 /// Readiness 探针 handler。
+///
+/// ocr #5514/5515：单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
+/// 内部强制执行（`HealthRegistry::with_check_timeout` 可配置），挂起/panic 的检查按
+/// `Unhealthy` 聚合，不会阻塞 actix worker 线程。
 pub async fn ready(registry: web::Data<Arc<HealthRegistry>>) -> HttpResponse {
     let report = registry.check_all().await;
     let status = match report.overall {

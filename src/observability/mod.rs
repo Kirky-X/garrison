@@ -12,7 +12,7 @@
 //!   inklog 结构化日志（含降级到 tracing-subscriber JSON）。启用 `audit-inklog` feature；
 //!   降级路径在 `metrics-prometheus` 或 `tracing-log` 启用时使用 tracing-subscriber JSON。
 //! - **Traces**（[`init_otlp_tracing`](crate::observability::otlp::init_otlp_tracing)）：
-//!   OpenTelemetry 分布式追踪，OTLP gRPC 导出。启用 `observability-otlp` feature。
+//!   OpenTelemetry 分布式追踪，OTLP gRPC 导出。启用 `otlp` feature。
 //!
 //! ## 集成点
 //!
@@ -22,7 +22,7 @@
 //!
 //! - `metrics-prometheus`：编译期包含 `GarrisonMetrics`，并为 inklog 降级路径提供 tracing-subscriber 依赖
 //! - `audit-inklog`：编译期包含 inklog 初始化与降级 API
-//! - `observability-otlp`：编译期包含 OTLP 导出器
+//! - `otlp`：编译期包含 OTLP 导出器
 //! - 未启用任一 feature：模块仍可导入但所有 API 返回 `None` / no-op，保证向后兼容
 
 #[cfg(feature = "metrics-prometheus")]
@@ -83,6 +83,8 @@ pub use inklog::{init_inklog_logging, init_inklog_logging_with_fallback};
 
 #[cfg(feature = "otlp")]
 pub use otlp::init_otlp_tracing;
+#[cfg(feature = "otlp")]
+pub use otlp::shutdown_otlp_tracing;
 
 /// inklog 初始化结果 — 包含可选的 LoggerManager guard 和降级状态。
 ///

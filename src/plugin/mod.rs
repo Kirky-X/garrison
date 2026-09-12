@@ -25,13 +25,19 @@ pub trait GarrisonPlugin: Send + Sync {
     /// 登录成功后被调用。
     ///
     /// 默认空实现返回 `Ok(())`。
+    ///
+    /// # ⚠️ 凭据警示（ocr #2345）
+    ///
+    /// `token` 为登录凭据，实现方**不得**记录其任何片段（含前缀）到日志或
+    /// 审计输出；如需关联请记录 `login_id` 或 token 哈希摘要。
     fn on_login(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
         Ok(())
     }
 
     /// 登出操作完成后被调用。
     ///
-    /// 默认空实现返回 `Ok(())`。
+    /// 默认空实现返回 `Ok(())`。`token` 为凭据，不得记录任何片段（见
+    /// [`Self::on_login`][Self::on_login] 的凭据警示）。
     fn on_logout(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
         Ok(())
     }
@@ -63,7 +69,14 @@ inventory::collect!(GarrisonPluginEntry);
 /// 插件管理器，收集并管理所有已注册插件。
 ///
 /// 在 `GarrisonManager::builder()` 时通过 `inventory::iter` 收集所有已注册插件。
-/// 插件方法返回 `Err` 时仅记录 `tracing::warn!` 日志，不中断主流程。
+/// 插件方法返回 `Err` 时仅记录 `tracing::warn!` 日志，不中断主流程；
+/// 插件**工厂函数 panic** 同样被捕获、跳过并记录 `tracing::warn!`，不中断启动。
+///
+/// # ⚠️ 凭据警示（ocr #2345）
+///
+/// 生命周期钩子的 `token` 参数是**凭据**：插件实现不得将其（含前缀）写入
+/// 日志、审计或任何输出——即使 8 字符前缀也足以帮助攻击者验证猜测/重放。
+/// 如需关联日志请记录 `login_id` 或 token 的哈希（如 SHA-256 前 8 字节 hex）。
 pub struct GarrisonPluginManager {
     /// 已注册的插件列表。
     plugins: Vec<Arc<dyn GarrisonPlugin>>,

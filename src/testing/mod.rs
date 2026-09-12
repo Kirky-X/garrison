@@ -23,7 +23,7 @@
 //!   "cases": [
 //!     {
 //!       "name": "admin_can_read",
-//!       "request": {"login_id": 1, "tenant_id": 0, "action": "read", "resource": null, "context": null},
+//!       "request": {"login_id": "1", "tenant_id": 0, "action": "read", "resource": null, "context": null},
 //!       "expected": {"allowed": true, "reason": "explicit_allow"}
 //!     }
 //!   ]
@@ -64,7 +64,7 @@ use crate::core::permission::{AuthRequest, Decision};
 ///   "cases": [
 ///     {
 ///       "name": "admin_can_read",
-///       "request": {"login_id": 1, "tenant_id": 0, "action": "read", "resource": null, "context": null},
+///       "request": {"login_id": "1", "tenant_id": 0, "action": "read", "resource": null, "context": null},
 ///       "expected": {"allowed": true, "reason": "explicit_allow"}
 ///     }
 ///   ]
@@ -117,8 +117,13 @@ pub struct TestFailure {
     pub case_name: String,
     /// 期望的决策。
     pub expected: Decision,
-    /// 实际的决策（`authorize` 返回 `Err` 时为 [`Decision::deny`] 占位）。
-    pub actual: Decision,
+    /// 实际的决策。
+    ///
+    /// `None` 表示 [`Authorizer::authorize`] 自身返回 `Err`（错误详情见
+    /// [`TestFailure::error`]）——此时**没有**实际决策，不再用
+    /// `Decision::deny` 占位，避免授权失败与真实拒绝在 `actual` 字段混淆
+    /// （ocr #8250/6143）。
+    pub actual: Option<Decision>,
     /// 错误消息（`authorize` 返回 `Err` 时填充，否则 `None`）。
     pub error: Option<String>,
 }

@@ -51,17 +51,18 @@ impl JsonTestSuite {
                         failures.push(TestFailure {
                             case_name: case.name.clone(),
                             expected: case.expected.clone(),
-                            actual,
+                            actual: Some(actual),
                             error: None,
                         });
                     }
                 },
                 Err(e) => {
+                    // ocr #8250/6143：authorize 失败时没有实际决策——actual 置 None，
+                    // 不再用合成的 deny 占位（避免授权错误与真实拒绝混淆）
                     failures.push(TestFailure {
                         case_name: case.name.clone(),
                         expected: case.expected.clone(),
-                        // authorize 失败时无 actual Decision，用 deny 占位
-                        actual: Decision::deny(DecisionReason::NoMatchingPermission),
+                        actual: None,
                         error: Some(e.to_string()),
                     });
                 },

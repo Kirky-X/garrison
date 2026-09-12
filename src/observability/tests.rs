@@ -164,6 +164,19 @@ mod tests_metrics {
         }
     }
 
+    /// ocr #6780/6923：重复调用 new()（含 Default）不再 panic——
+    /// 第二次起以 warn 提示并返回未注册的本地实例。
+    #[test]
+    #[serial]
+    fn test_new_repeated_does_not_panic() {
+        let _m1 = GarrisonMetrics::new();
+        let _m2 = GarrisonMetrics::new();
+        let _m3 = GarrisonMetrics::default();
+        // record/gather 在回退实例上仍可用（仅不新增默认 registry 采集）
+        _m3.record_login(true);
+        let _ = _m3.gather();
+    }
+
     /// 测试 Clone trait（用于 Arc<GarrisonMetrics> 在多线程共享场景）。
     #[test]
     #[serial]
@@ -388,12 +401,15 @@ mod tests_metrics {
 #[cfg(all(test, feature = "otlp"))]
 mod tests_otlp {
     use super::super::*;
+    use serial_test::serial;
 
     /// 测试 init_otlp_tracing 成功初始化（使用本地 endpoint，不实际导出）。
     /// tonic channel 是惰性连接，build() 不需要 endpoint 可达，但 build() 内部
     /// 调用 tokio::spawn，因此需要 tokio runtime（使用 #[tokio::test] 提供）。
-    /// 注意：set_tracer_provider 是全局一次性操作，此测试只能运行一次。
+    /// 注意：set_tracer_provider 是全局一次性操作，用 #[serial] 隔离，
+    /// 避免与其他触碰全局 provider 的测试并发竞争（ocr #1764/2026）。
     #[tokio::test]
+    #[serial]
     async fn test_init_otlp_tracing_succeeds() {
         // 使用本地不可达 endpoint，tonic 不会实际连接（惰性连接）
         let result = init_otlp_tracing("http://localhost:4317");
@@ -409,9 +425,10 @@ mod tests_otlp {
     ///
     /// 含空格的字符串不是合法 URI → `Endpoint::from_shared` 解析失败 →
     /// `ExporterBuildError` 经 `From` 转换为 `GarrisonOtelError::Exporter`。
-    /// 此路径在 build() 阶段即失败，不触达 `set_tracer_provider` 全局状态，
-    /// 也不需要真实 OTLP endpoint 可达。
+    /// 此路径在 build() 阶段即失败，不触达 `set_tracer_provider` 全局状态；
+    /// 仍加 #[serial] 与全局 provider 测试串行（ocr #1764/2026）。
     #[tokio::test]
+    #[serial]
     async fn test_init_otlp_tracing_invalid_endpoint_returns_err() {
         let result = init_otlp_tracing("not a valid endpoint");
         assert!(result.is_err(), "非法 endpoint 应返回 Err");

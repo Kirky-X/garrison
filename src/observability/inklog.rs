@@ -79,7 +79,18 @@ pub async fn init_inklog_logging_with_fallback() -> InklogInit {
                     .with_span_list(false)
                     .try_init();
                 if let Err(init_err) = result {
-                    tracing::debug!("tracing subscriber already initialized, skip: {}", init_err);
+                    // ocr #6921：如实区分「已初始化」（可安全跳过）与其他初始化失败
+                    // （降级路径实际不可用，必须以 warn 暴露，不得静默吞掉）
+                    let msg = init_err.to_string();
+                    if msg.contains("already") {
+                        tracing::debug!("tracing subscriber already initialized, skip: {}", init_err);
+                    } else {
+                        tracing::warn!(
+                            error = %init_err,
+                            "tracing subscriber try_init failed (non-already-initialized error); \
+                             degraded fallback logging may be unavailable"
+                        );
+                    }
                 }
             }
             // 无 observability feature 时，无 tracing-subscriber 可用，仅 eprintln! 警告

@@ -22,6 +22,10 @@ pub async fn live() -> impl IntoResponse {
 }
 
 /// Readiness 探针 handler——检查依赖项就绪状态。
+///
+/// ocr #5358：单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
+/// 内部强制执行（`HealthRegistry::with_check_timeout` 可配置），挂起/panic 的检查按
+/// `Unhealthy` 聚合，不会阻塞 axum worker task。
 pub async fn ready(
     axum::extract::State(registry): axum::extract::State<Arc<HealthRegistry>>,
 ) -> Response {

@@ -172,13 +172,25 @@ impl<T> ApiResponse<T> {
     /// 提取业务数据，失败时返回错误。
     ///
     /// 用于 BackendRemote 解析 HTTP 响应。
+    ///
+    /// # 一致性检查（ocr #6290）
+    ///
+    /// `error_code` 存在时**一律视为错误**（错误优先于数据）：畸形/恶意响应
+    /// 可能同时携带 `data` 与 `error_code`，此时以错误语义为准，防止
+    /// 「data + error_code 并存」被静默当成功返回。
     pub fn into_result(self) -> Result<T, (String, String)> {
+        if let Some(code) = self.error_code {
+            return Err((
+                code,
+                self.message
+                    .unwrap_or_else(|| "backend-unknown-error::".to_string()),
+            ));
+        }
         match self.data {
             Some(v) => Ok(v),
             None => Err((
-                self.error_code.unwrap_or_else(|| "UNKNOWN".to_string()),
-                self.message
-                    .unwrap_or_else(|| "backend-unknown-error::".to_string()),
+                "UNKNOWN".to_string(),
+                "backend-unknown-error::".to_string(),
             )),
         }
     }
@@ -228,5 +240,18 @@ mod tests {
         let (code, msg) = resp.into_result().unwrap_err();
         assert_eq!(code, "UNKNOWN");
         assert_eq!(msg, "backend-unknown-error::");
+    }
+
+    /// ocr #6290：data 与 error_code 并存时错误优先，不得静默返回成功。
+    #[test]
+    fn into_result_error_takes_precedence_over_data() {
+        let resp: ApiResponse<i32> = ApiResponse {
+            data: Some(42),
+            error_code: Some("INVALID_TOKEN".to_string()),
+            message: Some("token 已过期".to_string()),
+        };
+        let (code, msg) = resp.into_result().unwrap_err();
+        assert_eq!(code, "INVALID_TOKEN");
+        assert_eq!(msg, "token 已过期");
     }
 }

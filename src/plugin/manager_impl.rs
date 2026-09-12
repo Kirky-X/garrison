@@ -7,10 +7,33 @@ use super::*;
 
 impl GarrisonPluginManager {
     /// 创建插件管理器并收集所有已注册插件。
+    ///
+    /// # panic 隔离（ocr #2594）
+    ///
+    /// 单个插件工厂 panic 被 `catch_unwind` 捕获并降级为 `tracing::warn!`，
+    /// 该插件被跳过，其余插件照常加载，应用启动不中断。与
+    /// `listener::manager_impl` 的监听器隔离语义一致。注意 release profile
+    /// 配置 `panic = "abort"` 时此隔离退化为进程终止（见 Cargo.toml 说明）。
     pub fn new() -> Self {
+        use std::panic::{catch_unwind, AssertUnwindSafe};
         use std::iter::Iterator;
         let plugins: Vec<Arc<dyn GarrisonPlugin>> = inventory::iter::<GarrisonPluginEntry>()
-            .map(|entry| (entry.factory)())
+            .filter_map(|entry| {
+                // AssertUnwindSafe：工厂函数不承诺 UnwindSafe，
+                // 此处仅隔离 panic 不重入工厂，跨 catch_unwind 使用安全
+                match catch_unwind(AssertUnwindSafe(|| (entry.factory)())) {
+                    Ok(plugin) => Some(plugin),
+                    Err(panic_payload) => {
+                        let msg = panic_payload
+                            .downcast_ref::<&str>()
+                            .map(|s| (*s).to_string())
+                            .or_else(|| panic_payload.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown panic".to_string());
+                        tracing::warn!("plugin factory panicked, plugin skipped: {}", msg);
+                        None
+                    },
+                }
+            })
             .collect();
         for p in &plugins {
             tracing::info!("plugin loaded: {}", p.name());

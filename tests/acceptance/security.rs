@@ -53,17 +53,17 @@ async fn acc_sec_001_totp_adjacent_windows_pass() {
 
     // 当前窗口
     assert!(
-        handler.validate(&handler.generate(now), now),
+        handler.validate(&handler.generate(now).unwrap(), now).unwrap(),
         "当前窗口应通过"
     );
     // 前一窗口（now - 30）
     assert!(
-        handler.validate(&handler.generate(now - 30), now),
+        handler.validate(&handler.generate(now - 30).unwrap(), now).unwrap(),
         "前一窗口应通过（±1 skew）"
     );
     // 后一窗口（now + 30）
     assert!(
-        handler.validate(&handler.generate(now + 30), now),
+        handler.validate(&handler.generate(now + 30).unwrap(), now).unwrap(),
         "后一窗口应通过（±1 skew）"
     );
 }
@@ -81,11 +81,11 @@ async fn acc_sec_002_totp_beyond_two_windows_rejected() {
     let handler = TotpHandler::new(SECRET.to_vec(), 30, 6).unwrap();
 
     assert!(
-        !handler.validate(&handler.generate(now - 60), now),
+        !handler.validate(&handler.generate(now - 60).unwrap(), now).unwrap(),
         "前两个窗口（now-60）应被拒绝"
     );
     assert!(
-        !handler.validate(&handler.generate(now + 60), now),
+        !handler.validate(&handler.generate(now + 60).unwrap(), now).unwrap(),
         "后两个窗口（now+60）应被拒绝"
     );
 }
@@ -104,11 +104,11 @@ async fn acc_sec_003_totp_wrong_key_rejected() {
 
     // B 密钥的验证码对 A 校验必须失败（反之亦然）
     assert!(
-        !handler_a.validate(&handler_b.generate(now), now),
+        !handler_a.validate(&handler_b.generate(now).unwrap(), now).unwrap(),
         "不同密钥生成的验证码应被拒绝"
     );
     assert!(
-        !handler_b.validate(&handler_a.generate(now), now),
+        !handler_b.validate(&handler_a.generate(now).unwrap(), now).unwrap(),
         "不同密钥生成的验证码应被拒绝（双向）"
     );
 
@@ -133,7 +133,7 @@ async fn acc_sec_004_totp_replay_rejected_via_consume() {
     let now = 1_700_000_000i64;
     let handler = TotpHandler::new(SECRET.to_vec(), 30, 6).unwrap();
     let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(InMemoryDao::new());
-    let code = handler.generate(now);
+    let code = handler.generate(now).unwrap();
 
     let first = handler
         .validate_and_consume("user-1", &code, now, dao.as_ref())

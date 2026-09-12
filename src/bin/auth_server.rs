@@ -11,7 +11,7 @@
 //!
 //! - `GARRISON_EXTERNAL_PORT`：外网端口（默认 8080）
 //! - `GARRISON_INTERNAL_PORT`：内网端口（默认 8081）
-//! - `GARRISON_RATE_LIMIT`：外网每 IP 限速（默认 100）
+//! - `GARRISON_RATE_LIMIT`：外网每 IP 限速（默认 100，必须 > 0，为 0 时拒绝启动）
 //! - `GARRISON_INTERNAL_API_KEY`：内网 API Key（必须配置，无默认值，fail-closed）
 //! - `GARRISON_WORKER_THREADS`：Tokio worker 线程数（默认 = CPU 核数）
 //! - `GARRISON_MAX_BLOCKING_THREADS`：Tokio blocking 线程上限（默认 512）
@@ -26,12 +26,52 @@ use std::sync::Arc;
 
 use garrison::backend::embedded::BackendEmbedded;
 use garrison::backend::AuthBackend;
+use garrison::config::GarrisonConfig;
+use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
 use garrison::error::GarrisonResult;
+use garrison::manager::GarrisonManager;
 use garrison::server::GarrisonAuthServer;
+use garrison::stp::GarrisonInterface;
 use mimalloc::MiMalloc;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
+
+/// 内网 API 空权限/空角色 interface——生产 bin 不应依赖 test-only mock。
+///
+/// 行为：所有 login_id 返回空权限列表 + 空角色列表，
+/// 因此 `check_permission` / `check_role` 调用时将拒绝（无任何权限/角色放行）。
+/// 真实生产场景应替换为业务方自己的 RBAC 实现。
+struct SimpleInterface;
+
+#[async_trait::async_trait]
+impl GarrisonInterface for SimpleInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(vec![])
+    }
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(vec![])
+    }
+}
+
+/// 初始化全局 GarrisonManager 单例（ocr #6285/6450/6651）。
+///
+/// `BackendEmbedded` 委托全局 `GarrisonManager` 单例（零字段结构，不自初始化），
+/// 未初始化时所有认证操作返回 `manager-not-init` 错误——因此启动流程必须
+/// 先 `GarrisonManager::builder().build().await`（与
+/// `examples/src/infrastructure/auth_server.rs::setup_garrison_manager` 一致）。
+async fn setup_garrison_manager() -> GarrisonResult<()> {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(SimpleInterface);
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await?;
+    Ok(())
+}
 
 fn main() -> GarrisonResult<()> {
     // 显式构建 Tokio runtime，支持通过环境变量调优线程参数
@@ -72,6 +112,15 @@ async fn async_main() -> GarrisonResult<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
+    // ocr #3130/3134：拒绝 0 值——rate_limit=0 会让限速器拒绝所有请求（全部 429）。
+    // 负值在 u32 解析阶段即失败并回退默认值，无需额外校验。
+    if rate_limit == 0 {
+        eprintln!(
+            "FATAL: GARRISON_RATE_LIMIT=0 would reject every request (all 429); \
+             set a positive value (e.g. 100), refusing to start"
+        );
+        std::process::exit(1);
+    }
     let internal_api_key = std::env::var("GARRISON_INTERNAL_API_KEY").unwrap_or_else(|_| {
         eprintln!(
             "FATAL: GARRISON_INTERNAL_API_KEY env var not configured, refusing to start (fail-closed, M-SAST-1/M-5)"
@@ -115,9 +164,14 @@ async fn async_main() -> GarrisonResult<()> {
         eprintln!("WARN: no observability feature enabled, tracing logs will be dropped. Enable audit-inklog or metrics-prometheus for structured logging.");
     }
 
-    // 创建 BackendEmbedded 作为后端
-    // 注意：GarrisonManager 需要在使用前通过 GarrisonManager::builder().build().await 初始化
-    // 这里仅创建 BackendEmbedded 实例，实际部署时需确保 Manager 已初始化
+    // 创建 BackendEmbedded 作为后端。
+    // ocr #6285/6450/6651：BackendEmbedded 委托全局 GarrisonManager 单例，
+    // 必须先经 GarrisonManager::builder().build().await 初始化，
+    // 否则启动后所有认证操作都会报 manager-not-init 错误。
+    if let Err(e) = setup_garrison_manager().await {
+        tracing::error!(error = %e, "failed to initialize GarrisonManager");
+        return Err(e);
+    }
     let backend: Arc<dyn AuthBackend> = Arc::new(BackendEmbedded::new());
 
     let server = GarrisonAuthServer::new(backend)

@@ -152,35 +152,83 @@ impl GarrisonInterface for MockInterface {
 mod mock_dao_coverage_tests {
     use super::*;
 
+    /// ocr #408：fallback / 默认方法调用的结果不再 `let _` 丢弃——
+    /// 组合回退路径逐一断言返回值；MockDao 未重写的默认方法断言
+    /// fail-closed 的 `NotImplemented` 语义。
     #[tokio::test]
     async fn mock_dao_atomic_and_default_methods_coverage() {
         let dao = MockDao::new();
         dao.set("k1", "v1", 60).await.unwrap();
-        // atomic_test_fallback! 方法
-        let _ = dao.set_if_absent("a1", "v1", 60).await;
-        let _ = dao.get_and_delete("a1").await;
-        let _ = dao.incr("ctr", 60).await;
-        let _ = dao.decr("ctr").await;
-        let _ = dao.rename("k1", "k2").await;
-        let _ = dao.compare_and_swap("k2", Some("v1"), "v2", 60).await;
-        // trait 默认方法
-        let _ = dao.set_permanent("p1", "val").await;
-        let _ = dao.get_with_ttl("k1").await;
-        let _ = dao.get_timeout("k1").await;
-        let _ = dao.keys("*").await;
-        let _ = dao.find_social_binding(0, "wechat", "oid").await;
-        let _ = dao
-            .insert_social_binding(0, "u1", "wechat", "oid", None, 0)
-            .await;
-        let _ = dao.compare_and_update_if_greater("k1", 10, 60).await;
-        let _ = dao.eval_lua("return 1", vec![], vec![]).await;
+
+        // ---- atomic_test_fallback! 方法（组合回退语义）----
+        // key 不存在 → 写入成功
+        assert!(dao.set_if_absent("a1", "v1", 60).await.unwrap());
+        // 读取并删除 → 取回刚写入的值
+        assert_eq!(dao.get_and_delete("a1").await.unwrap().as_deref(), Some("v1"));
+        // 计数器：缺失 key 首次 incr → 1，再 decr → 归 0（key 删除）
+        assert_eq!(dao.incr("ctr", 60).await.unwrap(), 1);
+        assert_eq!(dao.decr("ctr").await.unwrap(), 0);
+        // rename：k1 存在 → Ok(())，值迁移到 k2
+        dao.rename("k1", "k2").await.unwrap();
+        assert_eq!(dao.get("k2").await.unwrap().as_deref(), Some("v1"));
+        // CAS：k2 当前值匹配 expected → 成功交换
+        assert!(dao.compare_and_swap("k2", Some("v1"), "v2", 60).await.unwrap());
+        assert_eq!(dao.get("k2").await.unwrap().as_deref(), Some("v2"));
+
+        // ---- trait 默认方法 ----
+        dao.set_permanent("p1", "val").await.unwrap();
+        assert_eq!(dao.get("p1").await.unwrap().as_deref(), Some("val"));
+        // k1 已 rename 到 k2 → Ok(None)
+        assert!(dao.get_with_ttl("k1").await.unwrap().is_none());
+        // MockDao 未重写 get_timeout → fail-closed NotImplemented
+        assert!(matches!(
+            dao.get_timeout("k1").await,
+            Err(GarrisonError::NotImplemented(_))
+        ));
+        // KV 抽象不支持 glob 扫描 / SQL 类默认方法 → NotImplemented
+        assert!(matches!(
+            dao.keys("*").await,
+            Err(GarrisonError::NotImplemented(_))
+        ));
+        assert!(matches!(
+            dao.find_social_binding(0, "wechat", "oid").await,
+            Err(GarrisonError::NotImplemented(_))
+        ));
+        assert!(matches!(
+            dao.insert_social_binding(0, "u1", "wechat", "oid", None, 0)
+                .await,
+            Err(GarrisonError::NotImplemented(_))
+        ));
+        assert!(matches!(
+            dao.compare_and_update_if_greater("k1", 10, 60).await,
+            Err(GarrisonError::NotImplemented(_))
+        ));
+        assert!(matches!(
+            dao.eval_lua("return 1", vec![], vec![]).await,
+            Err(GarrisonError::NotImplemented(_))
+        ));
         #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
         {
-            let _ = dao.insert_credit_consumption(0, "r", 1, 100, 100, 0).await;
-            let _ = dao.query_credit_consumption(0, 0, 0).await;
-            let _ = dao.query_role_hierarchy_edges(0).await;
-            let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
-            let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
+            assert!(matches!(
+                dao.insert_credit_consumption(0, "r", 1, 100, 100, 0).await,
+                Err(GarrisonError::NotImplemented(_))
+            ));
+            assert!(matches!(
+                dao.query_credit_consumption(0, 0, 0).await,
+                Err(GarrisonError::NotImplemented(_))
+            ));
+            assert!(matches!(
+                dao.query_role_hierarchy_edges(0).await,
+                Err(GarrisonError::NotImplemented(_))
+            ));
+            assert!(matches!(
+                dao.insert_role_hierarchy_edge(0, "c", "p").await,
+                Err(GarrisonError::NotImplemented(_))
+            ));
+            assert!(matches!(
+                dao.delete_role_hierarchy_edge(0, "c", "p").await,
+                Err(GarrisonError::NotImplemented(_))
+            ));
         }
     }
 }

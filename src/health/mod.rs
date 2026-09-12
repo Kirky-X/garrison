@@ -27,6 +27,7 @@
 use crate::error::GarrisonResult;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 
 /// 健康状态枚举。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +83,9 @@ pub struct HealthReport {
 /// 注册多个 `HealthCheck`，通过 `check_all()` 并发执行并聚合结果。
 pub struct HealthRegistry {
     pub(crate) checks: Vec<Box<dyn HealthCheck>>,
+    /// 单项检查超时（ocr #5514/5515/5358/5362：请求级护栏，默认 5 秒）。
+    /// 超时的检查按 `Unhealthy` 聚合，不会无限阻塞 readiness 探针。
+    pub(crate) check_timeout: Duration,
 }
 
 // ============================================================================

@@ -10,14 +10,37 @@ use std::time::Duration;
 
 #[cfg(feature = "metrics-prometheus")]
 impl GarrisonMetrics {
-    /// 创建新的指标集合，注册到默认 registry。
+    /// 创建新的指标集合，注册到默认 registry（进程级单例，OnceLock 缓存）。
     ///
-    /// # 错误
-    /// 若指标已注册（如多次调用 `new`），返回注册错误。生产环境建议使用 [`Self::register_to`]
-    /// 注册到自定义 registry。
+    /// # Panics
+    ///
+    /// 本方法**不会 panic**（ocr #6780/6923）：若默认 registry 已存在同名指标
+    /// （重复调用 `new` / 与 `register_to(default_registry)` 混用），以
+    /// `tracing::warn` 记录后返回一个未注册的本地实例（`record_*` / `gather()`
+    /// 均可用，仅默认 registry 不再新增采集——已注册实例不受影响）。
+    /// 生产环境建议使用 [`Self::register_to`] 注册到自定义 registry。
     pub fn new() -> Self {
-        Self::register_to(prometheus::default_registry())
-            .expect("failed to register GarrisonMetrics to the default registry: possibly already registered")
+        use std::sync::OnceLock;
+        static INSTANCE: OnceLock<GarrisonMetrics> = OnceLock::new();
+        INSTANCE.get_or_init(Self::init_default).clone()
+    }
+
+    /// `new()` 的单例初始化：注册默认 registry，冲突时 warn + 回退本地实例
+    /// （与 `account::metrics::AccountMetrics::new` / `credit::metrics::CreditMetrics::new`
+    /// 修复方式一致）。
+    fn init_default() -> Self {
+        match Self::register_to(prometheus::default_registry()) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "GarrisonMetrics 已注册到 prometheus 默认 registry（重复 new 或与 \
+                     register_to 混用），返回未注册的本地实例；已注册实例不受影响"
+                );
+                // build() 仅在指标名/帮助文本非法时失败——静态字面量下不可达
+                Self::build().expect("GarrisonMetrics: static metric opts are valid (unreachable)")
+            },
+        }
     }
 
     /// 创建并注册到指定 registry（用于自定义 registry 场景）。
@@ -25,6 +48,16 @@ impl GarrisonMetrics {
     /// # 错误
     /// - 指标已注册：返回 `Err(prometheus::Error::AlreadyReg)`。
     pub fn register_to(registry: &prometheus::Registry) -> Result<Self, prometheus::Error> {
+        let metrics = Self::build()?;
+        registry.register(Box::new(metrics.login_total.clone()))?;
+        registry.register(Box::new(metrics.token_validation_duration.clone()))?;
+        registry.register(Box::new(metrics.permission_query_total.clone()))?;
+        registry.register(Box::new(metrics.role_query_total.clone()))?;
+        Ok(metrics)
+    }
+
+    /// 构建指标集合（不注册到任何 registry；registry 字段暂存默认 registry 引用）。
+    fn build() -> Result<Self, prometheus::Error> {
         let login_total = prometheus::CounterVec::new(
             prometheus::Opts::new(
                 "garrison_login_total",
@@ -53,16 +86,12 @@ impl GarrisonMetrics {
             ),
             &["result"],
         )?;
-        registry.register(Box::new(login_total.clone()))?;
-        registry.register(Box::new(token_validation_duration.clone()))?;
-        registry.register(Box::new(permission_query_total.clone()))?;
-        registry.register(Box::new(role_query_total.clone()))?;
         Ok(Self {
             login_total,
             token_validation_duration,
             permission_query_total,
             role_query_total,
-            registry: registry.clone(),
+            registry: prometheus::default_registry().clone(),
         })
     }
 

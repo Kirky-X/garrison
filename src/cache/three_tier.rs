@@ -437,40 +437,72 @@ impl UserCacheService {
     /// # 参数
     /// - `login_id`: 登录主体标识。
     ///
-    /// # 错误
-    /// - L2 DAO 删除失败：透传 `GarrisonError`。
+    /// # 删除顺序语义
     ///
-    /// # 部分失败语义（Issue 34）
+    /// 逐 key 执行：**先删 L2 再删 L1**，避免窗口期内 L1 miss → L2 hit（旧数据）
+    /// → 回填 L1（旧数据）。三类缓存键相互独立、依次处理。
     ///
-    /// 当前实现按顺序执行 L2 删除（3 个 key）→ L1 删除（3 个 key）。若中途某个 L2 删除失败，
-    /// 已执行的 L2 删除不会回滚，L1 删除也不会执行。这意味着：
-    /// - 部分 L2 缓存可能已被清除，但 L1 仍持有旧数据
-    /// - 调用方收到错误后应重试或记录日志，不应假设“全部成功”或“全部失败”
+    /// # 与 singleflight 的互斥（ocr #6448）
     ///
-    /// 若需原子失效，请使用支持批量删除的 DAO 后端，或在调用方实现重试逻辑。
+    /// 每个 key 的删除在该 key 的 singleflight 写锁内执行：invalidate 会等待
+    /// 在途加载（持锁回填 L1/L2）完成后再删除，阻止「加载早于 invalidate 启动、
+    /// 却在 invalidate 之后回填旧数据」的竞态。
+    ///
+    /// # 部分失败语义（ocr #6284/6649/6683/6865，取代原 Issue 34 的顺序 `?` 行为）
+    ///
+    /// 全部 6 次 delete（3 key × L2/L1）**都会尝试执行**，不因中途失败跳过
+    /// 后续删除（旧实现 L2 中途失败即返回，导致 L1 旧数据残留至 TTL 过期）。
+    /// 返回**首个**错误；已成功删除的数量经 `tracing::warn` 记录，供调用方
+    /// 排障与重试决策。调用方收到错误后应重试——删除是幂等的。
+    /// 若需原子失效，请使用支持批量删除的 DAO 后端。
     pub async fn invalidate(&self, login_id: &str) -> GarrisonResult<()> {
-        let perm_key = DaoKeyPrefix::PermissionCache.build_key(login_id);
-        let role_key = DaoKeyPrefix::RoleCache.build_key(login_id);
-        let user_key = DaoKeyPrefix::UserCache.build_key(login_id);
+        let keys = [
+            DaoKeyPrefix::PermissionCache.build_key(login_id),
+            DaoKeyPrefix::RoleCache.build_key(login_id),
+            DaoKeyPrefix::UserCache.build_key(login_id),
+        ];
 
-        // 先失效 L2 再失效 L1，避免窗口期内 L1 miss → L2 hit（旧数据）→ 回填 L1（旧数据）。
-        self.dao.delete(&perm_key).await?;
-        self.dao.delete(&role_key).await?;
-        self.dao.delete(&user_key).await?;
+        let mut first_err: Option<GarrisonError> = None;
+        let mut deleted = 0usize;
+        for key in &keys {
+            // 与该 key 的 singleflight 加载互斥：等在途加载回填完成后再删，
+            // 防止在途加载在 invalidate 之后把旧数据回填 L1/L2（ocr #6448）
+            let lock = self.singleflight_lock(key);
+            let _guard = lock.write().await;
+            // 先失效 L2 再失效 L1（顺序语义见方法文档）
+            let l2_result = self.dao.delete(key).await;
+            let l1_result = self
+                .l1
+                .delete(key)
+                .await
+                .map_err(|e| GarrisonError::Internal(format!("cache-l1-delete::{}", e)));
+            drop(_guard);
+            drop(lock);
+            self.singleflight_locks
+                .remove_if(key, |_, l| Arc::strong_count(l) == 1);
 
-        self.l1
-            .delete(&perm_key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-delete::{}", e)))?;
-        self.l1
-            .delete(&role_key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-delete::{}", e)))?;
-        self.l1
-            .delete(&user_key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-delete::{}", e)))?;
+            for result in [l2_result, l1_result] {
+                match result {
+                    Ok(()) => deleted += 1,
+                    Err(e) => {
+                        if first_err.is_none() {
+                            first_err = Some(e);
+                        }
+                    },
+                }
+            }
+        }
 
+        if let Some(e) = first_err {
+            tracing::warn!(
+                login_id = %login_id,
+                deleted,
+                total = keys.len() * 2,
+                error = %e,
+                "cache invalidate completed with errors; all deletes were attempted, retry is idempotent"
+            );
+            return Err(e);
+        }
         Ok(())
     }
 }
@@ -1657,6 +1689,32 @@ mod tests {
         );
     }
 
+    /// ocr #6284/6649/6683/6865：invalidate 部分失败聚合——中途失败不再跳过
+    /// 后续删除，全部 3 次 L2 delete 都会被尝试（+3 次 L1 delete），返回首个错误。
+    #[tokio::test]
+    async fn invalidate_attempts_all_deletes_on_partial_failure() {
+        let (dao, _interface, service) = make_default_service();
+        dao.set_fail_delete(true);
+
+        let result = service.invalidate("26001").await;
+        assert!(result.is_err(), "存在失败 delete 应返回 Err");
+        // 全部 3 个 key 的 L2 delete 都被尝试（旧实现第 1 次失败即返回，count=1）
+        assert_eq!(
+            dao.delete_count(),
+            3,
+            "即使失败也应尝试全部 3 次 L2 delete，实际: {}",
+            dao.delete_count()
+        );
+        // 返回首个错误（注入的 Dao 错误）
+        match result {
+            Err(GarrisonError::Dao(msg)) => {
+                assert!(msg.contains("injected delete error"), "实际: {}", msg);
+            },
+            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
+            Ok(_) => panic!("期望 Err，实际 Ok"),
+        }
+    }
+
     // ------------------------------------------------------------------------
     // 补充测试：getter 方法
     // ------------------------------------------------------------------------
@@ -2043,11 +2101,13 @@ mod tests {
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
 
-        // 验证第一个 delete（perm_key）已执行
+        // 验证第一个 delete（perm_key）已执行；ocr #6284/6649/6683/6865：
+        // 部分失败语义已改为聚合——后续 delete 不再中断，全部 3 次 L2 delete
+        // 都会被尝试，返回首个错误
         assert_eq!(
             dao.delete_count(),
-            1,
-            "perm_key delete 应已执行，后续 delete 应在错误后中断"
+            3,
+            "失败后应继续尝试全部 L2 delete（聚合错误语义），实际执行: 3"
         );
     }
 
@@ -2159,25 +2219,26 @@ mod tests {
 
     /// T46: get_permissions 处理包含特殊字符的 login_id。
     ///
-    /// 验证 login_id 包含 URL 安全字符（冒号、点、下划线）时缓存键正确构建。
+    /// 验证 login_id 包含 URL 安全字符（点、下划线）时缓存键正确构建。
+    /// （id 不得含 `:`——dao_keys::build_key 的冒号歧义防护，debug 构建会 panic。）
     #[tokio::test]
     async fn get_permissions_handles_special_chars_in_login_id() {
         let (dao, interface, service) = make_default_service();
-        interface.set_permissions("user:1001.v2", vec!["perm:special".to_string()]);
+        interface.set_permissions("user_1001.v2", vec!["perm:special".to_string()]);
 
-        let perms = service.get_permissions("user:1001.v2").await.unwrap();
+        let perms = service.get_permissions("user_1001.v2").await.unwrap();
         assert_eq!(perms, vec!["perm:special".to_string()]);
 
         // 验证缓存键包含原始 login_id（不做转义）
         let set_keys = dao.set_keys();
         assert!(
-            set_keys.iter().any(|k| k == "perm:cache:user:1001.v2"),
+            set_keys.iter().any(|k| k == "perm:cache:user_1001.v2"),
             "缓存键应包含原始 login_id，实际: {:?}",
             set_keys
         );
 
         // 第二次调用：L1 hit → 不查询 L2/L3
-        let perms2 = service.get_permissions("user:1001.v2").await.unwrap();
+        let perms2 = service.get_permissions("user_1001.v2").await.unwrap();
         assert_eq!(perms2, vec!["perm:special".to_string()]);
         assert_eq!(interface.perm_count(), 1, "L1 命中不应查询 L3");
     }
@@ -2186,23 +2247,23 @@ mod tests {
     #[tokio::test]
     async fn invalidate_handles_special_chars_in_login_id() {
         let (dao, interface, service) = make_default_service();
-        interface.set_permissions("user:2001.v2", vec!["perm:a".to_string()]);
+        interface.set_permissions("user_2001.v2", vec!["perm:a".to_string()]);
 
         // 填充缓存
-        let _ = service.get_permissions("user:2001.v2").await.unwrap();
-        assert!(dao.contains_key("perm:cache:user:2001.v2"));
+        let _ = service.get_permissions("user_2001.v2").await.unwrap();
+        assert!(dao.contains_key("perm:cache:user_2001.v2"));
 
         // invalidate
-        service.invalidate("user:2001.v2").await.unwrap();
+        service.invalidate("user_2001.v2").await.unwrap();
 
         // 验证 L2 已清除
-        assert!(!dao.contains_key("perm:cache:user:2001.v2"));
+        assert!(!dao.contains_key("perm:cache:user_2001.v2"));
 
         // 验证 delete 调用使用了正确的 key
         let delete_keys = dao.delete_keys();
         assert!(
-            delete_keys.iter().any(|k| k == "perm:cache:user:2001.v2"),
-            "delete 应使用 key 'perm:cache:user:2001.v2'，实际: {:?}",
+            delete_keys.iter().any(|k| k == "perm:cache:user_2001.v2"),
+            "delete 应使用 key 'perm:cache:user_2001.v2'，实际: {:?}",
             delete_keys
         );
     }

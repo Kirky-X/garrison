@@ -54,6 +54,8 @@ fn manager_collects_registered_plugins() {
 #[serial]
 fn on_login_invokes_all_plugins() {
     reset_counters();
+    // ocr #251：验证 reset_counters 确实清零，防止 reset 失效时断言恒真
+    assert_eq!(LOGIN_CALLS.load(Ordering::SeqCst), 0, "reset 后 LOGIN_CALLS 应为 0");
     let manager = GarrisonPluginManager::new();
     manager.on_login("1001", "T1");
     // OkPlugin 的 on_login 应被调用至少 1 次
@@ -65,6 +67,8 @@ fn on_login_invokes_all_plugins() {
 #[serial]
 fn on_logout_invokes_all_plugins() {
     reset_counters();
+    // ocr #251：验证 reset_counters 确实清零
+    assert_eq!(LOGOUT_CALLS.load(Ordering::SeqCst), 0, "reset 后 LOGOUT_CALLS 应为 0");
     let manager = GarrisonPluginManager::new();
     manager.on_logout("1001", "T1");
     assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);
@@ -75,9 +79,28 @@ fn on_logout_invokes_all_plugins() {
 #[serial]
 fn on_permission_check_invokes_all_plugins() {
     reset_counters();
+    // ocr #251：验证 reset_counters 确实清零
+    assert_eq!(
+        PERM_CHECK_CALLS.load(Ordering::SeqCst),
+        0,
+        "reset 后 PERM_CHECK_CALLS 应为 0"
+    );
     let manager = GarrisonPluginManager::new();
     manager.on_permission_check("1001", "user:read");
     assert!(PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
+}
+
+/// ocr #251：reset_counters 自身有效性——污染计数器后 reset 必须归零。
+#[test]
+#[serial]
+fn reset_counters_zeroes_all_counters() {
+    LOGIN_CALLS.store(42, Ordering::SeqCst);
+    LOGOUT_CALLS.store(42, Ordering::SeqCst);
+    PERM_CHECK_CALLS.store(42, Ordering::SeqCst);
+    reset_counters();
+    assert_eq!(LOGIN_CALLS.load(Ordering::SeqCst), 0);
+    assert_eq!(LOGOUT_CALLS.load(Ordering::SeqCst), 0);
+    assert_eq!(PERM_CHECK_CALLS.load(Ordering::SeqCst), 0);
 }
 
 /// 插件失败不中断主流程（spec Scenario）。
