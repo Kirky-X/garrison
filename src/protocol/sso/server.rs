@@ -65,6 +65,9 @@ pub trait SsoServer: Send + Sync {
     /// 推送 SSO 消息到指定 login_id。
     ///
     /// 若未注入 `SsoChannel`，则 noop 返回 `Ok(())`。
+    ///
+    /// topic 名为 `sso:user:{sha256(login_id)[..32hex]}`（login_id 经确定性指纹
+    /// 脱敏，防止邮箱/手机号等 PII 泄漏到 topic/日志）；订阅方需按同一规则拼接 topic。
     async fn push_message(&self, login_id: &str, message: &str) -> GarrisonResult<()>;
 }
 
@@ -167,19 +170,23 @@ impl DefaultSsoServer {
     /// # 参数
     /// - `dao`: DAO 抽象层实例。
     /// - `secret`: HMAC 签名密钥（与 SsoClient 必须一致，禁止空字符串）。
-    pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> Self {
+    ///
+    /// # 错误
+    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（不 panic，可恢复配置错误）。
+    pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> GarrisonResult<Self> {
         let secret: String = secret.into();
-        assert!(
-            !secret.is_empty(),
-            "SSO secret must not be empty (per security audit M5: ticket must be signed)"
-        );
-        Self {
+        if secret.is_empty() {
+            return Err(GarrisonError::InvalidParam(
+                "sso-server-secret-empty::".to_string(),
+            ));
+        }
+        Ok(Self {
             dao,
             ticket_ttl_seconds: DEFAULT_TICKET_TTL,
             channel: None,
             converter: Arc::new(IdentityCenterIdConverter),
             secret,
-        }
+        })
     }
 
     /// 设置票据 TTL（秒），默认 60 秒。
@@ -241,10 +248,11 @@ impl SsoServer for DefaultSsoServer {
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| GarrisonError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
-            return Err(GarrisonError::InvalidToken(format!(
-                "sso-ticket-client-id-mismatch::{}::{}",
-                data.client_id, client_id
-            )));
+            // 与 SsoClient::validate_ticket 行为对齐：client_id 不匹配时不消费票据。
+            // 安全修复：错误消息固定，不回显存储/调用方 client_id（防止枚举有效 client_id）。
+            return Err(GarrisonError::InvalidToken(
+                "sso-ticket-client-id-mismatch::".to_string(),
+            ));
         }
         // 步骤 2: 原子 get_and_delete 消费票据（消除 TOCTOU 竞态）
         let consumed = self
@@ -269,12 +277,28 @@ impl SsoServer for DefaultSsoServer {
 
     async fn push_message(&self, login_id: &str, message: &str) -> GarrisonResult<()> {
         if let Some(channel) = &self.channel {
-            let topic = format!("sso:user:{}", login_id);
+            // PII 防护：login_id（可能为邮箱/手机号）不原样进入 topic 名，
+            // 改用 SHA-256 指纹（截断 32 hex），避免 PII 泄漏到 Redis topic /
+            // 监控面板 / broker 元数据。指纹为确定性映射，订阅方按同一规则拼 topic。
+            let topic = format!("sso:user:{}", fingerprint_id(login_id));
             channel.push(&topic, message).await?;
         }
         // 未注入 channel 时 noop
         Ok(())
     }
+}
+
+/// 计算标识符的确定性指纹（SHA-256 截断 32 hex，小写）。
+///
+/// 用于 pub/sub topic 等可能进入日志/监控的场景：同输入恒同输出，
+/// 但不暴露原始标识符（邮箱/手机号等 PII）。
+fn fingerprint_id(id: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(id.as_bytes());
+    digest[..16]
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect::<String>()
 }
 
 #[cfg(feature = "protocol-zeroize")]
@@ -300,7 +324,7 @@ mod tests {
     #[test]
     fn new_creates_server_with_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let _server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let _server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         // 构造成功即验证（dao 通过类型系统保证非空）
     }
 
@@ -309,6 +333,7 @@ mod tests {
     fn builder_chain_sets_fields() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+            .expect("secret 非空构造应成功")
             .with_ticket_ttl(120)
             .with_channel(Arc::new(NoopSsoChannel))
             .with_converter(Arc::new(IdentityCenterIdConverter));
@@ -386,7 +411,7 @@ mod tests {
     #[tokio::test]
     async fn issue_and_validate_ticket_roundtrip() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
         assert_eq!(login_id, "1001");
@@ -396,7 +421,7 @@ mod tests {
     #[tokio::test]
     async fn issue_ticket_returns_64_chars() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         // 新格式：{64_hex_random}.{hmac_b64}，长度不再固定为 64
         let parts: Vec<&str> = ticket.splitn(2, '.').collect();
@@ -409,7 +434,7 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_one_time_use_second_fails() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let first = server.validate_ticket(&ticket, 2001).await;
         let second = server.validate_ticket(&ticket, 2001).await;
@@ -424,7 +449,7 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let result = server.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
@@ -438,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_nonexistent_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let result = server.validate_ticket("nonexistent-ticket", 2001).await;
         assert!(result.is_err());
         match result.err() {
@@ -455,7 +480,7 @@ mod tests {
     #[tokio::test]
     async fn destroy_ticket_idempotent() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         // 销毁不存在的票据
         let result = server.destroy_ticket("nonexistent-ticket").await;
         assert_eq!(result.unwrap(), (), "销毁不存在的票据应返回 Ok(())（幂等）");
@@ -487,7 +512,7 @@ mod tests {
             }
         }
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功")
             .with_converter(Arc::new(OffsetConverter));
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
@@ -503,7 +528,7 @@ mod tests {
     #[tokio::test]
     async fn push_message_noop_when_no_channel() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let result = server.push_message("1001", "hello").await;
         assert_eq!(
             result.unwrap(),
@@ -537,11 +562,84 @@ mod tests {
         let channel = Arc::new(CountingChannel {
             count: AtomicUsize::new(0),
         });
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").with_channel(channel.clone());
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+            .expect("secret 非空构造应成功")
+            .with_channel(channel.clone());
         server.push_message("1001", "hello").await.unwrap();
         server.push_message("1002", "world").await.unwrap();
         assert_eq!(channel.count.load(Ordering::SeqCst), 2);
+    }
+
+    /// push_message 的 topic 不含原始 login_id（PII 脱敏：SHA-256 指纹拼接），
+    /// 且指纹确定性（同 login_id 同 topic、不同 login_id 不同 topic）。
+    #[tokio::test]
+    async fn push_message_topic_masks_login_id() {
+        /// 捕获 push topic 的 channel。
+        struct TopicCapturingChannel {
+            topics: std::sync::Mutex<Vec<String>>,
+        }
+        #[async_trait]
+        impl SsoChannel for TopicCapturingChannel {
+            async fn push(&self, topic: &str, _message: &str) -> GarrisonResult<()> {
+                self.topics.lock().unwrap().push(topic.to_string());
+                Ok(())
+            }
+            async fn subscribe(
+                &self,
+                _topic: &str,
+                _handler: Box<dyn Fn(String) + Send + Sync>,
+            ) -> GarrisonResult<()> {
+                Ok(())
+            }
+        }
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let channel = Arc::new(TopicCapturingChannel {
+            topics: std::sync::Mutex::new(Vec::new()),
+        });
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+            .expect("secret 非空构造应成功")
+            .with_channel(channel.clone());
+
+        // login_id 含 PII 形式（邮箱）
+        server.push_message("user@example.com", "m1").await.unwrap();
+        server.push_message("user@example.com", "m2").await.unwrap();
+        server.push_message("13800138000", "m3").await.unwrap();
+
+        let topics = channel.topics.lock().unwrap();
+        assert_eq!(topics.len(), 3);
+        for t in topics.iter() {
+            assert!(
+                t.starts_with("sso:user:"),
+                "topic 应保留 sso:user: 前缀，实际: {}",
+                t
+            );
+            assert!(
+                !t.contains("user@example.com") && !t.contains("13800138000"),
+                "topic 不得包含原始 login_id（PII），实际: {}",
+                t
+            );
+        }
+        // 确定性：同 login_id 两次 push 得到相同 topic
+        assert_eq!(topics[0], topics[1], "同 login_id 应映射到相同 topic");
+        assert_ne!(topics[0], topics[2], "不同 login_id 应映射到不同 topic");
+    }
+
+    /// 空 secret 构造返回 InvalidParam 错误而非 panic（错误处理修复）。
+    #[test]
+    fn new_rejects_empty_secret_with_invalid_param() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let result = DefaultSsoServer::new(dao, "");
+        match result {
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("sso-server-secret-empty"),
+                    "错误消息应含 sso-server-secret-empty 前缀，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+            Ok(_) => panic!("空 secret 不应构造成功"),
+        }
     }
 
     // ========================================================================
@@ -553,10 +651,10 @@ mod tests {
     async fn server_and_client_communicate_via_shared_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // SsoServer 签发 ticket
-        let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         // SsoClient 校验同一 ticket（共享 DAO）
-        let client = SsoClient::new(dao, "test-sso-secret-key");
+        let client = SsoClient::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let login_id = client.validate_ticket(&ticket, 2001).await.unwrap();
         assert_eq!(login_id, "1001");
     }
@@ -566,10 +664,10 @@ mod tests {
     async fn client_and_server_communicate_via_shared_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // SsoClient 签发 ticket
-        let client = SsoClient::new(dao.clone(), "test-sso-secret-key");
+        let client = SsoClient::new(dao.clone(), "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         // SsoServer 校验同一 ticket（共享 DAO）
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
         assert_eq!(login_id, "1001");
     }

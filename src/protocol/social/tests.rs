@@ -64,20 +64,35 @@ fn provider_names_constants_match_expected_strings() {
 /// 被 `GarrisonMigration::migrate_core()` 加载后 `social_bindings` 表存在
 ///
 /// 测试模式与 `role_hierarchy_table_exists_after_migration` 一致：
-/// 1. `init_dbnexus("sqlite::memory:")` 创建内存 SQLite
+/// 1. `DbPool::with_config` 创建**单连接**内存 SQLite（修复：原
+///    `init_dbnexus("sqlite::memory:")` 默认 `min_connections=5`，而
+///    `:memory:` 每连接独立数据库——迁移只落在其中一条连接上，
+///    `get_session` 拿到其他预建连接时表不存在，测试 flaky）
 /// 2. `GarrisonMigration::with_base_dir` 指向项目根目录 `migrations/sqlite/`
 /// 3. `migrate_core()` 执行 `core/*.sql`（含 005_social_bindings.sql）
 /// 4. 查询 `sqlite_master` 验证 `social_bindings` 表存在
 #[cfg(feature = "db-sqlite")]
 #[tokio::test(flavor = "multi_thread")]
 async fn social_bindings_table_exists_after_migration() {
-    use crate::dao::{init_dbnexus, GarrisonMigration};
+    use crate::dao::GarrisonMigration;
+    use dbnexus::{DbConfig, DbPool, PoolConfig};
     use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use std::path::PathBuf;
 
-    let pool = init_dbnexus("sqlite::memory:")
+    // 单连接池强制所有 `get_session` 复用同一 connection，`:memory:` 才能工作
+    //（与下方 `social_binding_service_find_or_create_creates_new_binding` 同配置）
+    let config = DbConfig {
+        url: "sqlite::memory:".to_string(),
+        pool_config: PoolConfig {
+            max_connections: 1,
+            min_connections: 1,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let pool = DbPool::with_config(config)
         .await
-        .expect("init_dbnexus 应成功");
+        .expect("DbPool::with_config 应成功");
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR 应可用");
     let base_dir = PathBuf::from(manifest_dir).join("migrations/sqlite");
     let migration = GarrisonMigration::with_base_dir(pool, base_dir);
@@ -652,4 +667,99 @@ async fn find_or_create_conflict_requery_error_propagates() {
         "回查失败应透传回查错误，实际: {:?}",
         result
     );
+}
+
+// ========================================================================
+// UNIQUE 冲突特征常量与 Debug 脱敏回归测试
+// ========================================================================
+
+/// `service::unique_conflict_markers` 四个特征常量与 `find_or_create` 的
+/// 冲突分支一一对应：任一常量都能命中对应后端的冲突消息（防常量与
+/// 匹配分支漂移；4 个后端冲突用例再从 service 行为侧覆盖同一组常量）。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+#[test]
+fn unique_conflict_markers_match_service_constants() {
+    use super::service::unique_conflict_markers as markers;
+    use crate::error::GarrisonError;
+
+    // 与 4 个后端冲突用例的消息逐字对应（单点维护防漂移）
+    let cases = [
+        (
+            markers::SQLITE,
+            "UNIQUE constraint failed: social_bindings.tenant_id",
+        ),
+        (
+            markers::POSTGRES,
+            "duplicate key value violates unique constraint \"social_bindings_uniq\"",
+        ),
+        (
+            markers::MYSQL,
+            "Duplicate entry 'openid-conflict' for key 'social_bindings.UNIQ'",
+        ),
+        (markers::SQLSTATE_UNIQUE, "db-unique-violation-sqlstate-23505"),
+    ];
+    for (marker, message) in cases {
+        assert!(
+            message.contains(marker),
+            "特征常量 {:?} 应命中对应后端冲突消息 {:?}",
+            marker,
+            message
+        );
+    }
+
+    // 非冲突错误消息不命中任何特征（fail-closed 透传的前提）
+    let non_conflict = GarrisonError::Dao("db-deadlock-detected".to_string()).to_string();
+    assert!(
+        !non_conflict.contains(markers::SQLITE)
+            && !non_conflict.contains(markers::POSTGRES)
+            && !non_conflict.contains(markers::MYSQL)
+            && !non_conflict.contains(markers::SQLSTATE_UNIQUE),
+        "非 UNIQUE 冲突错误不应命中任何特征常量，实际: {}",
+        non_conflict
+    );
+}
+
+/// `SocialUserInfo` 的 Debug 输出脱敏 raw 字段（不泄露第三方原始 JSON），
+/// 其余业务字段正常输出，且派生 Clone 不受手动 Debug 影响。
+#[test]
+fn social_user_info_debug_redacts_raw_field() {
+    let user = SocialUserInfo {
+        provider: provider_names::WECHAT.to_string(),
+        provider_user_id: "openid1".to_string(),
+        nickname: Some("Alice".to_string()),
+        avatar: None,
+        union_id: None,
+        raw: serde_json::json!({
+            "access_token": "SECRET_TOKEN",
+            "session_key": "SECRET_SESSION_KEY",
+            "openid": "openid1"
+        }),
+    };
+
+    let debug = format!("{:?}", user);
+    assert!(
+        debug.contains("SocialUserInfo"),
+        "Debug 应保留类型名，实际: {}",
+        debug
+    );
+    assert!(
+        debug.contains("openid1"),
+        "业务字段应正常输出，实际: {}",
+        debug
+    );
+    assert!(
+        debug.contains("<redacted"),
+        "raw 应以 <redacted> 摘要输出，实际: {}",
+        debug
+    );
+    assert!(
+        !debug.contains("SECRET_TOKEN") && !debug.contains("SECRET_SESSION_KEY"),
+        "Debug 不得泄露 raw 中的敏感凭据，实际: {}",
+        debug
+    );
+
+    // 手动 Debug 不影响 Clone 派生
+    let cloned = user.clone();
+    assert_eq!(cloned.provider_user_id, "openid1");
+    assert_eq!(cloned.raw, user.raw);
 }

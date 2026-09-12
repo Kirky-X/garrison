@@ -40,11 +40,16 @@
 /// ```
 pub fn encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
+    // 性能修复：改用 write! 直接写入预分配缓冲区——原实现循环内 format!
+    // 每个待编码字节都要分配一个临时 String（热路径：每个 query 参数、
+    // 每次社交登录请求都会调用）。
+    use std::fmt::Write as _;
     for b in s.bytes() {
         if b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.' || b == b'~' {
             out.push(b as char);
         } else {
-            out.push_str(&format!("%{:02X}", b));
+            // 对 String 的 fmt::Write 不会失败（无错误路径），忽略返回值
+            let _ = write!(out, "%{:02X}", b);
         }
     }
     out

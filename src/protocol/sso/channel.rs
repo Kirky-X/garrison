@@ -6,6 +6,16 @@
 //! 基于 Redis pub/sub 实现跨实例 SSO 消息推送，替代 `NoopSsoChannel`。
 //!
 //! 仅在 `cache-redis` + `protocol-sso-server` feature 同时启用时编译。
+//!
+//! # 订阅生命周期（错误处理/可靠性修复）
+//!
+//! - `subscribe` 通过 oneshot 回传首次连接+订阅结果：连接/订阅失败时向调用方
+//!   返回 `Err`（不再"假成功"）；
+//! - 后台任务句柄保存到结构体（[`RedisPubSubSsoChannel::shutdown`] 可主动停止，
+//!   `Drop` 时自动 abort），任务失败可观测、资源可回收；
+//! - 订阅建立后若连接断开（stream 结束），后台任务按可配置次数重连并重新
+//!   SUBSCRIBE（指数退避，见 [`RedisPubSubSsoChannel::with_reconnect_attempts`]），
+//!   超过次数后记 error 日志退出。
 
 use super::server::SsoChannel;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -13,6 +23,15 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::time::Duration;
+
+/// 断线重连默认最大尝试次数。
+const DEFAULT_RECONNECT_ATTEMPTS: usize = 5;
+
+/// 重连退避基数（毫秒）：第 n 次重试等待 `min(500 * n, 5000)` ms。
+const RECONNECT_BACKOFF_BASE_MS: u64 = 500;
+/// 重连退避上限（毫秒）。
+const RECONNECT_BACKOFF_MAX_MS: u64 = 5000;
 
 /// 基于 Redis pub/sub 的 SsoChannel 实现。
 ///
@@ -27,6 +46,10 @@ pub struct RedisPubSubSsoChannel {
     client: redis::Client,
     /// 连接管理器（用于 PUBLISH 命令，支持自动重连）。
     connection_manager: redis::aio::ConnectionManager,
+    /// 后台订阅任务句柄（不再即弃：供 shutdown/abort 回收，Drop 时统一停止）。
+    tasks: parking_lot::Mutex<Vec<tokio::task::JoinHandle<()>>>,
+    /// 连接断开后最大重连尝试次数（0 = 不重连，一次性订阅语义）。
+    max_reconnect_attempts: usize,
 }
 
 impl RedisPubSubSsoChannel {
@@ -43,6 +66,50 @@ impl RedisPubSubSsoChannel {
         Self {
             client,
             connection_manager,
+            tasks: parking_lot::Mutex::new(Vec::new()),
+            max_reconnect_attempts: DEFAULT_RECONNECT_ATTEMPTS,
+        }
+    }
+
+    /// 配置断线重连最大尝试次数（默认 5 次；0 = 不重连，断连即结束订阅）。
+    #[must_use]
+    pub fn with_reconnect_attempts(mut self, attempts: usize) -> Self {
+        self.max_reconnect_attempts = attempts;
+        self
+    }
+
+    /// 停止全部后台订阅任务（abort 并清空句柄），返回被停止的任务数。
+    ///
+    /// 订阅任务被 abort 后，对应 topic 不再接收消息；PubSub 连接随任务结束释放。
+    pub fn shutdown(&self) -> usize {
+        let mut tasks = self.tasks.lock();
+        let stopped = tasks.len();
+        for handle in tasks.drain(..) {
+            handle.abort();
+        }
+        stopped
+    }
+
+    /// 清理已结束的句柄并登记新任务句柄。
+    fn track_task(&self, handle: tokio::task::JoinHandle<()>) {
+        let mut tasks = self.tasks.lock();
+        tasks.retain(|h| !h.is_finished());
+        tasks.push(handle);
+    }
+
+    /// 第 `attempt` 次重连的退避时长（线性增长，封顶 5s）。
+    fn backoff(attempt: usize) -> Duration {
+        Duration::from_millis(
+            (RECONNECT_BACKOFF_BASE_MS * attempt as u64).min(RECONNECT_BACKOFF_MAX_MS),
+        )
+    }
+}
+
+impl Drop for RedisPubSubSsoChannel {
+    fn drop(&mut self) {
+        // Drop 时 abort 全部订阅任务，避免任务泄漏（资源回收修复）
+        for handle in self.tasks.lock().drain(..) {
+            handle.abort();
         }
     }
 }
@@ -68,8 +135,12 @@ impl SsoChannel for RedisPubSubSsoChannel {
         let topic = topic.to_string();
         let client = self.client.clone();
         let handler = Arc::new(handler);
+        let max_attempts = self.max_reconnect_attempts;
 
-        tokio::spawn(async move {
+        // oneshot 回传首次连接+订阅结果：失败时调用方拿到 Err（不再"假成功"）
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<GarrisonResult<()>>();
+
+        let handle = tokio::spawn(async move {
             let mut pubsub = match client.get_async_pubsub().await {
                 Ok(p) => p,
                 Err(e) => {
@@ -78,6 +149,10 @@ impl SsoChannel for RedisPubSubSsoChannel {
                         topic,
                         e
                     );
+                    let _ = ready_tx.send(Err(GarrisonError::Internal(format!(
+                        "sso-redis-subscribe-connect::{}",
+                        e
+                    ))));
                     return;
                 },
             };
@@ -88,39 +163,105 @@ impl SsoChannel for RedisPubSubSsoChannel {
                     topic,
                     e
                 );
+                let _ = ready_tx.send(Err(GarrisonError::Internal(format!(
+                    "sso-redis-subscribe-register::{}",
+                    e
+                ))));
                 return;
             }
+            // 首次订阅成功，通知调用方
+            let _ = ready_tx.send(Ok(()));
 
-            let mut msg_stream = pubsub.on_message();
-            while let Some(msg) = msg_stream.next().await {
-                let payload: Result<String, _> = msg.get_payload();
-                match payload {
-                    Ok(payload_str) => {
-                        // 在 catch_unwind 中调用 handler，防止 panic 中断订阅（spec R-005）
-                        let handler_clone = handler.clone();
-                        let result = std::panic::catch_unwind(AssertUnwindSafe(move || {
-                            handler_clone(payload_str);
-                        }));
-                        if result.is_err() {
-                            tracing::warn!(
-                                "SSO channel handler panic: topic={}, continue subscribing",
-                                topic
-                            );
+            // 消息循环 + 断线重连
+            let mut attempt = 0usize;
+            loop {
+                {
+                    let mut msg_stream = pubsub.on_message();
+                    while let Some(msg) = msg_stream.next().await {
+                        let payload: Result<String, _> = msg.get_payload();
+                        match payload {
+                            Ok(payload_str) => {
+                                // 在 catch_unwind 中调用 handler，防止 panic 中断订阅（spec R-005）
+                                let handler_clone = handler.clone();
+                                let result = std::panic::catch_unwind(AssertUnwindSafe(move || {
+                                    handler_clone(payload_str);
+                                }));
+                                if result.is_err() {
+                                    tracing::warn!(
+                                        "SSO channel handler panic: topic={}, continue subscribing",
+                                        topic
+                                    );
+                                }
+                            },
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Redis message payload parse failed: topic={}, err={}",
+                                    topic,
+                                    e
+                                );
+                            },
                         }
+                    }
+                }
+                // Stream 结束表示连接断开：按可配置次数重连并重新 SUBSCRIBE
+                if attempt >= max_attempts {
+                    tracing::error!(
+                        "Redis SUBSCRIBE stream ended and max reconnect attempts ({}), giving up: topic={}",
+                        max_attempts,
+                        topic
+                    );
+                    return;
+                }
+                attempt += 1;
+                let backoff = Self::backoff(attempt);
+                tracing::warn!(
+                    "Redis SUBSCRIBE stream ended (connection lost): topic={}, reconnect attempt {}/{} in {:?}",
+                    topic,
+                    attempt,
+                    max_attempts,
+                    backoff
+                );
+                tokio::time::sleep(backoff).await;
+                match client.get_async_pubsub().await {
+                    Ok(mut p) => {
+                        if let Err(e) = p.subscribe(&topic).await {
+                            tracing::error!(
+                                "Redis resubscribe failed: topic={}, err={}",
+                                topic,
+                                e
+                            );
+                            return;
+                        }
+                        pubsub = p;
+                        tracing::info!("Redis SUBSCRIBE reconnected: topic={}", topic);
+                        attempt = 0;
                     },
                     Err(e) => {
-                        tracing::warn!(
-                            "Redis message payload parse failed: topic={}, err={}",
-                            topic,
-                            e
-                        );
+                        tracing::warn!("Redis reconnect failed: topic={}, err={}", topic, e);
                     },
                 }
             }
-            // Stream 结束表示连接断开，后台 task 自然退出
-            tracing::info!("Redis SUBSCRIBE stream ended: topic={}", topic);
         });
 
+        // 等待首次订阅结果：连接/订阅失败向调用方传播 Err。
+        // 注意 oneshot 是双层 Result：外层 RecvError（发送端被 drop）+ 内层
+        // 订阅结果——两层都要处理，内层 Err 不得吞掉（否则退回"假成功"）。
+        // 失败时任务已结束（send 后即 return），句柄不登记——避免把已死亡的
+        // 任务留在 tasks 中污染 shutdown 计数（订阅成功后才登记）。
+        match ready_rx.await {
+            // 内层 Ok：首次连接+订阅成功
+            Ok(Ok(())) => {},
+            // 内层 Err：连接/订阅失败，传播给调用方
+            Ok(Err(e)) => return Err(e),
+            // 发送端被 drop（订阅任务被 abort 等）——订阅未建立
+            Err(_) => {
+                return Err(GarrisonError::Internal(
+                    "sso-redis-subscribe-task-ended::".to_string(),
+                ))
+            },
+        }
+
+        self.track_task(handle);
         Ok(())
     }
 }
@@ -200,13 +341,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 
-    /// subscribe 对不可达端口仍返回 Ok（spec R-005 语义：连接失败仅由后台
-    /// task 记日志，不向调用方传播——覆盖 spawn 后台任务 + get_async_pubsub
-    /// 连接失败早退分支）。
+    /// subscribe 对不可达端口返回 Err（错误处理修复：订阅失败不再"假成功"，
+    /// 首次连接失败经 oneshot 传播给调用方，前缀 `sso-redis-subscribe-connect::`）。
     #[tokio::test]
-    async fn subscribe_returns_ok_when_redis_unreachable() {
-        use std::time::Duration;
-
+    async fn subscribe_returns_err_when_redis_unreachable() {
         let channel = make_channel_with_unreachable_port();
         let result = channel
             .subscribe(
@@ -214,13 +352,57 @@ mod tests {
                 Box::new(|_| {}),
             )
             .await;
-        assert!(
-            result.is_ok(),
-            "subscribe 本身应返回 Ok（后台任务内部失败仅记日志），实际: {:?}",
-            result
+        match result {
+            Err(GarrisonError::Internal(msg)) => assert!(
+                msg.contains("sso-redis-subscribe-connect::"),
+                "错误应带 sso-redis-subscribe-connect:: 前缀，实际: {msg}"
+            ),
+            Ok(()) => panic!("subscribe 到不可达端口应返回 Err，实际 Ok（假成功已修复）"),
+            Err(other) => panic!("期望 Internal 错误，实际: {other:?}"),
+        }
+        // 失败任务未登记：shutdown 应返回 0
+        assert_eq!(channel.shutdown(), 0, "失败订阅不应登记任务句柄");
+    }
+
+    /// with_reconnect_attempts 配置重连次数（builder 链式调用）。
+    ///
+    /// `#[tokio::test]`：`get_connection_manager_lazy` 需要 Tokio runtime 上下文
+    ///（redis 内部注册 waker/驱动，无 reactor 时 panic）。
+    #[tokio::test]
+    async fn with_reconnect_attempts_configures_reconnect_budget() {
+        use std::time::Duration;
+
+        let client = redis::Client::open("redis://127.0.0.1:1").unwrap();
+        let connection_manager = client
+            .get_connection_manager_lazy(
+                redis::aio::ConnectionManagerConfig::default()
+                    .set_number_of_retries(1)
+                    .set_min_delay(Duration::from_millis(1)),
+            )
+            .expect("惰性 ConnectionManager 构造不应触发连接");
+        let channel =
+            RedisPubSubSsoChannel::new(connection_manager, client).with_reconnect_attempts(0);
+        assert_eq!(channel.max_reconnect_attempts, 0, "应可配置重连次数");
+        // 未订阅时 shutdown 返回 0（幂等）
+        assert_eq!(channel.shutdown(), 0);
+    }
+
+    /// 重连退避计算：线性增长且封顶。
+    #[test]
+    fn backoff_grows_linearly_and_caps() {
+        assert_eq!(
+            RedisPubSubSsoChannel::backoff(1),
+            Duration::from_millis(500)
         );
-        // 留出 spawn 的后台任务时间跑完连接失败分支（get_async_pubsub Err → 早退）
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            RedisPubSubSsoChannel::backoff(2),
+            Duration::from_millis(1000)
+        );
+        assert_eq!(
+            RedisPubSubSsoChannel::backoff(100),
+            Duration::from_millis(RECONNECT_BACKOFF_MAX_MS),
+            "退避应封顶 5s"
+        );
     }
 
     /// `redis::Client::open` 对非法 URL 快速失败（构造期确定性校验，
@@ -333,6 +515,10 @@ mod tests {
         // 等待消息接收
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert_eq!(counter.load(Ordering::SeqCst), 1, "应收到 1 条消息");
+
+        // JoinHandle 已登记（不再即弃）：shutdown 可停止任务并返回计数
+        let stopped = channel.shutdown();
+        assert!(stopped >= 1, "shutdown 应停止至少 1 个订阅任务，实际: {stopped}");
     }
 
     /// payload 非 UTF-8 时走解析失败 warn 分支：handler 不被调用，
@@ -402,6 +588,7 @@ mod tests {
             1,
             "合法 payload 应正常触发 handler（订阅未中断）"
         );
+        channel.shutdown();
     }
 
     /// subscribe 的 handler panic 不中断订阅（spec R-005 约束，
@@ -453,6 +640,50 @@ mod tests {
             counter.load(Ordering::SeqCst),
             2,
             "handler 应被调用两次（panic 不中断）"
+        );
+        channel.shutdown();
+    }
+
+    /// shutdown 后订阅任务被 abort：后续消息不再触发 handler（退订语义）。
+    #[tokio::test]
+    async fn shutdown_stops_message_delivery() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let reachable = redis_reachable().await;
+        skip_if_unreachable(reachable, "shutdown_stops_message_delivery");
+        if !reachable {
+            return;
+        }
+
+        let channel = Arc::new(make_local_channel().await);
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+        let topic = "garrison-channel-test-shutdown";
+
+        channel
+            .subscribe(
+                topic,
+                Box::new(move |_| {
+                    counter_clone.fetch_add(1, Ordering::SeqCst);
+                }),
+            )
+            .await
+            .expect("subscribe 失败");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // 退订：abort 后台任务
+        let stopped = channel.shutdown();
+        assert!(stopped >= 1, "shutdown 应停止订阅任务");
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // shutdown 后发布的消息不应再触发 handler
+        channel.push(topic, "after-shutdown").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            0,
+            "shutdown 后不应再收到消息（退订语义）"
         );
     }
 }

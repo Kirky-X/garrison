@@ -10,7 +10,7 @@ use crate::error::GarrisonError;
 /// 创建 SsoClient 实例（使用 MockDao + 测试用 secret）。
 fn make_client() -> SsoClient {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    SsoClient::new(dao, "test-sso-secret-key")
+    SsoClient::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功")
 }
 
 // ========================================================================
@@ -65,7 +65,7 @@ async fn issue_ticket_same_login_different_clients() {
 #[tokio::test]
 async fn issue_ticket_uses_correct_key_prefix() {
     let dao = Arc::new(MockDao::new());
-    let client = SsoClient::new(dao.clone(), "test-sso-secret-key");
+    let client = SsoClient::new(dao.clone(), "test-sso-secret-key").expect("secret 非空构造应成功");
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     let key = format!("garrison:sso:ticket:{}", ticket);
     let value = dao.get(&key).await.unwrap();
@@ -179,7 +179,7 @@ async fn destroy_ticket_nonexistent_returns_ok() {
 #[test]
 fn with_ticket_ttl_sets_ttl() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let client = SsoClient::new(dao, "test-sso-secret-key").with_ticket_ttl(120);
+    let client = SsoClient::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功").with_ticket_ttl(120);
     assert_eq!(client.ticket_ttl_seconds, 120);
 }
 
@@ -273,8 +273,8 @@ async fn validate_ticket_rejects_tampered_signature() {
 #[tokio::test]
 async fn validate_ticket_rejects_different_secret() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let issuer = SsoClient::new(dao.clone(), "secret-a");
-    let validator = SsoClient::new(dao, "secret-b");
+    let issuer = SsoClient::new(dao.clone(), "secret-a").expect("secret 非空构造应成功");
+    let validator = SsoClient::new(dao, "secret-b").expect("secret 非空构造应成功");
 
     let ticket = issuer.issue_ticket("1001", 2001).await.unwrap();
     let result = validator.validate_ticket(&ticket, 2001).await;
@@ -285,10 +285,43 @@ async fn validate_ticket_rejects_different_secret() {
     );
 }
 
-/// M5: 空 secret 应 panic（禁止空 secret）。
+/// 空 secret 构造返回 `InvalidParam` 错误（不 panic，与文档承诺一致）。
 #[test]
-#[should_panic(expected = "SSO secret must not be empty")]
 fn new_rejects_empty_secret() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let _client = SsoClient::new(dao, "");
+    let result = SsoClient::new(dao, "");
+    match result {
+        Err(GarrisonError::InvalidParam(msg)) => {
+            assert!(
+                msg.contains("sso-client-secret-empty"),
+                "错误消息应含 sso-client-secret-empty 前缀，实际: {}",
+                msg
+            );
+        },
+        Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+        Ok(_) => panic!("空 secret 不应构造成功"),
+    }
+}
+
+/// client_id 不匹配的错误消息不得回显存储/调用方 client_id（防枚举）。
+#[tokio::test]
+async fn validate_ticket_client_id_mismatch_message_does_not_leak_ids() {
+    let client = make_client();
+    let ticket = client.issue_ticket("1001", 2001).await.unwrap();
+    let result = client.validate_ticket(&ticket, 9999).await;
+    match result {
+        Err(GarrisonError::InvalidToken(msg)) => {
+            assert!(
+                msg.contains("sso-ticket-client-id-mismatch"),
+                "错误消息应含固定前缀，实际: {}",
+                msg
+            );
+            assert!(
+                !msg.contains("2001") && !msg.contains("9999"),
+                "错误消息不得回显 client_id，实际: {}",
+                msg
+            );
+        },
+        other => panic!("期望 InvalidToken，实际: {:?}", other),
+    }
 }

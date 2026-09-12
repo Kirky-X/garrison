@@ -37,6 +37,35 @@ fn sanitize_http_error(e: &reqwest::Error) -> String {
     }
 }
 
+/// 从微信原始 JSON 响应中剥离敏感凭据字段（`session_key` / `access_token`）。
+///
+/// 安全修复：`session_key`（小程序数据解密凭据）与 `access_token`（访问令牌）
+/// 属敏感凭据，若原样保留在 `SocialUserInfo.raw`，调用方打印/持久化 `raw`
+/// 时会意外泄露。此处移除这些字段后再返回（openid/unionid 等业务字段保留）。
+fn strip_sensitive_fields(mut raw: Value) -> Value {
+    const SENSITIVE_FIELDS: [&str; 2] = ["session_key", "access_token"];
+    if let Some(obj) = raw.as_object_mut() {
+        for field in SENSITIVE_FIELDS {
+            obj.remove(field);
+        }
+    }
+    raw
+}
+
+/// 校验授权回调 URL 的基本格式（必须为 https scheme）。
+///
+/// 微信开放平台要求授权回调域为 https 白名单域名；非 https 的 redirect_uri
+/// 一律拒绝拼接授权 URL（防 open-redirect / 明文回调）。
+fn validate_redirect_uri(redirect_uri: &str) -> GarrisonResult<()> {
+    if !redirect_uri.starts_with("https://") {
+        return Err(GarrisonError::InvalidParam(loc!(
+            "wechat-redirect-uri-must-be-https",
+            "wechat redirect_uri must be an https url".to_string()
+        )));
+    }
+    Ok(())
+}
+
 /// 微信扫码登录授权页端点。
 const WECHAT_AUTH_URL: &str = "https://open.weixin.qq.com/connect/qrconnect";
 
@@ -126,6 +155,9 @@ impl SocialLoginProvider for WechatProvider {
         state: &str,
         redirect_uri: &str,
     ) -> GarrisonResult<String> {
+        // 基本格式校验：redirect_uri 必须为 https（微信授权回调域要求，
+        // 非 https 拒绝拼接，防 open-redirect / 明文回调）
+        validate_redirect_uri(redirect_uri)?;
         Ok(format!(
             "{}?appid={}&redirect_uri={}&response_type=code&scope=snsapi_login&state={}#wechat_redirect",
             WECHAT_AUTH_URL,
@@ -172,11 +204,14 @@ impl SocialLoginProvider for WechatProvider {
             )));
         }
 
+        // JSON 解析错误同样经 sanitize_http_error 脱敏（reqwest::Error 的
+        // Display 含完整 URL，其中 query 携带 client_secret，不得入日志）
         let raw: Value = resp.json().await.map_err(|e| {
+            let detail = sanitize_http_error(&e);
             GarrisonError::Network(loc!(
                 "wechat-token-response-parse-failed",
-                format!("wechat token response parse failed: {}", e),
-                ("detail", &e.to_string())
+                format!("wechat token response parse failed: {}", detail),
+                ("detail", &detail)
             ))
         })?;
 
@@ -199,6 +234,7 @@ impl SocialLoginProvider for WechatProvider {
         let provider_user_id = raw
             .get("openid")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| {
                 GarrisonError::Network(loc!(
                     "wechat-response-missing-openid",
@@ -218,7 +254,9 @@ impl SocialLoginProvider for WechatProvider {
             nickname: None,
             avatar: None,
             union_id,
-            raw,
+            // 安全修复：剥离 access_token 等敏感凭据后再存入 raw（原响应含
+            // access_token，调用方打印/持久化 raw 会泄露令牌）
+            raw: strip_sensitive_fields(raw),
         })
     }
 
@@ -267,11 +305,13 @@ impl SocialLoginProvider for WechatProvider {
             )));
         }
 
+        // JSON 解析错误同样经 sanitize_http_error 脱敏（Display 含带密钥 URL）
         let raw: Value = resp.json().await.map_err(|e| {
+            let detail = sanitize_http_error(&e);
             GarrisonError::Network(loc!(
                 "wechat-userinfo-response-parse-failed",
-                format!("wechat userinfo response parse failed: {}", e),
-                ("detail", &e.to_string())
+                format!("wechat userinfo response parse failed: {}", detail),
+                ("detail", &detail)
             ))
         })?;
 
@@ -294,6 +334,7 @@ impl SocialLoginProvider for WechatProvider {
         let provider_user_id = raw
             .get("openid")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| {
                 GarrisonError::Network(loc!(
                     "wechat-userinfo-response-missing-openid",
@@ -323,7 +364,8 @@ impl SocialLoginProvider for WechatProvider {
             nickname,
             avatar,
             union_id,
-            raw,
+            // 安全修复：剥离 access_token/session_key 等敏感凭据后再存入 raw
+            raw: strip_sensitive_fields(raw),
         })
     }
 }
@@ -463,14 +505,13 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             )));
         }
 
+        // JSON 解析错误同样经 sanitize_http_error 脱敏（Display 含带 secret URL）
         let raw: Value = resp.json().await.map_err(|e| {
+            let detail = sanitize_http_error(&e);
             GarrisonError::Network(loc!(
                 "wechat-mini-app-jscode2session-response-parse-failed",
-                format!(
-                    "wechat mini-app jscode2session response parse failed: {}",
-                    e
-                ),
-                ("detail", &e.to_string())
+                format!("wechat mini-app jscode2session response parse failed: {}", detail),
+                ("detail", &detail)
             ))
         })?;
 
@@ -493,6 +534,7 @@ impl SocialLoginProvider for WechatMiniAppProvider {
         let provider_user_id = raw
             .get("openid")
             .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
             .ok_or_else(|| {
                 GarrisonError::Network(loc!(
                     "wechat-mini-app-jscode2session-response-missing-openid",
@@ -512,7 +554,9 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             nickname: None,
             avatar: None,
             union_id,
-            raw,
+            // 安全修复：剥离 session_key（小程序数据解密凭据）等敏感字段后再存入
+            // raw——原样保留会导致调用方打印/持久化 raw 时泄露解密凭据
+            raw: strip_sensitive_fields(raw),
         })
     }
 }
@@ -858,9 +902,9 @@ mod tests {
         let provider = WechatProvider::new("appid", "secret")
             .with_token_url("https://custom.token.url")
             .with_userinfo_url("https://custom.userinfo.url");
-        // 验证链式调用后 provider 仍可用
+        // 验证链式调用后 provider 仍可用（redirect_uri 须为 https）
         let url = provider
-            .get_authorization_url("s", "r")
+            .get_authorization_url("s", "https://example.com/cb")
             .await
             .expect("get_authorization_url 应返回 Ok");
         assert!(url.contains("appid=appid"));
@@ -1308,5 +1352,96 @@ mod tests {
 
         assert_eq!(user_info.provider_user_id, "openid_ok");
         assert_eq!(user_info.nickname.as_deref(), Some("Alice"));
+    }
+
+    // ========================================================================
+    // 安全修复回归测试：redirect_uri 校验 / raw 敏感字段剥离
+    // ========================================================================
+
+    /// get_authorization_url 对非 https 的 redirect_uri 返回 InvalidParam
+    ///（基本格式校验：防 open-redirect / 明文回调）。
+    #[tokio::test]
+    async fn wechat_provider_get_authorization_url_rejects_non_https_redirect_uri() {
+        let provider = WechatProvider::new("appid", "secret");
+        for bad in ["http://example.com/cb", "ftp://example.com/cb", "/relative", ""] {
+            let result = provider.get_authorization_url("state", bad).await;
+            match result {
+                Err(GarrisonError::InvalidParam(msg)) => assert!(
+                    msg.contains("https"),
+                    "错误消息应说明 redirect_uri 须为 https，实际: {}",
+                    msg
+                ),
+                Err(other) => panic!("非 https redirect_uri 应返回 InvalidParam，实际: {:?}", other),
+                Ok(url) => panic!("非 https redirect_uri 不应拼接授权 URL，实际: {}", url),
+            }
+        }
+    }
+
+    /// exchange_token 返回的 raw 不含 access_token（敏感凭据剥离）。
+    #[tokio::test]
+    async fn wechat_provider_exchange_token_raw_strips_access_token() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/oauth2/access_token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "SECRET_TOKEN",
+                "openid": "openid456",
+                "unionid": "union789",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatProvider::new("wx_appid", "wx_secret")
+            .with_token_url(format!("{}/sns/oauth2/access_token", server.uri()));
+        let user_info = provider
+            .exchange_token("code", "state")
+            .await
+            .expect("exchange_token 应返回 Ok");
+
+        assert!(
+            user_info.raw.get("access_token").is_none(),
+            "raw 不应保留 access_token（敏感凭据剥离），实际: {}",
+            user_info.raw
+        );
+        // 业务字段保留
+        assert_eq!(
+            user_info.raw.get("openid").and_then(|v| v.as_str()),
+            Some("openid456")
+        );
+    }
+
+    /// 小程序 get_user_info 返回的 raw 不含 session_key（解密凭据剥离）。
+    #[tokio::test]
+    async fn wechat_mini_app_get_user_info_raw_strips_session_key() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/sns/jscode2session"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "openid": "openid_mini_1",
+                "session_key": "SECRET_SESSION_KEY",
+                "unionid": "union_mini_1",
+            })))
+            .mount(&server)
+            .await;
+
+        let provider = WechatMiniAppProvider::new("appid", "secret")
+            .with_jscode2session_url(format!("{}/sns/jscode2session", server.uri()));
+        let user_info = provider
+            .get_user_info("js_code")
+            .await
+            .expect("get_user_info 应返回 Ok");
+
+        assert!(
+            user_info.raw.get("session_key").is_none(),
+            "raw 不应保留 session_key（解密凭据剥离），实际: {}",
+            user_info.raw
+        );
+        assert_eq!(user_info.provider_user_id, "openid_mini_1");
     }
 }

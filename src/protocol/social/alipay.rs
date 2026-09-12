@@ -85,6 +85,7 @@ impl AlipayProvider {
     ///
     /// # 错误
     /// - `GarrisonError::Config`: RSA 私钥 PEM 解析失败（无效格式/编码）
+    /// - `GarrisonError::Config`: reqwest HTTP 客户端构建失败（不 panic，可恢复配置错误）
     pub fn new(app_id: &str, private_key_pem: &str) -> GarrisonResult<Self> {
         let private_key = RsaPrivateKey::from_pkcs1_pem(private_key_pem).map_err(|e| {
             GarrisonError::Config(loc!(
@@ -95,15 +96,24 @@ impl AlipayProvider {
         })?;
         // 性能 MED-1 修复：一次性构造 SigningKey，避免每次 sign_request 重复 clone RsaPrivateKey
         let signing_key = SigningKey::<Sha256>::new(private_key);
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            // 错误处理修复：公共构造器返回 GarrisonResult，构建失败以 Config
+            // 错误传播而非 expect panic（如 TLS 后端初始化失败等可恢复环境问题）
+            .map_err(|e| {
+                GarrisonError::Config(loc!(
+                    "alipay-http-client-build-failed",
+                    format!("alipay http client build failed: {}", e),
+                    ("detail", &e.to_string())
+                ))
+            })?;
         Ok(Self {
             app_id: app_id.to_string(),
             private_key_pem: private_key_pem.to_string(),
             signing_key,
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .build()
-                .expect("reqwest client build with timeout should succeed"),
+            http,
             gateway_url: ALIPAY_GATEWAY_URL.to_string(),
         })
     }

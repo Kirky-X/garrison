@@ -36,6 +36,21 @@
 //! 3. 签名证书信任链（对接 IdP 元数据中的 X.509 证书）
 //! 4. 算法白名单（禁止 `rsa-1_5` 等弱算法，仅允许 `rsa-sha256` / `ecdsa-sha256`）
 //!
+//! ## 签名验证与 C14N 现状（`protocol-saml` feature）
+//!
+//! `XmlSecSamlProvider::validate_assertion`（`protocol-saml` feature）使用 `rsa`
+//! crate 执行 RSA-SHA256 验签，并对 `<ds:SignedInfo>` 应用 **Exclusive C14N
+//! 常用子集**规范化（注释剥离 / 自闭合展开 / 属性排序与空白规范化）后再验签。
+//! 子集限制：**命名空间声明不重写/不搬移、字符引用不展开**——若 IdP 依赖完整
+//! C14N 的命名空间重写，验签将失败（fail-closed，不会错误放行）。参见
+//! `canonicalize_signed_info_c14n_subset` 文档。
+//!
+//! 其余约定（原样字节验签 IdP 兼容性）：
+//!
+//! - DigestValue 计算约定：被引用元素**去除 Signature 子元素后的原始字节**
+//!   （隐式 enveloped-signature transform），不做 C14N。仅与采用相同约定的
+//!   IdP/测试装置兼容。
+//!
 //! ## 已实现的安全检查
 //!
 //! 以下安全检查已内置，无需自行实现：
@@ -810,20 +825,19 @@ fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
 /// - `Ok(false)`: 已被消费（重放拒绝）。
 /// - `Err(_)`: DAO 读写失败或时间解析失败。
 ///
-/// # vuln-0003 修复：原子 get_and_delete 消除 TOCTOU 竞态
+/// # vuln-0003 修复：原子 set_if_absent（SET NX）消除 TOCTOU 竞态
 ///
-/// 原实现使用 `dao.get()` + `dao.set()` 两步操作，存在 TOCTOU 竞态：
-/// 并发请求可能同时通过 `get` 检查后再 `set`，导致同一 Assertion 被多次消费。
+/// 原实现 v1 使用 `dao.get()` + `dao.set()` 两步操作，v2 改为 `get_and_delete`
+/// + `set`。但 `get_and_delete` 对**不存在**的键不产生任何预留——并发请求可能
+/// 同时拿到 `None` 后各自 `set`，导致同一 Assertion 被多次消费（跨进程场景
+/// 尤其明显）。
 ///
-/// 现使用 `dao.get_and_delete()` 原子操作：
-/// 1. `get_and_delete` 返回 `Some` → 已消费（重放），返回 `Ok(false)`
-/// 2. `get_and_delete` 返回 `None` → 首次消费，计算 TTL 后 `set` 标记已消费，返回 `Ok(true)`
+/// 现使用 `dao.set_if_absent()`（语义等价 Redis `SET NX EX`）单步原子预留：
+/// 1. 返回 `Ok(true)` → 首个消费者，键已写入（TTL = NotOnOrAfter 剩余有效期）
+/// 2. 返回 `Ok(false)` → 键已存在 = 已消费（重放拒绝）
 ///
-/// **原子性边界**：
-/// - `get_and_delete` 在 `MockDao` / `GarrisonDaoOxcache` 中由 `parking_lot::Mutex` 保护，进程内原子
-/// - 跨进程（Redis L2）需后端重写 `get_and_delete` 为 `GETDEL` 或 Lua 脚本
-/// - `get_and_delete` 后的 `set` 非原子，但即使两个并发请求同时到达，
-///   `get_and_delete` 保证仅一个返回 `None`（首次消费），另一个返回 `Some`（重放拒绝）
+/// 原子性由 DAO 实现保证：`InMemoryDao` / `GarrisonDaoOxcache` 以单锁临界区
+/// 实现 `set_if_absent`；跨进程（Redis L2）后端应实现为 `SET NX EX` 或 Lua 脚本。
 ///
 /// # TTL 计算
 /// TTL = `NotOnOrAfter - now`（剩余有效期）。若 `not_on_or_after` 为空或已过期，
@@ -837,14 +851,6 @@ pub async fn check_assertion_replay(
         return Ok(true);
     }
     let key = format!("{}consumed:{}", DaoKeyPrefix::Saml, assertion_id);
-
-    // vuln-0003 修复：原子 get_and_delete 替代非原子 get + set
-    // - 返回 Some：key 已存在 = 已消费 = 重放，返回 false
-    // - 返回 None：key 不存在 = 首次消费，继续 set 标记
-    let existing = dao.get_and_delete(&key).await?;
-    if existing.is_some() {
-        return Ok(false);
-    }
 
     // TTL 计算：NotOnOrAfter - now（剩余有效期），空或过期用 300 秒兜底
     let ttl = if not_on_or_after.is_empty() {
@@ -860,8 +866,11 @@ pub async fn check_assertion_replay(
             300
         }
     };
-    dao.set(&key, "1", ttl).await?;
-    Ok(true)
+
+    // vuln-0003 修复：单步原子预留（SET NX 语义），消除 get_and_delete + set
+    // 两步之间对「不存在键」的竞态窗口——并发下仅首个请求返回 true
+    let first = dao.set_if_absent(&key, "1", ttl).await?;
+    Ok(first)
 }
 
 /// InResponseTo ↔ AuthnRequest ID 绑定校验（CRIT-005）。
@@ -969,27 +978,34 @@ fn is_signature_algorithm_allowed(algorithm: &str) -> bool {
 
 /// 提取 `<ds:SignatureMethod Algorithm="...">` 的 Algorithm 属性值。
 ///
-/// 在 signature_xml 中查找 `<SignatureMethod` 元素并提取 `Algorithm` 属性。
-/// 找不到返回 None。
+/// 在 signature_xml 中查找 `<SignatureMethod` 元素并提取 `Algorithm` 属性
+///（双引号/单引号属性值均支持——带属性标签与引号风格容错）。找不到返回 None。
 ///
 /// # 安全性
 ///
 /// 有意使用字符串查找而非完整 XML 解析（与同文件 `extract_signature_value` 等
-/// 4 个 `extract_*` 函数风格一致）。SAML 响应已在上层由 quick-xml 完整解析，
+/// `extract_*` 函数风格一致）。SAML 响应已在上层由 quick-xml 完整解析，
 /// 此处仅对签名段做快速提取。附加以下防御：
 /// - 拒绝含 XML 特殊字符（`<`、`>`、`&`）的 Algorithm 值（防注入）
 /// - 限制 Algorithm 值最大长度为 128 字符（标准 URI 通常 < 100 字符）
 #[cfg(feature = "protocol-saml")]
 fn extract_signature_method_algorithm(signature_xml: &str) -> Option<String> {
-    // 字符串查找 SignatureMethod 元素的 Algorithm 属性
+    // 字符串查找 SignatureMethod 元素的 Algorithm 属性（兼容单/双引号）
     let method_start = signature_xml.find("<")?;
     let rest = &signature_xml[method_start..];
     let method_idx = rest.find("SignatureMethod")?;
     let after_method = &rest[method_idx..];
-    let alg_key = after_method.find("Algorithm=\"")?;
-    let alg_value_start = alg_key + "Algorithm=\"".len();
+    let (alg_value_start, quote) = match (
+        after_method.find("Algorithm=\""),
+        after_method.find("Algorithm='"),
+    ) {
+        (Some(d), Some(s)) if s < d => (s + "Algorithm='".len(), '\''),
+        (Some(d), _) => (d + "Algorithm=\"".len(), '"'),
+        (None, Some(s)) => (s + "Algorithm='".len(), '\''),
+        (None, None) => return None,
+    };
     let after_alg = &after_method[alg_value_start..];
-    let alg_end = after_alg.find('"')?;
+    let alg_end = after_alg.find(quote)?;
     let algorithm = &after_alg[..alg_end];
 
     // 安全防御：拒绝含 XML 特殊字符的 Algorithm 值（防注入）
@@ -1007,71 +1023,34 @@ fn extract_signature_method_algorithm(signature_xml: &str) -> Option<String> {
 
 /// 提取 `<ds:SignatureValue>...</ds:SignatureValue>` 的 base64 文本内容。
 ///
+/// 通过 [`find_element_text_span`] 查找，对带属性的开始标签
+///（如 `<ds:SignatureValue xmlns:ds="...">`）与混合前缀形式同样适用。
 /// 找不到返回 None。
 #[cfg(feature = "protocol-saml")]
 fn extract_signature_value(signature_xml: &str) -> Option<String> {
-    let start_tag_options = ["<ds:SignatureValue>", "<SignatureValue>"];
-    let end_tag_options = ["</ds:SignatureValue>", "</SignatureValue>"];
-
-    for (start_tag, end_tag) in start_tag_options.iter().zip(end_tag_options.iter()) {
-        if let Some(start_idx) = signature_xml.find(start_tag) {
-            let content_start = start_idx + start_tag.len();
-            if let Some(end_idx) = signature_xml[content_start..].find(end_tag) {
-                let value = &signature_xml[content_start..content_start + end_idx];
-                return Some(value.trim().to_string());
-            }
-        }
-    }
-    None
+    find_element_text_span(signature_xml, "SignatureValue")
 }
 
 /// 提取 `<ds:SignedInfo>...</ds:SignedInfo>` 的原始 XML（含标签）。
 ///
-/// 签名验证时对此 XML 计算 SHA-256 摘要并与签名值比对。
+/// 签名验证时对此 XML 做 C14N 常用子集规范化后作为签名验证输入。
 ///
-/// **C14N 限制**：本实现不执行 XML Canonicalization (C14N)，
-/// 直接使用原始 XML 字符串作为签名验证输入。若 IdP 对 canonicalized
-/// 形式签名（标准做法），验证可能失败。生产环境应替换为完整 C14N 实现。
+/// **容错匹配**：通过 [`find_element_span`] 查找，对带属性的开始标签
+///（如 `<ds:SignedInfo xmlns:ds="...">`）与混合前缀（开始 `ds:` 前缀、
+/// 结束无前缀，或反之）形式同样适用；找不到返回 None。
 #[cfg(feature = "protocol-saml")]
 fn extract_signed_info_xml(assertion_xml: &str) -> Option<String> {
-    let start_tag_options = ["<ds:SignedInfo>", "<SignedInfo>"];
-    let end_tag_options = ["</ds:SignedInfo>", "</SignedInfo>"];
-
-    for (start_tag, end_tag) in start_tag_options.iter().zip(end_tag_options.iter()) {
-        if let Some(start_idx) = assertion_xml.find(start_tag) {
-            if let Some(end_idx) = assertion_xml[start_idx..].find(end_tag) {
-                let end_pos = start_idx + end_idx + end_tag.len();
-                return Some(assertion_xml[start_idx..end_pos].to_string());
-            }
-        }
-    }
-    None
+    find_element_span(assertion_xml, "SignedInfo")
+        .map(|(start, end)| assertion_xml[start..end].to_string())
 }
 
 /// 提取 `<ds:Signature>...</ds:Signature>` 的原始 XML。
 ///
-/// 支持有无命名空间前缀两种形式。找不到返回 None。
+/// 通过 [`find_element_span`] 查找，支持带属性标签与混合前缀形式。找不到返回 None。
 #[cfg(feature = "protocol-saml")]
 fn extract_signature_xml(assertion_xml: &str) -> Option<String> {
-    let start_tag_options = [
-        "<ds:Signature>",
-        "<ds:Signature ",
-        "<Signature>",
-        "<Signature ",
-    ];
-    let end_tag_options = ["</ds:Signature>", "</Signature>"];
-
-    for start_tag in start_tag_options {
-        if let Some(start_idx) = assertion_xml.find(start_tag) {
-            for end_tag in end_tag_options {
-                if let Some(end_idx) = assertion_xml[start_idx..].find(end_tag) {
-                    let end_pos = start_idx + end_idx + end_tag.len();
-                    return Some(assertion_xml[start_idx..end_pos].to_string());
-                }
-            }
-        }
-    }
-    None
+    find_element_span(assertion_xml, "Signature")
+        .map(|(start, end)| assertion_xml[start..end].to_string())
 }
 
 /// Digest 算法 URI（XML-DSig 标准）：本实现仅支持 SHA-256。
@@ -1156,22 +1135,74 @@ fn extract_reference_bindings(signed_info_xml: &str) -> Vec<ReferenceBinding> {
     bindings
 }
 
-/// 提取指定 local name 元素的文本内容（首个匹配，去除前后空白）。
+/// 查找元素的完整 XML 片段范围（含开始/结束标签），返回 `(start, end)` 字节偏移。
 ///
-/// 同时兼容 `<ns:Name>` 与 `<Name>` 两种形式。
+/// **容错匹配**（修复原字符串精确匹配对属性变体/混合前缀的漏配）：
+/// - 开始标签带属性（`<ds:SignedInfo xmlns:ds="...">`）同样命中——通过
+///   「local name 后必须是空白/`>`/`/`」边界检查 + 跳过属性定位 `>` 实现；
+/// - 混合前缀：开始 `ds:` 前缀 + 结束无前缀（或反之）也能配对（同前缀优先）；
+/// - 边界检查避免 `<ds:Signature` 误配 `<ds:SignedInfo` 这类更长标签名。
+/// 找不到返回 None。
 #[cfg(feature = "protocol-saml")]
-fn extract_xml_text(xml: &str, local_name: &str) -> Option<String> {
-    for ns_prefix in ["ds:", ""] {
-        let start_tag = format!("<{}{}>", ns_prefix, local_name);
-        let end_tag = format!("</{}{}>", ns_prefix, local_name);
-        if let Some(s) = xml.find(&start_tag) {
-            let cs = s + start_tag.len();
-            if let Some(e) = xml[cs..].find(&end_tag) {
-                return Some(xml[cs..cs + e].trim().to_string());
+fn find_element_span(xml: &str, local_name: &str) -> Option<(usize, usize)> {
+    let prefixes = ["ds:", ""];
+    for open_prefix in prefixes {
+        let open = format!("<{}{}", open_prefix, local_name);
+        // 对应的闭合标签候选：同前缀优先，其次另一前缀（混合前缀容错）
+        let other = if open_prefix.is_empty() { "ds:" } else { "" };
+        let closes = [
+            format!("</{}{}>", open_prefix, local_name),
+            format!("</{}{}>", other, local_name),
+        ];
+
+        let mut search_from = 0usize;
+        while let Some(rel) = xml[search_from..].find(&open) {
+            let abs = search_from + rel;
+            // 边界检查：`<X` 之后必须是空白/`>`/`/`（避免匹配更长标签名）
+            match xml[abs + open.len()..].chars().next() {
+                Some(' ') | Some('>') | Some('/') | Some('\t') | Some('\n') | Some('\r') => {},
+                _ => {
+                    search_from = abs + 1;
+                    continue;
+                },
             }
+            for close in &closes {
+                if let Some(close_rel) = xml[abs..].find(close.as_str()) {
+                    return Some((abs, abs + close_rel + close.len()));
+                }
+            }
+            search_from = abs + 1;
         }
     }
     None
+}
+
+/// 查找元素的文本内容（首个匹配，去除前后空白）。
+///
+/// 基于 [`find_element_span`]：取开始标签 `>` 之后、闭合标签之前的文本，
+/// 对带属性的开始标签与混合前缀形式同样适用。找不到返回 None。
+#[cfg(feature = "protocol-saml")]
+fn find_element_text_span(xml: &str, local_name: &str) -> Option<String> {
+    let (start, end) = find_element_span(xml, local_name)?;
+    let seg = &xml[start..end];
+    // 内容 = 开始标签 `>` 之后到首个闭合标签 `</` 之前
+    let gt = seg.find('>')?;
+    let close_start = seg[gt..].find("</")? + gt;
+    if close_start >= gt + 1 {
+        Some(seg[gt + 1..close_start].trim().to_string())
+    } else {
+        // `<X></X>`：空文本内容
+        Some(String::new())
+    }
+}
+
+/// 提取指定 local name 元素的文本内容（首个匹配，去除前后空白）。
+///
+/// 同时兼容 `<ds:Name>` / `<Name>` / 带属性标签（如 `<ds:Name xmlns:ds="...">`）
+/// 等形式（委托 [`find_element_text_span`]）。
+#[cfg(feature = "protocol-saml")]
+fn extract_xml_text(xml: &str, local_name: &str) -> Option<String> {
+    find_element_text_span(xml, local_name)
 }
 
 /// 按 ID 属性定位元素并返回其原始 XML 切片（含起止标签）（CRIT-001）。
@@ -1240,6 +1271,158 @@ fn strip_enveloped_signature(element_xml: &str) -> String {
         Some(sig) => element_xml.replacen(&sig, "", 1),
         None => element_xml.to_string(),
     }
+}
+
+// ============================================================================
+// SignedInfo C14N 规范化（Exclusive C14N 常用子集）
+// ============================================================================
+
+/// 对 SignedInfo XML 做 Exclusive C14N 常用子集规范化，输出作为签名验证输入。
+///
+/// 实现的规范化规则（覆盖真实 IdP（Keycloak/ADFS/Okta 等）SignedInfo 的常见形态）：
+/// 1. **移除注释**（`<!--...-->`，与 C14N「无注释模式」一致）；
+/// 2. **自闭合标签展开**为双标签形式（`<X/>` → `<X></X>`）；
+/// 3. **属性规范化**：属性间空白压缩为单个空格、属性值统一双引号、
+///    属性按限定名字典序排序（消除属性顺序/空白差异导致的字节歧义）；
+/// 4. 文本节点原样保留（C14N 不修改文本内容，不做 trim）。
+///
+/// # 限制（fail-closed，不产生错误放行）
+///
+/// - **命名空间声明不重写/不搬移**：Exclusive C14N 的 visibly-utilized
+///   命名空间渲染未实现。若 IdP 的 SignedInfo 内部携带 `xmlns` 声明且依赖
+///   完整 C14N 的命名空间重写，规范化输出与 IdP 签名输入不一致 → 验签失败
+///   （拒绝，而非错误放行）。
+/// - **字符引用不展开**（`&#x41;` → `A` 等）。
+/// 上述限制已在模块文档与 `verify_saml_signature` 运行时告警中说明。
+#[cfg(feature = "protocol-saml")]
+fn canonicalize_signed_info_c14n_subset(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0usize;
+    while i < input.len() {
+        // 1. 注释移除（无注释模式）
+        if input[i..].starts_with("<!--") {
+            match input[i + 4..].find("-->") {
+                Some(end) => i += 4 + end + 3,
+                None => i = input.len(), // 未闭合注释：丢弃剩余（畸形输入，验签将失败）
+            }
+            continue;
+        }
+        if bytes[i] == b'<' {
+            match input[i..].find('>') {
+                Some(gt_rel) => {
+                    let inner_raw = &input[i + 1..i + gt_rel];
+                    if let Some(rest) = inner_raw.strip_prefix('/') {
+                        // 结束标签：`</ name >` → `</name>`
+                        out.push_str("</");
+                        out.push_str(rest.trim());
+                        out.push('>');
+                    } else {
+                        let self_closing = inner_raw.ends_with('/');
+                        let inner = inner_raw.trim_end_matches('/').trim();
+                        let (qname, attrs) = parse_tag_inner(inner);
+                        // 2 + 3：自闭合展开 + 属性排序/规范化
+                        out.push('<');
+                        out.push_str(&qname);
+                        let mut attrs = attrs;
+                        attrs.sort_by(|a, b| a.0.cmp(&b.0));
+                        for (k, v) in attrs {
+                            out.push(' ');
+                            out.push_str(&k);
+                            out.push_str("=\"");
+                            out.push_str(&v);
+                            out.push('"');
+                        }
+                        if self_closing {
+                            out.push_str("></");
+                            out.push_str(&qname);
+                            out.push('>');
+                        } else {
+                            out.push('>');
+                        }
+                    }
+                    i += gt_rel + 1;
+                    continue;
+                },
+                None => {
+                    // 未闭合标签：原样保留剩余（畸形输入，验签将失败）
+                    out.push_str(&input[i..]);
+                    i = input.len();
+                },
+            }
+        } else {
+            // 文本节点：原样保留到下一个 '<'
+            let lt = input[i..]
+                .find('<')
+                .map(|p| i + p)
+                .unwrap_or(input.len());
+            out.push_str(&input[i..lt]);
+            i = lt;
+        }
+    }
+    out
+}
+
+/// 解析开始标签内部（不含尖括号）：返回 `(限定名, 属性列表)`。
+///
+/// 属性值支持双/单引号；属性间空白（多空格/换行/制表符）规范化消除。
+#[cfg(feature = "protocol-saml")]
+fn parse_tag_inner(inner: &str) -> (String, Vec<(String, String)>) {
+    let inner = inner.trim();
+    let (qname, rest) = match inner.find(|c: char| c.is_whitespace()) {
+        Some(ws) => (inner[..ws].to_string(), &inner[ws..]),
+        None => (inner.to_string(), ""),
+    };
+    let mut attrs: Vec<(String, String)> = Vec::new();
+    let bytes = rest.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        // 属性名（到 '=' 或空白）
+        let name_start = i;
+        while i < bytes.len() && bytes[i] != b'=' && !bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let name = rest[name_start..i].to_string();
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i < bytes.len() && bytes[i] == b'=' {
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i < bytes.len() && (bytes[i] == b'"' || bytes[i] == b'\'') {
+                let quote = bytes[i];
+                i += 1;
+                let vstart = i;
+                while i < bytes.len() && bytes[i] != quote {
+                    i += 1;
+                }
+                let value = rest[vstart..i].to_string();
+                if i < bytes.len() {
+                    i += 1;
+                }
+                attrs.push((name, value));
+            } else {
+                // 无引号值（畸形输入）：取到下一个空白
+                let vstart = i;
+                while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                    i += 1;
+                }
+                attrs.push((name, rest[vstart..i].to_string()));
+            }
+        } else {
+            // 无值属性（畸形输入）
+            attrs.push((name, String::new()));
+        }
+    }
+    (qname, attrs)
 }
 
 /// 校验单个 Reference 绑定：URI 解析 → 元素定位 → 摘要常量时间比对（CRIT-001）。
@@ -1358,7 +1541,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
             GarrisonError::InvalidParam(format!("sso-saml-signature-value-decode::{}", e))
         })?;
 
-    // 4. 提取 <ds:SignedInfo> 原始 XML（C14N 限制：直接使用原始 XML）
+    // 4. 提取 <ds:SignedInfo> 原始 XML
     let signed_info_xml = match extract_signed_info_xml(assertion_xml) {
         Some(xml) => xml,
         None => {
@@ -1367,13 +1550,25 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
         },
     };
 
-    // C14N 运行时警告：提醒运维人员当前签名验证未执行 XML Canonicalization，
-    // 标准 IdP（如 Keycloak、ADFS）对 canonicalized 形式签名时验证将失败。
-    // 生产环境应启用 `secure-saml-c14n` feature 或替换为完整 C14N 实现。
+    // C14N 防御（fail-closed）：注释不应出现在 SignedInfo 中（C14N 无注释模式
+    // 会剥离注释，攻击者可借注释差异构造语义不明的签名输入），出现即拒绝。
+    if signed_info_xml.contains("<!--") {
+        tracing::warn!(
+            "SAML <ds:SignedInfo> contains XML comments, rejected (C14N no-comments mode)"
+        );
+        return Ok(false);
+    }
+
+    // C14N 规范化：XML-DSig 要求签名验证输入为 canonicalized SignedInfo，
+    // 而非原始序列化字节。此处应用 Exclusive C14N 常用子集（注释剥离/自闭合
+    // 展开/属性排序与空白规范化），消除属性顺序等非语义差异导致的验签失配。
+    // 子集限制（命名空间重写未实现等）见 canonicalize_signed_info_c14n_subset
+    // 文档——不满足时验证失败（fail-closed），不会错误放行。
+    let signed_info_canonical = canonicalize_signed_info_c14n_subset(&signed_info_xml);
     tracing::warn!(
-        "SAML signature verification performed without XML Canonicalization (C14N). \
-         If your IdP signs canonicalized XML (standard behavior), verification may fail. \
-         See extract_signed_info_xml documentation for details."
+        "SAML signature verification uses a common-subset Exclusive C14N for <ds:SignedInfo> \
+         (namespace rewriting not implemented). If your IdP relies on full inclusive C14N, \
+         verification may fail (fail-closed). See canonicalize_signed_info_c14n_subset docs."
     );
 
     // 5. 解析 IdP RSA 公钥并验证签名（PKCS#1 v1.5 + SHA-256）
@@ -1403,7 +1598,7 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
     })?;
 
     let verifying_key = VerifyingKey::<Sha256>::new(public_key);
-    match verifying_key.verify(signed_info_xml.as_bytes(), &signature) {
+    match verifying_key.verify(signed_info_canonical.as_bytes(), &signature) {
         Ok(()) => {},
         Err(_) => {
             tracing::warn!(

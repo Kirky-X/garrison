@@ -64,18 +64,19 @@ impl SsoClient {
     /// - `secret`: HMAC 签名密钥（用于 ticket 防伪造，禁止空字符串）。
     ///
     /// # 错误
-    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`。
-    pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> Self {
+    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（不 panic，可恢复配置错误）。
+    pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> GarrisonResult<Self> {
         let secret: String = secret.into();
-        assert!(
-            !secret.is_empty(),
-            "SSO secret must not be empty (per security audit M5: ticket must be signed)"
-        );
-        Self {
+        if secret.is_empty() {
+            return Err(GarrisonError::InvalidParam(
+                "sso-client-secret-empty::".to_string(),
+            ));
+        }
+        Ok(Self {
             dao,
             ticket_ttl_seconds: DEFAULT_TICKET_TTL,
             secret,
-        }
+        })
     }
 
     /// 设置票据 TTL（秒），默认 60 秒。
@@ -169,11 +170,11 @@ impl SsoClient {
         let data: SsoTicketData = serde_json::from_str(&value)
             .map_err(|e| GarrisonError::Internal(format!("sso-ticket-deserialize::{}", e)))?;
         if data.client_id != client_id {
-            // client_id 不匹配：不消费票据，允许正确 client_id 后续重试
-            return Err(GarrisonError::InvalidToken(format!(
-                "sso-ticket-client-id-mismatch::{}::{}",
-                data.client_id, client_id
-            )));
+            // client_id 不匹配：不消费票据，允许正确 client_id 后续重试。
+            // 安全修复：错误消息固定，不回显存储/调用方 client_id（防止枚举有效 client_id）。
+            return Err(GarrisonError::InvalidToken(
+                "sso-ticket-client-id-mismatch::".to_string(),
+            ));
         }
         // 步骤 2: 原子 get_and_delete 消费票据（消除 TOCTOU 竞态）
         // 并发场景：多个同 client_id 请求都通过步骤 1，但仅一个 get_and_delete 返回 Some

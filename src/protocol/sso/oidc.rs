@@ -170,17 +170,29 @@ pub struct OidcDiscoveryConfig {
 /// OIDC UserInfo 响应。
 ///
 /// 对应 OIDC UserInfo endpoint 返回的标准 claims。
+///
+/// # 可选 claims（修复：真实 IdP 兼容性）
+///
+/// 按 OIDC Core spec（Standard Claims），UserInfo 响应中**仅 `sub` 必需**，
+/// `email` / `name` / `preferred_username` / `picture` 均为可选——真实 IdP
+///（Google、Azure AD、Okta 等）按请求 scope 不同经常省略部分字段。故除
+/// `sub` 外全部字段标注 `#[serde(default)]`（缺失时反序列化为空字符串），
+/// 避免可选 claim 缺失导致 `get_user_info` 解析失败（登录不可用）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OidcUserInfo {
-    /// 主体标识（subject identifier）。
+    /// 主体标识（subject identifier，OIDC spec 唯一必需 claim）。
     pub sub: String,
-    /// 邮箱地址。
+    /// 邮箱地址（可选 claim，缺失时为空字符串）。
+    #[serde(default)]
     pub email: String,
-    /// 显示名称。
+    /// 显示名称（可选 claim，缺失时为空字符串）。
+    #[serde(default)]
     pub name: String,
-    /// 首选用户名。
+    /// 首选用户名（可选 claim，缺失时为空字符串）。
+    #[serde(default)]
     pub preferred_username: String,
-    /// 头像 URL。
+    /// 头像 URL（可选 claim，缺失时为空字符串）。
+    #[serde(default)]
     pub picture: String,
 }
 
@@ -939,6 +951,28 @@ mod tests {
             user_info.preferred_username
         );
         assert_eq!(deserialized.picture, user_info.picture);
+    }
+
+    /// 可选 claims 缺失时仍可反序列化（修复：真实 IdP 兼容性）。
+    ///
+    /// OIDC spec 仅 `sub` 必需；Google/Azure AD/Okta 等按 scope 省略
+    /// email/name/preferred_username/picture，缺失不得导致解析失败。
+    #[test]
+    fn oidc_user_info_missing_optional_claims_deserializes() {
+        // 仅含必需的 sub（真实 IdP 常见最小响应）
+        let deserialized: OidcUserInfo =
+            serde_json::from_str(r#"{"sub":"sub-only"}"#).expect("仅 sub 应可反序列化");
+        assert_eq!(deserialized.sub, "sub-only");
+        assert_eq!(deserialized.email, "", "缺失的可选 claim 应为空字符串");
+        assert_eq!(deserialized.name, "");
+        assert_eq!(deserialized.preferred_username, "");
+        assert_eq!(deserialized.picture, "");
+
+        // 缺 sub 仍应失败（必需 claim 不能静默为空）
+        assert!(
+            serde_json::from_str::<OidcUserInfo>(r#"{"email":"a@b.com"}"#).is_err(),
+            "缺失必需的 sub 应反序列化失败"
+        );
     }
 
     /// OidcDiscoveryConfig 实现 Clone + Debug（spec R-003 验收标准）。

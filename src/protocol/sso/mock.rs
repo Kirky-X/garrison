@@ -6,16 +6,36 @@
 //! 本模块仅在 `cfg(test)` 下编译（通过 `mod.rs` 中的 `#[cfg(test)] mod mock;` 声明），
 //! 提供 `MockDao`（基于 `tokio::sync::Mutex<HashMap>` 模拟 DAO），
 //! 供 `protocol::sso::tests` 票据签发/校验测试复用。
+//!
+//! TTL 语义（对齐产品 `dao::InMemoryDao`）：
+//! - `set(key, value, ttl_seconds)`：`ttl_seconds == 0` 表示永不过期，
+//!   否则记录过期时间点；
+//! - `get` 读取时惰性判断过期，过期键即删即返 `None`；
+//! - `expire(key, seconds)`：改写过期时间点，键不存在返回 `Err(Dao)`（与产品一致）。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
+
+/// 单条 mock 条目：值 + 可选过期时间点（`None` = 永不过期）。
+struct MockEntry {
+    value: String,
+    expires_at: Option<Instant>,
+}
+
+impl MockEntry {
+    /// 是否已过期（`expires_at` 为 `None` 时永不过期）。
+    fn is_expired(&self, now: Instant) -> bool {
+        matches!(self.expires_at, Some(t) if t <= now)
+    }
+}
 
 /// 测试用 Mock DAO，支持 TTL 模拟。
 pub struct MockDao {
-    data: Mutex<HashMap<String, String>>,
+    data: Mutex<HashMap<String, MockEntry>>,
 }
 
 impl MockDao {
@@ -30,28 +50,60 @@ impl MockDao {
 #[async_trait]
 impl GarrisonDao for MockDao {
     async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
-        let data = self.data.lock().await;
-        Ok(data.get(key).cloned())
+        let mut data = self.data.lock().await;
+        // 惰性过期：读取时判断，过期即删即返 None
+        match data.get(key) {
+            Some(entry) if entry.is_expired(Instant::now()) => {
+                data.remove(key);
+                Ok(None)
+            },
+            Some(entry) => Ok(Some(entry.value.clone())),
+            None => Ok(None),
+        }
     }
 
-    async fn set(&self, key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
+        let expires_at = if ttl_seconds == 0 {
+            None
+        } else {
+            Some(Instant::now() + Duration::from_secs(ttl_seconds))
+        };
         let mut data = self.data.lock().await;
-        data.insert(key.to_string(), value.to_string());
+        data.insert(
+            key.to_string(),
+            MockEntry {
+                value: value.to_string(),
+                expires_at,
+            },
+        );
         Ok(())
     }
 
     async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         let mut data = self.data.lock().await;
-        if data.contains_key(key) {
-            data.insert(key.to_string(), value.to_string());
-            Ok(())
-        } else {
-            Err(GarrisonError::Dao("sso-mock-key-not-found".to_string()))
+        match data.get_mut(key) {
+            Some(entry) => {
+                entry.value = value.to_string();
+                Ok(())
+            },
+            None => Err(GarrisonError::Dao("sso-mock-key-not-found".to_string())),
         }
     }
 
-    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
-        Ok(())
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
+        let mut data = self.data.lock().await;
+        match data.get_mut(key) {
+            Some(entry) => {
+                entry.expires_at = if seconds == 0 {
+                    None
+                } else {
+                    Some(Instant::now() + Duration::from_secs(seconds))
+                };
+                Ok(())
+            },
+            // 对齐产品 InMemoryDao：对不存在的键 expire 返回 Err
+            None => Err(GarrisonError::Dao(format!("sso-mock-key-missing::{}", key))),
+        }
     }
 
     async fn delete(&self, key: &str) -> GarrisonResult<()> {
@@ -62,7 +114,18 @@ impl GarrisonDao for MockDao {
 
     async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
         let mut data = self.data.lock().await;
-        Ok(data.remove(key))
+        // 过期键视为不存在：删除并返回 None
+        match data.get(key) {
+            Some(entry) if entry.is_expired(Instant::now()) => {
+                data.remove(key);
+                Ok(None)
+            },
+            Some(_) => {
+                let entry = data.remove(key).expect("entry 已确认存在");
+                Ok(Some(entry.value))
+            },
+            None => Ok(None),
+        }
     }
 
     // T012/架构审查 A3：其余 5 个原子方法经子集宏展开（逻辑单点维护于
@@ -101,5 +164,55 @@ mod mock_dao_coverage_tests {
             let _ = dao.insert_role_hierarchy_edge(0, "c", "p").await;
             let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
         }
+    }
+
+    /// TTL 语义：set 带 ttl 的键过期后 get 返回 None（真实过期，而非永不过期）。
+    #[tokio::test]
+    async fn mock_dao_ttl_expires_key() {
+        let dao = MockDao::new();
+        dao.set("ttl-key", "v", 1).await.unwrap();
+        // 过期前可读
+        assert_eq!(dao.get("ttl-key").await.unwrap().as_deref(), Some("v"));
+        // 等待过期（TTL=1s）
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert_eq!(
+            dao.get("ttl-key").await.unwrap(),
+            None,
+            "超过 TTL 后 get 应返回 None"
+        );
+    }
+
+    /// ttl_seconds=0 表示永不过期。
+    #[tokio::test]
+    async fn mock_dao_ttl_zero_means_permanent() {
+        let dao = MockDao::new();
+        dao.set("perm-key", "v", 0).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert_eq!(
+            dao.get("perm-key").await.unwrap().as_deref(),
+            Some("v"),
+            "ttl=0 应永不过期"
+        );
+    }
+
+    /// expire 实际缩短过期时间；对不存在的键返回 Err（对齐产品语义）。
+    #[tokio::test]
+    async fn mock_dao_expire_invalidates_key() {
+        let dao = MockDao::new();
+        dao.set("exp-key", "v", 0).await.unwrap();
+        dao.expire("exp-key", 1).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+        assert_eq!(
+            dao.get("exp-key").await.unwrap(),
+            None,
+            "expire 后超过时长 get 应返回 None"
+        );
+        // 不存在的键 expire 返回 Err
+        let missing = dao.expire("no-such-key", 10).await;
+        assert!(
+            matches!(missing, Err(GarrisonError::Dao(_))),
+            "对不存在键 expire 应返回 Err，实际: {:?}",
+            missing
+        );
     }
 }

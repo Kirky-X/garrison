@@ -49,7 +49,14 @@ pub mod provider_names {
 ///
 /// `provider` 字段为 `String` 类型（非枚举），允许外部 crate 自定义 provider 标识。
 /// 内置 provider 用 [`provider_names`] 模块的常量（`"wechat"` / `"alipay"` / `"wechat_mini_app"`）。
-#[derive(Debug, Clone)]
+///
+/// # Debug 脱敏（安全修复）
+///
+/// 本类型手动实现 `Debug`（不派生）：`raw` 字段承载第三方平台原始响应 JSON，
+/// 可能含 `access_token` / `session_key` / PII，派生 `Debug` 会在日志、
+/// tracing span 或错误上下文中明文输出。`Debug` 输出对 `raw` 仅打印
+/// `<redacted: N bytes>` 摘要（N 为序列化字节数），其余字段原样输出。
+#[derive(Clone)]
 pub struct SocialUserInfo {
     /// 用户来源平台标识（字符串，外部 crate 可自定义）。
     pub provider: String,
@@ -62,7 +69,31 @@ pub struct SocialUserInfo {
     /// 跨应用统一 ID（微信 unionid / 华为 unionID，用于同一开发者主体下多应用账号打通）。
     pub union_id: Option<String>,
     /// 第三方平台原始响应 JSON（调试用，不应依赖其结构）。
+    ///
+    /// 内置 provider 已剥离 `access_token` / `session_key` 等敏感凭据字段
+    ///（见 `wechat::strip_sensitive_fields`），但仍可能含 PII——禁止原样
+    /// 打印/持久化。
     pub raw: Value,
+}
+
+impl std::fmt::Debug for SocialUserInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // 安全修复：raw 不进 Debug 输出，仅以字节数摘要标注（脱敏）。
+        f.debug_struct("SocialUserInfo")
+            .field("provider", &self.provider)
+            .field("provider_user_id", &self.provider_user_id)
+            .field("nickname", &self.nickname)
+            .field("avatar", &self.avatar)
+            .field("union_id", &self.union_id)
+            .field(
+                "raw",
+                &format_args!(
+                    "<redacted: {} bytes>",
+                    serde_json::to_vec(&self.raw).map(|v| v.len()).unwrap_or(0)
+                ),
+            )
+            .finish()
+    }
 }
 
 // ============================================================================
@@ -199,6 +230,18 @@ pub trait SocialLoginProvider: Send + Sync {
     /// 实现必须返回完整 `SocialUserInfo`（必要时内部调用 `get_user_info`）。
     /// `social_callback` handler 直接使用返回的 `provider_user_id` 创建绑定，
     /// 若 `provider_user_id` 为空会导致 500（fail-closed）。
+    ///
+    /// # 实现者契约（必须遵守）
+    ///
+    /// - **`provider_user_id` 非空**：实现者必须在 `provider_user_id` 为空串
+    ///   （响应缺失该字段或值为空）时返回明确的 `Err`（如
+    ///   `GarrisonError::Network`），**不得**以空字符串作为
+    ///   `provider_user_id` 返回 `Ok`——空串会绕过绑定幂等性约束并最终引发
+    ///   handler 500。推荐做法：提取字段时用
+    ///   `.filter(|s| !s.is_empty())` 后再 `ok_or_else` 转换为错误
+    ///   （参考 `wechat::WechatProvider::exchange_token`）。
+    /// - **`raw` 不得含敏感凭据**：返回前剥离 `access_token` / `session_key`
+    ///   等凭据字段（参考 `wechat::strip_sensitive_fields`）。
     ///
     /// # 参数
     /// - `code`: 授权码（第三方平台回调时附在 query 参数，一次性消费）
