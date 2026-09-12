@@ -20,9 +20,9 @@
 ///
 /// let secret = b"12345678901234567890".to_vec();
 /// let handler = TotpHandler::new(secret, 30, 6).unwrap();
-/// let code = handler.generate(1700000000);
+/// let code = handler.generate(1700000000).unwrap();
 /// assert_eq!(code.len(), 6);
-/// assert!(handler.validate(&code, 1700000000));
+/// assert!(handler.validate(&code, 1700000000).unwrap());
 /// # }
 /// ```
 pub struct TotpHandler {

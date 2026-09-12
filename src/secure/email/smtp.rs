@@ -26,6 +26,18 @@ pub struct SmtpConfig {
     /// 发件人邮箱地址（默认同 username）。
     pub from_addr: String,
     /// 是否使用 TLS（默认 true）。
+    ///
+    /// # ⚠️ 危险配置（务必阅读）
+    ///
+    /// **`use_tls = false` 时使用 `builder_dangerous` 构建明文 SMTP 传输**：
+    /// SMTP 凭据（`username`/`password`）与邮件正文全部以**明文**在网络上传输，
+    /// 任何链路窃听者（同网段、代理、运营商）均可直接截获凭据与内容。
+    /// 构造时会输出 `tracing::warn!` 告警，但**不会拒绝构造**（保留对内网
+    /// 无 TLS relay / 本地 mailhog 等场景的兼容，属显式配置的可用性取舍）。
+    ///
+    /// 生产环境必须保持 `use_tls = true`（STARTTLS，默认）；仅在以下场景才允许
+    /// 关闭：内网可信 relay、本地测试容器。关闭前请确认网络链路可信，
+    /// 并确保告警日志被监控采集。
     pub use_tls: bool,
 }
 

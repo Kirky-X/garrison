@@ -5,6 +5,7 @@
 
 use super::TotpHandler;
 use crate::dao::GarrisonDao;
+use crate::error::GarrisonError;
 
 /// RFC 6238 测试密钥（20 字节 ASCII）。
 const TEST_SECRET: &[u8] = b"12345678901234567890";
@@ -24,7 +25,7 @@ fn new_with_default_params() {
 #[test]
 fn new_with_custom_params() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 60, 8).unwrap();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     assert_eq!(code.len(), 8);
 }
 
@@ -44,7 +45,7 @@ fn new_with_short_secret_errors() {
 #[test]
 fn generate_returns_6_digits() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     assert_eq!(code.len(), 6);
     assert!(code.chars().all(|c| c.is_ascii_digit()));
 }
@@ -54,15 +55,15 @@ fn generate_returns_6_digits() {
 fn generate_is_deterministic() {
     let h1 = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let h2 = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    assert_eq!(h1.generate(1700000000), h2.generate(1700000000));
+    assert_eq!(h1.generate(1700000000).unwrap(), h2.generate(1700000000).unwrap());
 }
 
 /// 同一 30 秒窗口内验证码稳定（spec Scenario）。
 #[test]
 fn same_time_window_produces_same_code() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let c1 = handler.generate(1700000000);
-    let c2 = handler.generate(1700000005); // 同一窗口内
+    let c1 = handler.generate(1700000000).unwrap();
+    let c2 = handler.generate(1700000005).unwrap(); // 同一窗口内
     assert_eq!(c1, c2);
 }
 
@@ -70,9 +71,51 @@ fn same_time_window_produces_same_code() {
 #[test]
 fn different_time_window_produces_different_code() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let c1 = handler.generate(1700000000);
-    let c2 = handler.generate(1700000030); // 下一窗口
+    let c1 = handler.generate(1700000000).unwrap();
+    let c2 = handler.generate(1700000030).unwrap(); // 下一窗口
     assert_ne!(c1, c2);
+}
+
+/// 负时间戳 generate 返回 InvalidParam（不再静默回绕为巨大 u64 计数器）。
+#[test]
+fn generate_negative_now_returns_invalid_param() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let result = handler.generate(-1);
+    assert!(
+        matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-totp-negative-now")),
+        "负 now 应返回 InvalidParam（secure-totp-negative-now），实际: {:?}",
+        result
+    );
+}
+
+/// 负时间戳 validate 返回 InvalidParam。
+#[test]
+fn validate_negative_now_returns_invalid_param() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let result = handler.validate("123456", -1);
+    assert!(
+        matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-totp-negative-now")),
+        "负 now 应返回 InvalidParam（secure-totp-negative-now），实际: {:?}",
+        result
+    );
+}
+
+/// 负时间戳 validate_and_consume 返回 InvalidParam（且不写 replay_key）。
+#[tokio::test]
+async fn validate_and_consume_negative_now_returns_invalid_param() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
+    let dao = crate::dao::tests::MockDao::new();
+    let result = handler
+        .validate_and_consume("user-neg-now", "123456", -1, &dao)
+        .await;
+    assert!(
+        matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-totp-negative-now")),
+        "负 now 应返回 InvalidParam（secure-totp-negative-now），实际: {:?}",
+        result
+    );
+    // 不应留下 replay_key 残留
+    let stored = dao.get("totp:used:user-neg-now:123456").await.unwrap();
+    assert!(stored.is_none(), "负 now 拒绝时不应写入 replay_key");
 }
 
 // ========================================================================
@@ -83,39 +126,39 @@ fn different_time_window_produces_different_code() {
 #[test]
 fn validate_current_window_succeeds() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let code = handler.generate(1700000000);
-    assert!(handler.validate(&code, 1700000000));
+    let code = handler.generate(1700000000).unwrap();
+    assert!(handler.validate(&code, 1700000000).unwrap());
 }
 
 /// 允许前一个时间窗口的验证码（spec Scenario，±1 窗口容差）。
 #[test]
 fn validate_previous_window_succeeds() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let code = handler.generate(1699999970); // 前一窗口
-    assert!(handler.validate(&code, 1700000000));
+    let code = handler.generate(1699999970).unwrap(); // 前一窗口
+    assert!(handler.validate(&code, 1700000000).unwrap());
 }
 
 /// 允许后一个时间窗口的验证码（spec Scenario，±1 窗口容差）。
 #[test]
 fn validate_next_window_succeeds() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let code = handler.generate(1700000030); // 后一窗口
-    assert!(handler.validate(&code, 1700000000));
+    let code = handler.generate(1700000030).unwrap(); // 后一窗口
+    assert!(handler.validate(&code, 1700000000).unwrap());
 }
 
 /// 超出容差窗口的验证码校验失败（spec Scenario）。
 #[test]
 fn validate_beyond_tolerance_fails() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let code = handler.generate(1699999940); // 前两个窗口
-    assert!(!handler.validate(&code, 1700000000));
+    let code = handler.generate(1699999940).unwrap(); // 前两个窗口
+    assert!(!handler.validate(&code, 1700000000).unwrap());
 }
 
 /// 错误验证码校验失败。
 #[test]
 fn validate_wrong_code_fails() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    assert!(!handler.validate("000000", 1700000000));
+    assert!(!handler.validate("000000", 1700000000).unwrap());
 }
 
 // ========================================================================
@@ -144,7 +187,7 @@ fn base32_secret_matches_raw_bytes() {
     let bytes = TotpHandler::secret_from_base32(b32_str).unwrap();
     let h1 = TotpHandler::new(bytes.clone(), 30, 6).unwrap();
     let h2 = TotpHandler::new(bytes, 30, 6).unwrap();
-    assert_eq!(h1.generate(1700000000), h2.generate(1700000000));
+    assert_eq!(h1.generate(1700000000).unwrap(), h2.generate(1700000000).unwrap());
 }
 
 // ========================================================================
@@ -156,7 +199,7 @@ fn base32_secret_matches_raw_bytes() {
 async fn validate_and_consume_first_use_succeeds() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     let result = handler
         .validate_and_consume("user-001", &code, 1700000000, &dao)
         .await;
@@ -169,7 +212,7 @@ async fn validate_and_consume_first_use_succeeds() {
 async fn validate_and_consume_rejects_replay() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
 
     let first = handler
         .validate_and_consume("user-001", &code, 1700000000, &dao)
@@ -189,7 +232,7 @@ async fn validate_and_consume_rejects_replay() {
 async fn validate_and_consume_isolates_by_login_id() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
 
     let user_a = handler
         .validate_and_consume("user-A", &code, 1700000000, &dao)
@@ -229,8 +272,8 @@ async fn validate_and_consume_wrong_code_returns_false_without_recording() {
 async fn validate_and_consume_different_codes_both_succeed() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code1 = handler.generate(1700000000);
-    let code2 = handler.generate(1700000030);
+    let code1 = handler.generate(1700000000).unwrap();
+    let code2 = handler.generate(1700000030).unwrap();
 
     if code1 == code2 {
         return;
@@ -264,7 +307,7 @@ async fn validate_and_consume_concurrent_no_double_accept() {
 
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = Arc::new(crate::dao::tests::MockDao::new());
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     let accept_count = Arc::new(AtomicUsize::new(0));
 
     let mut handles = Vec::new();
@@ -385,7 +428,7 @@ async fn e3_incr_returns_2_on_replay() {
 async fn e3_replay_key_format_is_correct() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     handler
         .validate_and_consume("user-format-test", &code, 1700000000, &dao)
         .await
@@ -406,7 +449,7 @@ async fn e3_replay_key_format_is_correct() {
 async fn e3_replay_key_ttl_is_step_times_3() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     handler
         .validate_and_consume("user-ttl-30", &code, 1700000000, &dao)
         .await
@@ -433,7 +476,7 @@ async fn e3_replay_key_ttl_is_step_times_3() {
 async fn e3_step_60_produces_ttl_180() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 60, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     handler
         .validate_and_consume("user-ttl-60", &code, 1700000000, &dao)
         .await
@@ -460,7 +503,7 @@ async fn e3_previous_window_code_accepted_first_time() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
     // 生成前一窗口的验证码（now-30s）
-    let prev_code = handler.generate(1699999970);
+    let prev_code = handler.generate(1699999970).unwrap();
     let result = handler
         .validate_and_consume("user-prev-win", &prev_code, 1700000000, &dao)
         .await
@@ -473,7 +516,7 @@ async fn e3_previous_window_code_accepted_first_time() {
 async fn e3_previous_window_code_rejected_on_replay() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let prev_code = handler.generate(1699999970);
+    let prev_code = handler.generate(1699999970).unwrap();
     let first = handler
         .validate_and_consume("user-prev-replay", &prev_code, 1700000000, &dao)
         .await
@@ -496,7 +539,7 @@ async fn e3_concurrent_different_login_ids_no_interference() {
 
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = Arc::new(crate::dao::tests::MockDao::new());
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     let accept_count = Arc::new(AtomicUsize::new(0));
 
     let mut handles = Vec::new();
@@ -532,8 +575,8 @@ async fn e3_concurrent_different_login_ids_no_interference() {
 async fn e3_replay_key_isolated_per_code() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code1 = handler.generate(1700000000);
-    let code2 = handler.generate(1700000030);
+    let code1 = handler.generate(1700000000).unwrap();
+    let code2 = handler.generate(1700000030).unwrap();
 
     // 若两个窗口的 code 恰好相同（极小概率），跳过测试
     if code1 == code2 {
@@ -589,7 +632,7 @@ async fn e3_wrong_code_does_not_write_replay_key() {
 async fn e3_incr_count_increments_with_replays() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let dao = crate::dao::tests::MockDao::new();
-    let code = handler.generate(1700000000);
+    let code = handler.generate(1700000000).unwrap();
     let replay_key = format!("totp:used:user-count:{}", code);
 
     // 首次通过 + 3 次重放

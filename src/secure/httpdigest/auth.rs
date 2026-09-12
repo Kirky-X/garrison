@@ -48,9 +48,19 @@ impl HttpDigestAuth {
     /// - `Ok(Self)`: 构造成功。
     /// - `Err(GarrisonError::Internal)`: 不支持的算法。
     pub fn new(realm: &str, algorithm: &str) -> GarrisonResult<Self> {
+        let algorithm: DigestAlgorithm = algorithm.parse()?;
+        if algorithm == DigestAlgorithm::Md5 {
+            // MD5 无编译期 feature 门控（兼容旧客户端），改为运行时告警便于审计每次使用
+            // （MD5 已被证明存在碰撞攻击，新系统应使用 SHA256）
+            tracing::warn!(
+                realm = %realm,
+                algorithm = "MD5",
+                "HttpDigestAuth constructed with MD5; MD5 is collision-broken and must only be used for legacy client compatibility"
+            );
+        }
         Ok(Self {
             realm: realm.to_string(),
-            algorithm: algorithm.parse()?,
+            algorithm,
             nonce_ttl: DEFAULT_NONCE_TTL_SECONDS,
             dao: None,
             server_key: None,
@@ -371,6 +381,10 @@ impl HttpDigestAuth {
 
     /// 校验客户端 Authorization header（仅支持 qop=auth）。
     ///
+    /// 客户端响应 qop=auth-int 时本方法**直接拒绝**（返回 false）：
+    /// auth-int 需要 body 参与 HA2 计算，必须改用
+    /// [`validate_with_body`](Self::validate_with_body) 传入请求体。
+    ///
     /// # 参数
     /// - `authorization_header`: 客户端发送的 Authorization header 值。
     /// - `method`: HTTP method（如 "GET" / "POST"）。
@@ -379,7 +393,8 @@ impl HttpDigestAuth {
     ///
     /// # 返回
     /// - `true`: 校验通过。
-    /// - `false`: 校验失败（密码错误 / method 不匹配 / qop 不支持 / nonce 过期 / 格式错误）。
+    /// - `false`: 校验失败（密码错误 / method 不匹配 / qop=auth-int 未携带 body /
+    ///   qop 不支持 / nonce 过期 / 格式错误）。
     pub fn validate(&self, authorization_header: &str, method: &str, uri: &str, ha1: &str) -> bool {
         self.validate_inner(authorization_header, method, uri, None, ha1)
     }
@@ -444,8 +459,14 @@ impl HttpDigestAuth {
                         self.algorithm.hash(ha2_input.as_bytes())
                     },
                     Some("auth-int") => {
-                        // auth-int 需要 body，HA2 = H(method:uri:H(body))
-                        let body_bytes = body.unwrap_or(&[]);
+                        // auth-int 需要 body，HA2 = H(method:uri:H(body))。
+                        // body 缺失时拒绝（fail-closed）：原实现 `body.unwrap_or(&[])`
+                        // 以空 body 计算 HA2，攻击者可用空 body 预计算合法 response，
+                        // 通过不携带 body 的 validate() 绕过 body 绑定校验。
+                        let body_bytes = match body {
+                            Some(b) => b,
+                            None => return false,
+                        };
                         let body_hash = self.algorithm.hash(body_bytes);
                         let ha2_input = format!("{}:{}:{}", method, uri, body_hash);
                         self.algorithm.hash(ha2_input.as_bytes())

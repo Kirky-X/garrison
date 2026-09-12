@@ -14,6 +14,23 @@
 //!
 //! MD5 算法已被证明存在碰撞攻击，不建议在新系统中使用。
 //! 仅在兼容旧客户端时使用 MD5，新系统应使用 SHA256（现为默认值）。
+//! `MD5` 变体未做编译期 feature 门控（兼容旧客户端的可用性取舍），
+//! 但 `HttpDigestAuth::new("...", "MD5")` 构造时会输出 `tracing::warn!`
+//! 运行时告警，便于审计每次 MD5 的使用。
+//!
+//! # 重放防护（务必阅读）
+//!
+//! nonce 本身仅是 `base64(timestamp:uuid)` + TTL（默认 300s），**不防重放**。
+//! 完整的 nc 单调性重放防护（RFC 7616 §3.4.6）必须通过 [`HttpDigestAuth::with_dao`]
+//! 注入 DAO 才会启用：
+//!
+//! - **未注入 DAO**：nc 校验被跳过（fail-open，仅进程级 warn 一次），
+//!   攻击者在 nonce TTL（默认 300s）窗口内可任意重放同一 Authorization header。
+//! - **注入 DAO**：nc 回退/重复被拒绝（fail-closed），DAO 故障时拒绝认证。
+//! - **未注入 server_key**：nonce 无 HMAC 签名，客户端可自铸 nonce（仍受 TTL 约束）。
+//!
+//! 生产环境必须 `with_dao(...)`（并强烈建议 `with_server_key(...)`）；
+//! API 无编译期强制，遗漏只会在运行期产生 warn 日志。
 
 /// Digest 算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

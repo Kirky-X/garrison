@@ -143,6 +143,9 @@ fn escape_into(out: &mut String, s: &str) {
 /// 解析从 `rest` 开头的 HTML 标签，返回 `(标签名, 是否闭合标签, 属性文本, 标签后的剩余字符串)`。
 ///
 /// `rest` 必须以 `<` 开头。若无法解析为有效标签（无标签名或无闭合 `>`）返回 `None`。
+///
+/// 扫描属性段时跟踪引号状态：引号内的 `>` 不视为标签结束
+/// （防 `<a href="a>b">text</a>` 在内嵌 `>` 处被截断产生畸变输出）。
 fn parse_tag(rest: &str) -> Option<(&str, bool, &str, &str)> {
     let bytes = rest.as_bytes();
     if bytes.is_empty() || bytes[0] != b'<' {
@@ -167,7 +170,24 @@ fn parse_tag(rest: &str) -> Option<(&str, bool, &str, &str)> {
     let name = &rest[name_start..pos];
 
     let attrs_start = pos;
-    while pos < bytes.len() && bytes[pos] != b'>' {
+    // 引号感知扫描：仅在引号外将 `>` 视为标签结束
+    let mut quote: Option<u8> = None;
+    while pos < bytes.len() {
+        let b = bytes[pos];
+        match quote {
+            Some(q) => {
+                if b == q {
+                    quote = None;
+                }
+            },
+            None => {
+                if b == b'"' || b == b'\'' {
+                    quote = Some(b);
+                } else if b == b'>' {
+                    break;
+                }
+            },
+        }
         pos += 1;
     }
     if pos >= bytes.len() {
@@ -326,7 +346,8 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
 
 /// 从属性段中移除危险 URI scheme。
 ///
-/// 扫描 `href=`/`src=`/`xlink:href=` 属性值，若 scheme 不在安全白名单
+/// 扫描 `href=`/`src=`/`xlink:href=`/`action=`/`formaction=`/`poster=`/`background=`
+/// 属性值，若 scheme 不在安全白名单
 /// （`http`/`https`/`mailto`/`#`/`/`/`./`/`../`/相对路径无 scheme）则将值替换为 `#`。
 /// 防止 `javascript:`/`data:`/`vbscript:` 等 URI scheme 执行 XSS。
 ///
@@ -344,6 +365,9 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
 /// - 大小写绕过：`JavaScript:`/`JAVASCRIPT:`/`java\tscript:`（前导空白和控制字符）
 /// - 前导空白：` javascript:alert(1)`
 /// - 三种引号形式：双引号、单引号、无引号
+/// - `=` 与引号间空白：`href= "javascript:alert(1)"`（值解析前先跳过空白）
+/// - 属性紧跟引号无空白：`<a title="x"href="javascript:alert(1)">`
+///   （属性边界识别含 `"`/`'`，与 `strip_event_handlers` 一致）
 ///
 /// # 实现策略
 ///
@@ -356,9 +380,16 @@ fn strip_dangerous_uri(attrs: &str) -> String {
     let mut last_copy = 0;
 
     while i < bytes.len() {
-        let is_attr_start = i == 0 || bytes[i - 1].is_ascii_whitespace();
-        if is_attr_start {
-            if let Some(value_start) = match_target_attr(bytes, i) {
+        // 属性边界与 strip_event_handlers 一致：位置 0、空白、或 `"`/`'` 之后
+        // （防 `title="x"href="javascript:..."` 引号后无空白的绕过）
+        if is_attr_start_pos(bytes, i) {
+            if let Some(eq_end) = match_target_attr(bytes, i) {
+                // 跳过 `=` 与值之间的空白（防 `href= "javascript:..."` 绕过：
+                // 原实现无引号分支遇空白立即返回空串，is_safe_uri("")=true 漏检）
+                let mut value_start = eq_end;
+                while value_start < bytes.len() && bytes[value_start].is_ascii_whitespace() {
+                    value_start += 1;
+                }
                 out.push_str(&attrs[last_copy..value_start]);
                 let (value_end, value_str) = extract_attr_value(bytes, value_start);
                 let stripped = value_str
@@ -381,12 +412,19 @@ fn strip_dangerous_uri(attrs: &str) -> String {
     out
 }
 
-/// 匹配 `bytes[i..]` 是否为 `href=`/`src=`/`xlink:href=`（大小写不敏感）。
+/// 匹配 `bytes[i..]` 是否为危险 URI 属性（大小写不敏感）：
+/// `href`/`src`/`xlink:href`（a/img/svg 等）与
+/// `action`（form）/`formaction`（input/button）/`poster`（video）/
+/// `background`（body/td，HTML4）。
 /// 返回 `=` 之后的位置或 `None`。
 fn match_target_attr(bytes: &[u8], i: usize) -> Option<usize> {
     match_attr_name(bytes, i, b"href")
         .or_else(|| match_attr_name(bytes, i, b"src"))
         .or_else(|| match_attr_name(bytes, i, b"xlink:href"))
+        .or_else(|| match_attr_name(bytes, i, b"action"))
+        .or_else(|| match_attr_name(bytes, i, b"formaction"))
+        .or_else(|| match_attr_name(bytes, i, b"poster"))
+        .or_else(|| match_attr_name(bytes, i, b"background"))
 }
 
 /// 检查从 `bytes[i..]` 开始是否匹配目标属性名（大小写不敏感），后跟 `=` 或空白+`=`。
@@ -993,6 +1031,144 @@ mod tests {
         assert!(
             !result.to_lowercase().contains("onerror"),
             "单引号属性后无空格 onerror 应被移除，实际: {}",
+            result
+        );
+    }
+
+    // ========================================================================
+    // strip_dangerous_uri 绕过回归测试（quote 边界 / =与引号间空白 / 新增危险属性）
+    // ========================================================================
+
+    /// 绕过 #5: `title="x"href="javascript:..."` — href 紧跟引号（无空白），
+    /// is_attr_start 需识别 `"`/`'` 边界，否则 URI 过滤被跳过。
+    #[test]
+    fn bypass_strips_dangerous_uri_after_quoted_attr_no_space() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a title="x"href="javascript:alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            r#"title="x"href 无空格时 javascript: 应被替换为 #，实际: {}"#,
+            result
+        );
+    }
+
+    /// 绕过 #6: `<a class="x"src="javascript:alert(1)">` — src 紧跟双引号。
+    #[test]
+    fn bypass_strips_dangerous_uri_src_after_quote() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["img"]));
+        let result = protector.sanitize(r#"<img class="x"src="javascript:alert(1)">"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            r#"class="x"src 无空格时 javascript: 应被替换为 #，实际: {}"#,
+            result
+        );
+    }
+
+    /// 绕过 #7: 单引号边界 — `title='x'href='javascript:...'`。
+    #[test]
+    fn bypass_strips_dangerous_uri_after_single_quoted_attr() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a title='x'href='javascript:alert(1)'>click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "单引号边界后 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// 绕过 #8: `href= "javascript:..."` — `=` 与引号间有空白，
+    /// 值解析需跳过空白后再取值，否则 is_safe_uri("") 恒真漏检。
+    #[test]
+    fn bypass_strips_dangerous_uri_with_space_between_equals_and_quote() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href= "javascript:alert(1)">click</a>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            r#"href= "javascript..." 应被替换为 #，实际: {}"#,
+            result
+        );
+    }
+
+    /// 绕过 #8 变体: `=` 与单引号间空白、以及 tab 分隔。
+    #[test]
+    fn bypass_strips_dangerous_uri_with_tab_between_equals_and_quote() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize("<a href=\t'javascript:alert(1)'>click</a>");
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            r#"href=\t'javascript...' 应被替换为 #，实际: {}"#,
+            result
+        );
+    }
+
+    /// `=` 与无引号值之间空白：合法相对路径值不受影响（保留原样）。
+    #[test]
+    fn strip_dangerous_uri_space_between_equals_keeps_safe_value() {
+        let attrs = r#"href= "/safe/path""#;
+        let result = strip_dangerous_uri(attrs);
+        assert_eq!(
+            result, attrs,
+            "安全 URI（= 与引号间有空格）应连同空白原样保留"
+        );
+    }
+
+    /// 新增危险 URI 属性：`<form action="javascript:alert(1)">` 应被替换。
+    #[test]
+    fn whitelist_strips_javascript_uri_in_form_action() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["form"]));
+        let result = protector.sanitize(r#"<form action="javascript:alert(1)">"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "form action 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// 新增危险 URI 属性：`<button formaction="javascript:alert(1)">` 应被替换。
+    #[test]
+    fn whitelist_strips_javascript_uri_in_formaction() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["button"]));
+        let result = protector.sanitize(r#"<button formaction="javascript:alert(1)">go</button>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "formaction 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// 新增危险 URI 属性：`<video poster="javascript:alert(1)">` 应被替换。
+    #[test]
+    fn whitelist_strips_javascript_uri_in_poster() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["video"]));
+        let result = protector.sanitize(r#"<video poster="javascript:alert(1)">"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "poster 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// 新增危险 URI 属性：`<td background="javascript:alert(1)">`（HTML4）应被替换。
+    #[test]
+    fn whitelist_strips_javascript_uri_in_background() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["td"]));
+        let result = protector.sanitize(r#"<td background="javascript:alert(1)">x</td>"#);
+        assert!(
+            !result.to_lowercase().contains("javascript"),
+            "background 中的 javascript: 应被替换为 #，实际: {}",
+            result
+        );
+    }
+
+    /// parse_tag 引号感知：属性值中的内嵌 `>` 不应截断标签。
+    /// `<a href="a>b">text</a>` → `<a href=&quot;a&gt;b&quot;>text</a>`（结构完整）。
+    #[test]
+    fn parse_tag_keeps_gt_inside_quoted_attr_value() {
+        let protector = XssProtector::new(XssMode::Whitelist(vec!["a"]));
+        let result = protector.sanitize(r#"<a href="a>b">text</a>"#);
+        assert_eq!(
+            result, r#"<a href=&quot;a&gt;b&quot;>text</a>"#,
+            "引号内的 > 不应截断标签，实际: {}",
             result
         );
     }

@@ -62,6 +62,14 @@ pub struct SmsRateLimiter {
 }
 
 /// SMS 验证码服务。
+///
+/// # DAO 注入约束（重要）
+///
+/// 本服务持有独立的 [`GarrisonDao`]（用于 code/attempts/unverified/recycled key），
+/// 同时内嵌的 [`SmsRateLimiter`] 也持有自己的 DAO（用于限速计数器与回滚）。
+/// **两者必须指向同一 DAO 实例/后端**（构造时传入同一个 `Arc`），框架不强制该约束：
+/// 若注入不同实例，服务与限速器将观察到不一致的状态（如限速器在一个后端递增、
+/// 服务在另一个后端读码），导致限速失效或验证码状态错乱。
 pub struct SmsVerificationService {
     rate_limiter: SmsRateLimiter,
     sender: Arc<dyn SmsSender>,

@@ -12,6 +12,23 @@
 //! - `Custom(String)` 变体使用 `regex::Regex` 将所有匹配项替换为 `***`（vuln-0010 D6 修复）
 
 use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+/// 正则编译缓存上限（防止动态构造的 pattern 无界增长占满内存）。
+///
+/// pattern 来自配置/代码（非用户输入），正常运行时去重后的 pattern 数远小于此值；
+/// 超过上限后新 pattern 仍可编译（只是不入缓存），不影响正确性。
+const REGEX_CACHE_CAP: usize = 256;
+
+/// 进程级正则编译缓存：pattern → 编译结果（`Regex` 内部为 Arc，clone 廉价）。
+///
+/// `MaskType::Custom` 每次匹配同一 pattern 时复用编译结果，消除
+/// `mask_value`/`mask_json` 热路径上的重复 `Regex::new` 开销（regex 编译代价远高于匹配）。
+fn regex_cache() -> &'static Mutex<HashMap<String, regex::Regex>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, regex::Regex>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
 
 /// 脱敏类型枚举。
 ///
@@ -50,8 +67,12 @@ pub enum MaskType {
 /// ```
 #[derive(Debug, Clone, Default)]
 pub struct SensitiveDataMasker {
-    /// 脱敏规则列表：`(脱敏类型, 字段名)`。
-    rules: Vec<(MaskType, &'static str)>,
+    /// 字段名 → 首个匹配规则（`with_rule` 时构建，O(1) 查找，替代原
+    /// `rules.iter().find()` 的 O(n×m) 线性扫描）。
+    ///
+    /// 保留"首个匹配规则生效"语义（与原 `iter().find()` 一致）：
+    /// 同一字段名多次添加规则时，以最先添加的为准。
+    index: HashMap<&'static str, MaskType>,
 }
 
 impl SensitiveDataMasker {
@@ -62,11 +83,14 @@ impl SensitiveDataMasker {
 
     /// 添加脱敏规则（builder 模式）。
     ///
+    /// 同一字段名重复添加时，保留首个规则（与 [`mask_field`](Self::mask_field)
+    /// 原"首个匹配生效"语义一致）。
+    ///
     /// # 参数
     /// - `mask_type`: 脱敏类型。
     /// - `field_name`: JSON Object 中需脱敏的字段名（`&'static str`）。
     pub fn with_rule(mut self, mask_type: MaskType, field_name: &'static str) -> Self {
-        self.rules.push((mask_type, field_name));
+        self.index.entry(field_name).or_insert(mask_type);
         self
     }
 
@@ -107,8 +131,8 @@ impl SensitiveDataMasker {
     /// # 返回
     /// 脱敏后的字符串。无匹配规则时返回原值；Custom regex 无效时返回 `"***"`。
     pub fn mask_field(&self, field: &str, value: &str) -> String {
-        match self.rules.iter().find(|(_, name)| *name == field) {
-            Some((mask_type, _)) => self.mask_value(value, mask_type),
+        match self.index.get(field) {
+            Some(mask_type) => self.mask_value(value, mask_type),
             None => value.to_string(),
         }
     }
@@ -134,9 +158,7 @@ impl SensitiveDataMasker {
                 let mut new_map = serde_json::Map::new();
                 for (key, val) in map {
                     let recursed = self.mask_json(val);
-                    let final_val = if let Some((mask_type, _)) =
-                        self.rules.iter().find(|(_, name)| *name == key.as_str())
-                    {
+                    let final_val = if let Some(mask_type) = self.index.get(key.as_str()) {
                         match &recursed {
                             Value::String(s) => Value::String(self.mask_value(s, mask_type)),
                             _ => recursed,
@@ -219,11 +241,13 @@ fn mask_bank_card(value: &str) -> String {
     format!("{prefix}{stars}{suffix}")
 }
 
-/// 自定义正则脱敏（vuln-0010 D6 修复）。
+/// 自定义正则脱敏（vuln-0010 D6 修复；编译结果经进程级缓存复用）。
 ///
 /// 使用 `regex::Regex` 将 `value` 中所有匹配 `regex_str` 的子串替换为 `"***"`。
-/// 正则编译失败时记录 `tracing::error!`（含 pattern 与错误信息）并返回 `"***"`
-/// 作为安全 fallback（fail-closed，避免泄露原值）。
+/// 正则按 pattern 缓存（见 [`regex_cache`]），同一 pattern 仅编译一次；
+/// 缓存未命中且编译失败时记录 `tracing::error!`（含 pattern 与错误信息）并返回
+/// `"***"` 作为安全 fallback（fail-closed，避免泄露原值；失败结果不入缓存，
+/// 保持原有的每次失败告警语义）。
 ///
 /// # 安全语义
 ///
@@ -243,16 +267,38 @@ fn mask_bank_card(value: &str) -> String {
 /// assert_eq!(result, "***-***-***");
 /// ```
 fn mask_custom(value: &str, regex_str: &str) -> String {
-    match regex::Regex::new(regex_str) {
-        Ok(re) => re.replace_all(value, "***").to_string(),
-        Err(e) => {
-            tracing::error!(
-                error = %e,
-                pattern = regex_str,
-                "Custom mask regex compilation failed; returning '***' as safe fallback"
-            );
-            "***".to_string()
-        },
+    let compiled: Option<regex::Regex> = {
+        let mut cache = match regex_cache().lock() {
+            Ok(guard) => guard,
+            // 缓存锁中毒（持锁线程 panic）时降级为继续使用，不影响脱敏正确性
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(re) = cache.get(regex_str) {
+            Some(re.clone())
+        } else {
+            match regex::Regex::new(regex_str) {
+                Ok(re) => {
+                    // 达到缓存上限后不再入缓存（新 pattern 仍即时编译，正确性不变）
+                    if cache.len() < REGEX_CACHE_CAP {
+                        cache.insert(regex_str.to_string(), re.clone());
+                    }
+                    Some(re)
+                },
+                // 编译失败不入缓存：保持原有的每次失败告警语义
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        pattern = regex_str,
+                        "Custom mask regex compilation failed; returning '***' as safe fallback"
+                    );
+                    None
+                },
+            }
+        }
+    };
+    match compiled {
+        Some(re) => re.replace_all(value, "***").to_string(),
+        None => "***".to_string(),
     }
 }
 

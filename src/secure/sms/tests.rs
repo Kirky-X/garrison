@@ -684,7 +684,7 @@ async fn rollback_invalid_phone_returns_invalid_param() {
     );
 }
 
-/// 回滚时 decr 失败应透传 Dao 错误（rollback 使用 `?` 传播，不吞错）。
+/// 回滚时 decr 失败应透传 Dao 错误（rollback 使用聚合策略：继续回滚天窗口，返回首个错误）。
 #[tokio::test]
 async fn rollback_decr_failure_propagates_error() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::with_fail_decr());
@@ -693,6 +693,141 @@ async fn rollback_decr_failure_propagates_error() {
     assert!(
         matches!(&result, Err(GarrisonError::Dao(msg)) if msg.contains("mock-decr-failed")),
         "回滚 decr 失败应透传 Dao 错误，实际: {:?}",
+        result
+    );
+}
+
+// ============================================================================
+// 窗口桶信息携带（check 与 rollback 共用同一桶键，防跨窗口边界递减错桶）
+// ============================================================================
+
+/// check_and_increment_with / rollback_with：携带窗口信息的精确回滚路径。
+#[tokio::test]
+async fn rollback_with_uses_check_windows() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::ok());
+    let limiter = SmsRateLimiter::new(dao.clone(), 100, 100);
+
+    let windows = limiter.check_and_increment_with("15800000009").await.unwrap();
+    assert_eq!(
+        window_counter_value(&dao, "15800000009", "hour").await,
+        Some("1".to_string())
+    );
+    // 使用 check 返回的窗口信息回滚：两个计数器递减到 0 → 被删除
+    limiter.rollback_with("15800000009", &windows).await.unwrap();
+    assert_eq!(
+        window_counter_value(&dao, "15800000009", "hour").await,
+        None,
+        "rollback_with 后 hour 计数器应被删除"
+    );
+    assert_eq!(
+        window_counter_value(&dao, "15800000009", "day").await,
+        None,
+        "rollback_with 后 day 计数器应被删除"
+    );
+}
+
+/// 前后空白归一化：带空白填充的手机号与裸手机号命中同一限速 key
+/// （防 `" 13800138000 "` 绕过限速），key 中不含空白。
+#[tokio::test]
+async fn check_and_increment_normalizes_phone_whitespace() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::ok());
+    let limiter = SmsRateLimiter::new(dao.clone(), 100, 100);
+
+    // 带前后空白的手机号发送成功
+    limiter.check_and_increment("  15800000010  ").await.unwrap();
+    // key 使用归一化后的手机号（无空白）
+    let keys = dao
+        .keys("sms:rate:15800000010:hour:*")
+        .await
+        .unwrap();
+    assert!(
+        !keys.is_empty(),
+        "归一化手机号应生成 sms:rate:15800000010:hour:* 的 key"
+    );
+    // 带空白填充的重复请求命中同一个 key（计数 2），而非生成新 key
+    limiter.check_and_increment("15800000010").await.unwrap();
+    let value = window_counter_value(&dao, "15800000010", "hour")
+        .await
+        .expect("两个请求应命中同一归一化 key");
+    assert_eq!(value, "2", "空白填充与裸手机号应共用同一计数器");
+    // 不存在含空白填充的 key（任何以空白开头的手机号 key）
+    let padded_keys = dao.keys("sms:rate: *").await.unwrap();
+    assert!(
+        padded_keys.is_empty(),
+        "不应存在含空白填充的限速 key，实际: {:?}",
+        padded_keys
+    );
+}
+
+/// 内部含空白的手机号被拒绝（前后空白 trim 归一化，内部空白无法归一化故拒绝）。
+#[test]
+fn validate_phone_rejects_inner_whitespace() {
+    let result = rate_limiter::validate_phone("138 0013 8000");
+    assert!(
+        matches!(&result, Err(GarrisonError::InvalidParam(msg)) if msg.contains("secure-phone-no-whitespace")),
+        "内部空白手机号应返回 InvalidParam（secure-phone-no-whitespace），实际: {:?}",
+        result
+    );
+}
+
+// ============================================================================
+// 达到最大尝试次数后的验证行为（安全属性：耗尽后正确码也不得通过）
+// ============================================================================
+
+/// 达到最大尝试次数后提交**正确**验证码仍被拒绝。
+///
+/// 安全属性：max attempts 耗尽后验证码已失效（code 被删除），
+/// 此后无论提交错误码还是正确码都不得验证通过，也不得开启新的尝试窗口。
+#[tokio::test]
+async fn correct_code_after_max_attempts_still_rejected() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    // 捕获验证码
+    struct CapturingSender {
+        code: parking_lot::Mutex<Option<String>>,
+    }
+    #[async_trait]
+    impl SmsSender for CapturingSender {
+        async fn send(&self, _phone: &str, code: &str) -> GarrisonResult<()> {
+            *self.code.lock() = Some(code.to_string());
+            Ok(())
+        }
+    }
+    let sender = Arc::new(CapturingSender {
+        code: parking_lot::Mutex::new(None),
+    });
+    let service = SmsVerificationService::new(
+        SmsRateLimiter::new(dao.clone(), 100, 100),
+        sender.clone(),
+        dao.clone(),
+        3,
+        100,
+    );
+    let phone = "13800138012";
+    service.send_code(phone).await.unwrap();
+    let correct_code = sender.code.lock().as_ref().cloned().unwrap();
+
+    // 3 次错误 → 第 4 次触发 MaxAttempts（验证码失效）
+    for _ in 0..3 {
+        let r = service.verify_code(phone, "000000").await;
+        assert!(matches!(r, Err(GarrisonError::InvalidParam(_))));
+    }
+    let r = service.verify_code(phone, "000000").await;
+    assert!(
+        matches!(r, Err(GarrisonError::SmsVerifyMaxAttempts)),
+        "第 4 次错误应返回 SmsVerifyMaxAttempts"
+    );
+
+    // 达上限后提交正确验证码：必须仍被拒绝（不得放行）
+    let result = service.verify_code(phone, &correct_code).await;
+    assert!(
+        result.is_err(),
+        "达上限后正确验证码必须被拒绝（验证码已随 MaxAttempts 失效），实际: {:?}",
+        result
+    );
+    // 且不得被当作一次新的错误尝试（返回 ERR_SMS_CODE_WRONG 的 InvalidParam）
+    assert!(
+        !matches!(&result, Err(GarrisonError::InvalidParam(m)) if m.starts_with(service::ERR_SMS_CODE_WRONG)),
+        "达上限后正确验证码不应返回 code-wrong（新尝试窗口），实际: {:?}",
         result
     );
 }

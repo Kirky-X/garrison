@@ -10,6 +10,13 @@ use totp_rs::{Algorithm, Builder as TotpBuilder};
 use super::TotpHandler;
 
 impl TotpHandler {
+    /// 校验时间戳合法性：负值对 TOTP 无意义，裸 `as u64` 转换会静默回绕为
+    /// 巨大值，产生完全不同时间窗口的验证码。
+    fn check_now(now: i64) -> GarrisonResult<u64> {
+        u64::try_from(now)
+            .map_err(|_| GarrisonError::InvalidParam("secure-totp-negative-now::".to_string()))
+    }
+
     /// 创建新的 TOTP 处理器。
     ///
     /// 使用 SHA1 算法（RFC 6238 默认），skew=1 允许 ±1 时间窗口偏差。
@@ -37,12 +44,15 @@ impl TotpHandler {
     /// 生成 TOTP 验证码。
     ///
     /// # 参数
-    /// - `now`: 当前 Unix 时间戳（秒）。
+    /// - `now`: 当前 Unix 时间戳（秒），必须 >= 0。
     ///
     /// # 返回
-    /// 指定位数的数字字符串。
-    pub fn generate(&self, now: i64) -> String {
-        self.totp.generate(now as u64).to_string()
+    /// - `Ok(String)`: 指定位数的数字字符串。
+    /// - `Err(GarrisonError::InvalidParam)`: `now` 为负值（裸 `as u64` 会静默回绕
+    ///   为巨大计数器，产生错误时间窗口的验证码，故显式拒绝）。
+    pub fn generate(&self, now: i64) -> GarrisonResult<String> {
+        let now = Self::check_now(now)?;
+        Ok(self.totp.generate(now).to_string())
     }
 
     /// 校验 TOTP 验证码。
@@ -51,13 +61,15 @@ impl TotpHandler {
     ///
     /// # 参数
     /// - `code`: 用户输入的验证码。
-    /// - `now`: 当前 Unix 时间戳（秒）。
+    /// - `now`: 当前 Unix 时间戳（秒），必须 >= 0。
     ///
     /// # 返回
-    /// - `true`: 校验通过。
-    /// - `false`: 校验失败。
-    pub fn validate(&self, code: &str, now: i64) -> bool {
-        self.totp.check(code, now as u64).is_some()
+    /// - `Ok(true)`: 校验通过。
+    /// - `Ok(false)`: 校验失败。
+    /// - `Err(GarrisonError::InvalidParam)`: `now` 为负值。
+    pub fn validate(&self, code: &str, now: i64) -> GarrisonResult<bool> {
+        let now = Self::check_now(now)?;
+        Ok(self.totp.check(code, now).is_some())
     }
 
     /// 校验 TOTP 验证码并防止重放攻击。
@@ -93,12 +105,13 @@ impl TotpHandler {
     /// # 参数
     /// - `login_id`: 登录主体标识（用户 ID）。
     /// - `code`: 用户输入的验证码。
-    /// - `now`: 当前 Unix 时间戳（秒）。
+    /// - `now`: 当前 Unix 时间戳（秒），必须 >= 0。
     /// - `dao`: DAO 抽象（用于原子记录已用验证码）。
     ///
     /// # 返回
     /// - `Ok(true)`: 校验通过且首次使用（`incr` 返回 1）。
     /// - `Ok(false)`: 校验失败或验证码已使用（重放拒绝，`incr` 返回 >1）。
+    /// - `Err(GarrisonError::InvalidParam)`: `now` 为负值。
     /// - `Err(_)`: DAO 读写失败。
     pub async fn validate_and_consume(
         &self,
@@ -107,15 +120,21 @@ impl TotpHandler {
         now: i64,
         dao: &dyn GarrisonDao,
     ) -> GarrisonResult<bool> {
-        if self.totp.check(code, now as u64).is_none() {
+        let now = Self::check_now(now)?;
+        if self.totp.check(code, now).is_none() {
             return Ok(false);
         }
         let replay_key = format!("totp:used:{}:{}", login_id, code);
 
         // E3 + FMEA #7：用 DAO 的原子 incr 替代 per-login_id 锁 + get-then-set。
         // incr 在后端用 Mutex/INCR 保证原子性：首次返回 1，重放返回 >1。
-        // TTL = step * 3，覆盖 skew=1 的 3 个时间窗口（前 + 当前 + 后）。
-        let count = dao.incr(&replay_key, self.step * 3).await?;
+        // TTL = step * 3，覆盖 skew=1 的 3 个时间窗口（前 + 当前 + 后）；
+        // step * 3 用 checked_mul 防止超大 step 溢出回绕出错误的短 TTL。
+        let ttl = self
+            .step
+            .checked_mul(3)
+            .ok_or_else(|| GarrisonError::Internal("secure-totp-ttl-overflow::".to_string()))?;
+        let count = dao.incr(&replay_key, ttl).await?;
         Ok(count == 1)
     }
 

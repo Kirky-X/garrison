@@ -425,17 +425,42 @@ fn validate_custom_ttl_works() {
 }
 
 /// 客户端请求 auth-int 时，validate（无 body）拒绝。
+///
+/// 关键攻击路径：攻击者用**空 body** 正确计算 auth-int response 后调用
+/// validate()（不传 body）——原实现以空 body 计算 HA2 会校验**通过**，
+/// 等于绕过 body 绑定。修复后 body 缺失时 auth-int 直接拒绝（fail-closed），
+/// 该测试确保这一语义不被回归。
 #[test]
 fn validate_auth_int_rejected_without_body() {
     let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
     let ha1 = auth.compute_ha1("admin", "secret");
     let nonce = make_valid_nonce();
+    let nc = "00000001";
+    let cnonce = "0a4f113c";
+    let method = "POST";
+    let uri = "/resource";
+    // 攻击者视角：用空 body 计算 auth-int 的 response（HA2 = H(method:uri:H("")))
+    let empty_body_hash = auth.algorithm.hash(b"");
+    let ha2_input = format!("{}:{}:{}", method, uri, empty_body_hash);
+    let ha2 = md5::compute(ha2_input.as_bytes());
+    let ha2_hex: String = ha2.0.iter().map(|b| format!("{:02x}", b)).collect();
+    let resp_input = format!("{}:{}:{}:{}:auth-int:{}", ha1, nonce, nc, cnonce, ha2_hex);
+    let resp = md5::compute(resp_input.as_bytes());
+    let resp_hex: String = resp.0.iter().map(|b| format!("{:02x}", b)).collect();
     let header = format!(
-        r#"Digest username="admin", realm="test@realm", nonce="{}", uri="/resource", response="dummy", qop=auth-int, nc=00000001, cnonce="abc""#,
-        nonce
+        r#"Digest username="admin", realm="test@realm", nonce="{}", uri="{}", response="{}", qop=auth-int, nc={}, cnonce="{}""#,
+        nonce, uri, resp_hex, nc, cnonce
     );
-    // validate（无 body）遇到 auth-int → 返回 false
-    assert!(!auth.validate(&header, "GET", "/resource", &ha1));
+    // 无 body 的 validate() 对 auth-int 一律拒绝（即使 response 是按空 body 正确计算的）
+    assert!(
+        !auth.validate(&header, method, uri, &ha1),
+        "auth-int 在 body 缺失时应被拒绝（即使按空 body 正确计算 response）"
+    );
+    // 带 body（含空 body）的 validate_with_body 仍可正常校验
+    assert!(
+        auth.validate_with_body(&header, method, uri, b"", &ha1),
+        "validate_with_body 携带（空）body 时应正常校验通过"
+    );
 }
 
 /// validate_with_body 支持 qop=auth-int（MD5）。
