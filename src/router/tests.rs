@@ -634,19 +634,17 @@ async fn default_interceptor_check_access_token_error_contains_guidance() {
 // ----------------------------------------------------------------
 
 /// 自定义拦截器：记录调用次数，用于验证 with_interceptor 注入。
+///
+/// ocr #1837：计数器改为 `Arc<AtomicU32>`——拦截器被 move 进 `GarrisonRouter`
+/// 后测试仍可读取最终计数（原普通字段在 move 后无法访问，导致无法事后断言）。
 struct CountingInterceptor {
-    count: std::sync::atomic::AtomicU32,
+    count: std::sync::Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl CountingInterceptor {
-    fn new() -> Self {
-        Self {
-            count: std::sync::atomic::AtomicU32::new(0),
-        }
-    }
-
-    fn get(&self) -> u32 {
-        self.count.load(std::sync::atomic::Ordering::SeqCst)
+    fn new() -> (Self, std::sync::Arc<std::sync::atomic::AtomicU32>) {
+        let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+        (Self { count: count.clone() }, count)
     }
 }
 
@@ -661,6 +659,9 @@ impl GarrisonInterceptor for CountingInterceptor {
 /// 验证 `GarrisonRouter::with_interceptor` 注入自定义拦截器后，
 /// middleware 会调用自定义拦截器的 pre_handle。
 ///
+/// ocr #959/1835：补请求后的计数递增断言——仅断言初始计数 0 无法发现
+/// `with_interceptor` 注入失败或拦截器未被调用的情况。
+///
 /// 覆盖 `with_interceptor` 方法体（设置 self.interceptor）。
 #[tokio::test]
 #[serial]
@@ -668,9 +669,12 @@ async fn with_interceptor_uses_custom_interceptor() {
     init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    let interceptor = CountingInterceptor::new();
-    let count_ptr = interceptor.get();
-    assert_eq!(count_ptr, 0, "初始调用次数应为 0");
+    let (interceptor, count) = CountingInterceptor::new();
+    assert_eq!(
+        count.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "初始调用次数应为 0"
+    );
 
     let app = GarrisonRouter::new(Arc::new(make_config()))
         .with_interceptor(interceptor)
@@ -682,6 +686,13 @@ async fn with_interceptor_uses_custom_interceptor() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+
+    // ocr #959/1835 核心断言：请求后自定义拦截器的 pre_handle 应恰好被调用一次
+    assert_eq!(
+        count.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "自定义拦截器的 pre_handle 应在请求后被调用一次"
+    );
 
     GarrisonManager::reset_for_test();
 }

@@ -48,16 +48,54 @@ pub mod interceptor;
 
 pub use auth_layer::{GarrisonGrpcAuthLayer, GarrisonGrpcAuthService};
 pub use health::health_service;
+pub use interceptor::MAX_TOKEN_LEN;
+
+/// garrison grpc token（认证上下文注入载体）。
+///
+/// 拦截器 / 鉴权层把校验通过的 Bearer token 以 `GarrisonGrpcToken` 存入
+/// request extensions，handler 侧可经
+/// `request.extensions().get::<GarrisonGrpcToken>()` 读取（ocr #3277）。
+/// `Debug` 手动实现为脱敏输出，防止误打印泄露 token。
+#[derive(Clone, PartialEq, Eq)]
+pub struct GarrisonGrpcToken(pub String);
+
+impl std::fmt::Debug for GarrisonGrpcToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("GarrisonGrpcToken")
+            .field(&"[REDACTED]")
+            .finish()
+    }
+}
+
+/// gRPC 拦截器**同步** token 校验扩展点（ocr #2633/#3036/#3276）。
+///
+/// `tonic::Interceptor::call` 是同步 trait，无法直接调用异步的
+/// `GarrisonUtil::check_login()`。为让 [`GarrisonGrpcInterceptor`] 具备真实鉴权
+/// 能力，可通过 [`GarrisonGrpcInterceptor::with_token_validator`] 注入本 trait 的
+/// 同步实现（如查询本地缓存会话表）；失败返回任意 `tonic::Status` 即拒绝请求。
+///
+/// 需要 async 全量鉴权（登录态/过期/封禁校验 + task_local 注入）时，
+/// 请使用 [`GarrisonGrpcAuthLayer`]（tower Layer 形态）。
+pub trait GarrisonGrpcTokenValidator: Send + Sync + 'static {
+    /// 校验 token；`Err(_)` 时请求以该 `Status` 拒绝（不进入 handler）。
+    fn validate(&self, token: &str) -> Result<(), tonic::Status>;
+}
 
 /// Garrison gRPC 鉴权拦截器。
 ///
-/// 实现 `tonic::Interceptor` trait，从 gRPC 请求 metadata 提取 Authorization Bearer token。
+/// 实现 `tonic::Interceptor` trait，从 gRPC 请求 metadata 提取 Authorization Bearer token：
+/// - scheme 按 RFC 7235 大小写不敏感匹配（`Bearer` / `bearer` / `bEaReR` 等均可）
+/// - token 非空且长度 ≤ 4KB（超长拒绝，防无界分配）
+/// - 通过校验的 token 以 [`GarrisonGrpcToken`] 注入 request extensions
 ///
-/// # 重要限制：仅提取 token，不执行 async 鉴权
+/// # 鉴权语义
 ///
-/// `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的 `GarrisonUtil::check_login()`。
-/// 本拦截器仅完成 token 提取与基本格式校验（非空、`Bearer ` 前缀正确），
-/// **不**执行实际的登录态/权限校验。
+/// `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的
+/// `GarrisonUtil::check_login()`：
+/// - **未配置校验器**（`new()` / 默认）：仅做上述格式校验，**不**执行登录态校验，
+///   实际鉴权须在 handler 内通过 `task_local`（`with_current_token`）显式调用。
+/// - **配置了同步校验器**（`with_token_validator`）：在拦截器内执行真实鉴权，
+///   失败直接以 `Status::UNAUTHENTICATED` 拒绝。
 ///
 /// # 完整 async 鉴权请使用 [`GarrisonGrpcAuthLayer`]
 ///
@@ -69,9 +107,6 @@ pub use health::health_service;
 /// let svc = GarrisonGrpcAuthLayer.layer(my_greeter_service);
 /// tonic::transport::Server::builder().add_service(svc).serve(addr).await?;
 /// ```
-///
-/// 若使用本拦截器（仅格式校验），必须在 tonic service handler 内通过
-/// `task_local`（`with_current_token`）显式调用 `GarrisonUtil::check_login()`。
 ///
 /// # 使用
 ///
@@ -85,8 +120,19 @@ pub use health::health_service;
 ///     .serve(addr)
 ///     .await?;
 /// ```
-#[derive(Debug, Default, Clone)]
-pub struct GarrisonGrpcInterceptor;
+#[derive(Default, Clone)]
+pub struct GarrisonGrpcInterceptor {
+    /// 可选的同步 token 校验器（None 时仅格式校验）。
+    validator: Option<std::sync::Arc<dyn GarrisonGrpcTokenValidator>>,
+}
+
+impl std::fmt::Debug for GarrisonGrpcInterceptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GarrisonGrpcInterceptor")
+            .field("validator", &self.validator.as_ref().map(|_| "configured"))
+            .finish()
+    }
+}
 
 #[cfg(test)]
 mod tests;

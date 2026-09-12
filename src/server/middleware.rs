@@ -141,18 +141,13 @@ pub async fn rate_limit_middleware(
     // 短暂持锁：取出 bucket Arc 并更新 last_access，然后在锁外调用 async allow
     // （limiteron allow 内部用原子 CAS，不阻塞，但避免跨 await 持有 parking_lot 锁）
     // DashMap 分片锁：不同 IP 的读写操作可并行，避免全局 Mutex 瓶颈
+    //
+    // TOCTOU 修复（ocr #2219）：先原子 insert（entry() 持分片写锁），再在锁外做
+    // 超限检查与 LRU 淘汰。并发插入不同新 IP 时可能短暂超过 max_entries，
+    // 但每个新插入都会触发一次淘汰检查，保证最终收敛到 max_entries 以内；
+    // 淘汰扫描仅在真正超限时发生（低于上限的新 IP 插入不再全表扫描）。
+    let is_new_ip = !state.buckets.contains_key(&ip);
     let bucket = {
-        // 新 IP 插入前若已达 max_entries，淘汰最久未访问的 bucket（LRU）
-        if !state.buckets.contains_key(&ip) && state.buckets.len() >= state.max_entries {
-            if let Some(oldest_key) = state
-                .buckets
-                .iter()
-                .min_by_key(|e| e.value().last_access)
-                .map(|e| e.key().clone())
-            {
-                state.buckets.remove(&oldest_key);
-            }
-        }
         let mut entry = state
             .buckets
             .entry(ip.clone())
@@ -163,6 +158,22 @@ pub async fn rate_limit_middleware(
         entry.last_access = Instant::now();
         entry.limiter.clone()
     };
+
+    // 新插入后超限：淘汰最久未访问的 bucket（LRU）。
+    // 在 entry 写锁释放后执行（DashMap iter 会锁各分片，跨 await/持锁迭代会死锁）。
+    if is_new_ip && state.buckets.len() > state.max_entries {
+        if let Some(oldest_key) = state
+            .buckets
+            .iter()
+            .min_by_key(|e| e.value().last_access)
+            .map(|e| e.key().clone())
+        {
+            // 防御：不淘汰刚插入的 bucket（其 last_access 刚更新，理论上不会被选中）
+            if oldest_key != ip {
+                state.buckets.remove(&oldest_key);
+            }
+        }
+    }
 
     // 在锁外调用 allow(1)（limiteron 内部原子操作，无需持锁）
     let allowed = match bucket.allow(1).await {
@@ -198,17 +209,25 @@ pub struct ApiKeyState {
     pub api_key: String,
 }
 
+/// 常量时间比较循环的固定工作量（字节）。
+///
+/// 合法 API Key 长度远小于此值；双方不足处以 0 填充对齐到固定长度，
+/// 保证循环执行次数与输入长度无关（不泄露 API Key 长度）。
+const CT_EQ_FIXED_WORKLOAD: usize = 256;
+
 /// 常量时间字节比较，防止 timing attack。
 ///
 /// 用 `subtle::ConstantTimeEq` 做常量时间比较，既不在第一个不匹配字节处短路返回，
-/// 也不在长度不同时提前返回，避免攻击者通过测量响应时间逐字节推断 API Key 内容，
+/// 也不按输入长度决定循环次数，避免攻击者通过测量响应时间逐字节推断 API Key 内容，
 /// 或通过长度差异的时间差推断 API Key 长度。
 ///
 /// # 安全性
 ///
 /// - 长度比较用 `u64::ct_eq`（常量时间），不 early return
-/// - 字节比较遍历到 `max(a.len, b.len)`，短的一方用 0 padding
-/// - 无论长度是否相等，都做同样多的工作（max_len 次比较）
+/// - 字节比较执行**固定工作量**（`CT_EQ_FIXED_WORKLOAD` 次迭代，与输入长度无关），
+///   短的一方用 0 padding 对齐
+/// - 任一输入超过固定工作量上限时返回 false：仅泄露"长度 > 256"这一粗粒度信息，
+///   不再泄露精确长度（合法 API Key 不会达到该长度）
 fn constant_time_eq(a: &str, b: &str) -> bool {
     use subtle::ConstantTimeEq;
 
@@ -218,10 +237,15 @@ fn constant_time_eq(a: &str, b: &str) -> bool {
     // 长度比较用常量时间，不 early return
     let len_eq = (a_bytes.len() as u64).ct_eq(&(b_bytes.len() as u64));
 
-    // 字节比较：遍历到 max_len，短的一方用 0 padding
-    let max_len = a_bytes.len().max(b_bytes.len());
+    // 超过固定工作量上限的输入不可能匹配真实 key，直接判不相等
+    //（避免为超长输入做无界 CPU 工作；时间差异仅暴露 "> 上限" 这一 coarse 事实）
+    if a_bytes.len() > CT_EQ_FIXED_WORKLOAD || b_bytes.len() > CT_EQ_FIXED_WORKLOAD {
+        return false;
+    }
+
+    // 字节比较：固定 CT_EQ_FIXED_WORKLOAD 次迭代，短的一方用 0 padding
     let mut byte_eq = subtle::Choice::from(1);
-    for i in 0..max_len {
+    for i in 0..CT_EQ_FIXED_WORKLOAD {
         let x = a_bytes.get(i).copied().unwrap_or(0);
         let y = b_bytes.get(i).copied().unwrap_or(0);
         byte_eq &= x.ct_eq(&y);
@@ -490,8 +514,22 @@ pub async fn inject_login_client_ip(mut req: Request, next: Next) -> Response {
                 },
             };
 
-            let mut json: serde_json::Value =
-                serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+            // fix ocr #6171：畸形 JSON body 不再静默替换为 null——
+            // 直接返回 400 Bad Request（fail-fast），避免下游 handler 收到被破坏的请求体。
+            let mut json: serde_json::Value = match serde_json::from_slice(&bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(error = %e, "inject_login_client_ip: malformed JSON body");
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({
+                            "error": "bad_request",
+                            "message": "request body must be valid JSON"
+                        })),
+                    )
+                        .into_response();
+                },
+            };
 
             let should_inject = json
                 .get("params")

@@ -33,6 +33,22 @@
 
 use crate::context::token_extract::extract_token_from_headers;
 
+/// `GarrisonConfig` 未注册为 actix app_data 时的一次性告警（防日志刷屏）。
+///
+/// 此场景下各 extractor 回退 `GarrisonConfig::default_config()`——安全相关参数
+/// （token 提取配置、timeout 等）可能与预期不一致，至少产生一条 warn 信号
+/// （ocr #2787；回退保持向后兼容，不做 fail-fast 破坏既有集成）。
+fn warn_missing_config_once() {
+    static WARN: std::sync::Once = std::sync::Once::new();
+    WARN.call_once(|| {
+        tracing::warn!(
+            "GarrisonConfig 未注册为 actix app_data（web::Data<Arc<GarrisonConfig>>），\
+             auth extractor 回退 default_config；安全参数可能不一致，\
+             请通过 App::app_data(web::Data::new(Arc::new(config))) 显式注册"
+        );
+    });
+}
+
 pub use crate::context::GarrisonPrincipal;
 
 /// 实现 `FromRequest`：从 `Authorization: Bearer <token>` header 提取 token，
@@ -50,9 +66,10 @@ impl actix_web::FromRequest for GarrisonPrincipal {
         let config = req
             .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::GarrisonConfig>>>()
             .map(|d| d.get_ref().clone())
-            .unwrap_or_else(
-                || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
-            );
+            .unwrap_or_else(|| {
+                warn_missing_config_once();
+                std::sync::Arc::new(crate::config::GarrisonConfig::default_config())
+            });
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
@@ -95,9 +112,10 @@ impl actix_web::FromRequest for super::CheckLogin {
         let config = req
             .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::GarrisonConfig>>>()
             .map(|d| d.get_ref().clone())
-            .unwrap_or_else(
-                || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
-            );
+            .unwrap_or_else(|| {
+                warn_missing_config_once();
+                std::sync::Arc::new(crate::config::GarrisonConfig::default_config())
+            });
 
         Box::pin(async move {
             let token = extract_token_from_headers(&headers, &config)?.ok_or_else(|| {
@@ -147,9 +165,10 @@ impl actix_web::FromRequest for super::CheckRole {
         let config = req
             .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::GarrisonConfig>>>()
             .map(|d| d.get_ref().clone())
-            .unwrap_or_else(
-                || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
-            );
+            .unwrap_or_else(|| {
+                warn_missing_config_once();
+                std::sync::Arc::new(crate::config::GarrisonConfig::default_config())
+            });
 
         // CRITICAL-12 修复：角色必须通过 web::Data<RequiredRole> 服务端配置，
         // 禁止从客户端可控的 header/query param 读取（防 `?role=admin` 绕过）。
@@ -200,9 +219,10 @@ impl actix_web::FromRequest for super::CheckPermission {
         let config = req
             .app_data::<actix_web::web::Data<std::sync::Arc<crate::config::GarrisonConfig>>>()
             .map(|d| d.get_ref().clone())
-            .unwrap_or_else(
-                || std::sync::Arc::new(crate::config::GarrisonConfig::default_config()),
-            );
+            .unwrap_or_else(|| {
+                warn_missing_config_once();
+                std::sync::Arc::new(crate::config::GarrisonConfig::default_config())
+            });
 
         // CRITICAL-12 修复：权限必须通过 web::Data<RequiredPermission> 服务端配置，
         // 禁止从客户端可控的 header/query param 读取（防 `?permission=xxx` 绕过）。
@@ -231,6 +251,36 @@ impl actix_web::FromRequest for super::CheckPermission {
 // TenantContext extractor（feature gate tenant-isolation）
 // ============================================================================
 
+/// `X-Tenant-Id` header 信任模型一次性告警（防日志刷屏，ocr #2140/2788）。
+#[cfg(feature = "tenant-isolation")]
+fn warn_header_tenant_unverified_once() {
+    static WARN: std::sync::Once = std::sync::Once::new();
+    WARN.call_once(|| {
+        tracing::warn!(
+            "TenantContext 从客户端可控的 X-Tenant-Id header 提取租户且未与认证主体比对：\
+             任何调用方可声明任意租户 ID。本 extractor 仅做格式校验（数字解析），\
+             不做「主体→租户」归属授权。租户隔离请勿依赖该 header 值——\
+             应使用 ClaimTenantResolver（token claim）等服务端可信来源，\
+             或在业务层校验 principal 与租户的归属关系"
+        );
+    });
+}
+
+/// 从 `X-Tenant-Id` header 解析 `TenantContext`。
+///
+/// # 信任模型与安全边界（重要，ocr #2140/2788）
+///
+/// 本 extractor **仅做格式校验**（非空 + i64 解析），提取的 `tenant_id`：
+/// - **未**与认证主体（login_id）做归属授权比对——框架的 `SessionData`
+///   不携带主体→租户映射，无注册表可比对；
+/// - **未**对租户注册表/白名单做存在性校验。
+///
+/// 因此 `X-Tenant-Id` 是**客户端可控**输入：调用方可声明任意租户 ID。
+/// 若下游代码直接信任该值做租户隔离（缓存前缀、数据过滤），存在跨租户
+/// 越权风险。租户隔离的正确做法：
+/// 1. 使用 `ClaimTenantResolver`（从 token claim 解析，服务端可信）；
+/// 2. 或在业务层显式校验 `GarrisonPrincipal`（主体）与租户的归属关系；
+/// 3. 或将本 extractor 仅用于路由/审计标注，不作为隔离边界。
 #[cfg(feature = "tenant-isolation")]
 impl actix_web::FromRequest for crate::context::tenant::TenantContext {
     type Error = crate::error::GarrisonError;
@@ -238,6 +288,7 @@ impl actix_web::FromRequest for crate::context::tenant::TenantContext {
 
     fn from_request(req: &actix_web::HttpRequest, _: &mut actix_web::dev::Payload) -> Self::Future {
         let headers = req.headers().clone();
+        warn_header_tenant_unverified_once();
         Box::pin(async move {
             let raw = headers
                 .get("x-tenant-id")

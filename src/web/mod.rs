@@ -53,12 +53,40 @@ pub mod security_headers;
 #[cfg(feature = "firewall-waf")]
 pub mod axum;
 
+/// 允许列表未配置时的一次性告警（防日志刷屏，ocr #2814）。
+#[cfg(feature = "web-cors")]
+fn warn_missing_allowlist_once() {
+    static WARN: std::sync::Once = std::sync::Once::new();
+    WARN.call_once(|| {
+        tracing::warn!(
+            "frontend_separation CORS 未配置 cors_config.allowed_origins，\
+             任意 Origin 均被回显；建议配置允许列表以收紧信任边界"
+        );
+    });
+}
+
+/// web-cors feature 未启用时的一次性告警（防日志刷屏，ocr #2814）。
+#[cfg(not(feature = "web-cors"))]
+fn warn_no_cors_feature_once() {
+    static WARN: std::sync::Once = std::sync::Once::new();
+    WARN.call_once(|| {
+        tracing::warn!(
+            "frontend_separation CORS 回显任意 Origin（web-cors feature 未启用，\
+             无法按 cors_config.allowed_origins 过滤）；建议启用 web-cors 并配置允许列表"
+        );
+    });
+}
+
 /// 应用前后端分离模式的 CORS 头部（动态回显请求 Origin）。
 ///
 /// `frontend_separation=true` 时设置 `Access-Control-Allow-Origin/Headers/Methods` 头部。
 /// 根据 `request_origin` 参数决定 `Allow-Origin` 值：
 ///
 /// - `Some(origin)`：回显请求的 `Origin`（推荐，兼容 credentials）。
+///   - **允许列表防御边界（ocr #2814）**：`web-cors` feature 启用时，若
+///     `config.cors_config.allowed_origins` 非空，仅回显命中允许列表的 Origin，
+///     未命中时不设置 `Allow-Origin`（fail-closed）；允许列表为空时保持旧行为
+///     （回显任意 Origin，由调用方自行过滤）并 warn 提示配置允许列表。
 /// - `None`：不设置 `Allow-Origin` header（安全默认，避免 wildcard + credentials 冲突）。
 ///
 /// `frontend_separation=false` 时不设置任何头部。
@@ -85,6 +113,25 @@ pub fn apply_frontend_separation_cors_with_origin<R: GarrisonResponse>(
         // 动态回显请求 Origin（替代 wildcard `*`），兼容 credentials 场景。
         // 无 Origin 时不设置 Allow-Origin（安全默认，非 CORS 请求无需此 header）。
         if let Some(origin) = request_origin {
+            // ocr #2814: 允许列表防御边界——cors_config.allowed_origins 非空时
+            // 仅回显命中的 Origin（web-cors feature 下 GarrisonConfig 才有 cors_config 字段）
+            #[cfg(feature = "web-cors")]
+            {
+                let allowed = &config.cors_config.allowed_origins;
+                if allowed.is_empty() {
+                    warn_missing_allowlist_once();
+                } else if !crate::web::cors::origin_matches(origin, allowed) {
+                    tracing::debug!(origin = %origin, "Origin 未命中 CORS 允许列表，跳过 Allow-Origin 回显");
+                    response.set_header(CORS_ALLOW_HEADERS, DEFAULT_CORS_ALLOW_HEADERS)?;
+                    response.set_header(CORS_ALLOW_METHODS, DEFAULT_CORS_ALLOW_METHODS)?;
+                    response.set_header("Vary", "Origin")?;
+                    return Ok(());
+                }
+            }
+            #[cfg(not(feature = "web-cors"))]
+            {
+                warn_no_cors_feature_once();
+            }
             response.set_header(CORS_ALLOW_ORIGIN, origin)?;
         }
         response.set_header(CORS_ALLOW_HEADERS, DEFAULT_CORS_ALLOW_HEADERS)?;

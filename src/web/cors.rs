@@ -201,6 +201,12 @@ pub async fn garrison_cors_middleware(
         if !origin.is_empty() && origin_matches(origin, &config.allowed_origins) {
             let allow_origin = allow_origin_value(origin, &config.allowed_origins);
             let mut headers = axum::http::HeaderMap::new();
+            // Vary: Origin —— 响应内容随 Origin 变化，缓存层必须按 Origin 区分
+            // （RFC 6454 §7.6，预检分支，ocr #2805/#3490）
+            headers.insert(
+                HeaderName::from_static("vary"),
+                HeaderValue::from_static("Origin"),
+            );
             headers.insert(
                 axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
                 HeaderValue::from_str(allow_origin).unwrap_or(HeaderValue::from_static("*")),
@@ -248,6 +254,12 @@ pub async fn garrison_cors_middleware(
     // 实际请求：注入响应头后继续
     let mut resp = next.run(req).await;
     let headers = resp.headers_mut();
+    // Vary: Origin —— 响应内容随 Origin 变化，缓存层必须按 Origin 区分，
+    // 否则 origin A 的缓存响应可能被错发给 origin B（RFC 6454 §7.6，ocr #2805/#3490）
+    headers.insert(
+        HeaderName::from_static("vary"),
+        HeaderValue::from_static("Origin"),
+    );
     headers.insert(
         axum::http::header::ACCESS_CONTROL_ALLOW_ORIGIN,
         HeaderValue::from_str(allow_origin).unwrap_or(HeaderValue::from_static("*")),
@@ -698,6 +710,49 @@ mod tests {
             resp.headers().get("access-control-allow-origin").unwrap(),
             "*"
         );
+    }
+
+    // ========================================================================
+    // Vary: Origin（ocr #2805/#3490）
+    // ========================================================================
+
+    /// 实际请求（注入 ACAO）必须带 Vary: Origin，防止缓存跨 Origin 串用。
+    #[tokio::test]
+    async fn actual_request_includes_vary_origin() {
+        let config = CorsConfig {
+            allowed_origins: vec!["https://example.com".to_string()],
+            ..Default::default()
+        };
+        let app = make_app(config);
+        let resp = app
+            .oneshot(make_request_with_origin(
+                "GET",
+                "/api/test",
+                "https://example.com",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.headers().get("vary").unwrap(), "Origin");
+    }
+
+    /// 预检请求（注入 CORS 头）必须带 Vary: Origin。
+    #[tokio::test]
+    async fn preflight_includes_vary_origin() {
+        let config = CorsConfig {
+            allowed_origins: vec!["https://example.com".to_string()],
+            ..Default::default()
+        };
+        let app = make_app(config);
+        let resp = app
+            .oneshot(make_request_with_origin(
+                "OPTIONS",
+                "/api/test",
+                "https://example.com",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+        assert_eq!(resp.headers().get("vary").unwrap(), "Origin");
     }
 
     // ========================================================================

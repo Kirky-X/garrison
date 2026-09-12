@@ -58,7 +58,10 @@ pub use middleware::{current_client_ip, current_user_agent};
 pub use server_impl::to_api_response;
 
 /// Auth Server 配置。
-#[derive(Debug, Clone)]
+///
+/// `Debug` 实现为手动实现：`internal_api_key` 以 `[REDACTED]` 输出，
+/// 防止误打日志/错误报告时泄露机密（ocr #2221）。
+#[derive(Clone)]
 pub struct AuthServerConfig {
     /// 外网端口（面向用户）。
     pub external_port: u16,
@@ -76,6 +79,21 @@ pub struct AuthServerConfig {
     pub external_body_limit: usize,
     /// 内网请求体大小上限（字节，默认 1MB）。
     pub internal_body_limit: usize,
+}
+
+impl std::fmt::Debug for AuthServerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthServerConfig")
+            .field("external_port", &self.external_port)
+            .field("internal_port", &self.internal_port)
+            .field("external_rate_limit_per_ip", &self.external_rate_limit_per_ip)
+            .field("rate_limit_max_entries", &self.rate_limit_max_entries)
+            .field("rate_limit_trusted_proxies", &self.rate_limit_trusted_proxies)
+            .field("internal_api_key", &"[REDACTED]")
+            .field("external_body_limit", &self.external_body_limit)
+            .field("internal_body_limit", &self.internal_body_limit)
+            .finish()
+    }
 }
 
 /// TLS 配置（证书 + 私钥文件路径）。

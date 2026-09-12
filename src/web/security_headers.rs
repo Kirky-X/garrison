@@ -55,6 +55,10 @@ const HSTS_MAX_AGE: HeaderValue = HeaderValue::from_static("max-age=31536000; in
 /// - `Pragma: no-cache`
 /// - （`tls` feature 启用时）`Strict-Transport-Security: max-age=31536000; includeSubDomains`
 ///
+/// 静态资源等公开可缓存内容不应走本中间件（no-store 全响应注入会使
+/// 浏览器/CDN 缓存失效，ocr #5244）；确需同路由混布时可改用
+/// [`security_headers_middleware_with_config`] 关闭缓存头注入。
+///
 /// # 示例
 ///
 /// ```ignore
@@ -66,13 +70,57 @@ const HSTS_MAX_AGE: HeaderValue = HeaderValue::from_static("max-age=31536000; in
 ///     .layer(middleware::from_fn(security_headers_middleware));
 /// ```
 pub async fn security_headers_middleware(req: axum::extract::Request, next: Next) -> Response {
-    let mut response = next.run(req).await;
+    inject_security_headers(next.run(req).await, true)
+}
+
+/// 缓存头注入开关配置（ocr #5244）。
+///
+/// `no_store_cache == false` 时不注入 `Cache-Control: no-store` / `Pragma: no-cache`，
+/// 供静态资源等公开可缓存路由复用其余安全头；默认 `true` 保持原行为。
+#[derive(Debug, Clone)]
+pub struct SecurityHeadersConfig {
+    /// 是否注入 `Cache-Control: no-store` + `Pragma: no-cache`（默认 `true`）。
+    pub no_store_cache: bool,
+}
+
+impl Default for SecurityHeadersConfig {
+    fn default() -> Self {
+        Self { no_store_cache: true }
+    }
+}
+
+/// 可配置版安全响应头中间件（通过 `from_fn_with_state` + `Arc<SecurityHeadersConfig>` 挂载）。
+///
+/// # 示例
+///
+/// ```ignore
+/// use axum::middleware;
+/// use garrison::web::security_headers::{security_headers_middleware_with_config, SecurityHeadersConfig};
+/// use std::sync::Arc;
+///
+/// let config = Arc::new(SecurityHeadersConfig { no_store_cache: false });
+/// let app = Router::new()
+///     .route("/static", get(handler))
+///     .layer(middleware::from_fn_with_state(config, security_headers_middleware_with_config));
+/// ```
+pub async fn security_headers_middleware_with_config(
+    axum::extract::State(config): axum::extract::State<std::sync::Arc<SecurityHeadersConfig>>,
+    req: axum::extract::Request,
+    next: Next,
+) -> Response {
+    inject_security_headers(next.run(req).await, config.no_store_cache)
+}
+
+/// 实际注入逻辑（`no_store == false` 时跳过 Cache-Control / Pragma）。
+fn inject_security_headers(mut response: Response, no_store: bool) -> Response {
     let headers = response.headers_mut();
 
     headers.insert(X_CONTENT_TYPE_OPTIONS, NOSNIFF);
     headers.insert(X_FRAME_OPTIONS, DENY);
-    headers.insert(CACHE_CONTROL, NO_STORE);
-    headers.insert(PRAGMA, NO_CACHE);
+    if no_store {
+        headers.insert(CACHE_CONTROL, NO_STORE);
+        headers.insert(PRAGMA, NO_CACHE);
+    }
 
     // HSTS 仅在 TLS 终止模式下设置（明文传输 HSTS 无意义且可能被降级攻击）
     #[cfg(feature = "tls")]
@@ -88,6 +136,7 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use axum::routing::get;
     use axum::Router;
+    use std::sync::Arc;
     use tower::ServiceExt;
 
     /// 创建包含安全头中间件的测试 Router。
@@ -188,5 +237,48 @@ mod tests {
             "错误响应也应包含安全头"
         );
         assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+    }
+
+    /// 可配置中间件：no_store_cache=false 时跳过缓存头，其余安全头保留（ocr #5244）。
+    #[tokio::test]
+    async fn config_middleware_can_disable_no_store() {
+        let config = Arc::new(SecurityHeadersConfig { no_store_cache: false });
+        let app = Router::new()
+            .route("/ping", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(
+                config,
+                security_headers_middleware_with_config,
+            ));
+        let resp = app
+            .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(
+            resp.headers().get("cache-control").is_none(),
+            "no_store_cache=false 时不应注入 Cache-Control"
+        );
+        assert!(resp.headers().get("pragma").is_none());
+        assert_eq!(resp.headers().get("x-content-type-options").unwrap(), "nosniff");
+        assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+    }
+
+    /// 可配置中间件：默认配置（no_store_cache=true）行为与原中间件一致。
+    #[tokio::test]
+    async fn config_middleware_default_keeps_no_store() {
+        let config = Arc::new(SecurityHeadersConfig::default());
+        let app = Router::new()
+            .route("/ping", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn_with_state(
+                config,
+                security_headers_middleware_with_config,
+            ));
+        let resp = app
+            .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.headers().get("cache-control").unwrap(), "no-store");
+        assert_eq!(resp.headers().get("pragma").unwrap(), "no-cache");
     }
 }

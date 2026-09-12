@@ -82,6 +82,9 @@ pub struct GarrisonRouter {
     config: Arc<GarrisonConfig>,
     /// 租户解析器（None 时不启用租户提取，行为与旧版一致）。
     tenant_resolver: Option<Arc<dyn TenantResolver>>,
+    /// 鉴权通过后内层 handler 的可选超时（None = 不设超时，默认，行为与旧版一致；
+    /// 经 `with_handler_timeout` 配置，防挂起 handler 无限占用连接，ocr #2141）。
+    handler_timeout: Option<std::time::Duration>,
 }
 
 // ============================================================================
@@ -99,6 +102,8 @@ pub struct GarrisonMiddleware {
     interceptor: Arc<dyn GarrisonInterceptor>,
     config: Arc<GarrisonConfig>,
     tenant_resolver: Option<Arc<dyn TenantResolver>>,
+    /// 内层 handler 可选超时（None = 不设超时，默认，ocr #2141）。
+    pub(crate) handler_timeout: Option<std::time::Duration>,
 }
 
 /// middleware service（Transform 生成的中间层）。
@@ -113,6 +118,8 @@ pub struct GarrisonMiddlewareService<S> {
     pub config: Arc<GarrisonConfig>,
     /// 租户解析器（None 时不启用租户提取）。
     pub tenant_resolver: Option<Arc<dyn TenantResolver>>,
+    /// 内层 handler 可选超时（None = 不设超时，默认，ocr #2141）。
+    pub handler_timeout: Option<std::time::Duration>,
 }
 
 // ============================================================================

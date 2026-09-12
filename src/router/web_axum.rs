@@ -94,7 +94,8 @@ impl GarrisonRouter {
     /// 添加受保护路由：注册 axum 路由（GET）+ 记录鉴权规则。
     ///
     /// # 参数
-    /// - `path`: 请求路径模式（精确匹配）。
+    /// - `path`: 请求路径模式（精确匹配 / `:param`、`{param}` 参数段 / `{*wildcard}` 通配段，
+    ///   语义见 [`route_matches`]）。
     /// - `handler`: axum handler（GET 方法）。
     /// - `annotation`: 鉴权注解。
     pub fn route_protected<H, T>(mut self, path: &str, handler: H, annotation: Annotation) -> Self
@@ -189,32 +190,53 @@ impl GarrisonRouter {
     }
 }
 
-/// 路由模式匹配：支持精确匹配和 `:param` 参数段。
+/// 路由模式匹配：支持精确匹配、参数段与尾部通配。
 ///
-/// `pattern` 为注册时的路径模式（如 `/api/users/:id`），
-/// `path` 为实际请求路径（如 `/api/users/42`）。
-/// 每段按 `/` 分割后比对：`:xxx` 段匹配任意非空值，其余段精确匹配。
+/// `pattern` 为注册时的路径模式，`path` 为实际请求路径。
+/// 每段按 `/` 分割后比对：
+/// - 静态段：精确相等
+/// - `:param`（旧语法）与 `{param}`（axum 0.8 语法）：匹配任意非空单段
+/// - `{*wildcard}`（axum 0.8 通配）：匹配剩余所有段（含零段，前缀保护语义，
+///   如 `/api/{*rest}` 覆盖 `/api` 与 `/api/a/b`）
+/// - 段数不一致（除尾部通配外）不匹配——未命中规则时 middleware 跳过
+///   `pre_handle`（fail-closed 由注册侧保证：需要保护的路径必须注册；
+///   通配段可显式声明前缀保护）。
 fn route_matches(pattern: &str, path: &str) -> bool {
-    let pattern_segments = pattern.split('/');
-    let path_segments = path.split('/');
-    let mut pi = pattern_segments.peekable();
-    let mut ri = path_segments.peekable();
+    let mut pi = pattern.split('/');
+    let mut ri = path.split('/');
     loop {
         match (pi.next(), ri.next()) {
             (None, None) => return true,
-            (Some(p), Some(r)) => {
-                if p.starts_with(':') {
+            // pattern 段数多于 path：仅尾部通配（吞剩余段，含零段）可命中
+            (Some(seg), None) => return is_wildcard_segment(seg),
+            (Some(seg), Some(part)) => {
+                if is_wildcard_segment(seg) {
+                    // 尾部通配：吞掉剩余所有段（含零段）
+                    return true;
+                }
+                if is_param_segment(seg) {
                     // 参数段：匹配任意非空值
-                    if r.is_empty() {
+                    if part.is_empty() {
                         return false;
                     }
-                } else if p != r {
+                } else if seg != part {
                     return false;
                 }
             },
-            _ => return false,
+            // path 段数多于 pattern：不匹配（fail-closed）
+            (None, Some(_)) => return false,
         }
     }
+}
+
+/// 参数段：`:xxx`（旧语法）或 `{xxx}`（axum 0.8 语法，空 `{}` 不算参数）。
+fn is_param_segment(seg: &str) -> bool {
+    seg.starts_with(':') || (seg.starts_with('{') && seg.ends_with('}') && seg.len() > 2)
+}
+
+/// 尾部通配段：`{*xxx}`（axum 0.8 语法，最短 `{*x}` 为 4 字节）。
+fn is_wildcard_segment(seg: &str) -> bool {
+    seg.len() > 3 && seg.starts_with("{*") && seg.ends_with('}')
 }
 
 /// 实现 `Default`：使用 `GarrisonConfig::default_config()` 创建路由器，拦截器为 `DefaultGarrisonInterceptor`。
@@ -236,8 +258,9 @@ async fn garrison_middleware(
     next: Next,
 ) -> Response {
     let path = req.uri().path().to_string();
-    // 路由规则匹配：支持精确匹配和参数化路由（`:param` 段匹配任意值）。
-    // 修复前使用 `r.path == path` 精确匹配，`:id` 参数路由完全跳过鉴权。
+    // 路由规则匹配：支持精确匹配与参数化路由（`:param` / `{param}` 段匹配任意值，
+    // `{*wildcard}` 匹配剩余段）。修复前使用 `r.path == path` 精确匹配，
+    // 参数化路由完全跳过鉴权。
     let rule = state
         .rules
         .iter()
@@ -275,10 +298,28 @@ async fn garrison_middleware(
         // 检查是否有续签 Token，写入响应
         if let Some(renewed_token) = get_renewed_token() {
             if config.is_write_header {
-                if let Ok(name) = HeaderName::from_bytes(config.token_name.as_bytes()) {
-                    if let Ok(value) = HeaderValue::from_str(&renewed_token) {
+                // ocr #2516: header/cookie 构造失败不再静默丢弃——记 debug 日志
+                // （生产排查续签 token 丢失的关键线索）
+                match (
+                    HeaderName::from_bytes(config.token_name.as_bytes()),
+                    HeaderValue::from_str(&renewed_token),
+                ) {
+                    (Ok(name), Ok(value)) => {
                         resp.headers_mut().insert(name, value);
-                    }
+                    },
+                    (Err(e), _) => {
+                        tracing::debug!(
+                            error = %e,
+                            token_name = %config.token_name,
+                            "续签 token 写入响应 header 失败：token_name 非法，已跳过"
+                        );
+                    },
+                    (_, Err(e)) => {
+                        tracing::debug!(
+                            error = %e,
+                            "续签 token 写入响应 header 失败：token 含非法字符，已跳过"
+                        );
+                    },
                 }
             }
             if config.is_write_cookie {
@@ -287,8 +328,16 @@ async fn garrison_middleware(
                     "{}={}; HttpOnly; Path=/; SameSite={}{}",
                     config.token_name, renewed_token, config.cookie_same_site, secure_flag
                 );
-                if let Ok(value) = HeaderValue::from_str(&cookie) {
-                    resp.headers_mut().append(SET_COOKIE, value);
+                match HeaderValue::from_str(&cookie) {
+                    Ok(value) => {
+                        resp.headers_mut().append(SET_COOKIE, value);
+                    },
+                    Err(e) => {
+                        tracing::debug!(
+                            error = %e,
+                            "续签 token 写入 Set-Cookie 失败：cookie 串含非法字符，已跳过"
+                        );
+                    },
                 }
             }
             clear_renewed_token();
@@ -383,5 +432,30 @@ mod tests {
     fn route_matches_segment_count_mismatch() {
         assert!(!route_matches("/users/:id", "/users/123/extra"));
         assert!(!route_matches("/users/:id/extra", "/users/123"));
+    }
+
+    /// axum 0.8 `{param}` 语法应与 `:param` 语义一致（匹配任意非空单段）。
+    #[test]
+    fn route_matches_axum_brace_param() {
+        assert!(route_matches("/users/{id}", "/users/123"));
+        assert!(!route_matches("/users/{id}", "/users/")); // 空段不匹配
+        assert!(!route_matches("/users/{id}", "/users/123/extra"));
+        // 混合新旧语法与静态段
+        assert!(route_matches("/api/{version}/users/:id", "/api/v1/users/42"));
+        assert!(!route_matches(
+            "/api/{version}/users/:id",
+            "/api/v1/items/42"
+        ));
+    }
+
+    /// axum 0.8 `{*wildcard}` 通配段匹配剩余所有段（含零段，前缀保护语义）。
+    #[test]
+    fn route_matches_axum_wildcard_suffix() {
+        assert!(route_matches("/api/{*rest}", "/api"));
+        assert!(route_matches("/api/{*rest}", "/api/users/42"));
+        assert!(route_matches("/api/{*rest}", "/api/a/b/c"));
+        assert!(!route_matches("/api/{*rest}", "/others/x"));
+        // 静态前缀不一致不匹配
+        assert!(!route_matches("/api/users/{*rest}", "/api/others/x"));
     }
 }

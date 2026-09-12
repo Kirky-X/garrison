@@ -87,6 +87,113 @@ pub fn oauth2_internal_router(state: Arc<OAuth2State>) -> Router {
 
 // === HTTP 端点函数（薄包装，调用 handler） ===
 
+/// 请求体大小上限（防 DoS：OAuth2 端点参数均为短字符串，64KB 足够）。
+const OAUTH2_BODY_LIMIT: usize = 64 * 1024;
+
+/// RFC 6749 §5.1 / §5.2 — token 端点所有响应（含错误）必须带 no-store 缓存头。
+fn apply_no_store(mut resp: Response) -> Response {
+    let headers = resp.headers_mut();
+    headers.insert(
+        HeaderName::from_static("cache-control"),
+        HeaderValue::from_static("no-store"),
+    );
+    headers.insert(
+        HeaderName::from_static("pragma"),
+        HeaderValue::from_static("no-cache"),
+    );
+    resp
+}
+
+/// percent-decode `application/x-www-form-urlencoded` 的键/值（`+` 视为空格）。
+fn form_percent_decode(input: &[u8]) -> String {
+    let mut out = Vec::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        match input[i] {
+            b'+' => {
+                out.push(b' ');
+                i += 1;
+            },
+            b'%' if i + 2 < input.len() => {
+                let hex = std::str::from_utf8(&input[i + 1..i + 3]).ok();
+                match hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                    Some(b) => {
+                        out.push(b);
+                        i += 3;
+                    },
+                    None => {
+                        out.push(b'%');
+                        i += 1;
+                    },
+                }
+            },
+            b => {
+                out.push(b);
+                i += 1;
+            },
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// 将 `application/x-www-form-urlencoded` body 解析为 `serde_json::Value` 对象，
+/// 复用请求结构体的 `serde_json` 反序列化路径（RFC 6749 §3.2 表单格式，ocr #7612）。
+fn parse_form_body(body: &[u8]) -> Result<serde_json::Value, String> {
+    let mut map = serde_json::Map::new();
+    for pair in body.split(|&b| b == b'&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let mut it = pair.splitn(2, |&b| b == b'=');
+        let key = form_percent_decode(it.next().unwrap_or_default());
+        let value = form_percent_decode(it.next().unwrap_or_default());
+        if key.is_empty() {
+            return Err("empty form field name".to_string());
+        }
+        map.insert(key, serde_json::Value::String(value));
+    }
+    Ok(serde_json::Value::Object(map))
+}
+
+/// 按 Content-Type 提取请求结构体：
+/// - `application/x-www-form-urlencoded` → 表单解析（RFC 6749 §3.2 / RFC 7009 §2.1 / RFC 7662 §2.2）
+/// - 其余（含 `application/json` 与缺失）→ JSON 解析（向后兼容）
+///
+/// 解析失败返回 400 + RFC 6749 §5.2 `invalid_request` 错误体（带 no-store 头）。
+fn extract_oauth2_request<T: serde::de::DeserializeOwned>(
+    content_type: Option<&str>,
+    body: &[u8],
+) -> Result<T, Response> {
+    let is_form = content_type
+        .map(|ct| ct.starts_with("application/x-www-form-urlencoded"))
+        .unwrap_or(false);
+    let value = if is_form {
+        parse_form_body(body).and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string()))
+    } else {
+        serde_json::from_slice::<T>(body).map_err(|e| e.to_string())
+    };
+    match value {
+        Ok(req) => Ok(req),
+        Err(e) => Err(apply_no_store(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid_request", "message": e })),
+            )
+                .into_response(),
+        )),
+    }
+}
+
+/// 429 判定（ocr #2224）：token/revoke handler 的速率限制错误统一以
+/// `GarrisonError::OAuth2("rate_limited: ...")` 形态产出（见
+/// `oauth2_server::token` 的 `TokenRateLimiter` / `PasswordRateLimiter`）。
+/// 本框架的 `GarrisonError` 尚无独立的限速变体，此处按「变体 + 消息前缀」
+/// 做类型化匹配（比此前对整个 `Display` 做子串匹配更严格、不受错误文案后续
+/// 变化影响），并在 token.rs 侧维持 `rate_limited` 前缀契约。
+fn is_rate_limited_error(e: &crate::error::GarrisonError) -> bool {
+    matches!(e, crate::error::GarrisonError::OAuth2(msg) if msg.starts_with("rate_limited"))
+}
+
 async fn authorize_endpoint(
     State(state): State<Arc<OAuth2State>>,
     Query(req): Query<AuthorizeRequest>,
@@ -115,13 +222,31 @@ async fn authorize_endpoint(
 async fn token_endpoint(
     State(state): State<Arc<OAuth2State>>,
     headers: HeaderMap,
-    Json(req): Json<TokenRequest>,
+    body: axum::body::Bytes,
 ) -> Response {
     // 提取 Authorization 头（RFC 6749 §2.3.1 HTTP Basic Auth）
     let authorization = headers
         .get(axum::http::header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
+
+    // RFC 6749 §3.2：application/x-www-form-urlencoded 为主格式，JSON 兼容保留
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    if body.len() > OAUTH2_BODY_LIMIT {
+        return apply_no_store(
+            (
+                StatusCode::BAD_REQUEST,
+                Json(json!({ "error": "invalid_request", "message": "request body too large" })),
+            )
+                .into_response(),
+        );
+    }
+    let req: TokenRequest = match extract_oauth2_request(content_type, &body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
 
     match state
         .token_handler
@@ -130,25 +255,14 @@ async fn token_endpoint(
     {
         Ok(resp) => {
             // RFC 6749 §5.1 — token 响应必须含 Cache-Control: no-store + Pragma: no-cache
-            let mut response = (StatusCode::OK, Json(resp)).into_response();
-            response.headers_mut().insert(
-                HeaderName::from_static("cache-control"),
-                HeaderValue::from_static("no-store"),
-            );
-            response.headers_mut().insert(
-                HeaderName::from_static("pragma"),
-                HeaderValue::from_static("no-cache"),
-            );
-            response
+            apply_no_store((StatusCode::OK, Json(resp)).into_response())
         },
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts();
-            // 速率限制错误返回 429 Too Many Requests（RFC 6585 §4）
-            //
-            // `GarrisonError::OAuth2(_)` 的 error_code 统一为 "OAUTH2_ERROR"，
-            // 需通过错误消息中的 "rate_limited" 标识区分（与 token handler 中
-            // `PasswordRateLimiter` / `TokenRateLimiter` 的错误格式一致）。
-            let is_rate_limited = e.to_string().contains("rate_limited");
+            // RFC 6585 §4 — 速率限制错误返回 429 Too Many Requests。
+            // ocr #2224：按 GarrisonError::OAuth2 变体 + "rate_limited" 消息前缀
+            // 类型化判定（不再对整个 Display 做任意子串匹配）。
+            let is_rate_limited = is_rate_limited_error(&e);
             let status = if is_rate_limited {
                 StatusCode::TOO_MANY_REQUESTS
             } else {
@@ -159,45 +273,69 @@ async fn token_endpoint(
             } else {
                 error_code
             };
-            (
-                status,
-                Json(json!({ "error": body_error, "message": message })),
+            // RFC 6749 §5.1 — token 端点错误响应同样必须 no-store（ocr #2883）
+            apply_no_store(
+                (
+                    status,
+                    Json(json!({ "error": body_error, "message": message })),
+                )
+                    .into_response(),
             )
-                .into_response()
         },
     }
 }
 
 async fn revoke_endpoint(
     State(state): State<Arc<OAuth2State>>,
-    Json(req): Json<RevokeRequest>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Response {
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    let req: RevokeRequest = match extract_oauth2_request(content_type, &body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
     match state.revoke_handler.handle(&req).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        // RFC 7662 §2.2 — introspect/revoke 响应应带 no-store 缓存控制
+        Ok(()) => apply_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts();
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": error_code, "message": message })),
+            apply_no_store(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": error_code, "message": message })),
+                )
+                    .into_response(),
             )
-                .into_response()
         },
     }
 }
 
 async fn introspect_endpoint(
     State(state): State<Arc<OAuth2State>>,
-    Json(req): Json<IntrospectRequest>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
 ) -> Response {
+    let content_type = headers
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok());
+    let req: IntrospectRequest = match extract_oauth2_request(content_type, &body) {
+        Ok(req) => req,
+        Err(resp) => return resp,
+    };
     match state.introspect_handler.handle(&req).await {
-        Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
+        Ok(resp) => apply_no_store((StatusCode::OK, Json(resp)).into_response()),
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts();
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": error_code, "message": message })),
+            apply_no_store(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": error_code, "message": message })),
+                )
+                    .into_response(),
             )
-                .into_response()
         },
     }
 }
@@ -694,5 +832,82 @@ mod tests {
             .unwrap();
         // 非 rate_limited 错误应返回 400（非 429）
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // === 表单格式（RFC 6749 §3.2）+ 错误响应 no-store 测试（ocr #7612 / #2883）===
+
+    /// token 端点接受 application/x-www-form-urlencoded 请求体（RFC 6749 §3.2）。
+    #[tokio::test]
+    async fn test_token_endpoint_accepts_form_urlencoded() {
+        let (state, store) = make_state();
+        store.create(make_test_client("form-tok")).await.unwrap();
+        let app = oauth2_external_router(state);
+        let body = "grant_type=client_credentials&client_id=form-tok&client_secret=secret-123";
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .header(
+                        "content-type",
+                        "application/x-www-form-urlencoded;charset=UTF-8",
+                    )
+                    .body(Body::from(body.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "表单编码的 token 请求应被接受（RFC 6749 §3.2）"
+        );
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(resp_json["access_token"].as_str().is_some());
+    }
+
+    /// token 端点表单体支持 percent-encoding 与 `+` 空格。
+    #[test]
+    fn parse_form_body_decodes_percent_and_plus() {
+        let value = parse_form_body(b"grant_type=password&username=a%40b.com+cd%26x&code=%E4%B8%AD")
+            .unwrap();
+        assert_eq!(value["username"], "a@b.com cd&x");
+        assert_eq!(value["code"], "中");
+    }
+
+    /// 畸形请求体返回 400 + invalid_request（不再 panic / 500）。
+    #[tokio::test]
+    async fn test_token_endpoint_malformed_body_returns_400_invalid_request() {
+        let (state, _) = make_state();
+        let app = oauth2_external_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{not-json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let cache_control = resp
+            .headers()
+            .get("cache-control")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let pragma = resp
+            .headers()
+            .get("pragma")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(resp_json["error"], "invalid_request");
+        // 错误响应同样必须 no-store（RFC 6749 §5.1）
+        assert_eq!(cache_control.as_deref(), Some("no-store"));
+        assert_eq!(pragma.as_deref(), Some("no-cache"));
     }
 }

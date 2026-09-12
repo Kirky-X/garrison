@@ -10,9 +10,25 @@ impl AuthServerConfig {
     ///
     /// # 错误
     /// - `internal_api_key` 为空时返回错误，防止 fail-open 风险。
+    /// - `rate_limit_trusted_proxies` 含非内网/环回地址时返回错误：
+    ///   可信代理仅应部署在内网（loopback / RFC 1918 / link-local / IPv6 ULA），
+    ///   公网 IP 会被互联网路径上的中间设备伪造，扩大 X-Forwarded-For 信任边界（ocr #2882）。
     pub fn validate(&self) -> Result<(), String> {
         if self.internal_api_key.is_empty() {
             return Err("server-internal-api-key-missing::".to_string());
+        }
+        for ip in &self.rate_limit_trusted_proxies {
+            let is_private = match ip {
+                std::net::IpAddr::V4(v4) => {
+                    v4.is_loopback() || v4.is_private() || v4.is_link_local()
+                },
+                std::net::IpAddr::V6(v6) => {
+                    v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local()
+                },
+            };
+            if !is_private {
+                return Err(format!("server-trusted-proxy-not-private::{}", ip));
+            }
         }
         Ok(())
     }

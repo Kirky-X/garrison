@@ -369,14 +369,16 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
 /// （`GarrisonMetrics::new()` 注册的 `garrison_*` 指标），
 /// 用 `TextEncoder` 编码为 Prometheus 文本格式。
 ///
-/// # 设计权衡
+/// # 设计权衡（已知限制，ocr #3670/#6172/#6809）
 ///
 /// `#[forge]` 宏在非 streaming 模式下用 `Json(value).into_response()` 包装返回值，
-/// 响应 Content-Type 为 `application/json`，body 为 JSON 序列化的字符串
-/// （含转义换行符）。若需标准 Prometheus `text/plain` 抓取，应在
-/// `GarrisonAuthServer::external_router()` / `internal_router()` 中直接用 axum
-/// 路由注册（绕过 `#[forge]` 宏）。本端点优先复用 `#[forge]` 声明式注册，
-/// 保持路由定义一致性。
+/// 本端点响应 **Content-Type 为 `application/json`**，body 为 JSON 序列化的字符串
+/// （含转义换行符）——**不是**标准 Prometheus `text/plain` 抓取格式。标准
+/// Prometheus scraper（`prometheus::TextEncoder` 消费方）无法直接解析本端点响应；
+/// 集成 Prometheus 抓取时必须改在 `GarrisonAuthServer::external_router()` /
+/// `internal_router()` 中用 axum 原生路由注册 `text/plain` 版 metrics
+/// （绕过 `#[forge]` 宏），或在抓取侧做 JSON 解包转换。本端点保留
+/// `#[forge]` 声明式注册以维持路由定义一致性（既有集成测试固化该 JSON 契约）。
 ///
 /// # 错误
 ///
@@ -839,6 +841,10 @@ mod tests {
     /// `#[forge]` 宏用 `Json(value).into_response()` 包装返回值，
     /// 响应 body 为 JSON 序列化的字符串（含转义换行符）。
     /// 测试解析 JSON 字符串后验证包含 `bulwark_` 前缀指标。
+    ///
+    /// 注：该测试固化了「metrics 经 #[forge] 输出 JSON 包装」的设计取舍
+    /// （ocr #3670/#6172/#6809）——标准 Prometheus `text/plain` 抓取需绕过
+    /// `#[forge]` 用 axum 原生路由注册，见 metrics handler 的文档说明。
     #[cfg(feature = "metrics-prometheus")]
     #[tokio::test]
     #[serial_test::serial]

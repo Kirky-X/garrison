@@ -80,13 +80,21 @@ pub struct GarrisonRejection(pub GarrisonError);
 ///
 /// 对应 axum 版 `GarrisonRouter`，API 对齐。
 /// `impl GarrisonRouter` + `impl Default` 见 [`router`]。
+///
+/// # 封装性（ocr #3726/8024）
+///
+/// 内部字段（`rules` / `interceptor` / `config`）不对外暴露：
+/// 直接公开可变字段会让调用方绕过任何校验任意改写路由表、替换拦截器或
+/// 更换配置，静默破坏鉴权行为。请通过构造器 API
+/// （[`GarrisonRouter::new`] / [`GarrisonRouter::with_interceptor`] /
+/// [`GarrisonRouter::route_protected`]）注册规则。
 pub struct GarrisonRouter {
-    /// 路径 → 注解映射
-    pub rules: HashMap<String, Annotation>,
-    /// 拦截器
-    pub interceptor: Arc<dyn GarrisonInterceptor>,
-    /// 配置
-    pub config: Arc<GarrisonConfig>,
+    /// 路径 → 注解映射（私有：防外部绕过校验直接改写，ocr #3726/8024）。
+    rules: HashMap<String, Annotation>,
+    /// 拦截器（私有：防外部运行时替换，ocr #3726/8024）。
+    interceptor: Arc<dyn GarrisonInterceptor>,
+    /// 配置（私有：防外部运行时更换，ocr #3726/8024）。
+    config: Arc<GarrisonConfig>,
 }
 
 #[cfg(test)]

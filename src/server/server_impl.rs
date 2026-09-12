@@ -306,17 +306,22 @@ impl GarrisonAuthServer {
         ))
     }
 
-    /// 构建内网路由（sdforge + path-filter + api_key_auth + audit_log + tenant_resolution）。
+    /// 构建内网路由（sdforge + path-filter + api_key_auth + rate_limit + audit_log + tenant_resolution）。
     ///
     /// 用 `sdforge::http::build()` 收集所有 `#[forge]` 路由（15 基础 + metrics-prometheus 时 +1），
     /// 通过 `internal_path_filter` 中间件拒绝 3 个外网路径（login/logout/refresh），
     /// 其余内网路径放行（由 api_key_auth 保护）。
     ///
-    /// 中间件栈（从外到内）：
-    /// `audit_log → api_key_auth → internal_path_filter → tenant_resolution? → handler`
+    /// # 内网路由保护（ocr #2234 / #3425）
     ///
-    /// `tenant_resolution_middleware` 仅在 `tenant-isolation` feature 启用且
-    /// `with_tenant_resolver(Some(..))` 设置时注入。
+    /// - 内网路由同样挂载 `rate_limit_middleware`（限速参数复用外网配置：
+    ///   `external_rate_limit_per_ip` / `rate_limit_max_entries` / `rate_limit_trusted_proxies`），
+    ///   防止持有合法 API Key 的调用方无限速打满后端资源。
+    /// - OAuth2 内网路由（introspect）**先 merge 再统一挂中间件**：axum `merge` 不继承
+    ///   layer，若 introspect 路由在挂 layer 后 merge 会绕过 `api_key_auth`。
+    ///
+    /// 中间件栈（从外到内）：
+    /// `tenant_resolution? → audit_log → rate_limit → api_key_auth → internal_path_filter → handler`
     ///
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn internal_router(&self) -> Router {
@@ -324,16 +329,41 @@ impl GarrisonAuthServer {
         let api_key_state = Arc::new(middleware::ApiKeyState {
             api_key: self.config.internal_api_key.clone(),
         });
-        let router = sdforge::http::build()
-            .layer(Extension(self.backend.clone()))
+        // ocr #2234: 内网路由限速状态（参数与外网一致，独立 bucket 实例）
+        let rate_limit_state = Arc::new(middleware::RateLimitState::with_options(
+            self.config.external_rate_limit_per_ip,
+            self.config.rate_limit_max_entries,
+            self.config.rate_limit_trusted_proxies.clone(),
+        ));
+
+        let router = sdforge::http::build().layer(Extension(self.backend.clone()));
+
+        // ocr #3425: OAuth2 内网路由（introspect）先 merge，再统一在内网 router 上
+        // 挂 path_filter / api_key_auth / rate_limit / audit_log，
+        // 确保 merge 进来的路由不绕过 api_key_auth（axum merge 不继承 layer）。
+        #[cfg(feature = "oauth2-server")]
+        let router = {
+            if let Some(state) = &self.oauth2_state {
+                router.merge(oauth2_routes::oauth2_internal_router(state.clone()))
+            } else {
+                router
+            }
+        };
+
+        let router = router
             .layer(axum::middleware::from_fn(middleware::internal_path_filter))
             .layer(axum::middleware::from_fn_with_state(
                 api_key_state,
                 api_key_auth_middleware,
             ))
+            .layer(axum::middleware::from_fn_with_state(
+                rate_limit_state,
+                rate_limit_middleware,
+            ))
             .layer(axum::middleware::from_fn(audit_log_middleware));
 
         // 租户中间件：tenant-isolation feature 启用且注入 resolver 时才挂载
+        // （覆盖全部内网路由，含 merge 进来的 introspect，读取 tenant 前缀 key）
         #[cfg(feature = "tenant-isolation")]
         let router = {
             if let Some(resolver) = &self.tenant_resolver {
@@ -341,31 +371,6 @@ impl GarrisonAuthServer {
                     resolver.clone(),
                     crate::router::tenant_resolution_middleware,
                 ))
-            } else {
-                router
-            }
-        };
-
-        #[cfg(feature = "oauth2-server")]
-        let router = {
-            if let Some(state) = &self.oauth2_state {
-                let oauth2_router = oauth2_routes::oauth2_internal_router(state.clone());
-
-                // 租户中间件：与 external_router 同理，axum merge 不合并 layer。
-                // introspect 端点需在 TENANT scope 内读 access_token（与 token_endpoint 写入前缀一致）。
-                #[cfg(feature = "tenant-isolation")]
-                let oauth2_router = {
-                    if let Some(resolver) = &self.tenant_resolver {
-                        oauth2_router.layer(axum::middleware::from_fn_with_state(
-                            resolver.clone(),
-                            crate::router::tenant_resolution_middleware,
-                        ))
-                    } else {
-                        oauth2_router
-                    }
-                };
-
-                router.merge(oauth2_router)
             } else {
                 router
             }
@@ -460,7 +465,12 @@ impl GarrisonAuthServer {
                     GarrisonError::Internal(format!("server-internal-addr-parse::{}", e))
                 })?;
                 return axum_server::bind_rustls(addr, rustls_config)
-                    .serve(internal_router.into_make_service())
+                    .serve(
+                        // ocr #2236: 内网 TLS 路径同样注入 ConnectInfo，
+                        // 与外网路径对齐（限速/IP 提取中间件依赖 ConnectInfo<SocketAddr>）
+                        internal_router
+                            .into_make_service_with_connect_info::<std::net::SocketAddr>(),
+                    )
                     .await
                     .map_err(|e| {
                         GarrisonError::Internal(format!("server-internal-server-error::{}", e))
@@ -470,7 +480,13 @@ impl GarrisonAuthServer {
             let internal_listener = tokio::net::TcpListener::bind(&internal_addr)
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("server-internal-bind::{}", e)))?;
-            if let Err(e) = axum::serve(internal_listener, internal_router).await {
+            if let Err(e) = axum::serve(
+                internal_listener,
+                // ocr #2236: 内网非 TLS 路径同样注入 ConnectInfo（与外网对齐）
+                internal_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            )
+            .await
+            {
                 tracing::error!(error = %e, "internal server error");
                 return Err(GarrisonError::Internal(format!(
                     "server-internal-server-error::{}",

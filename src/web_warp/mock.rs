@@ -149,17 +149,57 @@ impl GarrisonInterface for MockInterface {
 mod mock_dao_coverage_tests {
     use super::*;
 
+    /// MockDao 组合回退方法覆盖测试。
+    ///
+    /// ocr #7586：不再对结果一律 `let _ =`——确定性路径补断言，
+    /// 回归（如 rename 丢值 / incr 不计数）将使测试失败。
     #[tokio::test]
     async fn mock_dao_atomic_and_default_methods_coverage() {
         let dao = MockDao::new();
         dao.set("k1", "v1", 60).await.unwrap();
-        let _ = dao.set_if_absent("a1", "v1", 60).await;
-        let _ = dao.get_and_delete("a1").await;
-        let _ = dao.incr("ctr", 60).await;
-        let _ = dao.decr("ctr").await;
-        let _ = dao.rename("k1", "k2").await;
-        let _ = dao.compare_and_swap("k2", Some("v1"), "v2", 60).await;
-        let _ = dao.set_permanent("p1", "val").await;
+
+        // set_if_absent：key 不存在 → Ok(true) 并写入
+        let inserted = dao.set_if_absent("a1", "v1", 60).await.unwrap();
+        assert!(inserted, "set_if_absent 对不存在的 key 应返回 true");
+
+        // get_and_delete：取回并删除
+        let removed = dao.get_and_delete("a1").await.unwrap();
+        assert_eq!(removed.as_deref(), Some("v1"), "get_and_delete 应取回刚写入的值");
+        let gone = dao.get("a1").await.unwrap();
+        assert!(gone.is_none(), "get_and_delete 后 key 应不存在");
+
+        // incr：从 1 开始计数
+        let n = dao.incr("ctr", 60).await.unwrap();
+        assert_eq!(n, 1, "incr 对不存在的 key 应返回 1");
+
+        // decr：1 → 0（并删除 key）
+        let n = dao.decr("ctr").await.unwrap();
+        assert_eq!(n, 0, "decr 1 应得到 0");
+        let gone = dao.get("ctr").await.unwrap();
+        assert!(gone.is_none(), "decr 到 0 后 key 应被删除");
+
+        // rename：值迁移到新 key
+        dao.rename("k1", "k2").await.unwrap();
+        let migrated = dao.get("k2").await.unwrap();
+        assert_eq!(migrated.as_deref(), Some("v1"), "rename 后新 key 应携带原值");
+        let gone = dao.get("k1").await.unwrap();
+        assert!(gone.is_none(), "rename 后旧 key 应不存在");
+
+        // compare_and_swap：expected 匹配 → 写入成功
+        let swapped = dao
+            .compare_and_swap("k2", Some("v1"), "v2", 60)
+            .await
+            .unwrap();
+        assert!(swapped, "expected 匹配时 CAS 应成功");
+        let updated = dao.get("k2").await.unwrap();
+        assert_eq!(updated.as_deref(), Some("v2"));
+
+        // set_permanent + get
+        dao.set_permanent("p1", "val").await.unwrap();
+        let v = dao.get("p1").await.unwrap();
+        assert_eq!(v.as_deref(), Some("val"));
+
+        // 其余辅助方法：冒烟调用（返回值语义依赖 trait 默认实现，仅保证不 panic）
         let _ = dao.get_with_ttl("k1").await;
         let _ = dao.get_timeout("k1").await;
         let _ = dao.keys("*").await;

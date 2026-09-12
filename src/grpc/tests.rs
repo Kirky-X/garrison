@@ -45,6 +45,41 @@ fn test_extract_token_bearer_uppercase() {
     assert_eq!(token, "TOKEN123");
 }
 
+/// 测试 extract_token 支持任意混合大小写 scheme（RFC 7235 大小写不敏感，
+/// 不再限于三种硬编码前缀，ocr #2631/#3034/#3275/#3588/#6239）。
+#[test]
+fn test_extract_token_bearer_mixed_case() {
+    for header in ["BeArEr tok1", "bEaReR tok2", "BEARER tok3", "bearer tok4"] {
+        let mut metadata = MetadataMap::new();
+        metadata.insert("authorization", header.parse().unwrap());
+        let token = GarrisonGrpcInterceptor::extract_token(&metadata)
+            .unwrap_or_else(|e| panic!("混合大小写 scheme 应被接受: {header}, 实际: {e}"));
+        assert_eq!(token, header.split_once(' ').unwrap().1);
+    }
+}
+
+/// 测试 extract_token 拒绝超过 MAX_TOKEN_LEN 的超长 token（ocr #2380）。
+#[test]
+fn test_extract_token_rejects_overlong_token() {
+    let mut metadata = MetadataMap::new();
+    let long_token = "a".repeat(super::MAX_TOKEN_LEN + 1);
+    metadata.insert(
+        "authorization",
+        format!("Bearer {long_token}").parse().unwrap(),
+    );
+    let result = GarrisonGrpcInterceptor::extract_token(&metadata);
+    assert!(result.is_err(), "超长 token 应被拒绝");
+    assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
+    // 边界：恰好 MAX_TOKEN_LEN 应被接受
+    let mut metadata = MetadataMap::new();
+    let exact_token = "a".repeat(super::MAX_TOKEN_LEN);
+    metadata.insert(
+        "authorization",
+        format!("Bearer {exact_token}").parse().unwrap(),
+    );
+    assert!(GarrisonGrpcInterceptor::extract_token(&metadata).is_ok());
+}
+
 /// 测试 extract_token 缺失 Authorization metadata 时返回 UNAUTHENTICATED。
 #[test]
 fn test_extract_token_missing_metadata() {
@@ -117,6 +152,67 @@ fn test_interceptor_call_missing_metadata() {
     assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
 }
 
+/// 测试 Interceptor::call() 把提取的 token 以 GarrisonGrpcToken 注入 request
+/// extensions（不再"提取即弃"，ocr #3277），且 Debug 输出脱敏。
+#[test]
+fn test_interceptor_call_injects_token_into_extensions() {
+    let mut interceptor = GarrisonGrpcInterceptor::new();
+    let mut request = tonic::Request::new(());
+    request
+        .metadata_mut()
+        .insert("authorization", "Bearer secret-token-abc".parse().unwrap());
+    let request = interceptor.call(request).expect("合法 token 应放行");
+    let injected = request
+        .extensions()
+        .get::<GarrisonGrpcToken>()
+        .expect("token 应注入 request extensions");
+    assert_eq!(injected.0, "secret-token-abc");
+    // Debug 脱敏：不得包含 token 明文
+    let debug = format!("{:?}", injected);
+    assert!(!debug.contains("secret-token-abc"), "Debug 不得泄露 token: {debug}");
+    assert!(debug.contains("[REDACTED]"));
+}
+
+/// 测试配置同步校验器后 Interceptor::call() 执行真实鉴权：
+/// 校验失败的 token 以 UNAUTHENTICATED 拒绝，不进入 handler（ocr #2633/#3036/#3276）。
+#[test]
+fn test_interceptor_with_validator_rejects_invalid_token() {
+    struct RejectAll;
+    impl GarrisonGrpcTokenValidator for RejectAll {
+        fn validate(&self, _token: &str) -> Result<(), tonic::Status> {
+            Err(tonic::Status::unauthenticated("invalid token"))
+        }
+    }
+    let mut interceptor =
+        GarrisonGrpcInterceptor::with_token_validator(std::sync::Arc::new(RejectAll));
+    let mut request = tonic::Request::new(());
+    request
+        .metadata_mut()
+        .insert("authorization", "Bearer some-token".parse().unwrap());
+    let result = interceptor.call(request);
+    assert!(result.is_err(), "校验器拒绝的 token 不应放行");
+    assert_eq!(result.unwrap_err().code(), tonic::Code::Unauthenticated);
+}
+
+/// 测试配置同步校验器后合法 token 放行且 token 注入 extensions。
+#[test]
+fn test_interceptor_with_validator_accepts_valid_token() {
+    struct AcceptAll;
+    impl GarrisonGrpcTokenValidator for AcceptAll {
+        fn validate(&self, _token: &str) -> Result<(), tonic::Status> {
+            Ok(())
+        }
+    }
+    let mut interceptor =
+        GarrisonGrpcInterceptor::with_token_validator(std::sync::Arc::new(AcceptAll));
+    let mut request = tonic::Request::new(());
+    request
+        .metadata_mut()
+        .insert("authorization", "Bearer good-token".parse().unwrap());
+    let request = interceptor.call(request).expect("校验通过的 token 应放行");
+    assert!(request.extensions().get::<GarrisonGrpcToken>().is_some());
+}
+
 /// 测试 Clone trait（用于 tonic interceptor 复用）。
 #[test]
 fn test_interceptor_clone() {
@@ -139,11 +235,21 @@ fn test_interceptor_debug() {
 
 /// 测试 health_service() 成功返回 HealthServer（Serving 状态已设置）。
 ///
+/// 断言返回的 server 是标准 gRPC health 服务（NamedService::NAME 正确），
 /// 函数内部通过 HealthReporter 设置 ServingStatus::Serving，
-/// 成功返回即表示状态已正确设置。
+/// 成功返回即表示状态已正确设置（ocr #2001：补真实断言，不再纯冒烟）。
 #[tokio::test]
 async fn test_health_service_returns_server() {
-    let _server = super::health_service().await;
+    let server = super::health_service().await;
+    fn assert_named_service<T: tonic::server::NamedService>(_: &T) -> &'static str {
+        T::NAME
+    }
+    let name = assert_named_service(&server);
+    assert_eq!(
+        name,
+        "grpc.health.v1.Health",
+        "health_service 应返回标准 gRPC health 服务"
+    );
 }
 
 /// 测试 health_service() 返回的类型实现了 tonic::server::NamedService。
@@ -166,7 +272,13 @@ async fn test_health_service_implements_named_service() {
 /// （NAME = "grpc.health.v1.Health"），health_service() 返回有效实例即表示 trait 已实现。
 #[tokio::test]
 async fn test_health_service_named_service_name() {
-    let _server = super::health_service().await;
+    let server = super::health_service().await;
+    // ocr #615：补真实断言——验证 NAME 确为标准健康检查服务名，
+    // 而非仅调用后丢弃（原测试无任何断言）。
+    fn name_of<T: tonic::server::NamedService>(_: &T) -> &'static str {
+        T::NAME
+    }
+    assert_eq!(name_of(&server), "grpc.health.v1.Health");
 }
 
 /// 测试 health_service() 多次调用返回独立实例（无全局状态泄漏）。
