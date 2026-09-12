@@ -33,12 +33,19 @@ async fn has_permission_not_held_returns_false() {
     assert!(!checker.has_permission("1001", "user:delete").await.unwrap());
 }
 
-/// has_permission 空字符串返回错误（spec Scenario）。
+/// has_permission 空字符串返回 InvalidParam 错误（spec Scenario）。
+///
+/// issue 338/344：断言强度补强——锁定具体错误变体与错误码，
+/// 任意其他错误变体（NotPermission/Dao/...）不再能蒙混通过。
 #[tokio::test]
 async fn has_permission_empty_string_returns_error() {
     let checker = make_checker();
     let result = checker.has_permission("1001", "").await;
-    assert!(result.is_err());
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("core-perm-empty")),
+        "has_permission 空字符串应返回 InvalidParam(core-perm-empty)，实际: {:?}",
+        result
+    );
 }
 
 // ========================================================================
@@ -57,6 +64,29 @@ async fn has_role_held_returns_true() {
 async fn has_role_not_held_returns_false() {
     let checker = make_checker();
     assert!(!checker.has_role("1001", "superadmin").await.unwrap());
+}
+
+/// issue 3079: has_role 对 role 字符串做 NFC 规范化（与 has_permission 对齐）。
+///
+/// NFD 形式 `"role\u{0301}1"`（e + COMBINING ACUTE ACCENT）应规范化为 NFC 形式
+/// `"rol\u{00e9}1"` 后匹配，防止视觉同形字符串绕过角色校验。
+#[tokio::test]
+async fn has_role_normalizes_unicode() {
+    let interface = MockInterface::new().with_roles("1001", vec!["rol\u{00e9}1"]);
+    let interface_arc: Arc<dyn GarrisonInterface> = Arc::new(interface);
+    let checker = PermissionCheckerDefault::new(interface_arc);
+
+    let nfd = "role\u{0301}1";
+    let nfc = "rol\u{00e9}1";
+
+    assert!(
+        checker.has_role("1001", nfd).await.unwrap(),
+        "NFD 形式应规范化后匹配 NFC role"
+    );
+    assert!(
+        checker.has_role("1001", nfc).await.unwrap(),
+        "NFC 形式应直接匹配"
+    );
 }
 
 // ========================================================================

@@ -139,23 +139,30 @@ pub trait PermissionChecker: Send + Sync {
 
     /// 批量校验权限：任一满足即返回 true。
     ///
-    /// 内部调用 `has_permission`，遇到错误时该权限视为不满足。
+    /// 内部调用 `has_permission`，遇到错误时该权限按 fail-closed 视为不满足。
     ///
-    /// # 错误处理说明（Issue 48）
+    /// # 错误处理说明（Issue 48 / issue 2415/2671/2669/3090）
     ///
-    /// 返回类型为 `bool` 而非 `GarrisonResult<bool>`，底层 `has_permission` 的错误
-    /// （如 DAO 不可达、超时）被静默吞并（`unwrap_or(false)`）。调用方无法区分
-    /// “确实无权限”与“校验过程出错”。若需错误可观测性，请使用 `authorize()` 方法
-    /// （返回 `GarrisonResult<Decision>`，包含完整错误信息）。
+    /// 返回类型为 `bool` 而非 `GarrisonResult<bool>`（trait 公开 API，变更会破坏
+    /// 所有实现方与调用方），底层 `has_permission` 的错误（如 DAO 不可达、超时）
+    /// 无法通过返回值表达。语义与可观测性契约：
+    ///
+    /// - **fail-closed 的可用性代价（安全敏感）**：底层存储故障会被降级为
+    ///   「不满足」——攻击者若能诱发临时 DAO 故障，可借此拒绝合法用户的授权判定。
+    /// - **故障不再静默**：默认实现（`PermissionCheckerDefault`）在错误路径逐条
+    ///   输出 `tracing::warn!`（含 login_id / permission / 错误详情），可对接告警。
+    /// - **需要区分「无权限」与「故障」时**：请使用 [`authorize()`](Self::authorize)
+    ///   （返回 `GarrisonResult<Decision>`，错误显性化，不降级）。
     async fn has_any_permission(&self, login_id: &str, perms: &[&str]) -> bool;
 
     /// 批量校验权限：全部满足才返回 true。
     ///
-    /// 内部调用 `has_permission`，遇到错误时该权限视为不满足。
+    /// 内部调用 `has_permission`，遇到错误时该权限按 fail-closed 视为不满足。
     ///
-    /// # 错误处理说明（Issue 48）
+    /// # 错误处理说明（Issue 48 / issue 2415/2671/3090）
     ///
-    /// 同 `has_any_permission`，底层错误被静默吞并。需要错误可观测性时使用 `authorize()`。
+    /// 同 [`has_any_permission`](Self::has_any_permission)：返回 `bool`，底层错误
+    /// fail-closed 降级并输出 `warn` 日志；需要错误通道时使用 `authorize()`。
     async fn has_all_permissions(&self, login_id: &str, perms: &[&str]) -> bool;
 }
 

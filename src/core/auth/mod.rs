@@ -134,6 +134,9 @@ pub trait AuthLogic: Send + Sync {
     /// # 错误
     /// - `GarrisonError::NotLogin`: token 无效或已过期。
     /// - `GarrisonError::InvalidParam`: `target_login_id` 为空字符串。
+    /// - `GarrisonError::NotPermission`: 无权切换，或目标不可用。注意（issue 2663
+    ///   反枚举）：目标 login_id 不存在与权限不足返回**同一**模糊错误类型与稳定
+    ///   错误码（`core-auth-switch-to-denied`），外部不可通过错误差异枚举账号存在性。
     ///
     /// # 默认实现
     /// 返回 `GarrisonError::NotImplemented`，由 `AuthLogicDefault` 覆盖。
@@ -177,10 +180,17 @@ pub struct AuthLogicDefault {
     /// Token 生成与校验处理器。
     token_handler: Arc<dyn Token>,
     /// 默认 token 有效期（秒）。
+    ///
+    /// 构造器级正数校验（issue 2664）：`AuthLogicDefault::new` 拒绝非正数，
+    /// 负值回退为 3600 秒并输出 warn——否则负值会在 TTL 计算处经 `as u64`
+    /// 回绕为事实上的永久会话（issue 2408，CWE-190）。
     timeout: i64,
     /// 是否启用 remember_me 扩展超时。
     remember_me_enabled: bool,
     /// remember_me 扩展超时秒数（默认 7776000 = 90 天）。
+    ///
+    /// 同样受构造器级正数校验（issue 2664）：`with_remember_me` 拒绝非正数，
+    /// 回退为 7776000 秒并输出 warn。
     remember_me_timeout: i64,
     /// 身份切换权限校验 guard（L4 修复，默认 DenyAllSwitchToGuard fail-closed）。
     switch_to_guard: Arc<dyn SwitchToGuard>,

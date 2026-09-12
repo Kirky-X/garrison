@@ -12,26 +12,51 @@ use crate::error::{GarrisonError, GarrisonResult};
 use cedar_policy::{Authorizer, Context, EntityUid, Policy, PolicyId, PolicySet, Request, Schema};
 use oxcache::traits::CacheKey;
 use oxcache::Cache;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::fmt::Write as _;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-/// ABAC 决策缓存 key：(principal, action, resource) 三元组。
+/// 计算 context 成分的缓存 key 分量（issue 6474/6478/6480/6482 修复）。
+///
+/// `context_json` 曾被排除在缓存 key 之外（T016 设计），导致同一
+/// (principal, action, resource) 三元组下不同 context 共享缓存条目，
+/// context 敏感策略（如时间窗校验）返回陈旧决策。修复：将 context_json 的
+/// SHA-256 摘要前 16 字节（128-bit，碰撞概率在 10^4 容量下可忽略）hex 编码后
+/// 纳入 key；`None` 使用固定占位 `"none"`。
+fn context_key_component(context_json: Option<&str>) -> String {
+    match context_json {
+        None => "none".to_string(),
+        Some(json) => {
+            let digest = Sha256::digest(json.as_bytes());
+            let mut hex = String::with_capacity(32);
+            for byte in &digest[..16] {
+                let _ = write!(hex, "{byte:02x}");
+            }
+            hex
+        },
+    }
+}
+
+/// ABAC 决策缓存 key：(principal, action, resource, context 摘要) 四元组。
 ///
 /// # 设计权衡
 ///
-/// `context_json` 不参与缓存 key。原因：
-/// - 任务规格 T016 明确 `key = (principal, action, resource)`
-/// - ABAC 策略热加载时通过 `clear()` 清空缓存，保证策略变更后决策一致
-/// - 调用方若需 context 敏感的求值，应使用 `evaluate_with_temp_policy`（不走缓存）
+/// `context_json` 以 SHA-256 前 16 字节摘要参与缓存 key（issue 6474/6478/6480/6482），
+/// 不同 context 不再共享缓存条目。实体属性状态仍**不**参与 key（issue 6473/6481/6483）：
+/// - 实体属性数据量大且无稳定指纹，纳入 key 的成本过高
+/// - 实体变更时调用方需调用 [`AbacEngine::invalidate_entities`] 清空缓存（见其文档）
+/// - 策略变更（load/unload/reload_all）通过 `clear()` + 代数递增保证一致性
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct DecisionKey(String, String, String);
+struct DecisionKey(String, String, String, String);
 
 impl CacheKey for DecisionKey {
     fn to_key_string(&self) -> String {
         // 使用 \x1F (ASCII Unit Separator) 作为字段分隔符，避免与 Cedar EntityUid 中的 ::" 冲突
-        format!("{}\x1F{}\x1F{}", self.0, self.1, self.2)
+        format!("{}\x1F{}\x1F{}\x1F{}", self.0, self.1, self.2, self.3)
     }
 }
 
@@ -50,6 +75,7 @@ const DECISION_CACHE_MAX_CAPACITY: u64 = 10_000;
 ///
 /// - `authorizer`：Cedar 授权器（无状态，可共享）
 /// - `policies`：策略集（`Arc<RwLock<PolicySet>>` 支持读写分离热加载）
+/// - `policy_generation`：策略集代数（每次热加载递增，用于缓存写回校验）
 /// - `schema`：Cedar schema（定义实体类型、属性、动作）
 /// - `cache`：决策缓存（`oxcache::Cache`，全局 TTL 60s, max 10000），key 为 DecisionKey
 /// - `entity_loader`：实体加载器
@@ -63,17 +89,26 @@ pub struct AbacEngine {
     authorizer: Authorizer,
     /// 策略集（RwLock 支持热加载时读写分离）。
     policies: Arc<RwLock<PolicySet>>,
+    /// 策略集代数（issue 6299 竞态修复）。
+    ///
+    /// 每次策略集变更（load_policy / unload_policy / reload_all，均在写锁范围内）
+    /// 递增。`evaluate` 在读锁范围内克隆策略快照时同时读取代数，写缓存前重读比较：
+    /// 代数不一致说明求值期间发生了热加载，该决策基于旧策略快照，跳过缓存写入，
+    /// 避免旧策略决策在 `reload_all` 清空缓存后回填（陈旧决策滞留 TTL 60s）。
+    policy_generation: AtomicU64,
     /// Cedar schema（定义实体类型、属性、动作）。
     schema: Schema,
     /// 决策缓存（`oxcache::Cache<DecisionKey, Decision>`，全局 TTL 60s, max 10000）。
     ///
     /// 策略热加载（load/unload/reload_all 成功）时调用 `clear()` 清空。
+    /// 实体状态变更需调用方显式调用 [`AbacEngine::invalidate_entities`] 清空。
     cache: Cache<DecisionKey, Decision>,
     /// 实体加载器。
     ///
     /// 每次 `evaluate` 时调用 `load_entities` 获取 Cedar Entities 集合，
     /// 支持基于实体属性的策略（如 `resource.owner == principal.id`）。
-    /// 决策缓存不因实体加载而失效——调用方需保证 `EntityLoader` 返回稳定实体集合。
+    /// 决策缓存不因实体加载而失效——实体属性变更时调用方需调用
+    /// [`AbacEngine::invalidate_entities`]（见其文档的调用时机说明）。
     entity_loader: Arc<dyn EntityLoader>,
 }
 
@@ -104,9 +139,30 @@ impl AbacEngine {
         Ok(Self {
             authorizer: Authorizer::new(),
             policies: Arc::new(RwLock::new(PolicySet::new())),
+            policy_generation: AtomicU64::new(0),
             schema,
             cache,
             entity_loader,
+        })
+    }
+
+    /// 清空决策缓存（实体状态变更时由调用方触发）。
+    ///
+    /// # 何时调用（issue 6473/6481/6483 / 2764 / 3191 / 8320）
+    ///
+    /// 决策缓存 key 含 (principal, action, resource, context 摘要)，但**不含实体属性状态**。
+    /// 若 `EntityLoader` 返回的实体属性在运行期发生变化（如 `resource.owner` 所有权转移、
+    /// 部门/组成员变更），调用方必须在实体变更点调用本方法清空缓存，否则最长
+    /// TTL 60s 内 `evaluate` 会返回基于旧实体属性的陈旧决策。
+    ///
+    /// 策略集变更（`load_policy` / `unload_policy` / `reload_all`）无需调用——
+    /// 内部已自动清空缓存并递增策略代数。
+    ///
+    /// # 错误
+    /// - 缓存清空失败：`GarrisonError::InvalidParam`
+    pub async fn invalidate_entities(&self) -> GarrisonResult<()> {
+        self.cache.clear().await.map_err(|e| {
+            GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
         })
     }
 
@@ -121,6 +177,12 @@ impl AbacEngine {
     /// # 返回
     /// - `Decision::allow()`：Cedar 允许
     /// - `Decision::deny(...)`：Cedar 拒绝（默认拒绝或显式 forbid）
+    ///
+    /// # 缓存语义
+    ///
+    /// 缓存 key 为 (principal, action, resource, context 摘要) 四元组：不同
+    /// `context_json` 不会共享缓存条目（issue 6474/6478/6480/6482）。实体属性状态
+    /// 不参与 key——实体变更时调用方需调用 [`Self::invalidate_entities`]。
     ///
     /// # 错误
     /// - EntityUid 解析失败：`GarrisonError::InvalidParam`
@@ -139,6 +201,7 @@ impl AbacEngine {
             principal.to_string(),
             action.to_string(),
             resource.to_string(),
+            context_key_component(context_json),
         );
         match self.cache.get(&cache_key).await {
             Ok(Some(cached)) => return Ok(cached),
@@ -151,66 +214,47 @@ impl AbacEngine {
             },
         }
 
-        // 缓存未命中，调用 Cedar 求值
-        let principal_uid: EntityUid = principal
-            .parse()
-            .map_err(|e| GarrisonError::InvalidParam(format!("abac-principal-parse::{}", e)))?;
-        let action_uid: EntityUid = action
-            .parse()
-            .map_err(|e| GarrisonError::InvalidParam(format!("abac-action-parse::{}", e)))?;
-        let resource_uid: EntityUid = resource
-            .parse()
-            .map_err(|e| GarrisonError::InvalidParam(format!("abac-resource-parse::{}", e)))?;
-        let context = match context_json {
-            Some(json) => Context::from_json_str(json, Some((&self.schema, &action_uid)))
-                .map_err(|e| GarrisonError::InvalidParam(format!("abac-context-parse::{}", e)))?,
-            None => Context::empty(),
-        };
-        let request = Request::new(
-            principal_uid,
-            action_uid,
-            resource_uid,
-            context,
-            Some(&self.schema),
-        )
-        .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
-        // 在读锁范围内克隆 PolicySet，避免跨 await 持有锁
-        let policies = {
+        // 在读锁范围内读取策略代数并克隆策略快照：写方在写锁范围内递增代数，
+        // 因此（代数, 策略快照）对在读锁内是一致的（issue 6299）
+        let (policies, generation) = {
             let guard = self.policies.read().await;
-            guard.clone()
+            (
+                guard.clone(),
+                self.policy_generation.load(Ordering::Acquire),
+            )
         };
-        // 通过 EntityLoader 加载实体。若返回错误，通过 ? 传播，缓存不受污染（未到达 set）。
-        let entities = self.entity_loader.load_entities().await?;
-        let response = self
-            .authorizer
-            .is_authorized(&request, &policies, &entities);
 
-        // 记录 Cedar 诊断错误（Issue 3/91: 原代码丢弃了 diagnostics errors）
-        for error in response.diagnostics().errors() {
+        // 共享求值 helper（与 evaluate_with_temp_policy 复用同一诊断/fail-closed 逻辑）
+        let (decision, has_eval_errors) = self
+            .evaluate_policies(
+                principal,
+                action,
+                resource,
+                context_json,
+                &policies,
+                "policy",
+            )
+            .await?;
+
+        // Cedar 诊断含错误时 fail-closed 拒绝（不缓存）：
+        // 瞬态故障（实体数据缺失等）不应钉死在 TTL 60s 的缓存里，恢复后立即可重评
+        if has_eval_errors {
+            return Ok(decision);
+        }
+
+        // 写入缓存（仅在求值成功后）
+        // issue 6299：写缓存前重读策略代数。若求值期间发生了热加载
+        //（load/unload/reload_all 已清空缓存并递增代数），本决策基于旧策略快照，
+        // 写入会把陈旧决策回填到新策略集的缓存中（TTL 60s 内返回过期决策）——跳过写入。
+        if self.policy_generation.load(Ordering::Acquire) != generation {
             tracing::warn!(
                 principal = %principal,
                 action = %action,
                 resource = %resource,
-                error = %error,
-                "Cedar policy evaluation diagnostic error"
+                "abac-decision-cache: policy set changed during evaluation, skipping cache write"
             );
+            return Ok(decision);
         }
-
-        let decision = match response.decision() {
-            cedar_policy::Decision::Allow => Decision::allow(),
-            cedar_policy::Decision::Deny => {
-                // 区分显式 forbid 策略匹配与隐式 deny（无策略匹配）
-                // diagnostics.reasons() 返回匹配的 policy ID；有匹配说明是 forbid 策略生效
-                let has_matching_policy = response.diagnostics().reason().next().is_some();
-                if has_matching_policy {
-                    Decision::deny(DecisionReason::ExplicitDeny)
-                } else {
-                    Decision::deny(DecisionReason::NoMatchingPermission)
-                }
-            },
-        };
-
-        // 写入缓存（仅在求值成功后）
         // 缓存写失败不影响求值结果——决策本身是正确的，仅记录警告
         if let Err(e) = self.cache.set(&cache_key, &decision).await {
             tracing::warn!(
@@ -238,7 +282,9 @@ impl AbacEngine {
         policies
             .add(policy)
             .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-policy-add::{}", e)))?;
-        // 策略变更后清空决策缓存（新策略可能改变现有 key 的决策）
+        // 策略变更后清空决策缓存（新策略可能改变现有 key 的决策）；
+        // 在写锁范围内递增策略代数，使并发 evaluate 的旧快照决策跳过缓存写回（issue 6299）
+        self.policy_generation.fetch_add(1, Ordering::Release);
         self.cache.clear().await.map_err(|e| {
             GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
         })?;
@@ -258,7 +304,9 @@ impl AbacEngine {
         policies
             .remove_static(policy_id)
             .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-policy-delete::{}", e)))?;
-        // 策略变更后清空决策缓存（移除策略可能改变现有 key 的决策）
+        // 策略变更后清空决策缓存（移除策略可能改变现有 key 的决策）；
+        // 在写锁范围内递增策略代数（issue 6299，同 load_policy）
+        self.policy_generation.fetch_add(1, Ordering::Release);
         self.cache.clear().await.map_err(|e| {
             GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
         })?;
@@ -288,7 +336,9 @@ impl AbacEngine {
         let mut guard = self.policies.write().await;
         *guard = new_set;
         // 策略集原子替换后清空决策缓存（新策略集可能改变现有 key 的决策）
-        // 仅在替换成功后执行；任一策略解析失败时提前 return Err，不会到达此处
+        // 仅在替换成功后执行；任一策略解析失败时提前 return Err，不会到达此处。
+        // 在写锁范围内递增策略代数（issue 6299，同 load_policy）
+        self.policy_generation.fetch_add(1, Ordering::Release);
         self.cache.clear().await.map_err(|e| {
             GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
         })?;
@@ -320,6 +370,57 @@ impl AbacEngine {
         context_json: Option<&str>,
         temp_policy_src: &str,
     ) -> GarrisonResult<Decision> {
+        let temp_policy = Policy::parse(None, temp_policy_src).map_err(|e| {
+            GarrisonError::InvalidParam(format!("abac-temp-cedar-policy-parse::{}", e))
+        })?;
+        let mut temp_set = PolicySet::new();
+        temp_set.add(temp_policy).map_err(|e| {
+            GarrisonError::InvalidParam(format!("abac-temp-cedar-policy-add::{}", e))
+        })?;
+        // 共享求值 helper（与 evaluate 复用同一诊断/fail-closed 逻辑）。
+        // evaluate_with_temp_policy 不写入缓存，错误通过 ? 传播。
+        let (decision, _has_eval_errors) = self
+            .evaluate_policies(
+                principal,
+                action,
+                resource,
+                context_json,
+                &temp_set,
+                "temp-policy",
+            )
+            .await?;
+        Ok(decision)
+    }
+
+    /// 共享求值 helper：构建 Request → Cedar 求值 → 诊断错误 fail-closed → Decision 映射。
+    ///
+    /// `evaluate` 与 `evaluate_with_temp_policy` 原本各自维护一份重复的
+    /// 构建/求值/诊断逻辑（issue 2757/2761 与 2756/2760/2762 同根因两处漂移），
+    /// 抽取至此单点维护。
+    ///
+    /// # Cedar 诊断错误的 fail-closed 处理（issue 2756-2762）
+    ///
+    /// Cedar `is_authorized` 在策略内部求值出错（schema 不匹配、类型错误、运行时
+    /// 错误）时仍可能返回 `Allow`。原实现仅记录 warn 后照常采用 `response.decision()`，
+    /// 把策略求值故障静默转换为 Allow（fail-open）。修复：诊断含错误时逐条 warn 记录，
+    /// 并统一返回 `Decision::deny(DecisionReason::EvaluationError)`（fail-closed 默认拒绝）。
+    ///
+    /// # 返回
+    /// - `(Decision, has_eval_errors)`：`has_eval_errors` 为 true 表示诊断含错误，
+    ///   决策为 fail-closed 拒绝；调用方不得将该决策写入缓存（瞬态故障不钉死 TTL）。
+    ///
+    /// # 错误
+    /// - EntityUid/Context/Request 解析失败：`GarrisonError::InvalidParam`
+    /// - EntityLoader 加载失败：透传（不污染缓存，调用方未到达写入路径）
+    async fn evaluate_policies(
+        &self,
+        principal: &str,
+        action: &str,
+        resource: &str,
+        context_json: Option<&str>,
+        policies: &PolicySet,
+        label: &str,
+    ) -> GarrisonResult<(Decision, bool)> {
         let principal_uid: EntityUid = principal
             .parse()
             .map_err(|e| GarrisonError::InvalidParam(format!("abac-principal-parse::{}", e)))?;
@@ -342,41 +443,55 @@ impl AbacEngine {
             Some(&self.schema),
         )
         .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
-        let temp_policy = Policy::parse(None, temp_policy_src).map_err(|e| {
-            GarrisonError::InvalidParam(format!("abac-temp-cedar-policy-parse::{}", e))
-        })?;
-        let mut temp_set = PolicySet::new();
-        temp_set.add(temp_policy).map_err(|e| {
-            GarrisonError::InvalidParam(format!("abac-temp-cedar-policy-add::{}", e))
-        })?;
-        // 通过 EntityLoader 加载实体；evaluate_with_temp_policy 不写入缓存，错误通过 ? 传播。
+        // 通过 EntityLoader 加载实体。若返回错误，通过 ? 传播，缓存不受污染。
         let entities = self.entity_loader.load_entities().await?;
         let response = self
             .authorizer
-            .is_authorized(&request, &temp_set, &entities);
+            .is_authorized(&request, policies, &entities);
 
-        // 记录 Cedar 诊断错误（与 evaluate 保持一致）
+        // 记录 Cedar 诊断错误（Issue 3/91: 原代码丢弃了 diagnostics errors）
+        let mut has_eval_errors = false;
         for error in response.diagnostics().errors() {
+            has_eval_errors = true;
             tracing::warn!(
                 principal = %principal,
                 action = %action,
                 resource = %resource,
                 error = %error,
-                "Cedar temp-policy evaluation diagnostic error"
+                "Cedar {} evaluation diagnostic error",
+                label
             );
         }
 
-        match response.decision() {
-            cedar_policy::Decision::Allow => Ok(Decision::allow()),
+        // issue 2756-2762：诊断含错误时默认拒绝（fail-closed），绝不采用 Cedar 的
+        // Allow——策略求值故障（schema/类型/运行时错误）必须显性化为 Deny + 日志告警，
+        // 而非静默放行。
+        if has_eval_errors {
+            tracing::error!(
+                principal = %principal,
+                action = %action,
+                resource = %resource,
+                "Cedar {} evaluation produced diagnostic errors; denying (fail-closed, issue 2756)",
+                label
+            );
+            return Ok((Decision::deny(DecisionReason::EvaluationError), true));
+        }
+
+        let decision = match response.decision() {
+            cedar_policy::Decision::Allow => Decision::allow(),
             cedar_policy::Decision::Deny => {
+                // 区分显式 forbid 策略匹配与隐式 deny（无策略匹配）
+                // diagnostics.reasons() 返回匹配的 policy ID；有匹配说明是 forbid 策略生效
                 let has_matching_policy = response.diagnostics().reason().next().is_some();
                 if has_matching_policy {
-                    Ok(Decision::deny(DecisionReason::ExplicitDeny))
+                    Decision::deny(DecisionReason::ExplicitDeny)
                 } else {
-                    Ok(Decision::deny(DecisionReason::NoMatchingPermission))
+                    Decision::deny(DecisionReason::NoMatchingPermission)
                 }
             },
-        }
+        };
+
+        Ok((decision, false))
     }
 }
 
@@ -386,7 +501,7 @@ mod tests {
     use crate::abac::{EmptyEntityLoader, StaticEntityLoader};
     use cedar_policy::Entities;
 
-    /// 测试辅助：判断指定 (principal, action, resource) 决策是否已在缓存中。
+    /// 测试辅助：判断指定 (principal, action, resource) 决策是否已在缓存中（无 context）。
     ///
     /// 使用 oxcache `get()` 而非 `len()`：oxcache `len()` 是
     /// 最终一致估算值，写入后未必立即可见；`get()` 强制检索 key，可靠。
@@ -400,6 +515,7 @@ mod tests {
             principal.to_string(),
             action.to_string(),
             resource.to_string(),
+            context_key_component(None),
         );
         engine.cache.get(&key).await.unwrap_or(None).is_some()
     }
@@ -1499,5 +1615,151 @@ mod tests {
             ),
             Ok(_) => panic!("evaluate_with_temp_policy 期望 Err，实际 Ok"),
         }
+    }
+
+    // ============================================================
+    // issue 6474/6477/6478/6480/6482: context 参与缓存 key
+    // ============================================================
+
+    /// context 敏感 schema：access 动作带 context 属性 `level`（Long）。
+    const CONTEXT_SCHEMA_JSON: &str = r#"{
+        "": {
+            "entityTypes": {
+                "User": {},
+                "Resource": {}
+            },
+            "actions": {
+                "access": {
+                    "appliesTo": {
+                        "principalTypes": ["User"],
+                        "resourceTypes": ["Resource"],
+                        "context": {
+                            "type": "Record",
+                            "attributes": {
+                                "level": { "type": "Long" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }"#;
+
+    /// 同三元组不同 context 不得共享缓存：context.level 敏感策略按各自 context 正确求值。
+    ///
+    /// 修复前：key 仅 (principal, action, resource)，`level=5` 的 Allow 决策会被
+    /// `level=1` 的请求命中（返回错误的 Allow）。修复后：context 摘要参与 key。
+    #[tokio::test]
+    async fn t016_context_participates_in_cache_key() {
+        let engine = AbacEngine::new(CONTEXT_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
+        engine
+            .load_policy(
+                "p1",
+                r#"permit(principal, action, resource) when { context.level >= 3 };"#,
+            )
+            .await
+            .expect("load");
+
+        let principal = r#"User::"alice""#;
+        let action = r#"Action::"access""#;
+        let resource = r#"Resource::"doc1""#;
+
+        // level=5 → Allow（写入 hash(ctx5) 条目）
+        let allow = engine
+            .evaluate(principal, action, resource, Some(r#"{"level": 5}"#))
+            .await
+            .expect("evaluate level=5");
+        assert!(allow.allowed, "level=5 应 Allow");
+
+        // level=1 → 必须 Deny（不得命中 level=5 的缓存条目）
+        let deny = engine
+            .evaluate(principal, action, resource, Some(r#"{"level": 1}"#))
+            .await
+            .expect("evaluate level=1");
+        assert!(
+            !deny.allowed,
+            "level=1 应 Deny（不同 context 不得共享缓存条目）"
+        );
+
+        // level=5 再次求值 → 仍 Allow（其缓存条目未被 level=1 污染）
+        let allow_again = engine
+            .evaluate(principal, action, resource, Some(r#"{"level": 5}"#))
+            .await
+            .expect("evaluate level=5 again");
+        assert!(allow_again.allowed, "level=5 缓存条目应保持 Allow");
+    }
+
+    /// issue 6473/6481/6483/8320：invalidate_entities 清空决策缓存。
+    #[tokio::test]
+    async fn invalidate_entities_clears_decision_cache() {
+        let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
+        engine
+            .load_policy("p1", r#"permit(principal, action, resource);"#)
+            .await
+            .expect("load");
+
+        let principal = r#"User::"alice""#;
+        let action = r#"Action::"access""#;
+        let resource = r#"Resource::"doc1""#;
+        engine
+            .evaluate(principal, action, resource, None)
+            .await
+            .expect("evaluate");
+        assert!(
+            cache_has_entry(&engine, principal, action, resource).await,
+            "求值后缓存应包含该 key"
+        );
+
+        engine.invalidate_entities().await.expect("invalidate");
+        assert!(
+            !cache_has_entry(&engine, principal, action, resource).await,
+            "invalidate_entities 后缓存应清空"
+        );
+    }
+
+    // ============================================================
+    // issue 2756-2762: Cedar 诊断错误 fail-closed
+    // ============================================================
+
+    /// Cedar 求值诊断错误时必须 fail-closed 拒绝（不得采用 Cedar 的 Allow）。
+    ///
+    /// 策略访问实体属性（`resource.owner`），但 EmptyEntityLoader 返回空实体集合，
+    /// Cedar 求值产生诊断错误（实体不存在）。修复前：仅 warn 后采用 decision
+    /// （可能 Allow，fail-open）；修复后：统一返回 deny(EvaluationError)。
+    #[tokio::test]
+    async fn evaluation_error_fails_closed_denies() {
+        let engine = AbacEngine::new(ATTR_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
+        engine
+            .load_policy(
+                "p1",
+                r#"permit(principal, action, resource) when { resource.owner == principal.id };"#,
+            )
+            .await
+            .expect("load");
+
+        let decision = engine
+            .evaluate(
+                r#"User::"alice""#,
+                r#"Action::"access""#,
+                r#"Resource::"doc1""#,
+                None,
+            )
+            .await
+            .expect("evaluate（诊断错误走 fail-closed 拒绝而非 Err）");
+        assert!(
+            !decision.allowed,
+            "Cedar 诊断错误时必须拒绝（fail-closed）"
+        );
+        assert!(
+            decision.reason == DecisionReason::EvaluationError,
+            "诊断错误的拒绝原因应为 EvaluationError，实际: {:?}",
+            decision.reason
+        );
     }
 }

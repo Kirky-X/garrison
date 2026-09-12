@@ -48,10 +48,17 @@ pub enum DecisionReason {
     TenantMismatch,
     /// 强制拒绝（forbid 优先语义，不可被 Allow 覆盖）。
     ///
-    /// 仅在 `safe-defaults` feature 启用时可用。组合多个决策时优先级最高：
+    /// 仅在 `core-advanced` feature 启用时可用。组合多个决策时优先级最高：
     /// 任一 Forbid 决策存在则最终结果为 Forbid。
     #[cfg(feature = "core-advanced")]
     Forbid(String),
+    /// 策略引擎求值故障（fail-closed 拒绝）。
+    ///
+    /// 表示授权引擎自身在求值过程中出错（如 Cedar 诊断错误：schema 不匹配、
+    /// 类型错误、策略运行时错误）。区别于 [`DecisionReason::ExplicitDeny`]
+    /// （业务规则的显式拒绝）：本变体意味着决策过程不可信，按最小权限原则拒绝。
+    /// 调用方应同时关注日志告警（引擎侧以 `error` 级别记录）。
+    EvaluationError,
 }
 
 /// 鉴权决策结果。
@@ -115,7 +122,7 @@ impl Decision {
 
     /// 创建一个强制拒绝决策（Forbid 优先于 Allow）。
     ///
-    /// 仅在 `safe-defaults` feature 启用时可用。Forbid 决策 `allowed: false`，
+    /// 仅在 `core-advanced` feature 启用时可用。Forbid 决策 `allowed: false`，
     /// `reason: DecisionReason::Forbid(reason)`，组合时优先级最高。
     #[cfg(feature = "core-advanced")]
     pub fn forbid(reason: impl Into<String>) -> Self {
@@ -131,7 +138,7 @@ impl Decision {
 
     /// 判断是否为 Forbid 决策。
     ///
-    /// 仅在 `safe-defaults` feature 启用时可用。
+    /// 仅在 `core-advanced` feature 启用时可用。
     #[cfg(feature = "core-advanced")]
     pub fn is_forbid(&self) -> bool {
         matches!(self.reason, DecisionReason::Forbid(_))
@@ -427,9 +434,9 @@ mod tests {
     }
 
     // ========================================================================
-    // safe-defaults feature 测试（Forbid 优先语义）
+    // Forbid 优先语义测试（core-advanced feature）
     //
-    // 启用 safe-defaults feature 时，DecisionReason 新增 Forbid(String) 变体，
+    // 启用 core-advanced feature 时，DecisionReason 新增 Forbid(String) 变体，
     // Decision 新增 forbid() / is_forbid() 方法。
     // ========================================================================
     #[cfg(feature = "core-advanced")]

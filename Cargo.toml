@@ -433,7 +433,8 @@ backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallbac
 secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
 # secure-simple-token 确保 SimpleTokenStyle 使用 HMAC 签名（A11 CRITICAL 修复）
 auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token", "dep:mimalloc"]
-abac = ["dep:cedar-policy", "cache-memory"]
+# dep:sha2：决策缓存 key 的 context_json 摘要成分（issue 6474/6477/6480/6482，SHA-256 前 16 字节）
+abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
 

@@ -16,6 +16,12 @@ use crate::session::{GarrisonSession, TokenSession};
 
 use super::*;
 
+/// 默认 token 有效期（秒）。构造器收到非正数 timeout 时的回退值（issue 2408/2664）。
+const DEFAULT_TOKEN_TIMEOUT_SECS: i64 = 3_600;
+
+/// remember_me 默认扩展超时（秒，90 天）。`with_remember_me` 收到非正数 timeout 时的回退值。
+const DEFAULT_REMEMBER_ME_TIMEOUT_SECS: i64 = 7_776_000;
+
 impl AuthLogicDefault {
     /// 创建新的 `AuthLogicDefault` 实例。
     ///
@@ -30,14 +36,26 @@ impl AuthLogicDefault {
     /// # 参数
     /// - `session`: 会话管理器。
     /// - `token_handler`: Token 生成与校验处理器。
-    /// - `timeout`: 默认 token 有效期（秒）。
+    /// - `timeout`: 默认 token 有效期（秒）。非正数（<= 0）时回退为 3600 秒并输出
+    ///   `warn` 日志（issue 2408/2664：负值若未经校验，`as u64` 会回绕为巨大 TTL，
+    ///   产生事实上的永久 Token-Session）。
     pub fn new(session: Arc<GarrisonSession>, token_handler: Arc<dyn Token>, timeout: i64) -> Self {
+        let timeout = if timeout > 0 {
+            timeout
+        } else {
+            tracing::warn!(
+                timeout,
+                "core-auth: non-positive timeout rejected, falling back to \
+                 default 3600s (issue 2408/2664: negative i64 would wrap via `as u64`)"
+            );
+            DEFAULT_TOKEN_TIMEOUT_SECS
+        };
         Self {
             session,
             token_handler,
             timeout,
             remember_me_enabled: false,
-            remember_me_timeout: 7_776_000,
+            remember_me_timeout: DEFAULT_REMEMBER_ME_TIMEOUT_SECS,
             switch_to_guard: Arc::new(DenyAllSwitchToGuard),
             renew_locks: Arc::new(DashMap::new()),
         }
@@ -50,10 +68,20 @@ impl AuthLogicDefault {
     ///
     /// # 参数
     /// - `enabled`: 是否启用 remember_me。
-    /// - `timeout`: remember_me 扩展超时秒数（应大于 `timeout`）。
+    /// - `timeout`: remember_me 扩展超时秒数（应大于 `timeout`）。非正数（<= 0）时
+    ///   回退为 7776000 秒（90 天）并输出 `warn` 日志（issue 2664：构造器级正数校验）。
     pub fn with_remember_me(mut self, enabled: bool, timeout: i64) -> Self {
         self.remember_me_enabled = enabled;
-        self.remember_me_timeout = timeout;
+        self.remember_me_timeout = if timeout > 0 {
+            timeout
+        } else {
+            tracing::warn!(
+                timeout,
+                "core-auth: non-positive remember_me_timeout rejected, falling back to \
+                 default 7776000s (issue 2664)"
+            );
+            DEFAULT_REMEMBER_ME_TIMEOUT_SECS
+        };
         self
     }
 
@@ -128,9 +156,20 @@ impl AuthLogic for AuthLogicDefault {
         self.session.create(id, &token).await?;
         // R-session-lifecycle-005: remember_me 扩展 Token-Session TTL
         if effective_timeout != self.timeout {
-            self.session
-                .set_token_session_ttl(&token, effective_timeout as u64)
-                .await?;
+            // issue 2408：构造器已保证 timeout/remember_me_timeout 为正数，
+            // 此处仍用 try_from 防御性校验——负值绝不允许经 `as u64` 回绕为巨大 TTL
+            let ttl_secs = match u64::try_from(effective_timeout) {
+                Ok(v) => v,
+                Err(_) => {
+                    tracing::warn!(
+                        effective_timeout,
+                        "core-auth-login: non-positive effective_timeout, \
+                         falling back to default 3600s TTL (issue 2408)"
+                    );
+                    DEFAULT_TOKEN_TIMEOUT_SECS as u64
+                },
+            };
+            self.session.set_token_session_ttl(&token, ttl_secs).await?;
         }
         Ok(token)
     }
@@ -183,16 +222,20 @@ impl AuthLogic for AuthLogicDefault {
         // 1. 防止 switch_to 切到不存在的 login_id（ensure_token_in_account_session 已 fail-closed，
         //    此层提前拒绝，避免执行到后续步骤）
         // 2. guard 可能依赖 target 的属性，target 不存在时 guard 行为未定义
-        // 安全权衡：此校验会泄露 login_id 存在性，但 switch_to 本身是高危操作，
-        // 调用方通常已通过 login 流程知道 target 存在，泄露风险可接受。
+        //
+        // issue 2663（login_id 可枚举）：原实现返回专用错误码
+        // `core-auth-target-login-id-not-found`，已认证调用方可通过错误差异枚举系统中
+        // 存在哪些 login_id。修复：统一返回与权限拒绝同类型的模糊错误
+        // `NotPermission("core-auth-switch-to-denied")`，使「target 不存在」与
+        // 「无权切换」在外部不可区分。
         if self
             .session
             .get_account_session(target_login_id)
             .await?
             .is_none()
         {
-            return Err(GarrisonError::InvalidParam(
-                "core-auth-target-login-id-not-found".to_string(),
+            return Err(GarrisonError::NotPermission(
+                "core-auth-switch-to-denied".to_string(),
             ));
         }
 
@@ -202,6 +245,10 @@ impl AuthLogic for AuthLogicDefault {
         self.switch_to_guard
             .check(&original_login_id, target_login_id)
             .await?;
+
+        // 保存原始 TokenSession 快照：两阶段 Account-Session 迁移的失败路径回滚用
+        //（issue 6429/6641/6642）
+        let ts_original = ts.clone();
 
         // 存储原始 login_id 到 attrs["switched_from"]
         ts.attrs
@@ -221,24 +268,82 @@ impl AuthLogic for AuthLogicDefault {
         // 3. `enforce_max_login_count(original)` 否则会误算已切换的 token
         //
         // 顺序选择：先 remove original，再 ensure target。
-        // - 若 remove original 失败：返回 Err，token 仍在 original。ts.login_id 已改为
-        //   target（save_token_session 已执行），但 is_valid 会失败（target 未含 token）。
-        //   用户需重新登录或重试 switch_to。权衡：相比"双指"残留（先 ensure target 再
-        //   remove original 失败导致 token 同时在两边），孤立状态更易被发现且不会越权踢出。
-        // - 若 ensure target 失败：token 已从 original 移除但未加到 target，is_valid 失败。
-        //   用户需重新登录。trade-off：可观测的失败优于静默的双指状态。
         //
-        // remove_token_from_account_session 内部用 `with_login_lock(original)` 串行化
-        // Account-Session read-modify-write，避免与 original 的 login/logout 竞态。
-        self.session
+        // issue 6429/6641/6642（两阶段失败路径的 token 孤儿）：save_token_session 之后
+        // 任一 Account-Session 操作失败，原本会直接返回 Err 且无回滚——token 在两侧
+        // Account-Session 间处于孤儿/双注册状态（ts.login_id 已改但注册关系未跟随）。
+        // 修复：失败路径 best-effort 回滚到迁移前快照（恢复 ts_original；ensure 失败时
+        // 还需把 token 挂回 original）。回滚成功 → 状态一致，透传原始错误；
+        // 回滚也失败 → 升级为 Internal 聚合错误（rule 12：失败显性化，禁止静默残留）。
+        //
+        // remove/ensure 内部均用 `with_login_lock` 串行化 Account-Session
+        // read-modify-write，避免与 login/logout 竞态。
+        if let Err(remove_err) = self
+            .session
             .remove_token_from_account_session(&original_login_id, token)
-            .await?;
+            .await
+        {
+            // 回滚：恢复原始 TokenSession（login_id = original），与「token 仍在 original
+            // Account-Session」重新一致
+            if let Err(rb_err) = self.session.save_token_session(token, &ts_original).await {
+                let token_prefix = &token[..token.len().min(8)];
+                tracing::error!(
+                    error = %remove_err,
+                    rollback_error = %rb_err,
+                    token_prefix = %token_prefix,
+                    "switch_to: remove from original Account-Session failed and rollback failed; \
+                     token session may be inconsistent (issue 6429)"
+                );
+                return Err(GarrisonError::Internal(
+                    "core-auth-switch-to-inconsistent".to_string(),
+                ));
+            }
+            return Err(remove_err);
+        }
 
         // 确保 token 存在于目标 login_id 的 Account-Session 中
         //（否则 is_valid 检查会因 Account-Session 不存在而返回 false）
-        self.session
+        if let Err(ensure_err) = self
+            .session
             .ensure_token_in_account_session(target_login_id, token)
-            .await?;
+            .await
+        {
+            // 回滚：token 已从 original 移除，需先挂回 original Account-Session，
+            // 再恢复原始 TokenSession，回到迁移前状态（issue 6641/6642）
+            let reattach_ok = self
+                .session
+                .ensure_token_in_account_session(&original_login_id, token)
+                .await;
+            let restore_ok = self.session.save_token_session(token, &ts_original).await;
+            if let (Err(rb1), Err(rb2)) = (&reattach_ok, &restore_ok) {
+                let token_prefix = &token[..token.len().min(8)];
+                tracing::error!(
+                    error = %ensure_err,
+                    rollback_error_1 = %rb1,
+                    rollback_error_2 = %rb2,
+                    token_prefix = %token_prefix,
+                    "switch_to: ensure target Account-Session failed and rollback failed; \
+                     token orphaned from both Account-Sessions (issue 6641/6642)"
+                );
+                return Err(GarrisonError::Internal(
+                    "core-auth-switch-to-inconsistent".to_string(),
+                ));
+            }
+            // 回滚成功（或部分成功但状态可由返回错误显性化）：透传原始错误。
+            // 单边回滚失败时也在此显性化，避免静默孤儿。
+            if reattach_ok.is_err() || restore_ok.is_err() {
+                let token_prefix = &token[..token.len().min(8)];
+                tracing::error!(
+                    error = %ensure_err,
+                    reattach_ok = reattach_ok.is_ok(),
+                    restore_ok = restore_ok.is_ok(),
+                    token_prefix = %token_prefix,
+                    "switch_to: rollback partially failed, token state may need operator cleanup \
+                     (issue 6641/6642)"
+                );
+            }
+            return Err(ensure_err);
+        }
 
         // 审计日志
         // token 脱敏：仅记录前 8 字符
@@ -417,10 +522,13 @@ impl AuthLogic for AuthLogicDefault {
             //    理由：若因 delete 失败而返回 Err，用户将丢失新 token（已建立），
             //    反而制造新的 DoS — 与 A9 修复目标相悖。
             //
-            //    rule 12（失败显性化）+ 安全审查 MEDIUM-1（主动告警）：
-            //    - 用 `error` 级别记录（而非 `warn`），确保生产环境监控系统触发告警
-            //    - 携带稳定 `error_code = "renew_old_token_cleanup_failed"` 字段，
-            //      供运维日志告警系统（如 Loki/ELK + Alertmanager）基于此 code 配置告警规则
+            //    issue 2662 / 3241（CWE-613 双 token 窗口）：此权衡是**已知并接受**的
+            //    安全残留——旧 token 在 logout 失败时保持有效，攻击者若提前持有旧 token
+            //    可继续使用。缓解措施（本实现的承诺）：
+            //    - 审计事件必须记录失败：下方 `tracing::error!` 携带稳定
+            //      `error_code = "renew_old_token_cleanup_failed"`，审计/监控依赖此 code
+            //    - rule 12（失败显性化）+ 安全审查 MEDIUM-1（主动告警）：
+            //      用 `error` 级别记录（而非 `warn`），确保生产环境监控系统触发告警
             //    - 告警规则建议：error_code="renew_old_token_cleanup_failed" 出现 >0 次即触发
             //      P2 告警，运维需在 5 分钟内介入清理残留旧 token（CWE-613 缓解）
             //    - 未注入 `AlertListenerManager` 时无法主动广播 `SecurityAlertEvent`，

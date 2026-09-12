@@ -498,10 +498,12 @@ async fn switch_to_custom_guard_denies_preserves_session() {
 // A6 新增：target_account_exists 校验测试
 // ========================================================================
 
-/// A6: switch_to 切换到不存在的 target_login_id 应返回 InvalidParam。
+/// A6: switch_to 切换到不存在的 target_login_id 应被拒绝。
 ///
-/// target_account_exists 校验在 guard 检查前执行，确保不会执行到后续步骤
-/// （如修改 session、调用 ensure_token_in_account_session）。
+/// issue 2663（login_id 可枚举修复）：原实现返回专用错误码
+/// `core-auth-target-login-id-not-found`（InvalidParam），已认证调用方可据此枚举
+/// login_id 存在性。修复后统一返回模糊错误 `NotPermission("core-auth-switch-to-denied")`，
+/// 与「无权切换」在外部不可区分。本测试的契约从 InvalidParam 变更为 NotPermission。
 #[tokio::test]
 async fn switch_to_nonexistent_target_returns_invalid_param() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -509,8 +511,8 @@ async fn switch_to_nonexistent_target_returns_invalid_param() {
     // 不创建 "ghost-user" 的 Account-Session
     let result = auth.switch_to(&token, "ghost-user").await;
     assert!(
-        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("core-auth-target-login-id-not-found")),
-        "切换到不存在的 target 应返回 InvalidParam，实际: {:?}",
+        matches!(result, Err(GarrisonError::NotPermission(ref msg)) if msg.contains("core-auth-switch-to-denied")),
+        "切换到不存在的 target 应返回统一的模糊 NotPermission（issue 2663 反枚举），实际: {:?}",
         result
     );
     // session 未被修改
@@ -520,9 +522,10 @@ async fn switch_to_nonexistent_target_returns_invalid_param() {
     );
 }
 
-/// A6: target_account_exists 校验在 guard 之前执行（target 不存在时优先返回 InvalidParam）。
+/// A6: target_account_exists 校验在 guard 之前执行（target 不存在时优先拒绝）。
 ///
 /// 即使 guard 是 TestAllowAllGuard，target 不存在仍应被拒绝。
+/// issue 2663：拒绝错误为统一的模糊 NotPermission（与 guard 拒绝同类型，不可区分）。
 #[tokio::test]
 async fn switch_to_target_check_precedes_guard() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -530,8 +533,8 @@ async fn switch_to_target_check_precedes_guard() {
     // 不创建 "ghost" 的 Account-Session
     let result = auth.switch_to(&token, "ghost").await;
     assert!(
-        matches!(result, Err(GarrisonError::InvalidParam(_))),
-        "target 不存在时应先返回 InvalidParam（而非 guard 的 NotPermission），实际: {:?}",
+        matches!(result, Err(GarrisonError::NotPermission(ref msg)) if msg.contains("core-auth-switch-to-denied")),
+        "target 不存在时应优先返回统一的模糊 NotPermission，实际: {:?}",
         result
     );
 }

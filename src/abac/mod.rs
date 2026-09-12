@@ -68,8 +68,18 @@ pub use loader::{EmptyEntityLoader, StaticEntityLoader};
 ///
 /// # 缓存语义
 ///
-/// `load_entities` 在每次 `AbacEngine::evaluate` 时调用。决策缓存不主动失效，
-/// 调用方需保证 `EntityLoader` 返回稳定实体集合（同一实体集合的多次加载应返回一致结果）。
+/// `load_entities` 在每次 `AbacEngine::evaluate` 时调用。决策缓存 key 含
+/// (principal, action, resource, context 摘要)，但**不含实体属性状态**：
+/// 缓存不随实体加载自动失效。调用方约定：
+///
+/// - `EntityLoader` 返回**稳定**实体集合（同一实体多次加载结果一致）时无需任何干预；
+/// - 实体属性在运行期发生变化（如 `resource.owner` 转移、组成员变更）时，
+///   调用方必须在变更点调用 [`AbacEngine::invalidate_entities`] 清空决策缓存，
+///   否则最长 TTL 60s 内 `evaluate` 会返回基于旧实体属性的陈旧决策
+///  （安全风险：用户可能保留已失去的访问权限）；
+/// - 策略集变更（`load_policy` / `unload_policy` / `reload_all`）由引擎内部
+///   自动清空缓存，无需调用方干预。
+///
 /// 若 `load_entities` 返回错误，错误通过 `?` 传播，缓存不受污染。
 #[cfg(feature = "abac")]
 #[async_trait::async_trait]

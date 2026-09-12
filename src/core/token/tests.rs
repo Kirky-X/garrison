@@ -321,8 +321,9 @@ fn a11_simple_style_empty_secret_verify_returns_none() {
 
 /// A11 核心测试：generate + verify + parse 往返一致性。
 ///
-/// H2 修复后 token 格式为 `<login_id>\x1f<uuid>.<hmac>`，login_id 可含任意字符
-/// （除 `\x1f` 和 `.`，但二者在正常 login_id 中不会出现）。
+/// H2 修复后 token 格式为 `<login_id>\x1f<uuid>.<exp>.<hmac>`，login_id 可含任意字符
+/// （除 `\x1f` 和 `.`，issue 2429 边界用例见下方专用测试）。
+/// issue 2425/3256：Simple token 现携带 exp，`expire_at` 应为正数（不再是 0）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_roundtrip() {
@@ -336,7 +337,11 @@ fn a11_simple_style_roundtrip() {
     // parse 返回正确 TokenClaims
     let claims = style.parse(&token).unwrap();
     assert_eq!(claims.login_id, "roundtrip_user");
-    assert_eq!(claims.expire_at, 0); // Simple token 不含过期时间
+    assert!(
+        claims.expire_at > chrono::Utc::now().timestamp(),
+        "issue 2425/3256: expire_at 应为未来的过期时间戳，实际: {}",
+        claims.expire_at
+    );
     assert_eq!(claims.device, None);
 }
 
@@ -345,7 +350,10 @@ fn a11_simple_style_roundtrip() {
 #[test]
 fn a11_simple_style_parse_rejects_forged_hmac() {
     let style = make_simple_style();
-    let forged = "admin\x1f550e8400-e29b-41d4-a716-446655440000.fake-hmac";
+    // 伪造 token：合法 UUID + 合法形态的 exp 段 + 伪造 HMAC
+    //（issue 2425/3256 后格式含 exp 段，伪造样本同步更新以命中 HMAC 校验路径）
+    let forged =
+        "admin\x1f550e8400-e29b-41d4-a716-446655440000.9999999999.fake-hmac";
     let result = style.parse(forged);
     assert!(
         matches!(result, Err(GarrisonError::InvalidToken(_))),
@@ -441,6 +449,83 @@ fn a11_simple_style_without_feature_generate_errors() {
     assert!(
         matches!(result, Err(GarrisonError::Config(_))),
         "A11: 未启用 secure-simple-token feature 时 generate 应返回 Config 错误"
+    );
+}
+
+// ========================================================================
+// 边界用例（issue 2429 / 3258 / 2425）：\x1f 分隔符、空 login_id、过期语义
+// ========================================================================
+
+/// issue 2429: login_id 含 `\x1f`（与分隔符同字节）必须被拒绝，不得产生可解析歧义 token。
+///
+/// 攻击场景：login_id = "user\x1fadmin" 生成的 token 会被 verify 按**第一个** `\x1f`
+/// 切分出错误身份（"user" + 非法 uuid 段）。修复：generate 直接拒绝含 `\x1f` 的
+/// login_id（fail-closed）；即便手工拼出内嵌 `\x1f` 的 token，verify 也返回 None。
+#[cfg(feature = "secure-simple-token")]
+#[test]
+fn boundary_login_id_containing_unit_separator_rejected() {
+    let style = make_simple_style();
+    // generate 直接拒绝
+    let result = style.generate("user\x1fadmin", 3600);
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidParam(_))),
+        "含 \\x1f 的 login_id 应在 generate 时被拒绝，实际: {:?}",
+        result
+    );
+
+    // 防御：手工构造内嵌 \x1f 前缀的合法 token（u1 的真实签名）也应 verify 失败
+    let token = style.generate("u1", 3600).unwrap();
+    let poisoned = format!("user\x1f{}", token);
+    let verified = style.verify(&poisoned).unwrap();
+    assert_eq!(
+        verified, None,
+        "内嵌 \\x1f 的拼接 token 应被 verify 拒绝（身份混淆防御）"
+    );
+}
+
+/// issue 3258: 空 login_id 在 generate 时被拒绝（fail-closed，杜绝空身份 token）。
+#[cfg(feature = "secure-simple-token")]
+#[test]
+fn boundary_empty_login_id_rejected_at_generate() {
+    let style = make_simple_style();
+    let result = style.generate("", 3600);
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidParam(_))),
+        "空 login_id 应返回 InvalidParam（身份旁路防御），实际: {:?}",
+        result
+    );
+    // 防御：verify/parse 对空身份段的手工 token 也应拒绝
+    let style_ok = make_simple_style();
+    let token = style_ok.generate("u1", 3600).unwrap();
+    // 把真实 login_id 段挖空："\x1f<uuid>.<exp>.<hmac>"（HMAC 必不匹配，先应被空身份检查拒绝）
+    let body = token.rsplit_once('.').map(|(b, _)| b).unwrap_or("");
+    let hmac = token.rsplit_once('.').map(|(_, h)| h).unwrap_or("");
+    let rest = body.split_once('\x1f').map(|(_, r)| r).unwrap_or("");
+    let hollowed = format!("\x1f{}.{}", rest, hmac);
+    assert_eq!(
+        style_ok.verify(&hollowed).unwrap(),
+        None,
+        "空 login_id 段的 token 应被 verify 拒绝"
+    );
+}
+
+/// issue 2425/3256（辅助验证）：generate 拒绝 timeout <= 0（无过期时间的永久 token 不允许生成）。
+#[cfg(feature = "secure-simple-token")]
+#[test]
+fn boundary_simple_token_rejects_non_positive_timeout() {
+    let style = make_simple_style();
+    assert!(
+        matches!(style.generate("u1", 0), Err(GarrisonError::InvalidParam(_))),
+        "timeout=0 应被拒绝，实际: {:?}",
+        style.generate("u1", 0)
+    );
+    assert!(
+        matches!(
+            style.generate("u1", -3600),
+            Err(GarrisonError::InvalidParam(_))
+        ),
+        "负 timeout 应被拒绝（issue 2408 同源：负值不得回绕），实际: {:?}",
+        style.generate("u1", -3600)
     );
 }
 

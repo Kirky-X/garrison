@@ -78,13 +78,16 @@ pub struct Random64TokenStyle;
 
 /// Simple 风格 Token（A11 安全修复版）。
 ///
-/// 格式为 `<login_id>-<uuid>.<hmac_sha256_base64(secret, login_id|uuid)>`，
-/// 通过 HMAC-SHA256 签名防止 token 伪造（CRITICAL 漏洞修复）。
+/// 格式为 `<login_id>\x1f<uuid>.<exp>.<hmac_sha256_base64(secret, login_id|uuid|exp)>`，
+/// 通过 HMAC-SHA256 签名防止 token 伪造（CRITICAL 漏洞修复），并内嵌过期时间戳
+/// `exp`（Unix 秒）实现 token 级过期（issue 2425/3256 修复，对齐 JWT 语义）。
 ///
 /// # 安全模型（A11）
 ///
-/// - **生成**：服务端用 `secret` 对 `login_id|uuid` 计算 HMAC-SHA256，附加到 token 末尾
-/// - **验证**：用 `subtle::ConstantTimeEq` 常数时间比较 HMAC，防止 timing side-channel
+/// - **生成**：服务端用 `secret` 对 `login_id|uuid|exp` 计算 HMAC-SHA256，附加到 token 末尾；
+///   `timeout <= 0` 时拒绝生成（fail-closed，杜绝无过期时间的永久 token）
+/// - **验证**：用 `subtle::ConstantTimeEq` 常数时间比较 HMAC，防止 timing side-channel；
+///   `exp` 已过期（`Utc::now() >= exp`）时视为无效
 /// - **fail-closed**：`secure-simple-token` feature 未启用时，`generate` 返回 `Err`，
 ///   杜绝无签名的不安全 token 流入生产环境
 ///
@@ -95,23 +98,38 @@ pub struct Random64TokenStyle;
 ///
 /// # 迁移说明
 ///
-/// 旧格式 `<login_id>-<uuid>`（无 HMAC）的 token 在 `verify` 时返回 `Ok(None)`，
-/// 视为无效 token，用户需重新登录获取新格式 token。
-#[derive(Debug, Clone, Default)]
+/// 旧格式 `<login_id>-<uuid>`（无 HMAC）与 A11 格式 `<login_id>\x1f<uuid>.<hmac>`
+/// （无 exp 段）的 token 在 `verify` 时返回 `Ok(None)`，视为无效 token，
+/// 用户需重新登录获取新格式 token。
+#[derive(Clone, Default)]
 pub struct SimpleTokenStyle {
     /// HMAC-SHA256 签名密钥（服务端保管，不随 token 下发）。
     ///
-    /// 仅在启用 `secure-simple-token` feature 时由 `Token` impl 读取；
-    /// 未启用 feature 时为 dead code，此处 allow 以避免 feature-gated 警告。
+    /// 仅在启用 `secure-simple-token` feature 时由 `Token` impl 读取。
     ///
-    /// # 安全说明（Issue 49）
+    /// # 安全说明（issue 2419 / 3252 / 3253 / 3577）
     ///
-    /// 当前使用 `String` 存储密钥，`String::drop` 不会清零底层内存缓冲区，
-    /// 密钥可能残留在堆内存中增加侧信道泄露风险。生产环境若对此有严格要求，
-    /// 应启用 `protocol-zeroize` feature 使密钥类型切换为 `Zeroizing<String>`
-    ///（Drop 时自动清零），或使用 `Vec<u8>` + 手动 `explicit_zero`。
+    /// - **Debug 脱敏**：`Debug` 为手动实现，secret 以 `[REDACTED]` 输出，
+    ///   防止 `{:#?}` / `{:?}` 日志泄露 HMAC 密钥。
+    /// - **明文驻留（已知限制）**：当前使用 `String` 存储密钥，`String::drop`
+    ///   不会清零底层堆内存缓冲区，密钥可能残留（增加侧信道泄露面）；
+    ///   `Clone`（如 `TokenStyleFactory` 按值返回、调用方克隆）会复制出更多明文副本。
+    /// - **protocol-zeroize 迁移路径**：生产环境若对此有严格要求，应启用
+    ///   `protocol-zeroize` feature，将本字段类型切换为 `Zeroizing<String>`
+    ///  （Drop 时自动清零）或 `Vec<u8>` + 手动 `explicit_zero`，并为 `Clone`
+    ///   补充 zeroize-aware 分配。该类型切换会触及本模块全部 `self.secret`
+    ///   访问点（style_impl.rs 的 HMAC 路径），作为独立 change 落地。
     #[allow(dead_code)]
     secret: String,
+}
+
+impl std::fmt::Debug for SimpleTokenStyle {
+    /// 手动实现的 Debug：secret 脱敏输出（issue 2419——derive(Debug) 会打印 HMAC 密钥）。
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SimpleTokenStyle")
+            .field("secret", &"[REDACTED]")
+            .finish()
+    }
 }
 
 impl SimpleTokenStyle {
