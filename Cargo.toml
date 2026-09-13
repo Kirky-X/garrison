@@ -112,7 +112,7 @@ opentelemetry-otlp = { version = "0.32", optional = true, default-features = fal
 tonic = { optional = true, default-features = false, features = ["transport"], workspace = true }
 tonic-health = { version = "0.14", optional = true, default-features = false }
 # grpc feature：GarrisonGrpcAuthLayer 的 tower Layer/Service（核心 trait，无 util）
-# [v0.9.0] 桥接 sdforge/grpc：启用后 #[forge] 宏生成的 gRPC 路由注册（cfg(feature = "grpc")）
+# 桥接 sdforge/grpc：启用后 #[forge] 宏生成的 gRPC 路由注册（cfg(feature = "grpc")）
 # 在 garrison 上下文编译进来，与 GarrisonGrpcAuthLayer 共用同一 tonic 栈（prost/tonic-prost 由 sdforge 引入）
 tower = { version = "0.5", optional = true, default-features = false }
 fluent = { version = "0.17", default-features = false }
@@ -191,7 +191,7 @@ default = ["backend-embedded"]
 # 这些模块无 feature flag，总是编译
 
 # === 核心扩展：决策溯源 / 权限注册表 / forbid 优先语义 ===
-# [v0.9.0] 合并 decision-trace + permission-registry + safe-defaults → core-advanced
+# 合并 decision-trace + permission-registry + safe-defaults → core-advanced
 core-advanced = []
 
 # === 核心扩展：请求对象式授权 API ===
@@ -211,7 +211,7 @@ config-hot-reload = ["confers/watch"]
 config-interpolation = ["confers/interpolation"]
 config-dynamic = ["confers/dynamic"]
 config-toggle = ["confers/feature-toggle"]
-# [v0.9.0] 配置增强特性（透传 confers 高级能力）
+# 配置增强特性（透传 confers 高级能力）
 config-yaml = ["confers/yaml"]
 config-audit = ["confers/audit"]
 config-consul = ["confers/consul"]
@@ -256,7 +256,7 @@ db-sqlite = ["db-base", "dbnexus/sqlite"]
 db-postgres = ["db-base", "dbnexus/postgres", "embedded-migrations"]
 db-mysql = ["db-base", "dbnexus/mysql"]
 db-retry = ["db-base", "dbnexus/retry"]
-# [v0.9.0] 数据库增强特性（透传 dbnexus 高级能力）
+# 数据库增强特性（透传 dbnexus 高级能力）
 # sharding 聚合：分片 + 分布式 ID + scatter-gather 并行查询
 db-sharding = ["db-base", "dbnexus/sharding", "dbnexus/distributed-id", "dbnexus/scatter-gather"]
 db-replica = ["db-base", "dbnexus/replica-routing"]
@@ -298,9 +298,9 @@ protocol-saml = ["protocol-sso", "rsa", "dep:base64", "dep:subtle"]
 # === 安全模块 ===
 secure-totp = ["totp-rs", "dep:base32"]
 secure-sign = ["dep:sha2", "hmac", "dep:base64", "dep:subtle"]
-# [v0.9.0] secure-httpbasic → protocol-httpbasic（域统一到协议层）
+# secure-httpbasic → protocol-httpbasic（域统一到协议层）
 protocol-httpbasic = ["dep:base64"]
-# [v0.9.0] secure-httpdigest → protocol-httpdigest（域统一到协议层）
+# secure-httpdigest → protocol-httpdigest（域统一到协议层）
 protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "dep:subtle", "dep:hkdf", "hmac"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
@@ -316,7 +316,7 @@ email-verification-smtp = ["email-verification", "dep:lettre"]
 
 # === 账号安全引擎 ===
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:sha2", "dep:base32"]
-# [v0.9.0] account-credential-zeroize → credential-zeroize（缩短名称）
+# account-credential-zeroize → credential-zeroize（缩短名称）
 credential-zeroize = ["account-credential", "zeroize"]
 account-policy = ["account-credential", "dep:regex"]
 account-lockout = ["firewall"]
@@ -337,13 +337,13 @@ tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 # 注：sdforge 0.4.7 无 health-check 子特性（上游从未提供），
 # 聚合特性仅保留 auth-server，避免悬空 feature 引用导致解析失败
 server-health-check = ["auth-server"]
-# [v0.9.0] T011：graceful shutdown 真实落地——SIGTERM/SIGINT 触发后停止接收
+# graceful shutdown 真实落地——SIGTERM/SIGINT 触发后停止接收
 # 新连接并 drain 在途请求。原为空壳（反向依赖 auth-server），现为独立门控；
 # auth-server 聚合默认包含
 server-graceful-shutdown = []
 
 # === Web 安全中间件 ===
-# [v0.9.0] web-waf 已废弃（与 firewall-waf 功能 100% 重叠），统一使用 firewall-waf
+# web-waf 已废弃（与 firewall-waf 功能 100% 重叠），统一使用 firewall-waf
 web-cors = ["web-axum"]
 web-csrf = ["web-axum", "dep:rand", "dep:base64", "dep:subtle"]
 # HTTP 安全响应头中间件（X-Content-Type-Options / X-Frame-Options / HSTS / Cache-Control）
@@ -386,7 +386,7 @@ firewall-ddos = ["firewall"]
 firewall-waf = ["firewall", "web-axum"]
 firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
 anomalous-detector-dual = ["firewall", "listener", "dao-key-index"]
-# [v0.9.0] 防护增强特性（透传 limiteron 高级能力）
+# 防护增强特性（透传 limiteron 高级能力）
 firewall-gcra = ["firewall", "limiteron/gcra"]
 firewall-tower = ["firewall", "limiteron/tower-middleware"]
 firewall-quota = ["firewall", "limiteron/quota-control"]
@@ -399,7 +399,7 @@ firewall-parallel = ["firewall", "limiteron/parallel-checker"]
 dao-key-index = []
 
 # === 安全告警系统 ===
-# [v0.9.0] security-extra 为 stp 模块 safe-auth 相关门控的聚合特性。
+# security-extra 为 stp 模块 safe-auth 相关门控的聚合特性。
 # 注意：strategy::alert 模块在代码中实际门控于 security-extra（非 security-alert），
 # security-alert 仅作为兼容别名存在（历史上曾为零依赖死 feature，导致
 # device-binding / session-hijack-detection 单独启用时编译失败——测试代码编译门禁暴露）。
@@ -413,7 +413,7 @@ device-binding = ["security-alert"]
 session-hijack-detection = ["security-alert", "auth-server"]
 
 # === Session 增强 ===
-# [v0.9.0] 合并 anonymous-session + session-search + dynamic-active-timeout + login-token-map-persistence → session-extra
+# 合并 anonymous-session + session-search + dynamic-active-timeout + login-token-map-persistence → session-extra
 session-extra = []
 
 # === 三层缓存架构 ===
@@ -514,7 +514,7 @@ full = [
     "config-full",
     "db-retry", "cache-lock",
     "api-docs",
-    # [v0.9.0] 自研库特性吸收
+    # 自研库特性吸收
     "config-yaml", "config-audit", "config-consul", "config-etcd", "config-distributed",
     "db-sharding", "db-replica", "db-saga",
     "firewall-gcra", "firewall-tower", "firewall-quota", "firewall-admission", "firewall-event", "firewall-monitoring", "firewall-parallel",
@@ -535,7 +535,7 @@ production = [
     "sms-rate-limit",
     "backend-embedded", "backend-kit", "auth-server", "auth-server-sdforge", "abac",
     "api-docs",
-    # [v0.9.0] 自研库特性吸收（生产环境）
+    # 自研库特性吸收（生产环境）
     "config-yaml", "config-distributed", "config-audit",
     "db-sharding", "db-replica",
     "firewall-gcra", "firewall-tower", "firewall-monitoring", "firewall-parallel",
@@ -557,7 +557,7 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = true
-# T012（v0.9.0）: panic 改为 unwind（原 "abort"）。
+# panic 改为 unwind（原 "abort"）。
 # src/listener（插件广播隔离）、src/protocol/sso/channel.rs（SSO 订阅 handler）
 # 依赖 std::panic::catch_unwind 实现“隔离单个任务 panic、避免污染全局状态”——
 # abort 下该语义退化为整个认证节点终止，多租户/高并发部署单 listener panic
@@ -566,9 +566,6 @@ strip = true
 panic = "unwind"
 
 # === 测试目标 ===
-# Phase 4 迁移（T040/T042/T043）：db_mysql_testcontainers / auth_server_integration /
-# e2e 已并入 tests/acceptance/（environment.rs、server.rs、各域文件），
-# 原文件删除，对应 [[test]] 条目一并移除（避免悬空路径）。
 
 [[test]]
 name = "acceptance"
