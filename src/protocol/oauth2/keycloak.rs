@@ -469,7 +469,8 @@ impl KeycloakProvider {
     ///   签名验证失败 / claims 解析失败 / token 已过期 / aud 不匹配 / iss 不匹配 / nbf 未生效。
     /// - `GarrisonError::Network`: JWKS 拉取失败。
     /// - `GarrisonError::Dao`: DAO 读写失败。
-    /// 清洗 JWT `kid` 用于日志/错误输出（T39）：过滤控制字符并限长 128，
+    ///
+    /// 清洗 JWT `kid` 用于日志/错误输出：过滤控制字符并限长 128，
     /// 防止恶意 kid 注入控制字符污染日志或造成输出异常。
     fn sanitize_kid(kid: &str) -> String {
         let filtered: String = kid.chars().filter(|c| !c.is_control()).collect();
