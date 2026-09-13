@@ -546,7 +546,7 @@ mod tests {
     }
 
     // --------------------------------------------------------------------
-    // T023: is_safe 单元测试
+    // is_safe 单元测试
     // --------------------------------------------------------------------
 
     /// open_safe("default", 3600) 后 is_safe("default") 返回 Ok(true)。
@@ -739,7 +739,7 @@ mod tests {
     }
 
     // --------------------------------------------------------------------
-    // T024: close_safe 单元测试
+    // close_safe 单元测试
     // --------------------------------------------------------------------
 
     /// open_safe("default") 后 close_safe("default")，safe_services 中 default 条目被移除（len=0）。
@@ -908,10 +908,10 @@ mod tests {
     }
 
     // --------------------------------------------------------------------
-    // T026: Feature gate 注册验证（编译测试）
+    // Feature gate 注册验证（编译测试）
     // --------------------------------------------------------------------
 
-    /// T026: safe-auth feature 启用时，open_safe/is_safe/close_safe inherent methods
+    /// safe-auth feature 启用时，open_safe/is_safe/close_safe inherent methods
     /// 可访问且行为正确。
     ///
     /// 验证 feature gate 配置：safe-auth 启用 → safe.rs 编译 → inherent methods 可调用。
@@ -945,7 +945,7 @@ mod tests {
         .await;
     }
 
-    /// T026: full feature 启用时 safe-auth 也启用（Cargo.toml full 列表包含 "safe-auth"）。
+    /// full feature 启用时 safe-auth 也启用（Cargo.toml full 列表包含 "safe-auth"）。
     ///
     /// 验证 Cargo.toml 配置正确性：full → safe-auth 依赖关系。
     /// 本测试在 `--features full` 下编译并运行（full 隐含 safe-auth）。

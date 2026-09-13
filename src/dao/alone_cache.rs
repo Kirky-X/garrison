@@ -83,7 +83,7 @@ impl GarrisonDao for AloneCache {
         self.inner.get_and_delete(&self.prefixed_key(key)).await
     }
 
-    /// set_if_absent 委托内部 dao（原子 SETNX 语义，T012 收严为必需方法）。
+    /// set_if_absent 委托内部 dao（原子 SETNX 语义， 收严为必需方法）。
     async fn set_if_absent(
         &self,
         key: &str,
@@ -95,14 +95,14 @@ impl GarrisonDao for AloneCache {
             .await
     }
 
-    /// rename 委托内部 dao（原子重命名 + TTL 保留，T012 收严为必需方法）。
+    /// rename 委托内部 dao（原子重命名 + TTL 保留， 收严为必需方法）。
     async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
         self.inner
             .rename(&self.prefixed_key(old_key), &self.prefixed_key(new_key))
             .await
     }
 
-    /// incr 委托内部 dao（原子计数，T012 收严为必需方法）。
+    /// incr 委托内部 dao（原子计数， 收严为必需方法）。
     async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
         self.inner.incr(&self.prefixed_key(key), ttl_seconds).await
     }

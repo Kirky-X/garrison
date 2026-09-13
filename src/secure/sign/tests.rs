@@ -177,7 +177,7 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
     }
 
     // 交错块测量（ABAB…）：交替计时两侧各 BLOCK_SIZE 次，抵消并行负载的
-    // 慢漂移（Phase 4 去 flaky：串行分窗在负载波动下出现偶发 8x+ 假阳性）。
+    // 慢漂移（去 flaky：串行分窗在负载波动下出现偶发 8x+ 假阳性）。
     let mut valid_nanos: u128 = 0;
     let mut invalid_nanos: u128 = 0;
     for _ in 0..BLOCKS {

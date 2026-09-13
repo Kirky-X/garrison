@@ -236,7 +236,7 @@ mod tests {
     // register / validate 测试
     // ========================================================================
 
-    /// T057-1: register 单个权限后 validate 命中（spec Scenario）。
+    /// register 单个权限后 validate 命中（spec Scenario）。
     #[test]
     fn register_single_permission_success() {
         let registry = PermissionRegistry::new();
@@ -247,7 +247,7 @@ mod tests {
         assert_eq!(roles, vec!["admin".to_string()]);
     }
 
-    /// T057-2: validate 返回注册时的 required_roles（多角色场景）。
+    /// validate 返回注册时的 required_roles（多角色场景）。
     #[test]
     fn validate_returns_required_roles_when_registered() {
         let registry = PermissionRegistry::new();
@@ -258,7 +258,7 @@ mod tests {
         assert_eq!(roles, vec!["admin".to_string(), "editor".to_string()]);
     }
 
-    /// T057-3: validate 未注册的权限返回 InvalidParam 错误（spec R-permission-registry-001）。
+    /// validate 未注册的权限返回 InvalidParam 错误（spec R-permission-registry-001）。
     #[test]
     fn validate_returns_error_for_unregistered_permission() {
         let registry = PermissionRegistry::new();
@@ -270,7 +270,7 @@ mod tests {
         }
     }
 
-    /// T057-4: register 重复同名权限返回错误（spec Scenario）。
+    /// register 重复同名权限返回错误（spec Scenario）。
     #[test]
     fn register_duplicate_returns_error() {
         let registry = PermissionRegistry::new();
@@ -282,7 +282,7 @@ mod tests {
         assert!(result.is_err(), "重复注册应返回错误");
     }
 
-    /// T057-5: register 空 name 返回 InvalidParam 错误（spec Scenario）。
+    /// register 空 name 返回 InvalidParam 错误（spec Scenario）。
     #[test]
     fn register_empty_name_returns_error() {
         let registry = PermissionRegistry::new();
@@ -295,7 +295,7 @@ mod tests {
         }
     }
 
-    /// T057-6: list_all 返回所有已注册权限规格（数量正确）。
+    /// list_all 返回所有已注册权限规格（数量正确）。
     #[test]
     fn list_all_returns_all_registered() {
         let registry = PermissionRegistry::new();
@@ -317,7 +317,7 @@ mod tests {
         assert!(names.contains(&"c:delete"));
     }
 
-    /// T057-7: from_inventory 收集 inventory::submit! 静态注册项。
+    /// from_inventory 收集 inventory::submit! 静态注册项。
     ///
     /// 验证测试模块顶部 `inventory::submit!` 注册的两个测试项被 `from_inventory` 收集。
     #[test]
@@ -358,7 +358,7 @@ mod tests {
         );
     }
 
-    /// T057-8: register required_roles 为空时允许注册（某些权限无角色要求）。
+    /// register required_roles 为空时允许注册（某些权限无角色要求）。
     #[test]
     fn register_empty_required_roles_allowed() {
         let registry = PermissionRegistry::new();

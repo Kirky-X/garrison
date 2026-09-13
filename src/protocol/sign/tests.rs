@@ -284,7 +284,7 @@ async fn validate_method_case_difference_returns_error() {
     assert!(result.is_err());
 }
 
-/// T020：并发重放 — 16 个 tokio 任务同时用同一 nonce 校验，
+/// 并发重放 — 16 个 tokio 任务同时用同一 nonce 校验，
 /// 仅一个成功（incr 返回 1），其余全部被拒（incr 返回 >1），原子防重放。
 #[tokio::test]
 async fn validate_nonce_concurrent_replay_only_one_wins() {
@@ -313,7 +313,7 @@ async fn validate_nonce_concurrent_replay_only_one_wins() {
     assert_eq!(wins, 1, "并发重放：仅一个 nonce 校验应成功，实际 {}", wins);
 }
 
-/// T020：不同 app_key 的相同 nonce 互不污染（key 含 app_key 前缀）。
+/// 不同 app_key 的相同 nonce 互不污染（key 含 app_key 前缀）。
 #[tokio::test]
 async fn validate_nonce_isolated_by_app_key() {
     let dao = Arc::new(MockDao::new());

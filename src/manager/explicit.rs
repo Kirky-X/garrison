@@ -284,7 +284,7 @@ mod tests {
     // 测试 1：Manager::new 构造成功
     // ------------------------------------------------------------------------
 
-    /// T078-1: `Manager::new(Arc::new(logic))` 构造成功，logic 引用计数正确。
+    /// `Manager::new(Arc::new(logic))` 构造成功，logic 引用计数正确。
     ///
     /// 验证 Manager 持有 logic 的 Arc 副本，不消耗原始 Arc。
     #[tokio::test]
@@ -314,7 +314,7 @@ mod tests {
     // 测试 2：Manager::authorize 返回 Decision
     // ------------------------------------------------------------------------
 
-    /// T078-2: `manager.authorize(&req)` 返回 `Decision`（不 panic / 不返回 Err）。
+    /// `manager.authorize(&req)` 返回 `Decision`（不 panic / 不返回 Err）。
     ///
     /// 已登录 + 持有权限场景下返回 `Ok(Decision)`。
     #[tokio::test]
@@ -341,7 +341,7 @@ mod tests {
     // 测试 3：Manager::authorize allowed=true 场景
     // ------------------------------------------------------------------------
 
-    /// T078-3: 持有权限时 `authorize` 返回 `Decision { allowed: true, reason: ExplicitAllow }`。
+    /// 持有权限时 `authorize` 返回 `Decision { allowed: true, reason: ExplicitAllow }`。
     #[tokio::test]
     async fn manager_authorize_with_allowed_returns_true() {
         let interface: Arc<dyn GarrisonInterface> =
@@ -368,7 +368,7 @@ mod tests {
     // 测试 4：Manager::authorize allowed=false 场景
     // ------------------------------------------------------------------------
 
-    /// T078-4: 未持有权限时 `authorize` 返回 `Decision { allowed: false, reason: NoMatchingPermission }`。
+    /// 未持有权限时 `authorize` 返回 `Decision { allowed: false, reason: NoMatchingPermission }`。
     #[tokio::test]
     async fn manager_authorize_with_denied_returns_false() {
         let interface: Arc<dyn GarrisonInterface> =
@@ -395,7 +395,7 @@ mod tests {
     // 测试 5：Manager::check_permission 委托 PermissionLogic 行为一致
     // ------------------------------------------------------------------------
 
-    /// T078-5: `manager.check_permission(login_id, perm)` 与 `PermissionLogic::check_permission(perm)`
+    /// `manager.check_permission(login_id, perm)` 与 `PermissionLogic::check_permission(perm)`
     /// 行为一致（同一 task_local 上下文下返回相同允许/拒绝结果）。
     ///
     /// 验证委托语义：Manager 内部调用 logic.check_permission，返回值映射正确。
@@ -448,7 +448,7 @@ mod tests {
     // 测试 6：Manager Drop 不影响全局单例
     // ------------------------------------------------------------------------
 
-    /// T078-6: Manager Drop 后 `GarrisonManager` 全局单例状态不受影响（独立生命周期）。
+    /// Manager Drop 后 `GarrisonManager` 全局单例状态不受影响（独立生命周期）。
     ///
     /// 验证 Manager 与 GarrisonManager 共享同一 logic 实例时，Drop Manager
     /// 不破坏全局单例（引用计数正确，is_initialized 仍为 true）。
@@ -502,7 +502,7 @@ mod tests {
     // 测试 7：build_explicit 路径 Manager Drop 后 task 被 abort
     // ------------------------------------------------------------------------
 
-    /// T014: `GarrisonManager::builder().build_explicit().await` 返回的 Manager
+    /// `GarrisonManager::builder().build_explicit().await` 返回的 Manager
     /// Drop 后，cleanup_task 与 anomalous_analyzer_task 的 JoinHandle::is_finished() 为 true。
     ///
     /// 与 `manager_drop_does_not_affect_global_singleton` 互补：该测试覆盖 `Manager::new`

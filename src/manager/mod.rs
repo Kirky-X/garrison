@@ -89,7 +89,7 @@ pub struct GarrisonManager {
     /// 外层 `ArcSwapOption` 管理 Option（初始化/重置），内层 `Arc<RwLock<Strategy>>`
     /// 允许运行时通过 `strategy.write().register_*()` 替换策略。
     strategy: ArcSwapOption<RwLock<Strategy>>,
-    /// 后台 cleanup task 的 JoinHandle（T030）。
+    /// 后台 cleanup task 的 JoinHandle。
     ///
     /// `builder().build()` 时若 `config.token_map_cleanup_interval_secs > 0` 则启动 task 并保存 handle。
     /// `reset_for_test` / `Drop` 时 abort task，避免后台线程在测试间或程序退出后残留。

@@ -59,9 +59,10 @@ use crate::session::GarrisonSession;
 ///             Err(garrison::error::GarrisonError::NotPermission(
 ///                 format!("{} 无权切换到 {}", original, target)
 ///             ))
+///             ))
+///         }
 ///         }
 ///     }
-/// }
 ///
 /// let auth = AuthLogicDefault::new(session, token_handler, 3600)
 ///     .with_switch_to_guard(Arc::new(AdminOnlyGuard));

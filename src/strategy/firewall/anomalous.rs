@@ -329,7 +329,7 @@ mod tests {
 
     /// 验证首次登录（无历史坐标）时 `check` 调用 `set_permanent` 精确写入当前坐标。
     ///
-    /// 这是 T020 保护网测试：T021 将提取 `update_historic_coord` helper 统一 None/Some
+    /// 这是 保护网测试： 将提取 `update_historic_coord` helper 统一 None/Some
     /// 分支的 `set_permanent` 调用，本测试确保重构后 None 分支仍精确写入当前坐标 csv。
     #[tokio::test]
     async fn check_updates_historic_coord_on_first_login() {

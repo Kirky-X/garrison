@@ -12,7 +12,7 @@
 //! ## 设计
 //!
 //! - 类型本身不依赖 `tenant-isolation` feature gate（feature 关闭时仍可构造）
-//! - DAO key 前缀与 Repository SQL 过滤才由 feature 控制（见 T033-T034 / T031-T032）
+//! - DAO key 前缀与 Repository SQL 过滤才由 feature 控制（见）
 
 use async_trait::async_trait;
 use http::HeaderMap;

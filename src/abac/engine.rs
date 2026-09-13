@@ -22,7 +22,7 @@ use tokio::sync::RwLock;
 
 /// 计算 context 成分的缓存 key 分量（issue 6474/6478/6480/6482 修复）。
 ///
-/// `context_json` 曾被排除在缓存 key 之外（T016 设计），导致同一
+/// `context_json` 曾被排除在缓存 key 之外（设计），导致同一
 /// (principal, action, resource) 三元组下不同 context 共享缓存条目，
 /// context 敏感策略（如时间窗校验）返回陈旧决策。修复：将 context_json 的
 /// SHA-256 摘要前 16 字节（128-bit，碰撞概率在 10^4 容量下可忽略）hex 编码后
@@ -553,14 +553,14 @@ mod tests {
         }
     }"#;
 
-    /// T121: AbacEngine::new 从 JSON schema 初始化成功。
+    /// AbacEngine::new 从 JSON schema 初始化成功。
     #[tokio::test]
     async fn t121_new_from_json_schema_success() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader)).await;
         assert!(engine.is_ok(), "AbacEngine::new 应成功: {:?}", engine.err());
     }
 
-    /// T121: 无效 JSON schema 返回 InvalidParam。
+    /// 无效 JSON schema 返回 InvalidParam。
     #[tokio::test]
     async fn t121_new_invalid_schema_returns_invalid_param() {
         let result = AbacEngine::new("not a valid json", Arc::new(EmptyEntityLoader)).await;
@@ -571,7 +571,7 @@ mod tests {
         );
     }
 
-    /// T123: evaluate — 匹配 permit 策略时返回 Allow。
+    /// evaluate — 匹配 permit 策略时返回 Allow。
     #[tokio::test]
     async fn t123_evaluate_permit_returns_allow() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -597,7 +597,7 @@ mod tests {
         assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
     }
 
-    /// T123: evaluate — 不匹配 permit 策略时返回 Deny（默认拒绝）。
+    /// evaluate — 不匹配 permit 策略时返回 Deny（默认拒绝）。
     #[tokio::test]
     async fn t123_evaluate_no_match_returns_deny() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -623,7 +623,7 @@ mod tests {
         assert_eq!(decision.reason, DecisionReason::NoMatchingPermission);
     }
 
-    /// T123: evaluate — 无策略时默认 Deny。
+    /// evaluate — 无策略时默认 Deny。
     #[tokio::test]
     async fn t123_evaluate_no_policies_returns_deny() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -641,7 +641,7 @@ mod tests {
         assert!(!decision.allowed, "无策略时应默认拒绝");
     }
 
-    /// T123: evaluate — 无效 principal 格式返回 InvalidParam。
+    /// evaluate — 无效 principal 格式返回 InvalidParam。
     #[tokio::test]
     async fn t123_evaluate_invalid_principal_returns_error() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -662,7 +662,7 @@ mod tests {
         );
     }
 
-    /// T125: Decision 映射 — Cedar Allow → Decision::allow()。
+    /// Decision 映射 — Cedar Allow → Decision::allow()。
     #[tokio::test]
     async fn t125_decision_mapping_allow() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -685,7 +685,7 @@ mod tests {
         assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
     }
 
-    /// T125: Decision 映射 — Cedar Deny → Decision::deny()。
+    /// Decision 映射 — Cedar Deny → Decision::deny()。
     #[tokio::test]
     async fn t125_decision_mapping_deny() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -705,7 +705,7 @@ mod tests {
         assert_eq!(decision.reason, DecisionReason::NoMatchingPermission);
     }
 
-    /// T125: forbid 策略覆盖 permit — Cedar 语义验证。
+    /// forbid 策略覆盖 permit — Cedar 语义验证。
     #[tokio::test]
     async fn t125_forbid_overrides_permit() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -739,7 +739,7 @@ mod tests {
         );
     }
 
-    /// T125: evaluate 带 context JSON 不报错。
+    /// evaluate 带 context JSON 不报错。
     #[tokio::test]
     async fn t125_evaluate_with_context() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -911,10 +911,10 @@ mod tests {
     }
 
     // ============================================================
-    // evaluate_with_temp_policy 测试（T138/T139）
+    // evaluate_with_temp_policy 测试
     // ============================================================
 
-    /// T139: evaluate_with_temp_policy — 匹配的临时策略返回 Allow。
+    /// evaluate_with_temp_policy — 匹配的临时策略返回 Allow。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_permit_returns_allow() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -934,7 +934,7 @@ mod tests {
         assert!(decision.allowed, "匹配的临时策略应 Allow");
     }
 
-    /// T139: evaluate_with_temp_policy — 不匹配的临时策略返回 Deny。
+    /// evaluate_with_temp_policy — 不匹配的临时策略返回 Deny。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_no_match_returns_deny() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -955,7 +955,7 @@ mod tests {
         assert!(!decision.allowed, "不匹配的临时策略应 Deny");
     }
 
-    /// T139: evaluate_with_temp_policy — 无效策略返回 InvalidParam。
+    /// evaluate_with_temp_policy — 无效策略返回 InvalidParam。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_invalid_returns_error() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -977,7 +977,7 @@ mod tests {
         );
     }
 
-    /// T139: evaluate_with_temp_policy — 不修改共享策略集。
+    /// evaluate_with_temp_policy — 不修改共享策略集。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_does_not_modify_shared() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1022,7 +1022,7 @@ mod tests {
         assert!(!after.allowed, "临时策略求值后共享策略集应仍为空（Deny）");
     }
 
-    /// T139: evaluate_with_temp_policy — 带 when 条件的策略。
+    /// evaluate_with_temp_policy — 带 when 条件的策略。
     #[tokio::test]
     async fn t139_evaluate_with_temp_policy_when_condition() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1060,10 +1060,10 @@ mod tests {
     }
 
     // ============================================================
-    // T016: ABAC 决策缓存 oxcache TTL 60s 测试
+    // ABAC 决策缓存 oxcache TTL 60s 测试
     // ============================================================
 
-    /// T016: 同 key 两次 evaluate，第二次命中缓存（len == 1）。
+    /// 同 key 两次 evaluate，第二次命中缓存（len == 1）。
     #[tokio::test]
     async fn t016_cache_hit_on_second_evaluate_same_key() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1098,7 +1098,7 @@ mod tests {
         assert_eq!(d1.allowed, d2.allowed, "两次求值结果应一致");
     }
 
-    /// T016: 不同 key 两次 evaluate，缓存各存一条（len == 2）。
+    /// 不同 key 两次 evaluate，缓存各存一条（len == 2）。
     #[tokio::test]
     async fn t016_cache_miss_on_different_keys() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1146,7 +1146,7 @@ mod tests {
         );
     }
 
-    /// T016: unload_policy 后缓存失效（len == 0）。
+    /// unload_policy 后缓存失效（len == 0）。
     #[tokio::test]
     async fn t016_cache_invalidated_on_unload_policy() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1202,7 +1202,7 @@ mod tests {
         assert!(!after.allowed, "unload 后应 Deny");
     }
 
-    /// T016: reload_all 成功后缓存失效（len == 0）。
+    /// reload_all 成功后缓存失效（len == 0）。
     #[tokio::test]
     async fn t016_cache_invalidated_on_reload_all() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1263,7 +1263,7 @@ mod tests {
         assert!(!alice.allowed, "alice 应被拒绝");
     }
 
-    /// T016: reload_all 失败时缓存保持不变（不失效）。
+    /// reload_all 失败时缓存保持不变（不失效）。
     #[tokio::test]
     async fn t016_cache_kept_on_reload_all_failure() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1322,7 +1322,7 @@ mod tests {
         assert!(alice.allowed, "reload 失败后 alice 应仍被允许（缓存命中）");
     }
 
-    /// T016: load_policy 后缓存失效（新策略可能改变现有 key 的决策）。
+    /// load_policy 后缓存失效（新策略可能改变现有 key 的决策）。
     #[tokio::test]
     async fn t016_cache_invalidated_on_load_policy() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1380,7 +1380,7 @@ mod tests {
         assert!(after.allowed, "load 后应 Allow");
     }
 
-    /// T016: evaluate_with_temp_policy 不写入缓存。
+    /// evaluate_with_temp_policy 不写入缓存。
     #[tokio::test]
     async fn t016_evaluate_with_temp_policy_does_not_cache() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))

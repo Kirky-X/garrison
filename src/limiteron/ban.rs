@@ -277,7 +277,7 @@ impl BanStorage for GarrisonDaoBanStorage {
                         parts.len()
                     )));
                 }
-                // M-3: parse 失败显性化 — 脏数据返回 Err（fail-fast）
+                // parse 失败显性化 — 脏数据返回 Err（fail-fast）
                 let ban_times: u32 = parts[0].parse().map_err(|e| {
                     StorageError::QueryError(format!(
                         "limiteron-ban-history-parse-ban-times::{}::{}::{}",
@@ -330,7 +330,7 @@ impl BanStorage for GarrisonDaoBanStorage {
         let key = ban_times_key(target);
         match self.dao.get(&key).await.map_err(map_to_storage_err)? {
             None => Ok(0),
-            // M-3: parse 失败显性化 — 脏数据返回错误而非静默用 0
+            // parse 失败显性化 — 脏数据返回错误而非静默用 0
             Some(val) => val.parse::<u64>().map_err(|e| {
                 StorageError::QueryError(format!(
                     "limiteron-ban-times-parse-failed::{}::{}::{}",
@@ -671,9 +671,9 @@ mod tests {
         );
     }
 
-    // --- M-3: unwrap_or(0) 静默吞错修复测试 ---
+    // --- unwrap_or(0) 静默吞错修复测试 ---
 
-    /// M-3: BanStorage::get_ban_times 遇到脏数据时返回错误（非静默用 0）。
+    /// BanStorage::get_ban_times 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]
     async fn m3_ban_get_ban_times_dirty_data_returns_err() {
         let storage = GarrisonDaoBanStorage::new(make_dao());
@@ -691,7 +691,7 @@ mod tests {
         );
     }
 
-    /// M-3: BanStorage::get_history 遇到脏数据时返回错误（fail-fast）。
+    /// BanStorage::get_history 遇到脏数据时返回错误（fail-fast）。
     #[tokio::test]
     async fn m3_ban_get_history_dirty_data_returns_err() {
         let storage = GarrisonDaoBanStorage::new(make_dao());

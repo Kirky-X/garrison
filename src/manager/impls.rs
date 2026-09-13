@@ -64,7 +64,7 @@ impl GarrisonManager {
             .ok_or_else(|| GarrisonError::Session("manager-not-init".to_string()))
     }
 
-    /// 获取全局 `DisableRepository` 引用（v0.6.5 T020）。
+    /// 获取全局 `DisableRepository` 引用。
     ///
     /// `builder().build()` 时自动创建 `DefaultDisableRepository` 并注入到 `GarrisonLogicDefault`，
     /// 此方法从 logic 中读取封禁库实例，供业务方调用 `disable` / `untie_disable` /
@@ -119,11 +119,11 @@ impl GarrisonManager {
     /// 使后续 `GarrisonUtil::login(id)` 等返回未初始化错误。
     #[cfg(any(test, feature = "testing"))]
     pub fn reset_for_test() {
-        // T030: abort cleanup task 避免测试间残留后台线程
+        // abort cleanup task 避免测试间残留后台线程
         if let Some(handle) = GARRISON_MANAGER.cleanup_task_handle.write().take() {
             handle.abort();
         }
-        // T023: abort anomalous analyzer task + 清空 shutdown_tx
+        // abort anomalous analyzer task + 清空 shutdown_tx
         #[cfg(feature = "anomalous-detector-dual")]
         {
             if let Some(handle) = GARRISON_MANAGER.anomalous_analyzer_handle.write().take() {
@@ -141,11 +141,11 @@ impl GarrisonManager {
 
 impl Drop for GarrisonManager {
     fn drop(&mut self) {
-        // T030: manager drop 时 abort cleanup task，避免后台线程残留
+        // manager drop 时 abort cleanup task，避免后台线程残留
         if let Some(handle) = self.cleanup_task_handle.write().take() {
             handle.abort();
         }
-        // T023: abort anomalous analyzer task + 清空 shutdown_tx
+        // abort anomalous analyzer task + 清空 shutdown_tx
         #[cfg(feature = "anomalous-detector-dual")]
         {
             if let Some(handle) = self.anomalous_analyzer_handle.write().take() {

@@ -167,7 +167,7 @@ pub trait MfaLogic: SessionLogic {
 impl MfaLogic for GarrisonLogicDefault {
     /// 检查二级认证（MFA）状态。
     ///
-    /// `GarrisonLogicDefault` 覆写实现（v0.6.5 T025）：
+    /// `GarrisonLogicDefault` 覆写实现：
     /// 调用 `is_safe("default")` 检查 "default" service 的二级认证状态。
     ///
     /// # 为什么覆写 trait default？
@@ -193,7 +193,7 @@ impl MfaLogic for GarrisonLogicDefault {
 
     /// 检查当前登录账号是否被封禁。
     ///
-    /// `GarrisonLogicDefault` 覆写实现（v0.6.5 T019）：
+    /// `GarrisonLogicDefault` 覆写实现：
     /// 1. 无当前 token（未登录）→ 返回 `Ok(())`
     /// 2. token 对应的 TokenSession 不存在 → 返回 `Ok(())`
     /// 3. 调用 `DisableRepository::is_disable(login_id, "default")`，未封禁 → `Ok(())`
@@ -409,10 +409,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T025: check_safe 默认实现测试
+    // check_safe 默认实现测试
     // ========================================================================
 
-    /// T025: 不启用 safe-auth 时，MockMfa（只实现 trait defaults）的 check_safe 返回 Ok。
+    /// 不启用 safe-auth 时，MockMfa（只实现 trait defaults）的 check_safe 返回 Ok。
     ///
     /// is_safe 默认返回 Ok(true) → check_safe 返回 Ok(())。
     #[tokio::test]
@@ -423,7 +423,7 @@ mod tests {
         mock.check_safe().await.unwrap();
     }
 
-    /// T025: MockMfa 不覆写 is_safe，使用 trait default Ok(true)。
+    /// MockMfa 不覆写 is_safe，使用 trait default Ok(true)。
     ///
     /// 验证 check_safe 默认调用 is_safe("default")，因 is_safe=true，返回 Ok(())。
     #[tokio::test]
@@ -631,7 +631,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T019: DisableRepository 集成测试（GarrisonLogicDefault.check_disable）
+    // DisableRepository 集成测试（GarrisonLogicDefault.check_disable）
     // ========================================================================
 
     mod t019_disable_integration {
@@ -909,10 +909,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T025: check_safe 默认实现集成测试（需要 safe-auth feature）
+    // check_safe 默认实现集成测试（需要 safe-auth feature）
     // ========================================================================
 
-    /// T025 集成测试：验证 check_safe 默认实现与 GarrisonLogicDefault inherent method
+    /// 集成测试：验证 check_safe 默认实现与 GarrisonLogicDefault inherent method
     /// （open_safe / is_safe / close_safe）的交互。
     ///
     /// 仅在 `safe-auth` feature 启用时编译，因为测试需要 inherent method 支持。

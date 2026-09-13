@@ -834,7 +834,7 @@ mod tests {
     // Metrics 端点测试（feature = "metrics-prometheus"）
     // ========================================================================
 
-    /// T005: /metrics 端点返回 200 + JSON 包装的 Prometheus 文本格式。
+    /// /metrics 端点返回 200 + JSON 包装的 Prometheus 文本格式。
     ///
     /// `#[forge]` 宏用 `Json(value).into_response()` 包装返回值，
     /// 响应 body 为 JSON 序列化的字符串（含转义换行符）。
@@ -877,7 +877,7 @@ mod tests {
         );
     }
 
-    /// T005: /metrics 端点在未注册 GarrisonMetrics 时返回 200 + 空字符串。
+    /// /metrics 端点在未注册 GarrisonMetrics 时返回 200 + 空字符串。
     ///
     /// 验证 default registry 为空时端点不 panic，返回空 Prometheus 文本。
     #[cfg(feature = "metrics-prometheus")]

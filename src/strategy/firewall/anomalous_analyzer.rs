@@ -417,7 +417,7 @@ impl AnomalousLoginAnalyzer {
         })
     }
 
-    /// 优雅停止分析器任务（默认 5 秒超时，T008）。
+    /// 优雅停止分析器任务（默认 5 秒超时）。
     ///
     /// 发送 shutdown 信号后等待任务结束，超时则强制 abort。
     /// 适用于异步上下文（GarrisonManager 的同步 Drop 仍用 `handle.abort()`）。
@@ -436,7 +436,7 @@ impl AnomalousLoginAnalyzer {
         Self::shutdown_with_timeout(handle, shutdown_tx, DEFAULT_SHUTDOWN_TIMEOUT).await
     }
 
-    /// 优雅停止分析器任务（自定义超时，T008）。
+    /// 优雅停止分析器任务（自定义超时）。
     ///
     /// 1. 发送 shutdown 信号（`shutdown_tx.send(true)`）
     /// 2. 用 `tokio::time::timeout` 包裹 `handle.await`
@@ -1332,7 +1332,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T008: shutdown + shutdown_with_timeout 测试
+    // shutdown + shutdown_with_timeout 测试
     // ========================================================================
 
     /// shutdown_with_timeout 对慢任务（不响应 shutdown 信号）超时后强制 abort。

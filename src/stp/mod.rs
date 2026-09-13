@@ -318,7 +318,7 @@ pub(crate) mod mock;
 mod tests;
 
 // ============================================================================
-// T026: security-extra（safe-auth）关闭时的 MfaLogic trait default 行为验证
+// security-extra（safe-auth）关闭时的 MfaLogic trait default 行为验证
 // ============================================================================
 
 // batch-08 修复（issue #857 死测试）：原测试 `t026_safe_auth_not_in_scope_when_disabled`
@@ -335,7 +335,7 @@ mod safe_feature_gate_tests {
     use crate::strategy::GarrisonPermissionStrategy;
     use std::sync::Arc;
 
-    /// T026: security-extra 禁用时，GarrisonLogicDefault 没有 open_safe inherent method，
+    /// security-extra 禁用时，GarrisonLogicDefault 没有 open_safe inherent method，
     /// 调用解析到 MfaLogic trait default（open_safe=Ok(()), is_safe=Ok(true), close_safe=Ok(())）。
     #[tokio::test]
     async fn t026_safe_auth_not_in_scope_when_disabled() {

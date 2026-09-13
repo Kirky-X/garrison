@@ -204,7 +204,7 @@ impl DistributedLimiter for GarrisonDaoDistributedLimiter {
     async fn get_count(&self, key: &str) -> Result<u64, LimiteronError> {
         match self.dao.get(key).await.map_err(map_to_limiter_err)? {
             None => Ok(0),
-            // M-3: parse 失败显性化 — 脏数据返回错误而非静默用 0
+            // parse 失败显性化 — 脏数据返回错误而非静默用 0
             Some(val) => val.parse::<u64>().map_err(|e| {
                 map_to_limiter_err(GarrisonError::Dao(format!(
                     "limiteron-get-count-parse-failed::{}::{}::{}",
@@ -270,9 +270,9 @@ mod tests {
         assert_eq!(limiter.get_count("noexist").await.unwrap(), 0);
     }
 
-    // --- M-3: unwrap_or(0) 静默吞错修复测试 ---
+    // --- unwrap_or(0) 静默吞错修复测试 ---
 
-    /// M-3: DistributedLimiter::get_count 遇到脏数据时返回错误（非静默用 0）。
+    /// DistributedLimiter::get_count 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]
     async fn m3_limiter_get_count_dirty_data_returns_err() {
         let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
@@ -292,10 +292,10 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T010: Redis Lua 脚本原子化限速（check-and-increment）测试
+    // Redis Lua 脚本原子化限速（check-and-increment）测试
     // ------------------------------------------------------------------------
 
-    /// T010: 并发 100 次 atomic_check_and_incr（阈值 10）结果精确为 10 通过 + 90 拒绝。
+    /// 并发 100 次 atomic_check_and_incr（阈值 10）结果精确为 10 通过 + 90 拒绝。
     ///
     /// 验证 GarrisonDaoDistributedLimiter::atomic_check_and_incr 通过 eval_lua 实现
     /// 原子 check-and-increment：100 个并发任务同时调用，仅前 10 个通过（count <= 10），
@@ -352,7 +352,7 @@ mod tests {
         );
     }
 
-    /// T010: 单线程连续 5 次 atomic_check_and_incr（阈值 3）— 前 3 通过，后 2 拒绝。
+    /// 单线程连续 5 次 atomic_check_and_incr（阈值 3）— 前 3 通过，后 2 拒绝。
     #[tokio::test]
     async fn t010_atomic_check_and_incr_sequential_threshold() {
         let dao = Arc::new(InMemoryDao::new());
@@ -384,7 +384,7 @@ mod tests {
             .unwrap());
     }
 
-    /// T010: eval_lua 默认实现返回 NotImplemented（GarrisonDaoOxcache 不支持 Lua）。
+    /// eval_lua 默认实现返回 NotImplemented（GarrisonDaoOxcache 不支持 Lua）。
     ///
     /// 验证 trait 默认实现：未重写 eval_lua 的实现者调用时返回 NotImplemented。
     #[tokio::test]

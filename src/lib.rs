@@ -179,7 +179,7 @@
 //! ```rust
 //! use garrison::prelude::*;
 //!
-//! // 通过 prelude 引入核心类型（T014：LoginParams / GarrisonDaoOxcache /
+//! // 通过 prelude 引入核心类型（LoginParams / GarrisonDaoOxcache /
 //! // Annotation / with_current_token / current_token 均已入 prelude）
 //! let _config: GarrisonConfig = GarrisonConfig::default_config();
 //! ```
@@ -353,7 +353,7 @@ pub mod credit;
 
 /// 安全模块，提供 TOTP / 签名 / Basic / Digest / Unicode 同形异义字检测 / 敏感数据脱敏 验证。
 ///
-/// 密码哈希能力已迁移到 `account::credential::password`（v0.6.0）。
+/// 密码哈希能力已迁移到 `account::credential::password`。
 #[cfg(any(
     feature = "secure-totp",
     feature = "secure-sign",
@@ -726,7 +726,7 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 /// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`（0.5.0 P2）
 /// - `#[check_api_key]`（0.6.1）
 /// - `#[check_mfa]` / `#[check_abac]`（v0.7.x）
-/// - `#[check_disable]`（v0.7.3）
+/// - `#[check_disable]`
 ///
 /// 宏将 async fn 包装为 wrapper，在 body 前插入 `GarrisonUtil::check_*()` 调用，
 /// 失败时返回 `axum::response::Response`（401/403）。

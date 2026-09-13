@@ -551,7 +551,7 @@ async fn cache_permission_overwrite() {
     );
 }
 
-/// 验证租户隔离：不同 tenant 相同 login_id 的权限缓存互不污染（T023）。
+/// 验证租户隔离：不同 tenant 相同 login_id 的权限缓存互不污染。
 #[tokio::test]
 async fn cache_permission_isolated_by_tenant() {
     let dao = Arc::new(MockCacheDao::new());
@@ -593,7 +593,7 @@ async fn cache_permission_isolated_by_tenant() {
     );
 }
 
-/// 验证 invalidate_permission_cache 使权限回收立即生效，而非等 300s TTL（T024）。
+/// 验证 invalidate_permission_cache 使权限回收立即生效，而非等 300s TTL。
 #[tokio::test]
 async fn invalidate_permission_cache_reflects_revocation_immediately() {
     let dao = Arc::new(MockCacheDao::new());

@@ -5,15 +5,15 @@
 //! 提供用户级 temporary + permanent 双态锁定，与 BruteForceStrategy（IP 级）组合使用。
 //! 详见 spec `user-lockout`。
 //!
-//! # 核心类型（T011）
+//! # 核心类型
 //!
 //! - [`WaitStrategy`](crate::account::lockout::WaitStrategy)：等待策略 enum（Multiple 倍数 / Linear 线性）
 //! - [`UserLockoutConfig`](crate::account::lockout::UserLockoutConfig)：用户级锁定配置（5 字段）
 //! - [`LockoutState`](crate::account::lockout::LockoutState)：锁定状态（4 字段，DAO 持久化）
 //!
-//! # 策略实现（T012）
+//! # 策略实现
 //!
-//! T012 的 `UserLockoutStrategy` + `GarrisonFirewallStrategy` trait 实现位于 `strategy` 子模块。
+//! 的 `UserLockoutStrategy` + `GarrisonFirewallStrategy` trait 实现位于 `strategy` 子模块。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -147,7 +147,7 @@ pub struct LockoutState {
 }
 
 // ============================================================================
-// UserLockoutStrategy：用户级双态锁定策略（T012）
+// UserLockoutStrategy：用户级双态锁定策略
 // ============================================================================
 
 /// 用户级双态锁定策略。

@@ -409,7 +409,7 @@ impl GarrisonAuthServer {
     /// 启用 `tls` feature 且调用 `with_tls()` 后，两个端口均使用
     /// `axum_server::bind_rustls` 替代 `axum::serve`，实现 HTTPS/TLS 终止。
     ///
-    /// # 优雅停机（feature = "server-graceful-shutdown"，T011）
+    /// # 优雅停机（feature = "server-graceful-shutdown"）
     ///
     /// SIGTERM / SIGINT 触发后：停止接收新连接，等待在途请求完成（drain），
     /// 复用 manager cleanup task 的 watch 基建语义。TLS 路径经
@@ -418,7 +418,7 @@ impl GarrisonAuthServer {
         // 启动前校验配置合法性
         self.config.validate().map_err(GarrisonError::Config)?;
 
-        // T011: 信号监听 → Notify 广播给两个端口 serve future
+        // 信号监听 → Notify 广播给两个端口 serve future
         #[cfg(feature = "server-graceful-shutdown")]
         let shutdown_notify = {
             let notify = Arc::new(tokio::sync::Notify::new());
@@ -456,7 +456,7 @@ impl GarrisonAuthServer {
             );
         }
 
-        // T011: 每 task 专属克隆（async move 捕获整块环境，须在闭包外克隆）
+        // 每 task 专属克隆（async move 捕获整块环境，须在闭包外克隆）
         #[cfg(feature = "server-graceful-shutdown")]
         let shutdown_notify_ext = Arc::clone(&shutdown_notify);
         #[cfg(feature = "server-graceful-shutdown")]
@@ -476,7 +476,7 @@ impl GarrisonAuthServer {
                 let addr: std::net::SocketAddr = external_addr.parse().map_err(|e| {
                     GarrisonError::Internal(format!("server-external-addr-parse::{}", e))
                 })?;
-                // T011: TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
+                // TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
                 #[cfg(feature = "server-graceful-shutdown")]
                 let handle = {
                     let handle = axum_server::Handle::new();
@@ -509,7 +509,7 @@ impl GarrisonAuthServer {
                 external_listener,
                 external_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
             );
-            // T011: 信号触发后停止接收新连接并 drain 在途请求
+            // 信号触发后停止接收新连接并 drain 在途请求
             #[cfg(feature = "server-graceful-shutdown")]
             let serve = serve.with_graceful_shutdown(async move {
                 shutdown_notify.notified().await;
@@ -538,7 +538,7 @@ impl GarrisonAuthServer {
                 let addr: std::net::SocketAddr = internal_addr.parse().map_err(|e| {
                     GarrisonError::Internal(format!("server-internal-addr-parse::{}", e))
                 })?;
-                // T011: TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
+                // TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
                 #[cfg(feature = "server-graceful-shutdown")]
                 let handle = {
                     let handle = axum_server::Handle::new();
@@ -574,7 +574,7 @@ impl GarrisonAuthServer {
                 // ocr #2236: 内网非 TLS 路径同样注入 ConnectInfo（与外网对齐）
                 internal_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
             );
-            // T011: 信号触发后停止接收新连接并 drain 在途请求
+            // 信号触发后停止接收新连接并 drain 在途请求
             #[cfg(feature = "server-graceful-shutdown")]
             let serve = serve.with_graceful_shutdown(async move {
                 shutdown_notify.notified().await;
@@ -589,7 +589,7 @@ impl GarrisonAuthServer {
             Ok(())
         });
 
-        // 任一服务器异常即返回错误，M-1: 显式 abort 另一个 task 避免资源泄漏
+        // 任一服务器异常即返回错误， 显式 abort 另一个 task 避免资源泄漏
         tokio::select! {
             res = &mut external_handle => {
                 internal_handle.abort();
@@ -604,7 +604,7 @@ impl GarrisonAuthServer {
 }
 
 // ============================================================================
-// 优雅停机（T011，feature = "server-graceful-shutdown"）
+// 优雅停机（feature = "server-graceful-shutdown"）
 // ============================================================================
 
 #[cfg(feature = "server-graceful-shutdown")]
@@ -642,7 +642,7 @@ mod graceful_shutdown_tests {
     use super::*;
     use axum::routing::get;
 
-    /// T011: 触发 shutdown 通知后 serve future 完成（监听停止）；
+    /// 触发 shutdown 通知后 serve future 完成（监听停止）；
     /// 触发前到达的在途请求完整收到响应（drain 语义）。
     #[tokio::test]
     async fn graceful_shutdown_drains_and_stops() {

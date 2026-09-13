@@ -217,7 +217,7 @@ mod tests {
         assert_eq!(json["trace_id"], serde_json::json!("t-123"));
     }
 
-    /// T011 补充：拒绝决策序列化 reason 为 NoMatchingPermission。
+    /// 补充：拒绝决策序列化 reason 为 NoMatchingPermission。
     #[test]
     fn decision_deny_serializes_reason_no_matching_permission() {
         let decision = Decision::deny(DecisionReason::NoMatchingPermission);
@@ -226,7 +226,7 @@ mod tests {
         assert_eq!(json["reason"], serde_json::json!("no_matching_permission"));
     }
 
-    /// T011 补充：FirewallBlocked 变体序列化为 { FirewallBlocked: "..." }。
+    /// 补充：FirewallBlocked 变体序列化为 { FirewallBlocked: "..." }。
     #[test]
     fn decision_reason_firewall_blocked_serializes_with_message() {
         let reason = DecisionReason::FirewallBlocked("ip blocked".to_string());
@@ -237,7 +237,7 @@ mod tests {
         );
     }
 
-    /// T011 补充：allow() 构造器创建 ExplicitAllow 决策。
+    /// 补充：allow() 构造器创建 ExplicitAllow 决策。
     #[test]
     fn decision_allow_constructor_creates_explicit_allow() {
         let decision = Decision::allow();
@@ -265,7 +265,7 @@ mod tests {
         assert!(req.context.is_null());
     }
 
-    /// T013 补充：AuthRequest::new 构造器设置默认值。
+    /// 补充：AuthRequest::new 构造器设置默认值。
     #[test]
     fn auth_request_new_sets_defaults() {
         let req = AuthRequest::new("1001", "user:write");
@@ -276,7 +276,7 @@ mod tests {
         assert!(req.context.is_null());
     }
 
-    /// T013 补充：AuthRequest 可构造带 tenant_id 和 resource。
+    /// 补充：AuthRequest 可构造带 tenant_id 和 resource。
     #[test]
     fn auth_request_with_tenant_and_resource() {
         let req = AuthRequest {
@@ -291,7 +291,7 @@ mod tests {
         assert_eq!(req.context["ip"], serde_json::json!("10.0.0.1"));
     }
 
-    /// T013 补充：DecisionReason 全变体可序列化（覆盖枚举完整性）。
+    /// 补充：DecisionReason 全变体可序列化（覆盖枚举完整性）。
     #[test]
     fn all_decision_reason_variants_serialize() {
         let variants: &[DecisionReason] = &[
@@ -311,7 +311,7 @@ mod tests {
         }
     }
 
-    /// T013 补充：GarrisonResult<Decision> 可用于 authorize 返回类型。
+    /// 补充：GarrisonResult<Decision> 可用于 authorize 返回类型。
     #[test]
     fn garrison_result_decision_compiles() {
         let ok: GarrisonResult<Decision> = Ok(Decision::allow());

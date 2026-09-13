@@ -2,14 +2,14 @@
 //! See LICENSE for full license text.
 
 //! 封禁库模块，提供账号封禁/解封/查询能力。
-//! # 核心类型（T015）
+//! # 核心类型
 //!
 //! - [`DisableEntry`](crate::account::disable::DisableEntry)：封禁条目 struct（5 字段，JSON 持久化）
 //! - [`DisableRepository`](crate::account::disable::DisableRepository)：封禁库 trait（5 方法）
 //!
-//! # 实现层（T016-T018）
+//! # 实现层
 //!
-//! T016-T018 将实现 `DefaultDisableRepository`，持有 `Arc<dyn GarrisonDao>` 委托实现。
+//! 将实现 `DefaultDisableRepository`，持有 `Arc<dyn GarrisonDao>` 委托实现。
 //!
 //! # 过期语义（统一约定，Issue 6468/6660/6661）
 //!

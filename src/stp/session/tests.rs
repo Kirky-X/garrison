@@ -148,7 +148,7 @@ mod suite {
     }
 
     // ========================================================================
-    // T006: AnomalyDetector 集成测试（security-alert feature）
+    // AnomalyDetector 集成测试（security-alert feature）
     // ========================================================================
 
     #[cfg(feature = "security-extra")]
@@ -623,7 +623,7 @@ mod suite {
     }
 
     // ========================================================================
-    // T013: DeviceBindingPolicy 集成测试（device-binding feature）
+    // DeviceBindingPolicy 集成测试（device-binding feature）
     // ========================================================================
 
     #[cfg(feature = "device-binding")]
@@ -979,7 +979,7 @@ mod suite {
     }
 
     // ========================================================================
-    // T014: three-tier-cache 集成测试（three-tier-cache feature）
+    // three-tier-cache 集成测试（three-tier-cache feature）
     // 验证 R-three-tier-cache-005: logout/logout_by_login_id 调用 invalidate
     // ========================================================================
 
@@ -1381,7 +1381,7 @@ mod suite {
             let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
-            // 安全默认：stateless JWT 必须启用撤销（T017 互斥校验），
+            // 安全默认：stateless JWT 必须启用撤销（互斥校验），
             // 需要无撤销组合的测试请自行构造 config。
             config.enable_jwt_revocation = true;
             config.token_style = "jwt".to_string();
@@ -1442,7 +1442,7 @@ mod suite {
         #[tokio::test]
         async fn check_login_stateless_valid_jwt_returns_true() {
             let secret = "coverage-secret-stateless-valid-32bytes!!";
-            // 安全组合：jwt_mode=Stateless + enable_jwt_revocation=true（T017 互斥校验要求）
+            // 安全组合：jwt_mode=Stateless + enable_jwt_revocation=true（互斥校验要求）
             let logic = make_jwt_logic(true, JwtMode::Stateless, secret);
             let handler = crate::protocol::jwt::JwtHandler::new(secret);
             let jwt_token = handler
@@ -1495,7 +1495,7 @@ mod suite {
             );
         }
 
-        /// T017：token_style=jwt + jwt_mode=Stateless + enable_jwt_revocation=false 互斥，
+        /// token_style=jwt + jwt_mode=Stateless + enable_jwt_revocation=false 互斥，
         /// 启动校验 fail-closed 返回 Config 错误（不可吊销的永久 JWT 凭证）。不依赖 token 合法性。
         #[cfg(feature = "protocol-jwt")]
         #[serial]
@@ -1532,7 +1532,7 @@ mod suite {
             );
         }
 
-        /// T017 正例：启用 `allow_stateless_jwt_no_revocation` 风险接受开关后，
+        /// 正例：启用 `allow_stateless_jwt_no_revocation` 风险接受开关后，
         /// 该组合被放行（需有效 JWT 才能真正通过 verify）。
         #[cfg(feature = "protocol-jwt")]
         #[serial]
@@ -2244,7 +2244,7 @@ mod suite {
                 );
             }
 
-            /// T009: 本地 login_token_map 与 DAO AccountSession 分歧时闸门仍以 DAO 为准。
+            /// 本地 login_token_map 与 DAO AccountSession 分歧时闸门仍以 DAO 为准。
             ///
             /// 模拟多节点部署：节点 B 的本地 map 缺失节点 A 登录的 token（remove 后），
             /// 旧实现闸门读本地 map（len=2 <= max=2）被短路放行；新实现读 DAO（3 > 2），
@@ -2306,10 +2306,10 @@ mod suite {
             }
 
             // ==================================================================
-            // T008 请求内登录身份复用测试
+            // 请求内登录身份复用测试
             // ==================================================================
 
-            /// T008: check_login 校验成功后 get_login_id 命中缓存（零 DAO 读取）；
+            /// check_login 校验成功后 get_login_id 命中缓存（零 DAO 读取）；
             /// logout 后缓存立即失效，回退 DAO 读取返回未登录。
             #[tokio::test]
             async fn login_id_cache_hit_and_logout_invalidation() {
@@ -2401,7 +2401,7 @@ mod suite {
                 .await;
             }
 
-            /// T008: 未在缓存作用域内（直连 API 场景）行为不变——回退 DAO 读取。
+            /// 未在缓存作用域内（直连 API 场景）行为不变——回退 DAO 读取。
             #[tokio::test]
             async fn login_id_fallback_without_cache_scope() {
                 use crate::stp::session::SessionLogic as _;
@@ -2641,7 +2641,7 @@ mod suite {
             assert_eq!(ts.login_id, "lwt-user-001");
         }
 
-        /// T018：login_with_token 经由 create_session_with_quota 执行最大登录数配额，
+        /// login_with_token 经由 create_session_with_quota 执行最大登录数配额，
         /// 创建第 max_login_count+1 个会话时最旧会话被踢出。
         #[tokio::test]
         async fn login_with_token_enforces_max_login_count_evicts_oldest() {
@@ -3315,7 +3315,7 @@ mod suite {
     }
 
     // ========================================================================
-    // T014: JWT 撤销黑名单测试（H-14）
+    // JWT 撤销黑名单测试（H-14）
     // ========================================================================
 
     #[cfg(feature = "protocol-jwt")]
@@ -3384,7 +3384,7 @@ mod suite {
             assert_eq!(value.unwrap(), "1");
         }
 
-        /// T005: 黑名单写失败时执行有界重试——前 2 次瞬时失败，第 3 次成功。
+        /// 黑名单写失败时执行有界重试——前 2 次瞬时失败，第 3 次成功。
         #[tokio::test]
         async fn blacklist_write_retries_then_succeeds() {
             use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3460,7 +3460,7 @@ mod suite {
             );
         }
 
-        /// T005: 黑名单写入持续失败时重试有界（恰好 3 次），函数不 panic、不向调用方传播错误。
+        /// 黑名单写入持续失败时重试有界（恰好 3 次），函数不 panic、不向调用方传播错误。
         #[tokio::test]
         async fn blacklist_write_bounded_retry_on_persistent_failure() {
             use std::sync::atomic::{AtomicUsize, Ordering};
@@ -3704,7 +3704,7 @@ mod firewall_tests {
         );
     }
 
-    /// T010: 启用 firewall feature 时 builder 应自动注入 firewall_hook。
+    /// 启用 firewall feature 时 builder 应自动注入 firewall_hook。
     #[tokio::test]
     #[serial]
     async fn builder_auto_wires_firewall_hook() {

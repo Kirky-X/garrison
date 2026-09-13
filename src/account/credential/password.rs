@@ -11,7 +11,7 @@
 //! - `BcryptHasher` 使用 bcrypt 0.19 crate（默认 cost=12）
 //! - `PasswordVerifier` 根据 hash 前缀自动选择算法校验
 //!
-//! ## 迁移说明（v0.6.0）
+//! ## 迁移说明
 //!
 //! 本模块从 `secure/password/mod.rs` 迁移到 `account/credential/password.rs`。
 //! - `secure-password` feature → `account-credential` feature

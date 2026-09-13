@@ -532,10 +532,10 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // EscapeAll 模式测试（T007）
+    // EscapeAll 模式测试
     // ========================================================================
 
-    /// T007-1: EscapeAll 转义尖括号：`<script>alert(1)</script>` → `&lt;script&gt;alert(1)&lt;/script&gt;`。
+    /// EscapeAll 转义尖括号：`<script>alert(1)</script>` → `&lt;script&gt;alert(1)&lt;/script&gt;`。
     #[test]
     fn escape_all_replaces_angle_brackets() {
         let p = XssProtector::new(XssMode::EscapeAll);
@@ -545,28 +545,28 @@ mod tests {
         );
     }
 
-    /// T007-2: EscapeAll 转义 & 符号：`a & b` → `a &amp; b`。
+    /// EscapeAll 转义 & 符号：`a & b` → `a &amp; b`。
     #[test]
     fn escape_all_replaces_ampersand() {
         let p = XssProtector::new(XssMode::EscapeAll);
         assert_eq!(p.sanitize("a & b"), "a &amp; b");
     }
 
-    /// T007-3: EscapeAll 转义双引号：`"quote"` → `&quot;quote&quot;`。
+    /// EscapeAll 转义双引号：`"quote"` → `&quot;quote&quot;`。
     #[test]
     fn escape_all_replaces_double_quote() {
         let p = XssProtector::new(XssMode::EscapeAll);
         assert_eq!(p.sanitize("\"quote\""), "&quot;quote&quot;");
     }
 
-    /// T007-4: EscapeAll 转义单引号：`'single'` → `&#x27;single&#x27;`。
+    /// EscapeAll 转义单引号：`'single'` → `&#x27;single&#x27;`。
     #[test]
     fn escape_all_replaces_single_quote() {
         let p = XssProtector::new(XssMode::EscapeAll);
         assert_eq!(p.sanitize("'single'"), "&#x27;single&#x27;");
     }
 
-    /// T007-5: EscapeAll 处理空输入：`` → ``。
+    /// EscapeAll 处理空输入：`` → ``。
     #[test]
     fn escape_all_handles_empty_input() {
         let p = XssProtector::new(XssMode::EscapeAll);
@@ -574,10 +574,10 @@ mod tests {
     }
 
     // ========================================================================
-    // Whitelist 模式测试（T008）
+    // Whitelist 模式测试
     // ========================================================================
 
-    /// T008-1: 白名单保留允许的标签，转义非白名单标签。
+    /// 白名单保留允许的标签，转义非白名单标签。
     /// 白名单 `["b","i"]`，输入 `<b>bold</b><script>x</script>`
     /// → `<b>bold</b>&lt;script&gt;x&lt;/script&gt;`。
     #[test]
@@ -589,7 +589,7 @@ mod tests {
         );
     }
 
-    /// T008-2: 白名单标签的属性值中的特殊字符也要转义。
+    /// 白名单标签的属性值中的特殊字符也要转义。
     /// 白名单 `["b"]`，输入 `<b class="x">text</b>`
     /// → `<b class=&quot;x&quot;>text</b>`。
     #[test]
@@ -601,7 +601,7 @@ mod tests {
         );
     }
 
-    /// T008-3: 白名单标签内的纯文本内容中的特殊字符也要转义。
+    /// 白名单标签内的纯文本内容中的特殊字符也要转义。
     /// 白名单 `["b"]`，输入 `<b>a & b</b>` → `<b>a &amp; b</b>`。
     #[test]
     fn whitelist_escapes_text_content() {
@@ -609,14 +609,14 @@ mod tests {
         assert_eq!(p.sanitize("<b>a & b</b>"), "<b>a &amp; b</b>");
     }
 
-    /// T008-4: 白名单模式处理空输入：`` → ``。
+    /// 白名单模式处理空输入：`` → ``。
     #[test]
     fn whitelist_empty_returns_empty() {
         let p = XssProtector::new(XssMode::Whitelist(vec!["b"]));
         assert_eq!(p.sanitize(""), "");
     }
 
-    /// T008-5: 白名单标签的事件处理器属性（on*）应被移除。
+    /// 白名单标签的事件处理器属性（on*）应被移除。
     /// 输入 `<b onclick=alert(1)>text</b>`，onclick 不应出现在输出中。
     #[test]
     fn whitelist_strips_event_handler_attributes() {
@@ -629,7 +629,7 @@ mod tests {
         );
     }
 
-    /// T008-6: 白名单标签的双引号包裹事件处理器属性也应被移除。
+    /// 白名单标签的双引号包裹事件处理器属性也应被移除。
     #[test]
     fn whitelist_strips_quoted_event_handler_attributes() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
@@ -641,7 +641,7 @@ mod tests {
         );
     }
 
-    /// T008-7: 白名单标签的单引号包裹事件处理器属性也应被移除。
+    /// 白名单标签的单引号包裹事件处理器属性也应被移除。
     #[test]
     fn whitelist_strips_single_quoted_event_handler_attributes() {
         let protector = XssProtector::new(XssMode::Whitelist(vec!["b"]));
@@ -1174,7 +1174,7 @@ mod tests {
     }
 
     // ========================================================================
-    // strip_event_handlers 直接单元测试（T001）
+    // strip_event_handlers 直接单元测试
     // ========================================================================
 
     /// 无事件处理器的属性原样保留。
@@ -1293,7 +1293,7 @@ mod tests {
     }
 
     // ========================================================================
-    // strip_dangerous_uri 直接单元测试（T005）
+    // strip_dangerous_uri 直接单元测试
     // ========================================================================
 
     /// `javascript:` 替换为 `#`。

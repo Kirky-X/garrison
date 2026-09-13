@@ -131,7 +131,7 @@ pub enum ErrorMode {
 ///
 /// ```ignore
 /// use garrison::account::policy::{ErrorMode, PasswordPolicyEngine, PolicyContext};
-/// // T008/T009 实现具体规则后注入
+/// // 实现具体规则后注入
 /// let engine = PasswordPolicyEngine::new(Vec::new(), ErrorMode::FirstError);
 /// let ctx = PolicyContext {
 ///     user_id: "alice".into(),

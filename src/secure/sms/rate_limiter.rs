@@ -91,7 +91,7 @@ impl SmsRateLimiter {
     /// 递减计数器（委托 `dao.decr` 原子操作）。
     ///
     /// 委托 [`GarrisonDao::decr`] 在单次 DAO 调用内完成 get → parse → update/delete，
-    /// 消除原三步组合的 TOCTOU 竞态（fix-refresh-race-and-test-contracts / T014）。
+    /// 消除原三步组合的 TOCTOU 竞态（fix-refresh-race-and-test-contracts /）。
     ///
     /// 语义（与 `dao.decr` 一致）：
     /// - key 不存在或已过期：返回 Ok(())（dao.decr 返回 0，无副作用）

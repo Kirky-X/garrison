@@ -743,7 +743,7 @@ pub mod mysql;
 /// 角色层级子模块。
 ///
 /// always compiled（`RoleHierarchyRecord` 不依赖 db-sqlite）。
-/// `RoleHierarchyService` 在 T045-T050 扩展时依赖 `GarrisonDao` trait（always compiled）。
+/// `RoleHierarchyService` 在 扩展时依赖 `GarrisonDao` trait（always compiled）。
 pub mod role_hierarchy;
 
 // ============================================================================
@@ -1208,8 +1208,8 @@ mod tests {
     #[test]
     fn all_repository_traits_are_send_sync() {
         fn assert_send_sync<T: Send + Sync + ?Sized>() {}
-        // 这些 trait object 检查仅验证 trait 本身满足 Send + Sync 约束
-        // （具体 impl 在 T019 Green 阶段验证）
+        // 这些 trait object 检查仅验证 trait 本身满足 Send + Sync 约束，
+        // 具体 impl 由各后端实现的测试单独验证
         assert_send_sync::<dyn UserRepository>();
         assert_send_sync::<dyn RoleRepository>();
         assert_send_sync::<dyn PermissionRepository>();
@@ -1223,7 +1223,7 @@ mod tests {
     }
 
     // ========================================================================
-    // convert_placeholders 测试（T134，依据 P3 重构决策）
+    // convert_placeholders 测试（依据 P3 重构决策）
     // ========================================================================
 
     /// SQLite 后端保留 `?` 占位符不变。
@@ -1276,7 +1276,7 @@ mod tests {
         assert_eq!(result, "VALUES ($1, $2, $3, $4, $5)");
     }
 
-    /// T001：Postgres 后端跳过单引号字符串字面量内的 `?`，引号外仍替换为 `$n`。
+    /// Postgres 后端跳过单引号字符串字面量内的 `?`，引号外仍替换为 `$n`。
     ///
     /// 场景：SQL 注释/字面量中的 `?`（如 `note = '?'`）不应被当作占位符替换，
     /// 否则参数序号错位导致后续 `$n` 与绑定参数不匹配。
@@ -1292,7 +1292,7 @@ mod tests {
         );
     }
 
-    /// T002：Postgres 后端处理连续 `''` 转义单引号后仍正确替换占位符。
+    /// Postgres 后端处理连续 `''` 转义单引号后仍正确替换占位符。
     ///
     /// 场景：SQL 字面量 `''` 表示一个字面单引号字符（不结束字符串），
     /// 因此 `'' AS empty` 之后 `?` 仍在字符串外，应被替换为 `$1`。
@@ -1308,12 +1308,12 @@ mod tests {
         );
     }
 
-    /// T002-supplement：覆盖 SQL 字符串字面量内的 `''` 转义分支（L743-L748）。
+    /// 覆盖 SQL 字符串字面量内的 `''` 转义分支（L743-L748）。
     ///
     /// 场景：SQL 标准中字符串字面量内的 `''` 表示一个字面单引号字符
     /// （不结束字符串），如 `'a''b'` 表示字符串 `a'b`。状态机应保持
     /// `in_string=true`，使转义后的 `?` 在字符串外被替换为 `$1`。
-    /// T002 仅覆盖独立 `''`（空字符串字面量），未触发字符串内转义分支。
+    /// 仅覆盖独立 `''`（空字符串字面量），未触发字符串内转义分支。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_handles_escaped_quote_inside_string_literal() {
@@ -1326,7 +1326,7 @@ mod tests {
         );
     }
 
-    /// T003：`--` 行注释内的 `?` 不被替换，注释后的 `?` 正常编号。
+    /// `--` 行注释内的 `?` 不被替换，注释后的 `?` 正常编号。
     ///
     /// 场景：`SELECT ? -- comment with ?` 若注释内 `?` 被替换，
     /// 会导致参数序号错位（绑定值与占位符不匹配）。
@@ -1342,7 +1342,7 @@ mod tests {
         );
     }
 
-    /// T004：`/* */` 块注释内的 `?` 不被替换。
+    /// `/* */` 块注释内的 `?` 不被替换。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_skips_question_mark_in_block_comment() {
@@ -1355,7 +1355,7 @@ mod tests {
         );
     }
 
-    /// T004-supplement：嵌套块注释（PostgreSQL 语义）内层的 `?` 也不替换。
+    /// 嵌套块注释（PostgreSQL 语义）内层的 `?` 也不替换。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_handles_nested_block_comments() {
@@ -1382,7 +1382,7 @@ mod tests {
     }
 
     // ========================================================================
-    // make_statement 测试（T135，依据 P3 重构决策）
+    // make_statement 测试（依据 P3 重构决策）
     // ========================================================================
 
     /// Mock 连接，仅用于测试 `make_statement` 的 backend 检测逻辑。

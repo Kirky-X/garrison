@@ -12,7 +12,7 @@ use super::DbHealthCheck;
 use super::{ConfigHealthCheck, HealthCheck, HealthResult, HealthStatus};
 use crate::config::GarrisonConfig;
 // 探测路径（cache-redis）专用 import：db-postgres/db-mysql 探测改为 pool ping 后
-// 不再使用 GarrisonDao（T010），避免未使用导入告警
+// 不再使用 GarrisonDao，避免未使用导入告警
 #[cfg(feature = "cache-redis")]
 use crate::dao::GarrisonDao;
 #[cfg(any(feature = "db-postgres", feature = "db-mysql", feature = "cache-redis"))]
@@ -147,7 +147,7 @@ impl DbHealthCheck {
     /// 创建数据库健康检查器（未注入连接池）。
     ///
     /// db-postgres / db-mysql 探测路径下，未注入连接池时探测返回 `Degraded`
-    /// （T010：不误报 `Healthy`）。生产部署请配合 `DbHealthCheck::with_pool`
+    /// （不误报 `Healthy`）。生产部署请配合 `DbHealthCheck::with_pool`
     /// 注入连接池使用。
     pub fn new() -> Self {
         #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
@@ -160,7 +160,7 @@ impl DbHealthCheck {
         }
     }
 
-    /// 注入 SQL 连接池（db-postgres / db-mysql 探测路径，T010）。
+    /// 注入 SQL 连接池（db-postgres / db-mysql 探测路径）。
     ///
     /// 注入后 readiness 探测执行真实 pool ping（SELECT 1 语义）：
     /// 数据库宕机 / 连接池耗尽 / 网络分区时返回 `Unhealthy`，K8s 可正确摘流。
@@ -202,7 +202,7 @@ impl HealthCheck for DbHealthCheck {
 // -------------------- 探测路径：db-postgres 或 db-mysql 启用 --------------------
 //
 // PG/MySQL 后端通过网络连接数据库，必须执行真实探测以发现连接断开 / 池耗尽 / 网络分区。
-// T010：探测目标从内存 KV DAO（dao.get 委托进程内存储，无法反映数据库状态）
+// 探测目标从内存 KV DAO（dao.get 委托进程内存储，无法反映数据库状态）
 // 改为注入连接池的真实 ping（`DbPool::as_sea_orm` → `DatabaseConnection::ping`）。
 // 未注入连接池时返回 `Degraded`（诚实降级，不误报 `Healthy`）。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
@@ -223,7 +223,7 @@ impl HealthCheck for DbHealthCheck {
             if GarrisonManager::logic().is_err() {
                 return Ok(HealthStatus::Unhealthy);
             }
-            // T010: 未注入连接池 → 无法确证数据库可达，诚实降级
+            // 未注入连接池 → 无法确证数据库可达，诚实降级
             let Some(pool) = pool.as_ref() else {
                 tracing::warn!(
                     "DbHealthCheck: no pool injected (use DbHealthCheck::with_pool); \

@@ -45,10 +45,10 @@ fn oauth2_refresh_token_key(token: &str) -> String {
 
 /// 授权码已签发 token 的吊销追踪记录 TTL（30 天，覆盖 refresh token 生命周期）。
 ///
-/// 用于重放/双花检测时定位并吊销此前签发的 access/refresh token（T019）。
+/// 用于重放/双花检测时定位并吊销此前签发的 access/refresh token。
 const CODE_USED_RECORD_TTL_SECONDS: u64 = 2_592_000;
 
-/// 授权码已签发 token 的吊销追踪记录（T019）。
+/// 授权码已签发 token 的吊销追踪记录。
 ///
 /// 授权码被原子消费（删除）后，其签发的 token 仍需可被定位吊销，
 /// 因此将 `access_token` / `refresh_token` 单独持久化于此结构。
@@ -335,7 +335,7 @@ impl AuthorizeHandler {
         }
     }
 
-    /// 记录授权码签发的 token，供「重放/双花」时吊销（T019）。
+    /// 记录授权码签发的 token，供「重放/双花」时吊销。
     ///
     /// 授权码被原子消费（删除）后，其签发的 access/refresh token 仍需可被定位吊销。
     /// 因此将 `access_token` / `refresh_token` 写入独立的 `oauth2:codeused:` 记录，
@@ -359,7 +359,7 @@ impl AuthorizeHandler {
             .await
     }
 
-    /// 重放/双花检测：授权码已不存在时，吊销其此前签发的 token（T019）。
+    /// 重放/双花检测：授权码已不存在时，吊销其此前签发的 token。
     ///
     /// 读取 `oauth2:codeused:` 记录，删除 access/refresh token 的 DAO 记录
     /// （使 introspection / refresh 失效）。best-effort：删除失败仅记录告警，不阻断主流程。
@@ -941,7 +941,7 @@ mod tests {
         assert!(result.is_none());
     }
 
-    /// T019：并发原子消费 — 16 个 tokio 任务同时用同一 code 调用 consume_code，
+    /// 并发原子消费 — 16 个 tokio 任务同时用同一 code 调用 consume_code，
     /// 仅一个成功（取到 Some），其余全部返回 None，杜绝并发双花 / 重放。
     #[tokio::test]
     async fn consume_code_atomic_concurrent_only_one_wins() {
@@ -991,7 +991,7 @@ mod tests {
         );
     }
 
-    /// T019：重放检测 + 吊销 — 授权码被消费后记录签发的 token，
+    /// 重放检测 + 吊销 — 授权码被消费后记录签发的 token，
     /// 再次消费（重放）时 `revoke_replayed_code_tokens` 应定位并删除签发记录。
     #[tokio::test]
     async fn revoke_replayed_code_tokens_deletes_records() {

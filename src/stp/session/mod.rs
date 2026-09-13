@@ -5,7 +5,7 @@
 //! 从 v0.5.2 起，原 `GarrisonLogic` 上帝 trait 拆分为 6 个细粒度 trait；
 //! 本 trait 承接会话生命周期相关 10 个方法，super-trait 为 [`GarrisonCore`]。
 //!
-//! # LoginId 迁移（v0.5.2）
+//! # LoginId 迁移
 //!
 //! 所有 `login_id: i64` 签名迁移为 `login_id: &str`（对象安全，可作 `dyn`）。
 //! `GarrisonUtil` 保留 `impl Into<String>` ergonomic 入口，自动 `.into()` 后传引用。
@@ -416,7 +416,7 @@ impl SessionLogic for GarrisonLogicDefault {
                 #[cfg(feature = "protocol-jwt")]
                 self.blacklist_jwt_jti(&token).await;
                 self.session.logout(&token).await?;
-                // T008: 登出后立即失效请求内登录身份缓存（同请求内 get_login_id 回退 DAO）
+                // 登出后立即失效请求内登录身份缓存（同请求内 get_login_id 回退 DAO）
                 crate::stp::context::invalidate_login_identity_by_token(&token);
                 // auto-wire: 触发 plugin on_logout + listener Logout 事件
                 if let (Some(pm), Some(id)) = (&self.plugin_manager, login_id.as_ref()) {
@@ -447,7 +447,7 @@ impl SessionLogic for GarrisonLogicDefault {
 
     async fn logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()> {
         self.session.logout_by_login_id(login_id).await?;
-        // T008: 按主体失效请求内登录身份缓存
+        // 按主体失效请求内登录身份缓存
         crate::stp::context::invalidate_login_identity_by_login_id(login_id);
         // three-tier-cache: 失效用户三层缓存（权限/角色/用户）
         #[cfg(feature = "three-tier-cache")]
@@ -470,7 +470,7 @@ impl SessionLogic for GarrisonLogicDefault {
         }
         // kickout 语义等同 logout_by_login_id
         self.session.logout_by_login_id(login_id).await?;
-        // T008: 按主体失效请求内登录身份缓存
+        // 按主体失效请求内登录身份缓存
         crate::stp::context::invalidate_login_identity_by_login_id(login_id);
         // auto-wire: 触发 listener Kickout 事件（plugin 无 kickout 钩子）
         #[cfg(feature = "listener")]
@@ -493,7 +493,7 @@ impl SessionLogic for GarrisonLogicDefault {
         // kickout_by_token 语义等同 logout(token)
         let result = self.session.logout(token).await;
         if result.is_ok() {
-            // T008: 登出后立即失效请求内登录身份缓存
+            // 登出后立即失效请求内登录身份缓存
             crate::stp::context::invalidate_login_identity_by_token(token);
         }
         result
@@ -502,7 +502,7 @@ impl SessionLogic for GarrisonLogicDefault {
     async fn revoke_token(&self, token: &str) -> GarrisonResult<()> {
         // 销毁 Token-Session（幂等：token 不存在也返回 Ok）
         self.session.logout(token).await?;
-        // T008: 吊销后立即失效请求内登录身份缓存
+        // 吊销后立即失效请求内登录身份缓存
         crate::stp::context::invalidate_login_identity_by_token(token);
         // 广播 RevokeToken 事件
         #[cfg(feature = "listener")]
@@ -587,7 +587,7 @@ impl SessionLogic for GarrisonLogicDefault {
             },
         };
 
-        // T008: 登录身份缓存——check_login 校验成功后写入 (token, login_id)，
+        // 登录身份缓存——check_login 校验成功后写入 (token, login_id)，
         // 同请求内 handler 的 get_login_id/check_permission 命中缓存免 DAO 读取。
         // 缓存作用域 `with_login_id_scope` 由 Web middleware 在请求开始时创建
         // （覆盖整个请求处理期）；未在作用域内调用（直连 API/测试）时写入为
@@ -597,7 +597,7 @@ impl SessionLogic for GarrisonLogicDefault {
             JwtMode::Mixin => self.check_login_mixin(&token).await,
             JwtMode::Simple => self.check_login_simple(&token).await,
         };
-        // T006: 异常检测（仅 valid 时，检测失败不中断主流程）
+        // 异常检测（仅 valid 时，检测失败不中断主流程）
         #[cfg(feature = "security-extra")]
         if let Ok((true, Some(ref login_id))) = result {
             self.run_anomaly_check_on_check_login(login_id, &token)
@@ -637,7 +637,7 @@ impl SessionLogic for GarrisonLogicDefault {
                 },
             }
         }
-        // T008: 校验通过 → 缓存登录身份（get_login_id 按 token 匹配复用，登出即失效）
+        // 校验通过 → 缓存登录身份（get_login_id 按 token 匹配复用，登出即失效）
         if let Ok((true, Some(ref login_id))) = result {
             crate::stp::context::cache_login_identity(&token, login_id);
         }
@@ -647,7 +647,7 @@ impl SessionLogic for GarrisonLogicDefault {
     async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
         match current_token() {
             Ok(token) => {
-                // T008: 请求内缓存命中（check_login 已校验该 token）直接复用，
+                // 请求内缓存命中（check_login 已校验该 token）直接复用，
                 // 免一次 TokenSession DAO 读取；token 不匹配或未在缓存作用域内
                 // 回退 DAO 读取（语义不变）。
                 if let Some(login_id) = crate::stp::context::cached_login_id_for(&token) {
@@ -709,7 +709,7 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 }
 
-// 私有 helper 方法拆分到独立文件（大文件拆分，fix-codebase-review-violations T015）。
+// 私有 helper 方法拆分到独立文件（大文件拆分，fix-codebase-review-violations）。
 mod helpers;
 
 #[cfg(test)]

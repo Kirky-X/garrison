@@ -890,7 +890,7 @@ mod tests {
 
     /// DAO 模式下脏计数器数据导致 `check_brute_force` 返回 Err（Fail Loud）。
     ///
-    /// v0.7.2 语义：limiteron `get_count` 在 parse 失败时返回 `Err`（M-3: fail-fast），
+    /// v0.7.2 语义：limiteron `get_count` 在 parse 失败时返回 `Err`（fail-fast），
     /// `check_brute_force` 将其映射为 `GarrisonError::Dao` 向上传播，
     /// 不再静默用 0（避免脏数据导致阈值检测失效）。
     #[tokio::test]

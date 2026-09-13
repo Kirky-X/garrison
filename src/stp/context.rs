@@ -141,7 +141,7 @@ pub fn current_token() -> GarrisonResult<String> {
 }
 
 // ============================================================================
-// CURRENT_LOGIN_ID task_local 上下文 API（T008 请求内登录身份复用）
+// CURRENT_LOGIN_ID task_local 上下文 API（请求内登录身份复用）
 // ============================================================================
 //
 // 请求级登录身份缓存：`with_login_id_scope` 由 Web middleware 在请求开始时
@@ -313,7 +313,7 @@ mod tests {
         .await;
     }
 
-    /// 锁中毒（poisoned）时仍应恢复内部值而非 panic（T034）。
+    /// 锁中毒（poisoned）时仍应恢复内部值而非 panic。
     #[tokio::test]
     async fn renewed_token_recovers_from_poisoned_mutex() {
         // 构造一个中毒的 Mutex：在持有锁的线程中 panic

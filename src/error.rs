@@ -709,7 +709,7 @@ impl miette::Diagnostic for GarrisonError {
 mod tests {
     use super::*;
 
-    /// 验证 `code()` 覆盖全部变体且两两唯一、非空、全大写、稳定（T011；
+    /// 验证 `code()` 覆盖全部变体且两两唯一、非空、全大写、稳定（
     /// 供日志/监控等非 HTTP 场景使用，须与 `response_parts()` 的 error_code 同源防漂移）。
     #[test]
     fn error_code_covers_all_variants_unique_and_stable() {
@@ -829,7 +829,7 @@ mod tests {
 
     /// 哨兵（性能审查 P3）：`GarrisonError` 经 `Exception(Box<..>)` 后体积必须
     /// 远低于 clippy `result_large_err` 阈值（128B），防止未来变体膨胀无声回退
-    /// 到「192 处告警」的级联状态（T011 连带修复的回归锚定）。
+    /// 到「192 处告警」的级联状态（连带修复的回归锚定）。
     #[test]
     fn error_size_stays_within_result_large_err_budget() {
         let size = std::mem::size_of::<GarrisonError>();

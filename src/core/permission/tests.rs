@@ -213,7 +213,7 @@ async fn authorize_returns_decision_with_allowed_true_when_permission_matches() 
     assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
 }
 
-/// T015 补充: authorize 在权限不匹配时返回 allowed=false + NoMatchingPermission。
+/// 补充: authorize 在权限不匹配时返回 allowed=false + NoMatchingPermission。
 #[tokio::test]
 async fn authorize_returns_deny_when_permission_not_matched() {
     let checker = make_checker();
@@ -225,7 +225,7 @@ async fn authorize_returns_deny_when_permission_not_matched() {
     assert_eq!(decision.reason, DecisionReason::NoMatchingPermission);
 }
 
-/// T015 补充: authorize 在权限字符串为空时返回 InvalidParam 错误。
+/// 补充: authorize 在权限字符串为空时返回 InvalidParam 错误。
 #[tokio::test]
 async fn authorize_returns_error_for_empty_permission() {
     let checker = make_checker();
@@ -268,7 +268,7 @@ async fn check_permission_delegates_to_authorize_and_returns_allowed() {
         .is_err());
 }
 
-/// T017 补充: check_permission 的错误类型为 NotPermission（不是其他错误）。
+/// 补充: check_permission 的错误类型为 NotPermission（不是其他错误）。
 #[tokio::test]
 async fn check_permission_deny_returns_not_permission_error() {
     let checker = make_checker();
@@ -282,7 +282,7 @@ async fn check_permission_deny_returns_not_permission_error() {
     }
 }
 
-/// T017 补充: check_role 仍保持原行为（未持有角色返回 NotRole）。
+/// 补充: check_role 仍保持原行为（未持有角色返回 NotRole）。
 #[tokio::test]
 async fn check_role_still_returns_not_role_when_unmatched() {
     let checker = make_checker();
@@ -293,7 +293,7 @@ async fn check_role_still_returns_not_role_when_unmatched() {
     }
 }
 
-/// T017 补充: Decision 可从 authorize 序列化为 JSON（端到端 trace 输出验证）。
+/// 补充: Decision 可从 authorize 序列化为 JSON（端到端 trace 输出验证）。
 #[tokio::test]
 async fn authorize_decision_serializes_to_json() {
     let checker = make_checker();

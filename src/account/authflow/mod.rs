@@ -5,7 +5,7 @@
 //! 提供声明式认证流程编排，覆盖登录 + MFA + 社交登录 + SSO 全认证流程。
 //! 详见 spec `auth-flow-dsl`。
 //!
-//! # 核心类型（T013）
+//! # 核心类型
 //!
 //! - [`AuthStep`](crate::account::authflow::AuthStep)：认证步骤 enum（7 变体：Login/Mfa/SocialProvider/SsoServer/RequiredAction/Conditional/SubFlow）
 //! - [`AuthCondition`](crate::account::authflow::AuthCondition)：条件分支 enum（4 变体：HasCredential/IsLocked/IpWhitelisted/Custom）
@@ -15,10 +15,10 @@
 //!
 //! # 子模块
 //!
-//! - [`builder`](crate::account::authflow::builder): FlowBuilder 流式构建 DSL（T014）
-//! - [`registry`](crate::account::authflow::registry): FlowRegistry inventory 注册（T015）
-//! - [`executor`](crate::account::authflow::executor): AuthExecutor 执行器（T016/T017）
-//! - [`builtin`](crate::account::authflow::builtin): 内置 AuthenticationFlow（T018）
+//! - [`builder`](crate::account::authflow::builder): FlowBuilder 流式构建 DSL
+//! - [`registry`](crate::account::authflow::registry): FlowRegistry inventory 注册
+//! - [`executor`](crate::account::authflow::executor): AuthExecutor 执行器
+//! - [`builtin`](crate::account::authflow::builtin): 内置 AuthenticationFlow
 
 pub mod builder;
 pub mod builtin;

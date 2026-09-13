@@ -308,10 +308,10 @@ mod tests {
     use serde_json::json;
 
     // ========================================================================
-    // mask_value 测试（T001）
+    // mask_value 测试
     // ========================================================================
 
-    /// T001-1: 手机号 "13812341234" → "138****1234"。
+    /// 手机号 "13812341234" → "1381234"。
     #[test]
     fn mask_phone_returns_138_1234() {
         let masker = SensitiveDataMasker::new();
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(result, "138****1234");
     }
 
-    /// T001-2: 身份证 "110101199001011234" → "110***********1234"。
+    /// 身份证 "110101199001011234" → "110***1234"。
     #[test]
     fn mask_id_card_returns_masked() {
         let masker = SensitiveDataMasker::new();
@@ -327,7 +327,7 @@ mod tests {
         assert_eq!(result, "110***********1234");
     }
 
-    /// T001-3: 邮箱 "alice@example.com" → "a***@example.com"。
+    /// 邮箱 "alice@example.com" → "a***@example.com"。
     #[test]
     fn mask_email_returns_masked() {
         let masker = SensitiveDataMasker::new();
@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(result, "a***@example.com");
     }
 
-    /// T001-4: 银行卡 "6222021234567890" → "622202******7890"（PCI-DSS first 6 + last 4）。
+    /// 银行卡 "6222021234567890" → "622202**7890"（PCI-DSS first 6 + last 4）。
     #[test]
     fn mask_bank_card_returns_masked() {
         let masker = SensitiveDataMasker::new();
@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(result, "622202******7890");
     }
 
-    /// T001-5: Custom 类型真实脱敏 — 正则 `\d+` 匹配所有数字组替换为 `***`。
+    /// Custom 类型真实脱敏 — 正则 `\d+` 匹配所有数字组替换为 `***`。
     /// SSN `123-45-6789` → `***-***-***`（每个数字组替换为 `***`，不论原长度）。
     /// vuln-0010 D6 修复：原 placeholder 静默返回原值（敏感数据泄露）。
     #[test]
@@ -353,7 +353,7 @@ mod tests {
         assert_eq!(result, "***-***-***");
     }
 
-    /// T001-5a: Custom 类型正则无匹配时返回原值（用户负责正则正确性）。
+    /// Custom 类型正则无匹配时返回原值（用户负责正则正确性）。
     #[test]
     fn mask_custom_no_match_returns_original() {
         let masker = SensitiveDataMasker::new();
@@ -361,7 +361,7 @@ mod tests {
         assert_eq!(result, "no-digits-here");
     }
 
-    /// T001-5b: Custom 类型正则编译失败时返回 `"***"` 作为安全 fallback。
+    /// Custom 类型正则编译失败时返回 `"***"` 作为安全 fallback。
     /// 无效正则 `[` 不能编译，返回 `"***"`（fail-closed，避免泄露原值）+ error 日志。
     #[test]
     fn mask_custom_invalid_regex_returns_safe_fallback() {
@@ -370,7 +370,7 @@ mod tests {
         assert_eq!(result, "***");
     }
 
-    /// T001-5c: Custom 类型正则匹配 IP 地址（多组数字 + 点号）替换为 `***`。
+    /// Custom 类型正则匹配 IP 地址（多组数字 + 点号）替换为 `***`。
     /// 验证复杂正则（多 `\d+\.` 组合）也正确脱敏。
     #[test]
     fn mask_custom_redacts_ip_pattern() {
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(result, "client_ip=***;");
     }
 
-    /// T001-6: 手机号少于 7 位返回原值。
+    /// 手机号少于 7 位返回原值。
     #[test]
     fn mask_phone_short_returns_original() {
         let masker = SensitiveDataMasker::new();
@@ -390,7 +390,7 @@ mod tests {
         assert_eq!(result, "123456");
     }
 
-    /// T001-7: 身份证少于 7 位返回原值。
+    /// 身份证少于 7 位返回原值。
     #[test]
     fn mask_id_card_short_returns_original() {
         let masker = SensitiveDataMasker::new();
@@ -398,7 +398,7 @@ mod tests {
         assert_eq!(result, "123456");
     }
 
-    /// T001-8: 邮箱无 `@` 返回原值。
+    /// 邮箱无 `@` 返回原值。
     #[test]
     fn mask_email_no_at_returns_original() {
         let masker = SensitiveDataMasker::new();
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(result, "noemail");
     }
 
-    /// T001-9: 邮箱 `@` 在首位（无本地部分）返回原值。
+    /// 邮箱 `@` 在首位（无本地部分）返回原值。
     #[test]
     fn mask_email_at_start_returns_original() {
         let masker = SensitiveDataMasker::new();
@@ -414,7 +414,7 @@ mod tests {
         assert_eq!(result, "@example.com");
     }
 
-    /// T001-10: 银行卡少于 10 位返回全 `*`（PCI-DSS 3.4：不足 first 6 + last 4 时全屏蔽）。
+    /// 银行卡少于 10 位返回全 `*`（PCI-DSS 3.4：不足 first 6 + last 4 时全屏蔽）。
     #[test]
     fn mask_bank_card_short_returns_all_stars() {
         let masker = SensitiveDataMasker::new();
@@ -422,7 +422,7 @@ mod tests {
         assert_eq!(result, "*******");
     }
 
-    /// T002-1: PCI-DSS 3.4 银行卡脱敏 first 6 + last 4：
+    /// PCI-DSS 3.4 银行卡脱敏 first 6 + last 4：
     /// "6225881234567890"（16 位）→ "622588******7890"（前 6 + 中 6 星 + 后 4）。
     #[test]
     fn mask_bank_card_pci_dss_first6_last4() {
@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(result, "622588******7890");
     }
 
-    /// T002-2: PCI-DSS 边界 — 恰好 10 位时 first 6 + last 4 中间 0 星。
+    /// PCI-DSS 边界 — 恰好 10 位时 first 6 + last 4 中间 0 星。
     #[test]
     fn mask_bank_card_pci_dss_boundary_10_chars() {
         let masker = SensitiveDataMasker::new();
@@ -439,7 +439,7 @@ mod tests {
         assert_eq!(result, "6225887890");
     }
 
-    /// T002-3: PCI-DSS 边界 — 9 位（< 10）返回全 `*`，长度与输入一致。
+    /// PCI-DSS 边界 — 9 位（< 10）返回全 `*`，长度与输入一致。
     #[test]
     fn mask_bank_card_pci_dss_short_9_chars_all_stars() {
         let masker = SensitiveDataMasker::new();
@@ -447,7 +447,7 @@ mod tests {
         assert_eq!(result, "*********");
     }
 
-    /// T002-4: PCI-DSS 边界 — 空字符串返回空（长度 0 < 10，全 `*` 即空串）。
+    /// PCI-DSS 边界 — 空字符串返回空（长度 0 < 10，全 `*` 即空串）。
     #[test]
     fn mask_bank_card_pci_dss_empty_string() {
         let masker = SensitiveDataMasker::new();
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(result, "");
     }
 
-    /// T001-11: 手机号含多字节字符（中文）不应 panic。
+    /// 手机号含多字节字符（中文）不应 panic。
     /// "ab中cdefg" 字节 2..5 为 "中"（3 字节），旧实现 `&value[..3]` 切到字符中间会 panic。
     #[test]
     fn mask_phone_handles_multibyte_input() {
@@ -464,7 +464,7 @@ mod tests {
         assert!(!result.is_empty(), "多字节输入不应 panic 且应返回非空结果");
     }
 
-    /// T001-12: 身份证含多字节字符不应 panic。
+    /// 身份证含多字节字符不应 panic。
     #[test]
     fn mask_id_card_handles_multibyte_input() {
         let masker = SensitiveDataMasker::new();
@@ -472,7 +472,7 @@ mod tests {
         assert!(!result.is_empty(), "多字节输入不应 panic 且应返回非空结果");
     }
 
-    /// T001-13: 银行卡含多字节字符不应 panic。
+    /// 银行卡含多字节字符不应 panic。
     /// "ab中cdefg" 字节 2..5 为 "中"，旧实现 `&value[..4]` 切到字符中间会 panic。
     #[test]
     fn mask_bank_card_handles_multibyte_input() {
@@ -520,10 +520,10 @@ mod tests {
     }
 
     // ========================================================================
-    // mask_json 测试（T002）
+    // mask_json 测试
     // ========================================================================
 
-    /// T002-1: `{"phone":"13812341234"}` → `{"phone":"138****1234"}`。
+    /// `{"phone":"13812341234"}` → `{"phone":"1381234"}`。
     #[test]
     fn mask_json_masks_phone_field() {
         let masker = SensitiveDataMasker::new().with_rule(MaskType::Phone, "phone");
@@ -532,7 +532,7 @@ mod tests {
         assert_eq!(masked, json!({"phone": "138****1234"}));
     }
 
-    /// T002-2: 嵌套 Object 递归脱敏。
+    /// 嵌套 Object 递归脱敏。
     #[test]
     fn mask_json_masks_nested_object() {
         let masker = SensitiveDataMasker::new().with_rule(MaskType::Phone, "phone");
@@ -541,7 +541,7 @@ mod tests {
         assert_eq!(masked, json!({"user": {"phone": "138****1234"}}));
     }
 
-    /// T002-3: 数组中的 Object 递归脱敏。
+    /// 数组中的 Object 递归脱敏。
     #[test]
     fn mask_json_masks_array_of_objects() {
         let masker = SensitiveDataMasker::new().with_rule(MaskType::Phone, "phone");
@@ -553,7 +553,7 @@ mod tests {
         );
     }
 
-    /// T002-4: 非 Object 类型返回原值。
+    /// 非 Object 类型返回原值。
     #[test]
     fn mask_json_non_object_returns_original() {
         let masker = SensitiveDataMasker::new();
@@ -562,7 +562,7 @@ mod tests {
         assert_eq!(masked, input);
     }
 
-    /// T002-5: 无匹配字段返回原值。
+    /// 无匹配字段返回原值。
     #[test]
     fn mask_json_no_matching_field_returns_original() {
         let masker = SensitiveDataMasker::new().with_rule(MaskType::Phone, "phone");
@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(masked, json!({"name": "Alice"}));
     }
 
-    /// T002-6: 多字段混合脱敏（phone + email + 非敏感字段）。
+    /// 多字段混合脱敏（phone + email + 非敏感字段）。
     #[test]
     fn mask_json_masks_multiple_fields() {
         let masker = SensitiveDataMasker::new()

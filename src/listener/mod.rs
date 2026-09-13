@@ -24,7 +24,7 @@ use std::sync::Arc;
 #[cfg(feature = "audit-log")]
 pub mod audit;
 
-/// 请求上下文（T004 新增）。
+/// 请求上下文。
 ///
 /// 携带与 HTTP 请求相关的客户端信息，由事件广播方注入到 `GarrisonEvent` 的
 /// `request_context` 字段，供 `to_audit_entry` 提取 ip 与 user_agent 填充审计日志。
@@ -91,7 +91,7 @@ pub enum GarrisonEvent {
         token: String,
         /// 登录设备信息（可选）。
         device: Option<String>,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 登出事件。
@@ -100,7 +100,7 @@ pub enum GarrisonEvent {
         login_id: String,
         /// 被登出的 token（**掩码形式**，v0.9.0 起不含完整 token）。
         token: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 被踢下线事件。
@@ -111,7 +111,7 @@ pub enum GarrisonEvent {
         token: String,
         /// 踢出原因。
         reason: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 权限校验事件。
@@ -120,7 +120,7 @@ pub enum GarrisonEvent {
         login_id: String,
         /// 被校验的权限字符串。
         permission: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 角色校验事件。
@@ -129,21 +129,21 @@ pub enum GarrisonEvent {
         login_id: String,
         /// 被校验的角色字符串。
         role: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// Token 过期事件。
     TokenExpired {
         /// 过期的 token（**掩码形式**，v0.9.0 起不含完整 token）。
         token: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 登录失败事件。
     ///
     /// 在 `login_with_password` 失败路径广播（invalid_credentials / hash_format_error）。
     /// 注意：login_id 字段使用 `String` 类型，以保持与现有变体一致
-    ///（偏差 D-Phase11-1，依据规则 11 惯例优先于新颖）。
+    ///（偏差 D--1，依据规则 11 惯例优先于新颖）。
     LoginFailure {
         /// 登录主体标识。
         login_id: String,
@@ -152,7 +152,7 @@ pub enum GarrisonEvent {
         /// v0.4.2 安全审计 A-014: user_not_found 与 wrong_password 统一为 "invalid_credentials"，
         /// 防止日志/事件泄露用户存在性（防用户枚举）。
         reason: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// Token 刷新事件。
@@ -165,7 +165,7 @@ pub enum GarrisonEvent {
         old_token: String,
         /// 刷新后的新 token（**掩码形式**，v0.9.0 起不含完整 token）。
         new_token: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// Token 主动吊销事件。
@@ -176,7 +176,7 @@ pub enum GarrisonEvent {
     RevokeToken {
         /// 被吊销的 token。
         token: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 会话超时事件。
@@ -188,7 +188,7 @@ pub enum GarrisonEvent {
         login_id: String,
         /// 超时的 token。
         token: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 账号锁定事件。
@@ -199,7 +199,7 @@ pub enum GarrisonEvent {
         login_id: String,
         /// 锁定原因（如 "brute_force: 5 failures in 1h"）。
         reason: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 防火墙阻断事件。
@@ -210,7 +210,7 @@ pub enum GarrisonEvent {
         login_id: String,
         /// 阻断原因（hook 错误信息）。
         reason: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// API Key 轮换事件。
@@ -221,7 +221,7 @@ pub enum GarrisonEvent {
         old_key: String,
         /// 轮换后的新 key。
         new_key: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 临时凭据消费事件。
@@ -232,11 +232,11 @@ pub enum GarrisonEvent {
         key: String,
         /// 凭据载荷值。
         value: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     // ========================================================================
-    // 变体（spec R-audit-log-005 要求，T076 Green）
+    // 变体（spec R-audit-log-005 要求）
     // ========================================================================
     /// 社交登录事件（spec R-audit-log-005）。
     ///
@@ -248,7 +248,7 @@ pub enum GarrisonEvent {
         user_id: String,
         /// 关联的本地 login_id（首次登录可能为 None，绑定后才有）。
         login_id: Option<String>,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 租户切换事件（spec R-audit-log-005）。
@@ -261,7 +261,7 @@ pub enum GarrisonEvent {
         from_tenant: i64,
         /// 切换后的租户 ID。
         to_tenant: i64,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 设备封禁事件（spec R-audit-log-005）。
@@ -272,7 +272,7 @@ pub enum GarrisonEvent {
         login_id: String,
         /// 被封禁的设备标识。
         device: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 设备解封事件（spec R-audit-log-005）。
@@ -283,7 +283,7 @@ pub enum GarrisonEvent {
         login_id: String,
         /// 被解封的设备标识。
         device: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 配置热重载事件（spec R-audit-log-005）。
@@ -292,7 +292,7 @@ pub enum GarrisonEvent {
     ConfigReload {
         /// 新配置版本号。
         config_version: u32,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 异常登录检测事件（spec R-anomalous-detector-dual-006）。
@@ -308,7 +308,7 @@ pub enum GarrisonEvent {
         detail: serde_json::Value,
         /// 检测时间戳（Unix 秒）。
         timestamp: i64,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// 被顶替下线事件（超出最大登录数时，最旧会话被新会话顶替）。
@@ -319,7 +319,7 @@ pub enum GarrisonEvent {
         token: String,
         /// 顶替原因。
         reason: String,
-        /// 请求上下文（IP + User-Agent，T004 新增）。
+        /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
     /// Credit 消费事件（多租户配额计量）。

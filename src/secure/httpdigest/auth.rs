@@ -107,7 +107,7 @@ impl HttpDigestAuth {
         self
     }
 
-    /// 注入服务端签名密钥（T021）：以 HKDF 从 `secret` 域分隔派生 32 字节 HMAC 密钥。
+    /// 注入服务端签名密钥：以 HKDF 从 `secret` 域分隔派生 32 字节 HMAC 密钥。
     ///
     /// 派生：`HKDF-SHA256(salt = realm, ikm = secret, info = NONCE_HMAC_HKDF_INFO)`，
     /// 复用 protocol-sign 的 HKDF 域分隔范式，避免密钥域混用。
@@ -153,7 +153,7 @@ impl HttpDigestAuth {
     /// 格式（无 `server_key`）：
     /// - `base64("{timestamp}:{random_uuid}")`
     ///
-    /// 格式（注入 `server_key`，T021）：
+    /// 格式（注入 `server_key`）：
     /// - `base64("{timestamp}:{random_uuid}:{hmac_sha256(server_key, timestamp:random_uuid)}")`
     /// - timestamp: 当前 Unix 秒
     /// - random_uuid: UUID v4（保证唯一性）
@@ -174,7 +174,7 @@ impl HttpDigestAuth {
     /// 校验 nonce 是否有效（格式正确且未过期，且签名有效）。
     ///
     /// nonce 格式（无 `server_key`，无签名）：`base64("{timestamp}:{random}")`
-    /// nonce 格式（注入 `server_key`，T021）：`base64("{timestamp}:{random}:{mac}")`
+    /// nonce 格式（注入 `server_key`）：`base64("{timestamp}:{random}:{mac}")`
     ///
     /// 注入 `server_key` 时：先验 HMAC 签名（`constant_time_eq`），再校验时间戳，
     /// 任一步失败即拒绝。未注入 `server_key` 时无签名校验（仅时间戳 TTL 防护）。
@@ -199,7 +199,7 @@ impl HttpDigestAuth {
                     Ok(t) => t,
                     Err(_) => return false,
                 };
-                // 先验签名（T021：先验 HMAC 再计时间戳，杜绝自铸 nonce）
+                // 先验签名（先验 HMAC 再计时间戳，杜绝自铸 nonce）
                 if !verify_nonce_signature(key, timestamp, parts[1], parts[2]) {
                     return false;
                 }
@@ -264,7 +264,7 @@ impl HttpDigestAuth {
             None => {
                 // fail-open：未注入 DAO 时跳过 nc 单调性校验（DAO 为可选依赖），
                 // 仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
-                // 进程级一次性 warn（T022）：提醒运维注入 DAO 以启用 RFC 7616 §3.4.6 重放防护，
+                // 进程级一次性 warn：提醒运维注入 DAO 以启用 RFC 7616 §3.4.6 重放防护，
                 // 明确标注当前为 fail-open 语义（非 fail-closed）。
                 static WARNED_NO_DAO: std::sync::atomic::AtomicBool =
                     std::sync::atomic::AtomicBool::new(false);

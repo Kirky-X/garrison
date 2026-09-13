@@ -247,7 +247,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
 
     async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
         // 进程内原子：将 ttl_sync → set_with_ttl_sync 置于 atomic_mutex 临界区，
-        // 避免并发 update / expire 之间的 TOCTOU（T025）。
+        // 避免并发 update / expire 之间的 TOCTOU。
         let _guard = self.atomic_mutex.lock();
         let actual_key = prefixed_key(key);
         // ttl_sync 返回 None 既可能是“永久键”也可能是“键已消失”，需 exists_sync 二次甄别。
@@ -349,9 +349,9 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// rename 用 get → ttl_sync → set_with_ttl_sync → delete 四步。
     ///
     /// 重写默认实现以保留原键 TTL（用 `ttl_sync` 读取剩余 TTL，用 `set_with_ttl_sync` 写入）。
-    /// 进程内原子：整体置于 `atomic_mutex` 临界区（T025）。
+    /// 进程内原子：整体置于 `atomic_mutex` 临界区。
     /// `ttl_sync` 返回 None 时追加 `exists_sync` 甄别永久键 / 已消失键，
-    /// 已消失返回 `Dao("dao-key-missing")` 而非写入永久值（T025）。
+    /// 已消失返回 `Dao("dao-key-missing")` 而非写入永久值。
     /// 同步迁移 `key_index`：移除旧键条目、插入新键条目（否则 `keys()` 会
     /// 漏报新键且残留旧键陈旧条目）。
     async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {

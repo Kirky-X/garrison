@@ -119,7 +119,7 @@ fn make_simple_style() -> SimpleTokenStyle {
     SimpleTokenStyle::new(TEST_SECRET.to_string())
 }
 
-/// R-sessiontokenconsistency-002（T016）：secret 短于 32 字节时 generate/verify 失败，
+/// R-sessiontokenconsistency-002：secret 短于 32 字节时 generate/verify 失败，
 /// 对齐 JWT 双向强校验；32 字节边界成功。
 #[cfg(feature = "secure-simple-token")]
 #[test]

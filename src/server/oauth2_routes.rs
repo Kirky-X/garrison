@@ -516,7 +516,7 @@ mod tests {
         );
     }
 
-    /// T003: 有 GarrisonPrincipal（Extension）时 authorize 端点返回 Redirect 含 code。
+    /// 有 GarrisonPrincipal（Extension）时 authorize 端点返回 Redirect 含 code。
     /// principal.login_id = "1001" → user_id = Some(1001) → 授权成功 → Redirect。
     #[tokio::test]
     async fn test_authorize_endpoint_returns_redirect_with_code_when_principal_present() {
@@ -552,7 +552,7 @@ mod tests {
         );
     }
 
-    /// T003: 无 GarrisonPrincipal（Extension 缺失）时 authorize 端点返回 LoginRequired。
+    /// 无 GarrisonPrincipal（Extension 缺失）时 authorize 端点返回 LoginRequired。
     #[tokio::test]
     async fn test_authorize_endpoint_returns_login_required_when_no_principal() {
         let (state, store) = make_state();

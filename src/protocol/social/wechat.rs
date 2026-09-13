@@ -582,7 +582,7 @@ mod tests {
     /// `https://open.weixin.qq.com/connect/qrconnect?appid=APPID&redirect_uri=REDIRECT_URI&response_type=code&scope=snsapi_login&state=STATE#wechat_redirect`
     ///
     /// Red 阶段：`WechatProvider` 类型不存在 → 编译失败。
-    /// Green 阶段（T100）：定义 struct + impl 后测试通过。
+    /// 定义 struct + impl 后测试通过。
     #[tokio::test]
     async fn wechat_provider_get_authorization_url_returns_correct_format() {
         let provider = WechatProvider::new("wx_appid", "wx_secret");
@@ -627,7 +627,7 @@ mod tests {
     ///
     /// 官方文档指定 GET 方法 + query 参数（非 POST form body），测试用 query_param 匹配。
     ///
-    /// Green 阶段（T102）：实现 exchange_token 后测试通过。
+    /// 实现 exchange_token 后测试通过。
     #[tokio::test]
     async fn wechat_provider_exchange_token_parses_access_token_from_response() {
         use wiremock::matchers::{method, path, query_param};
@@ -670,7 +670,7 @@ mod tests {
     /// 4. 断言返回 `SocialUserInfo` 含 nickname/avatar/union_id
     ///
     /// Red 阶段：`with_userinfo_url` / `get_user_info` 实现 missing → panic。
-    /// Green 阶段（T004）：实现后测试通过。
+    /// 实现后测试通过。
     #[tokio::test]
     async fn wechat_provider_get_user_info_parses_nickname_and_avatar() {
         use wiremock::matchers::{method, path, query_param};
@@ -711,7 +711,7 @@ mod tests {
     /// 验证 `WechatProvider::get_user_info` 在 HTTP 错误时返回 `GarrisonError`（不 panic）
     ///
     /// Red 阶段：`get_user_info` 未实现 → panic。
-    /// Green 阶段（T004）：实现后返回 `Err(GarrisonError::Network(_))`。
+    /// 实现后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_provider_get_user_info_returns_error_on_http_failure() {
         use wiremock::matchers::{method, path};
@@ -749,7 +749,7 @@ mod tests {
     /// 返回 `SocialUserInfo`。
     ///
     /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
-    /// Green 阶段（T089）：实现 jscode2session 调用后测试通过。
+    /// 实现 jscode2session 调用后测试通过。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_success() {
         use wiremock::matchers::{method, path, query_param};
@@ -787,7 +787,7 @@ mod tests {
     ///（无效 code）时返回 `GarrisonError`。
     ///
     /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
-    /// Green 阶段（T089）：实现 errcode 检查后返回 `Err(GarrisonError::Network(_))`。
+    /// 实现 errcode 检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_invalid_code() {
         use wiremock::matchers::{method, path};
@@ -819,7 +819,7 @@ mod tests {
     /// `GarrisonError::Network`。
     ///
     /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
-    /// Green 阶段（T089）：实现 HTTP 状态码检查后返回 `Err(GarrisonError::Network(_))`。
+    /// 实现 HTTP 状态码检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_network_error() {
         use wiremock::matchers::{method, path};
@@ -853,7 +853,7 @@ mod tests {
     /// 返回 `GarrisonError`。
     ///
     /// Red 阶段：`get_user_info` 含 `(未实现占位)` → panic。
-    /// Green 阶段（T089）：实现 openid 缺失检查后返回 `Err(GarrisonError::Network(_))`。
+    /// 实现 openid 缺失检查后返回 `Err(GarrisonError::Network(_))`。
     #[tokio::test]
     async fn wechat_mini_app_get_user_info_missing_openid() {
         use wiremock::matchers::{method, path};

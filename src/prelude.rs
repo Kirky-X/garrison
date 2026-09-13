@@ -33,12 +33,12 @@ pub use crate::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategy
 
 /// 注解驱动的路由保护声明（[Annotation]，`GarrisonRouter::route_protected` 使用）。
 pub use crate::annotation::Annotation;
-/// 内置缓存 DAO（feature: cache-memory / cache-redis，T014 prelude 增补）。
+/// 内置缓存 DAO（feature: cache-memory / cache-redis， prelude 增补）。
 #[cfg(any(feature = "cache-memory", feature = "cache-redis"))]
 pub use crate::dao::GarrisonDaoOxcache;
 /// 登录参数（[LoginParams]，`login` / `login_with_password` 使用）。
 pub use crate::stp::LoginParams;
-/// 请求上下文工具：设置当前 token 作用域 / 读取当前 token（T014 prelude 增补）。
+/// 请求上下文工具：设置当前 token 作用域 / 读取当前 token（prelude 增补）。
 pub use crate::stp::{current_token, with_current_token};
 
 /// 邀请码定向注册协议类型（feature: protocol-invitation）。

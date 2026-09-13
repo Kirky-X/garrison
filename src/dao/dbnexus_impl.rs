@@ -26,7 +26,7 @@ static POSTGRES_MIGRATIONS: include_dir::Dir<'_> = include_dir::include_dir!("mi
 
 /// 初始化 dbnexus 连接池（最常用入口）。
 ///
-/// 对应 tasks.md 3.4：封装 dbnexus 初始化逻辑。
+/// 对应 封装 dbnexus 初始化逻辑。
 ///
 /// # 参数
 /// - `url`: 数据库连接 URL。

@@ -147,7 +147,7 @@ mod tests {
     // Authorizer trait 测试
     // ========================================================================
 
-    /// T062-1: Authorizer::authorize 在允许场景返回 allowed=true 的 Decision。
+    /// Authorizer::authorize 在允许场景返回 allowed=true 的 Decision。
     #[tokio::test]
     async fn authorizer_allows_when_permission_held() {
         let authorizer = MockAuthorizer::new(MockOutcome::Allow);
@@ -157,7 +157,7 @@ mod tests {
         assert_eq!(decision.reason, DecisionReason::ExplicitAllow);
     }
 
-    /// T062-2: Authorizer::authorize 在拒绝场景返回 allowed=false + NoMatchingPermission。
+    /// Authorizer::authorize 在拒绝场景返回 allowed=false + NoMatchingPermission。
     #[tokio::test]
     async fn authorizer_denies_when_permission_not_held() {
         let authorizer = MockAuthorizer::new(MockOutcome::DenyNoMatch);
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(decision.reason, DecisionReason::NoMatchingPermission);
     }
 
-    /// T062-3: Authorizer::authorize 在参数无效时返回 InvalidParam 错误。
+    /// Authorizer::authorize 在参数无效时返回 InvalidParam 错误。
     #[tokio::test]
     async fn authorizer_returns_error_on_invalid_param() {
         let authorizer = MockAuthorizer::new(MockOutcome::InvalidParam);
@@ -180,7 +180,7 @@ mod tests {
         }
     }
 
-    /// T062-4: Authorizer::authorize 完整传递 AuthRequest 的 login_id/action/resource 字段。
+    /// Authorizer::authorize 完整传递 AuthRequest 的 login_id/action/resource 字段。
     #[tokio::test]
     async fn authorizer_passes_auth_request_intact() {
         let authorizer = MockAuthorizer::new(MockOutcome::Allow);
@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(captured.resource.as_deref(), Some("doc:42"));
     }
 
-    /// T062-5: Authorizer::authorize 正确传递 context 字段（serde_json::Value）。
+    /// Authorizer::authorize 正确传递 context 字段（serde_json::Value）。
     #[tokio::test]
     async fn authorizer_passes_context_field() {
         let authorizer = MockAuthorizer::new(MockOutcome::Allow);
@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(captured.context["device"], serde_json::json!("mobile"));
     }
 
-    /// T062-6: Authorizer::authorize 正确传递 tenant_id 字段。
+    /// Authorizer::authorize 正确传递 tenant_id 字段。
     #[tokio::test]
     async fn authorizer_passes_tenant_id() {
         let authorizer = MockAuthorizer::new(MockOutcome::Allow);
@@ -239,10 +239,10 @@ mod tests {
         assert_eq!(captured.tenant_id, 42);
     }
 
-    /// T062-7: blanket impl — PermissionCheckerDefault 自动实现 Authorizer，
+    /// blanket impl — PermissionCheckerDefault 自动实现 Authorizer，
     /// authorize 行为与 PermissionChecker::authorize 一致。
     ///
-    /// **Red 阶段**：此测试在 T063 添加 blanket impl 前不编译
+    /// 此测试在 添加 blanket impl 前不编译
     ///（`PermissionCheckerDefault` 未实现 `Authorizer`）。
     #[tokio::test]
     async fn authorizer_blanket_impl_works_with_permission_checker() {
@@ -257,7 +257,7 @@ mod tests {
             .await
             .expect("PermissionChecker::authorize ok");
 
-        // Via Authorizer（blanket impl — 需要 T063 添加才能编译）
+        // Via Authorizer（blanket impl — 需要 添加才能编译）
         let decision_auth = Authorizer::authorize(&checker, &req)
             .await
             .expect("Authorizer::authorize ok");
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(decision_auth.reason, DecisionReason::ExplicitAllow);
     }
 
-    /// T062-8: Authorizer 可作为 dyn trait 使用（Box<dyn Authorizer>）。
+    /// Authorizer 可作为 dyn trait 使用（Box<dyn Authorizer>）。
     ///
     /// 验证 trait object 安全：`Authorizer: Send + Sync` + `#[async_trait]` 使
     /// `Box<dyn Authorizer>` 可构造并调用 `authorize`。

@@ -162,7 +162,7 @@ pub struct CredentialModel {
 /// 凭证存储抽象（DAO 层接口）。
 ///
 /// 5 方法 CRUD：`create` / `find_by_user` / `find_by_user_and_type` / `update` / `delete`。
-/// 由 `DaoCredentialRepository`（T006 实现）基于 `GarrisonDao` 实现，也可由业务方自定义实现。
+/// 由 `DaoCredentialRepository`基于 `GarrisonDao` 实现，也可由业务方自定义实现。
 ///
 /// # IDOR 防护（vuln-0004 修复）
 ///

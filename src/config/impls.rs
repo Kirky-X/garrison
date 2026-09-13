@@ -453,7 +453,7 @@ impl GarrisonConfig {
         )]
         let mut config = config;
 
-        // T039: 环境变量覆盖（spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）。
+        // 环境变量覆盖（spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）。
         // confers 通用收集无法处理枚举结构变体，故 CORS/CSRF/RateLimit 的环境变量
         // 由显式逻辑覆盖，优先级最高。
         #[cfg(feature = "web-cors")]
@@ -647,7 +647,7 @@ impl GarrisonConfig {
             ));
         }
         // session_hover_timeout 上界：10 年（315_360_000 秒），防止 saturating_mul 之外的
-        // 配置层误用超大值（T036）。合法值为 -1（禁用）或 (0, 上界]。
+        // 配置层误用超大值。合法值为 -1（禁用）或 (0, 上界]。
         const MAX_SESSION_HOVER_TIMEOUT_SECS: i64 = 315_360_000;
         if self.session_hover_timeout > MAX_SESSION_HOVER_TIMEOUT_SECS {
             return Err(GarrisonError::Config(format!(

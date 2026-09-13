@@ -209,10 +209,10 @@ mod tests {
     const COUNTRY_TEST_DB: &str = "tests/data/GeoLite2-Country-Test.mmdb";
 
     // =========================================================================
-    // MaxMindDbGeoLookup 测试（T049-T057）
+    // MaxMindDbGeoLookup 测试
     // =========================================================================
 
-    /// 验证从测试 mmdb 文件打开 MaxMindDbGeoLookup 成功（T051）。
+    /// 验证从测试 mmdb 文件打开 MaxMindDbGeoLookup 成功。
     #[test]
     fn maxminddb_geo_open_success() {
         let result = MaxMindDbGeoLookup::open(CITY_TEST_DB);
@@ -223,7 +223,7 @@ mod tests {
         );
     }
 
-    /// 验证打开不存在的文件返回 Err（T052）。
+    /// 验证打开不存在的文件返回 Err。
     #[test]
     fn maxminddb_geo_open_file_not_found() {
         let result = MaxMindDbGeoLookup::open("tests/data/nonexistent.mmdb");
@@ -244,7 +244,7 @@ mod tests {
         assert!(result.is_ok(), "从字节构造应成功: {:?}", result.err());
     }
 
-    /// 验证查询已知 IP 返回 Some(GeoCoord)（T053）。
+    /// 验证查询已知 IP 返回 Some(GeoCoord)。
     ///
     /// 81.2.69.142 是 MaxMind 测试数据中的已知 IP（英国伦敦）。
     #[tokio::test]
@@ -268,7 +268,7 @@ mod tests {
         );
     }
 
-    /// 验证查询私有 IP 返回 None（T054）。
+    /// 验证查询私有 IP 返回 None。
     ///
     /// 192.168.1.1 是私有 IP，mmdb 数据库中无记录。
     #[tokio::test]
@@ -282,7 +282,7 @@ mod tests {
         );
     }
 
-    /// 验证查询无效 IP 返回 Err（T055）。
+    /// 验证查询无效 IP 返回 Err。
     #[tokio::test]
     async fn maxminddb_geo_lookup_invalid_ip() {
         let lookup = MaxMindDbGeoLookup::open(CITY_TEST_DB).expect("打开数据库失败");
@@ -297,10 +297,10 @@ mod tests {
     }
 
     // =========================================================================
-    // MaxMindDbCountryLookup 测试（T058-T064）
+    // MaxMindDbCountryLookup 测试
     // =========================================================================
 
-    /// 验证从测试 mmdb 文件打开 MaxMindDbCountryLookup 成功（T059）。
+    /// 验证从测试 mmdb 文件打开 MaxMindDbCountryLookup 成功。
     #[test]
     fn maxminddb_country_open_success() {
         let result = MaxMindDbCountryLookup::open(COUNTRY_TEST_DB);
@@ -326,7 +326,7 @@ mod tests {
         assert!(result.is_ok(), "从字节构造应成功: {:?}", result.err());
     }
 
-    /// 验证查询已知 IP 返回 Some(国家码)（T060）。
+    /// 验证查询已知 IP 返回 Some(国家码)。
     ///
     /// 81.2.69.142 是 MaxMind 测试数据中的已知 IP（英国，国家码 GB）。
     #[tokio::test]
@@ -344,7 +344,7 @@ mod tests {
         );
     }
 
-    /// 验证查询私有 IP 返回 None（T061）。
+    /// 验证查询私有 IP 返回 None。
     #[tokio::test]
     async fn maxminddb_country_lookup_private_ip() {
         let lookup = MaxMindDbCountryLookup::open(COUNTRY_TEST_DB).expect("打开数据库失败");
@@ -356,7 +356,7 @@ mod tests {
         );
     }
 
-    /// 验证查询无效 IP 返回 Err（T062）。
+    /// 验证查询无效 IP 返回 Err。
     #[tokio::test]
     async fn maxminddb_country_lookup_invalid_ip() {
         let lookup = MaxMindDbCountryLookup::open(COUNTRY_TEST_DB).expect("打开数据库失败");
@@ -371,10 +371,10 @@ mod tests {
     }
 
     // =========================================================================
-    // 集成测试（T065-T066）
+    // 集成测试
     // =========================================================================
 
-    /// 验证 GeoIPStrategy 注入 MaxMindDbCountryLookup 的白名单拦截行为（T065）。
+    /// 验证 GeoIPStrategy 注入 MaxMindDbCountryLookup 的白名单拦截行为。
     ///
     /// 81.2.69.142 → GB，白名单 ["CN"]，应拦截。
     #[tokio::test]
@@ -399,7 +399,7 @@ mod tests {
         );
     }
 
-    /// 验证 AnomalousLoginStrategy 注入 MaxMindDbGeoLookup 的异地登录检测（T066）。
+    /// 验证 AnomalousLoginStrategy 注入 MaxMindDbGeoLookup 的异地登录检测。
     ///
     /// 使用 City 测试数据库，81.2.69.142 → 伦敦坐标。
     /// MockDao 提供历史坐标（北京），haversine 距离 > 500km，应拦截。

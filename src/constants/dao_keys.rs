@@ -44,7 +44,7 @@ pub enum DaoKeyPrefix {
     /// OAuth2 授权码已签发 token 的吊销追踪记录前缀：`oauth2:codeused:`
     ///
     /// 授权码被原子消费（删除）后，其签发的 access/refresh token 记录在此，
-    /// 供重放/双花检测时吊销（T019）。
+    /// 供重放/双花检测时吊销。
     OAuth2CodeUsed,
 }
 

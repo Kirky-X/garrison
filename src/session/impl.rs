@@ -147,7 +147,7 @@ impl GarrisonSession {
             return true; // 不启用悬停检查
         }
         let now = chrono::Utc::now().timestamp_millis();
-        // saturating_mul 防止极大 hover_timeout 触发 i64 溢出（T036）
+        // saturating_mul 防止极大 hover_timeout 触发 i64 溢出
         let timeout_millis = hover_timeout_secs.saturating_mul(1000);
         match self.last_active_time.get(login_id) {
             Some(last) => {
@@ -169,7 +169,7 @@ impl GarrisonSession {
     /// # pub(crate) 可见性说明
     /// 暴露给 `stp::session::AuthLogicDefault::enforce_max_login_count` 使用，
     /// 将 `enforce_max_login_count` 纳入 per-login_id 锁保护，与 `create_token_session`
-    /// 形成原子序列，消除并发 login 时的 TOCTOU 竞态（fix-refresh-race-and-test-contracts / T015）。
+    /// 形成原子序列，消除并发 login 时的 TOCTOU 竞态（fix-refresh-race-and-test-contracts /）。
     pub(crate) async fn with_login_lock<F, R>(&self, login_id: &str, f: F) -> R
     where
         F: std::future::Future<Output = R>,
@@ -1196,7 +1196,7 @@ impl GarrisonSession {
 
     /// 与 [`Self::is_valid`] 同语义，但返回校验通过的 Token-Session 快照。
     ///
-    /// T008 请求内复用：check_login 链路将快照传递给 hover 检查与登录身份缓存，
+    /// 请求内复用：check_login 链路将快照传递给 hover 检查与登录身份缓存，
     /// 消除同一请求内对同一 token 的重复 DAO 读取（原 3-4 次 → 1-2 次）。
     pub async fn is_valid_with_session(
         &self,
@@ -1206,7 +1206,7 @@ impl GarrisonSession {
             Some(ts) => ts,
             None => return Ok(None),
         };
-        // T011: per-token 动态活跃超时检查
+        // per-token 动态活跃超时检查
         // 优先使用 token_session.dynamic_active_timeout，None 时回退到全局 active_timeout
         #[cfg(feature = "session-extra")]
         {
@@ -1387,7 +1387,7 @@ impl GarrisonSession {
     /// # pub(crate) 可见性说明
     /// 暴露给 `stp::session::AuthLogicDefault::enforce_max_login_count` 使用，
     /// 在 `with_login_lock` 已持锁状态下调用 `logout_inner`（不重入锁），避免死锁
-    /// （fix-refresh-race-and-test-contracts / T015）。
+    /// （fix-refresh-race-and-test-contracts /）。
     ///
     /// # 调用契约
     /// **调用方必须已持有 `with_login_lock(login_id)` 锁**，否则会破坏 Account-Session
@@ -1674,7 +1674,7 @@ mod tests {
         (dao, session)
     }
 
-    /// T012：remember-me 登录时 TokenSession.effective_timeout 写入 remember_me_timeout，
+    /// remember-me 登录时 TokenSession.effective_timeout 写入 remember_me_timeout，
     /// 且 `get_token_session` 过期判定以 effective_timeout 为权威来源。
     #[tokio::test]
     async fn remember_me_token_uses_effective_timeout_as_authoritative() {
@@ -1734,7 +1734,7 @@ mod tests {
         let _ = dao;
     }
 
-    /// T014（R-sessiontokenconsistency-001 集成）：remember-me 登录后，空闲时长超过基础 timeout
+    /// （R-sessiontokenconsistency-001 集成）：remember-me 登录后，空闲时长超过基础 timeout
     /// 但仍小于 remember_me_timeout 时，`get_token_session` 仍返回 Some 且不删除会话
     /// （即 remember-me 长 TTL 真正生效，不因 touch/读取被缩水回基础 timeout）。
     #[tokio::test]

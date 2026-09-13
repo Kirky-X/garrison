@@ -291,7 +291,7 @@ impl PasswordRateLimiter {
 /// - **limiteron 委托**：通过 `GarrisonDaoDistributedLimiter` + `InMemoryDao` 实现原子计数 + TTL，
 ///   `atomic_check_and_incr` 在 Redis 后端走 Lua 脚本原子 check-and-increment，
 ///   `InMemoryDao` 后端退化为 `incr` + 阈值判断（单进程原子）
-/// - **Fail 策略（v0.9.0）**：username 维度（撞库防护）DAO 错误 fail-closed 拒绝；
+/// - **Fail 策略**：username 维度（撞库防护）DAO 错误 fail-closed 拒绝；
 ///   client QPS 维度 fail-open 放行（可用性优先，仅防滥用）
 /// - **独立于 PasswordRateLimiter**：后者是失败计数器（账户锁定），
 ///   本结构是请求速率限制（QPS 限制），两者互补
@@ -418,7 +418,7 @@ impl Default for TokenRateLimiter {
 
 /// /oauth2/token handler，处理 4 种 grant type。
 ///
-/// # Refresh Token 统一（v0.7.1）
+/// # Refresh Token 统一
 ///
 /// 启用 `db-sqlite` feature 并通过 `with_refresh_rotation` 注入
 /// `RefreshTokenRotation` 后，refresh_token 走统一轮换路径：
@@ -476,7 +476,7 @@ impl TokenHandler {
         self
     }
 
-    /// 注入 RefreshTokenRotation 启用统一轮换 + reuse detection（v0.7.1）。
+    /// 注入 RefreshTokenRotation 启用统一轮换 + reuse detection。
     ///
     /// 仅在 `db-sqlite` feature 启用时可用。注入后：
     /// - `issue_tokens` 在 `with_refresh=true` 时委托 `rotation.issue()`
@@ -649,7 +649,7 @@ impl TokenHandler {
 
     /// refresh_token grant type：刷新令牌。
     ///
-    /// # Refresh Token 统一（v0.7.1）
+    /// # Refresh Token 统一
     ///
     /// 启用 `db-sqlite` 且注入 `RefreshTokenRotation` 时，走统一轮换路径：
     /// - 调用 `rotation.rotate()` 获得 hash chain + reuse detection + 链式撤销
@@ -885,7 +885,7 @@ impl TokenHandler {
     ///
     /// `username` 仅 password grant type 有值（RFC 7662 §2.3 内省返回）。
     ///
-    /// # Refresh Token 统一（v0.7.1）
+    /// # Refresh Token 统一
     ///
     /// `with_refresh=true` 时：
     /// - 启用 `db-sqlite` 且注入 `RefreshTokenRotation` → 委托 `rotation.issue()`
@@ -1027,7 +1027,7 @@ impl TokenHandler {
 
     /// 查找 refresh_token 记录（供 introspect / revoke 端点使用）。
     ///
-    /// # 存储路径（v0.7.1）
+    /// # 存储路径
     ///
     /// - `db-sqlite` + `RefreshTokenRotation` 注入：refresh token 存 SQLite
     ///   `refresh_tokens` 表（以 SHA-256 hash 为键），查 rotation.validate()
@@ -2431,7 +2431,7 @@ mod tests {
         assert_eq!(limiter.username_window_secs, 1);
     }
 
-    /// M-3: `PasswordRateLimiter::check` DAO 故障（计数器值损坏）时 fail-closed 拒绝。
+    /// `PasswordRateLimiter::check` DAO 故障（计数器值损坏）时 fail-closed 拒绝。
     #[tokio::test]
     async fn password_rate_limiter_check_fails_closed_on_dao_error() {
         let dao = Arc::new(InMemoryDao::new());
@@ -2451,7 +2451,7 @@ mod tests {
         );
     }
 
-    /// M-3: DAO 故障时 `check_username`（撞库防护）fail-closed、`check_client`（QPS 防滥用）fail-open。
+    /// DAO 故障时 `check_username`（撞库防护）fail-closed、`check_client`（QPS 防滥用）fail-open。
     #[tokio::test]
     async fn token_rate_limiter_dao_error_applies_different_fail_strategies() {
         let dao = Arc::new(InMemoryDao::new());
@@ -2814,7 +2814,7 @@ mod refresh_rotation_tests {
         }
     }
 
-    /// T006: `TokenHandler::with_refresh_rotation` 构造成功。
+    /// `TokenHandler::with_refresh_rotation` 构造成功。
     #[tokio::test(flavor = "multi_thread")]
     async fn token_handler_with_refresh_rotation() {
         let handler = make_handler_with_rotation().await;
@@ -2824,7 +2824,7 @@ mod refresh_rotation_tests {
         );
     }
 
-    /// T007: 注入 rotation 后，authorization_code grant 签发的 refresh_token 存在于 refresh_tokens 表。
+    /// 注入 rotation 后，authorization_code grant 签发的 refresh_token 存在于 refresh_tokens 表。
     #[tokio::test(flavor = "multi_thread")]
     async fn issue_tokens_with_rotation_uses_issue_method() {
         let handler = make_handler_with_rotation().await;
@@ -2865,7 +2865,7 @@ mod refresh_rotation_tests {
         assert_eq!(record.client_id, Some("rot-auth-001".to_string()));
     }
 
-    /// T008: 注入 rotation 后，refresh_token grant type 返回新 refresh_token（轮换）。
+    /// 注入 rotation 后，refresh_token grant type 返回新 refresh_token（轮换）。
     #[tokio::test(flavor = "multi_thread")]
     async fn handle_refresh_token_with_rotation_rotates() {
         let handler = make_handler_with_rotation().await;
@@ -2916,7 +2916,7 @@ mod refresh_rotation_tests {
         );
     }
 
-    /// T008: reuse detection — 同一 refresh_token 两次使用，第二次返回 TokenRevoked。
+    /// reuse detection — 同一 refresh_token 两次使用，第二次返回 TokenRevoked。
     #[tokio::test(flavor = "multi_thread")]
     async fn handle_refresh_token_reuse_detection() {
         let handler = make_handler_with_rotation().await;
@@ -3028,7 +3028,7 @@ mod refresh_rotation_tests {
         );
     }
 
-    /// T007/T008 fallback: 未注入 rotation 时退化为 DAO 路径（轮换 + 删除旧 token）。
+    /// fallback: 未注入 rotation 时退化为 DAO 路径（轮换 + 删除旧 token）。
     #[tokio::test(flavor = "multi_thread")]
     async fn handle_refresh_token_without_rotation_fallback() {
         let handler = make_handler_without_rotation();
@@ -3088,7 +3088,7 @@ mod refresh_rotation_tests {
         );
     }
 
-    /// T012: 端到端集成测试 — authorization_code → refresh → reuse detection → revoke_chain。
+    /// 端到端集成测试 — authorization_code → refresh → reuse detection → revoke_chain。
     ///
     /// 完整流程：
     /// 1. authorization_code grant 签发初始 refresh_token（token1）

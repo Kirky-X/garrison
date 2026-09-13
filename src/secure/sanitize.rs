@@ -135,31 +135,31 @@ mod tests {
     use super::*;
 
     // ========================================================================
-    // 正常用例（T235）
+    // 正常用例
     // ========================================================================
 
-    /// T235-1: 普通字符串原样返回（trim 后）。
+    /// 普通字符串原样返回（trim 后）。
     #[test]
     fn sanitize_normal_string() {
         let result = sanitize_input("hello world", 100).unwrap();
         assert_eq!(result, "hello world");
     }
 
-    /// T235-2: trim 前后空白。
+    /// trim 前后空白。
     #[test]
     fn sanitize_trims_whitespace() {
         let result = sanitize_input("  hello  ", 100).unwrap();
         assert_eq!(result, "hello");
     }
 
-    /// T235-3: 移除 null 字节。
+    /// 移除 null 字节。
     #[test]
     fn sanitize_removes_null_bytes() {
         let result = sanitize_input("ab\0cd", 100).unwrap();
         assert_eq!(result, "abcd");
     }
 
-    /// T235-4: 移除控制字符（除 \t \n \r）。
+    /// 移除控制字符（除 \t \n \r）。
     #[test]
     fn sanitize_removes_control_chars() {
         let input = "a\x01b\x02c\x03d";
@@ -167,7 +167,7 @@ mod tests {
         assert_eq!(result, "abcd");
     }
 
-    /// T235-5: 保留 \t \n \r。
+    /// 保留 \t \n \r。
     #[test]
     fn sanitize_keeps_tab_newline_carriage_return() {
         let input = "line1\nline2\r\n\ttabbed";
@@ -175,7 +175,7 @@ mod tests {
         assert_eq!(result, "line1\nline2\r\n\ttabbed");
     }
 
-    /// T235-6: 移除 DEL 字符（U+007F）。
+    /// 移除 DEL 字符（U+007F）。
     #[test]
     fn sanitize_removes_del_char() {
         let input = "ab\x7Fcd";
@@ -231,14 +231,14 @@ mod tests {
         assert_eq!(result, "helloworld", "U+202E (RLO) 应被移除");
     }
 
-    /// T235-7: 空输入返回空字符串。
+    /// 空输入返回空字符串。
     #[test]
     fn sanitize_empty_input() {
         let result = sanitize_input("", 100).unwrap();
         assert_eq!(result, "");
     }
 
-    /// T235-8: 全空白输入返回空字符串。
+    /// 全空白输入返回空字符串。
     #[test]
     fn sanitize_all_whitespace_returns_empty() {
         let result = sanitize_input("   \t  \n  ", 100).unwrap();
@@ -246,24 +246,24 @@ mod tests {
     }
 
     // ========================================================================
-    // 长度限制（T235）
+    // 长度限制
     // ========================================================================
 
-    /// T235-9: 长度等于 max_len 通过。
+    /// 长度等于 max_len 通过。
     #[test]
     fn sanitize_len_equal_max_passes() {
         let result = sanitize_input("hello", 5).unwrap();
         assert_eq!(result, "hello");
     }
 
-    /// T235-10: 长度超过 max_len 返回 InvalidParam 错误。
+    /// 长度超过 max_len 返回 InvalidParam 错误。
     #[test]
     fn sanitize_len_exceeds_max_returns_error() {
         let result = sanitize_input("hello world", 5);
         assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
-    /// T235-11: 长度按 char count 计算（非字节），多字节字符正确处理。
+    /// 长度按 char count 计算（非字节），多字节字符正确处理。
     #[test]
     fn sanitize_len_counts_chars_not_bytes() {
         // 3 个中文字符 = 9 字节，但 char count = 3
@@ -271,14 +271,14 @@ mod tests {
         assert_eq!(result, "你好吗");
     }
 
-    /// T235-12: max_len = 0 只允许空字符串。
+    /// max_len = 0 只允许空字符串。
     #[test]
     fn sanitize_max_len_zero_only_empty() {
         let result = sanitize_input("", 0).unwrap();
         assert_eq!(result, "");
     }
 
-    /// T235-13: max_len = 0 拒绝非空输入。
+    /// max_len = 0 拒绝非空输入。
     #[test]
     fn sanitize_max_len_zero_rejects_nonempty() {
         let result = sanitize_input("a", 0);
@@ -286,10 +286,10 @@ mod tests {
     }
 
     // ========================================================================
-    // 边界用例（T235）
+    // 边界用例
     // ========================================================================
 
-    /// T235-14: 消毒后再检查长度（null 字节移除后不超限）。
+    /// 消毒后再检查长度（null 字节移除后不超限）。
     #[test]
     fn sanitize_then_length_check() {
         // 输入 6 个字符（含 1 个 null），消毒后 5 个字符，max_len=5 通过
@@ -297,14 +297,14 @@ mod tests {
         assert_eq!(result, "abcde");
     }
 
-    /// T235-15: 消毒后超限仍返回错误（trim 后仍超长）。
+    /// 消毒后超限仍返回错误（trim 后仍超长）。
     #[test]
     fn sanitize_after_trim_exceeds_returns_error() {
         let result = sanitize_input("  hello world  ", 5);
         assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
     }
 
-    /// T235-16: Unicode 控制字符 U+0085 (NEL) 被移除。
+    /// Unicode 控制字符 U+0085 (NEL) 被移除。
     #[test]
     fn sanitize_removes_unicode_control_nel() {
         let input = "ab\u{0085}cd";
@@ -312,7 +312,7 @@ mod tests {
         assert_eq!(result, "abcd");
     }
 
-    /// T235-17: U+200B (ZERO WIDTH SPACE) 作为 Cf 类字符被移除，防止 Unicode 同形/绕过攻击。
+    /// U+200B (ZERO WIDTH SPACE) 作为 Cf 类字符被移除，防止 Unicode 同形/绕过攻击。
     #[test]
     fn sanitize_keeps_zero_width_space() {
         let input = "ab\u{200B}cd";
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(result, "abcd");
     }
 
-    /// T235-18: 混合攻击 payload（null + 控制字符 + 前后空白）。
+    /// 混合攻击 payload（null + 控制字符 + 前后空白）。
     #[test]
     fn sanitize_mixed_attack_payload() {
         let input = "  \0\x01admin\x02\0  ";

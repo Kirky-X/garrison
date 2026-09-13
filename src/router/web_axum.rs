@@ -286,7 +286,7 @@ async fn garrison_middleware(
 
     with_renewed_token_scope(async {
         let result = match token {
-            // T008: 登录身份缓存作用域——覆盖 middleware 鉴权 + handler 整个处理期，
+            // 登录身份缓存作用域——覆盖 middleware 鉴权 + handler 整个处理期，
             // check_login 写入 (token, login_id) 后，handler 内 get_login_id 免 DAO 读取
             Some(t) => with_login_id_scope(with_current_token(t, handle)).await,
             None => handle.await,

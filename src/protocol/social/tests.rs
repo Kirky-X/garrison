@@ -8,7 +8,7 @@ use super::*;
 /// 验证 `SocialLoginProvider` trait 可被 mock 实现并调用三个方法
 ///
 /// Red 阶段：`SocialLoginProvider` / `SocialUserInfo` 类型不存在 → 编译失败。
-/// Green 阶段（T098）：定义完整类型后测试通过。
+/// 定义完整类型后测试通过。
 #[tokio::test]
 async fn social_login_provider_trait_defines_three_methods() {
     use super::mock::MockSocialProvider;
@@ -60,7 +60,7 @@ fn provider_names_constants_match_expected_strings() {
 // SQLite 迁移加载验证（feature = "db-sqlite"）
 // ========================================================================
 
-/// T106 Green: 验证 `migrations/sqlite/core/005_social_bindings.sql`
+/// 验证 `migrations/sqlite/core/005_social_bindings.sql`
 /// 被 `GarrisonMigration::migrate_core()` 加载后 `social_bindings` 表存在
 ///
 /// 测试模式与 `role_hierarchy_table_exists_after_migration` 一致：
@@ -122,13 +122,13 @@ async fn social_bindings_table_exists_after_migration() {
 }
 
 // ========================================================================
-// T107-SocialBindingService Red-Green（feature = "db-sqlite"）
+// - Green（feature = "db-sqlite"）
 // ========================================================================
 
-/// T107 Red: `SocialBindingService::find_or_create` 创建新绑定
+/// `SocialBindingService::find_or_create` 创建新绑定
 ///
 /// Red 阶段：`SocialBindingService` 类型不存在 → 编译失败。
-/// Green 阶段（T108）：定义 `SocialBindingService { dao }` + `find_or_create` 后测试通过。
+/// 定义 `SocialBindingService { dao }` + `find_or_create` 后测试通过。
 ///
 /// # 测试流程
 ///
@@ -257,7 +257,7 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
 // 直接调用 loc! 宏避免依赖 HTTP mock，聚焦 i18n 翻译正确性。
 // ========================================================================
 
-/// T021 i18n 测试 1：zh locale 下 wechat-token-request-failed 返回中文消息。
+/// i18n 测试 1：zh locale 下 wechat-token-request-failed 返回中文消息。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_token_request_failed_zh() {
@@ -271,7 +271,7 @@ fn loc_i18n_wechat_token_request_failed_zh() {
     assert_eq!(msg, "微信 token 请求失败: conn refused");
 }
 
-/// T021 i18n 测试 2：en locale 下 wechat-token-request-failed 返回英文消息。
+/// i18n 测试 2：en locale 下 wechat-token-request-failed 返回英文消息。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_token_request_failed_en() {
@@ -285,7 +285,7 @@ fn loc_i18n_wechat_token_request_failed_en() {
     assert_eq!(msg, "WeChat token request failed: conn refused");
 }
 
-/// T021 i18n 测试 3：zh locale 下 wechat-error-response 带 code+message 参数返回中文。
+/// i18n 测试 3：zh locale 下 wechat-error-response 带 code+message 参数返回中文。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_wechat_error_response_with_code_message_zh() {
@@ -300,7 +300,7 @@ fn loc_i18n_wechat_error_response_with_code_message_zh() {
     assert_eq!(msg, "微信错误 40029: invalid code");
 }
 
-/// T021 i18n 测试 4：zh locale 下 alipay-rsa-key-parse-failed 返回中文消息。
+/// i18n 测试 4：zh locale 下 alipay-rsa-key-parse-failed 返回中文消息。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
@@ -314,7 +314,7 @@ fn loc_i18n_alipay_rsa_key_parse_failed_zh() {
     assert_eq!(msg, "支付宝 RSA 私钥解析失败: bad pem");
 }
 
-/// T021 i18n 测试 5：en locale 下 alipay-rsa-key-parse-failed 返回英文消息。
+/// i18n 测试 5：en locale 下 alipay-rsa-key-parse-failed 返回英文消息。
 #[cfg(feature = "i18n")]
 #[test]
 fn loc_i18n_alipay_rsa_key_parse_failed_en() {

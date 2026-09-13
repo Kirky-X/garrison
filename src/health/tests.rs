@@ -242,7 +242,7 @@ async fn db_health_check_unhealthy_when_manager_uninitialized() {
     );
 }
 
-/// T010: 探测路径下未注入连接池（`new()` 默认）时返回 `Degraded`，不再误报 `Healthy`。
+/// 探测路径下未注入连接池（`new()` 默认）时返回 `Degraded`，不再误报 `Healthy`。
 ///
 /// 原实现探测内存 KV DAO（Postgres 宕机仍 Healthy，K8s 摘流失效）；
 /// v0.9.0 起无连接池句柄即诚实降级。
@@ -276,7 +276,7 @@ async fn db_health_check_degraded_without_pool() {
     GarrisonManager::reset_for_test();
 }
 
-/// T010: 注入连接池后执行真实 ping——数据库可达 → `Healthy`。
+/// 注入连接池后执行真实 ping——数据库可达 → `Healthy`。
 ///
 /// 用 sqlite 内存池验证 `with_pool` 的 ping 接线路径（真实 pg/mysql 服务连通性
 /// 由 e2e_matrix 覆盖；此处验证接线与 ping 调用本身）。

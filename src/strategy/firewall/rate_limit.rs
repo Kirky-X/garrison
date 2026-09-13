@@ -437,7 +437,7 @@ impl RateLimitStrategy {
             .get(key)
             .await
             .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
-        // M-3: parse 失败时 warn 记录脏数据，不静默丢弃
+        // parse 失败时 warn 记录脏数据，不静默丢弃
         let mut timestamps: Vec<u64> = stored
             .as_deref()
             .unwrap_or("")
@@ -625,7 +625,7 @@ mod tests {
     // 验证码挑战 + 动态阈值测试
     // ========================================================================
 
-    /// T096-1: 接近阈值时 should_challenge 返回 true（80% 阈值触发挑战）。
+    /// 接近阈值时 should_challenge 返回 true（80% 阈值触发挑战）。
     ///
     /// max_requests=10，调用 check 8 次后到达 80%，应触发挑战。
     #[tokio::test]
@@ -652,7 +652,7 @@ mod tests {
         assert!(should, "达到 80% 阈值时应触发验证码挑战，实际: {}", should);
     }
 
-    /// T096-2: 远低于阈值时 should_challenge 返回 false。
+    /// 远低于阈值时 should_challenge 返回 false。
     ///
     /// max_requests=10，仅 1 次请求（10%），不应触发挑战。
     #[tokio::test]
@@ -677,7 +677,7 @@ mod tests {
         assert!(!should, "远低于阈值时不应触发挑战，实际: {}", should);
     }
 
-    /// T096-3: 正确答案通过 verify_challenge 验证。
+    /// 正确答案通过 verify_challenge 验证。
     #[tokio::test]
     async fn captcha_challenge_verify_correct_answer() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -699,7 +699,7 @@ mod tests {
         assert!(ok, "正确答案应通过验证");
     }
 
-    /// T096-4: 错误答案验证失败。
+    /// 错误答案验证失败。
     #[tokio::test]
     async fn captcha_challenge_verify_incorrect_answer() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -751,7 +751,7 @@ mod tests {
         );
     }
 
-    /// T096-5: 流量持续高时阈值上调。
+    /// 流量持续高时阈值上调。
     ///
     /// max_requests=10, dynamic_threshold=Some(20)。
     /// 初始阈值 10，传入 traffic_count >= 80% 应上调，封顶 20。
@@ -805,7 +805,7 @@ mod tests {
         );
     }
 
-    /// T096-6: 流量持续低时阈值下调。
+    /// 流量持续低时阈值下调。
     ///
     /// 先用高流量把阈值推到高位，再用低流量下调，下限 max_requests。
     #[tokio::test]
@@ -871,7 +871,7 @@ mod tests {
         );
     }
 
-    /// T096-7: 动态阈值上调后 check 使用新阈值而非 max_requests（回归测试）。
+    /// 动态阈值上调后 check 使用新阈值而非 max_requests（回归测试）。
     ///
     /// max_requests=10, dynamic_threshold=Some(20)。先用 adjust_threshold 把阈值推到 20，
     /// 再调用 check 11 次——若 check 仍用 max_requests=10，第 11 次会被拦截（bug）；

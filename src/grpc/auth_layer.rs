@@ -92,7 +92,7 @@ where
         //    鉴权与内层调用同处 `with_current_token` 作用域——handler 经
         //    task_local 看到当前 token，`GarrisonUtil` 静态 API 可直接使用。
         let response_fut = self.inner.call(request);
-        // T008: 登录身份缓存作用域与 with_current_token 同层——鉴权 + handler
+        // 登录身份缓存作用域与 with_current_token 同层——鉴权 + handler
         // 处理期内 get_login_id/check_permission 可命中缓存免 DAO 读取。
         Box::pin(with_login_id_scope(with_current_token(token, async move {
             match GarrisonUtil::check_login().await {

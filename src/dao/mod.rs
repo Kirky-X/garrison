@@ -29,7 +29,7 @@ pub(crate) use macros::dao_session;
 /// - `keys` 按 glob pattern 扫描 key（默认返回 `NotImplemented`；`MockDao` 已实现；`GarrisonDaoOxcache` 在 `dao-key-index` feature 启用时通过维护 key 索引实现，由 `protocol-apikey` / `anomalous-detector-dual` 传递启用）
 /// - `rename` 重命名 key（原子必需方法）
 ///
-/// # 原子性编译期契约（Issues 51-54，acceptance-overhaul T012 收严）
+/// # 原子性编译期契约（Issues 51-54，acceptance-overhaul 收严）
 ///
 /// 以下方法为**必需方法（无默认实现）**，实现方必须保证原子性：
 ///
@@ -574,7 +574,7 @@ pub trait GarrisonDao: Send + Sync {
     }
 }
 
-/// DAO 原子方法测试回退宏（T012 编译期契约配套）——实现见 `atomic_fallback.rs`。
+/// DAO 原子方法测试回退宏（编译期契约配套）——实现见 `atomic_fallback.rs`。
 /// `#[doc(hidden)]` + 测试域专用：生产 DAO 实现**禁止**使用组合语义。
 /// 注：完全的编译期门控（cfg testing）需 CI 测试命令追加 testing feature
 ///（CI 现为 full-only，属 Non-Goals），已记录为后续 change（架构审查 A1）。
@@ -709,7 +709,7 @@ pub use dbnexus_dao::GarrisonDaoDbnexus;
 // ============================================================================
 // 9 个核心表的 Repository trait + Row struct，与 dbnexus 解耦。
 // SQLite 实现见 `repository::sqlite` 子模块（启用 `db-sqlite` feature，
-// T019 Green 阶段创建后由 repository/mod.rs 内部声明）。
+// 由 repository/mod.rs 内部声明）。
 pub mod repository;
 
 // ============================================================================
@@ -1174,7 +1174,7 @@ pub mod tests {
             );
         }
 
-        /// T025：键过期瞬间 update 应返回 missing，且绝不应将键写成永久值。
+        /// 键过期瞬间 update 应返回 missing，且绝不应将键写成永久值。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_update_expired_key_returns_missing_no_permanent_write() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1191,7 +1191,7 @@ pub mod tests {
             assert!(timeout.is_none(), "过期键 update 后 timeout 应为 None");
         }
 
-        /// T025：永久键 update 仍保留永久语义（不为 regression）。
+        /// 永久键 update 仍保留永久语义（不为 regression）。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_update_permanent_key_stays_permanent() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1203,7 +1203,7 @@ pub mod tests {
             assert!(timeout.is_none(), "永久键 update 后 timeout 仍应为 None");
         }
 
-        /// T035：incr 在 u64::MAX 溢出时返回 Dao 错误而非 panic/回绕。
+        /// incr 在 u64::MAX 溢出时返回 Dao 错误而非 panic/回绕。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_incr_overflow_returns_error() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1763,7 +1763,7 @@ pub mod tests {
     }
 
     // ========================================================================
-    // decr 并发原子性测试（fix-refresh-race-and-test-contracts / T011-T012）
+    // decr 并发原子性测试（fix-refresh-race-and-test-contracts /）
     // ========================================================================
 
     /// 验证 MockDao::decr 并发原子性：10 个 task 并发 decr 同一 key（初始值 5），
@@ -2054,11 +2054,11 @@ pub mod tests {
         );
     }
 
-    /// `decr` 为编译期必需方法（T012 收严，取代 M2 的运行时 NotImplemented 默认）。
+    /// `decr` 为编译期必需方法（收严，取代 M2 的运行时 NotImplemented 默认）。
     ///
     /// 默认实现原为 get → parse → update/delete 三步组合（TOCTOU"跨越式递减"，
     /// 曾致 `concurrent_send_does_not_exceed_limit` flaky），M2 改为 NotImplemented
-    /// 运行时 fail-closed；acceptance-overhaul T012 进一步收严：**移除默认实现**，
+    /// 运行时 fail-closed；acceptance-overhaul 进一步收严：**移除默认实现**，
     /// 遗漏实现编译期报错（E0046），不再存在运行期"缺省"路径可供测试。
     /// 本测试改验 MinimalDao 组合回退语义正确：5 → 4（保留 key），0 时删除 key。
     #[tokio::test]

@@ -522,7 +522,7 @@ mod tests_inklog {
         );
     }
 
-    /// M-4: init_inklog_logging_with_fallback 成功时返回非降级 InklogInit。
+    /// init_inklog_logging_with_fallback 成功时返回非降级 InklogInit。
     #[tokio::test]
     #[serial]
     async fn m4_init_with_fallback_succeeds_not_degraded() {
@@ -531,7 +531,7 @@ mod tests_inklog {
         assert!(result.guard().is_some(), "成功时应返回 LoggerManager guard");
     }
 
-    /// M-4: InklogInit 的 is_degraded() 和 guard() 方法行为正确。
+    /// InklogInit 的 is_degraded() 和 guard() 方法行为正确。
     #[tokio::test]
     #[serial]
     async fn m4_inklog_init_degraded_flag() {

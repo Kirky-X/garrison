@@ -160,10 +160,10 @@ fn event_derives_debug_and_clone() {
 }
 
 // ========================================================================
-// T075-GarrisonEvent 14 变体（spec R-audit-log-005）
+// 14 变体（spec R-audit-log-005）
 // ========================================================================
 
-/// T075 Red: 验证 `GarrisonEvent` 含 spec R-audit-log-005 要求的 14 个变体。
+/// 验证 `GarrisonEvent` 含 spec R-audit-log-005 要求的 14 个变体。
 ///
 /// spec 要求变体：`Login`/`Logout`/`Kickout`/`LoginFailure`/`RevokeToken`/
 /// `PermissionCheck`/`RoleCheck`/`TokenRefresh`/`TokenRotate`/`SocialLogin`/
@@ -737,7 +737,7 @@ fn test_credit_alert_event_construct_and_match() {
 }
 
 // ========================================================================
-// mask_token_for_event 单测（T004 / CWE-532）
+// mask_token_for_event 单测（CWE-532）
 // ========================================================================
 
 /// 长 token：前 8 字符 + `***`，不含完整 token。

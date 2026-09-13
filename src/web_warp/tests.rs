@@ -547,7 +547,7 @@ async fn check_permission_filter_passes_with_valid_permission() {
 }
 
 // ========================================================================
-// T004: GarrisonRejection → 三框架统一 JSON（garrison_recover）
+// GarrisonRejection → 三框架统一 JSON（garrison_recover）
 // ========================================================================
 
 /// ACC-WARP-RECOVER-001（正常+异常）：真实 `warp::serve` 挂 `.recover(garrison_recover)` 后，

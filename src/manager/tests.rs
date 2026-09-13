@@ -476,7 +476,7 @@ async fn init_rejects_invalid_token_style() {
 /// 验证 builder 构建成功且后续 login 可正常工作。
 ///
 /// 兜底路径（无 factory 注册时通过 builder 链直接构造 GarrisonLogicDefault）由
-/// builder.rs 中的 T035b `build_logic_via_builder_chain` 单测覆盖，此处验证
+/// builder.rs 中的 `build_logic_via_builder_chain` 单测覆盖，此处验证
 /// 通过公开 builder API 构建后的端到端可用性。
 #[tokio::test]
 #[serial]
@@ -703,7 +703,7 @@ async fn runtime_strategy_replacement_takes_effect_immediately() {
 }
 
 // ------------------------------------------------------------------------
-// T020: GarrisonManager 注册 DisableRepository 集成测试
+// GarrisonManager 注册 DisableRepository 集成测试
 // ------------------------------------------------------------------------
 
 /// 验证 init 后 `GarrisonManager::disable_repository()` 返回 Some，
@@ -846,7 +846,7 @@ async fn test_manager_disable_repository_persists() {
 }
 
 // ------------------------------------------------------------------------
-// T030: spawn_cleanup_task 集成到 GarrisonManager::builder()
+// spawn_cleanup_task 集成到 GarrisonManager::builder()
 // ------------------------------------------------------------------------
 
 /// 验证 interval > 0 时 init 后 cleanup task 启动。

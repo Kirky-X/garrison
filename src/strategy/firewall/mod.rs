@@ -21,8 +21,8 @@
 //!
 //! ## 与现有 trait 的区分
 //!
-//! - [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy)（v0.3.0）：权限/角色校验
-//! - [`FirewallStrategy`](crate::strategy::registry::FirewallStrategy)（v0.4.2）：登录前钩子检查
+//! - [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy)：权限/角色校验
+//! - [`FirewallStrategy`](crate::strategy::registry::FirewallStrategy)：登录前钩子检查
 //! - [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy)（v0.5.0，本 trait）：IP 级防火墙拦截
 
 use crate::error::GarrisonResult;

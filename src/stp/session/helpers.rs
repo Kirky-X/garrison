@@ -311,7 +311,7 @@ impl GarrisonLogicDefault {
     ///
     /// 事件广播需启用 `listener` feature 且注入 `listener_manager`，否则跳过。
     ///
-    /// # 并发安全（fix-refresh-race-and-test-contracts / T015 / HIGH-1 修复）
+    /// # 并发安全（fix-refresh-race-and-test-contracts / / HIGH-1 修复）
     ///
     /// 整个函数体在 `with_login_lock(login_id)` 保护下执行，保证 enforce 内部
     /// Account-Session read-modify-write 序列的并发安全。内部 `logout` 改为
@@ -378,7 +378,7 @@ impl GarrisonLogicDefault {
             return Ok(());
         }
 
-        // T009: 闸门改读 DAO AccountSession——本地 login_token_map 是进程内索引，
+        // 闸门改读 DAO AccountSession——本地 login_token_map 是进程内索引，
         // 多节点共享存储部署时各节点本地计数互不可见（节点 A 登满 max 个后，
         // 节点 B 本地 map 为空直接放行），max_login_count 形同虚设。
         // AccountSession.tokens 为权威数据源；登录路径非热路径，1 次 DAO get 可承受。
@@ -521,7 +521,7 @@ impl GarrisonLogicDefault {
     ) -> GarrisonResult<(bool, Option<String>)> {
         #[cfg(feature = "protocol-jwt")]
         {
-            // R-sessiontokenconsistency / T017：stateless JWT 但未启用撤销 = 不可吊销的永久凭证（高危）。
+            // R-sessiontokenconsistency / ：stateless JWT 但未启用撤销 = 不可吊销的永久凭证（高危）。
             // 启动期互斥校验：token_style=jwt 且 jwt_mode=Stateless 且 enable_jwt_revocation=false 时拒绝，
             // 给出三选一指引（开启撤销 / 改 Mixin / 显式风险接受）。fail-closed，不依赖 token 合法性。
             if self.config.token_style == "jwt"
@@ -552,7 +552,7 @@ impl GarrisonLogicDefault {
                     }
                 }
             }
-            // T008: stateless 无 session，login_id 直接取自 claims（零额外读取）
+            // stateless 无 session，login_id 直接取自 claims（零额外读取）
             Ok((true, Some(claims.login_id)))
         }
         #[cfg(not(feature = "protocol-jwt"))]
@@ -582,7 +582,7 @@ impl GarrisonLogicDefault {
                 handler.verify(token)?;
             }
         }
-        // T008: is_valid_with_session 返回 Token-Session 快照——hover 检查与
+        // is_valid_with_session 返回 Token-Session 快照——hover 检查与
         // 登录身份缓存复用同一快照，消除同一请求内的重复 DAO 读取
         let ts_opt = self.session.is_valid_with_session(token).await?;
         let valid = ts_opt.is_some();
@@ -623,7 +623,7 @@ impl GarrisonLogicDefault {
 
     /// 检查悬停超时并更新最后活跃时间。
     ///
-    /// 仅在会话有效时调用。Token-Session 快照由调用方传入（T008 请求内复用，
+    /// 仅在会话有效时调用。Token-Session 快照由调用方传入（请求内复用，
     /// 不再重复读取）：
     /// - 悬停未超时：更新 `last_active`，返回 `Ok(true)`。
     /// - 悬停超时：执行 `logout` 并广播 `SessionTimeout` 事件。
@@ -676,7 +676,7 @@ impl GarrisonLogicDefault {
         &self,
         token: &str,
     ) -> GarrisonResult<(bool, Option<String>)> {
-        // T008: is_valid_with_session 返回 Token-Session 快照——hover 检查与
+        // is_valid_with_session 返回 Token-Session 快照——hover 检查与
         // 登录身份缓存复用同一快照，消除同一请求内的重复 DAO 读取
         let ts_opt = self.session.is_valid_with_session(token).await?;
         let valid = ts_opt.is_some();
@@ -749,7 +749,7 @@ impl GarrisonLogicDefault {
             return; // 已过期，无需加入黑名单
         }
         let key = format!("jwt:blacklist:{}", jti);
-        // T005（H-14 增强）: 写失败有界重试（退避 100/300ms，共 3 次尝试）。
+        // （H-14 增强）: 写失败有界重试（退避 100/300ms，共 3 次尝试）。
         // 撤销写失败若只 warn 放行，被吊销 token 在全部节点继续有效至自然过期
         // （撤销传播延迟上界 = 剩余有效期）；重试消化瞬时抖动，最终失败升级为
         // error 日志供部署侧告警监控该窗口。对外仍保持幂等成功（logout 不因

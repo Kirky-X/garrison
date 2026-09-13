@@ -59,7 +59,7 @@ impl Authorizer for MockAuthorizer {
     }
 }
 
-/// T073-1: 合法 JSON 解析为 JsonTestSuite，name + cases 数量正确。
+/// 合法 JSON 解析为 JsonTestSuite，name + cases 数量正确。
 #[tokio::test]
 async fn from_json_parses_valid_suite() {
     let json = r#"{
@@ -91,7 +91,7 @@ async fn from_json_parses_valid_suite() {
     assert!(!suite.cases[1].expected.allowed);
 }
 
-/// T073-2: 非法 JSON（语法错误）返回 GarrisonError。
+/// 非法 JSON（语法错误）返回 GarrisonError。
 #[test]
 fn from_json_rejects_invalid_json() {
     // 数组括号不匹配（`[}`），serde_json 会报语法错误
@@ -104,7 +104,7 @@ fn from_json_rejects_invalid_json() {
     }
 }
 
-/// T073-3: 缺少必填字段（name / cases / request / expected）返回错误。
+/// 缺少必填字段（name / cases / request / expected）返回错误。
 #[test]
 fn from_json_rejects_missing_required_field() {
     // 缺 name
@@ -133,7 +133,7 @@ fn from_json_rejects_missing_required_field() {
     );
 }
 
-/// T073-4: 3 个 case 全部通过，返回 TestReport{passed:3, failed:0}。
+/// 3 个 case 全部通过，返回 TestReport{passed:3, failed:0}。
 #[tokio::test]
 async fn run_returns_all_passed_when_all_cases_match() {
     let suite = JsonTestSuite {
@@ -168,7 +168,7 @@ async fn run_returns_all_passed_when_all_cases_match() {
     assert!(report.failures.is_empty(), "failures should be empty");
 }
 
-/// T073-5: 1 个 case 失败（Decision.allowed 不匹配），返回 TestReport{passed:2, failed:1}。
+/// 1 个 case 失败（Decision.allowed 不匹配），返回 TestReport{passed:2, failed:1}。
 #[tokio::test]
 async fn run_returns_failures_when_some_cases_dont_match() {
     let suite = JsonTestSuite {
@@ -215,7 +215,7 @@ async fn run_returns_failures_when_some_cases_dont_match() {
     );
 }
 
-/// T073-6: Authorizer 返回 Err 时该 case 记为失败（error 字段填充）。
+/// Authorizer 返回 Err 时该 case 记为失败（error 字段填充）。
 #[tokio::test]
 async fn run_handles_authorizer_error() {
     let suite = JsonTestSuite {

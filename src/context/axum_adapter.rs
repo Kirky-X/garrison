@@ -402,7 +402,7 @@ mod tests {
         builder.body(Body::empty()).unwrap()
     }
 
-    /// 构建带 body 的 Request<Body>（用于 T006 body 读取测试）。
+    /// 构建带 body 的 Request<Body>（用于 body 读取测试）。
     fn make_request_with_body(
         uri: &str,
         method: &str,
@@ -955,7 +955,7 @@ mod tests {
     }
 
     /// 验证 AxumContext::request() 返回的 wrapper 从 Authorization: Bearer 提取 token
-    /// 时大小写不敏感（RFC 7235）。回归 T117 P1-2：原实现用 `strip_prefix("Bearer ")`
+    /// 时大小写不敏感（RFC 7235）。回归 P1-2：原实现用 `strip_prefix("Bearer ")`
     /// 大小写敏感，与 AxumRequest::get_token（用 strip_bearer_prefix）不一致。
     #[test]
     fn axum_context_wrapper_bearer_case_insensitive() {
@@ -1010,10 +1010,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T006: body 读取分支测试（is_read_body=true）
+    // body 读取分支测试（is_read_body=true）
     // ========================================================================
 
-    /// T006: `is_read_body=true` 且 header/cookie 无 token 时，从 body JSON 提取 token。
+    /// `is_read_body=true` 且 header/cookie 无 token 时，从 body JSON 提取 token。
     ///
     /// 优先级：header > cookie > body。本测试 header/cookie 均无 token，
     /// body 为 `{"token": "abc123"}`，应提取到 "abc123"。
@@ -1039,7 +1039,7 @@ mod tests {
         );
     }
 
-    /// T006: `is_read_body=true` 但 body 无 token 字段时，回退到 header 读取。
+    /// `is_read_body=true` 但 body 无 token 字段时，回退到 header 读取。
     ///
     /// 优先级：header > cookie > body。本测试 header 有 `Authorization: Bearer`，
     /// body 为 `{"other": "value"}`（无 token 字段），应返回 header 的 token。

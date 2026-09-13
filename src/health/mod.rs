@@ -104,7 +104,7 @@ pub struct CacheHealthCheck;
 /// 数据库健康检查器（feature-gated），探测 dbnexus 连接。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub struct DbHealthCheck {
-    /// SQL 连接池句柄（db-postgres / db-mysql 探测路径用，T010）。
+    /// SQL 连接池句柄（db-postgres / db-mysql 探测路径用）。
     ///
     /// `None`（`new()` 默认）时探测路径返回 `Degraded`——不再误报 `Healthy`
     /// （原实现探测内存 KV DAO，Postgres 宕机 readiness 仍 Healthy，

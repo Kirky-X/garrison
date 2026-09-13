@@ -1290,7 +1290,7 @@ async fn test_listen_bind_failure_external_port_with_valid_config() {
 /// 测试 listen 在配置合法且内网端口被占用时返回 bind 错误。
 ///
 /// 覆盖内网 `TcpListener::bind` 失败分支与 select 的 internal 错误臂
-///（M-1：internal 失败时显式 abort external task）。
+///（internal 失败时显式 abort external task）。
 #[tokio::test]
 async fn test_listen_bind_failure_internal_port_with_valid_config() {
     let internal_listener = tokio::net::TcpListener::bind("0.0.0.0:0")

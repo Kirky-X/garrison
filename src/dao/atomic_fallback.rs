@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! DAO 原子方法**测试回退**实现（T012 编译期契约的配套）。
+//! DAO 原子方法**测试回退**实现（编译期契约的配套）。
 //!
 //! `#[doc(hidden)]` + 测试域专用：生产 DAO 实现**禁止**使用本模块的组合语义
 //! （完整编译期门控需 CI 测试命令追加 `testing` feature，CI 现为 full-only，

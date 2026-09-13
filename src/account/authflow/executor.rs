@@ -28,8 +28,8 @@
 //! # 核心类型
 //!
 //! - [`CredentialBuilder`]：凭证构造 trait（`CredentialModel → Box<dyn Credential>`）
-//! - [`SocialProviderResolver`]：社交登录 provider 解析 trait（T017）
-//! - [`SsoServerResolver`]：SSO Server 解析 trait（T017）
+//! - [`SocialProviderResolver`]：社交登录 provider 解析 trait
+//! - [`SsoServerResolver`]：SSO Server 解析 trait
 //! - [`AuthExecutor`]：认证执行器（5 字段：logic / credential_repo / policy_engine / lockout / registry）
 
 use super::registry::FlowRegistry;
@@ -98,7 +98,7 @@ pub trait CredentialBuilder: Send + Sync {
 // SocialProviderResolver / SsoServerResolver（解决 R-008 五字段约束）
 // ============================================================================
 
-/// 社交登录 provider 解析 trait（T017）。
+/// 社交登录 provider 解析 trait。
 ///
 /// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持 R-008
 /// 5 字段不变）。实现方在内部委托
@@ -158,7 +158,7 @@ pub trait SocialProviderResolver: Send + Sync {
     ) -> GarrisonResult<String>;
 }
 
-/// SSO Server 解析 trait（T017）。
+/// SSO Server 解析 trait。
 ///
 /// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持 R-008
 /// 5 字段不变）。实现方在内部委托
@@ -200,7 +200,7 @@ pub trait SsoServerResolver: Send + Sync {
 /// 认证流程执行器。
 ///
 /// 按 [`AuthenticationFlow`] 步骤顺序执行认证逻辑，支持 Login / Mfa / Conditional /
-/// SubFlow / SocialProvider / SsoServer 六种步骤类型（RequiredAction 待 v0.6.5 实现）。
+/// SubFlow / SocialProvider / SsoServer 六种步骤类型。
 ///
 /// # 5 字段 schema（R-008 严格约束）
 ///
@@ -239,7 +239,7 @@ pub struct AuthExecutor {
     logic: Arc<GarrisonLogicDefault>,
     /// 凭证存储抽象（查询用户凭证）。
     credential_repo: Arc<dyn CredentialRepository>,
-    /// 密码策略引擎（可选，v0.6.0 未在 execute 中使用，预留给 RequiredAction 步骤）。
+    /// 密码策略引擎（可选，供 RequiredAction 步骤使用）。
     policy_engine: Option<Arc<PasswordPolicyEngine>>,
     /// 用户级锁定策略（可选，Login 步骤前检查 + 失败时 record_failure）。
     lockout: Option<Arc<UserLockoutStrategy>>,
@@ -383,7 +383,7 @@ impl AuthExecutor {
     }
 
     /// 执行认证流程（带 CredentialBuilder + SocialProviderResolver + SsoServerResolver，
-    /// 支持 Login / SocialProvider / SsoServer 全部步骤类型，T017 新增）。
+    /// 支持 Login / SocialProvider / SsoServer 全部步骤类型）。
     ///
     /// SocialProvider 步骤通过 `social_resolver` 调用
     /// `SocialLoginProvider::exchange_token(ctx.input, state)` 取得 `provider_user_id`，
@@ -933,7 +933,7 @@ impl AuthExecutor {
         }
     }
 
-    /// 执行 SocialProvider 步骤（内部方法，T017 新增）。
+    /// 执行 SocialProvider 步骤（内部方法）。
     ///
     /// 流程：
     /// 1. `social_resolver` 为 `None` → `Failed`（需通过 `execute_with_full` 调用）。
@@ -995,7 +995,7 @@ impl AuthExecutor {
         Ok(StepOutcome::Success { token: Some(token) })
     }
 
-    /// 执行 SsoServer 步骤（内部方法，T017 新增）。
+    /// 执行 SsoServer 步骤（内部方法）。
     ///
     /// 流程：
     /// 1. `sso_resolver` 为 `None` → `Failed`（需通过 `execute_with_full` 调用）。
@@ -2442,7 +2442,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 测试: conditional_custom_condition_* （T003：Custom 扩展点三态）
+    // 测试: conditional_custom_condition_* （Custom 扩展点三态）
     // ------------------------------------------------------------------------
 
     /// Custom 条件未注册求值器 → 显性 InvalidParam 错误（不再静默 false）。
@@ -2555,7 +2555,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 测试: ip_whitelist_* （T001/T002：IpWhitelisted 真实求值）
+    // 测试: ip_whitelist_* （IpWhitelisted 真实求值）
     // ------------------------------------------------------------------------
 
     /// 白名单命中（IPv4 CIDR）→ IpWhitelisted 为 true → 执行 if_step。
@@ -3444,7 +3444,7 @@ mod tests {
     // ------------------------------------------------------------------------
 
     /// R-009: SsoServer 步骤 — execute()（无 resolver）→ Failed（"需要 SsoServerResolver"）。
-    /// 覆盖 execute_sso 中 sso_resolver=None 的分支（非 T017 门控路径）。
+    /// 覆盖 execute_sso 中 sso_resolver=None 的分支（非 门控路径）。
     #[tokio::test]
     async fn sso_step_without_resolver_returns_failed() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
@@ -3597,7 +3597,7 @@ mod tests {
     // SocialProvider + SsoServer 步骤测试
     // ========================================================================
     //
-    // T017 子模块仅在 `social-wechat` + `protocol-sso-server` 同时启用时编译
+    // 子模块仅在 `social-wechat` + `protocol-sso-server` 同时启用时编译
     //（与测试命令 `cargo test --features "account-authflow social-wechat
     // protocol-sso-server cache-memory"` 对应）。mock resolver 内部持有 mock
     // SocialLoginProvider / SsoServer，证明 executor 通过 resolver 委托调用了
@@ -3811,13 +3811,13 @@ mod tests {
         // 辅助函数
         // --------------------------------------------------------------------
 
-        /// 构造空凭证 repo 的 executor（T017 不依赖凭证，但 make_executor 需要 repo）。
+        /// 构造空凭证 repo 的 executor（不依赖凭证，但 make_executor 需要 repo）。
         fn make_t017_executor() -> AuthExecutor {
             let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
             make_executor(repo, None)
         }
 
-        /// 占位 CredentialBuilder（T017 流程不含 Login，但 execute_with_full 需要传 builder）。
+        /// 占位 CredentialBuilder（流程不含 Login，但 execute_with_full 需要传 builder）。
         fn dummy_builder() -> MockCredentialBuilder {
             MockCredentialBuilder {
                 password_verify_result: false,

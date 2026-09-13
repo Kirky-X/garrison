@@ -166,10 +166,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T019: get_anon_token_session
+    // get_anon_token_session
     // ========================================================================
 
-    /// T019: 首次调用创建匿名 Session，login_id 为空，is_anon 为 true。
+    /// 首次调用创建匿名 Session，login_id 为空，is_anon 为 true。
     #[tokio::test]
     async fn get_anon_token_session_creates_new_on_first_call() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(ts.created_at, ts.last_active_at);
     }
 
-    /// T019: 二次获取返回同一个 Session（created_at 不变）。
+    /// 二次获取返回同一个 Session（created_at 不变）。
     #[tokio::test]
     async fn get_anon_token_session_returns_same_on_second_call() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
@@ -202,7 +202,7 @@ mod tests {
         assert!(ts2.is_anon);
     }
 
-    /// T019: 超时后重新调用创建新 Session（created_at 不同）。
+    /// 超时后重新调用创建新 Session（created_at 不同）。
     #[tokio::test]
     async fn get_anon_token_session_recreates_after_timeout() {
         // anon TTL = 2 秒
@@ -224,10 +224,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T020: is_anon
+    // is_anon
     // ========================================================================
 
-    /// T020: 匿名 token 的 is_anon 返回 true。
+    /// 匿名 token 的 is_anon 返回 true。
     #[tokio::test]
     async fn is_anon_returns_true_for_anon_token() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
@@ -239,7 +239,7 @@ mod tests {
         assert!(result, "匿名 token 的 is_anon 应返回 true");
     }
 
-    /// T020: 登录 token 的 is_anon 返回 false。
+    /// 登录 token 的 is_anon 返回 false。
     #[tokio::test]
     async fn is_anon_returns_false_for_login_token() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
@@ -252,10 +252,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T021: logout_anon
+    // logout_anon
     // ========================================================================
 
-    /// T021: 注销后再获取创建新 Session。
+    /// 注销后再获取创建新 Session。
     #[tokio::test]
     async fn logout_anon_then_get_creates_new_session() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
@@ -284,7 +284,7 @@ mod tests {
         assert!(ts2.login_id.is_empty(), "新 Session 的 login_id 应为空");
     }
 
-    /// T021: 注销不存在的 anon token 返回 Ok(())（幂等）。
+    /// 注销不存在的 anon token 返回 Ok(())（幂等）。
     #[tokio::test]
     async fn logout_anon_nonexistent_returns_ok() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);

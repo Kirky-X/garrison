@@ -1139,13 +1139,13 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 3 个集成测试（T014: 失效场景验证）
+    // 3 个集成测试（失效场景验证）
     // ------------------------------------------------------------------------
 
     /// I1: 登出后缓存失效 — invalidate 后再次查询走 L3。
     ///
     /// 注：logout 集成到 stp/session.rs 需修改 GarrisonManager::builder()，
-    /// 留到 Phase 6 统一接线。此处验证 invalidate 的行为。
+    /// 留到 统一接线。此处验证 invalidate 的行为。
     #[tokio::test]
     async fn logout_invalidates_cache() {
         let (dao, interface, service) = make_default_service();
@@ -1289,7 +1289,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T009: singleflight per-key RwLock 防击穿测试
+    // singleflight per-key RwLock 防击穿测试
     // ------------------------------------------------------------------------
 
     /// T13: singleflight 防击穿 — 并发 10 次同一 key 请求只触发 1 次 L3 加载。

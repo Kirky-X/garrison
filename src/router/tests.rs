@@ -1175,7 +1175,7 @@ async fn group_chained_calls_register_separate_prefixes() {
 }
 
 // ----------------------------------------------------------------
-// T017: 续签 Token 写入响应测试
+// 续签 Token 写入响应测试
 // ----------------------------------------------------------------
 
 /// 模拟续签的拦截器：pre_handle 时设置 renewed token。
@@ -1191,7 +1191,7 @@ impl GarrisonInterceptor for RenewingInterceptor {
     }
 }
 
-/// T017-1: 续签 Token → 写入 header（is_write_header=true）。
+/// 续签 Token → 写入 header（is_write_header=true）。
 #[tokio::test]
 #[serial]
 async fn renewed_token_written_to_header() {
@@ -1223,7 +1223,7 @@ async fn renewed_token_written_to_header() {
     GarrisonManager::reset_for_test();
 }
 
-/// T017-2: 续签 Token → 写入 cookie（is_write_cookie=true）。
+/// 续签 Token → 写入 cookie（is_write_cookie=true）。
 #[tokio::test]
 #[serial]
 async fn renewed_token_written_to_cookie() {
@@ -1256,7 +1256,7 @@ async fn renewed_token_written_to_cookie() {
     GarrisonManager::reset_for_test();
 }
 
-/// T017-3: 续签 Token → 两者均 false 时不写入。
+/// 续签 Token → 两者均 false 时不写入。
 #[tokio::test]
 #[serial]
 async fn renewed_token_not_written_when_both_disabled() {
@@ -1286,7 +1286,7 @@ async fn renewed_token_not_written_when_both_disabled() {
     GarrisonManager::reset_for_test();
 }
 
-/// T017-4: 续签 Token → 同时写入 header 和 cookie（两者均 true）。
+/// 续签 Token → 同时写入 header 和 cookie（两者均 true）。
 #[tokio::test]
 #[serial]
 async fn renewed_token_written_to_both_header_and_cookie() {
@@ -1326,7 +1326,7 @@ async fn renewed_token_written_to_both_header_and_cookie() {
     GarrisonManager::reset_for_test();
 }
 
-/// T017-5: 无续签 Token → 响应无额外 header/cookie。
+/// 无续签 Token → 响应无额外 header/cookie。
 #[tokio::test]
 #[serial]
 async fn no_renewed_token_nothing_written() {
@@ -1354,7 +1354,7 @@ async fn no_renewed_token_nothing_written() {
     GarrisonManager::reset_for_test();
 }
 
-/// T017-6: clear_renewed_token 后后续请求无续签 Token。
+/// clear_renewed_token 后后续请求无续签 Token。
 #[tokio::test]
 #[serial]
 async fn clear_renewed_token_prevents_leak() {
@@ -1393,7 +1393,7 @@ async fn clear_renewed_token_prevents_leak() {
     GarrisonManager::reset_for_test();
 }
 
-/// T017-7: 配置中的 token_name 用作 header 名。
+/// 配置中的 token_name 用作 header 名。
 #[tokio::test]
 #[serial]
 async fn token_name_used_as_header_name() {
@@ -1426,7 +1426,7 @@ async fn token_name_used_as_header_name() {
     GarrisonManager::reset_for_test();
 }
 
-/// T017-8: Cookie 包含正确属性（HttpOnly, Path=/, SameSite=Lax）。
+/// Cookie 包含正确属性（HttpOnly, Path=/, SameSite=Lax）。
 #[tokio::test]
 #[serial]
 async fn cookie_has_correct_attributes() {

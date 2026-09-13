@@ -3,6 +3,6 @@
 
 //! axum 框架适配子模块（firewall-waf middleware）。
 
-/// WAF middleware 适配器（T010 实现）。
+/// WAF middleware 适配器。
 #[cfg(feature = "firewall-waf")]
 pub mod waf;

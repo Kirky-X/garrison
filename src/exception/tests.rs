@@ -241,7 +241,7 @@ fn builder_chain_with_all_setters() {
     assert_eq!(ex.extras.get("device"), Some(&"web".to_string()));
 }
 
-/// 验证 `login_id` 为 `Option<String>`（T010：与全局 login_id 的 String 迁移一致，
+/// 验证 `login_id` 为 `Option<String>`（与全局 login_id 的 String 迁移一致，
 /// `with_login_id` 同时接受 `&str` 与 `String`）。
 #[test]
 fn login_id_is_string_typed() {

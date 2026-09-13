@@ -77,7 +77,7 @@ pub trait PermissionChecker: Send + Sync {
     /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(GarrisonError)`；
     /// "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
     async fn authorize(&self, request: &AuthRequest) -> GarrisonResult<Decision> {
-        // D5（v0.5.1）：decision-trace feature 启用时自动生成 UUID v7 作为 trace_id
+        // D5：decision-trace feature 启用时自动生成 UUID v7 作为 trace_id
         // （时间有序，便于跨服务追踪与日志关联）；不启用时为 None，避免性能开销。
         #[cfg(feature = "core-advanced")]
         let trace_id = Some(uuid::Uuid::now_v7().to_string());

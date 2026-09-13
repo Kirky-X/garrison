@@ -10,7 +10,7 @@
 //! ## 核心抽象
 //!
 //! - [`RefreshTokenRecord`](crate::protocol::jwt::refresh::RefreshTokenRecord)：`refresh_tokens` 表行结构（hash chain 字段）
-//! - `RefreshTokenRotation`：rotate 服务（T057-T066 实现）
+//! - `RefreshTokenRotation`：rotate 服务
 //!
 //! ## 表结构
 //!
@@ -28,10 +28,10 @@
 //! ```
 
 // ============================================================================
-// RefreshTokenRecord 定义（T054 Green）
+// RefreshTokenRecord 定义
 // ============================================================================
 
-/// `refresh_tokens` 表行结构（T054 Green）。
+/// `refresh_tokens` 表行结构。
 ///
 /// 基于 hash chain 的 RefreshToken 记录：每次 `rotate` 时，新 token 的
 /// `parent_token_hash` 指向旧 token 的 `token_hash`，形成链式结构。
@@ -107,7 +107,7 @@ where
 }
 
 // ============================================================================
-// RefreshTokenRotation 服务（T057-db-sqlite gated）
+// RefreshTokenRotation 服务（sqlite gated）
 // ============================================================================
 
 #[cfg(feature = "db-sqlite")]
@@ -123,11 +123,11 @@ mod service {
 
     /// RefreshToken Rotation 服务（hash chain + rotate + reuse detection）。
     ///
-    /// 完整实现在 T057-T066 逐步构建：
-    /// - T057-`rotate` 基础实现（SHA-256 hash + INSERT new + UPDATE old revoked=1）
-    /// - T059-`detect_reuse` 查表 revoked=1
-    /// - T061-`revoke_chain` 递归 UPDATE parent_token_hash 链
-    /// - T063-`rotate` 追加 reuse detection（重用则 revoke_chain 后返回 InvalidToken）
+    /// 完整实现在 逐步构建：
+    /// - -`rotate` 基础实现（SHA-256 hash + INSERT new + UPDATE old revoked=1）
+    /// - -`detect_reuse` 查表 revoked=1
+    /// - -`revoke_chain` 递归 UPDATE parent_token_hash 链
+    /// - -`rotate` 追加 reuse detection（重用则 revoke_chain 后返回 InvalidToken）
     ///
     /// # 字段
     ///
@@ -137,7 +137,7 @@ mod service {
     ///
     /// # Rule 7 冲突暴露
     ///
-    /// tasks.md T058 原描述 `pub dao: Arc<dyn GarrisonDao>` 不够——
+    /// 原描述 `pub dao: Arc<dyn GarrisonDao>` 不够——
     /// `rotate` 需查 SQL（DbPool）+ 签发 access token（JwtHandler）+ 读 key_version。
     /// 决策：struct 持有 `pool: DbPool` + `jwt_handler: Arc<JwtHandler>` + `key_version: Arc<RwLock<u32>>`，
     /// 不持有 `dao`（GarrisonDao 是缓存层抽象，不支持 SQL 查询）。
@@ -185,7 +185,7 @@ mod service {
                 .unwrap_or(0)
         }
 
-        /// T058 Green: rotate 旧 refresh token 为新 access + 新 refresh。
+        /// rotate 旧 refresh token 为新 access + 新 refresh。
         ///
         /// 流程：
         /// 1. 计算 `old_hash = SHA-256(old_token)`
@@ -261,7 +261,7 @@ mod service {
 
             // 本调用方已独占持有该 token 的消费权，读取会话数据
             // （无需再过滤 revoked=0——上方条件 UPDATE 已将其置 1）
-            // T005: 扩展 SELECT 读取 OAuth2 字段以便继承到新记录
+            // 扩展 SELECT 读取 OAuth2 字段以便继承到新记录
             let select_stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 "SELECT login_id, tenant_id, client_id, scopes, username, user_id \
@@ -282,7 +282,7 @@ mod service {
             let tenant_id: i64 = row
                 .try_get("", "tenant_id")
                 .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-query::{}", e)))?;
-            // T005: 读取 OAuth2 扩展字段（旧记录可能为 NULL，使用 ok().flatten() 容错）
+            // 读取 OAuth2 扩展字段（旧记录可能为 NULL，使用 ok().flatten() 容错）
             let client_id: Option<String> = row.try_get("", "client_id").ok().flatten();
             let scopes: Option<String> = row.try_get("", "scopes").ok().flatten();
             let username: Option<String> = row.try_get("", "username").ok().flatten();
@@ -299,7 +299,7 @@ mod service {
                 .expect("key_version RwLock should not be poisoned");
 
             // INSERT new record（parent_token_hash = old_hash, revoked=0, 7 天过期）
-            // T005: 继承 OAuth2 扩展字段
+            // 继承 OAuth2 扩展字段
             // （旧 record 已在原子消费步置 revoked=1，无需再 UPDATE）
             let insert_stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -340,7 +340,7 @@ mod service {
             Ok((new_access, new_refresh))
         }
 
-        /// T003 Green: 签发初始 refresh_token 并写入 refresh_tokens 表。
+        /// 签发初始 refresh_token 并写入 refresh_tokens 表。
         ///
         /// 用于 OAuth2 authorization_code / password grant type 首次签发 refresh_token。
         /// 不存在父 token（`parent_token_hash = None`），`revoked = 0`。
@@ -424,7 +424,7 @@ mod service {
             Ok(refresh_token)
         }
 
-        /// T004 Green: 验证 refresh_token 有效性（不轮换）。
+        /// 验证 refresh_token 有效性（不轮换）。
         ///
         /// 用于 OAuth2 introspect 端点或调用方需要只读检查 token 有效性。
         ///
@@ -514,7 +514,7 @@ mod service {
             }
         }
 
-        /// T060 Green: 检测 token 是否已被消费（revoked=1 即 reuse）。
+        /// 检测 token 是否已被消费（revoked=1 即 reuse）。
         ///
         /// # 参数
         /// - `token_hash`: 已 SHA-256 哈希的 token hash（非原始 token）
@@ -557,7 +557,7 @@ mod service {
             Ok(revoked == 1)
         }
 
-        /// T062 Green: 撤销给定 token 及其所有子代（沿 parent_token_hash 反向递归）。
+        /// 撤销给定 token 及其所有子代（沿 parent_token_hash 反向递归）。
         ///
         /// 语义：reuse detection 命中 old_token 后，old_token 之后签发的所有
         /// 后代 token（即 parent_token_hash 链上以 old_token 为根的子树）
@@ -674,7 +674,7 @@ pub use service::RefreshTokenRotation;
 mod tests {
     use super::*;
 
-    /// T053 Red: `RefreshTokenRecord` 构造测试（hash chain 字段可读）。
+    /// `RefreshTokenRecord` 构造测试（hash chain 字段可读）。
     ///
     /// 断言所有字段可正确初始化与读取，包括：
     /// - `token_hash`: 新 token 的 SHA-256 哈希
@@ -735,7 +735,7 @@ mod tests {
         );
     }
 
-    /// T001 Red→Green: 含 OAuth2 扩展字段的 JSON 序列化-反序列化往返一致。
+    /// →Green: 含 OAuth2 扩展字段的 JSON 序列化-反序列化往返一致。
     #[test]
     fn refresh_token_record_new_json_roundtrip() {
         let record = RefreshTokenRecord {
@@ -759,7 +759,7 @@ mod tests {
 }
 
 // ============================================================================
-// db-sqlite 集成测试（T055-refresh_tokens 表迁移 + rotate 服务）
+// db-sqlite 集成测试（_tokens 表迁移 + rotate 服务）
 // ============================================================================
 
 #[cfg(all(test, feature = "protocol-jwt", feature = "db-sqlite"))]
@@ -793,15 +793,15 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T055-refresh_tokens 表迁移验证
+    // _tokens 表迁移验证
     // ========================================================================
 
-    /// T055-T056 Green: 验证 SQLite 迁移加载 `003_refresh_tokens.sql` 后
+    /// 验证 SQLite 迁移加载 `003_refresh_tokens.sql` 后
     /// `refresh_tokens` 表存在。
     ///
     /// Rule 11（惯例优先）：SQL 文件放 `migrations/sqlite/core/003_refresh_tokens.sql`，
     /// 复用现有 `migrate_core()` 自动加载机制（与 002_role_hierarchy.sql 同惯例），
-    /// 而非 tasks.md 原描述的 `src/dao/repository/sqlite/refresh_tokens.sql`。
+    /// 而非 原描述的 `src/dao/repository/sqlite/refresh_tokens.sql`。
     #[tokio::test(flavor = "multi_thread")]
     async fn refresh_tokens_table_exists_after_migration() {
         let pool = setup_db().await;
@@ -821,7 +821,7 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // 辅助函数（T057+ rotate 测试用）
+    // 辅助函数（+ rotate 测试用）
     // ========================================================================
 
     /// 计算 SHA-256 并返回 hex 字符串。
@@ -900,10 +900,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T057-rotate 测试
+    // 测试
     // ========================================================================
 
-    /// T057 Red: `rotate` 插入新 token 并标记旧 token 已消费。
+    /// `rotate` 插入新 token 并标记旧 token 已消费。
     ///
     /// 流程：
     /// 1. 预先 INSERT old_token record（模拟已签发的 refresh token）
@@ -945,10 +945,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T059-detect_reuse 测试
+    // _reuse 测试
     // ========================================================================
 
-    /// T059 Red: `detect_reuse` 在 token 已被消费（revoked=1）时返回 true。
+    /// `detect_reuse` 在 token 已被消费（revoked=1）时返回 true。
     ///
     /// 流程：
     /// 1. 预先 INSERT old_token record（revoked=0）
@@ -987,10 +987,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T061-revoke_chain 测试
+    // _chain 测试
     // ========================================================================
 
-    /// T061 Red: `revoke_chain` 撤销给定 token 及其所有子代（沿 parent_token_hash 反向递归）。
+    /// `revoke_chain` 撤销给定 token 及其所有子代（沿 parent_token_hash 反向递归）。
     ///
     /// 构造链：t1 (parent=None) ← t2 (parent=t1) ← t3 (parent=t2)
     /// （t3 是最新，t1 是最老）
@@ -999,9 +999,9 @@ mod db_sqlite_tests {
     ///
     /// 断言：t1/t2/t3 的 revoked 字段全为 1
     ///
-    /// **Rule 7 命名说明**：tasks.md 原测试名 `revoke_chain_revokes_all_parent_tokens`
+    /// **Rule 7 命名说明**：原测试名 `revoke_chain_revokes_all_parent_tokens`
     /// 与实际语义有歧义——实际撤销的是 t1 及其所有"子代"（descendant），
-    /// 而非"父代"（parent）。此处沿用 tasks.md 命名以保持一致（Rule 11），
+    /// 而非"父代"（parent）。此处沿用原命名以保持一致（Rule 11），
     /// 但语义以 doc comment 为准。
     #[tokio::test(flavor = "multi_thread")]
     async fn revoke_chain_revokes_all_parent_tokens() {
@@ -1039,10 +1039,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T063-rotate with reuse detection 测试
+    // with reuse detection 测试
     // ========================================================================
 
-    /// T063 Red: `rotate` 检测到 old_token 重用时返回 `InvalidToken` 并吊销整个链。
+    /// `rotate` 检测到 old_token 重用时返回 `InvalidToken` 并吊销整个链。
     ///
     /// 流程：
     /// 1. 预先 INSERT t1 record（revoked=0）
@@ -1091,10 +1091,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T003-issue 方法测试
+    // 方法测试
     // ========================================================================
 
-    /// T003 Red→Green: `issue` 后 `validate` 返回 Some，字段匹配。
+    /// →Green: `issue` 后 `validate` 返回 Some，字段匹配。
     ///
     /// 流程：
     /// 1. `issue(client_id, user_id, scopes, username, login_id, tenant_id, ttl)`
@@ -1143,7 +1143,7 @@ mod db_sqlite_tests {
         assert_eq!(record.user_id, Some(42));
     }
 
-    /// T003 Red→Green: 空 scopes 列表时 scopes 字段为 None。
+    /// →Green: 空 scopes 列表时 scopes 字段为 None。
     #[tokio::test(flavor = "multi_thread")]
     async fn issue_with_empty_scopes_stores_none() {
         let pool = setup_db().await;
@@ -1176,10 +1176,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T004-validate 方法测试
+    // 方法测试
     // ========================================================================
 
-    /// T004 Red→Green: 有效 token 返回 Some。
+    /// →Green: 有效 token 返回 Some。
     #[tokio::test(flavor = "multi_thread")]
     async fn validate_returns_some_for_valid_token() {
         let pool = setup_db().await;
@@ -1199,7 +1199,7 @@ mod db_sqlite_tests {
         assert!(result.is_some(), "有效 token 应返回 Some");
     }
 
-    /// T004 Red→Green: 已 revoked token 返回 None。
+    /// →Green: 已 revoked token 返回 None。
     #[tokio::test(flavor = "multi_thread")]
     async fn validate_returns_none_for_revoked_token() {
         let pool = setup_db().await;
@@ -1224,7 +1224,7 @@ mod db_sqlite_tests {
         assert!(result.is_none(), "已 revoked token 应返回 None");
     }
 
-    /// T004 Red→Green: 不存在 token 返回 None。
+    /// →Green: 不存在 token 返回 None。
     #[tokio::test(flavor = "multi_thread")]
     async fn validate_returns_none_for_nonexistent_token() {
         let pool = setup_db().await;
@@ -1240,10 +1240,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T005-rotate 继承 OAuth2 字段测试
+    // 继承 OAuth2 字段测试
     // ========================================================================
 
-    /// T005 Red→Green: `issue` 带 OAuth2 字段后 `rotate`，新记录继承这些字段。
+    /// →Green: `issue` 带 OAuth2 字段后 `rotate`，新记录继承这些字段。
     ///
     /// 流程：
     /// 1. `issue` 带 client_id / scopes / username / user_id
@@ -1303,7 +1303,7 @@ mod db_sqlite_tests {
         assert!(old_record.is_none(), "旧 token 应已 revoked");
     }
 
-    /// T005: OAuth2 字段为 NULL 的记录 rotate 后，新记录字段也为 None。
+    /// OAuth2 字段为 NULL 的记录 rotate 后，新记录字段也为 None。
     ///
     /// JWT 模块签发的记录不含 OAuth2 字段（列为 NULL）；
     /// rotate 链式继承：新记录的 OAuth2 字段继承旧记录的 NULL。

@@ -3,7 +3,7 @@
 
 //! 密码策略规则实现。
 //! 提供 9 条可插拔密码策略规则（v0.6.0 一次性交付，v0.8.1 移除 3 条 NIST 不推荐规则）。
-//! T008 实现 6 条核心规则（R-005），T009 实现 6 条扩展规则（R-006）。
+//! 实现 6 条核心规则（R-005）， 实现 6 条扩展规则（R-006）。
 //!
 //! # 核心规则（R-005）
 //!
@@ -511,7 +511,7 @@ impl PasswordPolicyRule for RegexRule {
 }
 
 // ============================================================================
-// NistComplianceRule（T013 — NIST SP 800-63B 密码策略合规）
+// NistComplianceRule（NIST SP 800-63B 密码策略合规）
 // ============================================================================
 
 /// NIST SP 800-63B 密码策略合规规则。
@@ -519,7 +519,7 @@ impl PasswordPolicyRule for RegexRule {
 /// 基于 NIST SP 800-63B §5.1.1.2 推荐实践：
 /// - **仅校验最小长度**（默认 ≥ 8 字符），不强制复杂度
 /// - **不强制大写/小写/数字/特殊字符混合**（NIST 不推荐此类规则）
-/// - **HIBP（Have I Been Pwned）检查为 stub**，始终返回 `Ok(())`，推迟到 v0.9.0
+/// - **HIBP（Have I Been Pwned）检查**由 `policy-hibp` feature 门控（k-anonymity range search），未启用时显性报错
 ///
 /// # 设计
 ///
@@ -531,8 +531,8 @@ impl PasswordPolicyRule for RegexRule {
 ///
 /// # HIBP stub
 ///
-/// `check_hibp` 方法为 v0.7.0 stub，始终返回 `Ok(())`。
-/// v0.9.0 将实现真实 HIBP API 调用（通过 range search k-anonymity 协议）。
+/// 启用 `policy-hibp` 时经 range search k-anonymity 协议调用真实 HIBP API；
+/// 未启用时返回显性 `PolicyError`（fail-closed，不静默放行）。
 ///
 /// # 替代关系
 ///

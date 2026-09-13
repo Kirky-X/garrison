@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 用户级双态锁定策略实现（T012）。
+//! 用户级双态锁定策略实现。
 //!
 //! 本文件包含 `UserLockoutStrategy` 的 impl 块、
 //! [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy) trait 实现，

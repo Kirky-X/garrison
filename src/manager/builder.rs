@@ -351,7 +351,7 @@ impl GarrisonManagerBuilder {
             .with_permission_checker(permission_checker.clone())
             .with_plugin_manager(plugin_manager.clone());
 
-        // T010: firewall-* feature 启用时自动装配防火墙 hook（避免 dead-code）。
+        // firewall-* feature 启用时自动装配防火墙 hook（避免 dead-code）。
         // 通过 `GarrisonFirewallCheckHookDefault` 注入共享 DAO 的限流器，
         // 使 login 流水线的 5 个 hook（含暴力破解/频率/geo/异常检测）真正生效。
         #[cfg(feature = "firewall")]
@@ -484,7 +484,7 @@ impl GarrisonManagerBuilder {
 
     /// 兜底路径：无 factory entry 时直接通过 builder 链构造 `GarrisonLogicDefault`。
     ///
-    /// 提取为独立私有函数，便于 T035b 单元测试兜底逻辑本身（不依赖 inventory 全局状态）。
+    /// 提取为独立私有函数，便于 单元测试兜底逻辑本身（不依赖 inventory 全局状态）。
     #[allow(clippy::too_many_arguments)]
     #[cfg_attr(
         not(any(feature = "listener", feature = "three-tier-cache")),
@@ -718,7 +718,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T002: new() 与 9 个链式 setter
+    // new() 与 9 个链式 setter
     // ------------------------------------------------------------------------
 
     #[test]
@@ -787,7 +787,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T004: with_factory setter
+    // with_factory setter
     // ------------------------------------------------------------------------
 
     #[test]
@@ -802,7 +802,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T005: build() 注入全局单例
+    // build() 注入全局单例
     // ------------------------------------------------------------------------
 
     #[tokio::test]
@@ -816,7 +816,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T007 / T032: build_explicit() 返回独立 Manager，Drop 后 task 被 abort
+    // build_explicit() 返回独立 Manager，Drop 后 task 被 abort
     // ------------------------------------------------------------------------
 
     #[cfg(feature = "manager-explicit")]
@@ -906,7 +906,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T009: 5 个 with_* manager 注入
+    // 5 个 with_* manager 注入
     // ------------------------------------------------------------------------
 
     #[tokio::test]
@@ -1001,7 +1001,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T010b: build_explicit() 路径下 GarrisonUtil 契约
+    // build_explicit() 路径下 GarrisonUtil 契约
     // ------------------------------------------------------------------------
 
     #[cfg(feature = "manager-explicit")]
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T033: build() 后 cleanup_task_handle 状态
+    // build() 后 cleanup_task_handle 状态
     // ------------------------------------------------------------------------
 
     #[tokio::test]
@@ -1060,7 +1060,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T034: 必填字段缺失 fail-closed
+    // 必填字段缺失 fail-closed
     // ------------------------------------------------------------------------
 
     #[tokio::test]
@@ -1115,7 +1115,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T035: with_factory 自定义 factory 构造 logic
+    // with_factory 自定义 factory 构造 logic
     // ------------------------------------------------------------------------
 
     static TEST_MARKER_ENTRY: GarrisonLogicFactoryEntry = GarrisonLogicFactoryEntry {
@@ -1170,7 +1170,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T035a: three-tier-cache 注入与自动构造
+    // three-tier-cache 注入与自动构造
     // ------------------------------------------------------------------------
 
     #[cfg(feature = "three-tier-cache")]
@@ -1210,7 +1210,7 @@ mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // T035b: build_logic_via_builder_chain 兜底逻辑
+    // build_logic_via_builder_chain 兜底逻辑
     // ------------------------------------------------------------------------
 
     #[tokio::test]

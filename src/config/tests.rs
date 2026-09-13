@@ -114,24 +114,24 @@ fn default_config_matches_spec() {
 }
 
 // ========================================================================
-// is_write_cookie 配置测试（T016）
+// is_write_cookie 配置测试
 // ========================================================================
 
-/// T016: `default_config()` 的 `is_write_cookie` 为 false。
+/// `default_config()` 的 `is_write_cookie` 为 false。
 #[test]
 fn default_is_write_cookie_is_false() {
     let config = GarrisonConfig::default_config();
     assert!(!config.is_write_cookie, "默认 is_write_cookie 应为 false");
 }
 
-/// T016: `default_config()` 的 `is_write_header` 为 true（验证已有字段）。
+/// `default_config()` 的 `is_write_header` 为 true（验证已有字段）。
 #[test]
 fn default_is_write_header_is_true() {
     let config = GarrisonConfig::default_config();
     assert!(config.is_write_header, "默认 is_write_header 应为 true");
 }
 
-/// T016: 可自定义 `is_write_cookie` 为 true。
+/// 可自定义 `is_write_cookie` 为 true。
 #[test]
 fn custom_is_write_cookie_can_be_set() {
     let mut config = GarrisonConfig::default_config();
@@ -140,7 +140,7 @@ fn custom_is_write_cookie_can_be_set() {
     assert!(config.validate().is_ok(), "is_write_cookie=true 应通过校验");
 }
 
-/// T016: `is_write_header` 和 `is_write_cookie` 可同时为 true。
+/// `is_write_header` 和 `is_write_cookie` 可同时为 true。
 #[test]
 fn both_is_write_header_and_is_write_cookie_can_be_true() {
     let mut config = GarrisonConfig::default_config();
@@ -480,7 +480,7 @@ fn config_default_session_hover_is_negative_one() {
     assert_eq!(config.session_hover_timeout, -1);
 }
 
-/// T036: `session_hover_timeout` 超过 10 年（315_360_000 秒）上界时校验应拒绝。
+/// `session_hover_timeout` 超过 10 年（315_360_000 秒）上界时校验应拒绝。
 #[test]
 fn config_rejects_session_hover_timeout_above_max() {
     let mut config = GarrisonConfig::default_config();
@@ -492,7 +492,7 @@ fn config_rejects_session_hover_timeout_above_max() {
     );
 }
 
-/// T036: `session_hover_timeout` 等于上界（10 年）时校验应通过。
+/// `session_hover_timeout` 等于上界（10 年）时校验应通过。
 #[test]
 fn config_accepts_session_hover_timeout_at_max() {
     let mut config = GarrisonConfig::default_config();
@@ -1054,10 +1054,10 @@ fn env_overrides_auto_renewal_threshold() {
 }
 
 // ========================================================================
-// T029: token_map_cleanup_interval_secs 配置测试（4 个）
+// token_map_cleanup_interval_secs 配置测试（4 个）
 // ========================================================================
 
-/// T029: `default_config()` 的 `token_map_cleanup_interval_secs` 为 300（5 分钟）。
+/// `default_config()` 的 `token_map_cleanup_interval_secs` 为 300（5 分钟）。
 #[test]
 fn token_map_cleanup_interval_default_is_300() {
     let config = GarrisonConfig::default_config();
@@ -1071,7 +1071,7 @@ fn token_map_cleanup_interval_default_is_300() {
     );
 }
 
-/// T029: 手动设置自定义值（如 600）后字段值生效且通过 `validate()` 校验。
+/// 手动设置自定义值（如 600）后字段值生效且通过 `validate()` 校验。
 #[test]
 fn token_map_cleanup_interval_custom_value() {
     let mut config = GarrisonConfig::default_config();
@@ -1083,7 +1083,7 @@ fn token_map_cleanup_interval_custom_value() {
     );
 }
 
-/// T029: 设置 -1 表示禁用后台清理 task（与 T028 `interval_secs <= 0` 行为一致）。
+/// 设置 -1 表示禁用后台清理 task（与 `interval_secs <= 0` 行为一致）。
 #[test]
 fn token_map_cleanup_interval_negative_disables() {
     let mut config = GarrisonConfig::default_config();
@@ -1102,7 +1102,7 @@ fn token_map_cleanup_interval_negative_disables() {
     );
 }
 
-/// T029: 环境变量 `GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS` 覆盖默认值。
+/// 环境变量 `GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS` 覆盖默认值。
 ///
 /// 注：env var 名按代码库惯例与字段名严格对应（如 `sign_window_seconds` ↔ `GARRISON_SIGN_WINDOW_SECONDS`），
 /// 故 `token_map_cleanup_interval_secs` ↔ `GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS`。
@@ -1121,10 +1121,10 @@ fn token_map_cleanup_interval_env_var_overrides() {
 }
 
 // ========================================================================
-// T013: login_token_map_persist_interval_secs 配置测试
+// login_token_map_persist_interval_secs 配置测试
 // ========================================================================
 
-/// T013: `default_config()` 的 `login_token_map_persist_interval_secs` 为 0（同步写入）。
+/// `default_config()` 的 `login_token_map_persist_interval_secs` 为 0（同步写入）。
 #[cfg(feature = "session-extra")]
 #[test]
 fn login_token_map_persist_interval_default_is_zero() {
@@ -1139,7 +1139,7 @@ fn login_token_map_persist_interval_default_is_zero() {
     );
 }
 
-/// T013: `GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS=10` 环境变量覆盖默认值。
+/// `GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS=10` 环境变量覆盖默认值。
 #[cfg(feature = "session-extra")]
 #[test]
 #[serial]
@@ -1156,10 +1156,10 @@ fn login_token_map_persist_interval_env_var_overrides() {
 }
 
 // ========================================================================
-// T018: anon_session_timeout 配置测试
+// anon_session_timeout 配置测试
 // ========================================================================
 
-/// T018: `default_config()` 的 `anon_session_timeout` 为 1800（30 分钟）。
+/// `default_config()` 的 `anon_session_timeout` 为 1800（30 分钟）。
 #[cfg(feature = "session-extra")]
 #[test]
 fn anon_session_timeout_default_is_1800() {
@@ -1174,7 +1174,7 @@ fn anon_session_timeout_default_is_1800() {
     );
 }
 
-/// T018: `GARRISON_ANON_SESSION_TIMEOUT=3600` 环境变量覆盖默认值。
+/// `GARRISON_ANON_SESSION_TIMEOUT=3600` 环境变量覆盖默认值。
 #[cfg(feature = "session-extra")]
 #[test]
 #[serial]
@@ -1261,10 +1261,10 @@ fn env_overrides_max_login_count() {
 }
 
 // ========================================================================
-// T005: is_read_body 配置测试
+// is_read_body 配置测试
 // ========================================================================
 
-/// T005: `default_config()` 的 `is_read_body` 为 false。
+/// `default_config()` 的 `is_read_body` 为 false。
 #[test]
 fn config_default_is_read_body_is_false() {
     let config = GarrisonConfig::default_config();
@@ -1275,7 +1275,7 @@ fn config_default_is_read_body_is_false() {
     );
 }
 
-/// T005: `GARRISON_IS_READ_BODY=true` 环境变量覆盖配置为 true。
+/// `GARRISON_IS_READ_BODY=true` 环境变量覆盖配置为 true。
 #[test]
 #[serial]
 fn env_overrides_is_read_body() {
@@ -1288,10 +1288,10 @@ fn env_overrides_is_read_body() {
 }
 
 // ========================================================================
-// T014: device_binding_mode 配置测试（4 个，spec R-device-binding-001）
+// device_binding_mode 配置测试（4 个，spec R-device-binding-001）
 // ========================================================================
 
-/// T014: `default_config()` 的 `device_binding_mode` 为 "disabled"。
+/// `default_config()` 的 `device_binding_mode` 为 "disabled"。
 #[test]
 fn test_device_binding_mode_default() {
     let config = GarrisonConfig::default_config();
@@ -1301,7 +1301,7 @@ fn test_device_binding_mode_default() {
     );
 }
 
-/// T014: 自定义值 "strict" 通过 `validate()` 校验。
+/// 自定义值 "strict" 通过 `validate()` 校验。
 #[test]
 fn test_device_binding_mode_custom() {
     let mut config = GarrisonConfig::default_config();
@@ -1312,7 +1312,7 @@ fn test_device_binding_mode_custom() {
     );
 }
 
-/// T014: 无效值 "invalid" 校验失败返回 `Err`。
+/// 无效值 "invalid" 校验失败返回 `Err`。
 #[test]
 fn test_device_binding_mode_invalid() {
     let mut config = GarrisonConfig::default_config();
@@ -1332,7 +1332,7 @@ fn test_device_binding_mode_invalid() {
     }
 }
 
-/// T014: 环境变量 `GARRISON_DEVICE_BINDING_MODE=loose` 覆盖配置值。
+/// 环境变量 `GARRISON_DEVICE_BINDING_MODE=loose` 覆盖配置值。
 #[test]
 #[serial]
 fn test_device_binding_mode_env_override() {
@@ -1345,7 +1345,7 @@ fn test_device_binding_mode_env_override() {
 }
 
 // ========================================================================
-// T036: validate() redis_url 非空校验测试（3 个，spec R-redis-ratelimit-004）
+// validate() redis_url 非空校验测试（3 个，spec R-redis-ratelimit-004）
 // ========================================================================
 
 /// 验证 `rate_limit_backend=Redis` 且 `redis_url` 为空时 `validate()` 返回 Err。
@@ -1385,7 +1385,7 @@ fn validate_memory_backend_skips_redis_url_check() {
 }
 
 // ========================================================================
-// T039: 环境变量覆盖测试（6 个 serial，spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）
+// 环境变量覆盖测试（6 个 serial，spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）
 // ========================================================================
 
 /// R-cors-001: `GARRISON_CORS_ALLOWED_ORIGINS` 覆盖 CORS 允许的源列表。
@@ -1505,7 +1505,7 @@ fn env_rate_limit_backend_invalid_value_returns_error() {
 }
 
 // ========================================================================
-// T001: 并发登录策略枚举配置测试（spec R-001 / R-004）
+// 并发登录策略枚举配置测试（spec R-001 / R-004）
 // ========================================================================
 
 /// R-001: `GarrisonConfig::default()` 的 `replaced_login_exit_mode` 为 `OldDevice`。
@@ -1612,10 +1612,10 @@ fn env_overrides_overflow_logout_mode() {
 }
 
 // ========================================================================
-// T012: audit_mask_mode 配置测试
+// audit_mask_mode 配置测试
 // ========================================================================
 
-/// T012: `default_config()` 的 `audit_mask_mode` 为 `Partial`。
+/// `default_config()` 的 `audit_mask_mode` 为 `Partial`。
 #[test]
 fn default_audit_mask_mode_is_partial() {
     let config = GarrisonConfig::default_config();
@@ -1626,7 +1626,7 @@ fn default_audit_mask_mode_is_partial() {
     );
 }
 
-/// T012: `AuditMaskMode` 序列化为 snake_case 字符串 "full"/"partial"。
+/// `AuditMaskMode` 序列化为 snake_case 字符串 "full"/"partial"。
 #[test]
 fn audit_mask_mode_serde_snake_case() {
     assert_eq!(
@@ -1647,7 +1647,7 @@ fn audit_mask_mode_serde_snake_case() {
     );
 }
 
-/// T012: `GARRISON_AUDIT_MASK_MODE=full` 环境变量覆盖配置为 Full。
+/// `GARRISON_AUDIT_MASK_MODE=full` 环境变量覆盖配置为 Full。
 #[test]
 #[serial]
 fn env_overrides_audit_mask_mode() {
@@ -1661,7 +1661,7 @@ fn env_overrides_audit_mask_mode() {
 }
 
 // ========================================================================
-// T023-d: anomalous-detector-dual validate() 校验测试（spec R-007）
+// anomalous-detector-dual validate() 校验测试（spec R-007）
 // ========================================================================
 
 /// R-007: `anomalous_analyzer_interval_secs < 60` 时 validate() 返回 Err。
@@ -1701,7 +1701,7 @@ fn validate_rejects_zero_burst_threshold() {
     );
 }
 
-// === 安全审查 M-1：load() 安全防护集成测试（规则 9） ===
+// === 安全审查 load() 安全防护集成测试（规则 9） ===
 
 /// 验证 `load` 拒绝空路径（安全 LOW-1）。
 #[test]

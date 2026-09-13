@@ -105,7 +105,7 @@ mod tests {
     // check_confusable 测试（Red 阶段）
     // ========================================================================
 
-    /// T083-1: 纯 ASCII 字符串（如 "user:read"）返回空 Vec（无可疑字符）。
+    /// 纯 ASCII 字符串（如 "user:read"）返回空 Vec（无可疑字符）。
     #[test]
     fn check_confusable_returns_empty_for_pure_ascii() {
         let warnings = check_confusable("user:read");
@@ -116,7 +116,7 @@ mod tests {
         );
     }
 
-    /// T083-2: 含 Latin 'a' (U+0061) 与 Cyrillic 'а' (U+0430) 混合时返回警告。
+    /// 含 Latin 'a' (U+0061) 与 Cyrillic 'а' (U+0430) 混合时返回警告。
     ///
     /// Cyrillic 'а' (U+0430) 视觉与 Latin 'a' (U+0061) 相同，应被检测为可疑。
     #[test]
@@ -135,7 +135,7 @@ mod tests {
         );
     }
 
-    /// T083-3: 混合字符串 "аdmin"（首字符为 Cyrillic 'а' U+0430）返回警告。
+    /// 混合字符串 "аdmin"（首字符为 Cyrillic 'а' U+0430）返回警告。
     ///
     /// 模拟攻击者用 Cyrillic 'а' 替换 Latin 'a' 仿冒 "admin" 权限名。
     #[test]
@@ -150,14 +150,14 @@ mod tests {
         assert_eq!(first.position, 0, "首字符字节位置应为 0");
     }
 
-    /// T083-4: 空字符串返回空 Vec（边界条件）。
+    /// 空字符串返回空 Vec（边界条件）。
     #[test]
     fn check_confusable_returns_empty_for_empty_string() {
         let warnings = check_confusable("");
         assert!(warnings.is_empty(), "空字符串不应有可疑字符");
     }
 
-    /// T083-5: 多个同形异义字返回多个警告。
+    /// 多个同形异义字返回多个警告。
     ///
     /// "аdmin" 含 Cyrillic 'а' (U+0430) → Latin 'a'，再加 Cyrillic 'о' (U+043E) → Latin 'o'。
     #[test]
@@ -176,7 +176,7 @@ mod tests {
         assert!(chars.contains(&'\u{043E}'), "应检测到 Cyrillic 'о'");
     }
 
-    /// T083-6: 数字同形异义（Arabic-Indic Digit One U+0661 与 Latin Digit One U+0031）返回警告。
+    /// 数字同形异义（Arabic-Indic Digit One U+0661 与 Latin Digit One U+0031）返回警告。
     ///
     /// Arabic-Indic '١' (U+0661) 视觉与 Latin '1' (U+0031) 相似，TR39 skeleton 算法将两者
     /// 均映射为 'l'（lowercase L），故 `confusable_with` 为 'l'。

@@ -550,7 +550,7 @@ async fn check_login_returns_false_for_expired_token() {
 
 /// 验证 `check_access_token` 委托 `check_login`，已登录时返回 `Ok(())`。
 ///
-/// T151。语义：access_token 类型校验入口，默认实现委托 check_login。
+/// 。语义：access_token 类型校验入口，默认实现委托 check_login。
 #[tokio::test]
 async fn check_access_token_delegates_to_check_login() {
     let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
@@ -569,7 +569,7 @@ async fn check_access_token_delegates_to_check_login() {
 
 /// 验证 `check_client_token` 委托 `check_login`，已登录时返回 `Ok(())`。
 ///
-/// T151。语义：client_token 类型校验入口，默认实现委托 check_login。
+/// 。语义：client_token 类型校验入口，默认实现委托 check_login。
 #[tokio::test]
 async fn check_client_token_delegates_to_check_login() {
     let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
@@ -588,7 +588,7 @@ async fn check_client_token_delegates_to_check_login() {
 
 /// 验证 `check_temp_token` 委托 `check_login`，已登录时返回 `Ok(())`。
 ///
-/// T151。语义：temp_token 类型校验入口，默认实现委托 check_login。
+/// 。语义：temp_token 类型校验入口，默认实现委托 check_login。
 #[tokio::test]
 async fn check_temp_token_delegates_to_check_login() {
     let logic = Arc::new(make_logic(3600, 86400, false, "uuid", true, true));
@@ -2067,7 +2067,7 @@ async fn login_by_token_with_managers_triggers_hooks() {
 }
 
 // ------------------------------------------------------------------------
-// 0.4.2 Phase 5: login_with_password 测试
+// 0.4.2 : login_with_password 测试
 // ------------------------------------------------------------------------
 
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
@@ -2260,7 +2260,7 @@ async fn login_without_metrics_does_not_panic() {
 }
 
 // ------------------------------------------------------------------------
-// 0.4.2 Phase 6: login_type Multi-Account 测试
+// 0.4.2 : login_type Multi-Account 测试
 // ------------------------------------------------------------------------
 
 /// R-001: `get_permission_list_with_type` 默认委托 `get_permission_list`。
@@ -2433,7 +2433,7 @@ async fn check_login_stateless_only_jwt_verify() {
     config.token_style = "jwt".to_string();
     config.jwt_secret = "stateless-test-secret-aaaabbbbccccdddd".to_string().into();
     config.throw_on_not_login = true;
-    // T017 安全组合：stateless JWT 必须启用撤销
+    // 安全组合：stateless JWT 必须启用撤销
     config.enable_jwt_revocation = true;
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
@@ -3068,7 +3068,7 @@ async fn sync_check_api_key_executes_without_panic() {
 /// R-hover-003: `session_hover_timeout=1`（1秒），login 后 check_login 返回 true，
 /// MockClock 推进 2 秒后 check_login 返回 false（踢出）。
 ///
-/// 使用 MockClock 替代 `tokio::time::sleep` 消除 flaky 测试（T007）。
+/// 使用 MockClock 替代 `tokio::time::sleep` 消除 flaky 测试。
 #[serial]
 #[tokio::test]
 async fn hover_timeout_evicts_inactive_session() {
@@ -3365,7 +3365,7 @@ fn make_logic_with_auth(
     (dao, logic)
 }
 
-/// T002: threshold=-1（未启用）时 check_and_renew 返回 None。
+/// threshold=-1（未启用）时 check_and_renew 返回 None。
 #[tokio::test]
 async fn check_and_renew_returns_none_when_threshold_disabled() {
     let (_dao, logic) = make_logic_with_auth(3600, 86400, "uuid", -1);
@@ -3377,7 +3377,7 @@ async fn check_and_renew_returns_none_when_threshold_disabled() {
     assert!(result.is_none(), "threshold=-1 时应返回 None");
 }
 
-/// T002: TTL 充足时 check_and_renew 返回 None。
+/// TTL 充足时 check_and_renew 返回 None。
 #[tokio::test]
 async fn check_and_renew_returns_none_when_ttl_sufficient() {
     let (_dao, logic) = make_logic_with_auth(3600, 86400, "uuid", 20);
@@ -3390,7 +3390,7 @@ async fn check_and_renew_returns_none_when_ttl_sufficient() {
     assert!(result.is_none(), "TTL 充足时应返回 None");
 }
 
-/// T003: 非 JWT 模式 + remaining_pct < threshold 时调用 renew_to_equivalent 续签。
+/// 非 JWT 模式 + remaining_pct < threshold 时调用 renew_to_equivalent 续签。
 #[tokio::test]
 async fn check_and_renew_renews_non_jwt_when_threshold_reached() {
     let (dao, logic) = make_logic_with_auth(10, 86400, "uuid", 90);
@@ -3413,7 +3413,7 @@ async fn check_and_renew_renews_non_jwt_when_threshold_reached() {
     assert!(new_valid, "新 token 应有效");
 }
 
-/// T004: JWT 模式 + remaining_pct < threshold 时调用 refresh_token 续签。
+/// JWT 模式 + remaining_pct < threshold 时调用 refresh_token 续签。
 #[cfg(feature = "protocol-jwt")]
 #[tokio::test]
 async fn check_and_renew_renews_jwt_when_threshold_reached() {
@@ -3458,7 +3458,7 @@ async fn check_and_renew_renews_jwt_when_threshold_reached() {
     assert_ne!(new_token, token, "续签后应生成新 token");
 }
 
-/// T005: check_login 在 TTL 低于阈值时自动续签，并通过 CURRENT_RENEWED_TOKEN 传递新 token。
+/// check_login 在 TTL 低于阈值时自动续签，并通过 CURRENT_RENEWED_TOKEN 传递新 token。
 #[tokio::test]
 async fn check_login_renews_token_when_threshold_reached() {
     let (dao, logic) = make_logic_with_auth(10, 86400, "uuid", 90);
@@ -3516,7 +3516,7 @@ async fn login_with_default_params_creates_session() {
 }
 
 // ============================================================================
-// v0.6.3 D2 T010: is_share 复用现有 token 测试
+// v0.6.3 D2 : is_share 复用现有 token 测试
 // ========================================================================
 
 /// is_share=true 时，重复登录同一 login_id 应复用现有有效 token，不创建新会话。
@@ -3564,7 +3564,7 @@ async fn login_with_is_share_creates_new_when_no_existing() {
 }
 
 // ============================================================================
-// v0.6.3 D2 T011: is_concurrent=false 踢出现有会话测试
+// v0.6.3 D2 : is_concurrent=false 踢出现有会话测试
 // ========================================================================
 
 /// is_concurrent=false + is_share=false 时，重复登录同一 login_id 应踢出旧 token。
@@ -3594,10 +3594,10 @@ async fn login_with_is_concurrent_false_kickouts_existing() {
 }
 
 // ============================================================================
-// T002: replaced_login_exit_mode 集成测试（is_concurrent=false 时生效）
+// replaced_login_exit_mode 集成测试（is_concurrent=false 时生效）
 // ============================================================================
 
-/// T002: NewDevice 模式下，已有旧会话时拒绝新登录。
+/// NewDevice 模式下，已有旧会话时拒绝新登录。
 #[tokio::test]
 async fn login_new_device_mode_rejects_new_login() {
     let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -3731,7 +3731,7 @@ async fn login_with_is_concurrent_true_preserves_existing() {
     assert!(ts1.is_some(), "is_concurrent=true 应保留旧 token");
 }
 
-// v0.6.3 D2 T012: enforce_max_login_count 测试
+// v0.6.3 D2 : enforce_max_login_count 测试
 
 /// enforce_max_login_count 应踢出最旧的 token，保留较新的。
 ///
@@ -3808,7 +3808,7 @@ async fn enforce_max_login_count_no_op_when_under_limit() {
         .is_some());
 }
 
-// v0.6.3 D2 T013: login 调用 enforce_max_login_count 测试
+// v0.6.3 D2 : login 调用 enforce_max_login_count 测试
 
 /// login 在 max_login_count > 0 时应自动踢出最旧的会话。
 ///
@@ -3854,7 +3854,7 @@ async fn login_with_max_login_count_evicts_oldest_session() {
 }
 
 // ============================================================================
-// v0.6.6 T003: enforce_max_login_count 集成 overflow_logout_mode 测试
+// v0.6.6 : enforce_max_login_count 集成 overflow_logout_mode 测试
 // ============================================================================
 
 /// 测试用录音监听器：捕获广播事件供测试断言。
@@ -4123,11 +4123,11 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
     }
 }
 
-// v0.6.3 D3 T014: refresh_access_token 默认实现返回 NotImplemented
+// v0.6.3 D3 : refresh_access_token 默认实现返回 NotImplemented
 
 /// `refresh_access_token` 默认实现应返回 `GarrisonError::NotImplemented`。
 ///
-/// T014 仅添加 trait 方法签名 + 默认实现；T015 会注入 `RefreshTokenRotation` 实现实际轮换。
+/// 仅添加 trait 方法签名 + 默认实现； 会注入 `RefreshTokenRotation` 实现实际轮换。
 #[tokio::test]
 async fn session_logic_refresh_default_returns_not_implemented() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
@@ -4139,11 +4139,11 @@ async fn session_logic_refresh_default_returns_not_implemented() {
     );
 }
 
-// v0.6.3 D3 T015: refresh_access_token 覆盖实现——未注入/未启用 feature 时返回 NotImplemented
+// v0.6.3 D3 : refresh_access_token 覆盖实现——未注入/未启用 feature 时返回 NotImplemented
 
 /// 未注入 RefreshTokenRotation 时返回 NotImplemented（db-sqlite + protocol-jwt 启用）。
 ///
-/// T015 覆盖 `refresh_access_token`：注入了 `refresh_token_rotation` 字段后，
+/// 覆盖 `refresh_access_token`：注入了 `refresh_token_rotation` 字段后，
 /// 未注入（None）时应返回 `NotImplemented`，而非调用 trait 默认实现。
 #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
 #[tokio::test]
@@ -4175,7 +4175,7 @@ async fn refresh_access_token_returns_not_implemented_without_db_sqlite() {
 }
 
 // ========================================================================
-// v0.6.3 D4 T020: login 自动生成设备指纹
+// v0.6.3 D4 : login 自动生成设备指纹
 // ========================================================================
 
 /// login 时 `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值，
@@ -4305,7 +4305,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
             if key.starts_with("account:session:") {
                 // 行为锚定注入：当 AccountSession 已含 2 个 token（即超限登录的
                 // enforce 闸门读取）时首次返回 Err。相比固定调用序号，本方式对
-                // enforce 内部的读取次数变化鲁棒（T009 调整闸门读取时机后仍成立）。
+                // enforce 内部的读取次数变化鲁棒（调整闸门读取时机后仍成立）。
                 let current = self.inner.get(key).await?;
                 let over_limit = current
                     .as_deref()
@@ -4441,7 +4441,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
 }
 
 // ------------------------------------------------------------------------
-// T011: per-token dynamic active timeout（dynamic-active-timeout feature）
+// per-token dynamic active timeout（dynamic-active-timeout feature）
 // ------------------------------------------------------------------------
 
 /// 验证 per-token active_timeout 生效：设置 per-token active_timeout=1 秒（很短），
@@ -4518,7 +4518,7 @@ async fn per_token_active_timeout_none_falls_back_to_global() {
 }
 
 // ============================================================================
-// T003-T004: revoke_all_sessions + get_active_sessions 工业标准 API 测试
+// revoke_all_sessions + get_active_sessions 工业标准 API 测试
 // ============================================================================
 
 /// 验证 `revoke_all_sessions` 终止指定用户的所有会话并返回数量。

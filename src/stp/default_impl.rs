@@ -23,7 +23,7 @@ impl GarrisonLogicDefault {
         self.session.dao().clone()
     }
 
-    /// 诊断：builder 是否已将防火墙 hook 注入（T010 自检）。
+    /// 诊断：builder 是否已将防火墙 hook 注入（自检）。
     #[allow(dead_code)]
     pub(crate) fn firewall_hook_injected(&self) -> bool {
         self.firewall.firewall_hook_injected()

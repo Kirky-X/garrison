@@ -10,7 +10,7 @@
 //! ## 核心抽象
 //!
 //! - [`RoleHierarchyRecord`](crate::dao::repository::role_hierarchy::RoleHierarchyRecord)：`role_hierarchy` 表行结构（child_role → parent_role + tenant_id）
-//! - `RoleHierarchyService`：TC 预计算 + 缓存 + 增量失效（T045-T050 实现，any(db-sqlite, db-postgres, db-mysql) gated）
+//! - `RoleHierarchyService`：TC 预计算 + 缓存 + 增量失效（实现，any(db-sqlite, db-postgres, db-mysql) gated）
 //!
 //! ## 表结构
 //!
@@ -27,7 +27,7 @@
 // Row struct 定义
 // ============================================================================
 
-/// `role_hierarchy` 表行结构（T042 Green）。
+/// `role_hierarchy` 表行结构。
 ///
 /// 表示一条 `child_role → parent_role` 的继承边（在同一 `tenant_id` 下）。
 ///
@@ -110,7 +110,7 @@ mod service {
                 .collect())
         }
 
-        /// 计算指定租户的角色层级传递闭包（T045-T046）。
+        /// 计算指定租户的角色层级传递闭包。
         ///
         /// DFS 遍历 `role_hierarchy` 表，对每个 `child_role` 收集所有祖先
         ///（含直接父角色与间接祖先）。
@@ -217,7 +217,7 @@ mod service {
             (ancestors, complete)
         }
 
-        /// T048 Green: 获取指定角色的所有祖先（先查 oxcache，未命中则 `compute_closure` 并缓存 1 小时）。
+        /// 获取指定角色的所有祖先（先查 oxcache，未命中则 `compute_closure` 并缓存 1 小时）。
         ///
         /// 缓存策略：
         /// - key: `tenant:{tenant_id}:role_closure`，存储整个租户的闭包 JSON
@@ -259,7 +259,7 @@ mod service {
             Ok(closure.get(role).cloned().unwrap_or_default())
         }
 
-        /// T050 Green: 添加角色继承边（幂等 INSERT）并失效该租户的闭包缓存。
+        /// 添加角色继承边（幂等 INSERT）并失效该租户的闭包缓存。
         ///
         /// 委托 `dao.insert_role_hierarchy_edge()` 实现（幂等，后端自适应）。
         /// 缓存失效：插入成功后立即删除 `tenant:{tenant_id}:role_closure`。
@@ -295,7 +295,7 @@ mod service {
             self.invalidate_cache(tenant_id).await
         }
 
-        /// T050 Green: 失效指定租户的闭包缓存。
+        /// 失效指定租户的闭包缓存。
         ///
         /// 删除 oxcache key `tenant:{tenant_id}:role_closure`。
         /// 幂等：若 key 不存在，`dao.delete` 不报错。
@@ -407,14 +407,14 @@ mod tests {
     // RoleHierarchyRecord 构造测试
     // ========================================================================
 
-    /// T041 Red→Green：`RoleHierarchyRecord` 可构造且字段可读。
+    /// →：`RoleHierarchyRecord` 可构造且字段可读。
     ///
     /// 断言 `RoleHierarchyRecord { child_role, parent_role, tenant_id }`
     /// 三字段可正确初始化与读取。
     ///
     /// # 命名说明（Rule 7 冲突暴露）
     ///
-    /// tasks.md T041 原描述用 `role` 字段，T043 SQL 用 `child_role`。
+    /// 原描述用 `role` 字段， SQL 用 `child_role`。
     /// 决策：统一用 `child_role` / `parent_role`（对称清晰，与 SQL 一致），
     /// 避免 `role` 单字段在 Rust 中与 `RoleRow` 混淆。
     #[test]
@@ -465,7 +465,7 @@ mod tests {
 }
 
 // ============================================================================
-// db-sqlite 集成测试（T043-role_hierarchy 表迁移 + compute_closure）
+// db-sqlite 集成测试（_hierarchy 表迁移 + compute_closure）
 // ============================================================================
 
 #[cfg(all(test, feature = "db-sqlite"))]
@@ -530,12 +530,12 @@ mod db_sqlite_tests {
     // role_hierarchy 表迁移验证
     // ========================================================================
 
-    /// T044 Green: 验证 SQLite 迁移加载 `002_role_hierarchy.sql` 后 `role_hierarchy` 表存在。
+    /// 验证 SQLite 迁移加载 `002_role_hierarchy.sql` 后 `role_hierarchy` 表存在。
     ///
     /// Rule 11（惯例优先）：SQL 文件放 `migrations/sqlite/core/002_role_hierarchy.sql`，
     /// 复用现有 `migrate_core()` 自动加载机制，无需修改 sqlite/mod.rs 的 migration 段。
     ///
-    /// Rule 7（冲突暴露）：tasks.md T043 原描述路径 `src/dao/repository/sqlite/role_hierarchy.sql`
+    /// Rule 7（冲突暴露）： 原描述路径 `src/dao/repository/sqlite/role_hierarchy.sql`
     /// 不符合现有 migration 目录结构（`migrations/sqlite/core/`），改为符合惯例的路径。
     #[tokio::test(flavor = "multi_thread")]
     async fn role_hierarchy_table_exists_after_migration() {
@@ -556,10 +556,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T045-compute_closure 传递闭包测试
+    // _closure 传递闭包测试
     // ========================================================================
 
-    /// T045 Green: `compute_closure` 返回间接祖先。
+    /// `compute_closure` 返回间接祖先。
     ///
     /// 构造 role_hierarchy 数据 `user -> admin -> super_admin`，
     /// 调用 `compute_closure(tenant_id=0)`，
@@ -665,10 +665,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T047-get_ancestors 缓存测试
+    // _ancestors 缓存测试
     // ========================================================================
 
-    /// T047 Red: `get_ancestors` 首次调用触发 `compute_closure` 并缓存到 oxcache。
+    /// `get_ancestors` 首次调用触发 `compute_closure` 并缓存到 oxcache。
     ///
     /// 构造 `user -> admin -> super_admin`，调用 `get_ancestors("user", 0)`，
     /// 断言返回集合含 `"admin"` 和 `"super_admin"`，并验证 oxcache 已写入
@@ -704,10 +704,10 @@ mod db_sqlite_tests {
     }
 
     // ========================================================================
-    // T049-add_edge + invalidate_cache 测试
+    // _edge + invalidate_cache 测试
     // ========================================================================
 
-    /// T049 Red: `add_edge` 插入新边后应失效该租户的闭包缓存。
+    /// `add_edge` 插入新边后应失效该租户的闭包缓存。
     ///
     /// 流程：
     /// 1. `get_ancestors` 触发 `compute_closure` + 缓存写入
@@ -744,7 +744,7 @@ mod db_sqlite_tests {
         assert!(cached_after.is_none(), "add_edge 后缓存应已失效");
     }
 
-    /// T050 额外验证：`add_edge` 后再次 `get_ancestors` 应反映新边。
+    /// 额外验证：`add_edge` 后再次 `get_ancestors` 应反映新边。
     ///
     /// 流程：
     /// 1. `user -> admin`，`get_ancestors("user")` 返回 {admin}

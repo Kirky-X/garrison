@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 设备绑定模块测试:Disabled 策略行为验证（T012）。
+//! 设备绑定模块测试:Disabled 策略行为验证。
 
 use super::*;
 

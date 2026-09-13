@@ -88,7 +88,7 @@ pub use otlp::shutdown_otlp_tracing;
 
 /// inklog 初始化结果 — 包含可选的 LoggerManager guard 和降级状态。
 ///
-/// M-4: `#[must_use]` 确保 guard 不会被意外丢弃（丢弃后 subscriber 可能注销）。
+/// `#[must_use]` 确保 guard 不会被意外丢弃（丢弃后 subscriber 可能注销）。
 #[cfg(feature = "audit-inklog")]
 #[must_use = "InklogInit holds the LoggerManager guard; dropping it may unregister the log subscriber"]
 pub struct InklogInit {

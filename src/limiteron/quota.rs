@@ -108,7 +108,7 @@ impl QuotaStorage for GarrisonDaoQuotaStorage {
 
         match (meta, count) {
             (Some(meta_str), Some(count_str)) => {
-                // M-3: parse 失败显性化 — 脏数据返回 Err（fail-fast）
+                // parse 失败显性化 — 脏数据返回 Err（fail-fast）
                 let consumed: u64 = count_str.parse().map_err(|e| {
                     map_to_storage_err(GarrisonError::Dao(format!(
                         "limiteron-quota-count-parse-failed::{}::{}::{}",
@@ -330,9 +330,9 @@ mod tests {
         assert!(quota.get_quota("user3", "sms").await.unwrap().is_none());
     }
 
-    // --- M-3: unwrap_or(0) 静默吞错修复测试 ---
+    // --- unwrap_or(0) 静默吞错修复测试 ---
 
-    /// M-3: QuotaStorage::get_quota 遇到脏 count 数据时返回错误（fail-fast）。
+    /// QuotaStorage::get_quota 遇到脏 count 数据时返回错误（fail-fast）。
     #[tokio::test]
     async fn m3_quota_get_quota_dirty_count_returns_err() {
         let quota = GarrisonDaoQuotaStorage::new(make_dao());
@@ -361,7 +361,7 @@ mod tests {
         );
     }
 
-    /// M-3: QuotaStorage::get_quota 遇到脏 meta 数据时返回错误（fail-fast）。
+    /// QuotaStorage::get_quota 遇到脏 meta 数据时返回错误（fail-fast）。
     #[tokio::test]
     async fn m3_quota_get_quota_dirty_meta_returns_err() {
         let quota = GarrisonDaoQuotaStorage::new(make_dao());

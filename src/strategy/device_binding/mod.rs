@@ -8,17 +8,17 @@
 //! - [`require_secondary_auth`](crate::strategy::device_binding::DeviceBindingPolicy::require_secondary_auth):判断新设备是否需要二级认证
 //!
 //! 三种内置实现:
-//! - [`StrictBinding`](crate::strategy::device_binding::StrictBinding):新设备强制二级认证(T010)
-//! - [`LooseBinding`](crate::strategy::device_binding::LooseBinding):新设备仅告警不阻断(T011)
-//! - [`Disabled`](crate::strategy::device_binding::Disabled):完全禁用设备绑定(T012)
+//! - [`StrictBinding`](crate::strategy::device_binding::StrictBinding):新设备强制二级认证
+//! - [`LooseBinding`](crate::strategy::device_binding::LooseBinding):新设备仅告警不阻断
+//! - [`Disabled`](crate::strategy::device_binding::Disabled):完全禁用设备绑定
 //!
 //! 此模块仅在启用 `device-binding` 特性时编译(依赖 `security-alert`)。
 
-/// 宽松绑定策略实现模块(T011)。
+/// 宽松绑定策略实现模块。
 pub mod loose;
 /// 策略实现模块:Disabled 策略与共用工具函数。
 pub mod policies;
-/// 严格绑定策略实现模块(T010)。
+/// 严格绑定策略实现模块。
 pub mod strict;
 
 #[cfg(test)]
@@ -39,9 +39,9 @@ use async_trait::async_trait;
 ///
 /// # 内置实现
 ///
-/// - `StrictBinding`:新设备强制二级认证(T010)
-/// - `LooseBinding`:新设备仅告警不阻断(T011)
-/// - `Disabled`:完全禁用设备绑定(T012)
+/// - `StrictBinding`:新设备强制二级认证
+/// - `LooseBinding`:新设备仅告警不阻断
+/// - `Disabled`:完全禁用设备绑定
 #[async_trait]
 pub trait DeviceBindingPolicy: Send + Sync {
     /// 检测指定 `device_id` 是否为 `login_id` 的新设备。

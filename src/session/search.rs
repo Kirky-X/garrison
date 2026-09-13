@@ -481,10 +481,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T024: SearchSortType 枚举
+    // SearchSortType 枚举
     // ========================================================================
 
-    /// T024: SearchSortType 4 个变体的序列化 + 反序列化 round-trip。
+    /// SearchSortType 4 个变体的序列化 + 反序列化 round-trip。
     #[test]
     fn search_sort_type_round_trip() {
         for variant in [
@@ -516,10 +516,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T025: search_token_value
+    // search_token_value
     // ========================================================================
 
-    /// T025: keyword 匹配 — 搜索 "alpha" 返回 2 个（alpha-1, alpha-2）。
+    /// keyword 匹配 — 搜索 "alpha" 返回 2 个（alpha-1, alpha-2）。
     #[tokio::test]
     async fn search_token_value_keyword_match() {
         let (_dao, session) = make_session(3600, 86400);
@@ -537,7 +537,7 @@ mod tests {
         assert!(result.contains(&"alpha-2".to_string()));
     }
 
-    /// T025: 分页 — start=1, size=2 返回第 2、3 个。
+    /// 分页 — start=1, size=2 返回第 2、3 个。
     #[tokio::test]
     async fn search_token_value_pagination() {
         let (dao, session) = make_session(3600, 86400);
@@ -558,7 +558,7 @@ mod tests {
         assert_eq!(result[1], "tok-3");
     }
 
-    /// T025: 排序 — 验证 CreatedDesc 和 CreatedAsc 顺序正确。
+    /// 排序 — 验证 CreatedDesc 和 CreatedAsc 顺序正确。
     #[tokio::test]
     async fn search_token_value_sort_order() {
         let (dao, session) = make_session(3600, 86400);
@@ -593,10 +593,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T026: search_session_id
+    // search_session_id
     // ========================================================================
 
-    /// T026: keyword 匹配 — 搜索 "user" 返回 2 个（user1, user2）。
+    /// keyword 匹配 — 搜索 "user" 返回 2 个（user1, user2）。
     #[tokio::test]
     async fn search_session_id_keyword_match() {
         let (_dao, session) = make_session(3600, 86400);
@@ -614,7 +614,7 @@ mod tests {
         assert!(result.contains(&"user2".to_string()));
     }
 
-    /// T026: 空结果 — 搜索不存在的 keyword 返回空 Vec。
+    /// 空结果 — 搜索不存在的 keyword 返回空 Vec。
     #[tokio::test]
     async fn search_session_id_empty_result() {
         let (_dao, session) = make_session(3600, 86400);
@@ -629,10 +629,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T027: search_token_session_id
+    // search_token_session_id
     // ========================================================================
 
-    /// T027: 验证 search_token_session_id 按 login_id 过滤，并与 search_token_value 对比。
+    /// 验证 search_token_session_id 按 login_id 过滤，并与 search_token_value 对比。
     #[tokio::test]
     async fn search_token_session_id_filters_by_login_id() {
         let (dao, session) = make_session(3600, 86400);
@@ -681,10 +681,10 @@ mod tests {
     }
 
     // ========================================================================
-    // T025/T027: 匿名 Session 排除
+    // 匿名 Session 排除
     // ========================================================================
 
-    /// T025/T027: 匿名 Session 不出现在搜索结果中。
+    /// 匿名 Session 不出现在搜索结果中。
     #[tokio::test]
     async fn search_excludes_anon_sessions() {
         let (dao, session) = make_session(3600, 86400);

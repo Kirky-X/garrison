@@ -268,7 +268,7 @@ mod tests {
     use crate::dao::InMemoryDao;
 
     // ========================================================================
-    // T016: disable / untie_disable 方法测试
+    // disable / untie_disable 方法测试
     // ========================================================================
 
     /// disable 写入：调用 disable 后 DAO 中存在对应 key，value 为合法 DisableEntry JSON。
@@ -418,7 +418,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T017: 查询方法 is_disable / get_disable_time / get_disable_level 测试
+    // 查询方法 is_disable / get_disable_time / get_disable_level 测试
     // ========================================================================
 
     /// 未封禁 is_disable=false（service 隔离）：同一 login_id 在 "default" service 被封禁，
@@ -573,7 +573,7 @@ mod tests {
     }
 
     // ========================================================================
-    // T018: 阶梯封禁 level 支持测试
+    // 阶梯封禁 level 支持测试
     // ========================================================================
 
     /// level=0 普通封禁：disable(level=0) 后 get_disable_level 返回 Ok(Some(0))。

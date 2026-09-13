@@ -312,7 +312,7 @@ pub struct GarrisonPermissionStrategyDefault {
     permission_checker: Option<Arc<dyn PermissionChecker>>,
     /// 可选 DAO，用于权限缓存。
     dao: Option<Arc<dyn GarrisonDao>>,
-    /// 可选租户维度，用于权限缓存键隔离（T023）。
+    /// 可选租户维度，用于权限缓存键隔离。
     ///
     /// `Some(t)` 时缓存键为 `garrison:perm:cache:<t>:<login_id>:<permission>`；
     /// `None` 时使用占位符 `_`（未配置租户隔离，所有租户共享缓存键）。

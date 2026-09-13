@@ -91,7 +91,7 @@ impl GarrisonPermissionStrategyDefault {
         self
     }
 
-    /// 设置租户维度，启用权限缓存键租户隔离（T023）。
+    /// 设置租户维度，启用权限缓存键租户隔离。
     ///
     /// 注入后权限缓存键形如 `garrison:perm:cache:<tenant_id>:<login_id>:<permission>`，
     /// 不同租户相同 `login_id` 的权限判定结果互不污染。
@@ -113,7 +113,7 @@ impl GarrisonPermissionStrategyDefault {
         self
     }
 
-    /// 构造权限缓存键（T023：含租户维度）。
+    /// 构造权限缓存键（含租户维度）。
     ///
     /// `tenant_override` 用于请求级租户覆盖（`check_permission_in_tenant`），
     /// 避免未配置 builder 租户时回退路径的跨租户缓存污染。
@@ -281,7 +281,7 @@ impl GarrisonPermissionStrategyDefault {
         }
     }
 
-    /// 失效某 `login_id` 的全部权限缓存（T024）。
+    /// 失效某 `login_id` 的全部权限缓存。
     ///
     /// 扫描 `garrison:perm:cache:<tenant>:<login_id>:*` 模式并逐一删除，
     /// 使权限回收 / 角色变更后下一次 `check_permission` 立即回源查询业务接口，
@@ -359,7 +359,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
         login_id: &str,
         permission: &str,
     ) -> GarrisonResult<bool> {
-        // 请求级租户覆盖缓存键维度（T023）：firewall 回退路径传入的租户
+        // 请求级租户覆盖缓存键维度：firewall 回退路径传入的租户
         // 优先于 builder 配置，防止未配置 builder 租户时跨租户缓存污染。
         self.check_permission_scoped(Some(tenant_id), login_id, permission)
             .await
@@ -431,7 +431,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
     ))]
     async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> GarrisonResult<()> {
         let Some(hook) = &self.firewall_hook else {
-            // T010 回归护栏：firewall feature 启用却未注入 hook，说明 builder
+            // 回归护栏：firewall feature 启用却未注入 hook，说明 builder
             // 自动装配被意外移除——输出 error! 避免"编译通过但防火墙静默失效"。
             #[cfg(feature = "firewall")]
             tracing::error!(

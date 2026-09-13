@@ -1083,7 +1083,7 @@ fn parse_remember_me_param_various_inputs() {
 // renew_to_equivalent 并发串行化测试（fix-refresh-race-and-test-contracts）
 // ========================================================================
 
-/// T001: 并发 renew_to_equivalent 同一 token 必须串行化（修复 CWE-362 TOCTOU 竞态）。
+/// 并发 renew_to_equivalent 同一 token 必须串行化（修复 CWE-362 TOCTOU 竞态）。
 ///
 /// spec R-refresh-token-001: 3 个并发 renew 同一 token，恰好 1 个 Ok + 2 个 Err。
 ///

@@ -11,8 +11,8 @@
 //!
 //! - **design.md L376-377 + L431-432**：PostgreSQL 后端 D8 明确"延后到 v0.5.2+ 评估"，
 //!   **无完整 PostgresRepository 设计**。
-//! - **tasks.md T111-T114**：要求"探测 dbnexus postgres feature 可用则本版本（v0.5.1）实施"。
-//! - **冲突**：design.md 说延后，tasks.md 说本版本实施。
+//! - ：要求"探测 dbnexus postgres feature 可用则本版本实施"。
+//! - **冲突**：design.md 说延后，说本版本实施。
 //! - **决策**：用户在本会话中明确决策"本版本实施"。本实现参考 SqliteRepository 模式，
 //!   schema 类型映射 SQLite→Postgres（`INTEGER`→`BIGINT`, `AUTOINCREMENT`→`BIGSERIAL`,
 //!   `TEXT`→`TEXT` 保持以兼容 `try_get::<String>`）。Repository 代码零重复复用 sqlite 模块

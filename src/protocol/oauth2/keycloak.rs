@@ -235,7 +235,7 @@ pub struct KeycloakTokenSet {
 /// 持有 `KeycloakConfig` 与可复用的 `reqwest::Client`，提供 OIDC RP 流程：
 /// - [`discover`](Self::discover)：从 `/.well-known/openid-configuration` 拉取 IdP 元数据
 /// - [`verify_id_token`](Self::verify_id_token)：JWKS 验签 + Keycloak claim 解析
-/// - [`exchange_code`](Self::exchange_code)（T117-T118 实现）：授权码换 token set
+/// - [`exchange_code`](Self::exchange_code)：授权码换 token set
 ///
 /// # 设计决策
 ///
@@ -584,7 +584,7 @@ impl KeycloakProvider {
             ))
         })?;
         // 启用 aud/iss/nbf 三重校验
-        // - validate_exp: 校验 exp（过期时间），T119-T120 已启用
+        // - validate_exp: 校验 exp（过期时间）， 已启用
         // - validate_nbf: 校验 nbf（生效时间），防止 token 在生效前被使用
         // - validate_aud: 校验 aud（受众），期望 aud 包含 client_id，防止 token 被重放给非预期 client
         // - set_audience: 设置期望的 audience = client_id
@@ -725,13 +725,12 @@ mod tests {
     use crate::dao::InMemoryDao;
 
     // ========================================================================
-    // T111-KeycloakConfig Red-Green
     // ========================================================================
 
-    /// T111 Red: `KeycloakConfig` 构造 + `discovery_url()` 返回正确 URL
+    /// `KeycloakConfig` 构造 + `discovery_url()` 返回正确 URL
     ///
     /// Red 阶段：`KeycloakConfig` 类型不存在 → 编译失败。
-    /// Green 阶段（T112）：定义 `KeycloakConfig` + `discovery_url()` 后测试通过。
+    /// 定义 `KeycloakConfig` + `discovery_url()` 后测试通过。
     ///
     /// # 测试流程
     ///
@@ -763,14 +762,14 @@ mod tests {
     }
 
     // ========================================================================
-    // T113-KeycloakProvider::discover Red-Green
+    // discover Red-
     // ========================================================================
 
-    /// T113 Red: `KeycloakProvider::discover` 从 `/.well-known/openid-configuration`
+    /// `KeycloakProvider::discover` 从 `/.well-known/openid-configuration`
     /// 拉取 OIDC discovery metadata。
     ///
     /// Red 阶段：`KeycloakProvider` / `OidcDiscoveryMetadata` 类型不存在 → 编译失败。
-    /// Green 阶段（T114）：定义 struct + discover 方法后测试通过。
+    /// 定义 struct + discover 方法后测试通过。
     ///
     /// # 测试流程
     ///
@@ -822,14 +821,14 @@ mod tests {
     }
 
     // ========================================================================
-    // T115-KeycloakProvider::verify_id_token Red-Green
+    // verify_id_token Red-
     // ========================================================================
 
-    /// T115 Red: `KeycloakProvider::verify_id_token` 用 JWKS 公钥验签 id_token
+    /// `KeycloakProvider::verify_id_token` 用 JWKS 公钥验签 id_token
     /// 并解析 Keycloak 特有 claim。
     ///
     /// Red 阶段：`KeycloakClaims` 类型不存在 → 编译失败。
-    /// Green 阶段（T116）：定义 struct + verify_id_token 方法后测试通过。
+    /// 定义 struct + verify_id_token 方法后测试通过。
     ///
     /// # 测试流程
     ///
@@ -948,13 +947,13 @@ mod tests {
     }
 
     // ========================================================================
-    // T117-KeycloakProvider::exchange_code Red-Green
+    // exchange_code Red-
     // ========================================================================
 
-    /// T117 Red: `KeycloakProvider::exchange_code` 用授权码换取 token set
+    /// `KeycloakProvider::exchange_code` 用授权码换取 token set
     ///
     /// Red 阶段：`KeycloakTokenSet` 类型 / `exchange_code` 方法不存在 → 编译失败。
-    /// Green 阶段（T118）：定义 struct + exchange_code 方法后测试通过。
+    /// 定义 struct + exchange_code 方法后测试通过。
     ///
     /// # 测试流程
     ///
@@ -1004,12 +1003,12 @@ mod tests {
     }
 
     // ========================================================================
-    // T119-过期 id_token 被拒绝（已实现于 T116，此为回归测试）
+    // - 过期 id_token 被拒绝（已实现于 ，此为回归测试）
     // ========================================================================
 
-    /// T119 回归测试: `verify_id_token` 拒绝已过期的 id_token
+    /// 回归测试: `verify_id_token` 拒绝已过期的 id_token
     ///
-    /// T116 的 `verify_id_token` 实现已含 `validate_exp = true` +
+    /// 的 `verify_id_token` 实现已含 `validate_exp = true` +
     /// `ExpiredSignature` → `InvalidToken("token expired")` 映射。
     /// 本测试验证该行为，确保过期 token 不会被误判为有效。
     ///
@@ -1436,14 +1435,14 @@ mod tests {
     }
 
     // ========================================================================
-    // T092-KeycloakProvider PKCE (RFC 7636 / D2) Red-Green
+    // PKCE (RFC 7636 / D2) Red-
     // ========================================================================
 
-    /// T092 测试 1：`with_pkce` 设置有效 verifier 后，`exchange_code` 请求体包含 `code_verifier`
+    /// 测试 1：`with_pkce` 设置有效 verifier 后，`exchange_code` 请求体包含 `code_verifier`
     ///
     ///
     /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic。
-    /// Green 阶段（T093）：实现 `with_pkce` 后测试通过。
+    /// 实现 `with_pkce` 后测试通过。
     ///
     /// # 测试流程
     ///
@@ -1508,11 +1507,11 @@ mod tests {
         );
     }
 
-    /// T092 测试 2：`with_pkce` 传入无效 verifier（长度 < 43）返回 `InvalidParam` 错误
+    /// 测试 2：`with_pkce` 传入无效 verifier（长度 < 43）返回 `InvalidParam` 错误
     ///
     ///
     /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic（非预期 InvalidParam）。
-    /// Green 阶段（T093）：实现校验后返回 `InvalidParam` 错误。
+    /// 实现校验后返回 `InvalidParam` 错误。
     #[test]
     fn keycloak_pkce_flow_fails_on_invalid_verifier() {
         let config = KeycloakConfig {
@@ -1539,12 +1538,12 @@ mod tests {
         }
     }
 
-    /// T092 测试 3：`client_secret=None` 且未调用 `with_pkce`，`exchange_code` 返回错误
+    /// 测试 3：`client_secret=None` 且未调用 `with_pkce`，`exchange_code` 返回错误
     ///
     ///
     /// Red 阶段：`exchange_code` 现有实现只检查 `client_secret.is_some()`，
     /// `client_secret=None` 时直接跳过 secret 字段，不返回错误 → 测试失败。
-    /// Green 阶段（T093）：在 `exchange_code` 中校验鉴权方式后测试通过。
+    /// 在 `exchange_code` 中校验鉴权方式后测试通过。
     ///
     /// # 测试流程
     ///
@@ -1601,11 +1600,11 @@ mod tests {
         );
     }
 
-    /// T092 测试 4：同时配置 `client_secret` 和 PKCE 时，`exchange_code` 使用 PKCE 鉴权
+    /// 测试 4：同时配置 `client_secret` 和 PKCE 时，`exchange_code` 使用 PKCE 鉴权
     ///
     ///
     /// Red 阶段：`with_pkce` 方法体为 `(未实现占位)` → 调用时 panic。
-    /// Green 阶段（T093）：实现 PKCE 优先级逻辑后测试通过。
+    /// 实现 PKCE 优先级逻辑后测试通过。
     ///
     /// # 测试流程
     ///
@@ -1674,7 +1673,7 @@ mod tests {
     // 直接调用 loc! 宏避免依赖 HTTP mock，聚焦 i18n 翻译正确性。
     // ========================================================================
 
-    /// T021 i18n 测试 6：zh locale 下 keycloak-token-expired 返回中文消息（无参数）。
+    /// i18n 测试 6：zh locale 下 keycloak-token-expired 返回中文消息（无参数）。
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_token_expired_zh() {
@@ -1684,7 +1683,7 @@ mod tests {
         assert_eq!(msg, "token 已过期");
     }
 
-    /// T021 i18n 测试 7：en locale 下 keycloak-token-expired 返回英文消息（无参数）。
+    /// i18n 测试 7：en locale 下 keycloak-token-expired 返回英文消息（无参数）。
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_token_expired_en() {
@@ -1694,7 +1693,7 @@ mod tests {
         assert_eq!(msg, "Token expired");
     }
 
-    /// T021 i18n 测试 8：zh locale 下 keycloak-jwks-key-not-found 带 kid 参数返回中文。
+    /// i18n 测试 8：zh locale 下 keycloak-jwks-key-not-found 带 kid 参数返回中文。
     #[cfg(feature = "i18n")]
     #[test]
     fn loc_i18n_keycloak_jwks_key_not_found_with_kid_zh() {

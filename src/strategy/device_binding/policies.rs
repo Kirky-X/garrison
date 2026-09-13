@@ -5,7 +5,7 @@
 //!
 //! 本文件聚集不适合放在 `strict` / `loose` 子模块的策略实现与共用工具:
 //! - `check_is_new_device`:遍历 `login_id` 的历史 `TokenSession` 判断设备是否为新设备
-//! - [`Disabled`]:完全禁用设备绑定的零成本占位策略（T012）
+//! - [`Disabled`]:完全禁用设备绑定的零成本占位策略
 //!
 //! `check_is_new_device` 由 `StrictBinding` 与
 //! `LooseBinding` 复用,通过 `super::policies::check_is_new_device` 路径直接访问。

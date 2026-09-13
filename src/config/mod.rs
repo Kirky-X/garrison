@@ -90,7 +90,7 @@ pub const DEFAULT_AUTO_RENEWAL_THRESHOLD: i64 = -1;
 
 /// 默认 token map 清理间隔秒数（5 分钟）。
 ///
-/// `<= 0` 表示禁用后台清理 task（与 T028 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
+/// `<= 0` 表示禁用后台清理 task（与 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
 pub const DEFAULT_TOKEN_MAP_CLEANUP_INTERVAL: i64 = 300;
 
 /// 默认 login_token_map 持久化写入间隔秒数（0 = 同步写入）。
@@ -226,7 +226,7 @@ pub enum TenantResolverKind {
     Claim,
 }
 
-/// 审计脱敏模式（T012）。
+/// 审计脱敏模式。
 ///
 /// 控制 `AuditLogListener::mask_metadata` 的脱敏策略：
 /// - `Full`：所有 `mask_fields` 中的字段值替换为固定 `"***"`（完全屏蔽）
@@ -416,7 +416,7 @@ pub struct GarrisonConfig {
 
     /// token map 清理间隔秒数（默认 300 = 5 分钟）。
     ///
-    /// `<= 0` 表示禁用后台清理 task（与 T028 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
+    /// `<= 0` 表示禁用后台清理 task（与 `spawn_cleanup_task` 的 `interval_secs <= 0` 行为一致）。
     /// 由 `GarrisonManager::builder()` 读取后传给 `spawn_cleanup_task`。
     pub token_map_cleanup_interval_secs: i64,
 
@@ -482,7 +482,7 @@ pub struct GarrisonConfig {
     /// - `disabled`：不启用设备绑定（默认）
     ///
     /// 配置字段始终存在（非 feature-gated），策略注入由 `GarrisonManager::builder()` 根据
-    /// 此字段值决定（属于 T020 集成范畴）。
+    /// 此字段值决定（属于 集成范畴）。
     pub device_binding_mode: String,
 
     /// 顶人下线策略（is_concurrent=false 时生效）。默认 `OldDevice`。
@@ -515,12 +515,12 @@ pub struct GarrisonConfig {
     /// 仅在 `protocol-jwt` feature 启用且 `token_style="jwt"` 时有实际效果。
     pub enable_jwt_revocation: bool,
     /// 显式风险接受：允许 `token_style=jwt` + `jwt_mode=Stateless` + `enable_jwt_revocation=false`
-    /// 的不安全组合（不可吊销的永久 JWT 凭证）。默认 `false`（R-sessiontokenconsistency / T017 互斥校验）。
+    /// 的不安全组合（不可吊销的永久 JWT 凭证）。默认 `false`（R-sessiontokenconsistency / 互斥校验）。
     ///
     /// 仅当运维明确知悉风险并承担后果时设为 `true`；正常部署应使用 `enable_jwt_revocation=true` 或 `JwtMode::Mixin`。
     pub allow_stateless_jwt_no_revocation: bool,
 
-    /// 审计日志脱敏模式（T012）。默认 `Partial`。
+    /// 审计日志脱敏模式。默认 `Partial`。
     ///
     /// - `Full`：所有 `mask_fields` 字段值替换为 `"***"`（完全屏蔽）
     /// - `Partial`：使用 `SensitiveDataMasker` 类型感知脱敏（如手机号 → `138****1234`）
