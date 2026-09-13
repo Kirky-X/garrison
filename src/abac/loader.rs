@@ -6,7 +6,7 @@
 //! 引入 `EntityLoader` 抽象，让调用方注入实体数据源，
 //! 支持基于实体属性的策略（如 `resource.owner == principal.id`）。
 //!
-//! - `EmptyEntityLoader`：返回空 Entities（默认实现，保持向后兼容）
+//! - `EmptyEntityLoader`：返回空 Entities（默认实现）
 //! - `StaticEntityLoader`：持有预构造 Entities，每次 clone 返回（测试用）
 //!
 //! # 缓存语义

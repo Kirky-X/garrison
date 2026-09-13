@@ -12,7 +12,7 @@
 
 use std::sync::Arc;
 
-use crate::account::disable::DisableRepository;
+use crate::account::disable::{DefaultDisableRepository, DisableRepository};
 use crate::config::GarrisonConfig;
 use crate::core::auth::AuthLogic;
 use crate::core::permission::PermissionChecker;
@@ -45,7 +45,7 @@ pub struct GarrisonLogicFactoryContext {
     pub auth_logic: Option<Arc<dyn AuthLogic>>,
     /// 权限校验器（None 表示不注入，check_permission 委托 firewall）。
     pub permission_checker: Option<Arc<dyn PermissionChecker>>,
-    /// 封禁库（None 表示不注入，check_disable 返回 Ok 向后兼容 0.6.4 之前）。
+    /// 封禁库（None 表示未提供，factory 回退为基于 session DAO 的 `DefaultDisableRepository`）。
     pub disable_repository: Option<Arc<dyn DisableRepository>>,
     /// 三级缓存服务（仅 `three-tier-cache` feature 下存在；None 表示不注入）。
     #[cfg(feature = "three-tier-cache")]
@@ -109,7 +109,12 @@ pub fn garrison_logic_factory_default(
     firewall: Arc<dyn GarrisonPermissionStrategy>,
     ctx: &GarrisonLogicFactoryContext,
 ) -> GarrisonResult<Arc<GarrisonLogicDefault>> {
-    let mut builder = GarrisonLogicDefault::new(session, config, firewall);
+    // ctx 未携带封禁库时，基于 session 的 DAO 构造默认实现（check_disable 始终生效）
+    let disable_repository: Arc<dyn DisableRepository> = ctx
+        .disable_repository
+        .clone()
+        .unwrap_or_else(|| Arc::new(DefaultDisableRepository::new(session.dao().clone())));
+    let mut builder = GarrisonLogicDefault::new(session, config, firewall, disable_repository);
     if let Some(pm) = ctx.plugin_manager.clone() {
         builder = builder.with_plugin_manager(pm);
     }
@@ -122,9 +127,6 @@ pub fn garrison_logic_factory_default(
     }
     if let Some(pc) = ctx.permission_checker.clone() {
         builder = builder.with_permission_checker(pc);
-    }
-    if let Some(dr) = ctx.disable_repository.clone() {
-        builder = builder.with_disable_repository(dr);
     }
     #[cfg(feature = "three-tier-cache")]
     if let Some(ucs) = ctx.user_cache_service.clone() {

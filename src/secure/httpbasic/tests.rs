@@ -152,7 +152,10 @@ fn credential_debug_redacts_pass() {
         "Debug 输出不应包含明文密码，实际: {}",
         debug
     );
-    assert!(debug.contains("<redacted>"), "Debug 输出应含 <redacted> 占位符");
+    assert!(
+        debug.contains("<redacted>"),
+        "Debug 输出应含 <redacted> 占位符"
+    );
     // PartialEq 不受手动 Debug 影响
     let cred2 = HttpBasicAuth::decode(&encoded).unwrap();
     assert_eq!(cred, cred2);

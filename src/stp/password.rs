@@ -359,7 +359,7 @@ mod tests {
         /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
         fn make_logic_without_creds() -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -367,7 +367,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
         }
 
         /// 未注入 password_hasher 时返回 Config("stp-password-hasher-not-configured")。

@@ -118,7 +118,7 @@ pub trait Credential: Send + Sync {
 /// | `id` | `String` | 凭证 ID（UUID v4） |
 /// | `user_id` | `String` | 用户 ID（关联 login_id） |
 /// | `credential_type` | `String` | 凭证类型（`"password"` / `"totp"` / ...） |
-    /// | `secret_data` | `String` | 凭证数据（hash / secret / public key，JSON 编码）。**敏感字段**：仅启用 `credential-zeroize` feature 时 drop 后自动清零（见 struct 级安全注意） |
+/// | `secret_data` | `String` | 凭证数据（hash / secret / public key，JSON 编码）。**敏感字段**：仅启用 `credential-zeroize` feature 时 drop 后自动清零（见 struct 级安全注意） |
 /// | `label` | `Option<String>` | 用户自定义标签（如 `"iPhone TOTP"`） |
 /// | `created_at` | `i64` | 创建时间（Unix 时间戳） |
 /// | `enabled` | `bool` | 是否启用 |

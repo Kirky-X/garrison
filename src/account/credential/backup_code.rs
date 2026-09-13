@@ -510,7 +510,10 @@ mod tests {
     fn ct_eq_hex_comparison_semantics() {
         let h = sha256_hex("AAAA-AAAA-AAAA");
         assert!(ct_eq_hex(&h, &h), "相同哈希应相等");
-        assert!(!ct_eq_hex(&h, &sha256_hex("BBBB-BBBB-BBBB")), "不同哈希应不等");
+        assert!(
+            !ct_eq_hex(&h, &sha256_hex("BBBB-BBBB-BBBB")),
+            "不同哈希应不等"
+        );
         assert!(!ct_eq_hex(&h, "short"), "长度不等应返回 false");
         assert!(ct_eq_hex("", ""), "空串应相等");
     }

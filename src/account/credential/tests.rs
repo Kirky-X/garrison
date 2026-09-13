@@ -895,11 +895,12 @@ async fn mock_find_by_user_and_type_isolated_per_user() {
         .unwrap();
 
     // bob 的 password 查询只返回 bob 的凭证（不泄露 alice 的）
-    let bob_passwords = repo
-        .find_by_user_and_type("bob", "password")
-        .await
-        .unwrap();
-    assert_eq!(bob_passwords.len(), 1, "bob 的 password 查询应只含 bob 的凭证");
+    let bob_passwords = repo.find_by_user_and_type("bob", "password").await.unwrap();
+    assert_eq!(
+        bob_passwords.len(),
+        1,
+        "bob 的 password 查询应只含 bob 的凭证"
+    );
     assert_eq!(bob_passwords[0].id, "c2");
     assert!(
         bob_passwords.iter().all(|c| c.user_id == "bob"),
@@ -929,15 +930,19 @@ async fn dao_find_by_user_and_type_isolated_per_user() {
         .await
         .unwrap();
 
-    let bob_passwords = repo
-        .find_by_user_and_type("bob", "password")
-        .await
-        .unwrap();
-    assert_eq!(bob_passwords.len(), 1, "DAO: bob 的 password 查询应只含 bob 的凭证");
+    let bob_passwords = repo.find_by_user_and_type("bob", "password").await.unwrap();
+    assert_eq!(
+        bob_passwords.len(),
+        1,
+        "DAO: bob 的 password 查询应只含 bob 的凭证"
+    );
     assert_eq!(bob_passwords[0].id, "c2");
 
     // carol 无凭证 → 空结果，不报错也不泄露他人凭证
-    let carol = repo.find_by_user_and_type("carol", "password").await.unwrap();
+    let carol = repo
+        .find_by_user_and_type("carol", "password")
+        .await
+        .unwrap();
     assert!(carol.is_empty(), "无凭证用户应返回空 Vec");
 }
 

@@ -231,10 +231,7 @@ impl QuotaStorage for GarrisonDaoQuotaStorage {
                     );
                 }
             }
-            return Ok(Self::denied_result(
-                limit,
-                new_count.saturating_sub(cost),
-            ));
+            return Ok(Self::denied_result(limit, new_count.saturating_sub(cost)));
         }
 
         // 初始化/更新元数据（首次消费时设置窗口）
@@ -279,10 +276,10 @@ impl QuotaStorage for GarrisonDaoQuotaStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::tests::MockDao;
+    use crate::dao::InMemoryDao;
 
     fn make_dao() -> Arc<dyn GarrisonDao> {
-        Arc::new(MockDao::new())
+        Arc::new(InMemoryDao::new())
     }
 
     // --- GarrisonDaoQuotaStorage 测试 ---

@@ -50,13 +50,16 @@
 /// - `revoked`: 是否已撤销（rotate 后旧 token 标记为 true）
 /// - `created_at`: 创建时间（Unix 秒）
 ///
-/// ## OAuth2 扩展字段（v0.7.1 新增，`#[serde(default)]` 向后兼容）
+/// ## OAuth2 扩展字段（JWT 模块生成的记录为 `None`）
 ///
 /// - `client_id`: OAuth2 客户端 ID（JWT 模块不使用，设为 `None`）
 /// - `scopes`: OAuth2 授权的 scope 列表（空格分隔，JWT 模块不使用）
 /// - `username`: OAuth2 password grant type 用户名（JWT 模块不使用）
 /// - `user_id`: OAuth2 user_id（与 `login_id` 区分：`login_id` 是 JWT 模块的 i64 ID，
 ///   `user_id` 是 OAuth2 的 `Option<i64>`，`client_credentials` 时为 `None`）
+///
+/// 反序列化时这 4 个字段必须**显式存在**（值可为 `null`），缺失任一字段即失败
+/// （fail-closed，见 [`deserialize_required_option`]）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RefreshTokenRecord {
     /// 当前 token 的 SHA-256 哈希（主键）。
@@ -76,18 +79,31 @@ pub struct RefreshTokenRecord {
     /// 创建时间（Unix 秒）。
     pub created_at: i64,
 
-    /// OAuth2 客户端 ID（v0.7.1 新增，JWT 模块不使用）。
-    #[serde(default)]
+    /// OAuth2 客户端 ID（JWT 模块不使用）。
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub client_id: Option<String>,
-    /// OAuth2 授权的 scope 列表（空格分隔，v0.7.1 新增）。
-    #[serde(default)]
+    /// OAuth2 授权的 scope 列表（空格分隔）。
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub scopes: Option<String>,
-    /// OAuth2 password grant type 用户名（v0.7.1 新增）。
-    #[serde(default)]
+    /// OAuth2 password grant type 用户名。
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub username: Option<String>,
-    /// OAuth2 user_id（与 `login_id` 区分，v0.7.1 新增）。
-    #[serde(default)]
+    /// OAuth2 user_id（与 `login_id` 区分）。
+    #[serde(deserialize_with = "deserialize_required_option")]
     pub user_id: Option<i64>,
+}
+
+/// serde `deserialize_with` 辅助：`Option<T>` 字段显式必填（key 缺失即反序列化失败）。
+///
+/// serde 默认把 `Option<T>` 字段的 key 缺失解释为 `None`；本辅助使字段缺失时返回
+/// `missing field` 错误，key 显式存在时 `null` → `None`、有值 → `Some`（fail-closed）。
+fn deserialize_required_option<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    use serde::Deserialize as _;
+    Option::<T>::deserialize(deserializer)
 }
 
 // ============================================================================
@@ -230,12 +246,13 @@ mod service {
                 .map_err(|e| GarrisonError::Dao(format!("jwt-refresh-claim::{}", e)))?;
             if claimed.rows_affected() == 0 {
                 // 未抢到消费权：token 不存在，或已被并发 rotate 消费。
-                // 先释放本调用方持有的连接再返回（避免单连接池下占用）。
+                // 立即返回以释放本调用方持有的池连接（session 在此 drop），
+                // 不得在持有连接时调用 detect_reuse/revoke_chain（单连接池下
+                // 会自等待直至 acquire 超时）。
                 // 此处**不**吊销整链：并发落败方与胜者是同一客户端的同时请求
                 // （网络重试是常态），若按重用吊销链会误杀胜者刚签发的新 token；
                 // 真正的「消费后再次呈现」重用由入口处的 detect_reuse 预检
                 // （本函数第 2 步）负责识别并吊销整链。
-                drop(conn);
                 drop(session);
                 return Err(GarrisonError::InvalidToken(
                     "jwt-refresh-token-consumed::".to_string(),
@@ -697,14 +714,10 @@ mod tests {
         assert_eq!(record.user_id, None);
     }
 
-    /// T001 Red→Green: 旧 JSON（无 OAuth2 扩展字段）反序列化成功，新字段为 None。
-    ///
-    /// 验证 `#[serde(default)]` 向后兼容：v0.7.0 及更早版本序列化的
-    /// `RefreshTokenRecord` JSON 不含 client_id/scopes/username/user_id，
-    /// v0.7.1 反序列化时这些字段应为 None。
+    /// OAuth2 扩展字段为必填：JSON 缺失任一字段即反序列化失败（fail-closed）。
     #[test]
-    fn refresh_token_record_old_json_deserializes_with_none_new_fields() {
-        let old_json = r#"{
+    fn refresh_token_record_requires_oauth2_fields() {
+        let json = r#"{
             "token_hash": "abc123",
             "parent_token_hash": null,
             "login_id": 42,
@@ -714,21 +727,12 @@ mod tests {
             "revoked": false,
             "created_at": 1699000000
         }"#;
-        let record: RefreshTokenRecord = serde_json::from_str(old_json)
-            .expect("旧 JSON 反序列化应成功（#[serde(default)] 保证向后兼容）");
-        assert_eq!(record.token_hash, "abc123");
-        assert_eq!(record.parent_token_hash, None);
-        assert_eq!(record.login_id, 42);
-        assert_eq!(record.tenant_id, 1);
-        assert_eq!(record.key_version, 2);
-        assert_eq!(record.expires_at, 1700000000);
-        assert!(!record.revoked);
-        assert_eq!(record.created_at, 1699000000);
-        // 新字段应为 None
-        assert_eq!(record.client_id, None);
-        assert_eq!(record.scopes, None);
-        assert_eq!(record.username, None);
-        assert_eq!(record.user_id, None);
+        let result = serde_json::from_str::<RefreshTokenRecord>(json);
+        assert!(
+            result.is_err(),
+            "缺失 OAuth2 扩展字段的 JSON 应反序列化失败，实际: {:?}",
+            result
+        );
     }
 
     /// T001 Red→Green: 含 OAuth2 扩展字段的 JSON 序列化-反序列化往返一致。
@@ -1299,10 +1303,10 @@ mod db_sqlite_tests {
         assert!(old_record.is_none(), "旧 token 应已 revoked");
     }
 
-    /// T005 Red→Green: 旧记录（新字段 NULL）rotate 后新记录字段也为 None。
+    /// T005: OAuth2 字段为 NULL 的记录 rotate 后，新记录字段也为 None。
     ///
-    /// 验证向后兼容：v0.7.0 及更早的 refresh_tokens 记录不含 OAuth2 字段，
-    /// rotate 后新记录的 OAuth2 字段也应为 None。
+    /// JWT 模块签发的记录不含 OAuth2 字段（列为 NULL）；
+    /// rotate 链式继承：新记录的 OAuth2 字段继承旧记录的 NULL。
     #[tokio::test(flavor = "multi_thread")]
     async fn rotate_old_record_with_null_new_fields_inherits_none() {
         let pool = setup_db().await;
@@ -1310,8 +1314,8 @@ mod db_sqlite_tests {
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
-        // 使用旧格式 INSERT（不含 OAuth2 字段，模拟 v0.7.0 记录）
-        let old_token = "legacy_token_value";
+        // INSERT 不含 OAuth2 字段（列为 NULL，如 JWT 模块签发的记录）
+        let old_token = "rotation_source_token";
         let old_hash = sha256_hex(old_token);
         insert_refresh_token(&pool, &old_hash, None, 1, 0, 1, 9999, 0).await;
 

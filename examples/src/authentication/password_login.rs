@@ -89,13 +89,25 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 4. 构造 GarrisonLogicDefault，注入 hasher + user_repository
     let config = Arc::new(GarrisonConfig::default_config());
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 7_776_000));
+    let session = Arc::new(GarrisonSession::new(
+        dao.clone(),
+        timeout,
+        timeout,
+        7_776_000,
+    ));
     let firewall = Arc::new(GarrisonPermissionStrategyDefault::new(Arc::new(
         NoopInterface,
     )));
-    let logic = GarrisonLogicDefault::new(session, config, firewall)
-        .with_password_hasher(hasher)
-        .with_user_repository(user_repo);
+    let logic = GarrisonLogicDefault::new(
+        session,
+        config,
+        firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao.clone(),
+        )),
+    )
+    .with_password_hasher(hasher)
+    .with_user_repository(user_repo);
 
     // 5. 正确密码登录
     let token = logic

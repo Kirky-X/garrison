@@ -144,10 +144,11 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// stp 层 `check_permission` 的 firewall 回退路径通过此方法把请求级 `tenant_id`
     /// 传入策略（batch-08 修复：此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
     ///
-    /// # 默认实现
+    /// # 必须实现
     ///
-    /// 忽略 `tenant_id`，委托 [`check_permission`](Self::check_permission)（向后兼容）。
-    /// 支持租户隔离的策略应覆写此方法，将 `tenant_id` 纳入权限判定或缓存键。
+    /// 实现方**必须**将 `tenant_id` 纳入权限判定或缓存键：
+    /// - 数据源按租户隔离的策略应以 `tenant_id` 过滤数据 / 隔离缓存键；
+    /// - 数据源与租户无关的策略应显式说明这一点（而非静默丢弃参数）。
     ///
     /// # 参数
     /// - `tenant_id`: 请求级租户 ID（0 表示单租户/未隔离）。
@@ -155,12 +156,10 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// - `permission`: 权限标识字符串。
     async fn check_permission_in_tenant(
         &self,
-        _tenant_id: i64,
+        tenant_id: i64,
         login_id: &str,
         permission: &str,
-    ) -> GarrisonResult<bool> {
-        self.check_permission(login_id, permission).await
-    }
+    ) -> GarrisonResult<bool>;
 
     /// 校验角色：检查主体是否持有指定角色。
     ///
@@ -181,10 +180,11 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// stp 层 `check_role` 的 firewall 回退路径通过此方法把请求级 `tenant_id`
     /// 传入策略（batch-08 修复：此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
     ///
-    /// # 默认实现
+    /// # 必须实现
     ///
-    /// 忽略 `tenant_id`，委托 [`check_role`](Self::check_role)（向后兼容）。
-    /// 支持租户隔离的策略应覆写此方法，将 `tenant_id` 纳入角色判定。
+    /// 实现方**必须**将 `tenant_id` 纳入角色判定：
+    /// - 数据源按租户隔离的策略应以 `tenant_id` 过滤角色数据；
+    /// - 数据源与租户无关的策略应显式说明这一点（而非静默丢弃参数）。
     ///
     /// # 参数
     /// - `tenant_id`: 请求级租户 ID（0 表示单租户/未隔离）。
@@ -192,12 +192,10 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// - `role`: 角色标识字符串。
     async fn check_role_in_tenant(
         &self,
-        _tenant_id: i64,
+        tenant_id: i64,
         login_id: &str,
         role: &str,
-    ) -> GarrisonResult<bool> {
-        self.check_role(login_id, role).await
-    }
+    ) -> GarrisonResult<bool>;
 
     /// 校验角色（任一匹配）：主体持有 `roles` 中任意一个即通过。
     ///
@@ -255,8 +253,9 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
 
     /// 登录前防火墙安全钩子检查。
     ///
-    /// 默认实现为 no-op（向后兼容 0.2.x）。`GarrisonPermissionStrategyDefault` 在注入
-    /// `GarrisonFirewallCheckHook` 后按序调用 5 个 hook，任一 Err 阻断登录。
+    /// 必须实现：实现方声明登录前的安全检查行为——注入了防火墙 hook 的策略
+    /// （如 `GarrisonPermissionStrategyDefault`）按序调用 5 个 hook，任一 Err 阻断登录；
+    /// 纯权限校验用途的策略可显式实现为 no-op。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -273,9 +272,7 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
         feature = "firewall",
         feature = "oauth2-server"
     ))]
-    async fn check_login_hooks(&self, _login_id: &str, _ctx: &LoginContext) -> GarrisonResult<()> {
-        Ok(())
-    }
+    async fn check_login_hooks(&self, login_id: &str, ctx: &LoginContext) -> GarrisonResult<()>;
 
     /// 诊断：防火墙 hook 是否已注入（用于 builder 自动装配自检）。
     ///
@@ -318,7 +315,7 @@ pub struct GarrisonPermissionStrategyDefault {
     /// 可选租户维度，用于权限缓存键隔离（T023）。
     ///
     /// `Some(t)` 时缓存键为 `garrison:perm:cache:<t>:<login_id>:<permission>`；
-    /// `None` 时使用占位符 `_`，保持向后兼容（无租户隔离）。
+    /// `None` 时使用占位符 `_`（未配置租户隔离，所有租户共享缓存键）。
     tenant_id: Option<i64>,
     /// 默认 login_type（多账号体系，batch-08 接线 `_with_type` 回调）。
     ///

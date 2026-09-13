@@ -183,9 +183,10 @@ impl SsoChannel for RedisPubSubSsoChannel {
                             Ok(payload_str) => {
                                 // 在 catch_unwind 中调用 handler，防止 panic 中断订阅（spec R-005）
                                 let handler_clone = handler.clone();
-                                let result = std::panic::catch_unwind(AssertUnwindSafe(move || {
-                                    handler_clone(payload_str);
-                                }));
+                                let result =
+                                    std::panic::catch_unwind(AssertUnwindSafe(move || {
+                                        handler_clone(payload_str);
+                                    }));
                                 if result.is_err() {
                                     tracing::warn!(
                                         "SSO channel handler panic: topic={}, continue subscribing",
@@ -225,11 +226,7 @@ impl SsoChannel for RedisPubSubSsoChannel {
                 match client.get_async_pubsub().await {
                     Ok(mut p) => {
                         if let Err(e) = p.subscribe(&topic).await {
-                            tracing::error!(
-                                "Redis resubscribe failed: topic={}, err={}",
-                                topic,
-                                e
-                            );
+                            tracing::error!("Redis resubscribe failed: topic={}, err={}", topic, e);
                             return;
                         }
                         pubsub = p;
@@ -518,7 +515,10 @@ mod tests {
 
         // JoinHandle 已登记（不再即弃）：shutdown 可停止任务并返回计数
         let stopped = channel.shutdown();
-        assert!(stopped >= 1, "shutdown 应停止至少 1 个订阅任务，实际: {stopped}");
+        assert!(
+            stopped >= 1,
+            "shutdown 应停止至少 1 个订阅任务，实际: {stopped}"
+        );
     }
 
     /// payload 非 UTF-8 时走解析失败 warn 分支：handler 不被调用，

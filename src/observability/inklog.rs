@@ -83,7 +83,10 @@ pub async fn init_inklog_logging_with_fallback() -> InklogInit {
                     // （降级路径实际不可用，必须以 warn 暴露，不得静默吞掉）
                     let msg = init_err.to_string();
                     if msg.contains("already") {
-                        tracing::debug!("tracing subscriber already initialized, skip: {}", init_err);
+                        tracing::debug!(
+                            "tracing subscriber already initialized, skip: {}",
+                            init_err
+                        );
                     } else {
                         tracing::warn!(
                             error = %init_err,

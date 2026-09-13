@@ -449,18 +449,18 @@ mod tests {
         assert!(!result, "错误密码应返回 Ok(false)");
     }
 
-    /// R-003: BcryptHasher::verify 识别 $2a$ 格式（兼容旧 bcrypt）。
+    /// R-003: BcryptHasher::verify 识别 $2a$ 格式（标准 bcrypt 前缀变体）。
     #[test]
     fn bcrypt_verify_recognizes_2a_format() {
         let hasher = BcryptHasher::default();
-        // 先生成 $2b$ 哈希，然后把 $2b$ 改成 $2a$ 验证兼容性
+        // 先生成 $2b$ 哈希，然后把 $2b$ 改成 $2a$ 验证前缀识别
         let hash = hasher.hash("password").unwrap();
         let hash_2a = hash.replacen("$2b$", "$2a$", 1);
         let result = hasher.verify("password", &hash_2a).unwrap();
         assert!(result, "BcryptHasher 应识别 $2a$ 格式");
     }
 
-    /// R-003: BcryptHasher::verify 识别 $2y$ 格式（兼容旧 bcrypt）。
+    /// R-003: BcryptHasher::verify 识别 $2y$ 格式（标准 bcrypt 前缀变体）。
     #[test]
     fn bcrypt_verify_recognizes_2y_format() {
         let hasher = BcryptHasher::default();

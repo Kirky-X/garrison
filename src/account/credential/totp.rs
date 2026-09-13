@@ -119,7 +119,13 @@ impl TotpCredential {
     /// # 返回
     /// - `true`: 首次使用（已原子记录）。
     /// - `false`: 窗口内的重放（拒绝）。
-    fn check_and_record_replay(user_id: &str, cred_id: &str, code: &str, step: u64, now: i64) -> bool {
+    fn check_and_record_replay(
+        user_id: &str,
+        cred_id: &str,
+        code: &str,
+        step: u64,
+        now: i64,
+    ) -> bool {
         use std::collections::HashMap;
         use std::sync::{LazyLock, Mutex};
         static SEEN: LazyLock<Mutex<HashMap<String, i64>>> =

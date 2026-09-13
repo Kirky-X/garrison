@@ -65,7 +65,6 @@ impl UserCacheService {
     /// - `interface`: L3 数据源（`Arc<dyn GarrisonPermissionStrategy>`）。
     /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0）。若为 0，L1 条目将立即过期，缓存形同虚设。
     /// - `l2_ttl_secs`: L2 DAO 缓存 TTL（秒，必须 > 0）。若为 0，L2 写入将使用永久 TTL，可能导致内存泄漏。
-    /// - `l1_capacity`: L1 缓存最大容量（oxcache 0.3 使用默认 capacity，此参数保留向后兼容）。
     ///
     /// # 返回
     /// 已初始化的 `UserCacheService` 实例。
@@ -77,7 +76,7 @@ impl UserCacheService {
     /// # 示例
     /// ```ignore
     /// // TTL 为 0 时将返回错误
-    /// let result = UserCacheService::new(dao, interface, 0, 300, 10000);
+    /// let result = UserCacheService::new(dao, interface, 0, 300);
     /// assert!(result.is_err());
     /// ```
     pub fn new(
@@ -85,7 +84,6 @@ impl UserCacheService {
         interface: Arc<dyn GarrisonPermissionStrategy>,
         l1_ttl_secs: u64,
         l2_ttl_secs: u64,
-        l1_capacity: u64,
     ) -> GarrisonResult<Self> {
         // Issue 32: 验证 TTL 参数，防止 0 值导致缓存失效或内存泄漏
         if l1_ttl_secs == 0 {
@@ -98,7 +96,7 @@ impl UserCacheService {
                 "cache-l2-ttl-must-positive".to_string(),
             ));
         }
-        let _ = l1_capacity; // oxcache 0.3 Cache::new() 使用默认 capacity（10000）
+        // oxcache 0.3 Cache::new() 使用默认 capacity（10000）
         let l1 = Cache::new();
         Ok(Self {
             l1,
@@ -779,6 +777,43 @@ mod tests {
             }
             Ok(self.user_info.lock().get(login_id).cloned().unwrap_or(None))
         }
+
+        async fn check_permission_in_tenant(
+            &self,
+            _tenant_id: i64,
+            _login_id: &str,
+            _permission: &str,
+        ) -> GarrisonResult<bool> {
+            // 测试桩与租户无关：任意租户返回相同结果
+            Ok(false)
+        }
+
+        async fn check_role_in_tenant(
+            &self,
+            _tenant_id: i64,
+            _login_id: &str,
+            _role: &str,
+        ) -> GarrisonResult<bool> {
+            // 测试桩与租户无关：任意租户返回相同结果
+            Ok(false)
+        }
+
+        #[cfg(any(
+            feature = "sms-rate-limit",
+            feature = "firewall-ratelimit",
+            feature = "firewall-bruteforce",
+            feature = "firewall-ddos",
+            feature = "firewall",
+            feature = "oauth2-server"
+        ))]
+        async fn check_login_hooks(
+            &self,
+            _login_id: &str,
+            _ctx: &crate::strategy::hooks::LoginContext,
+        ) -> GarrisonResult<()> {
+            // 测试桩不注入防火墙 hook，显式 no-op
+            Ok(())
+        }
     }
 
     // ------------------------------------------------------------------------
@@ -801,7 +836,6 @@ mod tests {
             interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
             l1_ttl_secs,
             l2_ttl_secs,
-            10_000,
         )
         .expect("UserCacheService::new 应成功");
         (dao, interface, service)
@@ -1072,7 +1106,6 @@ mod tests {
                 interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
-                10_000,
             )
             .expect("UserCacheService::new 应成功"),
         );
@@ -1276,7 +1309,6 @@ mod tests {
                 interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
-                10_000,
             )
             .expect("UserCacheService::new 应成功"),
         );
@@ -1325,7 +1357,6 @@ mod tests {
                 interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
-                10_000,
             )
             .expect("UserCacheService::new 应成功"),
         );
@@ -1367,7 +1398,6 @@ mod tests {
                 interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
-                10_000,
             )
             .expect("UserCacheService::new 应成功"),
         );
@@ -1403,7 +1433,6 @@ mod tests {
                 interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
                 30,
                 300,
-                10_000,
             )
             .expect("UserCacheService::new 应成功"),
         );
@@ -2346,26 +2375,6 @@ mod tests {
     // 补充测试：UserCacheService::new 边缘条件
     // ------------------------------------------------------------------------
 
-    /// T49: UserCacheService::new 接受 l1_capacity=0（参数保留但 oxcache 使用默认 capacity）。
-    #[tokio::test]
-    async fn new_accepts_zero_l1_capacity() {
-        let dao = Arc::new(CountingMockDao::new());
-        let interface = Arc::new(CountingMockInterface::new());
-        let service = UserCacheService::new(
-            dao.clone() as Arc<dyn GarrisonDao>,
-            interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
-            30,
-            300,
-            0, // l1_capacity=0
-        );
-        assert!(service.is_ok(), "l1_capacity=0 应成功创建 service");
-
-        // 验证 service 可正常使用
-        interface.set_permissions("49001", vec!["perm:a".to_string()]);
-        let perms = service.unwrap().get_permissions("49001").await.unwrap();
-        assert_eq!(perms, vec!["perm:a".to_string()]);
-    }
-
     /// T50: UserCacheService::new 接受不同 TTL 值并正确存储。
     #[tokio::test]
     async fn new_stores_ttl_values_correctly() {
@@ -2376,7 +2385,6 @@ mod tests {
             interface.clone() as Arc<dyn GarrisonPermissionStrategy>,
             120,
             3600,
-            10_000,
         )
         .unwrap();
 

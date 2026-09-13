@@ -441,7 +441,10 @@ mod tests {
         assert!(!route_matches("/users/{id}", "/users/")); // 空段不匹配
         assert!(!route_matches("/users/{id}", "/users/123/extra"));
         // 混合新旧语法与静态段
-        assert!(route_matches("/api/{version}/users/:id", "/api/v1/users/42"));
+        assert!(route_matches(
+            "/api/{version}/users/:id",
+            "/api/v1/users/42"
+        ));
         assert!(!route_matches(
             "/api/{version}/users/:id",
             "/api/v1/items/42"

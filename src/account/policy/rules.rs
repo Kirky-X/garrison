@@ -325,7 +325,7 @@ impl PasswordPolicyRule for NotCommonPasswordRule {
 /// # 过期检测
 ///
 /// 通过 `PolicyContext::password_created_at`（Unix 秒）判断密码年龄：
-/// - `None` → **fail-open**（向后兼容，不阻塞密码修改）
+/// - `None` → **fail-open**（创建时间未知，无法判断过期，不阻塞密码修改）
 /// - `Some(ts)` → 计算 `now - ts > days * 86400`，过期则返回 `PolicyError`
 pub struct MaxAgeRule {
     /// 密码最大有效天数。

@@ -506,7 +506,7 @@ mod tests {
     #[tokio::test]
     async fn test_consume_with_weight_schedule() {
         let mut schedule = CreditSchedule::new();
-        schedule.insert("sms", 5);
+        schedule.insert("sms", 5).unwrap();
         let config = CreditConfig {
             credit_limit: 100,
             cycle: CreditCycle::Rolling { days: 30 },

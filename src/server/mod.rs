@@ -86,9 +86,15 @@ impl std::fmt::Debug for AuthServerConfig {
         f.debug_struct("AuthServerConfig")
             .field("external_port", &self.external_port)
             .field("internal_port", &self.internal_port)
-            .field("external_rate_limit_per_ip", &self.external_rate_limit_per_ip)
+            .field(
+                "external_rate_limit_per_ip",
+                &self.external_rate_limit_per_ip,
+            )
             .field("rate_limit_max_entries", &self.rate_limit_max_entries)
-            .field("rate_limit_trusted_proxies", &self.rate_limit_trusted_proxies)
+            .field(
+                "rate_limit_trusted_proxies",
+                &self.rate_limit_trusted_proxies,
+            )
             .field("internal_api_key", &"[REDACTED]")
             .field("external_body_limit", &self.external_body_limit)
             .field("internal_body_limit", &self.internal_body_limit)
@@ -124,7 +130,7 @@ pub struct GarrisonAuthServer {
     /// `Some(resolver)` 时，external_router / internal_router 自动注入
     /// `tenant_resolution_middleware`，从请求 headers 解析 `TenantContext` 并
     /// 在 `TENANT` task_local scope 内执行下游 handler。
-    /// `None` 时跳过租户中间件（向后兼容单租户场景或测试桩）。
+    /// `None` 表示未启用租户隔离（单租户部署），不注入租户中间件。
     #[cfg(feature = "tenant-isolation")]
     tenant_resolver: Option<Arc<dyn TenantResolver>>,
     #[cfg(feature = "oauth2-server")]

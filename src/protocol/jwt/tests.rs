@@ -52,7 +52,7 @@ fn claims_device_none_serializes_as_null() {
     assert!(!json.contains("nbf"), "nbf=None 时不应序列化 nbf 字段");
 }
 
-/// jti=None 时序列化结果不含 jti 字段（向后兼容旧 token）。
+/// jti=None 时序列化结果不含 jti 字段（`skip_serializing_if`）。
 #[test]
 fn claims_jti_none_skipped_in_json() {
     let claims = GarrisonJwtClaims {
@@ -84,14 +84,14 @@ fn sign_generates_unique_jti() {
     assert_ne!(c1.jti, c2.jti, "两个 token 的 jti 应不同");
 }
 
-/// 旧 token（无 jti 字段）仍可反序列化（向后兼容）。
+/// 无 jti 字段的 claims 仍可反序列化（RFC 7519 中 jti 为可选 claim）。
 #[test]
 fn claims_without_jti_deserializes() {
     let json =
         r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":"1001","device":"web"}"#;
     let claims: GarrisonJwtClaims = serde_json::from_str(json).unwrap();
     assert_eq!(claims.sub, "1001");
-    assert_eq!(claims.jti, None, "旧 token 无 jti 字段时应反序列化为 None");
+    assert_eq!(claims.jti, None, "无 jti 字段时应反序列化为 None");
 }
 
 /// GarrisonJwtClaims 可反序列化。
@@ -325,7 +325,7 @@ fn verify_past_nbf_returns_ok() {
     assert!(result.is_ok(), "nbf = 过去应通过校验: {:?}", result.err());
 }
 
-/// verify 接受无 nbf 字段的旧 token（向后兼容）。
+/// verify 接受无 nbf 字段的 token（RFC 7519 中 nbf 为可选 claim）。
 #[test]
 fn verify_token_without_nbf_field_returns_ok() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -346,13 +346,9 @@ fn verify_token_without_nbf_field_returns_ok() {
     let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
     let token = jsonwebtoken::encode(&header, &claims_json, &key).unwrap();
     let result = handler.verify(&token);
-    assert!(
-        result.is_ok(),
-        "无 nbf 字段应通过校验（向后兼容）: {:?}",
-        result.err()
-    );
+    assert!(result.is_ok(), "无 nbf 字段应通过校验: {:?}", result.err());
     let claims = result.unwrap();
-    assert!(claims.nbf.is_none(), "旧 token nbf 应为 None");
+    assert!(claims.nbf.is_none(), "无 nbf 字段时 claims.nbf 应为 None");
 }
 
 // ============================================================================
@@ -376,21 +372,6 @@ fn refresh_invalid_token_fails() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let result = handler.refresh("invalid.token.here", 3600);
     assert!(result.is_err());
-}
-
-/// JwtClaims 类型别名兼容 0.1.0 代码。
-#[test]
-fn jwt_claims_alias_works() {
-    let claims: JwtClaims = GarrisonJwtClaims {
-        sub: "1".to_string(),
-        iat: 0,
-        exp: 0,
-        login_id: "1".to_string(),
-        device: None,
-        jti: None,
-        nbf: None, // 补充 nbf 字段
-    };
-    assert_eq!(claims.login_id, "1");
 }
 
 // ============================================================================

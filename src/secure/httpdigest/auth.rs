@@ -50,12 +50,12 @@ impl HttpDigestAuth {
     pub fn new(realm: &str, algorithm: &str) -> GarrisonResult<Self> {
         let algorithm: DigestAlgorithm = algorithm.parse()?;
         if algorithm == DigestAlgorithm::Md5 {
-            // MD5 无编译期 feature 门控（兼容旧客户端），改为运行时告警便于审计每次使用
+            // MD5 无编译期 feature 门控，改为运行时告警便于审计每次使用
             // （MD5 已被证明存在碰撞攻击，新系统应使用 SHA256）
             tracing::warn!(
                 realm = %realm,
                 algorithm = "MD5",
-                "HttpDigestAuth constructed with MD5; MD5 is collision-broken and must only be used for legacy client compatibility"
+                "HttpDigestAuth constructed with MD5; MD5 is collision-broken and must not be used in new deployments (use SHA256)"
             );
         }
         Ok(Self {
@@ -70,8 +70,8 @@ impl HttpDigestAuth {
     /// 注入 DAO 用于 nc 单调性校验（vuln-0008 修复，RFC 7616 §3.4.6）。
     ///
     /// 注入后 `validate` / `validate_with_body` 会通过 DAO 跟踪每个 nonce 的最后 nc 值，
-    /// 拒绝 nc 回退或重复（重放攻击）。未注入时跳过 nc 校验（向后兼容，仅依赖 nonce TTL 防护，
-    /// 300s 窗口内仍可重放——生产环境强烈建议注入 DAO）。
+    /// 拒绝 nc 回退或重复（重放攻击）。DAO 为可选依赖：未注入时跳过 nc 校验，
+    /// 仅依赖 nonce TTL 防护，300s 窗口内仍可重放——生产环境强烈建议注入 DAO。
     ///
     /// # 参数
     /// - `dao`: 分布式 DAO 实现（Redis / dbnexus / MockDao 等）。
@@ -173,11 +173,11 @@ impl HttpDigestAuth {
 
     /// 校验 nonce 是否有效（格式正确且未过期，且签名有效）。
     ///
-    /// nonce 格式（无 `server_key`，向后兼容）：`base64("{timestamp}:{random}")`
+    /// nonce 格式（无 `server_key`，无签名）：`base64("{timestamp}:{random}")`
     /// nonce 格式（注入 `server_key`，T021）：`base64("{timestamp}:{random}:{mac}")`
     ///
     /// 注入 `server_key` 时：先验 HMAC 签名（`constant_time_eq`），再校验时间戳，
-    /// 任一步失败即拒绝。未注入时保持旧格式行为（仅时间戳 TTL 防护）。
+    /// 任一步失败即拒绝。未注入 `server_key` 时无签名校验（仅时间戳 TTL 防护）。
     pub(super) fn is_nonce_valid(&self, nonce: &str) -> bool {
         let decoded = match STANDARD.decode(nonce) {
             Ok(d) => d,
@@ -214,7 +214,7 @@ impl HttpDigestAuth {
                 true
             },
             None => {
-                // 向后兼容：旧格式 timestamp:random（2 段）
+                // 无签名格式（未注入 server_key）：timestamp:random（2 段）
                 let parts: Vec<&str> = raw.splitn(2, ':').collect();
                 if parts.len() != 2 {
                     return false;
@@ -237,7 +237,7 @@ impl HttpDigestAuth {
     /// 校验 nc（nonce count）单调性，拒绝重放攻击（vuln-0008，RFC 7616 §3.4.6）。
     ///
     /// 通过 DAO 跟踪每个 nonce 的最后接受的 nc 值，拒绝 nc 回退或重复。
-    /// - `dao` 为 None：跳过校验（返回 true，向后兼容）。
+    /// - `dao` 为 None：跳过校验（返回 true）。
     ///   **安全代价**：仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
     ///   生产环境强烈建议通过 `with_dao` 注入 DAO；仅单元测试 / 无重放风险场景可省略。
     /// - `dao` 为 Some：get `digest:nc:{nonce}` → 比较 → set 更新
@@ -262,7 +262,7 @@ impl HttpDigestAuth {
         let dao = match &self.dao {
             Some(d) => d,
             None => {
-                // fail-open：未注入 DAO 时跳过 nc 单调性校验（向后兼容），
+                // fail-open：未注入 DAO 时跳过 nc 单调性校验（DAO 为可选依赖），
                 // 仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
                 // 进程级一次性 warn（T022）：提醒运维注入 DAO 以启用 RFC 7616 §3.4.6 重放防护，
                 // 明确标注当前为 fail-open 语义（非 fail-closed）。

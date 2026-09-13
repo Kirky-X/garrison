@@ -379,7 +379,6 @@ impl GarrisonManagerBuilder {
                 firewall.clone(),
                 config.l1_cache_ttl_secs,
                 config.l2_cache_ttl_secs,
-                config.l1_cache_capacity,
             )?),
         };
 
@@ -508,11 +507,11 @@ impl GarrisonManagerBuilder {
         #[cfg(feature = "session-hijack-detection")]
         let hijack_mode = config.session_hijack_mode;
 
-        let mut builder = GarrisonLogicDefault::new(session.clone(), config, firewall)
-            .with_plugin_manager(plugin_manager)
-            .with_auth_logic(auth_logic)
-            .with_permission_checker(permission_checker)
-            .with_disable_repository(disable_repo);
+        let mut builder =
+            GarrisonLogicDefault::new(session.clone(), config, firewall, disable_repo)
+                .with_plugin_manager(plugin_manager)
+                .with_auth_logic(auth_logic)
+                .with_permission_checker(permission_checker);
         #[cfg(feature = "listener")]
         {
             builder = builder.with_listener_manager(listener_manager);
@@ -769,8 +768,7 @@ mod tests {
             let dao2 = make_dao();
             let fw: Arc<dyn GarrisonPermissionStrategy> =
                 Arc::new(GarrisonPermissionStrategyDefault::new(make_interface()));
-            let ucs =
-                Arc::new(crate::cache::UserCacheService::new(dao2, fw, 60, 3600, 10000).unwrap());
+            let ucs = Arc::new(crate::cache::UserCacheService::new(dao2, fw, 60, 3600).unwrap());
             b = b.with_user_cache_service(ucs);
         }
 
@@ -996,7 +994,7 @@ mod tests {
             .unwrap();
         let logic = GarrisonManager::logic().unwrap();
         assert!(
-            Arc::ptr_eq(&logic.disable_repository.as_ref().unwrap().clone(), &dr),
+            Arc::ptr_eq(&logic.disable_repository, &dr),
             "build 后 disable_repository 应为注入实例"
         );
         GarrisonManager::reset_for_test();
@@ -1131,7 +1129,12 @@ mod tests {
         firewall: Arc<dyn GarrisonPermissionStrategy>,
         ctx: &GarrisonLogicFactoryContext,
     ) -> GarrisonResult<Arc<GarrisonLogicDefault>> {
-        let mut builder = GarrisonLogicDefault::new(session, config, firewall);
+        let disable_repository = ctx.disable_repository.clone().unwrap_or_else(|| {
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                session.dao().clone(),
+            )) as Arc<dyn crate::account::disable::DisableRepository>
+        });
+        let mut builder = GarrisonLogicDefault::new(session, config, firewall, disable_repository);
         if let Some(pm) = ctx.plugin_manager.clone() {
             builder = builder.with_plugin_manager(pm);
         }
@@ -1144,9 +1147,6 @@ mod tests {
         }
         if let Some(pc) = ctx.permission_checker.clone() {
             builder = builder.with_permission_checker(pc);
-        }
-        if let Some(dr) = ctx.disable_repository.clone() {
-            builder = builder.with_disable_repository(dr);
         }
         Ok(Arc::new(builder.with_marker("custom-factory")))
     }
@@ -1181,7 +1181,7 @@ mod tests {
         let fw: Arc<dyn GarrisonPermissionStrategy> =
             Arc::new(GarrisonPermissionStrategyDefault::new(make_interface()));
         let custom_ucs =
-            Arc::new(crate::cache::UserCacheService::new(make_dao(), fw, 60, 3600, 10000).unwrap());
+            Arc::new(crate::cache::UserCacheService::new(make_dao(), fw, 60, 3600).unwrap());
         make_ready_builder()
             .with_user_cache_service(custom_ucs.clone())
             .build()
@@ -1243,14 +1243,8 @@ mod tests {
             listener_manager,
             #[cfg(feature = "three-tier-cache")]
             Arc::new(
-                crate::cache::UserCacheService::new(
-                    make_dao(),
-                    firewall_for_cache,
-                    60,
-                    3600,
-                    10000,
-                )
-                .unwrap(),
+                crate::cache::UserCacheService::new(make_dao(), firewall_for_cache, 60, 3600)
+                    .unwrap(),
             ),
         );
 
@@ -1268,10 +1262,7 @@ mod tests {
             logic.permission_checker.is_some(),
             "兜底 logic 应注入 permission_checker"
         );
-        assert!(
-            logic.disable_repository.is_some(),
-            "兜底 logic 应注入 disable_repository"
-        );
+        // disable_repository 为必需构造参数，字段恒存在（无 Option 断言）
     }
 
     // ------------------------------------------------------------------------
@@ -1333,7 +1324,7 @@ mod tests {
                 let fw2: Arc<dyn crate::strategy::GarrisonPermissionStrategy> = Arc::new(
                     crate::strategy::GarrisonPermissionStrategyDefault::new(make_interface()),
                 );
-                Arc::new(crate::cache::UserCacheService::new(dao2, fw2, 60, 3600, 10000).unwrap())
+                Arc::new(crate::cache::UserCacheService::new(dao2, fw2, 60, 3600).unwrap())
             },
         );
         // 成功构造（logic 内部状态正确即可）

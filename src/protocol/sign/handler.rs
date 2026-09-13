@@ -158,9 +158,9 @@ impl SignHandler {
         // 处理：减法溢出意味着 |now - timestamp| 必然远超任何合理窗口，直接按
         // 窗口外拒绝（与窗口校验失败同语义，不泄露额外信息）。checked_sub 成功后
         // diff 不可能等于 i64::MIN（那要求 timestamp > i64::MAX），abs() 无二次溢出。
-        let diff = now.checked_sub(timestamp).ok_or_else(|| {
-            GarrisonError::ExpiredToken("sign-timestamp-window".to_string())
-        })?;
+        let diff = now
+            .checked_sub(timestamp)
+            .ok_or_else(|| GarrisonError::ExpiredToken("sign-timestamp-window".to_string()))?;
         if diff.abs() > self.timestamp_window {
             return Err(GarrisonError::ExpiredToken(
                 "sign-timestamp-window".to_string(),

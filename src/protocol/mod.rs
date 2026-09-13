@@ -59,8 +59,8 @@ pub mod social;
 /// 按 locale 翻译异常 detail。i18n 基础层已无条件编译，始终优先查 FTL 翻译。
 ///
 /// 供社交登录（wechat/alipay）与 Keycloak 等模块在构造 `GarrisonError` detail 字符串时
-/// 使用，实现中英文切换。宏定义位于 crate 根（`crate::loc`），此处 re-export 以兼容
-/// 既有 `crate::protocol::loc` 调用。
+/// 使用，实现中英文切换。宏定义位于 crate 根（`crate::loc`），此处 re-export
+/// 供 `crate::protocol::loc` 路径的既有调用使用。
 ///
 /// # 参数
 ///

@@ -161,7 +161,7 @@ pub trait GarrisonDao: Send + Sync {
     /// - `Ok(None)`: 键不存在或已过期。
     ///
     /// # 默认实现
-    /// 委托 `self.get(key)` + `self.get_timeout(key)` 两次调用（向后兼容）。
+    /// 委托 `self.get(key)` + `self.get_timeout(key)` 两次调用。
     /// 后端若支持原子获取 value + TTL（如 Redis pipeline / 内存 HashMap 单次 lookup），
     /// 应重写此方法以减少 DAO 往返。
     async fn get_with_ttl(&self, key: &str) -> GarrisonResult<Option<(String, Option<Duration>)>> {
@@ -731,23 +731,16 @@ mod in_memory;
 
 pub use in_memory::InMemoryDao;
 
-/// 旧名兼容别名（正名 `InMemoryDao`；依赖 `MockDao` 的下游请迁移，下版本移除）。
-#[deprecated(note = "renamed to InMemoryDao")]
-pub type MockDao = InMemoryDao;
-
 #[cfg(all(test, feature = "protocol-apikey"))]
 pub(crate) use in_memory::glob_match;
 
 #[cfg(test)]
 /// DAO trait 契约测试与跨模块共享的 mock 实现（仅 `cfg(test)` 下编译）。
 pub mod tests {
-    use super::*;
-    // 兼容层：重导出 mock 模块的 MockDao 与 glob_match，保持旧路径
-    // `crate::dao::tests::MockDao` / `crate::dao::tests::glob_match` 可用
-    #[cfg(feature = "protocol-apikey")]
-    pub(crate) use super::glob_match;
-    // 兼容层：重导出 InMemoryDao（测试内部以 MockDao 名使用，不触发 deprecated）
+
+    /// 跨模块测试统一使用的内存 mock DAO 名称（即 [`InMemoryDao`]）。
     pub use super::InMemoryDao as MockDao;
+    use super::*;
     use crate::error::GarrisonError;
     use parking_lot::Mutex;
     use std::collections::HashMap;

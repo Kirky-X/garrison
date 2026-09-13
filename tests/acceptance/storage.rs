@@ -339,9 +339,12 @@ fn default_firewall() -> Arc<dyn GarrisonPermissionStrategy> {
 async fn acc_storage_007_dao_failure_surfaces_as_error() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
     let logic = GarrisonLogicDefault::new(
-        Arc::new(GarrisonSession::new(dao, 3600, 86400, 0)),
+        Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0)),
         Arc::new(storage_config()),
         default_firewall(),
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao,
+        )),
     );
 
     match logic

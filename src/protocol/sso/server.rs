@@ -324,7 +324,8 @@ mod tests {
     #[test]
     fn new_creates_server_with_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let _server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let _server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         // 构造成功即验证（dao 通过类型系统保证非空）
     }
 
@@ -411,7 +412,8 @@ mod tests {
     #[tokio::test]
     async fn issue_and_validate_ticket_roundtrip() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
         assert_eq!(login_id, "1001");
@@ -421,7 +423,8 @@ mod tests {
     #[tokio::test]
     async fn issue_ticket_returns_64_chars() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         // 新格式：{64_hex_random}.{hmac_b64}，长度不再固定为 64
         let parts: Vec<&str> = ticket.splitn(2, '.').collect();
@@ -434,7 +437,8 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_one_time_use_second_fails() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let first = server.validate_ticket(&ticket, 2001).await;
         let second = server.validate_ticket(&ticket, 2001).await;
@@ -449,7 +453,8 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let result = server.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
@@ -463,7 +468,8 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_nonexistent_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let result = server.validate_ticket("nonexistent-ticket", 2001).await;
         assert!(result.is_err());
         match result.err() {
@@ -480,7 +486,8 @@ mod tests {
     #[tokio::test]
     async fn destroy_ticket_idempotent() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         // 销毁不存在的票据
         let result = server.destroy_ticket("nonexistent-ticket").await;
         assert_eq!(result.unwrap(), (), "销毁不存在的票据应返回 Ok(())（幂等）");
@@ -512,7 +519,8 @@ mod tests {
             }
         }
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功")
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+            .expect("secret 非空构造应成功")
             .with_converter(Arc::new(OffsetConverter));
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
@@ -528,7 +536,8 @@ mod tests {
     #[tokio::test]
     async fn push_message_noop_when_no_channel() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let result = server.push_message("1001", "hello").await;
         assert_eq!(
             result.unwrap(),
@@ -651,7 +660,8 @@ mod tests {
     async fn server_and_client_communicate_via_shared_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // SsoServer 签发 ticket
-        let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key")
+            .expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         // SsoClient 校验同一 ticket（共享 DAO）
         let client = SsoClient::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
@@ -664,10 +674,12 @@ mod tests {
     async fn client_and_server_communicate_via_shared_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // SsoClient 签发 ticket
-        let client = SsoClient::new(dao.clone(), "test-sso-secret-key").expect("secret 非空构造应成功");
+        let client =
+            SsoClient::new(dao.clone(), "test-sso-secret-key").expect("secret 非空构造应成功");
         let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         // SsoServer 校验同一 ticket（共享 DAO）
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server =
+            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
         assert_eq!(login_id, "1001");
     }

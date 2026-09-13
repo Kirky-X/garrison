@@ -261,12 +261,7 @@ fn api_error(code: &str, message: &str) -> GarrisonError {
             service: "remote".to_string(),
             until: None,
         },
-        _ => {
-            return GarrisonError::Network(format!(
-                "backend-api-error::{}::{}",
-                code, message
-            ))
-        },
+        _ => return GarrisonError::Network(format!("backend-api-error::{}::{}", code, message)),
     };
     tracing::debug!(error_code = %code, api_message = %message, "remote backend API business error mapped");
     mapped
@@ -924,8 +919,14 @@ mod tests {
             build_url("https://h:8443", "/api/x"),
             "https://h:8443/api/x"
         );
-        assert_eq!(build_url("https://h:8443/", "/api/x"), "https://h:8443/api/x");
-        assert_eq!(build_url("https://h:8443//", "//api/x"), "https://h:8443/api/x");
+        assert_eq!(
+            build_url("https://h:8443/", "/api/x"),
+            "https://h:8443/api/x"
+        );
+        assert_eq!(
+            build_url("https://h:8443//", "//api/x"),
+            "https://h:8443/api/x"
+        );
     }
 
     // ========================================================================

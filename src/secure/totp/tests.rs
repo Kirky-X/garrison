@@ -55,7 +55,10 @@ fn generate_returns_6_digits() {
 fn generate_is_deterministic() {
     let h1 = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
     let h2 = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    assert_eq!(h1.generate(1700000000).unwrap(), h2.generate(1700000000).unwrap());
+    assert_eq!(
+        h1.generate(1700000000).unwrap(),
+        h2.generate(1700000000).unwrap()
+    );
 }
 
 /// 同一 30 秒窗口内验证码稳定（spec Scenario）。
@@ -104,7 +107,7 @@ fn validate_negative_now_returns_invalid_param() {
 #[tokio::test]
 async fn validate_and_consume_negative_now_returns_invalid_param() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let result = handler
         .validate_and_consume("user-neg-now", "123456", -1, &dao)
         .await;
@@ -187,7 +190,10 @@ fn base32_secret_matches_raw_bytes() {
     let bytes = TotpHandler::secret_from_base32(b32_str).unwrap();
     let h1 = TotpHandler::new(bytes.clone(), 30, 6).unwrap();
     let h2 = TotpHandler::new(bytes, 30, 6).unwrap();
-    assert_eq!(h1.generate(1700000000).unwrap(), h2.generate(1700000000).unwrap());
+    assert_eq!(
+        h1.generate(1700000000).unwrap(),
+        h2.generate(1700000000).unwrap()
+    );
 }
 
 // ========================================================================
@@ -198,7 +204,7 @@ fn base32_secret_matches_raw_bytes() {
 #[tokio::test]
 async fn validate_and_consume_first_use_succeeds() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code = handler.generate(1700000000).unwrap();
     let result = handler
         .validate_and_consume("user-001", &code, 1700000000, &dao)
@@ -211,7 +217,7 @@ async fn validate_and_consume_first_use_succeeds() {
 #[tokio::test]
 async fn validate_and_consume_rejects_replay() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code = handler.generate(1700000000).unwrap();
 
     let first = handler
@@ -231,7 +237,7 @@ async fn validate_and_consume_rejects_replay() {
 #[tokio::test]
 async fn validate_and_consume_isolates_by_login_id() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code = handler.generate(1700000000).unwrap();
 
     let user_a = handler
@@ -251,7 +257,7 @@ async fn validate_and_consume_isolates_by_login_id() {
 #[tokio::test]
 async fn validate_and_consume_wrong_code_returns_false_without_recording() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
 
     let result = handler
         .validate_and_consume("user-001", "000000", 1700000000, &dao)
@@ -271,7 +277,7 @@ async fn validate_and_consume_wrong_code_returns_false_without_recording() {
 #[tokio::test]
 async fn validate_and_consume_different_codes_both_succeed() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code1 = handler.generate(1700000000).unwrap();
     let code2 = handler.generate(1700000030).unwrap();
 
@@ -306,7 +312,7 @@ async fn validate_and_consume_concurrent_no_double_accept() {
     use std::sync::Arc;
 
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = Arc::new(crate::dao::tests::MockDao::new());
+    let dao = Arc::new(crate::dao::InMemoryDao::new());
     let code = handler.generate(1700000000).unwrap();
     let accept_count = Arc::new(AtomicUsize::new(0));
 
@@ -399,10 +405,10 @@ fn e3_source_has_no_dashmap_or_unbounded_static() {
 
 /// E3: 验证 `dao.incr` 在首次调用时返回 1。
 ///
-/// 直接调用 MockDao::incr 验证契约：key 不存在时初始化为 "1" 并返回 1。
+/// 直接调用 InMemoryDao::incr 验证契约：key 不存在时初始化为 "1" 并返回 1。
 #[tokio::test]
 async fn e3_incr_returns_1_on_first_call() {
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let count = dao.incr("totp:used:user-001:123456", 90).await.unwrap();
     assert_eq!(count, 1, "E3: incr 首次调用应返回 1（视为首次使用验证码）");
 }
@@ -410,7 +416,7 @@ async fn e3_incr_returns_1_on_first_call() {
 /// E3: 验证 `dao.incr` 在第二次调用时返回 2（重放检测）。
 #[tokio::test]
 async fn e3_incr_returns_2_on_replay() {
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let key = "totp:used:user-001:123456";
     let first = dao.incr(key, 90).await.unwrap();
     let second = dao.incr(key, 90).await.unwrap();
@@ -427,7 +433,7 @@ async fn e3_incr_returns_2_on_replay() {
 #[tokio::test]
 async fn e3_replay_key_format_is_correct() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code = handler.generate(1700000000).unwrap();
     handler
         .validate_and_consume("user-format-test", &code, 1700000000, &dao)
@@ -448,7 +454,7 @@ async fn e3_replay_key_format_is_correct() {
 #[tokio::test]
 async fn e3_replay_key_ttl_is_step_times_3() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code = handler.generate(1700000000).unwrap();
     handler
         .validate_and_consume("user-ttl-30", &code, 1700000000, &dao)
@@ -475,7 +481,7 @@ async fn e3_replay_key_ttl_is_step_times_3() {
 #[tokio::test]
 async fn e3_step_60_produces_ttl_180() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 60, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code = handler.generate(1700000000).unwrap();
     handler
         .validate_and_consume("user-ttl-60", &code, 1700000000, &dao)
@@ -501,7 +507,7 @@ async fn e3_step_60_produces_ttl_180() {
 #[tokio::test]
 async fn e3_previous_window_code_accepted_first_time() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     // 生成前一窗口的验证码（now-30s）
     let prev_code = handler.generate(1699999970).unwrap();
     let result = handler
@@ -515,7 +521,7 @@ async fn e3_previous_window_code_accepted_first_time() {
 #[tokio::test]
 async fn e3_previous_window_code_rejected_on_replay() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let prev_code = handler.generate(1699999970).unwrap();
     let first = handler
         .validate_and_consume("user-prev-replay", &prev_code, 1700000000, &dao)
@@ -538,7 +544,7 @@ async fn e3_concurrent_different_login_ids_no_interference() {
     use std::sync::Arc;
 
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = Arc::new(crate::dao::tests::MockDao::new());
+    let dao = Arc::new(crate::dao::InMemoryDao::new());
     let code = handler.generate(1700000000).unwrap();
     let accept_count = Arc::new(AtomicUsize::new(0));
 
@@ -574,7 +580,7 @@ async fn e3_concurrent_different_login_ids_no_interference() {
 #[tokio::test]
 async fn e3_replay_key_isolated_per_code() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code1 = handler.generate(1700000000).unwrap();
     let code2 = handler.generate(1700000030).unwrap();
 
@@ -610,7 +616,7 @@ async fn e3_replay_key_isolated_per_code() {
 #[tokio::test]
 async fn e3_wrong_code_does_not_write_replay_key() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let result = handler
         .validate_and_consume("user-wrong-code", "000000", 1700000000, &dao)
         .await
@@ -631,7 +637,7 @@ async fn e3_wrong_code_does_not_write_replay_key() {
 #[tokio::test]
 async fn e3_incr_count_increments_with_replays() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
-    let dao = crate::dao::tests::MockDao::new();
+    let dao = crate::dao::InMemoryDao::new();
     let code = handler.generate(1700000000).unwrap();
     let replay_key = format!("totp:used:user-count:{}", code);
 

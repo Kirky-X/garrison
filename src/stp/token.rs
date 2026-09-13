@@ -526,7 +526,7 @@ mod tests {
         /// 构造 GarrisonLogicDefault，token_style 可配置。
         fn make_logic(token_style: &str) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = token_style.to_string();
@@ -539,7 +539,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
         }
 
         /// verify_token + simple token_style → 返回 login_id。
@@ -610,7 +617,7 @@ mod tests {
         #[tokio::test]
         async fn verify_token_jwt_style_returns_login_id() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -619,7 +626,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             // 签发 JWT token
             let handler =
@@ -646,7 +660,7 @@ mod tests {
         #[tokio::test]
         async fn verify_token_invalid_jwt_returns_invalid_token() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -655,7 +669,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             let result = logic.verify_token("invalid.jwt.token").await;
             assert!(
@@ -687,7 +708,7 @@ mod tests {
         #[tokio::test]
         async fn refresh_token_jwt_valid_returns_new_token() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -697,7 +718,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             // 签发 JWT token
             let handler =
@@ -724,7 +752,7 @@ mod tests {
         #[tokio::test]
         async fn refresh_token_invalid_jwt_returns_error() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -734,7 +762,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             let result = logic.refresh_token("invalid.jwt.token").await;
             assert!(

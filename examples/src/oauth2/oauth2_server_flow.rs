@@ -29,7 +29,9 @@ use garrison::oauth2_server::client::{
 };
 use garrison::oauth2_server::introspect::{IntrospectHandler, IntrospectRequest};
 use garrison::oauth2_server::revoke::{RevokeHandler, RevokeRequest};
-use garrison::oauth2_server::token::{PasswordVerifier, TokenHandler, TokenRequest};
+use garrison::oauth2_server::token::{
+    PasswordRateLimiter, PasswordVerifier, TokenHandler, TokenRateLimiter, TokenRequest,
+};
 use std::sync::Arc;
 
 /// Mock 密码验证器（示例用，业务方应实现真实密码校验逻辑）。
@@ -85,8 +87,15 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "https://auth.example.com/login".into(),
     ));
     let token_handler = Arc::new(
-        TokenHandler::new(store.clone(), dao.clone(), authorize_handler.clone())
-            .with_password_verifier(Arc::new(MockPasswordVerifier)),
+        TokenHandler::new(
+            store.clone(),
+            dao.clone(),
+            authorize_handler.clone(),
+            // 账户锁定 + 端点限速为构造必需的安全组件（此处采用默认限速参数）
+            Arc::new(PasswordRateLimiter::new(5, 300)),
+            Arc::new(TokenRateLimiter::new()),
+        )
+        .with_password_verifier(Arc::new(MockPasswordVerifier)),
     );
     let introspect_handler = Arc::new(IntrospectHandler::new(store.clone(), token_handler.clone()));
     let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));

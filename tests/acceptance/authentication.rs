@@ -406,14 +406,21 @@ async fn acc_auth_010_wrong_password_and_unknown_user_indistinguishable() {
         .unwrap();
 
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let config = garrison::config::GarrisonConfig::default_config();
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
         garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(NoopInterface)),
     );
-    let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-        .with_password_hasher(Arc::new(hasher))
-        .with_user_repository(user_repo);
+    let logic = GarrisonLogicDefault::new(
+        session,
+        Arc::new(config),
+        firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao.clone(),
+        )),
+    )
+    .with_password_hasher(Arc::new(hasher))
+    .with_user_repository(user_repo);
 
     // 正常路径锚点：正确密码可登录
     let ok = logic.login_with_password("1001", "secret").await;
@@ -947,7 +954,7 @@ async fn make_logic_with_password() -> std::sync::Arc<garrison::stp::GarrisonLog
         .expect("预置用户应成功");
 
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -958,10 +965,17 @@ async fn make_logic_with_password() -> std::sync::Arc<garrison::stp::GarrisonLog
     let lm = Arc::new(garrison::listener::GarrisonListenerManager::new());
 
     Arc::new(
-        garrison::stp::GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_password_hasher(Arc::new(hasher))
-            .with_user_repository(user_repo)
-            .with_listener_manager(lm),
+        garrison::stp::GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_password_hasher(Arc::new(hasher))
+        .with_user_repository(user_repo)
+        .with_listener_manager(lm),
     )
 }
 
@@ -1073,7 +1087,7 @@ async fn acc_auth_022_password_login_fails_without_hasher_or_repository() {
     }
 
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
         GarrisonPermissionStrategyDefault::new(Arc::new(NoopInterface)),
     );
@@ -1083,6 +1097,9 @@ async fn acc_auth_022_password_login_fails_without_hasher_or_repository() {
         session.clone(),
         Arc::new(test_password_config()),
         firewall.clone(),
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao.clone(),
+        )),
     ));
     let result = logic_no_hasher.login_with_password("1001", "secret").await;
     match result.unwrap_err() {
@@ -1096,8 +1113,15 @@ async fn acc_auth_022_password_login_fails_without_hasher_or_repository() {
 
     // 未配置 user_repository → Config
     let logic_no_repo = Arc::new(
-        GarrisonLogicDefault::new(session, Arc::new(test_password_config()), firewall)
-            .with_password_hasher(Arc::new(Argon2Hasher::new())),
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(test_password_config()),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_password_hasher(Arc::new(Argon2Hasher::new())),
     );
     let result = logic_no_repo.login_with_password("1001", "secret").await;
     match result.unwrap_err() {

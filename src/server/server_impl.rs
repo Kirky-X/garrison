@@ -150,7 +150,7 @@ impl GarrisonAuthServer {
     /// 在 `TENANT` task_local scope 内执行下游 handler——使 `check_permission`
     /// / `check_role` / 审计日志等能通过 `current_tenant_id_or_error()` 读取租户上下文。
     ///
-    /// `None` 时跳过租户中间件（向后兼容单租户场景）。
+    /// `None` 表示未启用租户隔离（单租户部署），不注入租户中间件。
     ///
     /// # 参数
     /// - `resolver`：`Arc<dyn TenantResolver>`（如 `HeaderTenantResolver` /

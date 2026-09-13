@@ -50,11 +50,26 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     config.timeout = 3600;
     config.throw_on_not_login = true;
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 7_776_000));
+    let session = Arc::new(GarrisonSession::new(
+        dao.clone(),
+        timeout,
+        timeout,
+        7_776_000,
+    ));
     let firewall = Arc::new(GarrisonPermissionStrategyDefault::new(Arc::new(
         NoopInterface,
     )));
-    Arc::new(GarrisonLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(mode))
+    Arc::new(
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_jwt_mode(mode),
+    )
 }
 
 /// 运行 JWT 三模式示例。

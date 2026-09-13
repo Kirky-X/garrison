@@ -35,6 +35,8 @@ impl GarrisonLogicDefault {
     /// - `session`: 会话管理器。
     /// - `config`: 全局配置。
     /// - `firewall`: 权限策略（默认 `GarrisonPermissionStrategyDefault`，持有 `GarrisonInterface` 回调）。
+    /// - `disable_repository`: 封禁库（`check_disable` 委托其查询当前账号封禁状态）。
+    ///   通用场景传 `Arc::new(DefaultDisableRepository::new(dao))`。
     ///
     /// # 返回
     /// 新建的 `GarrisonLogicDefault` 实例。
@@ -42,6 +44,7 @@ impl GarrisonLogicDefault {
         session: Arc<GarrisonSession>,
         config: Arc<GarrisonConfig>,
         firewall: Arc<dyn GarrisonPermissionStrategy>,
+        disable_repository: Arc<dyn crate::account::disable::DisableRepository>,
     ) -> Self {
         Self {
             session,
@@ -70,7 +73,7 @@ impl GarrisonLogicDefault {
             alert_listener_manager: None,
             #[cfg(feature = "device-binding")]
             device_binding_policy: None,
-            disable_repository: None,
+            disable_repository,
             #[cfg(feature = "three-tier-cache")]
             user_cache_service: None,
             marker: None,
@@ -217,7 +220,7 @@ impl GarrisonLogicDefault {
     /// 注入异常检测器（builder 模式，需启用 `security-alert` feature）。
     ///
     /// 可链式调用注入多个检测器，`login` / `check_login` 时按注入顺序依次调用。
-    /// 未注入时跳过异常检测（向后兼容）。检测失败只 `tracing::warn!` 不中断主流程。
+    /// 未注入时跳过异常检测（功能关闭）。检测失败只 `tracing::warn!` 不中断主流程。
     #[cfg(feature = "security-extra")]
     pub fn with_anomaly_detector(
         mut self,
@@ -232,7 +235,7 @@ impl GarrisonLogicDefault {
     /// 注入告警监听器管理器（builder 模式，需启用 `security-alert` feature）。
     ///
     /// 注入后异常检测产生的事件通过 `AlertListenerManager::broadcast_alert` 广播。
-    /// 未注入时异常事件不广播（向后兼容）。
+    /// 未注入时异常事件不广播（未部署告警系统）。
     #[cfg(feature = "security-extra")]
     pub fn with_alert_listener_manager(
         mut self,
@@ -247,7 +250,7 @@ impl GarrisonLogicDefault {
     /// 注入后 `login` 流程在创建 session 前调用 `DeviceBindingPolicy::is_new_device`
     /// + `require_secondary_auth`，新设备且要求二级认证时设置 `LoginParams.require_mfa = true`。
     ///
-    /// 未注入时跳过检测（向后兼容）。检测失败只 `tracing::warn!` 不中断 login。
+    /// 未注入时跳过检测（功能关闭）。检测失败只 `tracing::warn!` 不中断 login。
     #[cfg(feature = "device-binding")]
     pub fn with_device_binding_policy(
         mut self,
@@ -257,26 +260,11 @@ impl GarrisonLogicDefault {
         self
     }
 
-    /// 注入封禁库（builder 模式，非 feature-gated）。
-    ///
-    /// 注入后 `check_disable` 从 task_local 获取当前 token → 查询 TokenSession 取 login_id →
-    /// 调用 `DisableRepository::is_disable(login_id, "default")`，被封禁则返回
-    /// `GarrisonError::DisableService`（携带 `until` 解封时间）。
-    ///
-    /// 未注入时 `check_disable` 返回 `Ok(())`（向后兼容 0.6.4 之前行为）。
-    pub fn with_disable_repository(
-        mut self,
-        repo: Arc<dyn crate::account::disable::DisableRepository>,
-    ) -> Self {
-        self.disable_repository = Some(repo);
-        self
-    }
-
     /// 注入用户缓存服务（builder 模式，需启用 `three-tier-cache` feature）。
     ///
     /// 注入后 `logout` / `logout_by_login_id` 在销毁会话后调用
     /// `UserCacheService::invalidate(login_id)` 失效用户的三层缓存（权限/角色/用户）。
-    /// 未注入时 logout 不失效缓存（向后兼容）。失效失败只 `tracing::warn!` 不中断 logout。
+    /// 未注入时 logout 不失效缓存（缓存失效功能关闭）。失效失败只 `tracing::warn!` 不中断 logout。
     #[cfg(feature = "three-tier-cache")]
     pub fn with_user_cache_service(mut self, service: Arc<crate::cache::UserCacheService>) -> Self {
         self.user_cache_service = Some(service);
@@ -386,7 +374,7 @@ impl GarrisonLogicDefault {
 mod no_feature_tests {
     use super::*;
     use crate::config::GarrisonConfig;
-    use crate::dao::tests::MockDao;
+    use crate::dao::InMemoryDao;
     use crate::manager::GarrisonManager;
     use crate::stp::mock::MockInterface;
     use serial_test::serial;
@@ -396,7 +384,8 @@ mod no_feature_tests {
     #[tokio::test]
     async fn check_api_key_without_feature_returns_config_error() {
         GarrisonManager::reset_for_test();
-        let dao: std::sync::Arc<dyn crate::dao::GarrisonDao> = std::sync::Arc::new(MockDao::new());
+        let dao: std::sync::Arc<dyn crate::dao::GarrisonDao> =
+            std::sync::Arc::new(InMemoryDao::new());
         let config = std::sync::Arc::new(GarrisonConfig::default());
         let interface: std::sync::Arc<dyn crate::stp::GarrisonInterface> =
             std::sync::Arc::new(MockInterface);

@@ -173,7 +173,6 @@ async fn demo_ddos(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     println!("--- 场景三：DDoS 防护 ---");
 
     let config = DDoSConfig {
-        global_rps: 100,
         per_ip_rps: 5,
         burst: 10,
     };

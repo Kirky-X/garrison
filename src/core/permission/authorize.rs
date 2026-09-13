@@ -37,7 +37,7 @@ use super::PermissionChecker;
 /// **显式公开 API**：任何授权引擎可实现此 trait，无需依赖具体数据源。
 ///
 /// 通过 blanket impl，所有 [`PermissionChecker`] 自动实现 `Authorizer`，
-/// 行为委托给 `PermissionChecker::authorize`，保持向后兼容。
+/// 行为委托给 `PermissionChecker::authorize`。
 ///
 /// # trait object 安全
 ///

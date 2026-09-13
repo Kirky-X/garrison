@@ -707,13 +707,19 @@ async fn rollback_with_uses_check_windows() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(FaultDao::ok());
     let limiter = SmsRateLimiter::new(dao.clone(), 100, 100);
 
-    let windows = limiter.check_and_increment_with("15800000009").await.unwrap();
+    let windows = limiter
+        .check_and_increment_with("15800000009")
+        .await
+        .unwrap();
     assert_eq!(
         window_counter_value(&dao, "15800000009", "hour").await,
         Some("1".to_string())
     );
     // 使用 check 返回的窗口信息回滚：两个计数器递减到 0 → 被删除
-    limiter.rollback_with("15800000009", &windows).await.unwrap();
+    limiter
+        .rollback_with("15800000009", &windows)
+        .await
+        .unwrap();
     assert_eq!(
         window_counter_value(&dao, "15800000009", "hour").await,
         None,
@@ -734,12 +740,12 @@ async fn check_and_increment_normalizes_phone_whitespace() {
     let limiter = SmsRateLimiter::new(dao.clone(), 100, 100);
 
     // 带前后空白的手机号发送成功
-    limiter.check_and_increment("  15800000010  ").await.unwrap();
-    // key 使用归一化后的手机号（无空白）
-    let keys = dao
-        .keys("sms:rate:15800000010:hour:*")
+    limiter
+        .check_and_increment("  15800000010  ")
         .await
         .unwrap();
+    // key 使用归一化后的手机号（无空白）
+    let keys = dao.keys("sms:rate:15800000010:hour:*").await.unwrap();
     assert!(
         !keys.is_empty(),
         "归一化手机号应生成 sms:rate:15800000010:hour:* 的 key"

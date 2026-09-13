@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod tests {
+mod suite {
     // jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
     // 类型为 Zeroizing<String>，feature 关闭时退化为 String，被 clippy 误报。
     #![allow(clippy::useless_conversion)]
@@ -139,11 +139,11 @@ mod tests {
         // GarrisonCore
         let _ = mock.config();
         // SessionLogic 未覆盖方法
-        let _ = mock.logout().await.unwrap();
-        let _ = mock.logout_by_login_id("u1").await.unwrap();
-        let _ = mock.kickout("u1").await.unwrap();
-        let _ = mock.kickout_by_token("t1").await.unwrap();
-        let _ = mock.revoke_token("t1").await.unwrap();
+        mock.logout().await.unwrap();
+        mock.logout_by_login_id("u1").await.unwrap();
+        mock.kickout("u1").await.unwrap();
+        mock.kickout_by_token("t1").await.unwrap();
+        mock.revoke_token("t1").await.unwrap();
         let _ = mock.check_login().await.unwrap();
     }
 
@@ -281,6 +281,40 @@ mod tests {
             ) -> GarrisonResult<bool> {
                 Ok(true)
             }
+            async fn check_permission_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _permission: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+            async fn check_role_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _role: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+            #[cfg(any(
+                feature = "sms-rate-limit",
+                feature = "firewall-ratelimit",
+                feature = "firewall-bruteforce",
+                feature = "firewall-ddos",
+                feature = "firewall",
+                feature = "oauth2-server"
+            ))]
+            async fn check_login_hooks(
+                &self,
+                _login_id: &str,
+                _ctx: &crate::strategy::hooks::LoginContext,
+            ) -> GarrisonResult<()> {
+                // 测试桩不注入防火墙 hook，显式 no-op
+                Ok(())
+            }
         }
 
         // --------------------------------------------------------------------
@@ -415,25 +449,39 @@ mod tests {
             listener_manager: Arc<AlertListenerManager>,
         ) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                .with_anomaly_detector(detector)
-                .with_alert_listener_manager(listener_manager)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
+            .with_anomaly_detector(detector)
+            .with_alert_listener_manager(listener_manager)
         }
 
-        /// 创建不带检测器的 GarrisonLogicDefault（向后兼容测试用）。
+        /// 创建不带检测器的 GarrisonLogicDefault（未启用异常检测）。
         fn make_logic_without_anomaly() -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
         }
 
         fn sample_anomaly_event(login_id: &str) -> SecurityAlertEvent {
@@ -542,9 +590,9 @@ mod tests {
             assert_eq!(listener.count(), 0, "检测失败时不应广播事件");
         }
 
-        /// 未注入 detector 时 login 正常工作（向后兼容）。
+        /// 未注入 detector 时 login 正常工作（跳过异常检测）。
         #[tokio::test]
-        async fn test_login_without_detector_backward_compatible() {
+        async fn test_login_without_detector_skips_anomaly_check() {
             let logic = make_logic_without_anomaly();
             let token = logic
                 .login("1001", &LoginParams::default())
@@ -561,9 +609,9 @@ mod tests {
             assert_eq!(ts.login_id, "1001");
         }
 
-        /// 未注入 detector 时 check_login 正常工作（向后兼容）。
+        /// 未注入 detector 时 check_login 正常工作（跳过异常检测）。
         #[tokio::test]
-        async fn test_check_login_without_detector_backward_compatible() {
+        async fn test_check_login_without_detector_skips_anomaly_check() {
             let logic = Arc::new(make_logic_without_anomaly());
             let token = logic.login("1001", &LoginParams::default()).await.unwrap();
 
@@ -629,6 +677,40 @@ mod tests {
             ) -> GarrisonResult<bool> {
                 Ok(true)
             }
+            async fn check_permission_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _permission: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+            async fn check_role_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _role: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+            #[cfg(any(
+                feature = "sms-rate-limit",
+                feature = "firewall-ratelimit",
+                feature = "firewall-bruteforce",
+                feature = "firewall-ddos",
+                feature = "firewall",
+                feature = "oauth2-server"
+            ))]
+            async fn check_login_hooks(
+                &self,
+                _login_id: &str,
+                _ctx: &crate::strategy::hooks::LoginContext,
+            ) -> GarrisonResult<()> {
+                // 测试桩不注入防火墙 hook，显式 no-op
+                Ok(())
+            }
         }
 
         // --------------------------------------------------------------------
@@ -670,12 +752,19 @@ mod tests {
         /// 创建带 MockDao 的 GarrisonLogicDefault（无设备绑定策略，供测试自定义注入）。
         fn make_logic_base() -> GarrisonLogicDefault {
             let dao: Arc<MockDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
         }
 
         // --------------------------------------------------------------------
@@ -853,9 +942,9 @@ mod tests {
             assert_eq!(ts.login_id, "1001");
         }
 
-        /// 未注入 policy 时 login 正常工作（向后兼容），params.require_mfa=false。
+        /// 未注入 policy 时 login 正常工作（跳过设备绑定检测），params.require_mfa=false。
         #[tokio::test]
-        async fn test_no_policy_backward_compatible() {
+        async fn test_no_policy_skips_device_binding_check() {
             let logic = make_logic_base();
             // 不注入 device_binding_policy
 
@@ -1050,6 +1139,43 @@ mod tests {
             async fn get_user_info(&self, _login_id: &str) -> GarrisonResult<Option<String>> {
                 Ok(Some("user-info".to_string()))
             }
+
+            async fn check_permission_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _permission: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+
+            async fn check_role_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _role: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+
+            #[cfg(any(
+                feature = "sms-rate-limit",
+                feature = "firewall-ratelimit",
+                feature = "firewall-bruteforce",
+                feature = "firewall-ddos",
+                feature = "firewall",
+                feature = "oauth2-server"
+            ))]
+            async fn check_login_hooks(
+                &self,
+                _login_id: &str,
+                _ctx: &crate::strategy::hooks::LoginContext,
+            ) -> GarrisonResult<()> {
+                // 测试桩不注入防火墙 hook，显式 no-op
+                Ok(())
+            }
         }
 
         /// 构造带 UserCacheService 的 GarrisonLogicDefault。
@@ -1065,12 +1191,18 @@ mod tests {
                     firewall.clone(),
                     30,
                     300,
-                    10_000,
                 )
                 .expect("UserCacheService::new 应成功"),
             );
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                .with_user_cache_service(cache_service)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
+            .with_user_cache_service(cache_service)
         }
 
         /// logout() 注入 cache service 时应调用 invalidate（删除 perm/role/user 3 个缓存 key）。
@@ -1170,11 +1302,11 @@ mod tests {
             assert!(deleted.contains(&"user:cache:2002".to_string()));
         }
 
-        /// 未注入 cache service 时 logout 不 panic（向后兼容）。
+        /// 未注入 cache service 时 logout 不 panic（无缓存失效步骤，直接完成）。
         #[tokio::test]
-        async fn logout_without_cache_service_backward_compatible() {
+        async fn logout_without_cache_service_succeeds() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(CountingDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -1184,6 +1316,7 @@ mod tests {
                 session,
                 Arc::new(config),
                 firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(dao)),
             ));
 
             let token = logic
@@ -1219,7 +1352,7 @@ mod tests {
         /// 创建基础 GarrisonLogicDefault（uuid token_style，throw 可配置）。
         fn make_logic(throw_on_not_login: bool) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
             config.token_style = "uuid".to_string();
@@ -1227,7 +1360,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
         }
 
         /// 创建 JWT 模式 GarrisonLogicDefault（token_style=jwt + 自定义 jwt_secret + jwt_mode）。
@@ -1238,7 +1378,7 @@ mod tests {
             secret: &str,
         ) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
             // 安全默认：stateless JWT 必须启用撤销（T017 互斥校验），
@@ -1250,7 +1390,15 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(jwt_mode)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
+            .with_jwt_mode(jwt_mode)
         }
 
         // --------------------------------------------------------------------
@@ -1359,13 +1507,20 @@ mod tests {
             config.allow_stateless_jwt_no_revocation = false;
             config.throw_on_not_login = false;
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let firewall = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                .with_jwt_mode(JwtMode::Stateless);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
+            .with_jwt_mode(JwtMode::Stateless);
             let result = with_current_token("any.token.here".to_string(), async {
                 logic.check_login().await
             })
@@ -1391,13 +1546,20 @@ mod tests {
             config.throw_on_not_login = false;
             config.jwt_secret = secret.to_string().into();
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let firewall = Arc::new(MockFirewall {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                .with_jwt_mode(JwtMode::Stateless);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
+            .with_jwt_mode(JwtMode::Stateless);
             let handler = crate::protocol::jwt::JwtHandler::new(secret);
             let jwt_token = handler.sign("risk-accept-user", 3600).unwrap();
             let result = with_current_token(jwt_token, async { logic.check_login().await }).await;
@@ -1475,7 +1637,7 @@ mod tests {
         async fn check_and_renew_ttl_sufficient_returns_none() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
             // session timeout=3600s，与 config.timeout 对齐以避免百分比计算偏差
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -1485,7 +1647,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             let token = logic
                 .login("renew-user-001", &LoginParams::default())
@@ -1502,7 +1671,7 @@ mod tests {
         async fn check_and_renew_no_auth_logic_returns_config_error() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
             // session timeout=5s，与 config.timeout 对齐
-            let session = Arc::new(GarrisonSession::new(dao, 5, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 5, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -1512,7 +1681,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             let token = logic
                 .login("renew-user-002", &LoginParams::default())
@@ -1536,7 +1712,7 @@ mod tests {
         #[tokio::test]
         async fn generate_token_unknown_style_returns_config_error() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "unknown-style".to_string();
@@ -1544,7 +1720,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             let result = logic.login("test-user", &LoginParams::default()).await;
             assert!(
@@ -1806,7 +1989,7 @@ mod tests {
                 throw_on_not_login: bool,
             ) -> (GarrisonLogicDefault, Arc<RecordingListener>) {
                 let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+                let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = throw_on_not_login;
                 config.token_style = "uuid".to_string();
@@ -1817,8 +2000,15 @@ mod tests {
                 let recorder = Arc::new(RecordingListener::new());
                 let lm = Arc::new(GarrisonListenerManager::new());
                 lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
-                let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                    .with_listener_manager(lm);
+                let logic = GarrisonLogicDefault::new(
+                    session,
+                    Arc::new(config),
+                    firewall,
+                    Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                        dao.clone(),
+                    )),
+                )
+                .with_listener_manager(lm);
                 (logic, recorder)
             }
 
@@ -2066,7 +2256,7 @@ mod tests {
             #[tokio::test]
             async fn login_by_token_creates_session_and_broadcasts_login() {
                 let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+                let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = false;
                 config.token_style = "simple".to_string();
@@ -2082,8 +2272,15 @@ mod tests {
                 let recorder = Arc::new(RecordingListener::new());
                 let lm = Arc::new(GarrisonListenerManager::new());
                 lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
-                let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                    .with_listener_manager(lm);
+                let logic = GarrisonLogicDefault::new(
+                    session,
+                    Arc::new(config),
+                    firewall,
+                    Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                        dao.clone(),
+                    )),
+                )
+                .with_listener_manager(lm);
 
                 // A11: 用 SimpleTokenStyle 生成合法 HMAC token（与 verify_token 使用相同 secret）
                 use crate::core::token::Token;
@@ -2134,7 +2331,7 @@ mod tests {
             #[tokio::test]
             async fn check_and_update_hover_evicts_on_timeout() {
                 let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+                let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = false;
                 config.token_style = "uuid".to_string();
@@ -2147,9 +2344,16 @@ mod tests {
                 let recorder = Arc::new(RecordingListener::new());
                 let lm = Arc::new(GarrisonListenerManager::new());
                 lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
-                let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                    .with_listener_manager(lm)
-                    .with_clock(clock.clone() as Arc<dyn Clock>);
+                let logic = GarrisonLogicDefault::new(
+                    session,
+                    Arc::new(config),
+                    firewall,
+                    Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                        dao.clone(),
+                    )),
+                )
+                .with_listener_manager(lm)
+                .with_clock(clock.clone() as Arc<dyn Clock>);
 
                 let token = logic
                     .login("hover-user-001", &LoginParams::default())
@@ -2195,7 +2399,7 @@ mod tests {
             #[tokio::test]
             async fn check_and_update_hover_evicts_on_timeout_throws() {
                 let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-                let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+                let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = true;
                 config.token_style = "uuid".to_string();
@@ -2205,8 +2409,15 @@ mod tests {
                     has_role: true,
                 });
                 let clock = Arc::new(MockClock::new(chrono::Utc::now()));
-                let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                    .with_clock(clock.clone() as Arc<dyn Clock>);
+                let logic = GarrisonLogicDefault::new(
+                    session,
+                    Arc::new(config),
+                    firewall,
+                    Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                        dao.clone(),
+                    )),
+                )
+                .with_clock(clock.clone() as Arc<dyn Clock>);
 
                 let token = logic
                     .login("hover-user-002", &LoginParams::default())
@@ -2256,7 +2467,7 @@ mod tests {
         #[tokio::test]
         async fn login_with_token_enforces_max_login_count_evicts_oldest() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.max_login_count = 2;
             config.is_concurrent = true;
@@ -2264,7 +2475,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             logic
                 .login_with_token("quota-user", "qt-token-001")
@@ -2554,7 +2772,7 @@ mod tests {
         #[tokio::test]
         async fn generate_token_random_64_style() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "random_64".to_string();
@@ -2562,7 +2780,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             let token = logic
                 .login("r64-user-001", &LoginParams::default())
@@ -2589,7 +2814,7 @@ mod tests {
         #[tokio::test]
         async fn generate_token_simple_style_is_hmac_and_verifiable() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "simple".to_string();
@@ -2598,7 +2823,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config.clone()), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config.clone()),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             // 主登录路径产出 token
             let token = logic
@@ -2638,7 +2870,7 @@ mod tests {
         #[tokio::test]
         async fn generate_token_simple_style_requires_feature() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "simple".to_string();
@@ -2646,7 +2878,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             let result = logic
                 .login("simple-user-001", &LoginParams::default())
@@ -2665,7 +2904,7 @@ mod tests {
         #[tokio::test]
         async fn generate_token_jwt_style() {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "jwt".to_string();
@@ -2674,7 +2913,14 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
 
             let token = logic
                 .login("jwt-user-001", &LoginParams::default())
@@ -2918,8 +3164,15 @@ mod tests {
                 has_permission: true,
                 has_role: true,
             });
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                .with_jwt_mode(JwtMode::Stateless);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
+            .with_jwt_mode(JwtMode::Stateless);
             (logic, dao)
         }
 

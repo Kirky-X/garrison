@@ -10,7 +10,7 @@
 //! - 封禁记录 → `crate::limiteron::GarrisonDaoBanStorage`
 //!
 //! 本模块仅保留 `RateLimitBackend` 配置 enum，用于 `GarrisonConfig`
-//! 表达限流后端选择（向后兼容 v0.6 配置）。运行时由 `GarrisonDaoDistributedLimiter`
+//! 表达限流后端选择。运行时由 `GarrisonDaoDistributedLimiter`
 //! 根据 `GarrisonDao` 后端（MockDao/SQLite/Redis 等）自动选择原子或降级实现。
 
 use serde::{Deserialize, Serialize};
@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 /// 限流后端选择枚举，用于 `GarrisonConfig` 配置。
 ///
-/// 默认 `Memory`（向后兼容）。启用 `rate-limit-redis` feature 后可选 `Redis`。
+/// 默认 `Memory`（进程内限流）。启用 `rate-limit-redis` feature 后可选 `Redis`。
 ///
 /// # v0.7 行为
 ///
@@ -149,7 +149,11 @@ mod tests {
             "Debug 不得包含 userinfo 凭据，实际: {}",
             dbg
         );
-        assert!(dbg.contains("***@host:6379/0"), "应保留 host 便于排查，实际: {}", dbg);
+        assert!(
+            dbg.contains("***@host:6379/0"),
+            "应保留 host 便于排查，实际: {}",
+            dbg
+        );
 
         let query_backend = RateLimitBackend::Redis {
             redis_url: "redis://host:6379/0?password=secret".to_string(),

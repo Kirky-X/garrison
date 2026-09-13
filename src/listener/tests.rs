@@ -169,9 +169,9 @@ fn event_derives_debug_and_clone() {
 /// `PermissionCheck`/`RoleCheck`/`TokenRefresh`/`TokenRotate`/`SocialLogin`/
 /// `TenantSwitch`/`DeviceBlock`/`DeviceUnblock`/`ConfigReload`。
 ///
-/// Rule 7 冲突暴露（kueiku Decision Matrix 分析结论：方案 C，不向后兼容）：
-/// - 现有 `TokenRevoke`/`PermissionDenied`/`RoleDenied`/`ApiKeyRotate` 语义与 spec 重复但名称不同
-/// - 用户决策："不向后兼容" → 重命名对齐 spec
+/// Rule 7 冲突处理（kueiku Decision Matrix 分析结论：方案 C）：
+/// - 现有 `TokenRevoke`/`PermissionDenied`/`RoleDenied`/`ApiKeyRotate` 语义与 spec 重复
+///   但名称不同 → 重命名对齐 spec
 /// - 现有独有变体（`TokenExpired`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/`TempCredentialConsumed`）保留
 ///   （功能完整：暴力破解检测/会话超时/防火墙阻断等关键安全事件不能丢失）
 /// - 最终变体数 19（spec 14 + 现有独有 5）

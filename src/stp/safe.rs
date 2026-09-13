@@ -228,6 +228,40 @@ mod tests {
         async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
             Ok(true)
         }
+        async fn check_permission_in_tenant(
+            &self,
+            _tenant_id: i64,
+            _login_id: &str,
+            _permission: &str,
+        ) -> GarrisonResult<bool> {
+            // 测试桩与租户无关：任意租户返回相同结果
+            Ok(true)
+        }
+        async fn check_role_in_tenant(
+            &self,
+            _tenant_id: i64,
+            _login_id: &str,
+            _role: &str,
+        ) -> GarrisonResult<bool> {
+            // 测试桩与租户无关：任意租户返回相同结果
+            Ok(true)
+        }
+        #[cfg(any(
+            feature = "sms-rate-limit",
+            feature = "firewall-ratelimit",
+            feature = "firewall-bruteforce",
+            feature = "firewall-ddos",
+            feature = "firewall",
+            feature = "oauth2-server"
+        ))]
+        async fn check_login_hooks(
+            &self,
+            _login_id: &str,
+            _ctx: &crate::strategy::hooks::LoginContext,
+        ) -> GarrisonResult<()> {
+            // 测试桩不注入防火墙 hook，显式 no-op
+            Ok(())
+        }
     }
 
     // --------------------------------------------------------------------
@@ -247,7 +281,14 @@ mod tests {
         config.throw_on_not_login = false;
         config.token_style = "uuid".to_string();
         let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
-        let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+        let logic = GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        );
         (logic, dao)
     }
 
@@ -903,15 +944,6 @@ mod tests {
         })
         .await;
     }
-
-    /// T026: safe-auth（security-extra）feature 禁用时的 trait default 行为验证。
-    ///
-    /// batch-08 修复（issue #857）：本测试原置于 safe.rs（`security-extra` 门控模块内）
-    /// 且标注 `#[cfg(not(feature = "security-extra"))]`——条件矛盾导致任何配置下都不编译
-    /// （死测试）。已迁移至 `stp/mod.rs` 的 `safe_feature_gate_tests` 模块
-    /// （非 feature 门控），在该模块内用 `cfg(not(security-extra))` 门控，
-    /// 使 `security-extra` 关闭时测试真正编译运行：验证 open_safe/is_safe/close_safe
-    /// 解析到 `MfaLogic` trait default（open_safe=Ok(()), is_safe=Ok(true), close_safe=Ok(())）。
 
     /// T026: full feature 启用时 safe-auth 也启用（Cargo.toml full 列表包含 "safe-auth"）。
     ///

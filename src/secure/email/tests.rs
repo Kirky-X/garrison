@@ -93,7 +93,7 @@ fn generate_code_returns_six_digits() {
         assert_ne!(code, "000000");
         // 范围 100000..1000000
         let num: u32 = code.parse().unwrap();
-        assert!(num >= 100000 && num < 1000000);
+        assert!((100000..1000000).contains(&num));
     }
 }
 

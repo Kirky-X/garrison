@@ -13,9 +13,11 @@ fn make_handler() -> ApiKeyHandler {
 }
 
 /// 从双段 token（`key_id.key_secret`）提取公开 `key_id`，作为存储 key 后缀。
-/// legacy 单 token（无 `.`）原样返回。
 fn key_id_of(token: &str) -> &str {
-    token.split_once('.').map(|(id, _)| id).unwrap_or(token)
+    token
+        .split_once('.')
+        .expect("token 应为 key_id.key_secret 双段格式")
+        .0
 }
 
 // ========================================================================
@@ -282,7 +284,7 @@ async fn generate_accepts_login_id_numeric() {
 }
 
 // ========================================================================
-// 0.4.2 Phase 8: API Key Namespace
+// API Key Namespace
 // ========================================================================
 
 /// R-001: ApiKeyInfo 序列化包含 namespace 字段。
@@ -301,20 +303,7 @@ fn apikey_info_serializes_with_namespace() {
     assert!(json.contains("\"internal\""), "namespace 值应为 internal");
 }
 
-/// R-001: 旧 JSON（无 namespace 字段）反序列化时 namespace = "default"
-#[test]
-fn apikey_info_old_json_deserializes_with_default_namespace() {
-    // 旧格式 JSON：无 namespace 字段（v0.4.1 及之前生成的 key）
-    let old_json = r#"{"login_id":"1","scopes":[],"expire_at":0,"revoked":false}"#;
-    let info: ApiKeyInfo = serde_json::from_str(old_json).unwrap();
-    assert_eq!(
-        info.namespace, "default",
-        "旧 JSON 应反序列化为 namespace=default"
-    );
-    assert_eq!(info.login_id, "1");
-}
-
-/// R-002: generate_with_namespace 用新格式 `garrison:apikey:<namespace>:<key>` 存储
+/// R-002: generate_with_namespace 用 `garrison:apikey:<namespace>:<key>` 存储
 #[tokio::test]
 #[serial_test::serial]
 async fn generate_with_namespace_stores_new_format_key() {
@@ -324,17 +313,17 @@ async fn generate_with_namespace_stores_new_format_key() {
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
         .await
         .unwrap();
-    // 新格式：garrison:apikey:internal:<key_id>
+    // 存储路径：garrison:apikey:internal:<key_id>
     let dao_key = format!("garrison:apikey:internal:{}", key_id_of(&key));
     let value = dao.get(&dao_key).await.unwrap();
-    assert!(value.is_some(), "新格式 key 应存在: {}", dao_key);
+    assert!(value.is_some(), "key 应存在: {}", dao_key);
     let info: ApiKeyInfo = serde_json::from_str(&value.unwrap()).unwrap();
     assert_eq!(info.namespace, "internal");
     assert_eq!(info.login_id, "1001");
-    // 旧格式不应存在
-    let old_key = format!("garrison:apikey:{}", key_id_of(&key));
-    let old_value = dao.get(&old_key).await.unwrap();
-    assert!(old_value.is_none(), "旧格式 key 不应存在");
+    // 无 namespace 的存储路径不应存在
+    let ns_less_key = format!("garrison:apikey:{}", key_id_of(&key));
+    let ns_less_value = dao.get(&ns_less_key).await.unwrap();
+    assert!(ns_less_value.is_none(), "无 namespace 的存储路径不应存在");
 }
 
 /// R-003: list_by_namespace 返回指定 namespace 下未吊销的 ApiKeyInfo
@@ -424,7 +413,7 @@ async fn verify_without_namespace_scans_all_namespaces() {
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
         .await
         .unwrap();
-    // 不带 namespace 的 verify 通过扫描新格式找到
+    // 不带 namespace 的 verify 通过反向索引找到
     let info = handler.verify(&key).await.unwrap();
     assert_eq!(info.login_id, "1001");
     assert_eq!(info.namespace, "internal");
@@ -483,7 +472,7 @@ async fn generate_with_namespace_validates_namespace() {
 /// CWE-916：`public_key_ref` 用于事件广播 / 审计日志，绝不得暴露 key_secret。
 ///
 /// - 双段 `key_id.key_secret` 只返回 key_id 部分；
-/// - 旧格式单 token 截断为前 8 字符 + `…`，不落完整凭证。
+/// - 不含 `.` 的输入截断为前 8 字符 + `…`，不落完整凭证。
 #[cfg(feature = "listener")]
 #[test]
 fn public_key_ref_never_exposes_secret() {
@@ -498,16 +487,16 @@ fn public_key_ref_never_exposes_secret() {
         !redacted.contains(&key_secret),
         "脱敏结果绝不得含 key_secret"
     );
-    // 旧格式单 token：截断为前 8 字符 + 省略号
-    let legacy = "deadbeef".repeat(8); // 64 hex
-    let redacted_legacy = public_key_ref(&legacy);
+    // 不含 `.` 的输入：截断为前 8 字符 + 省略号
+    let undotted = "deadbeef".repeat(8); // 64 hex
+    let redacted_undotted = public_key_ref(&undotted);
     assert_eq!(
-        redacted_legacy, "deadbeef\u{2026}",
-        "旧格式应截断为前 8 字符 + …"
+        redacted_undotted, "deadbeef\u{2026}",
+        "不含 `.` 的输入应截断为前 8 字符 + …"
     );
     assert!(
-        redacted_legacy.chars().count() <= 9,
-        "脱敏后长度应远小于原始 token，不足以还原"
+        redacted_undotted.chars().count() <= 9,
+        "脱敏后长度应远小于原始输入，不足以还原"
     );
 }
 
@@ -551,10 +540,16 @@ async fn verify_with_namespace_returns_error_when_namespace_mismatch() {
 async fn verify_returns_internal_error_when_json_invalid() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone());
-    let key = "deadbeef".repeat(8);
-    let dao_key = format!("garrison:apikey:{}", key);
+    let key_id = "deadbeefdeadbeefdeadbeefdeadbeef"; // 32 hex
+    let key_secret = "0123456789abcdef0123456789abcdef";
+    let token = format!("{}.{}", key_id, key_secret);
+    // 反向索引 → dao_key，value 为非法 JSON
+    let dao_key = format!("garrison:apikey:default:{}", key_id);
+    dao.set(&super::handler::idx_key_for(key_id), &dao_key, 3600)
+        .await
+        .unwrap();
     dao.set(&dao_key, "invalid-json", 3600).await.unwrap();
-    let result = handler.verify(&key).await;
+    let result = handler.verify(&token).await;
     assert!(
         matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
         "无效 JSON 应返回 Internal 错误，实际: {:?}",
@@ -562,41 +557,12 @@ async fn verify_returns_internal_error_when_json_invalid() {
     );
 }
 
-/// D7-T018: 拒绝空 `secret_hash` 的 legacy key（fail-closed，CWE-916 强化）。
+/// 验证 verify 在 value 不是有效 JSON 时返回 Internal 错误（见
+/// `verify_returns_internal_error_when_json_invalid`）。
 ///
-/// 构造 `secret_hash` 为空的 ApiKeyInfo（模拟 v0.4.1 legacy 格式），handler
-/// 应返回 `InvalidToken` 且错误消息含 `apikey-legacy-secret-required`。
-/// 不提供兼容开关（遵循"禁止向后兼容"规则），legacy key 必须迁移到 v0.7.x 新格式。
-#[tokio::test]
-#[serial_test::serial]
-async fn decode_and_check_rejects_empty_secret_hash() {
-    let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
-    let key = "deadbeef".repeat(8);
-    let dao_key = format!("garrison:apikey:{}", key);
-    let info = ApiKeyInfo {
-        login_id: "legacy-default".to_string(),
-        scopes: vec![],
-        expire_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + 3600,
-        revoked: false,
-        namespace: "default".to_string(),
-        ..Default::default() // secret_hash 为空（legacy v0.4.1）
-    };
-    let value = serde_json::to_string(&info).unwrap();
-    dao.set(&dao_key, &value, 3600).await.unwrap();
-
-    let result = handler.verify(&key).await;
-    assert!(
-        matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.contains("apikey-legacy-secret-required")),
-        "handler 应拒绝空 secret_hash 的 legacy key（fail-closed），实际: {:?}",
-        result
-    );
-}
-
+/// 注：`secret_hash` 为必填字段，缺失即反序列化失败（fail-closed），
+/// 不存在可校验的空 `secret_hash` 状态。
+///
 /// 验证 revoke 在 value 不是有效 JSON 时返回 Internal 错误。
 ///
 /// 覆盖 revoke_at 的反序列化失败分支。
@@ -604,10 +570,16 @@ async fn decode_and_check_rejects_empty_secret_hash() {
 async fn revoke_returns_internal_error_when_json_invalid() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone());
-    let key = "deadbeef".repeat(8);
-    let dao_key = format!("garrison:apikey:{}", key);
+    let key_id = "cafebeefcafebeefcafebeefcafebeef"; // 32 hex
+    let key_secret = "0123456789abcdef0123456789abcdef";
+    let token = format!("{}.{}", key_id, key_secret);
+    // 反向索引 → dao_key，value 为非法 JSON
+    let dao_key = format!("garrison:apikey:default:{}", key_id);
+    dao.set(&super::handler::idx_key_for(key_id), &dao_key, 3600)
+        .await
+        .unwrap();
     dao.set(&dao_key, "invalid-json", 3600).await.unwrap();
-    let result = handler.revoke(&key).await;
+    let result = handler.revoke(&token).await;
     assert!(
         matches!(result, Err(GarrisonError::Internal(ref msg)) if msg.contains("apikey-deserialize")),
         "无效 JSON 应返回 Internal 错误，实际: {:?}",
@@ -763,38 +735,6 @@ async fn e4_revoke_uses_reverse_index() {
     );
 }
 
-/// E4: 验证 `revoke` 在无反向索引时回退到旧格式。
-#[tokio::test]
-#[serial_test::serial]
-async fn e4_revoke_falls_back_to_legacy_format() {
-    let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
-    let key = "cafebeef".repeat(8);
-    let old_dao_key = format!("garrison:apikey:{}", key);
-    let info = ApiKeyInfo {
-        login_id: "legacy-revoke".to_string(),
-        scopes: vec![],
-        expire_at: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64
-            + 3600,
-        revoked: false,
-        namespace: "default".to_string(),
-        ..Default::default()
-    };
-    let value = serde_json::to_string(&info).unwrap();
-    dao.set(&old_dao_key, &value, 3600).await.unwrap();
-    // 不写入反向索引
-
-    handler.revoke(&key).await.unwrap();
-    let result = handler.verify(&key).await;
-    assert!(
-        matches!(result, Err(GarrisonError::InvalidToken(_))),
-        "E4: revoke 旧格式 key 后 verify 应失败"
-    );
-}
-
 /// E4: 验证反向索引的 TTL 与主 key 一致。
 ///
 /// 使用 `crate::dao::tests::MockDao`（支持 TTL 跟踪）验证索引和主 key 的
@@ -944,10 +884,10 @@ async fn e4_revoke_nonexistent_key_returns_invalid_token() {
     );
 }
 
-/// E4: 验证索引存在但 dao_key 已被删除时，verify 回退到 legacy 路径。
+/// E4: 验证索引存在但 dao_key 已被删除时，verify 返回 InvalidToken。
 ///
-/// 模拟场景：管理员手动 delete 了主 key 但索引残留。verify 应继续查找
-/// legacy 格式，最终返回 InvalidToken。
+/// 模拟场景：管理员手动 delete 了主 key 但索引残留。verify 经索引取不到
+/// 主记录，fail-closed 返回 InvalidToken。
 #[tokio::test]
 #[serial_test::serial]
 async fn e4_verify_falls_through_when_dao_key_deleted() {
@@ -962,7 +902,7 @@ async fn e4_verify_falls_through_when_dao_key_deleted() {
     let dao_key = format!("garrison:apikey:internal:{}", key_id_of(&key));
     dao.delete(&dao_key).await.unwrap();
 
-    // verify 应回退到 legacy，最终返回 InvalidToken
+    // verify 应返回 InvalidToken
     let result = handler.verify(&key).await;
     assert!(
         matches!(result, Err(GarrisonError::InvalidToken(_))),
@@ -1162,7 +1102,7 @@ async fn verify_passes_without_max_age() {
     let handler = make_handler();
     let token = handler.generate("user1", vec![], 3600).await.unwrap();
     let info = handler.verify(&token).await.unwrap();
-    assert!(info.created_at.is_some(), "新生成的 key 应有 created_at");
+    assert!(info.created_at > 0, "新生成的 key 应有 created_at");
 }
 
 /// 未过期 key（created_at + max_age > now）通过 verify。
@@ -1173,7 +1113,7 @@ async fn verify_passes_with_valid_max_age() {
     let token = handler.generate("user1", vec![], 3600).await.unwrap();
     // key 刚创建，max_age=7200 远未到期
     let info = handler.verify(&token).await.unwrap();
-    assert!(info.created_at.is_some());
+    assert!(info.created_at > 0);
 }
 
 /// 超期 key（created_at + max_age < now）被拒绝。
@@ -1192,7 +1132,7 @@ async fn verify_rejects_expired_max_age() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs() as i64;
-    info.created_at = Some(now - 100); // 100 秒前创建，max_age=10，已超期
+    info.created_at = now - 100; // 100 秒前创建，max_age=10，已超期
     dao.set(&dao_key, &serde_json::to_string(&info).unwrap(), 3600)
         .await
         .unwrap();
@@ -1205,27 +1145,14 @@ async fn verify_rejects_expired_max_age() {
     );
 }
 
-/// created_at 为 None 的旧 key 跳过 max_age 检查（向后兼容）。
-#[tokio::test]
-async fn verify_skips_max_age_for_legacy_key_without_created_at() {
-    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone()).with_max_age(10);
-    let token = handler.generate("user1", vec![], 3600).await.unwrap();
-
-    // 手动将 created_at 设为 None（模拟旧数据）
-    let key_id = key_id_of(&token);
-    let dao_key = format!("garrison:apikey:default:{}", key_id);
-    let mut info: ApiKeyInfo =
-        serde_json::from_str(&dao.get(&dao_key).await.unwrap().unwrap()).unwrap();
-    info.created_at = None;
-    dao.set(&dao_key, &serde_json::to_string(&info).unwrap(), 3600)
-        .await
-        .unwrap();
-
-    // 即使 max_age=10，created_at=None 时应跳过检查
-    let result = handler.verify(&token).await;
+/// created_at 为必填字段：反序列化缺失该字段的记录直接失败（fail-closed）。
+#[test]
+fn apikey_info_requires_created_at_field() {
+    let json = r#"{"login_id":"1","scopes":[],"expire_at":0,"revoked":false,"namespace":"default","key_id":"a","secret_hash":"b"}"#;
+    let result = serde_json::from_str::<ApiKeyInfo>(json);
     assert!(
-        result.is_ok(),
-        "created_at=None 的旧 key 应跳过 max_age 检查"
+        result.is_err(),
+        "缺失 created_at 的 JSON 应反序列化失败，实际: {:?}",
+        result
     );
 }

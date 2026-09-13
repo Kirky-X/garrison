@@ -925,7 +925,7 @@ async fn validate_nc_increasing_accepted_with_dao() {
     }
 }
 
-/// 未注入 DAO 时跳过 nc 校验（向后兼容）。
+/// 未注入 DAO 时跳过 nc 校验（DAO 为可选依赖，fail-open）。
 ///
 /// 场景：不注入 DAO（dao=None），相同 nc 重放仍被接受（仅依赖 nonce TTL 防重放）。
 #[tokio::test(flavor = "multi_thread")]
@@ -953,10 +953,10 @@ async fn validate_nc_skipped_without_dao() {
         auth.validate(&header, method, uri, &ha1),
         "vuln-0008: 无 DAO 时首次请求应通过"
     );
-    // 第二次相同 nc：仍通过（无 DAO 跳过 nc 校验，向后兼容）
+    // 第二次相同 nc：仍通过（无 DAO 跳过 nc 校验，fail-open）
     assert!(
         auth.validate(&header, method, uri, &ha1),
-        "vuln-0008: 无 DAO 时相同 nc 重放仍通过（向后兼容）"
+        "vuln-0008: 无 DAO 时相同 nc 重放仍通过（fail-open）"
     );
 }
 

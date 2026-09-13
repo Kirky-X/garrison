@@ -204,8 +204,7 @@ mod service {
                     }
                     ancestors.insert(parent.clone());
                     // 递归收集 parent 的祖先
-                    let (indirect, sub_complete) =
-                        Self::dfs_ancestors(parent, adj, visited, memo);
+                    let (indirect, sub_complete) = Self::dfs_ancestors(parent, adj, visited, memo);
                     complete &= sub_complete;
                     ancestors.extend(indirect);
                 }

@@ -10,19 +10,17 @@
 //!
 //! ## Key 命名空间
 //!
-//! v0.4.2 起，所有 API Key 存储格式由 `garrison:apikey:<key>` 升级为
-//! `garrison:apikey:<namespace>:<key>`，支持多租户/多场景隔离。
+//! 所有 API Key 存储于 `garrison:apikey:<namespace>:<key>`，支持多租户/多场景隔离。
 //!
 //! ## 凭证格式与哈希存储（CWE-916 修复）
 //!
-//! v0.7.x 起，API Key 采用 `key_id.key_secret` 双段格式（各 32 hex，`.` 分隔）：
+//! API Key 采用 `key_id.key_secret` 双段格式（各 32 hex，`.` 分隔）：
 //! - `key_id`：公开标识，作为存储 key 后缀（`garrison:apikey:<ns>:<key_id>`），可安全记录到日志用于审计。
 //! - `key_secret`：机密部分，**永不落库**；仅存储 `sha256(key_secret)` 到 `ApiKeyInfo::secret_hash`，
 //!   校验时用常量时间比较（`subtle::ConstantTimeEq`）。数据库/KV 泄露也无法还原 secret。
 //!
-//! `verify` 拒绝旧格式（v0.4.1 无 namespace 单 token、v0.4.2 带 namespace 单 token）：
-//! 旧 key 的 `ApiKeyInfo::secret_hash` 为空，被 `decode_and_check` fail-closed 拒绝
-//! （返回 `apikey-legacy-secret-required`），强制迁移到 v0.7.x 双段格式（W8，CWE-916 强化）。
+//! `verify` 只接受双段格式：不含 `.` 分隔符的输入无法定位存储记录，直接返回
+//! `InvalidToken`（fail-closed，CWE-916 强化：杜绝任何"按存在性校验"的路径）。
 
 use crate::dao::GarrisonDao;
 // listener_manager 注入（feature-gated）
@@ -46,24 +44,20 @@ pub struct ApiKeyInfo {
     pub revoked: bool,
     /// 命名空间。
     ///
-    /// - 新生成 key 必带 namespace（默认 `"default"`）
-    /// - 旧 JSON 数据（无 `namespace` 字段）反序列化时通过 `#[serde(default)]` 填充为 `"default"`
-    /// - 与 key 存储路径 `garrison:apikey:<namespace>:<key_id>` 中的 namespace 严格一致
-    #[serde(default = "handler::default_namespace")]
+    /// 新生成 key 必带 namespace（默认 `"default"`），与 key 存储路径
+    /// `garrison:apikey:<namespace>:<key_id>` 中的 namespace 严格一致。
+    /// 反序列化时该字段必需，缺失即失败（fail-closed）。
     pub namespace: String,
     /// 公开 key 标识（32 hex）。
     ///
     /// 作为存储 key 后缀，可安全记录到日志用于审计。
-    /// 旧 JSON（无此字段）反序列化为空串，仅作为 legacy key 查找路径的标识，
-    /// 最终仍被 `decode_and_check` fail-closed 拒绝（见 W8）。
-    #[serde(default)]
+    /// 反序列化时该字段必需，缺失即失败（fail-closed）。
     pub key_id: String,
     /// `sha256(key_secret)` 的 hex 编码（64 字符）。
     ///
     /// **不存储明文 secret**（CWE-916 修复）。校验时用常量时间比较。
-    /// 旧 JSON（无此字段）反序列化为空串，此时 fail-closed 拒绝（返回
-    /// `apikey-legacy-secret-required`），不做 secret 比较也不按存在性放行。
-    #[serde(default)]
+    /// 反序列化时该字段必需，缺失即失败（fail-closed），不做 secret 比较
+    /// 也不按存在性放行。
     pub secret_hash: String,
     /// 归属主体标识（IDOR 防护，#3）。
     ///
@@ -87,15 +81,15 @@ pub struct ApiKeyInfo {
     /// 创建时间戳（秒）。
     ///
     /// 用于 `max_age_secs` 生命周期策略：`created_at + max_age_secs < now` 时拒绝。
-    /// 旧 JSON（无此字段）反序列化为 `None`，此时跳过 max_age 检查（向后兼容）。
-    #[serde(default)]
-    pub created_at: Option<i64>,
+    /// 反序列化时该字段必需，缺失即失败（fail-closed），保证 max_age 策略
+    /// 对所有 key 都可执行。
+    pub created_at: i64,
 }
 
 /// API Key 作用域枚举（类型安全的常见作用域）。
 ///
 /// 提供规范的作用域字符串，供构建 [`ApiKeyHandler::with_allowed_scopes`] 的允许列表使用。
-/// 存储层仍以 `Vec<String>` 形态保存（向后兼容），本枚举仅用于减少手写字符串的拼写错误。
+/// 存储层以 `Vec<String>` 形态保存，本枚举仅用于减少手写字符串的拼写错误。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ApiKeyScope {
     /// 只读。
@@ -135,7 +129,7 @@ pub struct ApiKeyHandler {
     listener_manager: Option<Arc<GarrisonListenerManager>>,
     /// 作用域允许列表（opt-in，#6）。
     ///
-    /// - `None`（默认）：不校验 scopes，保持向后兼容。
+    /// - `None`（默认）：不校验 scopes，允许任意 scope。
     /// - `Some(list)`：`generate` 时拒绝不在列表中的 scope（返回 `InvalidParam`）。
     pub(crate) allowed_scopes: Option<Vec<String>>,
     /// 是否在 `verify` 成功后节流更新 `last_used_at`（opt-in，#7-b）。

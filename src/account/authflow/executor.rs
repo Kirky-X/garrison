@@ -1337,10 +1337,17 @@ mod tests {
         let config = Arc::new(GarrisonConfig::default_config());
         let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
         let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, timeout, 0));
         let firewall: Arc<dyn crate::strategy::GarrisonPermissionStrategy> =
             Arc::new(GarrisonPermissionStrategyDefault::new(interface));
-        Arc::new(GarrisonLogicDefault::new(session, config, firewall))
+        Arc::new(GarrisonLogicDefault::new(
+            session,
+            config,
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        ))
     }
 
     /// 构造测试用 AuthExecutor。

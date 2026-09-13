@@ -183,7 +183,14 @@ fn harness_logic_factory(
         .lock()
         .clone()
         .ok_or_else(|| GarrisonError::Config("harness-clock-handoff-empty".to_string()))?;
-    let mut builder = GarrisonLogicDefault::new(session, config, firewall).with_clock(clock);
+    // GarrisonManager::builder().build() 总是在 ctx 中携带 disable_repository；
+    // 缺失属于测试装配错误，fail loud。
+    let disable_repository = ctx
+        .disable_repository
+        .clone()
+        .unwrap_or_else(|| panic!("harness_logic_factory: ctx.disable_repository not provided"));
+    let mut builder =
+        GarrisonLogicDefault::new(session, config, firewall, disable_repository).with_clock(clock);
     if let Some(plugin_manager) = ctx.plugin_manager.clone() {
         builder = builder.with_plugin_manager(plugin_manager);
     }
@@ -196,9 +203,6 @@ fn harness_logic_factory(
     }
     if let Some(permission_checker) = ctx.permission_checker.clone() {
         builder = builder.with_permission_checker(permission_checker);
-    }
-    if let Some(disable_repository) = ctx.disable_repository.clone() {
-        builder = builder.with_disable_repository(disable_repository);
     }
     #[cfg(feature = "three-tier-cache")]
     if let Some(user_cache_service) = ctx.user_cache_service.clone() {

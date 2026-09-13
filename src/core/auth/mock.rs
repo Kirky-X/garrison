@@ -203,8 +203,7 @@ mod mock_dao_coverage_tests {
             "expected 匹配时 compare_and_swap 应成功"
         );
         assert!(
-            !dao
-                .compare_and_swap("k2", Some("v1"), "v3", 60)
+            !dao.compare_and_swap("k2", Some("v1"), "v3", 60)
                 .await
                 .unwrap(),
             "expected 不匹配时 compare_and_swap 应返回 false"

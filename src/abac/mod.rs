@@ -49,7 +49,7 @@ pub use loader::{EmptyEntityLoader, StaticEntityLoader};
 ///
 /// # 内置实现
 ///
-/// - [`EmptyEntityLoader`]：返回空 Entities（向后兼容默认行为）
+/// - [`EmptyEntityLoader`]：返回空 Entities（默认行为）
 /// - [`StaticEntityLoader`]：持有预构造 Entities，clone 返回（测试与固定实体场景）
 ///
 /// # 自定义实现

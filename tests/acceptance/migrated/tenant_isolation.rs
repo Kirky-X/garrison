@@ -78,7 +78,7 @@ mod tenant_audit_decision_e2e {
                 .await
                 .expect("oxcache 初始化应成功"),
         );
-        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
 
         let mut config = garrison::config::GarrisonConfig::default_config();
         config.token_style = "uuid".to_string();
@@ -105,9 +105,16 @@ mod tenant_audit_decision_e2e {
         lm.register(audit_listener.clone() as Arc<dyn GarrisonListener>);
 
         let logic = Arc::new(
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                .with_permission_checker(pc.clone())
-                .with_listener_manager(lm),
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
+            .with_permission_checker(pc.clone())
+            .with_listener_manager(lm),
         );
 
         let tenant_ctx = TenantContext {

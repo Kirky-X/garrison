@@ -602,7 +602,7 @@ async fn is_valid_returns_false_when_temp_credential_expired() {
     );
 }
 
-/// 验证 is_valid 在 token 未关联临时凭证时返回 true（向后兼容）。
+/// 验证 is_valid 在 token 未关联临时凭证时返回 true（无临时凭证约束，按 TTL 判定）。
 #[tokio::test]
 async fn is_valid_returns_true_when_no_temp_credential_linked() {
     let (_dao, session) = make_session(3600, 86400);

@@ -247,7 +247,10 @@ pub fn extract_token_from_request_parts(
         let content_type = header_fn("Content-Type")?.unwrap_or_default();
         // 大小写不敏感匹配（RFC 9110：media type 不区分大小写，ocr #6437），
         // `Application/JSON` 等非常规大小写不应静默跳过 body 提取
-        if content_type.to_ascii_lowercase().contains("application/json") {
+        if content_type
+            .to_ascii_lowercase()
+            .contains("application/json")
+        {
             if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
                 if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
                     return Ok(Some(token.to_string()));
@@ -627,7 +630,11 @@ mod tests {
         config.is_read_body = true;
         config.token_name = "token".to_string();
         let body = br#"{"token":"case_tok"}"#;
-        for ct in &["application/json", "Application/JSON", "APPLICATION/JSON; charset=utf-8"] {
+        for ct in &[
+            "application/json",
+            "Application/JSON",
+            "APPLICATION/JSON; charset=utf-8",
+        ] {
             let token = extract_token_from_request_parts(
                 &config,
                 body,

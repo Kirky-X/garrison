@@ -237,7 +237,7 @@ impl GarrisonFirewallCheckHookDefault {
     /// 注入 `GarrisonListenerManager`，启用 AccountLocked 事件广播。
     ///
     /// 注入后 `check_brute_force` 阻断时广播 `GarrisonEvent::AccountLocked`。
-    /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
+    /// 未注入时为 no-op（不广播）。需启用 `listener` feature。
     #[cfg(feature = "listener")]
     pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);

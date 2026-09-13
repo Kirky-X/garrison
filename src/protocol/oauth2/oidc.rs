@@ -33,7 +33,7 @@ use subtle::ConstantTimeEq;
 /// - JSON 字符串 → `OidcAudience::Single(String)`
 /// - JSON 数组   → `OidcAudience::Multi(Vec<String>)`
 ///
-/// 序列化时：`Single` 输出 String（向后兼容），`Multi` 输出数组。
+/// 序列化时：`Single` 输出 JSON 字符串，`Multi` 输出数组（两种形式均为 RFC 7519 允许）。
 ///
 /// # 与 `sso/oidc.rs::Aud` 的重复说明
 ///
@@ -45,7 +45,7 @@ use subtle::ConstantTimeEq;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum OidcAudience {
-    /// 单一受众（JSON 字符串形式，向后兼容）。
+    /// 单一受众（JSON 字符串形式）。
     Single(String),
     /// 多受众（JSON 数组形式，RFC 7519 允许）。
     Multi(Vec<String>),
@@ -203,7 +203,7 @@ impl OidcHandler {
         let claims = OidcClaims {
             iss: self.issuer.clone(),
             sub: login_id.clone(),
-            // 签发时使用 Single 形式（向后兼容，序列化为 JSON 字符串）
+            // 签发时使用 Single 形式（序列化为 JSON 字符串，与常见 IdP 行为一致）
             aud: OidcAudience::Single(self.audience.clone()),
             iat: now,
             exp: now + timeout,
@@ -328,7 +328,7 @@ impl OidcHandler {
 
 // 密钥零化仅在 `protocol-zeroize` feature 下编译生效；未启用该 feature 时
 // `secret` 以明文保留在内存中直至分配器回收（见 struct 文档「密钥内存安全」）。
-// 保持 feature 结构是为了兼容无 zeroize 依赖的默认构建，故不做无条件零化。
+// 保持 feature 结构是为了让默认构建不引入 zeroize 依赖，故不做无条件零化。
 #[cfg(feature = "protocol-zeroize")]
 impl Drop for OidcHandler {
     fn drop(&mut self) {
@@ -688,7 +688,7 @@ mod tests {
 
     /// 手动签发一个 aud 为数组形式的 id_token（模拟 IdP 返回多受众 token）。
     ///
-    /// `OidcHandler::sign_id_token` 总是签发 `Single` 形式（向后兼容），
+    /// `OidcHandler::sign_id_token` 总是签发 `Single` 形式，
     /// 测试数组形式需直接调用 `jsonwebtoken::encode` 构造 `Multi` 形式的 claims。
     fn sign_token_with_multi_aud(
         issuer: &str,

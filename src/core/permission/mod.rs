@@ -111,7 +111,7 @@ pub trait PermissionChecker: Send + Sync {
 
     /// 断言权限：被拒绝时返回 `Err(GarrisonError::NotPermission)`。
     ///
-    /// 0.5.0 默认实现委托 [`authorize`](Self::authorize)，保持向后兼容。
+    /// 默认实现委托 [`authorize`](Self::authorize)。
     async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<()> {
         let request = AuthRequest::new(login_id, permission);
         let decision = self.authorize(&request).await?;

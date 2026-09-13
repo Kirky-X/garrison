@@ -253,7 +253,7 @@ impl std::fmt::Debug for AccountMetrics {
 }
 
 // ============================================================================
-// 公共 API（feature 未启用时提供 no-op 占位，保证向后兼容）
+// 公共 API（feature 未启用时提供 no-op 占位）
 // ============================================================================
 
 /// 指标集合的 feature-gated 别名。
@@ -523,7 +523,7 @@ mod tests {
     }
 }
 
-/// 无 feature 时的编译验证测试（确保向后兼容）。
+/// 无 feature 时的编译验证测试。
 #[cfg(all(test, not(feature = "metrics-prometheus")))]
 mod tests_no_feature {
     use super::*;

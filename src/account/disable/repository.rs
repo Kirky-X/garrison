@@ -265,7 +265,7 @@ impl DisableRepository for DefaultDisableRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::tests::MockDao;
+    use crate::dao::InMemoryDao;
 
     // ========================================================================
     // T016: disable / untie_disable 方法测试
@@ -274,7 +274,7 @@ mod tests {
     /// disable 写入：调用 disable 后 DAO 中存在对应 key，value 为合法 DisableEntry JSON。
     #[tokio::test]
     async fn t016_disable_writes_entry_to_dao() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         let until = Utc::now() + chrono::Duration::seconds(3600);
         repo.disable("user-1001", "default", Some(until), 0, 3600)
@@ -293,7 +293,7 @@ mod tests {
     /// untie_disable 删除：disable 后调用 untie_disable，DAO 中 key 不存在。
     #[tokio::test]
     async fn t016_untie_disable_removes_entry_from_dao() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-1002", "default", None, 0, 0)
             .await
@@ -311,7 +311,7 @@ mod tests {
     /// service 在前 login_id 在后（便于按 service 前缀扫描）。
     #[tokio::test]
     async fn t016_disable_key_format_is_service_then_login_id() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-1003", "payment", None, 0, 0)
             .await
@@ -333,7 +333,7 @@ mod tests {
     /// 永久封禁 duration_secs=0：disable 传入 duration_secs=0 时，DAO 中 key 永久驻留（无 TTL）。
     #[tokio::test]
     async fn t016_disable_with_zero_duration_is_permanent() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-1004", "default", None, 0, 0)
             .await
@@ -350,7 +350,7 @@ mod tests {
     /// level 传递：disable 传入 level=2 时，序列化的 JSON 中 level 字段为 2。
     #[tokio::test]
     async fn t016_disable_passes_level_to_entry() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-1005", "default", None, 2, 3600)
             .await
@@ -364,7 +364,7 @@ mod tests {
     /// 多次 disable 覆盖：对同一 login_id+service 多次 disable，DAO 中只保留最后一次。
     #[tokio::test]
     async fn t016_multiple_disable_overwrites_previous() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 第一次 disable(level=1)
         repo.disable("user-1006", "default", None, 1, 0)
@@ -386,7 +386,7 @@ mod tests {
     /// disable 后 is_disable 间接验证：disable 后 is_disable 返回 Ok(true)。
     #[tokio::test]
     async fn t016_disable_then_is_disable_returns_true() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 未封禁时 is_disable 返回 false
         assert!(
@@ -406,7 +406,7 @@ mod tests {
     /// untie_disable 不存在不报错：对未封禁的 login_id 调用 untie_disable 返回 Ok(())。
     #[tokio::test]
     async fn t016_untie_disable_missing_key_returns_ok() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 对未封禁的 login_id 调用 untie_disable
         let result = repo.untie_disable("never_disabled", "default").await;
@@ -425,7 +425,7 @@ mod tests {
     /// 但在 "payment" service 上 is_disable 应返回 false（多 service 独立封禁）。
     #[tokio::test]
     async fn t017_is_disable_returns_false_for_unbanned_service() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 在 "default" service 上封禁
         repo.disable("user-2001", "default", None, 0, 0)
@@ -442,7 +442,7 @@ mod tests {
     /// is_disable 返回 Ok(true)。
     #[tokio::test]
     async fn t017_is_disable_returns_true_for_timed_ban() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         let until = Utc::now() + chrono::Duration::seconds(3600);
         repo.disable("user-2002", "default", Some(until), 0, 3600)
@@ -458,7 +458,7 @@ mod tests {
     /// get_disable_time 返回 Ok(None)（永久封禁无到期时间）。
     #[tokio::test]
     async fn t017_get_disable_time_returns_none_for_permanent_ban() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-2003", "default", None, 0, 0)
             .await
@@ -474,7 +474,7 @@ mod tests {
     /// get_disable_time 返回 Ok(Some(time))，且时间值精确匹配。
     #[tokio::test]
     async fn t017_get_disable_time_returns_some_for_timed_ban() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         let until = Utc::now() + chrono::Duration::seconds(7200);
         repo.disable("user-2004", "default", Some(until), 0, 7200)
@@ -491,7 +491,7 @@ mod tests {
     /// get_disable_level 正确值：disable(level=2) 后 get_disable_level 返回 Ok(Some(2))。
     #[tokio::test]
     async fn t017_get_disable_level_returns_correct_value() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-2005", "default", None, 2, 0)
             .await
@@ -508,7 +508,7 @@ mod tests {
     /// get_disable_level 未封禁返回 None：未 disable 时 get_disable_level 返回 Ok(None)。
     #[tokio::test]
     async fn t017_get_disable_level_returns_none_when_not_banned() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         assert_eq!(
             repo.get_disable_level("never_banned", "default")
@@ -524,7 +524,7 @@ mod tests {
     /// 覆盖 `serde_json::from_str` 失败路径，验证错误被包装为 `GarrisonError::Dao`。
     #[tokio::test]
     async fn t017_get_disable_time_returns_err_on_deserialize_failure() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // 手动写入损坏 JSON 到 disable key
         let key = "disable:default:user-2006";
@@ -540,7 +540,7 @@ mod tests {
     /// untie_disable 后 is_disable=false：disable 后 untie_disable，is_disable 返回 Ok(false)。
     #[tokio::test]
     async fn t017_is_disable_returns_false_after_untie_disable() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-2007", "default", None, 0, 0)
             .await
@@ -561,7 +561,7 @@ mod tests {
     /// get_disable_time 未封禁返回 None：未 disable 时 get_disable_time 返回 Ok(None)。
     #[tokio::test]
     async fn t017_get_disable_time_returns_none_when_not_banned() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         assert_eq!(
             repo.get_disable_time("never_banned", "default")
@@ -581,7 +581,7 @@ mod tests {
     /// 验证默认封禁级别 0（普通封禁）可正确存储与读取。
     #[tokio::test]
     async fn t018_level_zero_normal_ban() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-3001", "default", None, 0, 0)
             .await
@@ -600,7 +600,7 @@ mod tests {
     /// 验证一级阶梯封禁（如限制部分功能）可正确存储与读取。
     #[tokio::test]
     async fn t018_level_one_first_escalation() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-3002", "default", None, 1, 0)
             .await
@@ -619,7 +619,7 @@ mod tests {
     /// 验证三级阶梯封禁（如完全封禁）可正确存储与读取。
     #[tokio::test]
     async fn t018_level_three_full_ban() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-3003", "default", None, 3, 0)
             .await
@@ -640,7 +640,7 @@ mod tests {
     /// 验证高 level 值无截断/溢出，且 level 字段在 JSON 持久化层正确传递。
     #[tokio::test]
     async fn t018_get_disable_level_returns_correct_high_value() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         repo.disable("user-3004", "default", None, 10, 0)
             .await
@@ -670,7 +670,7 @@ mod tests {
     /// service 含 `:` 时 disable 返回 Err，阻止 key 注入。
     #[tokio::test]
     async fn h001_disable_rejects_colon_in_service() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao);
         let result = repo.disable("1001", "evil:service", None, 0, 0).await;
         assert!(result.is_err(), "service 含冒号应被拒绝（避免 key 注入）");
@@ -679,7 +679,7 @@ mod tests {
     /// login_id 含 `:` 时 disable 返回 Err，阻止 key 注入。
     #[tokio::test]
     async fn h001_disable_rejects_colon_in_login_id() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao);
         let result = repo.disable("evil:login", "default", None, 0, 0).await;
         assert!(result.is_err(), "login_id 含冒号应被拒绝（避免 key 注入）");
@@ -693,7 +693,7 @@ mod tests {
     /// get_disable_level 均返回 None（三方法对过期条目行为一致）。
     #[tokio::test]
     async fn expired_entry_all_queries_treated_as_not_disabled() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // until 为 1 小时前（已过期），duration_secs=0 → key 永久驻留，
         // 逻辑过期只由查询方法的活跃性检查识别
@@ -703,14 +703,19 @@ mod tests {
             .unwrap();
         // 前置条件：key 仍在 DAO 中
         let key = "disable:default:user-expired";
-        assert!(dao.get(key).await.unwrap().is_some(), "key 应仍存在（TTL=0）");
+        assert!(
+            dao.get(key).await.unwrap().is_some(),
+            "key 应仍存在（TTL=0）"
+        );
 
         assert!(
             !repo.is_disable("user-expired", "default").await.unwrap(),
             "过期条目 is_disable 应为 false"
         );
         assert_eq!(
-            repo.get_disable_time("user-expired", "default").await.unwrap(),
+            repo.get_disable_time("user-expired", "default")
+                .await
+                .unwrap(),
             None,
             "过期条目 get_disable_time 应返回 None（与 is_disable 一致）"
         );
@@ -731,7 +736,7 @@ mod tests {
     /// （= until 剩余秒数），封禁期内 DAO key 不被提前淘汰。
     #[tokio::test]
     async fn disable_ttl_uses_max_of_duration_and_until() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // until 在 1 小时后，duration_secs=60：若按 duration_secs 直写，
         // key 会在封禁到期前 3540 秒消失（封禁提前解除）
@@ -758,7 +763,7 @@ mod tests {
     /// （仍是更晚过期者）；逻辑过期由查询方法过滤，不受影响。
     #[tokio::test]
     async fn disable_ttl_longer_than_until_uses_duration() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
         // until 在 60 秒后，duration_secs=3600 → TTL 取 3600
         let until = Utc::now() + chrono::Duration::seconds(60);

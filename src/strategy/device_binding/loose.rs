@@ -11,7 +11,7 @@
 //! [`SecurityAlertEvent::NewDeviceLogin`](crate::strategy::alert::SecurityAlertEvent::NewDeviceLogin) 事件，业务方监听器可记录审计日志或
 //! 触发风控流程，但登录主流程不被阻断。
 //!
-//! `AlertListenerManager` 为 `Option`，`None` 时跳过广播（向后兼容无告警系统场景）。
+//! `AlertListenerManager` 为 `Option`，`None` 表示未部署告警系统，此时跳过广播。
 //!
 //! # HIGH-001 修复 + 新设备校验（issue #2160）
 //!
@@ -41,7 +41,7 @@ use super::DeviceBindingPolicy;
 /// `require_secondary_auth` 仍返回 `Ok(false)`（不触发二级认证），但会通过
 /// `AlertListenerManager` 广播 [`SecurityAlertEvent::NewDeviceLogin`] 事件。
 ///
-/// # 向后兼容
+/// # 未部署告警系统时（None）
 ///
 /// `alert_manager` 为 `None` 时跳过广播，行为等价于 [`super::Disabled`]（但
 /// `is_new_device` 仍正常检测），适用于未启用告警系统的部署。
@@ -285,7 +285,7 @@ mod tests {
         assert!(!r2, "旧设备 require_secondary_auth 应返回 false");
     }
 
-    /// 无 alert_manager 时新设备不报错（向后兼容）。
+    /// 无 alert_manager 时新设备不报错（None = 未部署告警系统，跳过广播）。
     #[tokio::test]
     async fn no_alert_manager_does_not_error() {
         let (_dao, session) = make_session();
@@ -352,11 +352,7 @@ mod tests {
             .require_secondary_auth("1001", "tablet-android")
             .await
             .unwrap();
-        assert_eq!(
-            counter.call_count(),
-            1,
-            "新设备应广播 1 次（总计 1 次）"
-        );
+        assert_eq!(counter.call_count(), 1, "新设备应广播 1 次（总计 1 次）");
     }
 
     /// require_secondary_auth_with_ip 将真实来源 IP 透传到 NewDeviceLogin 事件

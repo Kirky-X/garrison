@@ -161,9 +161,10 @@ impl AbacEngine {
     /// # 错误
     /// - 缓存清空失败：`GarrisonError::InvalidParam`
     pub async fn invalidate_entities(&self) -> GarrisonResult<()> {
-        self.cache.clear().await.map_err(|e| {
-            GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
-        })
+        self.cache
+            .clear()
+            .await
+            .map_err(|e| GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e)))
     }
 
     /// 求值策略。
@@ -445,9 +446,7 @@ impl AbacEngine {
         .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-request-build::{}", e)))?;
         // 通过 EntityLoader 加载实体。若返回错误，通过 ? 传播，缓存不受污染。
         let entities = self.entity_loader.load_entities().await?;
-        let response = self
-            .authorizer
-            .is_authorized(&request, policies, &entities);
+        let response = self.authorizer.is_authorized(&request, policies, &entities);
 
         // 记录 Cedar 诊断错误（Issue 3/91: 原代码丢弃了 diagnostics errors）
         let mut has_eval_errors = false;
@@ -1752,10 +1751,7 @@ mod tests {
             )
             .await
             .expect("evaluate（诊断错误走 fail-closed 拒绝而非 Err）");
-        assert!(
-            !decision.allowed,
-            "Cedar 诊断错误时必须拒绝（fail-closed）"
-        );
+        assert!(!decision.allowed, "Cedar 诊断错误时必须拒绝（fail-closed）");
         assert!(
             decision.reason == DecisionReason::EvaluationError,
             "诊断错误的拒绝原因应为 EvaluationError，实际: {:?}",

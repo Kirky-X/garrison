@@ -169,7 +169,10 @@ fn test_interceptor_call_injects_token_into_extensions() {
     assert_eq!(injected.0, "secret-token-abc");
     // Debug 脱敏：不得包含 token 明文
     let debug = format!("{:?}", injected);
-    assert!(!debug.contains("secret-token-abc"), "Debug 不得泄露 token: {debug}");
+    assert!(
+        !debug.contains("secret-token-abc"),
+        "Debug 不得泄露 token: {debug}"
+    );
     assert!(debug.contains("[REDACTED]"));
 }
 
@@ -246,8 +249,7 @@ async fn test_health_service_returns_server() {
     }
     let name = assert_named_service(&server);
     assert_eq!(
-        name,
-        "grpc.health.v1.Health",
+        name, "grpc.health.v1.Health",
         "health_service 应返回标准 gRPC health 服务"
     );
 }

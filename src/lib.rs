@@ -217,7 +217,7 @@ pub mod plugin;
 /// 可观测性模块，提供 Prometheus 指标 / 结构化 JSON 日志 / OpenTelemetry 分布式追踪。
 ///
 /// 启用 `metrics-prometheus` feature 启用指标采集；启用 `otlp` 启用 OTLP 追踪导出。
-/// 未启用任一 feature 时模块仍可导入但 API 为 no-op，保证向后兼容。
+/// 未启用任一 feature 时模块仍可导入但 API 为 no-op。
 #[cfg(any(
     feature = "metrics-prometheus",
     feature = "otlp",
@@ -234,7 +234,7 @@ pub mod grpc;
 
 /// 国际化模块，提供异常消息中英文切换（fluent-rs）。
 ///
-/// 默认 `Zh`（中文，向后兼容 0.2.x 硬编码行为），通过 `set_locale(GarrisonLocale::En)`
+/// 默认 `Zh`（中文），通过 `set_locale(GarrisonLocale::En)`
 /// 切换至英文。
 pub mod i18n;
 

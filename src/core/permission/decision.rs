@@ -537,7 +537,7 @@ mod tests {
         /// 现有 allow()/deny() 行为不因 safe-defaults feature 改变。
         ///
         /// 验证 `Decision::allow()` 和 `Decision::deny()` 在 safe-defaults feature
-        /// 启用时行为不变（向后兼容）。
+        /// 启用时行为不变。
         #[test]
         fn existing_allow_deny_unchanged() {
             let allow = Decision::allow();

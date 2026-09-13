@@ -484,7 +484,7 @@ mod tests {
     /// `BackendEmbedded::default()` 返回新实例。
     #[test]
     fn backend_embedded_default_returns_instance() {
-        let _backend = BackendEmbedded::default();
+        let _backend = BackendEmbedded;
     }
 
     /// `check_role` 无效 token 返回错误。

@@ -149,7 +149,7 @@ pub(crate) fn reset_backend_for_test() {
 ///
 /// `jwt_mode` 字段本身不 feature gate，但 `Stateless`/`Mixin` 中的 JWT verify
 /// 调用需 `protocol-jwt` feature。未启用时 `Stateless` 返回 `Config` 错误，
-/// `Mixin` 退化为仅查 session（向后兼容 0.4.1 行为）。
+/// `Mixin` 退化为仅查 session。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum JwtMode {
     /// 仅 JWT verify，不查询 oxcache session（高可用场景）。
@@ -203,7 +203,7 @@ impl GarrisonUtil {
 
     /// 便捷登录：使用默认 `LoginParams`（无设备/IP/UA/remember_me）。
     ///
-    /// 等价于 `login(id, &LoginParams::default())`，向后兼容 0.6.2 前的 `login(id)` 调用。
+    /// 等价于 `login(id, &LoginParams::default())` 的便捷封装。
     pub async fn login_simple(id: impl Into<String>) -> GarrisonResult<String> {
         Self::login(id, &LoginParams::default()).await
     }

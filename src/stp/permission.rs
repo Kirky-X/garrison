@@ -7,7 +7,7 @@
 
 use super::GarrisonLogicDefault;
 // tenant-isolation feature 启用时强制 fail-closed
-// feature 关闭时通过 TENANT.try_get() 保留向后兼容行为
+// feature 关闭时无租户上下文，TENANT.try_get() 失败视为租户 0（单租户）
 #[cfg(feature = "tenant-isolation")]
 use crate::context::tenant::current_tenant_id_or_error;
 #[cfg(not(feature = "tenant-isolation"))]
@@ -190,7 +190,7 @@ impl PermissionLogic for GarrisonLogicDefault {
         // 并广播 PermissionCheck 事件供 AuditLogListener 记录审计日志
         if let Some(pc) = &self.permission_checker {
             // tenant-isolation feature 启用时强制 fail-closed
-            // feature 关闭时通过 TENANT.try_get() 保留向后兼容行为
+            // feature 关闭时无租户上下文，TENANT.try_get() 失败视为租户 0（单租户）
             #[cfg(not(feature = "tenant-isolation"))]
             let tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
             #[cfg(feature = "tenant-isolation")]
@@ -723,7 +723,7 @@ mod tests {
             has_role: bool,
         ) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = throw_on_not_login;
             config.token_style = "uuid".to_string();
@@ -731,7 +731,14 @@ mod tests {
                 has_permission,
                 has_role,
             });
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
         }
 
         // ----------------------------------------------------------------
@@ -1045,7 +1052,7 @@ mod tests {
         /// 构造带 permission_checker 的 GarrisonLogicDefault。
         fn make_logic_with_checker(allowed: bool, fail: bool) -> GarrisonLogicDefault {
             let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
@@ -1054,8 +1061,15 @@ mod tests {
                 has_role: true,
             });
             let pc: Arc<dyn PermissionChecker> = Arc::new(MockPermissionChecker { allowed, fail });
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                .with_permission_checker(pc)
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            )
+            .with_permission_checker(pc)
         }
 
         /// 已登录 + permission_checker.authorize 返回 allowed=true → Ok(())。

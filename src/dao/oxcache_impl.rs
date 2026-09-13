@@ -22,7 +22,7 @@ use std::time::Duration;
 /// # 设计
 ///
 /// - `TENANT.try_get()` 返回 `Err` 而非 `None`（tokio task_local 语义），用 `Ok` 模式匹配
-/// - 不 panic：无上下文时 key 保持原样，保证向后兼容
+/// - 不 panic：无租户上下文时 key 保持原样（单租户语义，无前缀）
 /// - 同步函数：`try_get` 是同步的，无需 async
 fn prefixed_key(key: &str) -> String {
     #[cfg(feature = "tenant-isolation")]
@@ -270,7 +270,9 @@ impl GarrisonDao for GarrisonDaoOxcache {
             };
         self.cache
             .set_with_ttl_sync(&actual_key, &value.to_string(), remaining_ttl)
-            .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-update-set-with-ttl-sync::{}", e)))?;
+            .map_err(|e| {
+                GarrisonError::Dao(format!("dao-oxcache-update-set-with-ttl-sync::{}", e))
+            })?;
         // key_index 维护：update 只写 cache 不写索引会使 keys() 漏报该 key
         #[cfg(feature = "dao-key-index")]
         self.key_index.write().insert(actual_key);

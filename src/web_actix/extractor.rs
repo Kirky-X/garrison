@@ -37,7 +37,7 @@ use crate::context::token_extract::extract_token_from_headers;
 ///
 /// 此场景下各 extractor 回退 `GarrisonConfig::default_config()`——安全相关参数
 /// （token 提取配置、timeout 等）可能与预期不一致，至少产生一条 warn 信号
-/// （ocr #2787；回退保持向后兼容，不做 fail-fast 破坏既有集成）。
+/// （ocr #2787；选择回退为默认配置而非 fail-fast，由 warn 信号提示）。
 fn warn_missing_config_once() {
     static WARN: std::sync::Once = std::sync::Once::new();
     WARN.call_once(|| {

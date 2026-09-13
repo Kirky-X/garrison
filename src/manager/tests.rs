@@ -349,7 +349,7 @@ async fn default_factory_builds_working_logic() {
     let firewall: Arc<dyn GarrisonPermissionStrategy> =
         Arc::new(GarrisonPermissionStrategyDefault::new(interface));
 
-    // factory 签名新增 ctx 参数，构造空 context 验证向后兼容
+    // 构造各字段为 None 的空 context 调用 factory
     #[cfg(feature = "listener")]
     let ctx = GarrisonLogicFactoryContext {
         plugin_manager: None,

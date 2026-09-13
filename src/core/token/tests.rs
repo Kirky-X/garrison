@@ -246,21 +246,18 @@ fn simple_style_parse_rejects_invalid_uuid_suffix() {
     assert!(result.is_err(), "UUID 部分无效的 token parse 应返回 Err");
 }
 
-/// A11 核心测试：verify 拒绝无 HMAC 的旧格式 token（防降级攻击）。
+/// A11 核心测试：verify 拒绝无 HMAC 的降级 token（防降级攻击）。
 ///
-/// 攻击场景：攻击者构造旧格式 `<login_id>-<uuid>`（无 HMAC）的 token，
+/// 攻击场景：攻击者构造无 HMAC 的 `<login_id>-<uuid>` token，
 /// 试图绕过 HMAC 校验。应返回 None。
 #[cfg(feature = "secure-simple-token")]
 #[test]
-fn a11_simple_style_verify_rejects_legacy_token_without_hmac() {
+fn a11_simple_style_verify_rejects_unsigned_token_without_hmac() {
     let style = make_simple_style();
-    // 旧格式 token（无 HMAC 后缀）
-    let legacy_token = "root-550e8400-e29b-41d4-a716-446655440000";
-    let result = style.verify(legacy_token).unwrap();
-    assert_eq!(
-        result, None,
-        "A11: 旧格式 token（无 HMAC）应被拒绝，防止降级攻击"
-    );
+    // 无 HMAC 后缀的降级 token
+    let unsigned_token = "root-550e8400-e29b-41d4-a716-446655440000";
+    let result = style.verify(unsigned_token).unwrap();
+    assert_eq!(result, None, "A11: 无 HMAC 的 token 应被拒绝，防止降级攻击");
 }
 
 /// A11 核心测试：verify 拒绝 HMAC 不匹配的伪造 token。
@@ -352,8 +349,7 @@ fn a11_simple_style_parse_rejects_forged_hmac() {
     let style = make_simple_style();
     // 伪造 token：合法 UUID + 合法形态的 exp 段 + 伪造 HMAC
     //（issue 2425/3256 后格式含 exp 段，伪造样本同步更新以命中 HMAC 校验路径）
-    let forged =
-        "admin\x1f550e8400-e29b-41d4-a716-446655440000.9999999999.fake-hmac";
+    let forged = "admin\x1f550e8400-e29b-41d4-a716-446655440000.9999999999.fake-hmac";
     let result = style.parse(forged);
     assert!(
         matches!(result, Err(GarrisonError::InvalidToken(_))),

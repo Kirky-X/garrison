@@ -49,7 +49,7 @@ pub enum TenantSource {
 /// - DAO key 前缀与 Repository SQL 过滤才由 feature 控制
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TenantContext {
-    /// 租户 ID（0 表示默认/全局租户，向后兼容旧数据）。
+    /// 租户 ID（0 表示默认/全局租户，单租户部署使用）。
     pub tenant_id: i64,
     /// 解析来源（Header / Subdomain / Claim）。
     pub resolved_from: TenantSource,

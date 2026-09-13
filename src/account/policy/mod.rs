@@ -102,7 +102,7 @@ pub struct PolicyContext {
     pub password_history: Vec<String>,
     /// 密码创建时间（Unix 秒，用于 `MaxAgeRule` 过期检测）。
     ///
-    /// `None` 表示未知（向后兼容未提供此信息的调用方），
+    /// `None` 表示调用方未提供创建时间（未知），
     /// `MaxAgeRule` 在此情况下 fail-open（跳过过期检查，不阻塞密码修改）。
     pub password_created_at: Option<i64>,
 }

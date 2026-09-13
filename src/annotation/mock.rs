@@ -164,7 +164,10 @@ mod mock_dao_coverage_tests {
         // key 不存在 → 写入成功
         assert!(dao.set_if_absent("a1", "v1", 60).await.unwrap());
         // 读取并删除 → 取回刚写入的值
-        assert_eq!(dao.get_and_delete("a1").await.unwrap().as_deref(), Some("v1"));
+        assert_eq!(
+            dao.get_and_delete("a1").await.unwrap().as_deref(),
+            Some("v1")
+        );
         // 计数器：缺失 key 首次 incr → 1，再 decr → 归 0（key 删除）
         assert_eq!(dao.incr("ctr", 60).await.unwrap(), 1);
         assert_eq!(dao.decr("ctr").await.unwrap(), 0);
@@ -172,7 +175,10 @@ mod mock_dao_coverage_tests {
         dao.rename("k1", "k2").await.unwrap();
         assert_eq!(dao.get("k2").await.unwrap().as_deref(), Some("v1"));
         // CAS：k2 当前值匹配 expected → 成功交换
-        assert!(dao.compare_and_swap("k2", Some("v1"), "v2", 60).await.unwrap());
+        assert!(dao
+            .compare_and_swap("k2", Some("v1"), "v2", 60)
+            .await
+            .unwrap());
         assert_eq!(dao.get("k2").await.unwrap().as_deref(), Some("v2"));
 
         // ---- trait 默认方法 ----

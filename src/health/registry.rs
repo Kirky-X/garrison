@@ -80,9 +80,7 @@ impl HealthRegistry {
                             tracing::warn!(check = %name, panic = %msg, "health check panicked");
                             (
                                 name,
-                                Err(GarrisonError::Internal(
-                                    "health-check-panicked".to_string(),
-                                )),
+                                Err(GarrisonError::Internal("health-check-panicked".to_string())),
                             )
                         },
                         Err(_elapsed) => {

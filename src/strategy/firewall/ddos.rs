@@ -52,14 +52,10 @@ use std::time::Duration;
 ///
 /// # 字段语义（Fixed Window Counter）
 ///
-/// - `global_rps`：保留用于配置兼容性；当前实现下全局桶 threshold 用 `burst`，
-///   此字段不参与限流计算（向后兼容保留）。
 /// - `per_ip_rps`：单 IP 每秒允许的请求数（单 IP 桶的 threshold）。
 /// - `burst`：全局突发上限（全局桶的 threshold，1 秒窗口内允许的总请求数）。
 #[derive(Debug, Clone)]
 pub struct DDoSConfig {
-    /// 全局每秒最大请求数（保留用于配置兼容性，当前实现未直接使用）。
-    pub global_rps: u32,
     /// 单 IP 每秒最大请求数（单 IP 桶的 threshold）。
     pub per_ip_rps: u32,
     /// 全局突发上限（全局桶的 threshold，1 秒窗口内允许的总请求数）。
@@ -69,7 +65,6 @@ pub struct DDoSConfig {
 impl Default for DDoSConfig {
     fn default() -> Self {
         Self {
-            global_rps: 100,
             per_ip_rps: 10,
             burst: 20,
         }
@@ -86,7 +81,7 @@ impl Default for DDoSConfig {
 /// use garrison::strategy::firewall::ddos::{DDoSConfig, DDoSStrategy};
 ///
 /// let dao: Arc<dyn GarrisonDao> = /* oxcache 实现 */;
-/// let config = DDoSConfig { global_rps: 100, per_ip_rps: 10, burst: 20 };
+/// let config = DDoSConfig { per_ip_rps: 10, burst: 20 };
 /// let strategy = DDoSStrategy::new(config, dao);
 /// ```
 pub struct DDoSStrategy {
@@ -169,7 +164,6 @@ mod tests {
     async fn ddos_global_burst_limit() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
-            global_rps: 100,
             per_ip_rps: 1000, // per_ip 放宽，只测全局
             burst: 3,
         };
@@ -197,7 +191,6 @@ mod tests {
     async fn ddos_per_ip_isolation() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
-            global_rps: 100,
             per_ip_rps: 2,
             burst: 1000, // 全局放宽，只测 per_ip
         };
@@ -235,7 +228,6 @@ mod tests {
     async fn ddos_window_reset_after_ttl() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
-            global_rps: 100,
             per_ip_rps: 1000, // 放宽 per_ip，只测全局窗口重置
             burst: 2,
         };
@@ -270,7 +262,6 @@ mod tests {
     async fn ddos_dual_limit_per_ip_triggered_first() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
-            global_rps: 100,
             per_ip_rps: 1,
             burst: 10,
         };
@@ -330,7 +321,6 @@ mod tests {
     async fn per_ip_block_does_not_consume_global_quota() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = DDoSConfig {
-            global_rps: 100,
             per_ip_rps: 2,
             burst: 3,
         };
@@ -338,8 +328,14 @@ mod tests {
         let attacker = FirewallContext::new("9.9.9.9");
 
         // 攻击 IP 前 2 次通过（per_ip=1,2；global=1,2）
-        assert!(strategy.check(&attacker).await.is_ok(), "攻击 IP 第 1 次应通过");
-        assert!(strategy.check(&attacker).await.is_ok(), "攻击 IP 第 2 次应通过");
+        assert!(
+            strategy.check(&attacker).await.is_ok(),
+            "攻击 IP 第 1 次应通过"
+        );
+        assert!(
+            strategy.check(&attacker).await.is_ok(),
+            "攻击 IP 第 2 次应通过"
+        );
 
         // 攻击 IP 第 3 次被单 IP 桶拦截（per_ip=3 > 2），全局桶保持 2 不被消耗
         assert!(matches!(

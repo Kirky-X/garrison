@@ -304,7 +304,7 @@ impl GarrisonLogicDefault {
     /// `max=0` 时不做任何操作（0 表示不限制，由调用方判断）。
     ///
     /// 踢出后根据 [`crate::config::OverflowLogoutMode`] 广播对应事件：
-    /// - `Logout`：广播 `GarrisonEvent::Logout`（默认，向后兼容）
+    /// - `Logout`：广播 `GarrisonEvent::Logout`（默认）
     /// - `Kickout`：广播 `GarrisonEvent::Kickout`（reason: "超过最大登录数限制"）
     /// - `Replaced`：广播 `GarrisonEvent::RevokeToken`
     ///
@@ -561,7 +561,7 @@ impl GarrisonLogicDefault {
     ///
     /// 启用 `protocol-jwt` feature 且 `token_style=jwt` 时先 JWT verify 再查 session
     /// （JWT verify 失败直接返回错误，不查询 session）。否则仅查 session
-    /// （向后兼容 0.4.1 行为：无 protocol-jwt 或 token_style != jwt）。
+    /// （无 protocol-jwt feature 或 token_style != jwt 时）。
     pub(super) async fn check_login_mixin(&self, token: &str) -> GarrisonResult<bool> {
         #[cfg(feature = "protocol-jwt")]
         {

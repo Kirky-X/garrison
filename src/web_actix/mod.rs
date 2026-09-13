@@ -80,9 +80,9 @@ pub struct GarrisonRouter {
     rules: HashMap<String, Annotation>,
     interceptor: Arc<dyn GarrisonInterceptor>,
     config: Arc<GarrisonConfig>,
-    /// 租户解析器（None 时不启用租户提取，行为与旧版一致）。
+    /// 租户解析器（None = 不启用租户提取）。
     tenant_resolver: Option<Arc<dyn TenantResolver>>,
-    /// 鉴权通过后内层 handler 的可选超时（None = 不设超时，默认，行为与旧版一致；
+    /// 鉴权通过后内层 handler 的可选超时（None = 不设超时，默认；
     /// 经 `with_handler_timeout` 配置，防挂起 handler 无限占用连接，ocr #2141）。
     handler_timeout: Option<std::time::Duration>,
 }

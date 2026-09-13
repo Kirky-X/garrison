@@ -204,7 +204,10 @@ async fn run_returns_failures_when_some_cases_dont_match() {
     let failure = &report.failures[0];
     assert_eq!(failure.case_name, "u2_allow_but_actual_deny");
     assert!(failure.expected.allowed);
-    let actual = failure.actual.as_ref().expect("决策不匹配时 actual 应为 Some");
+    let actual = failure
+        .actual
+        .as_ref()
+        .expect("决策不匹配时 actual 应为 Some");
     assert!(!actual.allowed);
     assert!(
         failure.error.is_none(),

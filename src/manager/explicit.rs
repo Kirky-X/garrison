@@ -262,10 +262,17 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let config = Arc::new(make_config());
         let timeout = u64::try_from(config.timeout).unwrap();
-        let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, timeout, 0));
         let firewall: Arc<dyn GarrisonPermissionStrategy> =
             Arc::new(GarrisonPermissionStrategyDefault::new(interface));
-        Arc::new(GarrisonLogicDefault::new(session, config, firewall))
+        Arc::new(GarrisonLogicDefault::new(
+            session,
+            config,
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        ))
     }
 
     /// 在 task_local 上下文中执行 future（设置当前 token）。

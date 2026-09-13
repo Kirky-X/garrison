@@ -31,6 +31,18 @@ use std::sync::Arc;
 /// 授权码有效期（10 分钟，RFC 6749 §4.1.2 建议 ≤ 10 分钟）。
 const AUTH_CODE_TTL_SECONDS: u64 = 600;
 
+/// OAuth2 refresh_token 的 DAO fallback key：`oauth2:rtoken:{token}`。
+///
+/// 未注入 `RefreshTokenRotation`（需 `db-sqlite`）的部署经 DAO 键值存储
+/// 消费 refresh token（无 reuse detection，安全风险见 `token` 模块文档）。
+fn oauth2_refresh_token_key(token: &str) -> String {
+    debug_assert!(
+        !token.contains(':'),
+        "oauth2 refresh_token key: token must not contain ':' (ambiguous key)"
+    );
+    format!("oauth2:rtoken:{}", token)
+}
+
 /// 授权码已签发 token 的吊销追踪记录 TTL（30 天，覆盖 refresh token 生命周期）。
 ///
 /// 用于重放/双花检测时定位并吊销此前签发的 access/refresh token（T019）。
@@ -239,9 +251,8 @@ impl AuthorizeHandler {
                 // 才能原样回传 CSRF state（缺失会导致授权完成后的回调丢失 state）。
                 if let Some(state) = &req.state {
                     return_to.push_str("&state=");
-                    return_to.push_str(
-                        &utf8_percent_encode(state, QUERY_VALUE_ENCODE_SET).to_string(),
-                    );
+                    return_to
+                        .push_str(&utf8_percent_encode(state, QUERY_VALUE_ENCODE_SET).to_string());
                 }
                 let login_url = format!(
                     "{}?return_to={}",
@@ -376,8 +387,7 @@ impl AuthorizeHandler {
         }
         // 吊销 refresh token（阻止后续 refresh 轮换）
         if let Some(rt) = &record.refresh_token {
-            #[allow(deprecated)]
-            let rt_key = DaoKeyPrefix::OAuth2RefreshToken.build_key(rt);
+            let rt_key = oauth2_refresh_token_key(rt);
             if let Err(e) = self.dao.delete(&rt_key).await {
                 tracing::warn!(error = %e, "revoke_replayed_code_tokens: failed to delete refresh token record");
             }
@@ -767,7 +777,11 @@ mod tests {
         match resp {
             AuthorizeResponse::Redirect { location } => {
                 assert!(location.starts_with("https://app.example.com/cb?existing=param&code="));
-                assert!(!location.contains("?code="), "不得出现双 ? 畸形 URL: {}", location);
+                assert!(
+                    !location.contains("?code="),
+                    "不得出现双 ? 畸形 URL: {}",
+                    location
+                );
                 assert!(location.ends_with("&state=xyz"));
             },
             _ => panic!("期望 Redirect"),
@@ -1024,9 +1038,8 @@ mod tests {
             handler.dao.get(&at_key).await.unwrap().is_none(),
             "access token 记录应已被吊销删除"
         );
-        // 非 db-sqlite 面下该 variant 仍是 fallback 路径的正式存储键，测试合法使用
-        #[allow(deprecated)]
-        let rt_key = crate::constants::DaoKeyPrefix::OAuth2RefreshToken.build_key("rt-fake-001");
+        // DAO fallback 存储键（本模块 oauth2_refresh_token_key），断言 refresh token 已被吊销删除
+        let rt_key = oauth2_refresh_token_key("rt-fake-001");
         assert!(
             handler.dao.get(&rt_key).await.unwrap().is_none(),
             "refresh token 记录应已被吊销删除"

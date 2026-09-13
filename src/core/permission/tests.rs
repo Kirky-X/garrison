@@ -238,7 +238,7 @@ async fn authorize_returns_error_for_empty_permission() {
     }
 }
 
-/// check_permission 与 authorize 行为一致（向后兼容）。
+/// check_permission 与 authorize 行为一致。
 ///
 /// 验证 `check_permission(login_id, perm)` 的返回值（Ok/Err）与
 /// `authorize(&AuthRequest{..}).await?.allowed` 一致：

@@ -7,7 +7,7 @@
 //!
 //! ## 设计
 //!
-//! - `GarrisonLocale`：支持的语言枚举（默认 `Zh`，向后兼容 0.2.x 硬编码中文行为）
+//! - `GarrisonLocale`：支持的语言枚举（默认 `Zh`，中文）
 //! - thread_local 栈式 scope：`set_locale()` 返回 RAII guard，drop 时自动 pop
 //! - `OnceLock` 缓存 `FluentBundle`：首次访问时加载 .ftl 资源，后续零开销
 //! - `translate_error(&GarrisonError) -> String`：依据当前 locale 查询 fluent bundle
@@ -63,7 +63,7 @@ macro_rules! loc {
         let translated = $crate::i18n::translate_detail($key, &[$(($arg_k, $arg_v)),*]);
         if translated == $key {
             // 缺 key（translate_detail 回退为 key 本身）：应用调用方 fallback；
-            // fallback 为空串时保持返回 key（向后兼容既有行为）
+            // fallback 为空串时保持返回 key（视为未提供 fallback）
             let fallback = $fallback.to_string();
             if fallback.is_empty() {
                 translated
@@ -78,7 +78,7 @@ macro_rules! loc {
 
 /// 支持的语言枚举。
 ///
-/// 默认 `Zh`（中文），向后兼容 0.2.x 硬编码中文行为。
+/// 默认 `Zh`（中文）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GarrisonLocale {
     /// 中文（默认语言）。
@@ -801,7 +801,7 @@ mod tests {
         assert_eq!(msg, "owned fallback");
     }
 
-    /// loc! 缺 key 且 fallback 为空串时维持旧行为返回 key（向后兼容）。
+    /// loc! 缺 key 且 fallback 为空串时返回 key 本身。
     #[test]
     fn loc_macro_empty_fallback_keeps_key() {
         let _guard = set_locale(GarrisonLocale::Zh);

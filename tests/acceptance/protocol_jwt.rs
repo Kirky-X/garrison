@@ -729,7 +729,7 @@ async fn make_logic_with_jwt_mode(
     use garrison::strategy::GarrisonPermissionStrategy;
 
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "jwt-modes-test-secret-0123456789abcdef".to_string().into();
@@ -743,8 +743,15 @@ async fn make_logic_with_jwt_mode(
         garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(JwtNoopInterface)),
     );
     Arc::new(
-        garrison::stp::GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_jwt_mode(mode),
+        garrison::stp::GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_jwt_mode(mode),
     )
 }
 
@@ -791,7 +798,7 @@ async fn acc_jwt_018_simple_mode_session_only() {
     use garrison::strategy::GarrisonPermissionStrategy;
 
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -800,8 +807,15 @@ async fn acc_jwt_018_simple_mode_session_only() {
         garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(JwtNoopInterface)),
     );
     let logic = Arc::new(
-        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_jwt_mode(JwtMode::Simple),
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_jwt_mode(JwtMode::Simple),
     );
 
     // 正常：login 创建 session → 通过

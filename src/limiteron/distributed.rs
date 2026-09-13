@@ -33,7 +33,7 @@ pub struct GarrisonDaoDistributedLimiter {
     pub(super) dao: Arc<dyn GarrisonDao>,
     /// [`Limiter::allow`] 对全局计数器 `_global` 使用的阈值（超过则拒绝）。
     ///
-    /// 默认 `u64::MAX`（等效不限制、仅计数），保持与旧版「恒允许」行为兼容；
+    /// 默认 `u64::MAX`（等效不限制、仅计数），（观测模式）；
     /// 通过 [`Self::with_global_threshold`] 设置真实阈值后才会产生拒绝。
     global_threshold: u64,
 }
@@ -138,7 +138,7 @@ impl GarrisonDaoDistributedLimiter {
 impl Limiter for GarrisonDaoDistributedLimiter {
     /// 递增全局计数器 `_global` 并与阈值比较。
     ///
-    /// - `new` 构造（阈值 `u64::MAX`）：仅计数，恒返回 `Ok(true)`（向后兼容）。
+    /// - `new` 构造（阈值 `u64::MAX`）：仅计数，恒返回 `Ok(true)`（观测模式）。
     /// - `with_global_threshold` 构造：`count > threshold` 时返回 `Ok(false)`（真实拒绝）。
     async fn allow(&self, cost: u64) -> Result<bool, LimiteronError> {
         // Limiter trait 的 allow 无 key 参数，用固定 key 计数
@@ -222,10 +222,10 @@ impl DistributedLimiter for GarrisonDaoDistributedLimiter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dao::tests::MockDao;
+    use crate::dao::InMemoryDao;
 
     fn make_dao() -> Arc<dyn GarrisonDao> {
-        Arc::new(MockDao::new())
+        Arc::new(InMemoryDao::new())
     }
 
     // --- GarrisonDaoDistributedLimiter 测试 ---
@@ -304,7 +304,7 @@ mod tests {
     async fn t010_atomic_check_and_incr_concurrent_threshold() {
         use std::sync::atomic::{AtomicU64, Ordering};
 
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let limiter = Arc::new(GarrisonDaoDistributedLimiter::new(
             dao as Arc<dyn GarrisonDao>,
         ));
@@ -355,7 +355,7 @@ mod tests {
     /// T010: 单线程连续 5 次 atomic_check_and_incr（阈值 3）— 前 3 通过，后 2 拒绝。
     #[tokio::test]
     async fn t010_atomic_check_and_incr_sequential_threshold() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let limiter = GarrisonDaoDistributedLimiter::new(dao as Arc<dyn GarrisonDao>);
 
         let key = "rate_limit:t010:seq";
@@ -469,10 +469,10 @@ mod tests {
 
     /// atomic_check_and_incr 在 eval_lua 成功时正确判断阈值。
     ///
-    /// MockDao 支持 eval_lua（返回 INCR 结果），验证成功路径。
+    /// InMemoryDao 支持 eval_lua（返回 INCR 结果），验证成功路径。
     #[tokio::test]
     async fn atomic_check_and_incr_eval_lua_success_path() {
-        let dao = Arc::new(MockDao::new());
+        let dao = Arc::new(InMemoryDao::new());
         let limiter = GarrisonDaoDistributedLimiter::new(dao as Arc<dyn GarrisonDao>);
 
         // 阈值 5，首次 INCR 返回 1 <= 5 → 允许

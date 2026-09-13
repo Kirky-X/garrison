@@ -114,8 +114,8 @@ mod tests {
     #[test]
     fn test_weight_for_known_resource() {
         let mut schedule = CreditSchedule::new();
-        schedule.insert("sms", 5);
-        schedule.insert("login", 1);
+        schedule.insert("sms", 5).unwrap();
+        schedule.insert("login", 1).unwrap();
         assert_eq!(schedule.weight_for("sms"), 5);
         assert_eq!(schedule.weight_for("login"), 1);
     }

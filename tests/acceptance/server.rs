@@ -823,7 +823,7 @@ async fn acc_srv_014_token_authorization_code_grant_pkce() {
     // 2. token 交换（PKCE code_verifier）
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "authorization_code",
             "client_id": "srv-014-client",
             "client_secret": "secret-123",
@@ -858,7 +858,7 @@ async fn acc_srv_014_token_authorization_code_grant_pkce() {
     // 3. 异常侧：code 一次性（重放 → invalid_grant）
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "authorization_code",
             "client_id": "srv-014-client",
             "client_secret": "secret-123",
@@ -876,7 +876,7 @@ async fn acc_srv_014_token_authorization_code_grant_pkce() {
     // 4. 异常侧：错误 code_verifier → invalid_grant
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "authorization_code",
             "client_id": "srv-014-client",
             "client_secret": "secret-123",
@@ -907,7 +907,7 @@ async fn acc_srv_015_token_client_credentials_grant() {
 
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "client_credentials",
             "client_id": "srv-015-client",
             "client_secret": "secret-123",
@@ -942,7 +942,7 @@ async fn acc_srv_015_token_client_credentials_grant() {
     ] {
         let resp = client
             .post(format!("{}/oauth2/token", external_url))
-            .json(&bad)
+            .form(&bad)
             .send()
             .await
             .unwrap();
@@ -961,7 +961,9 @@ async fn acc_srv_016_token_password_grant() {
     use garrison::oauth2_server::client::{DaoOAuth2ClientStore, OAuth2ClientStore};
     use garrison::oauth2_server::introspect::IntrospectHandler;
     use garrison::oauth2_server::revoke::RevokeHandler;
-    use garrison::oauth2_server::token::{PasswordVerifier, TokenHandler};
+    use garrison::oauth2_server::token::{
+        PasswordRateLimiter, PasswordVerifier, TokenHandler, TokenRateLimiter,
+    };
     use garrison::server::oauth2_routes::OAuth2State;
 
     // 注入 PasswordVerifier 的 state（OAuth2State::new 不注入验证器，需手动装配）
@@ -985,8 +987,14 @@ async fn acc_srv_016_token_password_grant() {
         "https://auth.example.com/login".to_string(),
     ));
     let token_handler = Arc::new(
-        TokenHandler::new(store.clone(), dao.clone(), authorize_handler.clone())
-            .with_password_verifier(Arc::new(TestPasswordVerifier)),
+        TokenHandler::new(
+            store.clone(),
+            dao.clone(),
+            authorize_handler.clone(),
+            Arc::new(PasswordRateLimiter::new(1000, 300)),
+            Arc::new(TokenRateLimiter::with_limits(100_000, 60, 100_000, 60)),
+        )
+        .with_password_verifier(Arc::new(TestPasswordVerifier)),
     );
     let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
     let store_for_register = store.clone();
@@ -1009,7 +1017,7 @@ async fn acc_srv_016_token_password_grant() {
     // 正常侧：正确凭证 → 200 + access/refresh token
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "password",
             "client_id": "srv-016-client",
             "client_secret": "secret-123",
@@ -1030,7 +1038,7 @@ async fn acc_srv_016_token_password_grant() {
     // 异常侧：错误密码 → 400（invalid_grant）
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "password",
             "client_id": "srv-016-client",
             "client_secret": "secret-123",
@@ -1082,7 +1090,7 @@ async fn acc_srv_017_token_refresh_token_grant_rotates() {
 
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "authorization_code",
             "client_id": "srv-017-client",
             "client_secret": "secret-123",
@@ -1099,7 +1107,7 @@ async fn acc_srv_017_token_refresh_token_grant_rotates() {
     // 2. refresh grant → 200，新 access/refresh token（轮换）
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "refresh_token",
             "client_id": "srv-017-client",
             "client_secret": "secret-123",
@@ -1117,7 +1125,7 @@ async fn acc_srv_017_token_refresh_token_grant_rotates() {
     // 3. 异常侧：旧 refresh_token 重放 → 400 invalid_grant
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "refresh_token",
             "client_id": "srv-017-client",
             "client_secret": "secret-123",
@@ -1148,7 +1156,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
     // 1. client_credentials 签发 access_token
     let resp = client
         .post(format!("{}/oauth2/token", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "grant_type": "client_credentials",
             "client_id": "srv-018-client",
             "client_secret": "secret-123"
@@ -1163,7 +1171,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
     let resp = client
         .post(format!("{}/oauth2/introspect", internal_url))
         .header("x-api-key", "test-key")
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "token": access_token,
             "client_id": "srv-018-client",
             "client_secret": "secret-123"
@@ -1180,7 +1188,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
     // 3. revoke → 204（RFC 7009 成功无 body）
     let resp = client
         .post(format!("{}/oauth2/revoke", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "token": access_token,
             "client_id": "srv-018-client",
             "client_secret": "secret-123"
@@ -1195,7 +1203,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
         let resp = client
             .post(format!("{}/oauth2/introspect", internal_url))
             .header("x-api-key", "test-key")
-            .json(&serde_json::json!({
+            .form(&serde_json::json!({
                 "token": token,
                 "client_id": "srv-018-client",
                 "client_secret": "secret-123"
@@ -1215,7 +1223,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
     // 5. 异常侧：revoke 携带错误客户端凭证 → 400
     let resp = client
         .post(format!("{}/oauth2/revoke", external_url))
-        .json(&serde_json::json!({
+        .form(&serde_json::json!({
             "token": access_token,
             "client_id": "srv-018-client",
             "client_secret": "wrong-secret"

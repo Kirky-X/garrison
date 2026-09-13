@@ -1154,7 +1154,7 @@ mod i18n_tests {
         for err in invitation_errors() {
             let translated = translate_error(&err);
             assert!(
-                translated.chars().any(|c| !c.is_ascii()),
+                !translated.is_ascii(),
                 "zh 翻译应含非 ASCII（中文）字符，实际 {translated:?}"
             );
         }

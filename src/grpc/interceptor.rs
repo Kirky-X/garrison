@@ -127,7 +127,9 @@ impl Interceptor for GarrisonGrpcInterceptor {
         // 认证上下文注入（ocr #3277）：token 存入 request extensions，
         // handler 可通过 `request.extensions().get::<GarrisonGrpcToken>()` 读取，
         // 不再"提取即弃"。
-        request.extensions_mut().insert(GarrisonGrpcToken(token.clone()));
+        request
+            .extensions_mut()
+            .insert(GarrisonGrpcToken(token.clone()));
 
         // 真实鉴权扩展点（ocr #2633/#3036/#3276）：`Interceptor::call` 为同步 trait，
         // 无法 await `GarrisonUtil::check_login()`。配置了同步校验器时在此完成

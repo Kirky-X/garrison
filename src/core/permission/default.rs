@@ -47,7 +47,7 @@ impl PermissionChecker for PermissionCheckerDefault {
             )));
         }
         let roles = self.interface.get_role_list(login_id).await?;
-        Ok(roles.iter().any(|r| *r == normalized))
+        Ok(roles.contains(&normalized))
     }
 
     // check_permission / check_role 使用 trait 默认实现（委托 authorize / has_role），

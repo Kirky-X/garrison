@@ -128,15 +128,31 @@ impl IntrospectHandler {
         //    必须经 get_refresh_token_record 查找，而非恒查 access 记录。
         let record = match req.token_type_hint.as_deref() {
             Some("refresh_token") => {
-                match self.token_handler.get_refresh_token_record(&req.token).await? {
+                match self
+                    .token_handler
+                    .get_refresh_token_record(&req.token)
+                    .await?
+                {
                     Some(r) => Some(r),
-                    None => self.token_handler.get_access_token_record(&req.token).await?,
+                    None => {
+                        self.token_handler
+                            .get_access_token_record(&req.token)
+                            .await?
+                    },
                 }
             },
             _ => {
-                match self.token_handler.get_access_token_record(&req.token).await? {
+                match self
+                    .token_handler
+                    .get_access_token_record(&req.token)
+                    .await?
+                {
                     Some(r) => Some(r),
-                    None => self.token_handler.get_refresh_token_record(&req.token).await?,
+                    None => {
+                        self.token_handler
+                            .get_refresh_token_record(&req.token)
+                            .await?
+                    },
                 }
             },
         };
@@ -169,7 +185,7 @@ impl IntrospectHandler {
             sub: record.user_id.map(|id| id.to_string()),
             username: record.username,
             iat: Some(iat_ts),
-            nbf: Some(iat_ts), // OAuth2 token 签发即生效，nbf = iat
+            nbf: Some(iat_ts),           // OAuth2 token 签发即生效，nbf = iat
             aud: Some(record.client_id), // 受众为请求该 token 的客户端
             iss: Some(OAUTH2_ISSUER.into()),
             jti: record.jti,
@@ -183,7 +199,9 @@ mod tests {
     use crate::dao::{GarrisonDao, InMemoryDao};
     use crate::oauth2_server::authorize::AuthorizeHandler;
     use crate::oauth2_server::client::{DaoOAuth2ClientStore, GrantType, OAuth2Client};
-    use crate::oauth2_server::token::{TokenHandler, TokenRequest};
+    use crate::oauth2_server::token::{
+        PasswordRateLimiter, TokenHandler, TokenRateLimiter, TokenRequest,
+    };
 
     fn make_handlers() -> (
         IntrospectHandler,
@@ -202,14 +220,11 @@ mod tests {
             store.clone(),
             dao.clone(),
             authorize_handler.clone(),
+            Arc::new(PasswordRateLimiter::new(1000, 300)),
+            Arc::new(TokenRateLimiter::with_limits(100_000, 60, 100_000, 60)),
         ));
         let introspect_handler = IntrospectHandler::new(store, token_handler.clone());
-        (
-            introspect_handler,
-            dao,
-            token_handler,
-            authorize_handler,
-        )
+        (introspect_handler, dao, token_handler, authorize_handler)
     }
 
     fn make_client(id: &str) -> OAuth2Client {
@@ -481,7 +496,11 @@ mod tests {
     #[tokio::test]
     async fn introspect_expired_token_returns_inactive() {
         let (handler, dao, _token_handler, _) = make_handlers();
-        handler.store.create(make_client("int-exp-001")).await.unwrap();
+        handler
+            .store
+            .create(make_client("int-exp-001"))
+            .await
+            .unwrap();
 
         // 直接向 DAO 写入一条已过期的 access token 记录（模拟 TTL 尚未清理的过期记录）
         let expired_record = TokenRecord {
@@ -495,8 +514,7 @@ mod tests {
             jti: Some("expired-jti".into()),
             username: None,
         };
-        let key = crate::constants::DaoKeyPrefix::OAuth2AccessToken
-            .build_key("expired-token-001");
+        let key = crate::constants::DaoKeyPrefix::OAuth2AccessToken.build_key("expired-token-001");
         dao.set(&key, &serde_json::to_string(&expired_record).unwrap(), 600)
             .await
             .unwrap();

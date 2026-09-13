@@ -606,12 +606,17 @@ async fn make_strategy_logic() -> Arc<garrison::stp::GarrisonLogicDefault> {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(NoopInterface);
     let timeout = u64::try_from(config.timeout).unwrap_or(3600);
-    let session = Arc::new(GarrisonSession::new(dao, timeout, timeout, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), timeout, timeout, 0));
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
         garrison::strategy::GarrisonPermissionStrategyDefault::new(interface),
     );
     Arc::new(garrison::stp::GarrisonLogicDefault::new(
-        session, config, firewall,
+        session,
+        config,
+        firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao,
+        )),
     ))
 }
 

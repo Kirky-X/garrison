@@ -336,10 +336,9 @@ async fn wait_strategy_linear_record_failure_duration() {
 
 /// 验证 record_success 重置 failure_count，并清除**已触发**的临时锁定状态。
 ///
-/// Issue 1619/1620: 旧版仅用 3 次失败（默认阈值 5，未触发锁定）断言"锁定字段
-/// 不变"，注释与生产行为矛盾（strategy.rs 的 record_success 会清零
-/// temporary_lockout_count / locked_until）。现改为先以 max_failure_factor=1
-/// 触发一次真实临时锁定，再调 record_success，验证锁定字段被清零、
+/// Issue 1619/1620 修复：先以 max_failure_factor=1 触发一次真实临时锁定，
+/// 再调 record_success，验证 failure_count 与临时锁定状态
+/// （temporary_lockout_count / locked_until）被清零、
 /// permanent_locked 不受影响（永久锁定不可通过登录成功解除）。
 #[tokio::test]
 async fn record_success_resets_failure_count() {
@@ -362,7 +361,10 @@ async fn record_success_resets_failure_count() {
         "前置条件：应已处于临时锁定（locked_until > now），实际: {}",
         state.locked_until
     );
-    assert_eq!(state.temporary_lockout_count, 1, "前置条件：临时锁定次数应为 1");
+    assert_eq!(
+        state.temporary_lockout_count, 1,
+        "前置条件：临时锁定次数应为 1"
+    );
 
     // 登录成功 → 清零 failure_count + 临时锁定状态
     strategy.record_success("user1").await.unwrap();
@@ -375,10 +377,7 @@ async fn record_success_resets_failure_count() {
         state.temporary_lockout_count, 0,
         "record_success 应清除临时锁定次数"
     );
-    assert_eq!(
-        state.locked_until, 0,
-        "record_success 应清除 locked_until"
-    );
+    assert_eq!(state.locked_until, 0, "record_success 应清除 locked_until");
     assert!(
         !state.permanent_locked,
         "record_success 不得解除 permanent_locked"
@@ -416,7 +415,9 @@ async fn concurrent_record_failure_no_lost_updates() {
     for _ in 0..TASKS {
         let s = strategy.clone();
         handles.push(tokio::spawn(async move {
-            s.record_failure("user1").await.expect("record_failure 不应报错");
+            s.record_failure("user1")
+                .await
+                .expect("record_failure 不应报错");
         }));
     }
     for h in handles {
@@ -452,7 +453,10 @@ fn config_validate_rejects_degenerate_values() {
         wait_strategy: WaitStrategy::Linear { base_seconds: 60 },
         failure_window_seconds: 0,
     };
-    assert!(config.validate().is_err(), "failure_window_seconds=0 应被拒绝");
+    assert!(
+        config.validate().is_err(),
+        "failure_window_seconds=0 应被拒绝"
+    );
 
     // permanent_lockout + max_temporary_lockouts = 0 → 首次临时锁定即永久，应拒绝
     let config = UserLockoutConfig {

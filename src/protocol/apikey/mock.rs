@@ -7,7 +7,7 @@
 //! 提供 `MockDao`（基于 `tokio::sync::Mutex<HashMap>` 模拟 DAO），
 //! 供 `protocol::apikey::tests` API Key 生成/校验测试复用。
 //!
-//! `keys` 方法复用 `crate::dao::tests::glob_match`（通过 T007 兼容层保持可用）。
+//! `keys` 方法复用 `crate::dao::glob_match`。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -62,12 +62,12 @@ impl GarrisonDao for MockDao {
         Ok(())
     }
 
-    /// keys 复用 dao::tests::glob_match（避免重复实现 glob 逻辑）。
+    /// keys 复用 `crate::dao::glob_match`（避免重复实现 glob 逻辑）。
     async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
         let data = self.data.lock().await;
         let mut result = Vec::new();
         for key in data.keys() {
-            if crate::dao::tests::glob_match(pattern, key) {
+            if crate::dao::glob_match(pattern, key) {
                 result.push(key.clone());
             }
         }

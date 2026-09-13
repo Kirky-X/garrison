@@ -1,4 +1,4 @@
-mod tests {
+mod suite {
     use crate::dao::tests::MockDao;
     use crate::dao::GarrisonDao;
     use crate::error::{GarrisonError, GarrisonResult};

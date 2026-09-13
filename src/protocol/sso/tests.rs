@@ -179,7 +179,9 @@ async fn destroy_ticket_nonexistent_returns_ok() {
 #[test]
 fn with_ticket_ttl_sets_ttl() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let client = SsoClient::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功").with_ticket_ttl(120);
+    let client = SsoClient::new(dao, "test-sso-secret-key")
+        .expect("secret 非空构造应成功")
+        .with_ticket_ttl(120);
     assert_eq!(client.ticket_ttl_seconds, 120);
 }
 

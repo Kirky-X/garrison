@@ -56,7 +56,7 @@ fn parse_query(query: &str) -> Vec<(String, String)> {
 ///
 /// 支持两种格式：
 /// - 新格式（结构化 i18n key）：`"waf-xxx-key::arg"` — 从 key 前缀映射 hook 名
-/// - 旧格式（向后兼容）：`"[hook] reason"` — 直接提取
+/// - Hook 编码格式（由 WAF Hook 链生成）：`"[hook] reason"` — 直接提取
 fn parse_firewall_blocked(s: &str) -> (&str, &str) {
     // 新格式：结构化 i18n key
     if s.starts_with("waf-") {
@@ -76,7 +76,7 @@ fn parse_firewall_blocked(s: &str) -> (&str, &str) {
         };
         return (hook, s);
     }
-    // 旧格式：[hook] reason
+    // Hook 编码格式：[hook] reason
     if s.starts_with('[') {
         if let Some(close) = s.find(']') {
             let hook = &s[1..close];

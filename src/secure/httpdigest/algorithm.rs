@@ -41,7 +41,7 @@ impl DigestAlgorithm {
 impl Default for DigestAlgorithm {
     /// 默认算法为 SHA256。
     ///
-    /// 新系统应使用 SHA256 以避免 MD5 碰撞攻击。需要在兼容旧客户端时
+    /// 新系统应使用 SHA256 以避免 MD5 碰撞攻击。仅当客户端只支持 MD5 时
     /// 通过 `HttpDigestAuth::new(realm, "MD5")` 显式指定。
     fn default() -> Self {
         Self::Sha256

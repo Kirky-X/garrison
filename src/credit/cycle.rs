@@ -371,9 +371,18 @@ mod tests {
     #[test]
     fn test_from_tag_validates_param() {
         // fixed：day_of_month 必须在 1..=28
-        assert!(CreditCycle::from_tag("fixed", 0).is_none(), "day=0 应被拒绝");
-        assert!(CreditCycle::from_tag("fixed", 29).is_none(), "day=29 应被拒绝");
-        assert!(CreditCycle::from_tag("fixed", 31).is_none(), "day=31 应被拒绝");
+        assert!(
+            CreditCycle::from_tag("fixed", 0).is_none(),
+            "day=0 应被拒绝"
+        );
+        assert!(
+            CreditCycle::from_tag("fixed", 29).is_none(),
+            "day=29 应被拒绝"
+        );
+        assert!(
+            CreditCycle::from_tag("fixed", 31).is_none(),
+            "day=31 应被拒绝"
+        );
         assert!(CreditCycle::from_tag("fixed", u32::MAX).is_none());
         assert!(CreditCycle::from_tag("fixed", 1).is_some());
         assert!(CreditCycle::from_tag("fixed", 28).is_some());

@@ -53,9 +53,9 @@ impl HttpBasicAuth {
             .map_err(|e| GarrisonError::InvalidParam(format!("secure-base64-decode::{}", e)))?;
         let decoded_str = String::from_utf8(decoded)
             .map_err(|e| GarrisonError::InvalidParam(format!("secure-utf8-decode::{}", e)))?;
-        let (user, pass) = decoded_str
-            .split_once(':')
-            .ok_or_else(|| GarrisonError::InvalidParam("secure-cred-missing-colon::".to_string()))?;
+        let (user, pass) = decoded_str.split_once(':').ok_or_else(|| {
+            GarrisonError::InvalidParam("secure-cred-missing-colon::".to_string())
+        })?;
         Ok(Credential {
             user: user.to_string(),
             pass: pass.to_string(),

@@ -510,7 +510,10 @@ impl SocialLoginProvider for WechatMiniAppProvider {
             let detail = sanitize_http_error(&e);
             GarrisonError::Network(loc!(
                 "wechat-mini-app-jscode2session-response-parse-failed",
-                format!("wechat mini-app jscode2session response parse failed: {}", detail),
+                format!(
+                    "wechat mini-app jscode2session response parse failed: {}",
+                    detail
+                ),
                 ("detail", &detail)
             ))
         })?;
@@ -1363,7 +1366,12 @@ mod tests {
     #[tokio::test]
     async fn wechat_provider_get_authorization_url_rejects_non_https_redirect_uri() {
         let provider = WechatProvider::new("appid", "secret");
-        for bad in ["http://example.com/cb", "ftp://example.com/cb", "/relative", ""] {
+        for bad in [
+            "http://example.com/cb",
+            "ftp://example.com/cb",
+            "/relative",
+            "",
+        ] {
             let result = provider.get_authorization_url("state", bad).await;
             match result {
                 Err(GarrisonError::InvalidParam(msg)) => assert!(
@@ -1371,7 +1379,10 @@ mod tests {
                     "错误消息应说明 redirect_uri 须为 https，实际: {}",
                     msg
                 ),
-                Err(other) => panic!("非 https redirect_uri 应返回 InvalidParam，实际: {:?}", other),
+                Err(other) => panic!(
+                    "非 https redirect_uri 应返回 InvalidParam，实际: {:?}",
+                    other
+                ),
                 Ok(url) => panic!("非 https redirect_uri 不应拼接授权 URL，实际: {}", url),
             }
         }

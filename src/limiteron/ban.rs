@@ -6,8 +6,6 @@
 //! # 存储格式
 //! - 封禁记录：`limiteron:ban:{type}:{value}` →
 //!   `expires_at_ts|ban_times|is_manual|duration_secs|reason`
-//!   （兼容旧版 4 段格式 `expires_at_ts|ban_times|is_manual|reason`，duration
-//!   按 `ban_times * 300s` 重算）
 //! - 封禁次数：`limiteron:ban:times:{type}:{value}` → `u64`
 //! - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
 //!
@@ -73,7 +71,7 @@ fn ban_history_key(target: &BanTarget) -> String {
 /// `expires_at_ts|ban_times|is_manual|duration_secs|reason`。
 ///
 /// `duration` 落盘：非标准时长（与 `ban_times * 300s` 不一致，如手动封禁）
-/// 在反序列化后得以保留（旧版 4 段格式见 [`deserialize_ban_record`]）。
+/// 在反序列化后得以保留。
 fn serialize_ban_record(record: &BanRecord) -> String {
     format!(
         "{}|{}|{}|{}|{}",
@@ -87,11 +85,8 @@ fn serialize_ban_record(record: &BanRecord) -> String {
 
 /// 反序列化 `BanRecord`。
 ///
-/// 兼容两种存储格式：
-/// - 5 段（当前）：`expires_at_ts|ban_times|is_manual|duration_secs|reason`，
-///   `duration` 从落盘值恢复；
-/// - 4 段（旧版）：`expires_at_ts|ban_times|is_manual|reason`，`duration` 按
-///   `ban_times * 300s` 重算。
+/// 存储格式（5 段）：`expires_at_ts|ban_times|is_manual|duration_secs|reason`，
+/// `duration` 从落盘值恢复。
 ///
 /// # 脏数据处理（fail-open + 可观测）
 ///
@@ -102,29 +97,23 @@ fn serialize_ban_record(record: &BanRecord) -> String {
 fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
     let parts: Vec<&str> = val.splitn(5, '|').collect();
     let target_id = target_to_key_fragment(target);
-    let (is_manual_str, duration_secs, reason) = match parts.len() {
-        5 => {
-            let duration_secs: u64 = match parts[3].parse() {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(
-                        target = %target_id,
-                        value = %val,
-                        error = %e,
-                        "limiteron-ban: 封禁记录 duration 字段解析失败，视为未封禁（fail-open）"
-                    );
-                    return None;
-                },
-            };
-            (parts[2], Some(duration_secs), parts[4])
-        },
-        4 => (parts[2], None, parts[3]),
-        n => {
+    if parts.len() != 5 {
+        tracing::warn!(
+            target = %target_id,
+            value = %val,
+            parts = parts.len(),
+            "limiteron-ban: 封禁记录段数不对，视为未封禁（fail-open）"
+        );
+        return None;
+    }
+    let duration_secs: u64 = match parts[3].parse() {
+        Ok(v) => v,
+        Err(e) => {
             tracing::warn!(
                 target = %target_id,
                 value = %val,
-                parts = n,
-                "limiteron-ban: 封禁记录段数不对，视为未封禁（fail-open）"
+                error = %e,
+                "limiteron-ban: 封禁记录 duration 字段解析失败，视为未封禁（fail-open）"
             );
             return None;
         },
@@ -153,7 +142,7 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
             return None;
         },
     };
-    let is_manual = is_manual_str == "true";
+    let is_manual = parts[2] == "true";
     let expires_at = match DateTime::from_timestamp(expires_at_ts, 0) {
         Some(v) => v,
         None => {
@@ -165,14 +154,9 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
             return None;
         },
     };
-    // 5 段格式：duration 落盘恢复；4 段旧格式：按 ban_times * 300s 重算
-    let duration = match duration_secs {
-        Some(secs) => Duration::from_secs(secs),
-        None => record_duration_from_ban(target, ban_times),
-    };
+    let duration = Duration::from_secs(duration_secs);
     let banned_at = expires_at
-        - chrono::Duration::from_std(duration)
-            .unwrap_or_else(|_| chrono::Duration::seconds(0));
+        - chrono::Duration::from_std(duration).unwrap_or_else(|_| chrono::Duration::seconds(0));
     Some(BanRecord {
         target: target.clone(),
         ban_times,
@@ -180,13 +164,8 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
         banned_at,
         expires_at,
         is_manual,
-        reason: reason.to_string(),
+        reason: parts[4].to_string(),
     })
-}
-
-/// 从 ban_times 推断 duration（简化：ban_times * 300s）。
-fn record_duration_from_ban(_target: &BanTarget, ban_times: u32) -> Duration {
-    Duration::from_secs((ban_times as u64).saturating_mul(300))
 }
 
 /// `BanStorage` 适配器，用 `GarrisonDao` KV 存储封禁记录。
@@ -194,7 +173,6 @@ fn record_duration_from_ban(_target: &BanTarget, ban_times: u32) -> Duration {
 /// # 存储格式
 /// - 封禁记录：`limiteron:ban:{type}:{value}` →
 ///   `expires_at_ts|ban_times|is_manual|duration_secs|reason`
-///   （兼容旧版 4 段格式，duration 按 `ban_times * 300s` 重算）
 /// - 封禁次数：`limiteron:ban:times:{type}:{value}` → `u64`
 /// - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
 ///
@@ -328,10 +306,15 @@ impl BanStorage for GarrisonDaoBanStorage {
         // TTL——record 过期后 times 键永久残留，get_ban_times 返回历史累计而非
         // 当前封禁次数。现优先以 record 剩余生存期作为 times key 的 TTL。
         // 注：GarrisonDao::incr 仅在 key 首次创建时设置 TTL；已存在的 times 键
-        // （含旧版遗留的永久键）不会被重置 TTL，残留键仍会在 record 过期后保留，
-        // 彻底清理需 DAO 提供 iter/expire 查询能力。
+        // （如曾被以 TTL=0 写入的永久键）不会被重置 TTL，这类键会在 record 过期后
+        // 仍保留，彻底清理需 DAO 提供 iter/expire 查询能力。
         let record_key = ban_record_key(target);
-        let ttl = match self.dao.get(&record_key).await.map_err(map_to_storage_err)? {
+        let ttl = match self
+            .dao
+            .get(&record_key)
+            .await
+            .map_err(map_to_storage_err)?
+        {
             Some(val) => match deserialize_ban_record(target, &val) {
                 Some(record) if record.expires_at > Utc::now() => {
                     (record.expires_at - Utc::now()).num_seconds().max(1) as u64
@@ -566,7 +549,11 @@ mod tests {
             ) -> crate::error::GarrisonResult<bool> {
                 self.inner.set_if_absent(key, value, ttl_seconds).await
             }
-            async fn rename(&self, old_key: &str, new_key: &str) -> crate::error::GarrisonResult<()> {
+            async fn rename(
+                &self,
+                old_key: &str,
+                new_key: &str,
+            ) -> crate::error::GarrisonResult<()> {
                 self.inner.rename(old_key, new_key).await
             }
             async fn get_and_delete(
@@ -788,20 +775,12 @@ mod tests {
         );
     }
 
-    /// 旧版 4 段格式（无 duration 字段）兼容：duration 按 ban_times*300 重算。
+    /// 4 段旧格式（缺少 duration 字段）属损坏数据：走脏数据路径，warn + 视为未封禁。
     #[test]
-    fn ban_deserialize_legacy_4_part_format() {
+    fn ban_deserialize_4_part_corrupted_data_returns_none() {
         let target = BanTarget::Ip("7.7.7.7".to_string());
-        let rec = deserialize_ban_record(&target, "1799999999|2|false|legacy_reason");
-        assert!(rec.is_some(), "旧版 4 段格式应可解析");
-        let rec = rec.unwrap();
-        assert_eq!(
-            rec.duration,
-            Duration::from_secs(600),
-            "旧格式 duration 应按 ban_times*300s 重算"
-        );
-        assert_eq!(rec.reason, "legacy_reason");
-        assert!(!rec.is_manual);
+        let rec = deserialize_ban_record(&target, "1799999999|2|false|old_format_reason");
+        assert!(rec.is_none(), "4 段旧格式应视为损坏数据返回 None");
     }
 
     /// reason 含分隔符时按最后一段整体保留（splitn 语义）。
@@ -825,8 +804,10 @@ mod tests {
     #[test]
     fn ban_deserialize_malformed_data_returns_none() {
         let target = BanTarget::Ip("1.1.1.1".to_string());
-        // 只有 2 段（应为 4 段）
+        // 只有 2 段（应为 5 段）
         assert!(deserialize_ban_record(&target, "100|5").is_none());
+        // 只有 4 段（应为 5 段）
+        assert!(deserialize_ban_record(&target, "100|5|true|reason").is_none());
         // 只有 1 段
         assert!(deserialize_ban_record(&target, "100").is_none());
         // 空字符串
@@ -838,24 +819,11 @@ mod tests {
     fn ban_deserialize_non_numeric_returns_none() {
         let target = BanTarget::Ip("2.2.2.2".to_string());
         // expires_at_ts 不是数字
-        assert!(deserialize_ban_record(&target, "not_num|5|true|reason").is_none());
+        assert!(deserialize_ban_record(&target, "not_num|5|true|300|reason").is_none());
         // ban_times 不是数字
-        assert!(deserialize_ban_record(&target, "1000|not_num|true|reason").is_none());
-    }
-
-    /// record_duration_from_ban 正确计算 duration。
-    #[test]
-    fn ban_record_duration_from_ban_correct() {
-        let target = BanTarget::Ip("3.3.3.3".to_string());
-        assert_eq!(
-            record_duration_from_ban(&target, 1),
-            Duration::from_secs(300)
-        );
-        assert_eq!(
-            record_duration_from_ban(&target, 3),
-            Duration::from_secs(900)
-        );
-        assert_eq!(record_duration_from_ban(&target, 0), Duration::from_secs(0));
+        assert!(deserialize_ban_record(&target, "1000|not_num|true|300|reason").is_none());
+        // duration 不是数字
+        assert!(deserialize_ban_record(&target, "1000|5|true|not_num|reason").is_none());
     }
 
     /// get_history 段数不对时返回错误。

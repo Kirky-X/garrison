@@ -58,7 +58,7 @@ impl GarrisonInterface for MockInterface {
 
 async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "jwt".to_string();
     config.jwt_secret = "jwt-modes-test-secret-0123456789abcdef".to_string().into();
@@ -71,7 +71,17 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     let firewall: Arc<dyn garrison::strategy::GarrisonPermissionStrategy> = Arc::new(
         garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
-    Arc::new(GarrisonLogicDefault::new(session, Arc::new(config), firewall).with_jwt_mode(mode))
+    Arc::new(
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_jwt_mode(mode),
+    )
 }
 
 // ============================================================================
@@ -275,7 +285,7 @@ async fn mixin_mode_fails_with_jwt_only_no_session() {
 async fn simple_mode_passes_with_session_only() {
     // Simple 模式 token_style 可以是 uuid（不依赖 JWT）
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -284,8 +294,15 @@ async fn simple_mode_passes_with_session_only() {
         garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
     let logic = Arc::new(
-        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_jwt_mode(JwtMode::Simple),
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_jwt_mode(JwtMode::Simple),
     );
 
     let token = logic
@@ -306,7 +323,7 @@ async fn simple_mode_passes_with_session_only() {
 #[serial]
 async fn simple_mode_fails_without_session() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -315,8 +332,15 @@ async fn simple_mode_fails_without_session() {
         garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
     let logic = Arc::new(
-        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_jwt_mode(JwtMode::Simple),
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_jwt_mode(JwtMode::Simple),
     );
 
     // 直接用任意 token（无 session）

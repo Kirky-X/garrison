@@ -420,7 +420,7 @@ async fn switch_to_default_impl_returns_not_implemented() {
     );
     // 覆盖率补充：调用所有 trait 方法以覆盖 async_trait 生成代码
     let _ = auth.login("u1", None).await.unwrap();
-    let _ = auth.logout("t").await.unwrap();
+    auth.logout("t").await.unwrap();
     let _ = auth.is_login("t").await.unwrap();
     let _ = auth.get_login_id("t").await.unwrap();
     let _ = auth.verify_token("t").await.unwrap();
@@ -696,7 +696,7 @@ async fn renew_to_equivalent_default_impl_returns_not_implemented() {
     );
     // 覆盖率补充：调用所有 trait 方法以覆盖 async_trait 生成代码
     let _ = auth.login("u1", None).await.unwrap();
-    let _ = auth.logout("t").await.unwrap();
+    auth.logout("t").await.unwrap();
     let _ = auth.is_login("t").await.unwrap();
     let _ = auth.get_login_id("t").await.unwrap();
     let _ = auth.verify_token("t").await.unwrap();

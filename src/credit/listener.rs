@@ -61,11 +61,11 @@ mod tests {
     use crate::credit::config::CreditConfig;
     use crate::credit::cycle::CreditCycle;
     use crate::credit::schedule::CreditSchedule;
-    use crate::dao::tests::MockDao;
     use crate::dao::GarrisonDao;
+    use crate::dao::InMemoryDao;
 
     fn make_meter() -> Arc<CreditMeter> {
-        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let config = CreditConfig {
             credit_limit: 100,
             cycle: CreditCycle::Rolling { days: 30 },

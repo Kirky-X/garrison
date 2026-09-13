@@ -119,7 +119,8 @@ impl EmailVerificationService {
             if let Err(re) = self.dao.delete(&code_key).await {
                 tracing::error!(error = %re, key = %code_key, "delete code failed after send failure");
             }
-            if let Err(re) = EmailRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
+            if let Err(re) = EmailRateLimiter::decrement_counter(&*self.dao, &unverified_key).await
+            {
                 tracing::error!(error = %re, key = %unverified_key, "rollback unverified counter failed after send failure");
             }
             return Err(e);

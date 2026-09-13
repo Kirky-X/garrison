@@ -151,6 +151,43 @@ impl GarrisonPermissionStrategy for MockFirewall {
     async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
         Ok(self.has_role)
     }
+
+    async fn check_permission_in_tenant(
+        &self,
+        _tenant_id: i64,
+        _login_id: &str,
+        _permission: &str,
+    ) -> GarrisonResult<bool> {
+        // 基准测试桩与租户无关：任意租户返回相同结果
+        Ok(self.has_permission)
+    }
+
+    async fn check_role_in_tenant(
+        &self,
+        _tenant_id: i64,
+        _login_id: &str,
+        _role: &str,
+    ) -> GarrisonResult<bool> {
+        // 基准测试桩与租户无关：任意租户返回相同结果
+        Ok(self.has_role)
+    }
+
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
+    async fn check_login_hooks(
+        &self,
+        _login_id: &str,
+        _ctx: &garrison::strategy::hooks::LoginContext,
+    ) -> GarrisonResult<()> {
+        // 基准测试桩不注入防火墙 hook，显式 no-op
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -160,13 +197,16 @@ impl GarrisonPermissionStrategy for MockFirewall {
 /// 创建 GarrisonLogicDefault 实例（使用 MockDao + MockFirewall，不依赖真实 dbnexus / redis）。
 fn make_logic() -> GarrisonLogicDefault {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 7_776_000));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 7_776_000));
     let config = Arc::new(GarrisonConfig::default_config());
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
         has_permission: true,
         has_role: true,
     });
-    GarrisonLogicDefault::new(session, config, firewall)
+    let disable_repo: Arc<dyn garrison::account::disable::DisableRepository> = Arc::new(
+        garrison::account::disable::DefaultDisableRepository::new(dao),
+    );
+    GarrisonLogicDefault::new(session, config, firewall, disable_repo)
 }
 
 // ============================================================================

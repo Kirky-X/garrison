@@ -164,7 +164,11 @@ mod mock_dao_coverage_tests {
 
         // get_and_delete：取回并删除
         let removed = dao.get_and_delete("a1").await.unwrap();
-        assert_eq!(removed.as_deref(), Some("v1"), "get_and_delete 应取回刚写入的值");
+        assert_eq!(
+            removed.as_deref(),
+            Some("v1"),
+            "get_and_delete 应取回刚写入的值"
+        );
         let gone = dao.get("a1").await.unwrap();
         assert!(gone.is_none(), "get_and_delete 后 key 应不存在");
 
@@ -181,7 +185,11 @@ mod mock_dao_coverage_tests {
         // rename：值迁移到新 key
         dao.rename("k1", "k2").await.unwrap();
         let migrated = dao.get("k2").await.unwrap();
-        assert_eq!(migrated.as_deref(), Some("v1"), "rename 后新 key 应携带原值");
+        assert_eq!(
+            migrated.as_deref(),
+            Some("v1"),
+            "rename 后新 key 应携带原值"
+        );
         let gone = dao.get("k1").await.unwrap();
         assert!(gone.is_none(), "rename 后旧 key 应不存在");
 

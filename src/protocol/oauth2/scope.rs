@@ -304,8 +304,10 @@ mod tests {
         impl ScopeHandler for ReentrantHandler {
             fn validate(&self, scope: &str, _login_id: i64) -> GarrisonResult<bool> {
                 // 用户回调内重入写锁（register/unregister）
-                self.registry
-                    .register(&format!("{scope}-nested"), Arc::new(StubHandler { allowed: true }));
+                self.registry.register(
+                    &format!("{scope}-nested"),
+                    Arc::new(StubHandler { allowed: true }),
+                );
                 Ok(true)
             }
         }

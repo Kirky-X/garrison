@@ -50,10 +50,10 @@ pub trait GarrisonInterface: Send + Sync {
     /// 传入策略配置的 `login_type`（`with_login_type` builder 设置，默认 `"default"`）——
     /// 此前本方法仅测试调用（死 API），默认策略静默忽略 `login_type`。
     ///
-    /// # 向后兼容
+    /// # 默认实现
     ///
     /// 默认实现委托 [`get_permission_list`](Self::get_permission_list)（忽略 `login_type` 参数），
-    /// 现有 `GarrisonInterface` 实现者无需修改即可工作。
+    /// 数据源未按 `login_type` 隔离的实现者无需覆写。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -83,10 +83,10 @@ pub trait GarrisonInterface: Send + Sync {
     /// （`check_role` / `check_role_any` / `check_role_all` 均经此路径），
     /// 传入策略配置的 `login_type`——此前本方法仅测试调用（死 API）。
     ///
-    /// # 向后兼容
+    /// # 默认实现
     ///
     /// 默认实现委托 [`get_role_list`](Self::get_role_list)（忽略 `login_type` 参数），
-    /// 现有 `GarrisonInterface` 实现者无需修改即可工作。
+    /// 数据源未按 `login_type` 隔离的实现者无需覆写。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。

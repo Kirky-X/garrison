@@ -85,7 +85,9 @@ pub struct SecurityHeadersConfig {
 
 impl Default for SecurityHeadersConfig {
     fn default() -> Self {
-        Self { no_store_cache: true }
+        Self {
+            no_store_cache: true,
+        }
     }
 }
 
@@ -242,13 +244,12 @@ mod tests {
     /// 可配置中间件：no_store_cache=false 时跳过缓存头，其余安全头保留（ocr #5244）。
     #[tokio::test]
     async fn config_middleware_can_disable_no_store() {
-        let config = Arc::new(SecurityHeadersConfig { no_store_cache: false });
-        let app = Router::new()
-            .route("/ping", get(|| async { "ok" }))
-            .layer(axum::middleware::from_fn_with_state(
-                config,
-                security_headers_middleware_with_config,
-            ));
+        let config = Arc::new(SecurityHeadersConfig {
+            no_store_cache: false,
+        });
+        let app = Router::new().route("/ping", get(|| async { "ok" })).layer(
+            axum::middleware::from_fn_with_state(config, security_headers_middleware_with_config),
+        );
         let resp = app
             .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
             .await
@@ -260,7 +261,10 @@ mod tests {
             "no_store_cache=false 时不应注入 Cache-Control"
         );
         assert!(resp.headers().get("pragma").is_none());
-        assert_eq!(resp.headers().get("x-content-type-options").unwrap(), "nosniff");
+        assert_eq!(
+            resp.headers().get("x-content-type-options").unwrap(),
+            "nosniff"
+        );
         assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
     }
 
@@ -268,12 +272,9 @@ mod tests {
     #[tokio::test]
     async fn config_middleware_default_keeps_no_store() {
         let config = Arc::new(SecurityHeadersConfig::default());
-        let app = Router::new()
-            .route("/ping", get(|| async { "ok" }))
-            .layer(axum::middleware::from_fn_with_state(
-                config,
-                security_headers_middleware_with_config,
-            ));
+        let app = Router::new().route("/ping", get(|| async { "ok" })).layer(
+            axum::middleware::from_fn_with_state(config, security_headers_middleware_with_config),
+        );
         let resp = app
             .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
             .await

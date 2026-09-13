@@ -198,12 +198,8 @@ async fn acc_sess_001_dual_mode_session_read_write() {
 /// Account-Session 同步记录。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_002_login_writes_dual_mode_sessions() {
-    let session = Arc::new(GarrisonSession::new(
-        Arc::new(InMemoryDao::new()),
-        3600,
-        86400,
-        0,
-    ));
+    let dao = Arc::new(InMemoryDao::new());
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
         GarrisonPermissionStrategyDefault::new(Arc::new(NoopInterface)),
     );
@@ -211,6 +207,9 @@ async fn acc_sess_002_login_writes_dual_mode_sessions() {
         session.clone(),
         Arc::new(garrison::config::GarrisonConfig::default_config()),
         firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao,
+        )),
     );
 
     let token = logic
@@ -412,19 +411,22 @@ async fn acc_sess_005_ip_change_triggers_security_listener() {
 async fn acc_sess_006_device_binding_strict_requires_mfa_on_new_device() {
     use garrison::strategy::device_binding::StrictBinding;
 
-    let session = Arc::new(GarrisonSession::new(
-        Arc::new(InMemoryDao::new()),
-        3600,
-        86400,
-        0,
-    ));
+    let dao = Arc::new(InMemoryDao::new());
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.throw_on_not_login = false;
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
         GarrisonPermissionStrategyDefault::new(Arc::new(NoopInterface)),
     );
-    let logic = GarrisonLogicDefault::new(session.clone(), Arc::new(config), firewall)
-        .with_device_binding_policy(Arc::new(StrictBinding::new(session.clone())));
+    let logic = GarrisonLogicDefault::new(
+        session.clone(),
+        Arc::new(config),
+        firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao,
+        )),
+    )
+    .with_device_binding_policy(Arc::new(StrictBinding::new(session.clone())));
 
     // 新设备（无历史会话）→ 要求 MFA：login 被 hard block
     let new_device = LoginParams {
@@ -557,12 +559,8 @@ async fn acc_sess_008_expired_token_reads_empty() {
 /// 断言字段，本场景在逻辑层直接断言 TokenSession 存储内容（不可弱化）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_019_login_metadata_written_to_token_session() {
-    let session = Arc::new(GarrisonSession::new(
-        Arc::new(InMemoryDao::new()),
-        3600,
-        86400,
-        0,
-    ));
+    let dao = Arc::new(InMemoryDao::new());
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(
         GarrisonPermissionStrategyDefault::new(Arc::new(NoopInterface)),
     );
@@ -570,6 +568,9 @@ async fn acc_sess_019_login_metadata_written_to_token_session() {
         session.clone(),
         Arc::new(garrison::config::GarrisonConfig::default_config()),
         firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao,
+        )),
     );
 
     let params = LoginParams {
@@ -704,6 +705,9 @@ async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
         session.clone(),
         Arc::new(garrison::config::GarrisonConfig::default_config()),
         firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao.clone(),
+        )),
     );
 
     // When: 用户完成登录（原版以 GarrisonUtil::login 模拟 OIDC 认证后的会话创建）
@@ -1158,7 +1162,7 @@ async fn acc_sess_020_tenant_isolation_with_audit_log_and_decision_trace() {
 
     let pool = setup_db().await;
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
 
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
@@ -1183,9 +1187,16 @@ async fn acc_sess_020_tenant_isolation_with_audit_log_and_decision_trace() {
     lm.register(audit_listener.clone() as Arc<dyn garrison::listener::GarrisonListener>);
 
     let logic = Arc::new(
-        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_permission_checker(pc.clone())
-            .with_listener_manager(lm),
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_permission_checker(pc.clone())
+        .with_listener_manager(lm),
     );
 
     let tenant_ctx = TenantContext {

@@ -35,7 +35,7 @@ pub enum GrantType {
     RefreshToken,
     /// 客户端凭证流程（client_credentials）。
     ClientCredentials,
-    /// 密码流程（password，遗留兼容）。
+    /// 密码流程（password，RFC 6749 §4.3）。
     Password,
 }
 
@@ -129,13 +129,11 @@ impl OAuth2Client {
             if uri.is_empty()
                 || uri.len() > REDIRECT_URI_MAX_LEN
                 || !uri.contains(':')
-                || uri
-                    .chars()
-                    .any(|c| c.is_whitespace() || c.is_control())
+                || uri.chars().any(|c| c.is_whitespace() || c.is_control())
             {
-                return Err(GarrisonError::InvalidParam(format!(
-                    "oauth2-client-redirect-uri-invalid"
-                )));
+                return Err(GarrisonError::InvalidParam(
+                    "oauth2-client-redirect-uri-invalid".to_string(),
+                ));
             }
         }
         let client_secret_hash = hash_secret(client_secret)?;
@@ -182,7 +180,7 @@ impl OAuth2Client {
 
     /// 批量校验 scope 列表是否全部在 allowed_scopes 内。
     ///
-    /// 空 allowed_scopes 表示允许任意 scope（向后兼容）。
+    /// 空 allowed_scopes 表示允许任意 scope。
     /// 任一 scope 不在 allowed_scopes 内则返回 `invalid_scope` 错误。
     ///
     /// # 参数
@@ -281,16 +279,12 @@ impl OAuth2ClientStore for DaoOAuth2ClientStore {
 
     async fn update(&self, client: OAuth2Client) -> GarrisonResult<()> {
         let key = Self::build_key(&client.client_id);
-        let current = self
-            .dao
-            .get(&key)
-            .await?
-            .ok_or_else(|| {
-                GarrisonError::OAuth2(format!(
-                    "oauth2-server-client-not-found::{}",
-                    client.client_id
-                ))
-            })?;
+        let current = self.dao.get(&key).await?.ok_or_else(|| {
+            GarrisonError::OAuth2(format!(
+                "oauth2-server-client-not-found::{}",
+                client.client_id
+            ))
+        })?;
         let json = serde_json::to_string(&client).map_err(|e| {
             GarrisonError::Internal(format!("oauth2-server-client-serialize::{}", e))
         })?;
@@ -485,19 +479,33 @@ mod tests {
         let err = OAuth2Client::new("cid", "s", vec!["".into()], vec![], vec![]).unwrap_err();
         assert!(matches!(err, GarrisonError::InvalidParam(_)));
         // 缺 scheme（无 `:`）
-        let err = OAuth2Client::new("cid", "s", vec!["app.example.com/cb".into()], vec![], vec![])
-            .unwrap_err();
+        let err = OAuth2Client::new(
+            "cid",
+            "s",
+            vec!["app.example.com/cb".into()],
+            vec![],
+            vec![],
+        )
+        .unwrap_err();
         assert!(matches!(err, GarrisonError::InvalidParam(_)));
         // 含空白字符
-        let err = OAuth2Client::new("cid", "s", vec!["https://app.example.com/ cb".into()], vec![], vec![])
-            .unwrap_err();
+        let err = OAuth2Client::new(
+            "cid",
+            "s",
+            vec!["https://app.example.com/ cb".into()],
+            vec![],
+            vec![],
+        )
+        .unwrap_err();
         assert!(matches!(err, GarrisonError::InvalidParam(_)));
         // 超长（> 2048）
         let long_uri = format!("https://app.example.com/{}", "a".repeat(2048));
         let err = OAuth2Client::new("cid", "s", vec![long_uri], vec![], vec![]).unwrap_err();
         assert!(matches!(err, GarrisonError::InvalidParam(_)));
         // 合法 URI（含自定义 scheme）不受影响
-        assert!(OAuth2Client::new("cid", "s", vec!["myapp://callback".into()], vec![], vec![]).is_ok());
+        assert!(
+            OAuth2Client::new("cid", "s", vec!["myapp://callback".into()], vec![], vec![]).is_ok()
+        );
     }
 
     #[test]
@@ -657,7 +665,11 @@ mod tests {
                 wins += 1;
             }
         }
-        assert_eq!(wins, 1, "并发创建同一 client_id 仅一个应成功，实际 {}", wins);
+        assert_eq!(
+            wins, 1,
+            "并发创建同一 client_id 仅一个应成功，实际 {}",
+            wins
+        );
         // 最终仅存在一个客户端记录
         assert_eq!(store.list().await.unwrap().len(), 1);
     }

@@ -94,11 +94,19 @@ impl RevokeHandler {
                     .await?
                 {
                     Some(r) => Some(r),
-                    None => self.token_handler.get_access_token_record(&req.token).await?,
+                    None => {
+                        self.token_handler
+                            .get_access_token_record(&req.token)
+                            .await?
+                    },
                 }
             },
             _ => {
-                match self.token_handler.get_access_token_record(&req.token).await? {
+                match self
+                    .token_handler
+                    .get_access_token_record(&req.token)
+                    .await?
+                {
                     Some(r) => Some(r),
                     None => {
                         self.token_handler
@@ -124,7 +132,9 @@ mod tests {
     use crate::dao::InMemoryDao;
     use crate::oauth2_server::authorize::AuthorizeHandler;
     use crate::oauth2_server::client::{DaoOAuth2ClientStore, GrantType, OAuth2Client};
-    use crate::oauth2_server::token::{TokenHandler, TokenRequest};
+    use crate::oauth2_server::token::{
+        PasswordRateLimiter, TokenHandler, TokenRateLimiter, TokenRequest,
+    };
 
     /// 创建测试用 handler 和 DAO。
     fn make_handlers() -> (RevokeHandler, Arc<InMemoryDao>, Arc<TokenHandler>) {
@@ -139,6 +149,8 @@ mod tests {
             store.clone(),
             dao.clone(),
             authorize_handler,
+            Arc::new(PasswordRateLimiter::new(1000, 300)),
+            Arc::new(TokenRateLimiter::with_limits(100_000, 60, 100_000, 60)),
         ));
         let revoke_handler = RevokeHandler::new(store, token_handler.clone());
         (revoke_handler, dao, token_handler)
@@ -251,7 +263,11 @@ mod tests {
     #[tokio::test]
     async fn revoke_invalid_client_and_secret_are_indistinguishable() {
         let (handler, _, _) = make_handlers();
-        handler.store.create(make_client("rev-enum-001")).await.unwrap();
+        handler
+            .store
+            .create(make_client("rev-enum-001"))
+            .await
+            .unwrap();
 
         let bad_id = RevokeRequest {
             token: "some-token".into(),
@@ -280,8 +296,16 @@ mod tests {
     #[tokio::test]
     async fn revoke_rejects_token_owned_by_other_client() {
         let (handler, _, token_handler) = make_handlers();
-        handler.store.create(make_client("rev-owner-001")).await.unwrap();
-        handler.store.create(make_client("rev-attacker-001")).await.unwrap();
+        handler
+            .store
+            .create(make_client("rev-owner-001"))
+            .await
+            .unwrap();
+        handler
+            .store
+            .create(make_client("rev-attacker-001"))
+            .await
+            .unwrap();
         let victim_token = issue_token(&token_handler, "rev-owner-001").await;
 
         // 攻击者（合法注册客户端）尝试撤销他人 token

@@ -144,6 +144,40 @@ impl GarrisonPermissionStrategy for MockFirewall {
     async fn check_role_all(&self, _login_id: &str, _roles: &[&str]) -> GarrisonResult<bool> {
         Ok(self.has_role)
     }
+    async fn check_permission_in_tenant(
+        &self,
+        _tenant_id: i64,
+        _login_id: &str,
+        _permission: &str,
+    ) -> GarrisonResult<bool> {
+        // 测试桩与租户无关：任意租户返回相同结果
+        Ok(self.has_permission)
+    }
+    async fn check_role_in_tenant(
+        &self,
+        _tenant_id: i64,
+        _login_id: &str,
+        _role: &str,
+    ) -> GarrisonResult<bool> {
+        // 测试桩与租户无关：任意租户返回相同结果
+        Ok(self.has_role)
+    }
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
+    async fn check_login_hooks(
+        &self,
+        _login_id: &str,
+        _ctx: &crate::strategy::hooks::LoginContext,
+    ) -> GarrisonResult<()> {
+        // 测试桩不注入防火墙 hook，显式 no-op
+        Ok(())
+    }
 }
 
 // ------------------------------------------------------------------------

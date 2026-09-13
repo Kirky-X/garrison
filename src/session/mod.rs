@@ -154,14 +154,14 @@ pub struct TokenSession {
     /// value: 过期时间戳（Unix 秒），`now > value` 表示已过期。
     ///
     /// `open_safe` 写入，`is_safe` 查询，`close_safe` 移除。
-    /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为空 HashMap（向后兼容）。
+    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为空 HashMap。
     #[serde(default)]
     pub safe_services: HashMap<String, i64>,
     /// 动态活跃超时（秒）。
     ///
     /// 启用 `dynamic-active-timeout` feature 后存在。为 `None` 时使用全局 `active_timeout`，
     /// 为 `Some(secs)` 时该 token 使用自定义的活跃超时。
-    /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为 `None`（向后兼容）。
+    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
     #[cfg(feature = "session-extra")]
     #[serde(default)]
     pub dynamic_active_timeout: Option<i64>,
@@ -169,7 +169,7 @@ pub struct TokenSession {
     ///
     /// 启用 `anonymous-session` feature 后存在。匿名 Session 的 `login_id` 为空字符串 `""`，
     /// 通过 `token:session:anon:{token}` key 空间与登录 Session 隔离。
-    /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为 `false`（向后兼容）。
+    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `false`。
     #[cfg(feature = "session-extra")]
     #[serde(default)]
     pub is_anon: bool,
@@ -179,7 +179,7 @@ pub struct TokenSession {
     /// 否则为 `None`（使用全局 `timeout`）。
     /// `get_token_session` / `get_token_session_with_ttl` 的过期判定以本字段为权威来源，
     /// 避免 DB/缓存 TTL 与业务语义漂移（R-sessiontokenconsistency-001）。
-    /// `#[serde(default)]` 确保反序列化旧数据（无此字段）时默认为 `None`（向后兼容）。
+    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
     #[serde(default)]
     pub effective_timeout: Option<i64>,
 }
@@ -926,7 +926,7 @@ mod tests {
         );
     }
 
-    /// 验证 is_valid 在 token 未关联临时凭证时返回 true（向后兼容）。
+    /// 验证 is_valid 在 token 未关联临时凭证时返回 true（无临时凭证约束，按 TTL 判定）。
     #[tokio::test]
     async fn is_valid_returns_true_when_no_temp_credential_linked() {
         let (_dao, session) = make_session(3600, 86400);

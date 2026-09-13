@@ -95,7 +95,7 @@ impl GarrisonPermissionStrategyDefault {
     ///
     /// 注入后权限缓存键形如 `garrison:perm:cache:<tenant_id>:<login_id>:<permission>`，
     /// 不同租户相同 `login_id` 的权限判定结果互不污染。
-    /// 不注入（`None`）时缓存键使用占位符 `_`，保持向后兼容（无租户隔离）。
+    /// 不注入（`None`）时缓存键使用占位符 `_`（未配置租户隔离，所有租户共享缓存键）。
     pub fn with_tenant_id(mut self, tenant_id: i64) -> Self {
         self.tenant_id = Some(tenant_id);
         self
@@ -172,7 +172,7 @@ impl GarrisonPermissionStrategyDefault {
     ///
     ///
     /// 注入后 `check_login_hooks` 任一 hook 返回 `Err` 时广播 `GarrisonEvent::FirewallBlock`。
-    /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
+    /// 未注入时广播为 no-op（告警组件可选）。需启用 `listener` feature。
     #[cfg(feature = "listener")]
     pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
@@ -288,7 +288,7 @@ impl GarrisonPermissionStrategyDefault {
     /// 而非等待 300 秒 TTL 自然过期。
     ///
     /// 建议在 logout 流程与角色 / 权限变更监听器中调用本方法。
-    /// 未注入 DAO 时为 no-op（向后兼容）。
+    /// 未注入 DAO 时不写缓存，本方法直接返回 `Ok(())`。
     pub async fn invalidate_permission_cache(&self, login_id: &str) -> GarrisonResult<()> {
         if let Some(dao) = &self.dao {
             let tenant = self
@@ -365,6 +365,17 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
             .await
     }
 
+    async fn check_role_in_tenant(
+        &self,
+        _tenant_id: i64,
+        login_id: &str,
+        role: &str,
+    ) -> GarrisonResult<bool> {
+        // 本策略的角色数据源（GarrisonInterface 回调）无租户维度：角色列表全局共享，
+        // 请求级租户不参与角色判定。租户隔离的角色数据源请自定义实现本方法。
+        self.check_role(login_id, role).await
+    }
+
     async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
         if role.is_empty() {
             return Err(GarrisonError::InvalidParam(
@@ -406,7 +417,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
     /// 登录前防火墙安全钩子检查。
     ///
     /// 注入 `firewall_hook` 后按序调用 5 个 hook，任一 Err 阻断登录。
-    /// 未注入时为 no-op（向后兼容 0.2.x）。
+    /// 未注入时为 no-op（纯权限校验场景）。
     ///
     /// v0.4.2 扩展：任一 hook 返回 Err 时，若注入了 `listener_manager`，
     /// 广播 `GarrisonEvent::FirewallBlock` 事件。
@@ -479,9 +490,9 @@ impl GarrisonPermissionStrategyDefault {
 
         // 优先读取权限缓存
         if self.dao.is_some() {
-            if let Ok(Some(cached)) =
-                self.get_cached_permission_with(cache_tenant, login_id, permission)
-                    .await
+            if let Ok(Some(cached)) = self
+                .get_cached_permission_with(cache_tenant, login_id, permission)
+                .await
             {
                 return Ok(cached);
             }

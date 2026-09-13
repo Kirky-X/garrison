@@ -53,17 +53,15 @@ use super::to_api_response;
 /// 在 `CheckLoginRequest` 基础上增加可选 `caller_login_id` 字段，
 /// 用于校验调用者是否有权访问目标 token 的 session。
 ///
-/// # 兼容性
+/// # 字段语义
 ///
-/// `caller_login_id` 使用 `#[serde(default)]`，未传入时为 `None`。
-/// 这样 BackendRemote 发送的 `CheckLoginRequest { token }`（无 caller_login_id）
-/// 仍能反序列化为 `GetSessionRequest { token, caller_login_id: None }`，
-/// 保持向后兼容。
+/// `caller_login_id` 为可选字段（`#[serde(default)]`）：服务间调用方
+/// （如 BackendRemote）可只传 `token`，此时 `caller_login_id` 为 `None`。
 ///
 /// # 安全语义
 ///
 /// - `caller_login_id = Some(id)` 且 `id != session.login_id` → 返回 `NotPermission` 错误
-/// - `caller_login_id = None` → 记录 warn 日志，允许访问（兼容 BackendRemote 服务间调用）
+/// - `caller_login_id = None` → 记录 warn 日志，允许访问（服务间调用的所有权校验为 opt-in）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetSessionRequest {
     /// 待查询的 token 字符串。
@@ -721,7 +719,7 @@ mod tests {
         );
     }
 
-    /// A5: 未提供 caller_login_id 时应仍返回数据（兼容 BackendRemote 服务间调用）。
+    /// A5: 未提供 caller_login_id 时应仍返回数据（服务间调用，所有权校验为 opt-in）。
     #[tokio::test]
     async fn test_sdforge_get_session_without_caller_login_id() {
         let app = make_router();

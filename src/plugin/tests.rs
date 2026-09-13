@@ -55,7 +55,11 @@ fn manager_collects_registered_plugins() {
 fn on_login_invokes_all_plugins() {
     reset_counters();
     // ocr #251：验证 reset_counters 确实清零，防止 reset 失效时断言恒真
-    assert_eq!(LOGIN_CALLS.load(Ordering::SeqCst), 0, "reset 后 LOGIN_CALLS 应为 0");
+    assert_eq!(
+        LOGIN_CALLS.load(Ordering::SeqCst),
+        0,
+        "reset 后 LOGIN_CALLS 应为 0"
+    );
     let manager = GarrisonPluginManager::new();
     manager.on_login("1001", "T1");
     // OkPlugin 的 on_login 应被调用至少 1 次
@@ -68,7 +72,11 @@ fn on_login_invokes_all_plugins() {
 fn on_logout_invokes_all_plugins() {
     reset_counters();
     // ocr #251：验证 reset_counters 确实清零
-    assert_eq!(LOGOUT_CALLS.load(Ordering::SeqCst), 0, "reset 后 LOGOUT_CALLS 应为 0");
+    assert_eq!(
+        LOGOUT_CALLS.load(Ordering::SeqCst),
+        0,
+        "reset 后 LOGOUT_CALLS 应为 0"
+    );
     let manager = GarrisonPluginManager::new();
     manager.on_logout("1001", "T1");
     assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);

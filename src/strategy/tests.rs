@@ -410,7 +410,7 @@ async fn check_role_hierarchy_transitive() {
 
 /// 验证未配置 role_hierarchy 时保持 默认行为。
 #[tokio::test]
-async fn check_role_without_hierarchy_keeps_legacy_behavior() {
+async fn check_role_without_hierarchy_uses_flat_matching() {
     let mut iface = MockInterface::new();
     iface.set_roles("1001", &["admin"]);
     let fw = make_firewall(iface); // 无 hierarchy
@@ -645,7 +645,7 @@ async fn check_permission_uses_cache_short_circuit() {
 // 防火墙安全钩子集成测试
 // ------------------------------------------------------------------------
 
-/// 验证未注入 firewall_hook 时 check_login_hooks 为 no-op（向后兼容 0.2.x）。
+/// 验证未注入 firewall_hook 时 check_login_hooks 为 no-op（无防火墙检查直接放行）。
 #[cfg(any(
     feature = "sms-rate-limit",
     feature = "firewall-ratelimit",

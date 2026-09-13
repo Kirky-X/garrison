@@ -176,7 +176,10 @@ impl SmsRateLimiter {
                         "rollback hourly window counter failed after day incr failure"
                     );
                 }
-                return Err(GarrisonError::Internal(format!("secure-limiter-incr::{}", e)));
+                return Err(GarrisonError::Internal(format!(
+                    "secure-limiter-incr::{}",
+                    e
+                )));
             },
         };
         if day_count > self.daily_limit as u64 {

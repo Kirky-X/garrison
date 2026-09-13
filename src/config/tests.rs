@@ -458,15 +458,15 @@ remember_me_timeout = 9999999
 #[test]
 #[serial]
 fn env_overrides_remember_me() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_REMEMBER_ME_ENABLED", "true"));
-    env_guards.push(EnvVarGuard::set("GARRISON_REMEMBER_ME_TIMEOUT", "9999999"));
+    let _env_guards = [
+        EnvVarGuard::set("GARRISON_REMEMBER_ME_ENABLED", "true"),
+        EnvVarGuard::set("GARRISON_REMEMBER_ME_TIMEOUT", "9999999"),
+    ];
 
     let config = GarrisonConfig::load(None).unwrap();
 
     assert!(config.remember_me_enabled);
     assert_eq!(config.remember_me_timeout, 9999999);
-
 }
 
 // ========================================================================
@@ -518,8 +518,7 @@ fn config_default_frontend_separation_is_false() {
 #[test]
 #[serial]
 fn env_overrides_frontend_separation() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_FRONTEND_SEPARATION", "true"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_FRONTEND_SEPARATION", "true")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert!(config.frontend_separation);
 }
@@ -604,9 +603,10 @@ fn toml_invalid_token_style_rejected() {
 #[test]
 #[serial]
 fn env_overrides_toml() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_TIMEOUT", "3600"));
-    env_guards.push(EnvVarGuard::set("GARRISON_TOKEN_STYLE", "jwt"));
+    let _env_guards = [
+        EnvVarGuard::set("GARRISON_TIMEOUT", "3600"),
+        EnvVarGuard::set("GARRISON_TOKEN_STYLE", "jwt"),
+    ];
 
     let temp = write_temp_toml(
         r#"timeout = 1800
@@ -616,30 +616,28 @@ jwt_secret = "test-secret-0123456789abcdefghij""#,
 
     assert_eq!(config.timeout, 3600);
     assert_eq!(config.token_style, "jwt");
-
 }
 
 /// 验证布尔环境变量解析。
 #[test]
 #[serial]
 fn env_boolean_parsing() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_IS_READ_COOKIE", "false"));
-    env_guards.push(EnvVarGuard::set("GARRISON_THROW_ON_NOT_LOGIN", "false"));
+    let _env_guards = [
+        EnvVarGuard::set("GARRISON_IS_READ_COOKIE", "false"),
+        EnvVarGuard::set("GARRISON_THROW_ON_NOT_LOGIN", "false"),
+    ];
 
     let config = GarrisonConfig::load(None).unwrap();
 
     assert!(!config.is_read_cookie);
     assert!(!config.throw_on_not_login);
-
 }
 
 /// 验证环境变量非法值抛错。
 #[test]
 #[serial]
 fn env_invalid_value_errors() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_TIMEOUT", "not-a-number"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_TIMEOUT", "not-a-number")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
 }
@@ -648,8 +646,7 @@ fn env_invalid_value_errors() {
 #[test]
 #[serial]
 fn load_full_pipeline() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_TOKEN_NAME", "custom_token"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_TOKEN_NAME", "custom_token")];
     let temp = write_temp_toml(r#"timeout = 3600"#);
     let config = GarrisonConfig::load(Some(temp.path().to_str().unwrap())).unwrap();
     assert_eq!(config.token_name, "custom_token");
@@ -787,8 +784,7 @@ fn watcher_not_serialized() {
 #[test]
 #[serial]
 fn env_invalid_is_read_cookie_errors() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_IS_READ_COOKIE", "maybe"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_IS_READ_COOKIE", "maybe")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err(), "非法布尔值应导致 load 失败");
     assert!(matches!(result, Err(GarrisonError::Config(_))));
@@ -798,8 +794,7 @@ fn env_invalid_is_read_cookie_errors() {
 #[test]
 #[serial]
 fn env_invalid_is_read_header_errors() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_IS_READ_HEADER", "yesno"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_IS_READ_HEADER", "yesno")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(matches!(result, Err(GarrisonError::Config(_))));
@@ -809,8 +804,7 @@ fn env_invalid_is_read_header_errors() {
 #[test]
 #[serial]
 fn env_invalid_is_write_header_errors() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_IS_WRITE_HEADER", "unknown"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_IS_WRITE_HEADER", "unknown")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(matches!(result, Err(GarrisonError::Config(_))));
@@ -820,8 +814,7 @@ fn env_invalid_is_write_header_errors() {
 #[test]
 #[serial]
 fn env_invalid_throw_on_not_login_errors() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_THROW_ON_NOT_LOGIN", "yes_no"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_THROW_ON_NOT_LOGIN", "yes_no")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(matches!(result, Err(GarrisonError::Config(_))));
@@ -831,8 +824,7 @@ fn env_invalid_throw_on_not_login_errors() {
 #[test]
 #[serial]
 fn env_invalid_active_timeout_errors() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_ACTIVE_TIMEOUT", "not-a-number"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_ACTIVE_TIMEOUT", "not-a-number")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
 }
@@ -841,8 +833,7 @@ fn env_invalid_active_timeout_errors() {
 #[test]
 #[serial]
 fn env_invalid_token_style_fails_validation() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_TOKEN_STYLE", "unknown_style"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_TOKEN_STYLE", "unknown_style")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(
@@ -856,8 +847,7 @@ fn env_invalid_token_style_fails_validation() {
 #[test]
 #[serial]
 fn env_negative_timeout_fails_validation() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_TIMEOUT", "-100"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_TIMEOUT", "-100")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err());
     assert!(
@@ -875,8 +865,10 @@ fn env_negative_timeout_fails_validation() {
 #[test]
 #[serial]
 fn env_overrides_jwt_algorithm() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set(format!("{}JWT_ALGORITHM", ENV_PREFIX), "HS512"));
+    let _env_guards = [EnvVarGuard::set(
+        format!("{}JWT_ALGORITHM", ENV_PREFIX),
+        "HS512",
+    )];
     let config = GarrisonConfig::load(None).unwrap();
     assert_eq!(config.jwt_algorithm, "HS512");
 }
@@ -885,8 +877,10 @@ fn env_overrides_jwt_algorithm() {
 #[test]
 #[serial]
 fn env_overrides_sign_window_seconds() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "600"));
+    let _env_guards = [EnvVarGuard::set(
+        format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX),
+        "600",
+    )];
     let config = GarrisonConfig::load(None).unwrap();
     assert_eq!(config.sign_window_seconds, 600);
 }
@@ -895,8 +889,10 @@ fn env_overrides_sign_window_seconds() {
 #[test]
 #[serial]
 fn env_overrides_sso_ticket_ttl_seconds() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "120"));
+    let _env_guards = [EnvVarGuard::set(
+        format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX),
+        "120",
+    )];
     let config = GarrisonConfig::load(None).unwrap();
     assert_eq!(config.sso_ticket_ttl_seconds, 120);
 }
@@ -905,8 +901,10 @@ fn env_overrides_sso_ticket_ttl_seconds() {
 #[test]
 #[serial]
 fn env_overrides_sign_window_seconds_invalid() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set(format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX), "not-a-number"));
+    let _env_guards = [EnvVarGuard::set(
+        format!("{}SIGN_WINDOW_SECONDS", ENV_PREFIX),
+        "not-a-number",
+    )];
     let result = GarrisonConfig::load(None);
     assert!(
         result.is_err(),
@@ -918,8 +916,10 @@ fn env_overrides_sign_window_seconds_invalid() {
 #[test]
 #[serial]
 fn env_overrides_sso_ticket_ttl_seconds_invalid() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set(format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX), "abc"));
+    let _env_guards = [EnvVarGuard::set(
+        format!("{}SSO_TICKET_TTL_SECONDS", ENV_PREFIX),
+        "abc",
+    )];
     let result = GarrisonConfig::load(None);
     assert!(
         result.is_err(),
@@ -1048,8 +1048,7 @@ fn validate_accepts_threshold_boundaries() {
 #[test]
 #[serial]
 fn env_overrides_auto_renewal_threshold() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_AUTO_RENEWAL_THRESHOLD", "20"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_AUTO_RENEWAL_THRESHOLD", "20")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(config.auto_renewal_threshold, 20);
 }
@@ -1110,8 +1109,10 @@ fn token_map_cleanup_interval_negative_disables() {
 #[test]
 #[serial]
 fn token_map_cleanup_interval_env_var_overrides() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS", "600"));
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS",
+        "600",
+    )];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.token_map_cleanup_interval_secs, 600,
@@ -1143,8 +1144,10 @@ fn login_token_map_persist_interval_default_is_zero() {
 #[test]
 #[serial]
 fn login_token_map_persist_interval_env_var_overrides() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS", "10"));
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS",
+        "10",
+    )];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.login_token_map_persist_interval_secs, 10,
@@ -1176,8 +1179,7 @@ fn anon_session_timeout_default_is_1800() {
 #[test]
 #[serial]
 fn anon_session_timeout_env_var_overrides() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_ANON_SESSION_TIMEOUT", "3600"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_ANON_SESSION_TIMEOUT", "3600")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.anon_session_timeout, 3600,
@@ -1244,8 +1246,7 @@ fn validate_accepts_share_with_concurrent() {
 #[test]
 #[serial]
 fn env_overrides_is_concurrent() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_IS_CONCURRENT", "false"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_IS_CONCURRENT", "false")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert!(!config.is_concurrent);
 }
@@ -1254,8 +1255,7 @@ fn env_overrides_is_concurrent() {
 #[test]
 #[serial]
 fn env_overrides_max_login_count() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_MAX_LOGIN_COUNT", "3"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_MAX_LOGIN_COUNT", "3")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(config.max_login_count, 3);
 }
@@ -1264,14 +1264,11 @@ fn env_overrides_max_login_count() {
 // T005: is_read_body 配置测试
 // ========================================================================
 
-/// T005: `default_config()` 的 `is_read_body` 为 false（向后兼容）。
+/// T005: `default_config()` 的 `is_read_body` 为 false。
 #[test]
 fn config_default_is_read_body_is_false() {
     let config = GarrisonConfig::default_config();
-    assert!(
-        !config.is_read_body,
-        "默认 is_read_body 应为 false（向后兼容）"
-    );
+    assert!(!config.is_read_body, "默认 is_read_body 应为 false");
     assert_eq!(
         config.is_read_body, DEFAULT_IS_READ_BODY,
         "应等于 DEFAULT_IS_READ_BODY 常量"
@@ -1282,8 +1279,7 @@ fn config_default_is_read_body_is_false() {
 #[test]
 #[serial]
 fn env_overrides_is_read_body() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_IS_READ_BODY", "true"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_IS_READ_BODY", "true")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert!(
         config.is_read_body,
@@ -1340,8 +1336,7 @@ fn test_device_binding_mode_invalid() {
 #[test]
 #[serial]
 fn test_device_binding_mode_env_override() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_DEVICE_BINDING_MODE", "loose"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_DEVICE_BINDING_MODE", "loose")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.device_binding_mode, "loose",
@@ -1398,11 +1393,10 @@ fn validate_memory_backend_skips_redis_url_check() {
 #[test]
 #[serial]
 fn env_overrides_cors_allowed_origins() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set(
+    let _env_guards = [EnvVarGuard::set(
         "GARRISON_CORS_ALLOWED_ORIGINS",
         "https://a.com,https://b.com",
-    ));
+    )];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.cors_config.allowed_origins,
@@ -1415,11 +1409,10 @@ fn env_overrides_cors_allowed_origins() {
 #[test]
 #[serial]
 fn env_cors_origins_filters_empty_values() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set(
+    let _env_guards = [EnvVarGuard::set(
         "GARRISON_CORS_ALLOWED_ORIGINS",
         "https://a.com,,https://b.com,",
-    ));
+    )];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.cors_config.allowed_origins,
@@ -1433,8 +1426,7 @@ fn env_cors_origins_filters_empty_values() {
 #[test]
 #[serial]
 fn env_overrides_csrf_enabled() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_CSRF_ENABLED", "true"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_CSRF_ENABLED", "true")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert!(
         config.csrf_config.enabled,
@@ -1447,9 +1439,10 @@ fn env_overrides_csrf_enabled() {
 #[test]
 #[serial]
 fn env_overrides_rate_limit_backend_to_redis() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "redis"));
-    env_guards.push(EnvVarGuard::set("GARRISON_REDIS_URL", "redis://localhost:6379/0"));
+    let _env_guards = [
+        EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "redis"),
+        EnvVarGuard::set("GARRISON_REDIS_URL", "redis://localhost:6379/0"),
+    ];
     let config = GarrisonConfig::load(None).expect("load with env");
     match config.rate_limit_backend {
         RateLimitBackend::Redis { redis_url } => {
@@ -1464,8 +1457,7 @@ fn env_overrides_rate_limit_backend_to_redis() {
 #[test]
 #[serial]
 fn env_overrides_rate_limit_backend_to_memory() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "memory"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "memory")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.rate_limit_backend,
@@ -1479,8 +1471,10 @@ fn env_overrides_rate_limit_backend_to_memory() {
 #[test]
 #[serial]
 fn env_redis_url_alone_does_not_change_memory_backend() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_REDIS_URL", "redis://localhost:6379/0"));
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_REDIS_URL",
+        "redis://localhost:6379/0",
+    )];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.rate_limit_backend,
@@ -1494,8 +1488,7 @@ fn env_redis_url_alone_does_not_change_memory_backend() {
 #[test]
 #[serial]
 fn env_rate_limit_backend_invalid_value_returns_error() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "mysql"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_RATE_LIMIT_BACKEND", "mysql")];
     let result = GarrisonConfig::load(None);
     assert!(result.is_err(), "无效 backend 值应返回错误");
     let err = result.unwrap_err();
@@ -1593,8 +1586,10 @@ fn overflow_logout_mode_serde_snake_case() {
 #[test]
 #[serial]
 fn env_overrides_replaced_login_exit_mode() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_REPLACED_LOGIN_EXIT_MODE", "new_device"));
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_REPLACED_LOGIN_EXIT_MODE",
+        "new_device",
+    )];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.replaced_login_exit_mode,
@@ -1607,8 +1602,7 @@ fn env_overrides_replaced_login_exit_mode() {
 #[test]
 #[serial]
 fn env_overrides_overflow_logout_mode() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_OVERFLOW_LOGOUT_MODE", "kickout"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_OVERFLOW_LOGOUT_MODE", "kickout")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.overflow_logout_mode,
@@ -1657,8 +1651,7 @@ fn audit_mask_mode_serde_snake_case() {
 #[test]
 #[serial]
 fn env_overrides_audit_mask_mode() {
-    let mut env_guards: Vec<EnvVarGuard> = Vec::new();
-    env_guards.push(EnvVarGuard::set("GARRISON_AUDIT_MASK_MODE", "full"));
+    let _env_guards = [EnvVarGuard::set("GARRISON_AUDIT_MASK_MODE", "full")];
     let config = GarrisonConfig::load(None).expect("load with env");
     assert_eq!(
         config.audit_mask_mode,

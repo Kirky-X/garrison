@@ -53,17 +53,23 @@ async fn acc_sec_001_totp_adjacent_windows_pass() {
 
     // 当前窗口
     assert!(
-        handler.validate(&handler.generate(now).unwrap(), now).unwrap(),
+        handler
+            .validate(&handler.generate(now).unwrap(), now)
+            .unwrap(),
         "当前窗口应通过"
     );
     // 前一窗口（now - 30）
     assert!(
-        handler.validate(&handler.generate(now - 30).unwrap(), now).unwrap(),
+        handler
+            .validate(&handler.generate(now - 30).unwrap(), now)
+            .unwrap(),
         "前一窗口应通过（±1 skew）"
     );
     // 后一窗口（now + 30）
     assert!(
-        handler.validate(&handler.generate(now + 30).unwrap(), now).unwrap(),
+        handler
+            .validate(&handler.generate(now + 30).unwrap(), now)
+            .unwrap(),
         "后一窗口应通过（±1 skew）"
     );
 }
@@ -81,11 +87,15 @@ async fn acc_sec_002_totp_beyond_two_windows_rejected() {
     let handler = TotpHandler::new(SECRET.to_vec(), 30, 6).unwrap();
 
     assert!(
-        !handler.validate(&handler.generate(now - 60).unwrap(), now).unwrap(),
+        !handler
+            .validate(&handler.generate(now - 60).unwrap(), now)
+            .unwrap(),
         "前两个窗口（now-60）应被拒绝"
     );
     assert!(
-        !handler.validate(&handler.generate(now + 60).unwrap(), now).unwrap(),
+        !handler
+            .validate(&handler.generate(now + 60).unwrap(), now)
+            .unwrap(),
         "后两个窗口（now+60）应被拒绝"
     );
 }
@@ -104,11 +114,15 @@ async fn acc_sec_003_totp_wrong_key_rejected() {
 
     // B 密钥的验证码对 A 校验必须失败（反之亦然）
     assert!(
-        !handler_a.validate(&handler_b.generate(now).unwrap(), now).unwrap(),
+        !handler_a
+            .validate(&handler_b.generate(now).unwrap(), now)
+            .unwrap(),
         "不同密钥生成的验证码应被拒绝"
     );
     assert!(
-        !handler_b.validate(&handler_a.generate(now).unwrap(), now).unwrap(),
+        !handler_b
+            .validate(&handler_a.generate(now).unwrap(), now)
+            .unwrap(),
         "不同密钥生成的验证码应被拒绝（双向）"
     );
 
@@ -1177,7 +1191,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
     let config = {
         let mut c = GarrisonConfig::default_config();
         c.throw_on_not_login = false;
-        // 多租户隔离为 Opt-in（默认 enabled=false 向后兼容）：启用后
+        // 多租户隔离为 Opt-in（默认 enabled=false）：启用后
         // 会话/权限按 X-Tenant-Id 解析的租户作用域隔离（FMEA 配置项语义）。
         c.tenant_isolation = garrison::config::TenantIsolationConfig {
             enabled: true,

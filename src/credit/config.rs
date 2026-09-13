@@ -238,13 +238,19 @@ mod tests {
             thresholds: vec![50, 101],
             cooldown_seconds: 60,
         };
-        assert!(over.validate().unwrap_err().contains("credit-alert-thresholds-range"));
+        assert!(over
+            .validate()
+            .unwrap_err()
+            .contains("credit-alert-thresholds-range"));
 
         let unsorted = CreditAlertConfig {
             thresholds: vec![90, 80],
             cooldown_seconds: 60,
         };
-        assert!(unsorted.validate().unwrap_err().contains("credit-alert-thresholds-order"));
+        assert!(unsorted
+            .validate()
+            .unwrap_err()
+            .contains("credit-alert-thresholds-order"));
     }
 
     /// CreditConfig serde 往返（TOML）保持字段一致。

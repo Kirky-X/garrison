@@ -12,11 +12,10 @@
 //!
 //! # 安全说明
 //!
-//! MD5 算法已被证明存在碰撞攻击，不建议在新系统中使用。
-//! 仅在兼容旧客户端时使用 MD5，新系统应使用 SHA256（现为默认值）。
-//! `MD5` 变体未做编译期 feature 门控（兼容旧客户端的可用性取舍），
+//! MD5 算法已被证明存在碰撞攻击，新系统应使用 SHA256（现为默认值）。
+//! `MD5` 变体未做编译期 feature 门控，
 //! 但 `HttpDigestAuth::new("...", "MD5")` 构造时会输出 `tracing::warn!`
-//! 运行时告警，便于审计每次 MD5 的使用。
+//! 运行时告警，便于审计每次 MD5 的使用；仅限客户端只支持 MD5 时使用。
 //!
 //! # 重放防护（务必阅读）
 //!
@@ -35,7 +34,7 @@
 /// Digest 算法枚举。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DigestAlgorithm {
-    /// MD5 算法（兼容旧客户端，安全性较弱）。
+    /// MD5 算法（安全性较弱，存在碰撞攻击，仅限客户端只支持 MD5 时使用）。
     Md5,
     /// SHA256 算法（默认值，安全性较高）。
     Sha256,
@@ -76,7 +75,7 @@ pub struct HttpDigestAuth {
     /// `is_nonce_valid` 会先验 HMAC 再校验时间戳，拒绝自铸（无有效签名）的 nonce。
     /// 通过 `with_server_key` 以 HKDF 从配置密钥域分隔派生（复用 protocol-sign 派生范式）。
     ///
-    /// 未注入时保持向后兼容：nonce 为旧格式 `base64("{timestamp}:{uuid}")`（无签名），
+    /// 未注入时：nonce 为无签名格式 `base64("{timestamp}:{uuid}")`，
     /// 仅依赖时间戳 TTL 防护；生产环境强烈建议注入 `server_key` 以杜绝自铸 nonce。
     server_key: Option<[u8; 32]>,
 }

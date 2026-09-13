@@ -94,7 +94,6 @@ fn demo_service_construction() {
     println!("        interface,     // Arc<dyn GarrisonPermissionStrategy>");
     println!("        l1_ttl_secs,   // u64, L1 缓存 TTL");
     println!("        l2_ttl_secs,   // u64, L2 缓存 TTL");
-    println!("        l1_capacity,   // u64, L1 最大条目数");
     println!("    )?;");
     println!();
     println!("    // 方式 2: 通过 GarrisonManager builder 自动构造");

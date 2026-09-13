@@ -159,9 +159,12 @@ async fn acc_res_001_oxcache_failure_jwt_stateless_token_still_verifiable() {
     // 正常锚点：健康 DAO 下登录签发 JWT 并可验证
     let dao_healthy: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let logic_healthy = GarrisonLogicDefault::new(
-        Arc::new(GarrisonSession::new(dao_healthy, 3600, 86400, 0)),
+        Arc::new(GarrisonSession::new(dao_healthy.clone(), 3600, 86400, 0)),
         config.clone(),
         default_firewall(),
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao_healthy,
+        )),
     )
     .with_jwt_mode(JwtMode::Stateless);
     let token = logic_healthy
@@ -179,9 +182,12 @@ async fn acc_res_001_oxcache_failure_jwt_stateless_token_still_verifiable() {
     // DAO 故障注入：新登录显性失败（GarrisonError::Dao 传播，不吞错）
     let dao_failing: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
     let logic_failing = GarrisonLogicDefault::new(
-        Arc::new(GarrisonSession::new(dao_failing, 3600, 86400, 0)),
+        Arc::new(GarrisonSession::new(dao_failing.clone(), 3600, 86400, 0)),
         config,
         default_firewall(),
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao_failing,
+        )),
     )
     .with_jwt_mode(JwtMode::Stateless);
     let login_err = logic_failing

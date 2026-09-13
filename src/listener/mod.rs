@@ -644,10 +644,7 @@ impl std::fmt::Debug for GarrisonEvent {
                 .field("code", &redact_secret_for_debug(code))
                 .field("issuer_id", issuer_id)
                 .finish(),
-            GarrisonEvent::InvitationRedeemed {
-                code,
-                redeemer_id,
-            } => f
+            GarrisonEvent::InvitationRedeemed { code, redeemer_id } => f
                 .debug_struct("InvitationRedeemed")
                 .field("code", &redact_secret_for_debug(code))
                 .field("redeemer_id", redeemer_id)

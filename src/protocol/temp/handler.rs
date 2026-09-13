@@ -30,7 +30,7 @@ impl TempCredentialHandler {
     ///
     ///
     /// 注入后 `consume` 成功消费（value 为 Some）时广播 `GarrisonEvent::TempCredentialConsumed`。
-    /// 未注入时为 no-op（向后兼容 0.4.1）。需启用 `listener` feature。
+    /// 未注入时不广播事件（`listener` 为可选观测 feature）。需启用 `listener` feature。
     #[cfg(feature = "listener")]
     pub fn with_listener_manager(mut self, lm: Arc<GarrisonListenerManager>) -> Self {
         self.listener_manager = Some(lm);
@@ -96,8 +96,8 @@ impl TempCredentialHandler {
     /// 原子地读取并删除凭据（调用 `GarrisonDao::get_and_delete`），消除 TOCTOU 竞态，
     /// 保证一次性使用语义（vuln-0005 修复：原 `get + delete` 两步操作存在 double-spend 风险）。
     ///
-    /// v0.4.2 扩展：成功消费（value 为 Some）时若注入了 `listener_manager`，
-    /// 广播 `GarrisonEvent::TempCredentialConsumed`。
+    /// 成功消费（value 为 Some）时若注入了 `listener_manager`，
+    /// 广播 `GarrisonEvent::TempCredentialConsumed`（需启用 `listener` feature）。
     ///
     /// # 返回
     /// - `Ok(Some(value))`: 凭据存在且已被消费（删除）。

@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 
 /// Garrison JWT Claims 载荷。
 ///
-/// 字段兼容 0.1.0 `JwtClaims`，0.2.0 扩展 `login_id` 与 `device` 字段，
-/// v0.6.3 扩展 `jti`（RFC 7519 §4.1.7）保证同一秒内签发的 token 唯一。
+/// 标准字段 `sub` / `iat` / `exp` 之外，携带 `login_id` / `device` 扩展字段，
+/// 以及 `jti`（RFC 7519 §4.1.7）保证同一秒内签发的 token 唯一。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GarrisonJwtClaims {
     /// 主体标识（与 login_id 字符串一致）。
@@ -43,22 +43,21 @@ pub struct GarrisonJwtClaims {
 
     /// JWT 唯一标识（RFC 7519 §4.1.7）。
     ///
-    /// `sign` 时自动生成 UUID；旧 token 反序列化时缺失该字段则为 `None`（向后兼容）。
-    /// 用于保证同一秒内为同一用户签发的 token 仍唯一，支持 token rotation 语义。
+    /// `sign` 时自动生成 UUID；字段为 `Option` 以兼容不含 `jti` 的外部签发 token
+    /// （RFC 7519 中 `jti` 本身为可选 claim）。用于保证同一秒内为同一用户签发的
+    /// token 仍唯一，支持 token rotation 语义。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub jti: Option<String>,
 
     /// Not Before（RFC 7519 §4.1.5）。
     ///
-    /// `sign` 时自动设置为当前时间；旧 token 反序列化时缺失该字段则为 `None`（向后兼容）。
-    /// `verify` 启用 `validate_nbf = true` 后，`nbf` 为未来时间时拒绝 token（ImmatureSignature）。
-    /// `nbf` 为 `None` 时 jsonwebtoken 跳过 nbf 校验（向后兼容旧 token）。
+    /// `sign` 时自动设置为当前时间。`verify` 启用 `validate_nbf = true` 后，
+    /// `nbf` 为未来时间时拒绝 token（ImmatureSignature）。
+    /// 字段为 `Option` 以兼容不含 `nbf` 的外部签发 token（RFC 7519 中 `nbf`
+    /// 本身为可选 claim）；`nbf` 缺失时 jsonwebtoken 跳过 nbf 校验。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub nbf: Option<i64>,
 }
-
-/// 0.1.0 兼容别名。
-pub type JwtClaims = GarrisonJwtClaims;
 
 /// JWT 处理器，封装密钥与签名算法以供复用。
 ///
@@ -67,7 +66,7 @@ pub type JwtClaims = GarrisonJwtClaims;
 pub struct JwtHandler {
     /// 签名密钥。
     ///
-    /// # 安全注意（pre-1.0 兼容保留 `pub`）
+    /// # 安全注意
     ///
     /// 任何持有 `JwtHandler` 的代码都能直接读出原始密钥——调用方应将 handler
     /// 视为敏感对象，仅在可信边界内传递，不要写入日志或序列化输出。

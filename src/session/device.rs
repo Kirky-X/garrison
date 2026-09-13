@@ -97,13 +97,11 @@ impl DeviceManager {
 /// # 返回
 /// 32 字符的十六进制字符串（SHA-256 前 16 字节）。
 ///
-/// # 破坏性变更说明
+/// # 哈希构成
 ///
-/// 自本版本起 UA 与 IP 以 `\x1f`（Unit Separator）分隔后参与哈希，修复维度拼接歧义
+/// UA 与 IP 以 `\x1f`（Unit Separator）分隔后参与哈希，消除维度拼接歧义
 ///（`ua="ab"+ip="c"` 与 `ua="a"+ip="bc"` 在无分隔符时哈希相同，可伪造同指纹）。
-/// 输入相同的情况下本函数返回值与旧版本**不同**：若有外部调用方持久化了旧指纹
-///（如设备白名单），升级后需重新计算或迁移。生产登录路径已默认使用
-/// [`device_fingerprint_rich`]（自带分隔符），不受影响。
+/// 生产登录路径默认使用 [`device_fingerprint_rich`]（多维度指纹）。
 pub fn device_fingerprint(user_agent: &str, ip: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(user_agent.as_bytes());
@@ -152,7 +150,7 @@ impl<'a> DeviceFingerprintInput<'a> {
         }
     }
 
-    /// 仅从 ua + ip 构造（其他维度为 None，向后兼容旧 `device_fingerprint` 调用方）。
+    /// 仅从 ua + ip 构造（其他维度为 `None`，对应 [`device_fingerprint`] 的二维输入）。
     pub fn from_ua_ip(user_agent: &'a str, ip: &'a str) -> Self {
         Self {
             user_agent,
@@ -242,17 +240,14 @@ mod tests {
         assert_eq!(fp.len(), 32, "指纹应为 32 字符（16 字节 hex）");
     }
 
-    /// legacy 指纹分隔符：ua="ab"+ip="c" 与 ua="a"+ip="bc" 应产生不同指纹。
+    /// 指纹分隔符：ua="ab"+ip="c" 与 ua="a"+ip="bc" 应产生不同指纹。
     ///
     /// 验证 `\x1f` 分隔符消除维度拼接歧义（与 rich 版对齐）。
     #[test]
     fn device_fingerprint_delimiter_prevents_concat_ambiguity() {
         let fp1 = device_fingerprint("ab", "c");
         let fp2 = device_fingerprint("a", "bc");
-        assert_ne!(
-            fp1, fp2,
-            "分隔符应防止 legacy 指纹的维度拼接歧义"
-        );
+        assert_ne!(fp1, fp2, "分隔符应防止指纹的维度拼接歧义");
     }
 
     // ------------------------------------------------------------------------

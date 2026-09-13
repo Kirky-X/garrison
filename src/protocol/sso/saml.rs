@@ -829,8 +829,8 @@ fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
 ///
 /// 原实现 v1 使用 `dao.get()` + `dao.set()` 两步操作，v2 改为 `get_and_delete`
 /// + `set`。但 `get_and_delete` 对**不存在**的键不产生任何预留——并发请求可能
-/// 同时拿到 `None` 后各自 `set`，导致同一 Assertion 被多次消费（跨进程场景
-/// 尤其明显）。
+///   同时拿到 `None` 后各自 `set`，导致同一 Assertion 被多次消费（跨进程场景
+///   尤其明显）。
 ///
 /// 现使用 `dao.set_if_absent()`（语义等价 Redis `SET NX EX`）单步原子预留：
 /// 1. 返回 `Ok(true)` → 首个消费者，键已写入（TTL = NotOnOrAfter 剩余有效期）
@@ -1142,6 +1142,7 @@ fn extract_reference_bindings(signed_info_xml: &str) -> Vec<ReferenceBinding> {
 ///   「local name 后必须是空白/`>`/`/`」边界检查 + 跳过属性定位 `>` 实现；
 /// - 混合前缀：开始 `ds:` 前缀 + 结束无前缀（或反之）也能配对（同前缀优先）；
 /// - 边界检查避免 `<ds:Signature` 误配 `<ds:SignedInfo` 这类更长标签名。
+///
 /// 找不到返回 None。
 #[cfg(feature = "protocol-saml")]
 fn find_element_span(xml: &str, local_name: &str) -> Option<(usize, usize)> {
@@ -1188,7 +1189,7 @@ fn find_element_text_span(xml: &str, local_name: &str) -> Option<String> {
     // 内容 = 开始标签 `>` 之后到首个闭合标签 `</` 之前
     let gt = seg.find('>')?;
     let close_start = seg[gt..].find("</")? + gt;
-    if close_start >= gt + 1 {
+    if close_start > gt {
         Some(seg[gt + 1..close_start].trim().to_string())
     } else {
         // `<X></X>`：空文本内容
@@ -1293,6 +1294,7 @@ fn strip_enveloped_signature(element_xml: &str) -> String {
 ///   完整 C14N 的命名空间重写，规范化输出与 IdP 签名输入不一致 → 验签失败
 ///   （拒绝，而非错误放行）。
 /// - **字符引用不展开**（`&#x41;` → `A` 等）。
+///
 /// 上述限制已在模块文档与 `verify_saml_signature` 运行时告警中说明。
 #[cfg(feature = "protocol-saml")]
 fn canonicalize_signed_info_c14n_subset(input: &str) -> String {
@@ -1352,10 +1354,7 @@ fn canonicalize_signed_info_c14n_subset(input: &str) -> String {
             }
         } else {
             // 文本节点：原样保留到下一个 '<'
-            let lt = input[i..]
-                .find('<')
-                .map(|p| i + p)
-                .unwrap_or(input.len());
+            let lt = input[i..].find('<').map(|p| i + p).unwrap_or(input.len());
             out.push_str(&input[i..lt]);
             i = lt;
         }

@@ -120,9 +120,16 @@ fn construct_logic(
     config.throw_on_not_login = true;
 
     let logic = Arc::new(
-        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_permission_checker(pc)
-            .with_listener_manager(lm),
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_permission_checker(pc)
+        .with_listener_manager(lm),
     );
     println!("    ✓ GarrisonLogicDefault 已构造（PermissionChecker + ListenerManager 已注入）");
 

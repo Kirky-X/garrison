@@ -371,6 +371,9 @@ async fn garrison_exception_into_response_masks_extras() {
         !text.contains("super-secret"),
         "响应体不得包含未掩码的 extras 敏感值，实际: {text}"
     );
-    assert!(text.contains("***"), "extras 敏感值应掩码为 ***，实际: {text}");
+    assert!(
+        text.contains("***"),
+        "extras 敏感值应掩码为 ***，实际: {text}"
+    );
     assert!(text.contains("web"), "非敏感 extras 应保留，实际: {text}");
 }

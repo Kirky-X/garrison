@@ -97,7 +97,9 @@ impl EmailRateLimiter {
     pub async fn check_and_increment(&self, email: &str) -> GarrisonResult<()> {
         let normalized = normalize_email(email);
         validate_email(&normalized)?;
-        self.check_and_increment_inner(&normalized).await.map(|_| ())
+        self.check_and_increment_inner(&normalized)
+            .await
+            .map(|_| ())
     }
 
     /// 内部实现：接受已规范化的邮箱，避免重复 normalize。

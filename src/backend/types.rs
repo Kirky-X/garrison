@@ -188,10 +188,7 @@ impl<T> ApiResponse<T> {
         }
         match self.data {
             Some(v) => Ok(v),
-            None => Err((
-                "UNKNOWN".to_string(),
-                "backend-unknown-error::".to_string(),
-            )),
+            None => Err(("UNKNOWN".to_string(), "backend-unknown-error::".to_string())),
         }
     }
 }

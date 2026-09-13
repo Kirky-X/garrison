@@ -1002,8 +1002,8 @@ async fn test_internal_router_includes_oauth2_routes_when_set() {
                 .method("POST")
                 .uri("/oauth2/introspect")
                 .header("x-api-key", "test-api-key")
-                .header("content-type", "application/json")
-                .body(Body::from(r#"{"token":"test"}"#))
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(Body::from("token=test"))
                 .unwrap(),
         )
         .await

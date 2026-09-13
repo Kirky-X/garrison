@@ -40,22 +40,17 @@ impl GarrisonSession {
     }
 
     /// 获取 DAO 引用（`pub(crate)` 供 `GarrisonLogicDefault` 构造 `ApiKeyHandler`、
-    /// `health::checks` 执行依赖探测，以及 `protocol-jwt` 黑名单读写等内部模块复用）。
+    /// manager factory 构造 `DefaultDisableRepository` 兜底、`health::checks` 执行
+    /// 依赖探测，以及 `protocol-jwt` 黑名单读写等内部模块复用）。
     ///
     /// # 调用方
     /// - `GarrisonLogicDefault::check_api_key`（`protocol-apikey` feature）
+    /// - `manager::factory` / `builder` 测试工厂（`DefaultDisableRepository` 兜底）
     /// - `health::checks::DbHealthCheck` / `CacheHealthCheck`（`db-postgres` / `db-mysql` /
     ///   `cache-redis` feature 启用时）
     /// - `GarrisonLogicDefault::blacklist_jwt_jti` / `check_login_stateless`
     ///   （`protocol-jwt` feature）
-    #[cfg(any(
-        feature = "protocol-apikey",
-        feature = "db-postgres",
-        feature = "db-mysql",
-        feature = "cache-redis",
-        feature = "protocol-jwt",
-        feature = "firewall-bruteforce"
-    ))]
+    #[allow(dead_code)]
     pub(crate) fn dao(&self) -> &Arc<dyn GarrisonDao> {
         &self.dao
     }
@@ -278,7 +273,7 @@ impl GarrisonSession {
     /// create / create_token_session 共用内部实现。
     ///
     /// 在 per-login_id 锁内双写 Token-Session + Account-Session。
-    /// device/ip/user_agent 为 None 时对应字段留空（向后兼容 `create`）。
+    /// device/ip/user_agent 为 None 时对应字段留空（与 `create` 一致）。
     /// `remember_me` 为 `Some(true)` 时，token TTL 与 `effective_timeout` 取 `remember_me_timeout`。
     async fn create_inner(
         &self,
@@ -555,7 +550,8 @@ impl GarrisonSession {
                 let now = Utc::now().timestamp();
                 if as_.last_active_at + (self.active_timeout.min(i64::MAX as u64) as i64) < now {
                     // 双重检查后删除：并发 touch 可能已在检查间隙刷新 Account-Session（TOCTOU 防护）
-                    self.delete_account_session_if_still_expired(&login_id).await;
+                    self.delete_account_session_if_still_expired(&login_id)
+                        .await;
                     return Ok(None);
                 }
                 Ok(Some(as_))
@@ -2341,7 +2337,7 @@ mod tests {
     }
 
     /// `create_token_session` 中 LoginParams 的 device/ip/user_agent 为 None 时
-    /// TokenSession 对应字段也为 None（向后兼容 `create`）。
+    /// TokenSession 对应字段也为 None（与 `create` 一致）。
     #[tokio::test]
     async fn create_token_session_with_none_params_leaves_fields_none() {
         let (_dao, session) = make_session(3600, 86400);

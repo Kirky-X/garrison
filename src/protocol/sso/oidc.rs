@@ -412,25 +412,6 @@ impl DefaultOidcProvider {
         self
     }
 
-    /// 自定义 state_store 最大条目数（no-op，保留以兼容旧测试）。
-    ///
-    /// **注意**：DAO 模式下 state 容量由 oxcache 自管理，此方法不再生效。
-    /// 保留方法签名仅为兼容旧测试调用，新代码不应依赖此方法。
-    #[cfg(test)]
-    pub fn with_max_state_entries(self, _max: usize) -> Self {
-        // no-op：DAO（oxcache）自管理容量，无需 LRU 淘汰
-        self
-    }
-
-    /// 当前 state_store 条目数（stub，保留以兼容旧测试）。
-    ///
-    /// **注意**：DAO 模式下 state 存储在 oxcache 中，无法直接查询条目数。
-    /// 返回 0 仅用于兼容旧测试签名，新代码不应依赖此返回值。
-    #[cfg(test)]
-    pub fn state_store_len(&self) -> usize {
-        0
-    }
-
     /// 构造 JWKS 在 DAO 中的缓存 key。
     ///
     /// 格式：`oidc:jwks:{issuer}`，按 issuer 区分不同 IdP。
@@ -883,12 +864,12 @@ struct TokenResponse {
     id_token: Option<String>,
     #[allow(
         dead_code,
-        reason = "OAuth2 兼容字段：当前仅用 id_token，access_token 预留供 protocol-jwt 扩展"
+        reason = "OAuth2 标准字段：当前仅用 id_token，access_token 预留供 protocol-jwt 扩展"
     )]
     access_token: Option<String>,
-    #[allow(dead_code, reason = "OAuth2 兼容字段：预留 token_type 供后续扩展")]
+    #[allow(dead_code, reason = "OAuth2 标准字段：预留 token_type 供后续扩展")]
     token_type: Option<String>,
-    #[allow(dead_code, reason = "OAuth2 兼容字段：预留 expires_in 供后续扩展")]
+    #[allow(dead_code, reason = "OAuth2 标准字段：预留 expires_in 供后续扩展")]
     expires_in: Option<i64>,
 }
 
@@ -2125,13 +2106,13 @@ mod tests {
         }
     }
 
-    ///  DAO 模式下 with_max_state_entries 是 no-op，不影响 state 注册。
+    ///  DAO 模式下连续注册多个 state 均成功（容量由 oxcache 自管理）。
     ///
-    /// 原 LRU 淘汰机制已迁移到 oxcache 配置层，Provider 层不再负责容量限制。
-    /// with_max_state_entries 保留为 no-op 仅为兼容旧测试调用。
-    /// 期望：注册多个 state 不报错，state_store_len 始终返回 0（stub）。
+    /// Provider 层不负责容量限制；state 写入 DAO 后由 TTL 自动过期。
+    /// 期望：注册多个 state 不报错，且每个 state 均可写入 DAO。
     #[tokio::test]
-    async fn state_store_evicts_oldest_when_max_entries_reached() {
+    async fn state_registration_allows_multiple_entries() {
+        let dao = Arc::new(InMemoryDao::new());
         let config = OidcDiscoveryConfig {
             issuer: "https://idp.example.com".to_string(),
             authorization_endpoint: "https://idp.example.com/authorize".to_string(),
@@ -2140,35 +2121,33 @@ mod tests {
             jwks_uri: "https://idp.example.com/jwks".to_string(),
         };
 
-        // with_max_state_entries 是 no-op（DAO 模式下容量由 oxcache 自管理）
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(InMemoryDao::new()))
-            .with_max_state_entries(2);
-        // 注册 3 个 state（max=2，但 no-op 不淘汰）
-        provider
-            .get_authorization_url("https://cb.com/cb", "state-1", &["openid"])
-            .await
-            .unwrap();
-        provider
-            .get_authorization_url("https://cb.com/cb", "state-2", &["openid"])
-            .await
-            .unwrap();
-        provider
-            .get_authorization_url("https://cb.com/cb", "state-3", &["openid"])
-            .await
-            .unwrap();
-        // state_store_len 始终返回 0（stub，DAO 模式下无法查询条目数）
-        assert_eq!(provider.state_store_len(), 0);
+            .with_dao(dao.clone());
+        // 连续注册 3 个 state 均应成功
+        for state in ["state-1", "state-2", "state-3"] {
+            provider
+                .get_authorization_url("https://cb.com/cb", state, &["openid"])
+                .await
+                .unwrap();
+            assert!(
+                dao.get(&DefaultOidcProvider::state_cache_key(state))
+                    .await
+                    .unwrap()
+                    .is_some(),
+                "state {} 应已写入 DAO",
+                state
+            );
+        }
     }
 
-    ///  DAO 模式下 state_store_len 始终返回 0（stub），但 state 可正常注册。
+    ///  get_authorization_url 将 state 注册到 DAO。
     ///
-    /// state 实际存储在 oxcache 中，Provider 层无法直接查询条目数。
-    /// state_store_len 保留为 stub 仅为兼容旧测试调用。
-    /// 期望：get_authorization_url 不报错，state_store_len 始终返回 0。
+    /// state 写入 DAO（key 为 `oidc:state:{state}`，TTL 由 oxcache 管理）。
+    /// 期望：注册后 DAO 中可查到对应 key；同一 state 重复注册不报错（DAO 覆盖写入）。
     #[tokio::test]
     async fn get_authorization_url_registers_state() {
+        let dao = Arc::new(InMemoryDao::new());
         let config = OidcDiscoveryConfig {
             issuer: "https://idp.example.com".to_string(),
             authorization_endpoint: "https://idp.example.com/authorize".to_string(),
@@ -2178,26 +2157,34 @@ mod tests {
         };
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
-            .with_dao(Arc::new(InMemoryDao::new()));
-        // state_store_len 始终返回 0（stub）
-        assert_eq!(provider.state_store_len(), 0);
+            .with_dao(dao.clone());
         provider
             .get_authorization_url("https://cb.com/cb", "first-state", &["openid"])
             .await
             .unwrap();
-        // 注册后仍返回 0（stub，DAO 模式下无法查询条目数）
-        assert_eq!(provider.state_store_len(), 0);
+        assert!(
+            dao.get(&DefaultOidcProvider::state_cache_key("first-state"))
+                .await
+                .unwrap()
+                .is_some(),
+            "first-state 应已写入 DAO"
+        );
         provider
             .get_authorization_url("https://cb.com/cb", "second-state", &["openid"])
             .await
             .unwrap();
-        assert_eq!(provider.state_store_len(), 0);
+        assert!(
+            dao.get(&DefaultOidcProvider::state_cache_key("second-state"))
+                .await
+                .unwrap()
+                .is_some(),
+            "second-state 应已写入 DAO"
+        );
         // 同一 state 重复注册不报错（DAO 覆盖写入）
         provider
             .get_authorization_url("https://cb.com/cb", "first-state", &["openid"])
             .await
             .unwrap();
-        assert_eq!(provider.state_store_len(), 0);
     }
 
     // ========================================================================
@@ -2491,7 +2478,7 @@ mod tests {
     }
 
     // ========================================================================
-    // with_state_ttl / with_max_state_entries / state_store_len 测试
+    // with_state_ttl 测试
     // ========================================================================
 
     /// with_state_ttl 修改 state TTL 后 state 过期行为正确。
@@ -2517,16 +2504,6 @@ mod tests {
             .exchange_code("code", "https://sp.example.com/cb", "state-ttl-test")
             .await;
         assert!(result.is_err(), "state 过期后 exchange_code 应失败");
-    }
-
-    /// with_max_state_entries 为 no-op，返回的实例可正常使用。
-    #[test]
-    fn with_max_state_entries_is_noop() {
-        let config = make_test_config();
-        let provider = DefaultOidcProvider::new(config, "cid", "cs")
-            .unwrap()
-            .with_max_state_entries(100);
-        assert_eq!(provider.state_store_len(), 0);
     }
 
     // ========================================================================

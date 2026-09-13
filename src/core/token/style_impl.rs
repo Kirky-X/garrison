@@ -434,12 +434,7 @@ mod simple_token_impl_tests {
         assert_eq!(claims.expire_at, future_exp);
 
         // 篡改 exp（延长有效期）→ HMAC 绑定校验失败 → None
-        let tampered = format!(
-            "u1\x1f{}.{}.{}",
-            uuid_str,
-            future_exp + 86_400,
-            hmac_future
-        );
+        let tampered = format!("u1\x1f{}.{}.{}", uuid_str, future_exp + 86_400, hmac_future);
         assert_eq!(
             style.verify(&tampered).unwrap(),
             None,

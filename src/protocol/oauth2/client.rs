@@ -721,7 +721,10 @@ mod tests {
             "https://auth.example.com/token",
         )
         .expect("client 构建成功");
-        assert_eq!(client.introspect_url(), "https://auth.example.com/introspect");
+        assert_eq!(
+            client.introspect_url(),
+            "https://auth.example.com/introspect"
+        );
     }
 
     /// token_url 不以 /token 结尾时在末尾追加 /introspect。
@@ -753,7 +756,10 @@ mod tests {
         )
         .expect("client 构建成功")
         .with_introspect_url("https://introspect.example.com/check");
-        assert_eq!(client.introspect_url(), "https://introspect.example.com/check");
+        assert_eq!(
+            client.introspect_url(),
+            "https://introspect.example.com/check"
+        );
     }
 
     // ========================================================================

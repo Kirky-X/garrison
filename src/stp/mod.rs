@@ -115,7 +115,7 @@ pub struct LoginParams {
     /// 是否要求二级认证（v0.6.5 新增）。
     ///
     /// 由 `DeviceBindingPolicy` 在 login 流程中设置：strict 模式下新设备登录时置为 `true`，
-    /// 业务方可在登录后检查此标记触发 MFA 流程。默认 `false`（向后兼容）。
+    /// 业务方可在登录后检查此标记触发 MFA 流程。默认 `false`（不要求二级认证）。
     pub require_mfa: bool,
 }
 
@@ -264,29 +264,31 @@ pub struct GarrisonLogicDefault {
     clock: Arc<dyn Clock>,
     /// 异常检测器列表（可选，注入后 login/check_login 触发异常检测）。
     ///
-    /// 需启用 `security-alert` feature。未注入时为 no-op（向后兼容）。
+    /// 需启用 `security-alert` feature。未注入时为 no-op（功能关闭）。
     /// 检测失败只 `tracing::warn!` 不中断主流程。
     #[cfg(feature = "security-extra")]
     pub(crate) anomaly_detectors: Option<Vec<Arc<dyn crate::strategy::alert::AnomalyDetector>>>,
     /// 告警监听器管理器（可选，注入后广播异常检测产生的事件）。
     ///
-    /// 需启用 `security-alert` feature。未注入时异常事件不广播（向后兼容）。
+    /// 需启用 `security-alert` feature。未注入时异常事件不广播（未部署告警系统）。
     #[cfg(feature = "security-extra")]
     pub(crate) alert_listener_manager: Option<Arc<crate::strategy::alert::AlertListenerManager>>,
     /// 设备绑定策略（可选，注入后 login 流程检测新设备并设置 `require_mfa` 标记）。
     ///
-    /// 需启用 `device-binding` feature。未注入时跳过检测（向后兼容）。
+    /// 需启用 `device-binding` feature。未注入时跳过检测（功能关闭）。
     /// 检测失败只 `tracing::warn!` 不中断 login。
     #[cfg(feature = "device-binding")]
     pub(crate) device_binding_policy:
         Option<Arc<dyn crate::strategy::device_binding::DeviceBindingPolicy>>,
-    /// 封禁库（可选，注入后 check_disable 查询当前 login_id 是否被封禁）。
+    /// 封禁库（构造时必需注入，`check_disable` 委托其查询当前 login_id 是否被封禁）。
     ///
-    /// 非 feature-gated（核心能力）。未注入时 check_disable 返回 `Ok(())`（向后兼容）。
-    pub(crate) disable_repository: Option<Arc<dyn crate::account::disable::DisableRepository>>,
+    /// 非 feature-gated（核心能力）。通用场景传
+    /// `Arc::new(DefaultDisableRepository::new(dao))`（委托 DAO 持久化封禁条目），
+    /// 业务方也可实现 `DisableRepository` 接入自定义封禁数据源。
+    pub(crate) disable_repository: Arc<dyn crate::account::disable::DisableRepository>,
     /// 用户缓存服务（可选，注入后 logout/logout_by_login_id 失效用户三层缓存）。
     ///
-    /// 需启用 `three-tier-cache` feature。未注入时 logout 不失效缓存（向后兼容）。
+    /// 需启用 `three-tier-cache` feature。未注入时 logout 不失效缓存（缓存失效功能关闭）。
     /// 缓存失效失败只 `tracing::warn!` 不中断 logout 主流程。
     #[cfg(feature = "three-tier-cache")]
     pub(crate) user_cache_service: Option<Arc<crate::cache::UserCacheService>>,
@@ -336,7 +338,7 @@ mod safe_feature_gate_tests {
     #[tokio::test]
     async fn t026_safe_auth_not_in_scope_when_disabled() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
         let mut config = GarrisonConfig::default_config();
         config.throw_on_not_login = false;
         config.token_style = "uuid".to_string();
@@ -344,7 +346,14 @@ mod safe_feature_gate_tests {
             has_permission: true,
             has_role: true,
         });
-        let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+        let logic = GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        );
 
         let token = logic
             .login("user-t026-002", &LoginParams::default())

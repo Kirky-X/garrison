@@ -66,7 +66,7 @@ pub struct RateLimitState {
 const DEFAULT_MAX_ENTRIES: usize = 100_000;
 
 impl RateLimitState {
-    /// 创建限速状态（向后兼容，默认 max_entries=100_000，无可信代理）。
+    /// 创建限速状态（默认配置：max_entries=100_000，无可信代理）。
     ///
     /// # 参数
     /// - `capacity`：每个 IP 每秒允许的请求数（既是桶容量也是补充速率）
@@ -489,9 +489,9 @@ pub async fn inject_user_agent(req: Request, next: Next) -> Response {
 /// 仅挂载到 `POST /api/v1/auth/login` 端点。读取 `Extension<ClientIp>`，
 /// 当请求体 JSON 中 `params.ip` 为 null 或缺失时，自动填充客户端 IP。
 ///
-/// # 向后兼容
+/// # 行为说明
 ///
-/// 调用方显式传入 `params.ip` 时不覆盖（保留手动指定能力）。
+/// 调用方显式传入 `params.ip` 时不覆盖（显式值优先于自动填充）。
 /// 非 login 路径不应挂载此中间件（避免不必要的 body 解析开销）。
 pub async fn inject_login_client_ip(mut req: Request, next: Next) -> Response {
     // 仅处理 login 端点，其余路径直接放行（避免不必要的 body 解析）

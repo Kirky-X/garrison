@@ -15,8 +15,8 @@ impl GarrisonPluginManager {
     /// `listener::manager_impl` 的监听器隔离语义一致。注意 release profile
     /// 配置 `panic = "abort"` 时此隔离退化为进程终止（见 Cargo.toml 说明）。
     pub fn new() -> Self {
-        use std::panic::{catch_unwind, AssertUnwindSafe};
         use std::iter::Iterator;
+        use std::panic::{catch_unwind, AssertUnwindSafe};
         let plugins: Vec<Arc<dyn GarrisonPlugin>> = inventory::iter::<GarrisonPluginEntry>()
             .filter_map(|entry| {
                 // AssertUnwindSafe：工厂函数不承诺 UnwindSafe，

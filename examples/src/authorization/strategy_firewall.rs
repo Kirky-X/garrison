@@ -103,6 +103,46 @@ impl GarrisonPermissionStrategy for CustomFirewall {
         let user_roles = self.get_role_list(login_id).await?;
         Ok(roles.iter().all(|r| user_roles.iter().any(|ur| ur == r)))
     }
+
+    async fn check_permission_in_tenant(
+        &self,
+        tenant_id: i64,
+        login_id: &str,
+        permission: &str,
+    ) -> GarrisonResult<bool> {
+        // 示例数据源无租户维度：请求级租户不参与判定（实际租户隔离场景
+        // 应以 tenant_id 过滤数据源或隔离缓存键）。
+        let _ = tenant_id;
+        self.check_permission(login_id, permission).await
+    }
+
+    async fn check_role_in_tenant(
+        &self,
+        tenant_id: i64,
+        login_id: &str,
+        role: &str,
+    ) -> GarrisonResult<bool> {
+        // 示例数据源无租户维度，同上。
+        let _ = tenant_id;
+        self.check_role(login_id, role).await
+    }
+
+    #[cfg(any(
+        feature = "sms-rate-limit",
+        feature = "firewall-ratelimit",
+        feature = "firewall-bruteforce",
+        feature = "firewall-ddos",
+        feature = "firewall",
+        feature = "oauth2-server"
+    ))]
+    async fn check_login_hooks(
+        &self,
+        _login_id: &str,
+        _ctx: &garrison::strategy::hooks::LoginContext,
+    ) -> GarrisonResult<()> {
+        // 示例未注入防火墙 hook，显式 no-op
+        Ok(())
+    }
 }
 
 // ============================================================================

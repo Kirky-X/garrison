@@ -251,7 +251,10 @@ mod route_match_tests {
         // 空段不匹配参数
         assert!(!route_matches_rule("/api/users/{id}", "/api/users/"));
         // 段数不一致不匹配
-        assert!(!route_matches_rule("/api/users/{id}", "/api/users/42/extra"));
+        assert!(!route_matches_rule(
+            "/api/users/{id}",
+            "/api/users/42/extra"
+        ));
     }
 
     /// 尾部通配匹配：* / {*rest}（含零段）。

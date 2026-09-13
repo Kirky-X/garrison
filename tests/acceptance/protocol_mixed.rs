@@ -80,10 +80,9 @@ fn now_ts() -> i64 {
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_001_sso_ticket_issue_and_validate() {
     let dao: Arc<dyn GarrisonDao> = make_dao();
-    let client_a = SsoClient::new(dao.clone(), "acceptance-sso-secret")
-        .expect("secret 非空构造应成功");
-    let client_b = SsoClient::new(dao, "acceptance-sso-secret")
-        .expect("secret 非空构造应成功");
+    let client_a =
+        SsoClient::new(dao.clone(), "acceptance-sso-secret").expect("secret 非空构造应成功");
+    let client_b = SsoClient::new(dao, "acceptance-sso-secret").expect("secret 非空构造应成功");
 
     let ticket = client_a
         .issue_ticket("1001", 2001)
@@ -112,10 +111,9 @@ async fn acc_mixed_001_sso_ticket_issue_and_validate() {
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_002_sso_ticket_one_time_use_rejects_replay() {
     let dao: Arc<dyn GarrisonDao> = make_dao();
-    let client_a = SsoClient::new(dao.clone(), "acceptance-sso-secret")
-        .expect("secret 非空构造应成功");
-    let client_b = SsoClient::new(dao, "acceptance-sso-secret")
-        .expect("secret 非空构造应成功");
+    let client_a =
+        SsoClient::new(dao.clone(), "acceptance-sso-secret").expect("secret 非空构造应成功");
+    let client_b = SsoClient::new(dao, "acceptance-sso-secret").expect("secret 非空构造应成功");
 
     let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
 
@@ -153,7 +151,8 @@ async fn acc_mixed_002_sso_ticket_one_time_use_rejects_replay() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_mixed_003_sso_concurrent_consume_exactly_once() {
     let dao: Arc<dyn GarrisonDao> = make_dao();
-    let client = Arc::new(SsoClient::new(dao, "acceptance-sso-secret").expect("secret 非空构造应成功"));
+    let client =
+        Arc::new(SsoClient::new(dao, "acceptance-sso-secret").expect("secret 非空构造应成功"));
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
 
     let mut handles = Vec::with_capacity(CONCURRENCY);
@@ -610,10 +609,9 @@ async fn acc_mixed_016_temp_concurrent_consume_exactly_once() {
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_017_sso_destroy_ticket_and_idempotent() {
     let dao: Arc<dyn GarrisonDao> = make_dao();
-    let client_a = SsoClient::new(dao.clone(), "acceptance-sso-secret")
-        .expect("secret 非空构造应成功");
-    let client_b = SsoClient::new(dao, "acceptance-sso-secret")
-        .expect("secret 非空构造应成功");
+    let client_a =
+        SsoClient::new(dao.clone(), "acceptance-sso-secret").expect("secret 非空构造应成功");
+    let client_b = SsoClient::new(dao, "acceptance-sso-secret").expect("secret 非空构造应成功");
 
     let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
     client_a.destroy_ticket(&ticket).await.expect("销毁应成功");
@@ -638,10 +636,9 @@ async fn acc_mixed_017_sso_destroy_ticket_and_idempotent() {
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_018_sso_multiple_clients_independent_tickets() {
     let dao: Arc<dyn GarrisonDao> = make_dao();
-    let client_a = SsoClient::new(dao.clone(), "acceptance-sso-secret")
-        .expect("secret 非空构造应成功");
-    let client_b = SsoClient::new(dao, "acceptance-sso-secret")
-        .expect("secret 非空构造应成功");
+    let client_a =
+        SsoClient::new(dao.clone(), "acceptance-sso-secret").expect("secret 非空构造应成功");
+    let client_b = SsoClient::new(dao, "acceptance-sso-secret").expect("secret 非空构造应成功");
 
     let t1 = client_a.issue_ticket("1001", 2001).await.unwrap();
     let t2 = client_a.issue_ticket("1001", 2002).await.unwrap();
@@ -669,7 +666,8 @@ async fn acc_mixed_018_sso_multiple_clients_independent_tickets() {
 /// 迁自 tests/protocol/sso_edge_cases.rs::ticket_invalid_format_returns_error
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_019_sso_invalid_ticket_format_rejected() {
-    let client = SsoClient::new(make_dao(), "acceptance-sso-secret").expect("secret 非空构造应成功");
+    let client =
+        SsoClient::new(make_dao(), "acceptance-sso-secret").expect("secret 非空构造应成功");
 
     for (name, bad) in [
         ("短字符串", "short"),
@@ -841,6 +839,9 @@ async fn acc_mixed_023_check_api_key_invalid_and_empty_rejected() {
         session,
         Arc::new(garrison::config::GarrisonConfig::default_config()),
         firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao.clone(),
+        )),
     );
 
     // 未知 key → InvalidToken（fail-closed，不静默放行）

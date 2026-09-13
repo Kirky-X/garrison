@@ -230,8 +230,10 @@ fn extract_origin_host(uri_str: &str) -> Option<String> {
     let host = uri.host()?;
     let port = uri.port_u16();
     // 默认端口归一化：https:443 / http:80 等价于不带端口
-    let is_default_port =
-        matches!((uri.scheme_str(), port), (Some("https"), Some(443)) | (Some("http"), Some(80)));
+    let is_default_port = matches!(
+        (uri.scheme_str(), port),
+        (Some("https"), Some(443)) | (Some("http"), Some(80))
+    );
     match (port, is_default_port) {
         (Some(p), false) => Some(format!("{}:{}", host, p)),
         _ => Some(host.to_string()),
@@ -248,10 +250,11 @@ fn normalize_host(host: &str) -> String {
     if let Some(rest) = host.strip_prefix('[') {
         // IPv6 字面量：[addr] 或 [addr]:port
         match rest.split_once(']') {
-            Some((addr, after)) => match after.strip_prefix(':').and_then(|p| p.parse::<u16>().ok())
-            {
-                Some(80) | Some(443) => format!("[{}]", addr),
-                _ => host.to_string(),
+            Some((addr, after)) => {
+                match after.strip_prefix(':').and_then(|p| p.parse::<u16>().ok()) {
+                    Some(80) | Some(443) => format!("[{}]", addr),
+                    _ => host.to_string(),
+                }
             },
             None => host.to_string(),
         }

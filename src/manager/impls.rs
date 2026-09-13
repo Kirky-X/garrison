@@ -71,8 +71,8 @@ impl GarrisonManager {
     /// `is_disable` / `get_disable_time` / `get_disable_level`。
     ///
     /// # 返回
-    /// - `Some(Arc<dyn DisableRepository>)`: 已初始化且 disable_repository 已注册。
-    /// - `None`: 未初始化或未注册（向后兼容场景）。
+    /// - `Some(Arc<dyn DisableRepository>)`: manager 已初始化。
+    /// - `None`: manager 未初始化。
     ///
     /// # 示例
     /// ```ignore
@@ -85,7 +85,7 @@ impl GarrisonManager {
     pub fn disable_repository() -> Option<Arc<dyn DisableRepository>> {
         Self::logic()
             .ok()
-            .and_then(|logic| logic.disable_repository.clone())
+            .map(|logic| logic.disable_repository.clone())
     }
 
     /// 替换全局 `Strategy` 注册表。

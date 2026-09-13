@@ -101,7 +101,7 @@ mod tests {
     /// 插入 3 个 role:* key，warmup 后 roles_loaded == 3。
     #[tokio::test]
     async fn warmup_loads_role_permissions() {
-        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let dao = Arc::new(crate::dao::InMemoryDao::new());
         dao.set("role:admin", "perm1,perm2", 3600).await.unwrap();
         dao.set("role:user", "perm3", 3600).await.unwrap();
         dao.set("role:guest", "", 3600).await.unwrap();
@@ -118,7 +118,7 @@ mod tests {
     /// 插入 2 个 tenant:* key，warmup 后 tenants_loaded == 2。
     #[tokio::test]
     async fn warmup_loads_tenant_configs() {
-        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let dao = Arc::new(crate::dao::InMemoryDao::new());
         dao.set("tenant:acme", "config1", 3600).await.unwrap();
         dao.set("tenant:globex", "config2", 3600).await.unwrap();
 
@@ -132,7 +132,7 @@ mod tests {
     /// R-warmup-003: 空数据库不报错，返回零统计。
     #[tokio::test]
     async fn warmup_empty_db_returns_zero_stats() {
-        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let dao = Arc::new(crate::dao::InMemoryDao::new());
 
         let service = CacheWarmupService::new(dao);
         let stats = service.warmup().await.unwrap();
@@ -838,7 +838,7 @@ mod tests {
     /// warmup 同时加载 role 和 tenant 配置，返回正确统计。
     #[tokio::test]
     async fn warmup_loads_both_roles_and_tenants() {
-        let dao = Arc::new(crate::dao::tests::MockDao::new());
+        let dao = Arc::new(crate::dao::InMemoryDao::new());
         dao.set("role:admin", "perm1", 3600).await.unwrap();
         dao.set("role:user", "perm2", 3600).await.unwrap();
         dao.set("tenant:acme", "config1", 3600).await.unwrap();

@@ -14,7 +14,10 @@ impl GarrisonListenerManager {
             .collect();
         // ocr #5348：`type_name::<Arc<dyn GarrisonListener>>()` 对所有条目恒为同一字符串，
         // 无任何 per-listener 信息，原逐条循环属死代码；改为输出监听器数量。
-        tracing::info!("listener loaded: {} listener(s) registered", listeners.len());
+        tracing::info!(
+            "listener loaded: {} listener(s) registered",
+            listeners.len()
+        );
         Self {
             listeners: Arc::new(RwLock::new(listeners)),
         }
@@ -53,7 +56,10 @@ impl GarrisonListenerManager {
         for listener in &listeners {
             // AssertUnwindSafe：dyn GarrisonListener 不承诺 UnwindSafe，
             // 此处仅隔离 panic 不重入监听器，跨 catch_unwind 使用是安全的
-            match AssertUnwindSafe(listener.on_event(event)).catch_unwind().await {
+            match AssertUnwindSafe(listener.on_event(event))
+                .catch_unwind()
+                .await
+            {
                 Ok(Ok(())) => {},
                 Ok(Err(e)) => tracing::warn!("listener on_event failed: {}", e),
                 Err(panic_payload) => {

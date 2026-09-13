@@ -116,7 +116,7 @@ pub struct SimpleTokenStyle {
     ///   `Clone`（如 `TokenStyleFactory` 按值返回、调用方克隆）会复制出更多明文副本。
     /// - **protocol-zeroize 迁移路径**：生产环境若对此有严格要求，应启用
     ///   `protocol-zeroize` feature，将本字段类型切换为 `Zeroizing<String>`
-    ///  （Drop 时自动清零）或 `Vec<u8>` + 手动 `explicit_zero`，并为 `Clone`
+    ///   （Drop 时自动清零）或 `Vec<u8>` + 手动 `explicit_zero`，并为 `Clone`
     ///   补充 zeroize-aware 分配。该类型切换会触及本模块全部 `self.secret`
     ///   访问点（style_impl.rs 的 HMAC 路径），作为独立 change 落地。
     #[allow(dead_code)]

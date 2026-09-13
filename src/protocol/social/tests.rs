@@ -696,7 +696,10 @@ fn unique_conflict_markers_match_service_constants() {
             markers::MYSQL,
             "Duplicate entry 'openid-conflict' for key 'social_bindings.UNIQ'",
         ),
-        (markers::SQLSTATE_UNIQUE, "db-unique-violation-sqlstate-23505"),
+        (
+            markers::SQLSTATE_UNIQUE,
+            "db-unique-violation-sqlstate-23505",
+        ),
     ];
     for (marker, message) in cases {
         assert!(

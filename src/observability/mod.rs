@@ -23,7 +23,7 @@
 //! - `metrics-prometheus`：编译期包含 `GarrisonMetrics`，并为 inklog 降级路径提供 tracing-subscriber 依赖
 //! - `audit-inklog`：编译期包含 inklog 初始化与降级 API
 //! - `otlp`：编译期包含 OTLP 导出器
-//! - 未启用任一 feature：模块仍可导入但所有 API 返回 `None` / no-op，保证向后兼容
+//! - 未启用任一 feature：模块仍可导入但所有 API 返回 `None` / no-op
 
 #[cfg(feature = "metrics-prometheus")]
 pub use prometheus;
@@ -75,7 +75,7 @@ pub mod otlp;
 pub mod errors;
 
 // ============================================================================
-// 公共 re-export（保持向后兼容的扁平 API）
+// 公共 re-export（扁平 API）
 // ============================================================================
 
 #[cfg(feature = "audit-inklog")]

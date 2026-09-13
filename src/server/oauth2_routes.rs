@@ -28,7 +28,9 @@ use crate::oauth2_server::authorize::{AuthorizeHandler, AuthorizeRequest, Author
 use crate::oauth2_server::client::OAuth2ClientStore;
 use crate::oauth2_server::introspect::{IntrospectHandler, IntrospectRequest};
 use crate::oauth2_server::revoke::{RevokeHandler, RevokeRequest};
-use crate::oauth2_server::token::{TokenHandler, TokenRequest};
+use crate::oauth2_server::token::{
+    PasswordRateLimiter, TokenHandler, TokenRateLimiter, TokenRequest,
+};
 
 /// OAuth2 路由共享状态。
 ///
@@ -46,6 +48,10 @@ pub struct OAuth2State {
 
 impl OAuth2State {
     /// 创建 OAuth2State，内部构造 4 个 handler。
+    ///
+    /// TokenHandler 以安全默认参数构造限速组件（`PasswordRateLimiter::new(5, 300)`
+    /// 账户锁定 + `TokenRateLimiter::new()` 端点 QPS 限制），不提供
+    /// "未注入 = 无防护"的构造形态。
     pub fn new(
         store: Arc<dyn OAuth2ClientStore>,
         dao: Arc<dyn GarrisonDao>,
@@ -57,6 +63,8 @@ impl OAuth2State {
             store.clone(),
             dao.clone(),
             authorize_handler.clone(),
+            Arc::new(PasswordRateLimiter::new(5, 300)),
+            Arc::new(TokenRateLimiter::new()),
         ));
         let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
         let introspect_handler = Arc::new(IntrospectHandler::new(store, token_handler.clone()));
@@ -155,32 +163,40 @@ fn parse_form_body(body: &[u8]) -> Result<serde_json::Value, String> {
     Ok(serde_json::Value::Object(map))
 }
 
-/// 按 Content-Type 提取请求结构体：
-/// - `application/x-www-form-urlencoded` → 表单解析（RFC 6749 §3.2 / RFC 7009 §2.1 / RFC 7662 §2.2）
-/// - 其余（含 `application/json` 与缺失）→ JSON 解析（向后兼容）
+/// 按 Content-Type 提取请求结构体：仅接受 `application/x-www-form-urlencoded`
+///（RFC 6749 §3.2 / RFC 7009 §2.1 / RFC 7662 §2.2 规定的唯一请求格式）。
 ///
-/// 解析失败返回 400 + RFC 6749 §5.2 `invalid_request` 错误体（带 no-store 头）。
+/// Content-Type 缺失或为其他类型（含 `application/json`）返回
+/// 415 Unsupported Media Type；表单解析或字段校验失败返回
+/// 400 + RFC 6749 §5.2 `invalid_request` 错误体（均带 no-store 头）。
 fn extract_oauth2_request<T: serde::de::DeserializeOwned>(
     content_type: Option<&str>,
     body: &[u8],
-) -> Result<T, Response> {
+) -> Result<T, Box<Response>> {
     let is_form = content_type
         .map(|ct| ct.starts_with("application/x-www-form-urlencoded"))
         .unwrap_or(false);
-    let value = if is_form {
-        parse_form_body(body).and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string()))
-    } else {
-        serde_json::from_slice::<T>(body).map_err(|e| e.to_string())
-    };
-    match value {
+    if !is_form {
+        return Err(Box::new(apply_no_store(
+            (
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                Json(json!({
+                    "error": "invalid_request",
+                    "message": "Content-Type must be application/x-www-form-urlencoded"
+                })),
+            )
+                .into_response(),
+        )));
+    }
+    match parse_form_body(body).and_then(|v| serde_json::from_value(v).map_err(|e| e.to_string())) {
         Ok(req) => Ok(req),
-        Err(e) => Err(apply_no_store(
+        Err(e) => Err(Box::new(apply_no_store(
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": "invalid_request", "message": e })),
             )
                 .into_response(),
-        )),
+        ))),
     }
 }
 
@@ -230,7 +246,7 @@ async fn token_endpoint(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    // RFC 6749 §3.2：application/x-www-form-urlencoded 为主格式，JSON 兼容保留
+    // RFC 6749 §3.2：/token 仅接受 application/x-www-form-urlencoded
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok());
@@ -245,7 +261,7 @@ async fn token_endpoint(
     }
     let req: TokenRequest = match extract_oauth2_request(content_type, &body) {
         Ok(req) => req,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
     match state
@@ -295,7 +311,7 @@ async fn revoke_endpoint(
         .and_then(|v| v.to_str().ok());
     let req: RevokeRequest = match extract_oauth2_request(content_type, &body) {
         Ok(req) => req,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match state.revoke_handler.handle(&req).await {
         // RFC 7662 §2.2 — introspect/revoke 响应应带 no-store 缓存控制
@@ -323,7 +339,7 @@ async fn introspect_endpoint(
         .and_then(|v| v.to_str().ok());
     let req: IntrospectRequest = match extract_oauth2_request(content_type, &body) {
         Ok(req) => req,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match state.introspect_handler.handle(&req).await {
         Ok(resp) => apply_no_store((StatusCode::OK, Json(resp)).into_response()),
@@ -415,14 +431,14 @@ mod tests {
     async fn test_oauth2_external_router_has_token_route() {
         let (state, _) = make_state();
         let app = oauth2_external_router(state);
-        // 空 JSON body → Json 提取失败 → 400（非 404 证明路由存在）
+        // 表单 body 缺字段 → 400（非 404 证明路由存在）
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
-                    .body(Body::from("{}"))
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from("grant_type=client_credentials"))
                     .unwrap(),
             )
             .await
@@ -439,8 +455,8 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/revoke")
-                    .header("content-type", "application/json")
-                    .body(Body::from("{}"))
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from("token=x&client_id=c&client_secret=s"))
                     .unwrap(),
             )
             .await
@@ -453,17 +469,13 @@ mod tests {
         let (state, store) = make_state();
         store.create(make_test_client("route-int")).await.unwrap();
         let app = oauth2_internal_router(state);
-        let body = serde_json::json!({
-            "token": "nonexistent",
-            "client_id": "route-int",
-            "client_secret": "secret-123",
-        });
+        let body = "token=nonexistent&client_id=route-int&client_secret=secret-123";
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/introspect")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
@@ -578,17 +590,13 @@ mod tests {
     async fn test_token_endpoint_returns_bad_request_on_invalid_client() {
         let (state, _) = make_state();
         let app = oauth2_external_router(state);
-        let body = serde_json::json!({
-            "grant_type": "client_credentials",
-            "client_id": "no-such-client",
-            "client_secret": "secret",
-        });
+        let body = "grant_type=client_credentials&client_id=no-such-client&client_secret=secret";
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
@@ -603,17 +611,13 @@ mod tests {
         let (state, store) = make_state();
         store.create(make_test_client("cc-cid")).await.unwrap();
         let app = oauth2_external_router(state);
-        let body = serde_json::json!({
-            "grant_type": "client_credentials",
-            "client_id": "cc-cid",
-            "client_secret": "secret-123",
-        });
+        let body = "grant_type=client_credentials&client_id=cc-cid&client_secret=secret-123";
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
@@ -650,17 +654,13 @@ mod tests {
         // "basic-cid:secret-123" → base64
         let credentials = STANDARD.encode("basic-cid:secret-123");
         let auth_header = format!("Basic {}", credentials);
-        let body = serde_json::json!({
-            "grant_type": "client_credentials",
-            "client_id": "",
-            "client_secret": "",
-        });
+        let body = "grant_type=client_credentials";
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .header("authorization", &auth_header)
                     .body(Body::from(body.to_string()))
                     .unwrap(),
@@ -681,18 +681,14 @@ mod tests {
         let app = oauth2_external_router(state);
 
         // 1. 先通过 client_credentials 签发 token
-        let issue_body = serde_json::json!({
-            "grant_type": "client_credentials",
-            "client_id": "rev-ok",
-            "client_secret": "secret-123",
-        });
+        let issue_body = "grant_type=client_credentials&client_id=rev-ok&client_secret=secret-123";
         let resp = app
             .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .body(Body::from(issue_body.to_string()))
                     .unwrap(),
             )
@@ -703,18 +699,14 @@ mod tests {
         let token_resp: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         let token = token_resp["access_token"].as_str().expect("access_token");
 
-        // 2. 撤销 token
-        let revoke_body = serde_json::json!({
-            "token": token,
-            "client_id": "rev-ok",
-            "client_secret": "secret-123",
-        });
+        // 2. 撤销 token（RFC 7009 §2.1 表单格式）
+        let revoke_body = format!("token={}&client_id=rev-ok&client_secret=secret-123", token);
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/revoke")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .body(Body::from(revoke_body.to_string()))
                     .unwrap(),
             )
@@ -730,8 +722,6 @@ mod tests {
     /// 注入 `TokenRateLimiter`（client_max=1），第 2 次请求应返回 429 + `RATE_LIMIT_EXCEEDED`。
     #[tokio::test]
     async fn test_token_endpoint_returns_429_on_rate_limit_exceeded() {
-        use crate::oauth2_server::token::TokenRateLimiter;
-
         let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
         let authorize_handler = Arc::new(AuthorizeHandler::new(
@@ -739,10 +729,13 @@ mod tests {
             dao.clone(),
             "https://auth.example.com/login".to_string(),
         ));
-        let token_handler = Arc::new(
-            TokenHandler::new(store.clone(), dao.clone(), authorize_handler.clone())
-                .with_token_rate_limiter(Arc::new(TokenRateLimiter::with_limits(1, 60, 100, 60))),
-        );
+        let token_handler = Arc::new(TokenHandler::new(
+            store.clone(),
+            dao.clone(),
+            authorize_handler.clone(),
+            Arc::new(PasswordRateLimiter::new(1000, 300)),
+            Arc::new(TokenRateLimiter::with_limits(1, 60, 100, 60)),
+        ));
         let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
         let introspect_handler =
             Arc::new(IntrospectHandler::new(store.clone(), token_handler.clone()));
@@ -756,11 +749,7 @@ mod tests {
         store.create(make_test_client("rl-429")).await.unwrap();
         let app = oauth2_external_router(state);
 
-        let body = serde_json::json!({
-            "grant_type": "client_credentials",
-            "client_id": "rl-429",
-            "client_secret": "secret-123",
-        });
+        let body = "grant_type=client_credentials&client_id=rl-429&client_secret=secret-123";
 
         // 第 1 次成功（200 OK）
         let resp = app
@@ -769,7 +758,7 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
@@ -783,7 +772,7 @@ mod tests {
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
@@ -805,7 +794,7 @@ mod tests {
         );
     }
 
-    /// /token 端点未注入 `TokenRateLimiter` 时，非 rate_limited 错误仍返回 400（向后兼容）。
+    /// /token 端点非 rate_limited 错误返回 400（与限速 429 区分）。
     #[tokio::test]
     async fn test_token_endpoint_returns_400_on_non_rate_limited_error() {
         let (state, store) = make_state();
@@ -813,18 +802,14 @@ mod tests {
         let app = oauth2_external_router(state);
 
         // 用错误 client_secret 触发 OAuth2 错误（非 rate_limited）
-        let body = serde_json::json!({
-            "grant_type": "client_credentials",
-            "client_id": "nrl-400",
-            "client_secret": "wrong-secret",
-        });
+        let body = "grant_type=client_credentials&client_id=nrl-400&client_secret=wrong-secret";
 
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
+                    .header("content-type", "application/x-www-form-urlencoded")
                     .body(Body::from(body.to_string()))
                     .unwrap(),
             )
@@ -870,8 +855,9 @@ mod tests {
     /// token 端点表单体支持 percent-encoding 与 `+` 空格。
     #[test]
     fn parse_form_body_decodes_percent_and_plus() {
-        let value = parse_form_body(b"grant_type=password&username=a%40b.com+cd%26x&code=%E4%B8%AD")
-            .unwrap();
+        let value =
+            parse_form_body(b"grant_type=password&username=a%40b.com+cd%26x&code=%E4%B8%AD")
+                .unwrap();
         assert_eq!(value["username"], "a@b.com cd&x");
         assert_eq!(value["code"], "中");
     }
@@ -881,13 +867,14 @@ mod tests {
     async fn test_token_endpoint_malformed_body_returns_400_invalid_request() {
         let (state, _) = make_state();
         let app = oauth2_external_router(state);
+        // 空字段名 → parse_form_body 解析失败
         let resp = app
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/oauth2/token")
-                    .header("content-type", "application/json")
-                    .body(Body::from("{not-json"))
+                    .header("content-type", "application/x-www-form-urlencoded")
+                    .body(Body::from("grant_type=a&=b"))
                     .unwrap(),
             )
             .await
@@ -909,5 +896,53 @@ mod tests {
         // 错误响应同样必须 no-store（RFC 6749 §5.1）
         assert_eq!(cache_control.as_deref(), Some("no-store"));
         assert_eq!(pragma.as_deref(), Some("no-cache"));
+    }
+
+    /// Content-Type 缺失时返回 415 Unsupported Media Type（RFC 6749 §3.2 唯一格式）。
+    #[tokio::test]
+    async fn test_token_endpoint_missing_content_type_returns_415() {
+        let (state, _) = make_state();
+        let app = oauth2_external_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .body(Body::from(
+                        "grant_type=client_credentials&client_id=x&client_secret=y",
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(
+            resp.headers()
+                .get("cache-control")
+                .and_then(|v| v.to_str().ok()),
+            Some("no-store")
+        );
+    }
+
+    /// Content-Type 为 `application/json` 时返回 415（JSON 已不再被接受）。
+    #[tokio::test]
+    async fn test_token_endpoint_json_content_type_returns_415() {
+        let (state, _) = make_state();
+        let app = oauth2_external_router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/oauth2/token")
+                    .header("content-type", "application/json")
+                    .body(Body::from(r#"{"grant_type":"client_credentials"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(resp_json["error"], "invalid_request");
     }
 }

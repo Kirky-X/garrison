@@ -154,7 +154,7 @@ fn json_metadata(pairs: &[(&str, &str)]) -> String {
 /// 从 `GarrisonEvent` 提取 `request_context` 引用（T004 辅助函数）。
 ///
 /// 遍历所有变体，返回 `Option<&RequestContext>`。
-/// `None` 表示事件未携带请求上下文（向后兼容）。
+/// `None` 表示事件未携带请求上下文。
 #[cfg(feature = "db-sqlite")]
 fn extract_request_context(event: &GarrisonEvent) -> Option<&super::RequestContext> {
     match event {
@@ -358,7 +358,7 @@ impl AuditLogListener {
     fn to_audit_entry(&self, event: &GarrisonEvent) -> GarrisonResult<AuditEntry> {
         let now = Utc::now().timestamp();
         // 从 TENANT task_local 读取当前租户 ID
-        // - tenant-isolation feature 关闭：TENANT.try_get() 无上下文时返回 0（向后兼容）
+        // - tenant-isolation feature 关闭：TENANT.try_get() 无上下文时返回 0（单租户默认值）
         // - tenant-isolation feature 启用：current_tenant_id_or_error() 无上下文时返回 Err（Rule 12 失败显性化）
         #[cfg(not(feature = "tenant-isolation"))]
         let tenant_id = crate::context::tenant::TENANT
@@ -1197,11 +1197,7 @@ impl AuditLogListener {
 /// 简单字段原样返回（与历史输出格式逐字节一致，不破坏既有消费者）。
 #[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
 fn escape_csv_field(field: &str) -> String {
-    if field.contains(',')
-        || field.contains('"')
-        || field.contains('\n')
-        || field.contains('\r')
-    {
+    if field.contains(',') || field.contains('"') || field.contains('\n') || field.contains('\r') {
         format!("\"{}\"", field.replace('"', "\"\""))
     } else {
         field.to_string()
@@ -1362,7 +1358,7 @@ mod db_sqlite_tests {
             .await
     }
 
-    /// 直接执行测试体（`tenant-isolation` feature 关闭时使用，向后兼容单租户场景）。
+    /// 直接执行测试体（`tenant-isolation` feature 关闭时使用，单租户场景）。
     #[cfg(not(feature = "tenant-isolation"))]
     async fn run_with_tenant_scope<F, Fut, T>(f: F) -> T
     where

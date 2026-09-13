@@ -248,7 +248,7 @@ async fn make_logic_with_password() -> Arc<GarrisonLogicDefault> {
 
     // 构造 oxcache DAO
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -261,10 +261,17 @@ async fn make_logic_with_password() -> Arc<GarrisonLogicDefault> {
     let lm = Arc::new(GarrisonListenerManager::new());
 
     Arc::new(
-        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_password_hasher(Arc::new(hasher))
-            .with_user_repository(user_repo)
-            .with_listener_manager(lm),
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_password_hasher(Arc::new(hasher))
+        .with_user_repository(user_repo)
+        .with_listener_manager(lm),
     )
 }
 
@@ -344,7 +351,7 @@ async fn login_with_password_wrong_password() {
 #[serial]
 async fn login_with_password_fails_without_hasher() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -355,6 +362,9 @@ async fn login_with_password_fails_without_hasher() {
         session,
         Arc::new(config),
         firewall,
+        Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+            dao,
+        )),
     ));
 
     let result = logic_no_hasher.login_with_password("1001", "secret").await;
@@ -376,7 +386,7 @@ async fn login_with_password_fails_without_hasher() {
 #[serial]
 async fn login_with_password_fails_without_user_repository() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
-    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();
     config.token_style = "uuid".to_string();
     config.timeout = 3600;
@@ -384,8 +394,15 @@ async fn login_with_password_fails_without_user_repository() {
         garrison::strategy::GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface)),
     );
     let logic_no_repo = Arc::new(
-        GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-            .with_password_hasher(Arc::new(Argon2Hasher::new())),
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(garrison::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_password_hasher(Arc::new(Argon2Hasher::new())),
     );
 
     let result = logic_no_repo.login_with_password("1001", "secret").await;

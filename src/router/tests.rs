@@ -644,7 +644,12 @@ struct CountingInterceptor {
 impl CountingInterceptor {
     fn new() -> (Self, std::sync::Arc<std::sync::atomic::AtomicU32>) {
         let count = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
-        (Self { count: count.clone() }, count)
+        (
+            Self {
+                count: count.clone(),
+            },
+            count,
+        )
     }
 }
 

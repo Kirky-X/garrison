@@ -5,8 +5,7 @@
 //!
 //! 提供 `InMemoryDao`（完整实现 `GarrisonDao` 的内存后端，含 CAS/set_if_absent/
 //! incr/lua 模拟），生产代码亦可用作单实例部署后端（如 PasswordRateLimiter /
-//! GarrisonFirewallCheckHookDefault 的内存模式）；旧名 `InMemoryDao` 以 deprecated
-//! 别名保留一个版本。
+//! GarrisonFirewallCheckHookDefault 的内存模式）；
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -609,7 +608,6 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
 #[cfg(test)]
 mod glob_match_tests {
     use super::glob_match;
-
 
     /// 精确匹配（无通配符）：相等为 true，不等为 false。
     #[test]

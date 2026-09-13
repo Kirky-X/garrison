@@ -38,7 +38,7 @@
 //! - 启用 `rate-limit-redis` feature 切换 Redis 后端（支持 Lua 脚本）
 //! - 或改用 [`crate::strategy::firewall::BruteForceStrategy`]（固定窗口，原子计数）
 //!
-//! # 与 BruteForce 的对比（与旧版文档说明一致）
+//! # 与 BruteForce 的对比
 //!
 //! `BruteForceStrategy` 用 [`limiteron::limiters::DistributedLimiter`] 的 `incr_with_ttl`
 //! 原子递增计数器，无 TOCTOU 风险。但 `incr_with_ttl` 是**固定窗口**计数器，

@@ -16,11 +16,11 @@ use async_trait::async_trait;
 ///
 /// 对应 `StpLogic` 的 `checkSafe` / `checkDisable` 部分。
 ///
-/// # 默认实现（向后兼容）
+/// # 默认实现
 ///
 /// - [`check_safe`](Self::check_safe)：默认调用 `is_safe("default")`，未通过时返回
-///   `Err(NotSafe("SAFE_EXPIRED"))`；未覆写 `is_safe` 时仍返回 `Ok(())`（兼容 0.2.x）。
-/// - [`check_disable`](Self::check_disable)：默认返回 `Ok(())`（未实现禁用账号库，兼容 0.2.x）。
+///   `Err(NotSafe("SAFE_EXPIRED"))`；未覆写 `is_safe` 时返回 `Ok(())`（视为已通过）。
+/// - [`check_disable`](Self::check_disable)：默认返回 `Ok(())`（未实现禁用账号库）。
 ///   业务方覆写以查询当前 login_id 是否在禁用列表中。
 #[async_trait]
 pub trait MfaLogic: SessionLogic {
@@ -31,10 +31,8 @@ pub trait MfaLogic: SessionLogic {
     /// - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
     /// - `Err(e)` → 透传错误
     ///
-    /// # 向后兼容
-    ///
     /// 未覆写 `is_safe` 的实现者（如未启用 `safe-auth` feature 时），
-    /// `is_safe` 默认返回 `Ok(true)`，因此 `check_safe` 仍返回 `Ok(())`。
+    /// `is_safe` 默认返回 `Ok(true)`，因此 `check_safe` 返回 `Ok(())`。
     ///
     /// # 返回
     /// - `Ok(())`: 已通过二级认证或未启用 MFA。
@@ -48,12 +46,12 @@ pub trait MfaLogic: SessionLogic {
 
     /// 检查账号是否被禁用。
     ///
-    /// trait 默认实现返回 `Ok(())`（向后兼容 0.2.x）；`GarrisonLogicDefault` 自 v0.6.5 起覆写：
-    /// 注入 `DisableRepository` 后，从当前 token 取 login_id 并查询封禁状态，被封禁则返回
-    /// `DisableService` 错误。未注入 repository 或未登录时返回 `Ok(())`。
+    /// trait 默认实现返回 `Ok(())`（不查询禁用账号库）；`GarrisonLogicDefault` 自 v0.6.5 起覆写：
+    /// 从当前 token 取 login_id 并查询封禁状态，被封禁则返回
+    /// `DisableService` 错误。未登录时返回 `Ok(())`。
     ///
     /// # 返回
-    /// - `Ok(())`: 账号未禁用 / 未注入 DisableRepository / 未登录。
+    /// - `Ok(())`: 账号未禁用 / 未登录。
     /// - `Err(GarrisonError::DisableService)`: 账号已封禁（0.6.1 起推荐使用专用异常）。
     async fn check_disable(&self) -> GarrisonResult<()> {
         Ok(())
@@ -73,8 +71,9 @@ pub trait MfaLogic: SessionLogic {
     /// - `Err`: 未登录或 session 不存在。
     ///
     /// # 默认实现
-    /// 返回 `Ok(())`（no-op，向后兼容 0.6.4 之前）。
-    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写。
+    /// 返回 `Ok(())`（no-op）。
+    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写为真实实现；
+    /// 未启用时二级认证标记能力不可用，此默认实现维持接口完整。
     async fn open_safe(&self, _service: &str, _duration_secs: u64) -> GarrisonResult<()> {
         Ok(())
     }
@@ -89,8 +88,8 @@ pub trait MfaLogic: SessionLogic {
     /// - `Ok(false)`: service 未开启或已过期。
     ///
     /// # 默认实现
-    /// 返回 `Ok(true)`（始终安全，向后兼容 0.6.4 之前）。
-    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写。
+    /// 返回 `Ok(true)`（默认视为已通过二级认证）。
+    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写为真实实现。
     async fn is_safe(&self, _service: &str) -> GarrisonResult<bool> {
         Ok(true)
     }
@@ -105,8 +104,9 @@ pub trait MfaLogic: SessionLogic {
     /// - `Err`: 未登录或 session 不存在。
     ///
     /// # 默认实现
-    /// 返回 `Ok(())`（no-op，向后兼容 0.6.4 之前）。
-    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写。
+    /// 返回 `Ok(())`（no-op）。
+    /// `safe-auth` feature 启用时由 `GarrisonLogicDefault` 覆写为真实实现；
+    /// 未启用时二级认证标记能力不可用，此默认实现维持接口完整。
     async fn close_safe(&self, _service: &str) -> GarrisonResult<()> {
         Ok(())
     }
@@ -194,31 +194,16 @@ impl MfaLogic for GarrisonLogicDefault {
     /// 检查当前登录账号是否被封禁。
     ///
     /// `GarrisonLogicDefault` 覆写实现（v0.6.5 T019）：
-    /// 1. 无 `disable_repository` 注入 → 返回 `Ok(())`（向后兼容 0.6.4 之前）
-    /// 2. 无当前 token（未登录）→ 返回 `Ok(())`
-    /// 3. token 对应的 TokenSession 不存在 → 返回 `Ok(())`
-    /// 4. 调用 `DisableRepository::is_disable(login_id, "default")`，未封禁 → `Ok(())`
-    /// 5. 已封禁 → 返回 `Err(Self::disable_service("default", until))`，
+    /// 1. 无当前 token（未登录）→ 返回 `Ok(())`
+    /// 2. token 对应的 TokenSession 不存在 → 返回 `Ok(())`
+    /// 3. 调用 `DisableRepository::is_disable(login_id, "default")`，未封禁 → `Ok(())`
+    /// 4. 已封禁 → 返回 `Err(Self::disable_service("default", until))`，
     ///    `until` 来自 `get_disable_time`（None=永久封禁，Some=定时解封）
     ///
     /// # 错误
     /// - `GarrisonError::DisableService`: 账号已封禁。
     /// - DAO/反序列化失败：透传 `GarrisonError`。
     async fn check_disable(&self) -> GarrisonResult<()> {
-        // 无 disable_repository 时返回 Ok（向后兼容 0.6.4 之前）。
-        // batch-08 修复（#3445）：fail-open 跳过必须可观测——调用方无法从返回值
-        // 区分"账号正常"与"功能未启用"，此处以 warn 日志区分三种跳过原因。
-        let repo = match &self.disable_repository {
-            Some(r) => r,
-            None => {
-                tracing::warn!(
-                    reason = "disable_repository_not_injected",
-                    "check_disable skipped (fail-open): DisableRepository not injected, \
-                     ban checks are disabled"
-                );
-                return Ok(());
-            },
-        };
         // 获取当前 token（未登录时返回 Ok）
         let token = match current_token() {
             Ok(t) => t,
@@ -243,8 +228,15 @@ impl MfaLogic for GarrisonLogicDefault {
             },
         };
         // 检查封禁状态
-        if repo.is_disable(&ts.login_id, "default").await? {
-            let until = repo.get_disable_time(&ts.login_id, "default").await?;
+        if self
+            .disable_repository
+            .is_disable(&ts.login_id, "default")
+            .await?
+        {
+            let until = self
+                .disable_repository
+                .get_disable_time(&ts.login_id, "default")
+                .await?;
             return Err(Self::disable_service("default", until));
         }
         Ok(())
@@ -394,9 +386,9 @@ mod tests {
         );
     }
 
-    /// 验证 `open_safe` trait 默认实现返回 Ok(())（no-op，向后兼容 0.6.4 之前）。
+    /// 验证 `open_safe` trait 默认实现返回 Ok(())（no-op）。
     ///
-    /// 覆盖 trait default 路径（lines 78-80）：未覆写的实现者调用 open_safe 应直接返回 Ok。
+    /// 覆盖 trait default 路径：未覆写的实现者调用 open_safe 应直接返回 Ok。
     #[tokio::test]
     async fn open_safe_default_returns_ok() {
         let mock = MockMfa {
@@ -405,9 +397,9 @@ mod tests {
         mock.open_safe("default", 3600).await.unwrap();
     }
 
-    /// 验证 `close_safe` trait 默认实现返回 Ok(())（no-op，向后兼容 0.6.4 之前）。
+    /// 验证 `close_safe` trait 默认实现返回 Ok(())（no-op）。
     ///
-    /// 覆盖 trait default 路径（lines 110-112）：未覆写的实现者调用 close_safe 应直接返回 Ok。
+    /// 覆盖 trait default 路径：未覆写的实现者调用 close_safe 应直接返回 Ok。
     #[tokio::test]
     async fn close_safe_default_returns_ok() {
         let mock = MockMfa {
@@ -417,14 +409,14 @@ mod tests {
     }
 
     // ========================================================================
-    // T025: check_safe 默认实现向后兼容测试
+    // T025: check_safe 默认实现测试
     // ========================================================================
 
     /// T025: 不启用 safe-auth 时，MockMfa（只实现 trait defaults）的 check_safe 返回 Ok。
     ///
-    /// is_safe 默认返回 Ok(true) → check_safe 返回 Ok(())（向后兼容 0.6.4 之前）。
+    /// is_safe 默认返回 Ok(true) → check_safe 返回 Ok(())。
     #[tokio::test]
-    async fn t025_check_safe_backward_compat_without_safe_auth() {
+    async fn t025_check_safe_default_without_safe_auth() {
         let mock = MockMfa {
             config: Arc::new(GarrisonConfig::default()),
         };
@@ -694,24 +686,47 @@ mod tests {
             ) -> GarrisonResult<bool> {
                 Ok(true)
             }
+            async fn check_permission_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _permission: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+            async fn check_role_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _role: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+            #[cfg(any(
+                feature = "sms-rate-limit",
+                feature = "firewall-ratelimit",
+                feature = "firewall-bruteforce",
+                feature = "firewall-ddos",
+                feature = "firewall",
+                feature = "oauth2-server"
+            ))]
+            async fn check_login_hooks(
+                &self,
+                _login_id: &str,
+                _ctx: &crate::strategy::hooks::LoginContext,
+            ) -> GarrisonResult<()> {
+                // 测试桩不注入防火墙 hook，显式 no-op
+                Ok(())
+            }
         }
 
         // --------------------------------------------------------------------
         // 辅助函数
         // --------------------------------------------------------------------
 
-        /// 创建不带 disable_repository 的 GarrisonLogicDefault（向后兼容场景）。
-        fn make_logic_without_repo() -> GarrisonLogicDefault {
-            let dao: Arc<MockDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
-            let mut config = GarrisonConfig::default_config();
-            config.throw_on_not_login = false;
-            config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
-            GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-        }
-
-        /// 创建带 disable_repository 的 GarrisonLogicDefault，返回 (logic, repo) 便于测试。
+        /// 创建 GarrisonLogicDefault，返回 (logic, repo, dao) 便于测试。
         fn make_logic_with_repo() -> (
             GarrisonLogicDefault,
             Arc<DefaultDisableRepository>,
@@ -731,29 +746,18 @@ mod tests {
             let repo = Arc::new(DefaultDisableRepository::new(
                 dao.clone() as Arc<dyn GarrisonDao>
             ));
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall)
-                .with_disable_repository(repo.clone() as Arc<dyn DisableRepository>);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                repo.clone() as Arc<dyn DisableRepository>,
+            );
             (logic, repo, dao)
         }
 
         // --------------------------------------------------------------------
-        // 6 个集成测试
+        // 集成测试
         // --------------------------------------------------------------------
-
-        /// 未注入 disable_repository，check_disable 返回 Ok（向后兼容 0.6.4 之前）。
-        #[tokio::test]
-        async fn test_check_disable_no_repository_returns_ok() {
-            let logic = make_logic_without_repo();
-            let token = logic.login("1001", &LoginParams::default()).await.unwrap();
-
-            let result = with_current_token(token, async { logic.check_disable().await }).await;
-
-            assert!(
-                result.is_ok(),
-                "未注入 disable_repository 时 check_disable 应返回 Ok，实际: {:?}",
-                result
-            );
-        }
 
         /// 注入 repository 但未封禁，check_disable 返回 Ok。
         #[tokio::test]
@@ -965,6 +969,40 @@ mod tests {
             ) -> GarrisonResult<bool> {
                 Ok(true)
             }
+            async fn check_permission_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _permission: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+            async fn check_role_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _role: &str,
+            ) -> GarrisonResult<bool> {
+                // 测试桩与租户无关：任意租户返回相同结果
+                Ok(true)
+            }
+            #[cfg(any(
+                feature = "sms-rate-limit",
+                feature = "firewall-ratelimit",
+                feature = "firewall-bruteforce",
+                feature = "firewall-ddos",
+                feature = "firewall",
+                feature = "oauth2-server"
+            ))]
+            async fn check_login_hooks(
+                &self,
+                _login_id: &str,
+                _ctx: &crate::strategy::hooks::LoginContext,
+            ) -> GarrisonResult<()> {
+                // 测试桩不注入防火墙 hook，显式 no-op
+                Ok(())
+            }
         }
 
         // ----------------------------------------------------------------
@@ -984,7 +1022,14 @@ mod tests {
             config.throw_on_not_login = false;
             config.token_style = "uuid".to_string();
             let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
-            let logic = GarrisonLogicDefault::new(session, Arc::new(config), firewall);
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
             (logic, dao)
         }
 

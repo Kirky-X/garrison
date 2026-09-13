@@ -311,7 +311,11 @@ async fn broadcast_alert_listener_panic_propagates_and_aborts_broadcast() {
         "listener panic 应传播出 broadcast_alert（当前实现无 panic 恢复），实际: {:?}",
         joined
     );
-    assert_eq!(PANIC_CALLS.load(Ordering::SeqCst), 1, "panic listener 应被调用 1 次");
+    assert_eq!(
+        PANIC_CALLS.load(Ordering::SeqCst),
+        1,
+        "panic listener 应被调用 1 次"
+    );
     assert_eq!(
         AFTER_CALLS.load(Ordering::SeqCst),
         0,

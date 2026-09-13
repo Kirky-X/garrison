@@ -82,7 +82,7 @@ pub const DEFAULT_SESSION_HOVER_TIMEOUT: i64 = -1;
 /// 默认前后端分离模式（false = Cookie 模式，true = Token Header 模式）。
 pub const DEFAULT_FRONTEND_SEPARATION: bool = false;
 
-/// 默认是否从请求体读取 Token（false = 不读取，向后兼容）。
+/// 默认是否从请求体读取 Token（false = 不读取）。
 pub const DEFAULT_IS_READ_BODY: bool = false;
 
 /// 默认自动续签阈值（-1 = 不启用，0-100 = 剩余 TTL 百分比低于此值时触发续签）。
@@ -246,7 +246,7 @@ pub enum AuditMaskMode {
 ///
 /// # 默认值
 ///
-/// - `enabled`: `false`（不启用，向后兼容）
+/// - `enabled`: `false`（默认不启用）
 /// - `resolver`: `Header`（最常用，从 `X-Tenant-Id` header 解析）
 ///
 /// # 配置示例
@@ -269,7 +269,7 @@ pub struct TenantIsolationConfig {
 ///
 /// - `protocol-zeroize` feature 启用：`Zeroizing<String>`，Drop 时自动 zeroize buffer，
 ///   防止进程内存 dump / swap-to-disk 泄露 jwt_secret。
-/// - 不启用：退化为 `String`，与历史行为一致（向后兼容）。
+/// - 不启用：退化为 `String`。
 ///
 /// 调用方适配规则：
 /// - 赋值：`config.jwt_secret = "xxx".to_string().into()`（`String: From<String>` identity，
@@ -338,7 +338,7 @@ pub struct GarrisonConfig {
     /// 是否从 Header 中读取 Token。
     pub is_read_header: bool,
 
-    /// 是否从请求体中读取 Token（默认 false，向后兼容）。
+    /// 是否从请求体中读取 Token（默认 false）。
     ///
     /// 启用后，middleware 会从请求体（如 JSON 字段）中提取 Token。
     /// 通常与 `is_read_cookie` / `is_read_header` 组合使用。
@@ -479,7 +479,7 @@ pub struct GarrisonConfig {
     ///
     /// - `strict`：新设备登录触发二次认证（由 `DeviceBindingPolicy::StrictBinding` 处理）
     /// - `loose`：新设备登录仅告警不阻断（由 `LooseBinding` 处理）
-    /// - `disabled`：不启用设备绑定（默认，向后兼容）
+    /// - `disabled`：不启用设备绑定（默认）
     ///
     /// 配置字段始终存在（非 feature-gated），策略注入由 `GarrisonManager::builder()` 根据
     /// 此字段值决定（属于 T020 集成范畴）。
@@ -528,13 +528,13 @@ pub struct GarrisonConfig {
 
     /// 多租户隔离配置段。
     ///
-    /// 默认 `enabled: false`（向后兼容）。启用后需配合 `tenant-isolation` Cargo feature
+    /// 默认 `enabled: false`（不启用）。启用后需配合 `tenant-isolation` Cargo feature
     /// + `tenant_resolution_middleware` 才能生效。
     pub tenant_isolation: TenantIsolationConfig,
 
     /// CORS 跨域资源共享配置段。
     ///
-    /// 默认 `allowed_origins` 为空（向后兼容，不注入 CORS 头）。
+    /// 默认 `allowed_origins` 为空（不注入 CORS 头）。
     /// 启用后需配合 `web-cors` Cargo feature + `garrison_cors_middleware` 才能生效。
     #[cfg(feature = "web-cors")]
     pub cors_config: CorsConfig,
@@ -548,7 +548,7 @@ pub struct GarrisonConfig {
 
     /// 限流后端配置段。
     ///
-    /// 默认 `Memory`（向后兼容）。启用 `rate-limit-redis` Cargo feature 后可选 `Redis`。
+    /// 默认 `Memory`。启用 `rate-limit-redis` Cargo feature 后可选 `Redis`。
     #[cfg(feature = "rate-limit-redis")]
     pub rate_limit_backend: RateLimitBackend,
 

@@ -55,7 +55,7 @@ impl GarrisonRouter {
     ///
     /// 配置后 middleware 在每个请求前调用 `resolver.resolve(&headers)` 解析租户上下文，
     /// 进入 `TENANT.scope` 后执行鉴权；解析失败时拒绝请求（fail-closed）。
-    /// 未配置时行为与旧版一致（不提取租户）。
+    /// 未配置时不提取租户。
     ///
     /// # 示例
     ///
