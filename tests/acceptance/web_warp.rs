@@ -1,8 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! warp 域验收（ACC-WARP-NNN，spec acceptance-matrix R-acceptance-matrix-001，
-//! 任务 T029，补盲）。
+//! warp 域验收（ACC-WARP-NNN，spec acceptance-matrix R-acceptance-matrix-001，补盲）。
 //!
 //! 与 `web_smoke`（spawn_warp 冒烟、CheckLogin 基线）区分，本域覆盖：
 //! - 001-003 guard Filter 矩阵：`check_login` / `check_role` / `check_permission`

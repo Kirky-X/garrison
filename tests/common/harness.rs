@@ -308,7 +308,7 @@ impl HarnessBuilder {
         self
     }
 
-    /// 注入封禁仓库（`account::disable::DisableRepository`，T020 封禁场景）。
+    /// 注入封禁仓库（`account::disable::DisableRepository`， 封禁场景）。
     pub fn disable_repository(
         mut self,
         repo: Arc<dyn garrison::account::disable::DisableRepository>,

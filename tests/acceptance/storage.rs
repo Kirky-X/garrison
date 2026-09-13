@@ -4,7 +4,7 @@
 //! 存储域验收（spec `dao-atomicity` R-dao-atomicity-002 / `acceptance-matrix`
 //! R-acceptance-matrix-002 DAO 原子性并发补盲）。
 //!
-//! 验证 `GarrisonDao` 六个原子必需方法（T012 编译期契约）在真实多线程并发下
+//! 验证 `GarrisonDao` 六个原子必需方法（编译期契约）在真实多线程并发下
 //! 的正确性：`set_if_absent` 仅一次成功、`get_and_delete` 恰一次消费、
 //! `incr` 无丢失更新。覆盖 InMemoryDao（parking_lot 锁）与 GarrisonDaoOxcache
 //! （进程内 oxcache 后端）两种内置实现。
@@ -16,7 +16,7 @@ use garrison::dao::{GarrisonDao, GarrisonDaoOxcache, InMemoryDao};
 use std::sync::Arc;
 use std::time::Duration;
 
-// T030 所需装配（CRUD/TTL/租户隔离/错误注入）
+// 所需装配（CRUD/TTL/租户隔离/错误注入）
 use async_trait::async_trait;
 use garrison::backend::types::LoginParams;
 use garrison::config::GarrisonConfig;
@@ -187,7 +187,7 @@ async fn acc_storage_003b_oxcache_incr_serial_expectation() {
 }
 
 // ============================================================================
-// T030：三后端 CRUD 一致性 / TTL 过期 / 租户键隔离 / DAO 错误注入
+// 三后端 CRUD 一致性 / TTL 过期 / 租户键隔离 / DAO 错误注入
 // ============================================================================
 
 /// ACC-STORAGE-004（正常）：三后端 CRUD 语义一致 —— set/get/update/expire/delete

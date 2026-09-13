@@ -1,16 +1,11 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! resilience 域验收（spec `acceptance-matrix` R-acceptance-matrix-001，
-//! 任务 T031）。异常韧性场景，编号 `ACC-RES-NNN`：
+//! resilience 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! 异常韧性场景，编号 `ACC-RES-NNN`：
 //! oxcache 故障时 JWT 无状态降级 / 配置错误 fail-fast / auth-server 内网
 //! API Key 错误 401 / 限流 429 / BackendRemote 500 与超时的错误传播及
 //! 熔断打开-恢复。
-//!
-//! Phase 4 测试迁移（T040/T043）：ACC-RES-001 去重收纳 BW-AC-008 故障注入用例
-//! （tests/unit/acceptance_criteria.rs，编号注释已并入场景文档）；ACC-RES-009..012
-//! 自 tests/e2e 移植（坏 body / login_id 长度边界 / path_filter 双向 404 + 审计与
-//! health 链路 / metrics 端点），来源映射见各场景文档与文件尾迁移块。
 //!
 //! - ACC-RES-001 不经 GarrisonManager（独立 `GarrisonLogicDefault` 双实例：
 //!   健康 DAO 签发 + FailingDao 故障验证），无需 `#[serial]`。
@@ -118,7 +113,7 @@ impl GarrisonInterface for EmptyInterface {
 
 /// JWT 无状态模式配置：`token_style=jwt` + `jwt_mode=Stateless`，显式风险接受
 /// 开关 `allow_stateless_jwt_no_revocation=true`（关闭撤销黑名单，使
-/// `check_login_stateless` 纯签名校验、不读 DAO——T017 互斥校验的三选一出口）。
+/// `check_login_stateless` 纯签名校验、不读 DAO—— 互斥校验的三选一出口）。
 fn jwt_stateless_config() -> GarrisonConfig {
     let mut c = GarrisonConfig::default_config();
     c.token_style = "jwt".to_string();
@@ -146,9 +141,7 @@ fn default_firewall() -> Arc<dyn GarrisonPermissionStrategy> {
 /// `GarrisonLogicDefault` 实例——健康实例（InMemoryDao）签发 JWT 作为正常
 /// 锚点，故障实例（FailingDao，模拟 oxcache 故障）验证该 token 且尝试新登录。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 去重收纳 **BW-AC-008**（tests/unit/acceptance_criteria.rs
-/// `bw_ac_008_oxcache_failure_degrades_to_jwt_stateless`，FRD §8.1）：
+/// 去重收纳 **BW-AC-008**（FRD §8.1 oxcache 故障降级）：
 /// 原用例断言 `login` 返回 `Err(GarrisonError::Dao)` 且错误不被吞掉；本场景
 /// 保留该语义并强化——不仅断言新登录显性失败（`GarrisonError::Dao`），还额外
 /// 断言已签发 JWT 在故障 DAO 下仍可通过无状态签名校验（降级路径成立）。
@@ -326,7 +319,6 @@ async fn acc_res_003_builder_build_fail_fast() {
 /// tests/auth_server_integration.rs 的已知良好装配，注释见该文件 NEEDS CLARIFICATION）。
 ///
 /// `pub(crate)`：供 security.rs 的 pentest 场景（ACC-SEC-021..024/027/028）复用
-/// （Phase 4 测试迁移 T040/T043）。
 pub(crate) struct MockAuthBackend {
     tokens: parking_lot::Mutex<HashMap<String, String>>,
 }
@@ -470,7 +462,7 @@ pub(crate) fn uuid_like() -> String {
 /// 启动双端口测试服务器（外网 + 内网），返回 (external_url, internal_url, handle)。
 ///
 /// `pub(crate)`：供 security.rs 的 pentest 场景（ACC-SEC-021..024/027/028）复用
-/// （Phase 4 测试迁移 T040/T043）。仅使用 `MockAuthBackend`（无全局状态），
+/// 。仅使用 `MockAuthBackend`（无全局状态），
 /// 不需要 `#[serial]`。
 pub(crate) async fn start_test_server(
     rate_limit: u32,
@@ -753,21 +745,13 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
 }
 
 // ============================================================================
-// Phase 4 测试迁移（T040/T043）：server 层输入边界 / 路径过滤 / 健康与指标
-//
-// 来源 tests/e2e：
-// - api_errors.rs：test_api_errors_malformed_body（T023）/ test_api_errors_oversized_field（T024）
-// - api_boundary.rs：test_api_boundary_login_id_lengths（T025）
-// - api_authz_boundary.rs：test_authz_boundary_no_token_returns_401（T028）
-// - error_scenarios.rs：test_e2e_external_rejects_internal_path / test_e2e_internal_rejects_external_path
-// - middleware.rs：test_e2e_audit_log_middleware_does_not_break_flow / test_e2e_health_endpoint_returns_ok /
-//   test_e2e_metrics_endpoint_with_prometheus
-// 基础设施（以下两个 server 助手）供 security.rs pentest 场景复用。
+// server 层输入边界 / 路径过滤 / 健康与指标场景的基础设施
+// （以下两个 server 助手供 security.rs pentest 场景复用）。
 // ============================================================================
 
 /// 构造缺省租户上下文 HTTP 客户端（`X-Tenant-Id: 0`，`tenant-isolation` 启用时）。
 ///
-/// 镜像 tests/e2e/mod.rs 的 `default_tenant_headers` + `make_client`（Phase 4 迁移），
+/// 提供 `default_tenant_headers` + `make_client`，
 /// 供经 `start_garrison_server` 的跨租户场景（ACC-SEC-025）使用。
 pub(crate) fn tenant_client() -> reqwest::Client {
     let mut headers = reqwest::header::HeaderMap::new();
@@ -786,8 +770,7 @@ pub(crate) fn tenant_client() -> reqwest::Client {
 ///
 /// 先经 `GarrisonTestHarness`（全局单例）用给定 `config` 装配管理器，再以
 /// `BackendEmbedded` 为后端启动 `GarrisonAuthServer`；`tenant-isolation` 启用时
-/// 注入 `HeaderTenantResolver` + `tenant_resolution_middleware`（镜像
-/// tests/e2e/mod.rs 的 `spawn_server`，Phase 4 迁移）。
+/// 注入 `HeaderTenantResolver` + `tenant_resolution_middleware`。
 ///
 /// # 调用约束
 ///
@@ -857,7 +840,7 @@ macro_rules! assert_is_4xx {
 /// ACC-RES-009（异常）：login/check-login 恶意或畸形 body 拒绝——空 body、
 /// 非 JSON 字符串、空 JSON 对象、缺失 login_id、login_id 类型错误均 4xx；
 /// null 字节 login_id 因 serde_json 可接受返回 200+token（记录实际行为）；
-/// check-login 缺失必填 token 字段 4xx（T023 + T028 合并移植）。
+/// check-login 缺失必填 token 字段 4xx（+ 合并移植）。
 #[tokio::test]
 async fn acc_res_009_malformed_body_rejected_4xx() {
     use garrison::backend::types::LoginParams;
@@ -937,7 +920,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         );
     }
 
-    // 7. check-login 缺失必填 token 字段 → 4xx（T028）
+    // 7. check-login 缺失必填 token 字段 → 4xx
     let resp = client
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")
@@ -950,7 +933,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
 
 /// ACC-RES-010（正常+异常）：login_id 长度边界——空串与超长 65536/70000 返回
 /// 4xx 或 200（不返回 5xx）；常规长度 1/255/256 必须 200 + 非空 token
-/// （T024 + T025 合并移植）。
+/// （+ 合并移植）。
 #[tokio::test]
 async fn acc_res_010_login_id_length_boundaries_no_5xx() {
     use garrison::backend::types::LoginParams;
@@ -1031,7 +1014,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
 /// ACC-RES-011（异常+正常）：path_filter 双向隔离 + 审计/健康链路不阻断——
 /// 外网访问内网路径 check-login 404、内网访问外网路径 login 404（路由不可
 /// 越界）；审计日志中间件下 login → check-login 全链路正常（200 + data=true）、
-/// health 端点 200 + data=ok（T050 路径过滤 + 中间件场景合并移植）。
+/// health 端点 200 + data=ok（路径过滤 + 中间件场景合并移植）。
 #[tokio::test]
 async fn acc_res_011_path_filter_isolation_and_audit_health_flow() {
     use garrison::backend::types::LoginParams;

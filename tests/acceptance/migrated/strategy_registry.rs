@@ -14,7 +14,7 @@
 //!
 //! 运行：`cargo test --features "cache-memory" --test strategy_registry_integration`
 //!
-//! # production-mock-purge (T024)
+//! # production-mock-purge
 //!
 //! NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
 //! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，

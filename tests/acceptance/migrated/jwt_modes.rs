@@ -14,7 +14,7 @@
 //!
 //! 运行：`cargo test --features "protocol-jwt cache-memory" --test jwt_modes_integration`
 //!
-//! # production-mock-purge (T024)
+//! # production-mock-purge
 //!
 //! NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
 //! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
@@ -64,7 +64,7 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     config.jwt_secret = "jwt-modes-test-secret-0123456789abcdef".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = true;
-    // T017: Stateless JWT 模式必须启用 JWT 撤销黑名单（fail-closed 守卫）。
+    // Stateless JWT 模式必须启用 JWT 撤销黑名单（fail-closed 守卫）。
     if mode == JwtMode::Stateless {
         config.enable_jwt_revocation = true;
     }

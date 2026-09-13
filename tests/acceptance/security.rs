@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 安全域验收（spec `acceptance-matrix` R-acceptance-matrix-001，任务 T026）。
+//! 安全域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
 //! TOTP 时间窗口 / HTTP Basic / HTTP Digest（含 nc 重放防护）/ 密码策略规则矩阵 /
 //! HIBP 泄露密码检查 / 敏感数据脱敏 / XSS 过滤 / 输入消毒 / 常量时间比较，
 //! 「正常 + 异常」成对覆盖，场景编号 `ACC-SEC-NNN`。
@@ -11,10 +11,7 @@
 //! 方式组织：`full` 下运行 feature 关闭的显性 Err 断言（ACC-SEC-013），
 //! `--features full,policy-hibp` 下运行 wiremock 三场景（ACC-SEC-014..016）。
 //!
-//! Phase 4 测试迁移（T040/T043）：ACC-SEC-021..030 自 tests/e2e/pentest/
-//! 与 tests/e2e 错误/边界文件移植（伪造 token 认证绕过 / SQL 注入 / XSS /
-//! CSRF Origin / 跨租户提权 / admin 越权 / 暴力破解 / 会话劫持 / 未知 token），
-//! 来源映射见各场景文档。server 层依赖 resilience.rs 的
+//! server 层依赖 resilience.rs 的
 //! `start_test_server`（MockAuthBackend，无全局状态）与 `start_garrison_server`
 //! （BackendEmbedded + 全局单例，需 `#[serial]`）。
 //!
@@ -870,12 +867,11 @@ fn build_md5_digest_header(
 }
 
 // ============================================================================
-// Phase 4 测试迁移（T040/T043）：pentest 攻击面（自 tests/e2e/pentest/ 移植，
-// payload 集合保持与 pentest/mod.rs 原样一致）
+// pentest 攻击面
+// （payload 集合保持与原 pentest 套件一致）
 // ============================================================================
 
-/// SQL 错误关键字集合（小写，case-insensitive 匹配；镜像
-/// tests/e2e/pentest/mod.rs `SQL_ERROR_KEYWORDS`，Phase 4 迁移）。
+/// SQL 错误关键字集合（小写，case-insensitive 匹配）。
 const SQL_ERROR_KEYWORDS: &[&str] = &["sql", "syntax", "mysql", "sqlite"];
 
 /// SQL 注入 payload 集合——8 条经典攻击向量（镜像 pentest/mod.rs，原样保留）：
@@ -940,13 +936,9 @@ fn leaks_sql_keyword(body_text: &str) -> bool {
 /// `/api/v1/auth/check-login` 全部拒绝（无 500、无真实绕过），且响应体不泄漏
 /// SQL 错误关键字。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/auth_bypass.rs `pentest_auth_bypass_forged_tokens`（T043）
-/// 移植，并合并 tests/e2e/api_errors.rs `test_api_errors_invalid_token`（T022，
-/// 8 种无效 token + SQL 关键字泄漏断言）与 tests/e2e/auth_flow.rs
-/// `test_e2e_check_login_invalid_token_returns_false`（in-process 下无效 token
-/// 返回拒绝而非异常）。断言语义与原版一致并强化：拒绝判定覆盖
-/// `data=false` / `error_code` / 4xx 三种表达。
+/// 合并三个 e2e 原用例：伪造 token 认证绕过、8 种无效 token + SQL 关键字泄漏
+/// 断言、in-process 下无效 token 返回拒绝而非异常。断言语义与原版一致并强化：
+/// 拒绝判定覆盖 `data=false` / `error_code` / 4xx 三种表达。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sec_021_forged_tokens_authentication_bypass_rejected() {
     let (_external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
@@ -980,7 +972,7 @@ async fn acc_sec_021_forged_tokens_authentication_bypass_rejected() {
             token,
             status
         );
-        // HARD 断言：响应体不得泄漏 SQL 错误关键字（T022 合并）
+        // HARD 断言：响应体不得泄漏 SQL 错误关键字（合并）
         assert!(
             !leaks_sql_keyword(&body_text),
             "响应体泄漏 SQL 错误关键字 (token={token:?}): {body_text}"
@@ -992,10 +984,8 @@ async fn acc_sec_021_forged_tokens_authentication_bypass_rejected() {
 /// 不泄漏 SQL 错误信息。登录成功属 MockAuthBackend 行为偏差（不校验 login_id
 /// 有效性，非真实绕过；生产环境需校验 login_id 有效性——记录不 panic）。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/sql_injection.rs `pentest_sql_injection_login_id`（T039）
-/// 移植，HARD 断言（无 500 / 无关键字泄漏）与 `contains_ignore_ascii_case`
-/// 语义原样保留。
+/// 对应 e2e 原用例：HARD 断言（无 500 / 无关键字泄漏）与
+/// `contains_ignore_ascii_case` 语义原样保留。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sec_022_sql_injection_login_id_no_crash_no_leak() {
     let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
@@ -1044,8 +1034,6 @@ async fn acc_sec_022_sql_injection_login_id_no_crash_no_leak() {
 /// 响应不反射 payload 原文（sub-string check，防反射型 XSS）、Content-Type 为
 /// `application/json`（非 HTML，防存储型 XSS 渲染）、无 500。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/xss.rs `pentest_xss_login_id_not_reflected`（T041）移植，
 /// 三条 HARD 断言原样保留。装配修正：MockAuthBackend 的 token 内嵌 login_id
 /// （simple 风格），「body 不反射 payload」断言在 mock 后端下不可成立——
 /// 改用真实嵌入后端（默认 uuid token 风格，token 不含 login_id），
@@ -1057,7 +1045,7 @@ async fn acc_sec_023_xss_login_id_not_reflected() {
     let (external_url, _internal_url, _handle) =
         start_garrison_server(100, "test-key", config).await;
     // X-Tenant-Id 默认头（tenant_client）：tenant_resolution_middleware 对缺失
-    // 租户头返回 400 BAD_REQUEST（Phase 4 审查探针实证），携带租户头后请求
+    // 租户头返回 400 BAD_REQUEST（审查探针实证），携带租户头后请求
     // 真实进入 login 路径（200），不反射断言在 200 分支生效。
     let client = tenant_client();
     let login_url = format!("{}/api/v1/auth/login", external_url);
@@ -1089,7 +1077,7 @@ async fn acc_sec_023_xss_login_id_not_reflected() {
             "XSS payload 导致 500 错误 (payload={payload:?}): {body_text}"
         );
         // HARD 断言 2: 若校验层放行（200），响应 body 不得反射 payload（防反射型 XSS）
-        // 实测语义（Phase 4 修正，审查探针实证）：无 X-Tenant-Id 时的 400 来自
+        // 实测语义（修正，审查探针实证）：无 X-Tenant-Id 时的 400 来自
         // tenant_resolution_middleware 的租户头强制（非 login_id 校验层——login_id
         // 无入口校验语义）；带租户头时全部 XSS payload 均 200 且 token（uuid 风格）
         // 不反射载荷。400 分支保持「拒绝 + 不渲染为 HTML」防御性锚定。
@@ -1115,10 +1103,7 @@ async fn acc_sec_023_xss_login_id_not_reflected() {
 /// 正常放行（200，Bearer/API-Key 认证天然免疫 CSRF）；`Origin: https://evil.com`
 /// 请求不返回 500（接受 4xx 拒绝或 200 行为不变，均非真实攻击面）。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/csrf.rs `pentest_csrf_no_origin_header_accepted_for_api_mode`
-/// （T042）移植。原版安全 LOW-3 记录（API 模式无 Cookie，SameSite 场景需
-/// 浏览器测试套件）随测试保留在注释中。
+/// 安全 LOW-3 记录：API 模式无 Cookie，SameSite 场景需浏览器测试套件。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sec_024_csrf_api_mode_origin_behavior() {
     let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
@@ -1170,11 +1155,6 @@ async fn acc_sec_024_csrf_api_mode_origin_behavior() {
 }
 
 /// ACC-SEC-025（异常）：跨租户 token 隔离验收（FINDING-025 实证记录）。
-///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/privilege_escalation.rs `pentest_privilege_escalation_cross_tenant`
-/// （T044）移植，并合并 tests/e2e/api_authz_boundary.rs
-/// `test_authz_boundary_cross_tenant_token_isolation`（T030）。
 ///
 /// # 实测契约（findings 记录，非弱化）
 ///
@@ -1242,7 +1222,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
     assert_eq!(status, 200, "跨租户 check-login 仍应返回 200");
     let body: serde_json::Value = resp.json().await.expect("check-login 响应非 JSON");
 
-    // Phase 4 实证发现（FINDING-025）：会话存储（token:session）**不按租户作用域**——
+    // 实证发现（FINDING-025）：会话存储（token:session）**不按租户作用域**——
     //  当前无运行时消费点（仅配置解析），auth-server 的
     // check-login 跨租户返回 data=true。e2e pentest 原断言「跨租户 check-login 拒绝」
     // 从未被 CI 执行验证（e2e target 被 required-features 排除），属未验证声明。
@@ -1278,11 +1258,8 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
 /// ACC-SEC-026（异常）：普通用户越权访问 `admin:*`——无权限主体 check-permission
 /// `admin:*` 被拒（`NOT_PERMISSION`，最小权限原则）。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/privilege_escalation.rs
-/// `pentest_privilege_escalation_normal_user_admin_endpoint`（T045）移植。
-/// 原版断言三选一（403 / allowed=false / error_code 存在）；本场景在 harness 空
-/// 权限数据源下确定性强化为 `error_code == "NOT_PERMISSION"`。
+/// 对应 e2e 原用例：断言三选一（403 / allowed=false / error_code 存在）；本场景
+/// 在 harness 空权限数据源下确定性强化为 `error_code == "NOT_PERMISSION"`。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn acc_sec_026_normal_user_admin_privilege_denied() {
@@ -1329,11 +1306,8 @@ async fn acc_sec_026_normal_user_admin_privilege_denied() {
 /// ACC-SEC-027（异常）：暴力破解同一 login_id——100 次连续登录尝试必须触发
 /// 至少 1 次 429 限流（低阈值 server），且无 500 错误。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/brute_force.rs
-/// `pentest_brute_force_100_attempts_triggers_lockout_or_rate_limit`（T047）移植。
-/// 原版通过 env `GARRISON_RATE_LIMIT=10` 控制子进程限流阈值；本场景直接以
-/// `rate_limit=10` 参数构造 in-process server，语义等价且更确定。
+/// 对应 e2e 原用例经 env `GARRISON_RATE_LIMIT=10` 控制子进程限流阈值；本场景
+/// 直接以 `rate_limit=10` 参数构造 in-process server，语义等价且更确定。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sec_027_brute_force_same_login_100_attempts_429() {
     let (external_url, _internal_url, _handle) = start_test_server(10, "test-key").await;
@@ -1375,9 +1349,7 @@ async fn acc_sec_027_brute_force_same_login_100_attempts_429() {
 ///（服务器稳定）。登录成功属 MockAuthBackend 行为偏差（不校验 login_id，
 /// 非真实绕过；记录不 panic）。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/brute_force.rs
-/// `pentest_brute_force_dictionary_100_logins`（T048）移植，HARD 断言原样保留。
+/// 对应 e2e 原用例（暴力破解字典 100 次登录），HARD 断言原样保留。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sec_028_dictionary_100_logins_no_crash() {
     let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
@@ -1412,11 +1384,8 @@ async fn acc_sec_028_dictionary_100_logins_no_crash() {
 /// 登录踢出旧设备全部会话（`ReplacedLoginExitMode::OldDevice` 默认行为）：
 /// deviceA token 失效、deviceB token 有效。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/pentest/session_hijack.rs
-/// `pentest_session_hijack_concurrent_login_disabled`（T046）移植。原版 spec
-/// 偏差（in-process 而非 spawn_child，因无法自定义 `is_concurrent`）在本场景
-/// 同样成立，注释保留。
+/// 对应 e2e 原用例的 spec 偏差（in-process 而非 spawn_child，因无法自定义
+/// `is_concurrent`）在本场景同样成立，注释保留。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device() {
@@ -1495,13 +1464,10 @@ async fn acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device()
 /// ACC-SEC-030（异常）：未知/匿名 token 越权访问受保护资源——不存在 token 的
 /// `check_permission("admin:*")` 拒绝（`NotPermission`，未登录视为无任何权限）。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/api_authz_boundary.rs
-/// `test_authz_boundary_anonymous_token_cannot_access_protected`（T030e）移植。
-/// 原版 `#[cfg(feature = "anonymous-session")]` 门控已失效——`anonymous-session`
-/// 自 v0.9.0 合并入 `session-extra`（Cargo.toml:375），改用 `session-extra`
-/// 门控（`full` 已聚合）；server 未暴露匿名 token HTTP 端点（原版已预判），
-/// 等价断言「未知 token 越权被拒」在逻辑层直接验证。
+/// 原 e2e 用例的 `#[cfg(feature = "anonymous-session")]` 门控已失效——
+/// `anonymous-session` 自 v0.9.0 合并入 `session-extra`（Cargo.toml:375），
+/// 改用 `session-extra` 门控（`full` 已聚合）；server 未暴露匿名 token HTTP
+/// 端点（原用例已预判），等价断言「未知 token 越权被拒」在逻辑层直接验证。
 #[cfg(feature = "session-extra")]
 #[tokio::test]
 #[serial]

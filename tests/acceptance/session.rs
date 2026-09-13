@@ -1,21 +1,14 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! session 域验收（spec `acceptance-matrix` R-acceptance-matrix-002，
-//! 任务 T021）。双模会话读写 / TTL 续期 / 过期监听 / IP 安全监听 / 设备绑定 MFA /
+//! session 域验收（spec `acceptance-matrix` R-acceptance-matrix-002）。
+//! 双模会话读写 / TTL 续期 / 过期监听 / IP 安全监听 / 设备绑定 MFA /
 //! 匿名会话边界 / 过期读取为空，「正常 + 异常」成对覆盖，场景编号 `ACC-SESS-NNN`。
 //!
 //! 全部场景基于独立 `GarrisonSession` / `GarrisonLogicDefault` 实例构造，
 //! 不触碰 `GarrisonManager` 全局单例，故不加 `#[serial]`；并发场景统一使用
 //! `multi_thread` flavor（与 tests/integration/strategy_registry.rs 的 make_logic
 //! 直构惯例一致）。
-//!
-//! Phase 4 测试迁移（T040/T043）：
-//! - ACC-SESS-019 自 tests/e2e（login device/ip/ua 写入 + get-token-info/get-session）移植；
-//! - ACC-SESS-017 自 tests/acceptance_criteria.rs **BW-AC-003** 移植（编号注释保留）；
-//! - ACC-SESS-018 自 tests/acceptance_criteria.rs **BW-AC-001** 移植（编号注释保留）；
-//! - 去重注释：BW-AC-002 → ACC-SESS-003（touch/renew 重置 TTL 语义等价）、
-//!   BW-AC-009 的 Token-Session 删除部分 → ACC-SESS-001。
 
 use garrison::constants::DaoKeyPrefix;
 use garrison::dao::{GarrisonDao, InMemoryDao};
@@ -52,7 +45,7 @@ impl GarrisonInterface for NoopInterface {
 /// `GarrisonSession::touch`（`renew` 的底层实现）优先读取旧键剩余 TTL 回写；
 /// 本包装令 `get_with_ttl` 返回 `(value, None)`，使续期落入「重置为完整 timeout」
 /// 语义（与 src 单元测试 MockDao 语义一致），从而可观察「renew 重置 TTL」契约
-/// （见 T021 报告中的 API 偏差说明：TTL 感知型 DAO 下 touch 保留剩余 TTL）。
+/// （见 报告中的 API 偏差说明：TTL 感知型 DAO 下 touch 保留剩余 TTL）。
 struct TtlBlindDao {
     inner: Arc<InMemoryDao>,
 }
@@ -544,19 +537,15 @@ async fn acc_sess_008_expired_token_reads_empty() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SESS-009..011：Phase 4 测试迁移（T040/T043）
+// ACC-SESS-009..011：e2e 移植场景
 // ------------------------------------------------------------------------
 
 /// ACC-SESS-019（正常）：登录元数据写入 Token-Session——携带 device/ip/user_agent
 /// 登录后，`TokenSession` 对应字段完整写入（get-session 语义）；created_at /
 /// last_active_at 为正（get-token-info 语义）；按 token 反查 login_id 一致。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/auth_flow.rs `test_e2e_login_with_device_ip_ua` 移植，并合并
-/// tests/e2e/api_happy.rs `test_api_happy_get_token_info_and_session`（T020）与
-/// tests/e2e/session_flow.rs `test_e2e_get_token_info_returns_correct_data` /
-/// `test_e2e_get_session_returns_login_id`：原版经 HTTP get-token-info/get-session
-/// 断言字段，本场景在逻辑层直接断言 TokenSession 存储内容（不可弱化）。
+/// 合并三个 e2e 原用例（login device/ip/ua 写入 + get-token-info/get-session）：
+/// 原版经 HTTP 断言字段，本场景在逻辑层直接断言 TokenSession 存储内容（不可弱化）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_019_login_metadata_written_to_token_session() {
     let dao = Arc::new(InMemoryDao::new());
@@ -623,9 +612,7 @@ async fn acc_sess_019_login_metadata_written_to_token_session() {
 /// 代码库无自动 device-limit 踢出（推迟 v0.7.0），以 `kickout_by_device` 手动
 /// 设备级踢出验证同语义）——被踢设备 token 失效、另一设备 token 仍有效。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/acceptance_criteria.rs `bw_ac_003_concurrent_login_kicks_earliest_session`
-///（FRD §8.1 **BW-AC-003**）原样移植，断言语义与编号注释保留。
+/// 对应 FRD §8.1 **BW-AC-003**（并发登录踢出最早会话）验收标准，断言语义原样保留。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_017_bw_ac_003_kickout_by_device_isolates_device() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
@@ -691,9 +678,7 @@ async fn acc_sess_017_bw_ac_003_kickout_by_device_isolates_device() {
 /// 本测试验证 OIDC 登录的核心产出——会话创建（`account:session:{login_id}` +
 /// `token:session:{token}`），该逻辑由所有登录方式共享的登录链路实现。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/acceptance_criteria.rs `bw_ac_001_oidc_login_creates_account_and_token`
-///（FRD §8.1 **BW-AC-001**）原样移植，断言语义与编号注释保留。
+/// 对应 FRD §8.1 **BW-AC-001**（OIDC 登录创建账户与 token）验收标准，断言语义原样保留。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
@@ -744,8 +729,7 @@ async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SESS-010..016：Plugin / Listener 扩展点（T041 迁移自
-// tests/integration/plugin_listener.rs，`listener` 门控）
+// ACC-SESS-010..016：Plugin / Listener 扩展点（`listener` 门控）
 // ------------------------------------------------------------------------
 //
 // 计数器与 inventory 注册为测试二进制全局状态，全部用例 `#[serial]`；
@@ -1117,7 +1101,7 @@ async fn acc_sess_016_auto_wire_logout_triggers_hooks() {
 
 // ------------------------------------------------------------------------
 // ACC-SESS-020：多租户隔离 + 审计日志 + 决策溯源端到端
-//（T041 迁移自 tests/integration/tenant_isolation.rs，`audit-log` 门控）
+//（`audit-log` 门控）
 // ------------------------------------------------------------------------
 
 /// ACC-SESS-016（正常）：租户 42 用户 1001 的权限校验全链路——

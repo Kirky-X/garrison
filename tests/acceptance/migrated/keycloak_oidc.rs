@@ -11,7 +11,7 @@
 //! cargo test --features "keycloak-oidc db-sqlite cache-memory" --test integration
 //! ```
 //!
-//! # production-mock-purge (T024)
+//! # production-mock-purge
 //!
 //! wiremock: 外部第三方（keycloak/oauth2）协议模拟，经 production-mock-purge 方案豁免（NEEDS CLARIFICATION #1 用户裁定保留）
 

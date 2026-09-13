@@ -134,7 +134,7 @@ mod refresh_token_e2e {
         assert_eq!(t2_revoked_after, 1, "重用检测后 t2 也应被吊销（链级撤销）");
     }
 
-    /// T016: 验证 `refresh_access_token` 传入已撤销 token 时返回 `TokenRevoked`（透传 `rotate` 错误）。
+    /// 验证 `refresh_access_token` 传入已撤销 token 时返回 `TokenRevoked`（透传 `rotate` 错误）。
     ///
     /// 流程：
     /// 1. 预先插入一个 revoked=1 的 refresh token（模拟已被撤销的 token）

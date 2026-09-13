@@ -1,12 +1,10 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! server 域验收（spec `acceptance-matrix` R-acceptance-matrix-001，任务 T033）。
+//! server 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
 //!
 //! 场景编号 `ACC-SRV-NNN`：
-//! - ACC-SRV-001..012：`GarrisonAuthServer` 外网/内网端点验收，吸收重构
-//!   `tests/auth_server_integration.rs` 全部 12 个测试（每个场景标注
-//!   「迁自 tests/auth_server_integration.rs::<测试名>」，Phase 4 迁移追溯）；
+//! - ACC-SRV-001..012：`GarrisonAuthServer` 外网/内网端点验收（12 个场景）；
 //! - ACC-SRV-013..018：oauth2_server 端点级验收（`#[cfg(feature = "oauth2-server")]`）：
 //!   authorize 重定向 / token 4 种 grant / revoke / introspect（RFC 6749/7009/7662），
 //!   装配参考 `src/oauth2_server/*` 与 `tests/e2e/oauth2_flow.rs`；

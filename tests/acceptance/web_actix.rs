@@ -1,8 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! actix-web 域验收（ACC-ACTX-NNN，spec acceptance-matrix R-acceptance-matrix-001，
-//! 任务 T028，补盲）。
+//! actix-web 域验收（ACC-ACTX-NNN，spec acceptance-matrix R-acceptance-matrix-001，补盲）。
 //!
 //! 与 `web_smoke`（spawn_actix 冒烟、CheckLogin 基线）区分，本域覆盖：
 //! - 001 `GarrisonRouter::into_middleware()` middleware 矩阵：无 token 401 /

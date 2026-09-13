@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! oauth2 域验收（spec `acceptance-matrix` R-acceptance-matrix-001，任务 T024）。
+//! oauth2 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
 //! `OAuth2Client` 客户端侧四种授权流程（authorization_code+PKCE / client_credentials /
 //! password / refresh_token）+ Token Introspection，以及授权码重放 / 错误 client_secret /
 //! 错误 redirect_uri / PKCE verifier 不匹配 / 无效 refresh token / scope 越权
@@ -14,7 +14,7 @@
 //!
 //! ACC-OAUTH2-013..015 吸收 tests/protocol/oauth2_integration.rs（授权 URL
 //!   redirect_uri 参数、空 client_id 构造拒绝）与 oauth2_edge_cases.rs（scope
-//!   空串 vs None 请求体差异、expires_in=0），Phase 4 迁移追溯。
+//! 空串 vs None 请求体差异、expires_in=0）。
 //!
 //! # API 偏差记录
 //!
@@ -832,8 +832,7 @@ async fn acc_oauth2_015_expires_in_zero_parsed_as_immediate_expiry() {
 }
 
 // ============================================================================
-// ACC-OAUTH2-016：Keycloak OIDC RP 完整流程（T041 迁移自
-// tests/integration/keycloak_oidc.rs，`keycloak-oidc` 门控）
+// ACC-OAUTH2-016：Keycloak OIDC RP 完整流程（`keycloak-oidc` 门控）
 // ============================================================================
 
 /// ACC-OAUTH2-016（正常）：Keycloak OIDC RP 完整授权码流程端到端——

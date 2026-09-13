@@ -1,22 +1,14 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! authentication 域验收（spec `acceptance-matrix` R-acceptance-matrix-001，
-//! 任务 T020）。登录 / 登出 / 切换 / 续期 / 顶替 / 踢出 / 过期 / 封禁 / 锁定，
+//! authentication 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! 登录 / 登出 / 切换 / 续期 / 顶替 / 踢出 / 过期 / 封禁 / 锁定，
 //! 「正常 + 异常」成对覆盖，场景编号 `ACC-AUTH-NNN`。
 //!
 //! 会话级场景（001-009）经 `GarrisonTestHarness`（全局单例）+ `#[serial]`；
 //! 密码场景（010）使用独立 `GarrisonLogicDefault` 实例 + 真实 SQLite 迁移
 //! （镜像 integration/login_password.rs 的已知良好装配）；封禁（011）经
 //! `DefaultDisableRepository`；锁定（012）经 `UserLockoutStrategy`。
-//!
-//! Phase 4 测试迁移（T040/T043）：
-//! - ACC-AUTH-016/017/018 自 tests/e2e（safe+disable 默认值 / switch-to / refresh 链）移植；
-//! - ACC-AUTH-019 自 tests/acceptance_criteria.rs **BW-AC-010** 移植（编号注释保留）；
-//! - 去重注释：BW-AC-004 → ACC-RBAC-004（+ACC-RBAC-007 web 403 编码）、
-//!   BW-AC-005 → ACC-RBAC-003（+ACC-RBAC-007）、BW-AC-006 →
-//!   ACC-AUTH-001/002 + ACC-RBAC-001/002（组合覆盖）、BW-AC-009 →
-//!   ACC-AUTH-002 + ACC-SESS-001（logout 失效 + Token-Session 删除）。
 
 use crate::common::harness::GarrisonTestHarness;
 use garrison::stp::context::{get_renewed_token, with_renewed_token_scope};
@@ -539,17 +531,14 @@ async fn acc_auth_012_lockout_blocks_after_repeated_failures() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-013..016：Phase 4 测试迁移（T040/T043，自 tests/e2e 移植）
+// ACC-AUTH-013..016：e2e 移植场景
 // ------------------------------------------------------------------------
 
 /// ACC-AUTH-017（异常）：switch-to 默认安全拒绝——未注入自定义
 /// `SwitchToGuard` 时默认 `DenyAllSwitchToGuard` fail-closed 拒绝所有身份切换
 /// （`NotPermission`），且被拒切换无副作用（token 仍绑定原主体并保持有效）。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/session_flow.rs `test_e2e_switch_to_default_denies` 与
-/// tests/e2e/api_happy.rs `test_api_happy_kickout_switch_renew`（T021）的
-/// switch-to 部分移植。原版经 HTTP 断言 `error_code="NOT_PERMISSION"`；
+/// 对应 e2e 原用例（switch-to 部分）：经 HTTP 断言 `error_code="NOT_PERMISSION"`；
 /// 本场景在逻辑层直接断言 `BackendEmbedded::switch_to` 的 `NotPermission`
 /// 错误并补充无副作用断言（不可弱化，语义等价）。
 #[tokio::test]
@@ -589,9 +578,7 @@ async fn acc_auth_017_switch_to_default_deny_all_guard_rejects() {
 /// ACC-AUTH-018（正常）：refresh 链 50 次——连续 `renew_to_equivalent` 50 次
 /// 每次产出新 token（新旧互异）、链路不中断，最终 token 有效且首 token 已失效。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/api_boundary.rs `test_api_boundary_refresh_chain_50_times`（T027）
-/// 移植。原版经 HTTP `/api/v1/auth/refresh` 断言 status 200 + 新 token；
+/// 对应 e2e 原用例经 HTTP `/api/v1/auth/refresh` 断言 status 200 + 新 token；
 /// 本场景在逻辑层直接调用 `BackendEmbedded::renew_to_equivalent`（refresh
 /// 端点的同一下游实现，见 src/server/sdforge_routes.rs `auth_refresh`），
 /// 保留「链不中断 / 新旧互异 / 终态有效」全部语义。
@@ -637,9 +624,7 @@ async fn acc_auth_018_refresh_chain_50_times_keeps_valid() {
 /// （failure_count=5、locked_until>0、锁定时长落在 ±60s 窗口），且可构造
 /// `DisableService` 错误（until=Some(now+30min)，HTTP status=403）。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/acceptance_criteria.rs `bw_ac_010_login_failure_locks_account`
-///（FRD §8.1 **BW-AC-010**）原样移植，断言语义与编号注释保留。
+/// 对应 FRD §8.1 **BW-AC-010**（登录失败锁定账户）验收标准，断言语义原样保留。
 #[tokio::test]
 #[serial]
 #[cfg(feature = "account-lockout")]
@@ -720,12 +705,8 @@ async fn acc_auth_019_bw_ac_010_login_failure_locks_account() {
 /// `check_safe=false`、未被封禁 `check_disable=false`；未知 token 同样两项
 /// 均为 false（不误报封禁/认证状态）。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/permission_flow.rs `test_e2e_check_safe_default_returns_false` /
-/// `test_e2e_check_disable_default_returns_false` 与 tests/e2e/api_authz_boundary.rs
-/// `test_authz_boundary_disabled_token_rejected`（T030d）的 check-disable 部分
-/// 移植。原版经 HTTP 断言 `data=false`；本场景经 `BackendEmbedded::check_safe` /
-/// `check_disable`（端点同一下游）直接断言布尔值。
+/// 对应 e2e 原用例（check-disable 部分）：经 HTTP 断言 `data=false`；本场景经
+/// `BackendEmbedded::check_safe` / `check_disable`（端点同一下游）直接断言布尔值。
 #[tokio::test]
 #[serial]
 async fn acc_auth_016_safe_disable_defaults_false() {
@@ -749,7 +730,7 @@ async fn acc_auth_016_safe_disable_defaults_false() {
         !backend.check_disable(&token).await.unwrap(),
         "新 token 未被封禁，check_disable 应为 false"
     );
-    // 未知 token → 两者均为 false（不误报，T030d fallback 语义）
+    // 未知 token → 两者均为 false（不误报， fallback 语义）
     assert!(
         !backend
             .check_safe("nonexistent-token-disabled-test-12345")
@@ -767,8 +748,8 @@ async fn acc_auth_016_safe_disable_defaults_false() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-020..022：密码凭据域（T041 迁移自 tests/integration/login_password.rs；
-// ACC-AUTH-010 已覆盖的「防枚举统一错误」语义在 021 中标注去重）
+// ACC-AUTH-020..022：密码凭据域
+// （ACC-AUTH-010 已覆盖的「防枚举统一错误」语义在 021 中标注去重）
 // ------------------------------------------------------------------------
 
 /// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password

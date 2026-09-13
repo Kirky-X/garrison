@@ -1,8 +1,8 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! protocol 混合域验收（spec `acceptance-matrix` R-acceptance-matrix-002，
-//! 任务 T025）。sso / sign / apikey / temp 四个协议处理器「正常 + 异常」成对
+//! protocol 混合域验收（spec `acceptance-matrix` R-acceptance-matrix-002）。
+//! sso / sign / apikey / temp 四个协议处理器「正常 + 异常」成对
 //! 覆盖，场景编号 `ACC-MIXED-NNN`。
 //!
 //! 全部场景直构处理器 + 产品 `InMemoryDao`（参考 tests/protocol/{sso,sign,apikey,temp}
@@ -13,15 +13,11 @@
 //! ACC-MIXED-017..022 吸收 tests/protocol/{sso_integration,sso_edge_cases,
 //! sign_edge_cases,apikey_edge_cases,temp_edge_cases}.rs 的未覆盖用例
 //!（ticket 销毁/多 client/无效格式、sign 空/非法签名、apikey 命名空间隔离、
-//! temp scope 越权），Phase 4 迁移追溯。
+//! temp scope 越权）。
 //!
-//! Phase 4 测试迁移（T040/T043）补充：
-//! - ACC-MIXED-023 自 tests/e2e/error_scenarios.rs 的 check-api-key 端点用例移植
-//!   （`test_e2e_check_api_key_invalid_returns_error` / `test_e2e_check_api_key_empty_returns_error`）；
-//! - 去重注释：tests/unit/apikey_mock_edge.rs `expired_apikey_validation_fails`
-//!   （10.3）→ ACC-MIXED-012（过期 key 被拒语义等价；单元层 mock DAO 返回
-//!   `ExpiredToken`、产品 `InMemoryDao` 返回 `InvalidToken("apikey-not-found")`，
-//!   API 偏差见文件头记录，两者均拒绝过期 key）。
+//! 去重说明：单元层过期 apikey 用例由 ACC-MIXED-012 覆盖（过期 key 被拒语义
+//! 等价；单元层 mock DAO 返回 `ExpiredToken`、产品 `InMemoryDao` 返回
+//! `InvalidToken("apikey-not-found")`，API 偏差见文件头记录，两者均拒绝过期 key）。
 //!
 //! # SSO 模拟说明
 //!
@@ -598,8 +594,6 @@ async fn acc_mixed_016_temp_concurrent_consume_exactly_once() {
 
 // ------------------------------------------------------------------------
 // ACC-MIXED-017..022：sso 销毁/多 client、sign 参数、apikey 隔离、temp scope
-// （迁自 tests/protocol/{sso,sign,apikey,temp}_edge_cases.rs 与 sso_integration.rs，
-//  Phase 4 迁移追溯）
 // ------------------------------------------------------------------------
 
 /// ACC-MIXED-017（正常+异常）：`destroy_ticket` 销毁后跨子系统不可校验
@@ -795,7 +789,7 @@ async fn acc_mixed_022_temp_credential_scope_privilege_rejected() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-MIXED-023：check_api_key 端点语义（Phase 4 T040/T043，自 tests/e2e 移植）
+// ACC-MIXED-023：check_api_key 端点语义
 // ------------------------------------------------------------------------
 
 /// 空授权 `GarrisonInterface` 替身（与 session.rs 的 `NoopInterface` 同构，
@@ -816,11 +810,8 @@ impl GarrisonInterface for NoopInterface {
 /// `/api/v1/auth/check-api-key` 端点的下游，见 src/stp/default_impl.rs）——
 /// 未知 key / 空 key 均拒绝 `InvalidToken`（fail-closed），有效 key 放行 Ok。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/error_scenarios.rs `test_e2e_check_api_key_invalid_returns_error` /
-/// `test_e2e_check_api_key_empty_returns_error` 移植。原版经 HTTP 断言
-/// `error_code="INVALID_TOKEN"`；本场景在逻辑层直接断言错误类型（同一实现
-/// 路径），并补充有效 key 放行的正常路径锚点（不可弱化）。
+/// 对应 e2e 原用例经 HTTP 断言 `error_code="INVALID_TOKEN"`；本场景在逻辑层
+/// 直接断言错误类型（同一实现路径），并补充有效 key 放行的正常路径锚点（不可弱化）。
 ///
 /// # 装配说明
 /// 直构 `GarrisonLogicDefault`（独立 `GarrisonSession` + `InMemoryDao`），

@@ -20,7 +20,7 @@
 //!
 //! 依据 spec plugin-system + listener-system。
 //!
-//! # production-mock-purge (T024)
+//! # production-mock-purge
 //!
 //! - auto-wire 辅助 DAO `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
 //! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化

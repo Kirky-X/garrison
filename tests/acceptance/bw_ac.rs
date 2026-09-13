@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! BW-AC 验收标准追溯移植（Phase 4 T043，迁自 `tests/acceptance_criteria.rs`）。
+//! BW-AC 验收标准追溯移植。
 //!
 //! 原文件 9 个测试中：BW-AC-001（OIDC 会话创建）、003（设备踢出）、010（锁定）
 //! 已有验收矩阵等价场景（ACC-AUTH-011/012、session 域设备场景，见各域文件），

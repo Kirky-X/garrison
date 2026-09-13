@@ -1,13 +1,12 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! repository 域验收（spec `acceptance-matrix` R-acceptance-matrix-001，任务 T034）。
+//! repository 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
 //!
 //! 场景编号 `ACC-REPO-NNN`，`#[cfg(feature = "db-sqlite")]` 门控：
 //! - ACC-REPO-001..010：10 张核心表 CRUD（User/Role/Permission/UserRole/
 //!   RolePermission/AuthMethod/Session/LoginLog/UserExt/UserDevice），
-//!   从 `tests/repository.rs` / `tests/repository/` 吸收（每个场景标注
-//!   「迁自 tests/repository/…」，Phase 4 迁移追溯）；
+//!   吸收原 repository 测试树的全部场景；
 //! - ACC-REPO-011：迁移幂等（`migrate_core` 二次执行不报错、不重复建表）；
 //! - ACC-REPO-012：级联删除（用户删除后 user_role/auth_method/session/user_ext
 //!   级联清除、login_log SET NULL——以实际外键行为为准，sqlx-sqlite 默认
@@ -1256,9 +1255,6 @@ async fn acc_repo_022_user_device_repo_table_missing() {
 
 // ------------------------------------------------------------------------
 // ACC-REPO-023..030：dbnexus 层语义与未吸收用例
-// （迁自 tests/repository/dbnexus_integration.rs 与
-//   tests/repository/integration.rs / error_paths.rs 的未覆盖用例，
-//   Phase 4 迁移追溯）
 // ------------------------------------------------------------------------
 
 /// ACC-REPO-023（正常）：迁移产物精确断言——`migrate_core` 后 sqlite_master

@@ -1,8 +1,8 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! concurrency 域验收（spec `acceptance-matrix` R-acceptance-matrix-001，
-//! 任务 T032）。`multi_thread` runtime 真实竞争场景，编号 `ACC-CONC-NNN`：
+//! concurrency 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! `multi_thread` runtime 真实竞争场景，编号 `ACC-CONC-NNN`：
 //! 50 并发登录同账号 / 并发 renew（session.renew 与 auto_renewal 竞争）/
 //! 并发 refresh 同一 refresh token（轮换重用检测）/ kickout 与 login 竞态。
 //!
@@ -13,10 +13,6 @@
 //! 文件尾原样并入 3 个 `#[ignore]` 性能基线（tests/e2e/perf.rs 的
 //! perf_login / perf_check_login / perf_check_permission，保留 `#[ignore]`
 //! 与原文档注释；经 `--ignored` 显式触发）。
-//!
-//! Phase 4 测试迁移（T040/T043）：ACC-CONC-006 自 tests/e2e/api_boundary.rs
-//! `test_api_boundary_concurrent_refresh_same_token`（T026）移植；
-//! 文件尾 3 个性能基线即 tests/e2e/perf.rs 原样迁入（确认覆盖，无需重复）。
 
 use garrison::dao::{GarrisonDao, InMemoryDao};
 use garrison::protocol::jwt::JwtHandler;
@@ -568,7 +564,7 @@ async fn setup_single_connection_db() -> dbnexus::DbPool {
 }
 
 // ------------------------------------------------------------------------
-// ACC-CONC-006：并发 renew 同一 token（T026 移植）
+// ACC-CONC-006：并发 renew 同一 token（移植）
 // ------------------------------------------------------------------------
 
 /// ACC-CONC-006（异常侧）：3 个并发 task 对同一 token 调用
@@ -577,9 +573,7 @@ async fn setup_single_connection_db() -> dbnexus::DbPool {
 /// 轮换失效拒绝（`NotLogin`/`InvalidToken`，per-token 异步锁串行化消除
 /// CWE-362 TOCTOU）；新 token 有效、旧 token 失效，无重复签发。
 ///
-/// # 迁移溯源（Phase 4 T040/T043）
-/// 自 tests/e2e/api_boundary.rs `test_api_boundary_concurrent_refresh_same_token`
-///（T026）移植。原版经 HTTP 断言「恰好 1 个成功 + 2 个 error_code=NOT_LOGIN」；
+/// 对应 e2e 原用例经 HTTP 断言「恰好 1 个成功 + 2 个 error_code=NOT_LOGIN」；
 /// 本场景在逻辑层直接断言（同一实现路径），语义等价。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
@@ -1118,7 +1112,7 @@ mod perf_util {
 // 保留 #[ignore] 与原文档注释；`--ignored` 显式触发）。
 // ============================================================================
 
-/// T034: login 性能基线——P99 < 200ms，RPS >= 1000，error_rate < 0.1%。
+/// login 性能基线——P99 < 200ms，RPS >= 1000，error_rate < 0.1%。
 ///
 /// `RemoteContext::setup()` 启动服务后，对 `/api/v1/auth/login` 发起
 /// concurrency=100、duration=10s 的负载测试，断言 P99/RPS/error_rate
@@ -1127,7 +1121,7 @@ mod perf_util {
 /// # 场景语义（2026-09-11 重校准）
 /// 负载使用 **100 个轮转账号**（`perf_user_{n%100}`）而非单一账号：
 /// 登录路径的 Account-Session read-modify-write 由 per-login_id 互斥锁
-/// 保护（`SessionStore::with_login_lock`，T015 TOCTOU 修复，**设计如此**），
+/// 保护（`SessionStore::with_login_lock`， TOCTOU 修复，**设计如此**），
 /// 同账号并发登录必然串行化——用单账号压测测出的是锁排队延迟（实测
 /// P99 ~700ms）而非系统登录容量。同账号并发正确性由 concurrency 域
 /// 竞争测试覆盖；本基线度量多用户真实流量下的系统吞吐。
@@ -1183,7 +1177,7 @@ async fn perf_login_p99_under_200ms_1000rps() {
     );
 }
 
-/// T035: check-login 性能基线——P99 < 50ms，RPS >= 5000。
+/// check-login 性能基线——P99 < 50ms，RPS >= 5000。
 ///
 /// 先 login 获取有效 token，再对 `/api/v1/auth/check-login`（internal 端点）
 /// 发起 concurrency=200、duration=10s 的负载测试，断言 P99/RPS 满足基线。
@@ -1246,7 +1240,7 @@ async fn perf_check_login_p99_under_50ms_5000rps() {
     perf_util::assert_perf_baseline("RPS", report.rps, 5000, "ge", "check-login");
 }
 
-/// T036: check-permission 性能基线——P99 < 50ms，RPS >= 5000。
+/// check-permission 性能基线——P99 < 50ms，RPS >= 5000。
 ///
 /// 先 login 获取有效 token，再对 `/api/v1/auth/check-permission`（internal 端点）
 /// body 含 `{"token": ..., "permission": "read"}` 发起 concurrency=200、

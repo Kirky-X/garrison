@@ -1,8 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! axum 域深度验收矩阵（ACC-WAX-NNN，spec acceptance-matrix R-acceptance-matrix-001，
-//! 任务 T027）。
+//! axum 域深度验收矩阵（ACC-WAX-NNN，spec acceptance-matrix R-acceptance-matrix-001）。
 //!
 //! 在 `web_smoke` 的 CheckLogin 冒烟基线（spawn_axum 全链路）之上做深度矩阵：
 //! - 001-002 中间件 token 来源矩阵：Authorization header / Cookie（`garrison_token`）/
@@ -597,8 +596,7 @@ async fn acc_wax_008_macro_check_role_compile_and_run() {
 /// 干净路径放行 200；命中 `BlackPathHook` 黑名单的路径拦截 403，错误 JSON 含
 /// `error=firewall_blocked` / `hook=black_path` / `reason`。
 ///
-/// API 偏差备注：任务书提及的 `web-waf` feature 已于 v0.9.0 废弃（Cargo.toml
-/// 「web-waf 已废弃（与 firewall-waf 功能 100% 重叠）」），统一走 `firewall-waf`；
+/// API 偏差备注：`web-waf` feature 已废弃（与 firewall-waf 功能 100% 重叠），统一走 `firewall-waf`；
 /// 该 feature 包含于 `full`，门控等价满足。
 #[cfg(feature = "firewall-waf")]
 #[tokio::test]
@@ -714,7 +712,7 @@ async fn acc_wax_011_csrf_double_submit_protection() {
         garrison_csrf_middleware, generate_csrf_token, validate_csrf_token, CsrfConfig,
     };
 
-    // （a）token 原语（T011：generate + 常量时间校验）
+    // （a）token 原语（generate + 常量时间校验）
     let tok = generate_csrf_token().expect("generate_csrf_token 应成功");
     assert!(validate_csrf_token(&tok, &tok), "自身校验应通过");
     assert!(
@@ -853,8 +851,7 @@ async fn acc_wax_012_security_headers_on_success_and_error() {
 }
 
 // ============================================================================
-// ACC-WAX-013..014：Ignore 匿名访问 / 无效 token 拒绝（T041 迁移自
-// tests/integration/axum.rs + annotation.rs 的既有边界）
+// ACC-WAX-013..014：Ignore 匿名访问 / 无效 token 拒绝
 // ============================================================================
 
 /// ACC-WAX-013（正常）：`Ignore` 注解与 `Ignore` extractor 均允许匿名访问——
@@ -955,8 +952,8 @@ async fn acc_wax_014_invalid_token_rejected_by_middleware_and_extractor() {
 }
 
 // ============================================================================
-// ACC-WAX-015..021：注解宏 loose/strict 模式与类型化变体（T041 迁移自
-// tests/integration/annotation_macros.rs；001/006-008 已覆盖的合格路径去重）
+// ACC-WAX-015..021：注解宏 loose/strict 模式与类型化变体
+// （001/006-008 已覆盖的合格路径去重）
 // ============================================================================
 
 /// ACC-WAX-015（异常）：`#[check_login]` strict 模式错误转发——`throw_on_not_login

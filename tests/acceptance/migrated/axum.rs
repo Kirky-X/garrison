@@ -7,7 +7,7 @@
 //! middleware 自动从 header/cookie 提取 token + 设置 task_local、
 //! `DefaultGarrisonInterceptor` 根据 annotation 调用 `GarrisonUtil` 的完整链路。
 //!
-//! # production-mock-purge (T024)
+//! # production-mock-purge
 //!
 //! - `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
 //! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化

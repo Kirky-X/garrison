@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 旧集成测试树迁移模块（Phase 4 T041，迁自 `tests/integration/`）。
+//! 旧集成测试树迁移模块。
 //!
 //! 迁移方式：**逐字移植**（内部 `#![cfg(...)]` 属性转挂到本文件各 `mod` 声明，
 //! 测试体与断言语义零改动——迁移规则「可强化不可弱化」，保底总覆盖）。

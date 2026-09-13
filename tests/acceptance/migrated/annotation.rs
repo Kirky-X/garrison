@@ -5,7 +5,7 @@
 //!
 //! 验证 `CheckLogin` / `CheckRole` / `CheckPermission` extractor 在完整 axum 应用中的行为。
 //!
-//! # production-mock-purge (T024)
+//! # production-mock-purge
 //!
 //! - `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
 //! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化

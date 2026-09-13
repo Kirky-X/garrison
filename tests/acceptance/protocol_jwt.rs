@@ -1,15 +1,15 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! protocol-jwt 域验收（spec `acceptance-matrix` R-acceptance-matrix-002，
-//! 任务 T023）。JWT 签发/校验/轮换「正常 + 异常」成对覆盖：
+//! protocol-jwt 域验收（spec `acceptance-matrix` R-acceptance-matrix-002）。
+//! JWT 签发/校验/轮换「正常 + 异常」成对覆盖：
 //! HS256/HS512 roundtrip、mixin 模式（token_style=jwt + JwtMode::Mixin）、
 //! refresh token 轮换链（parent hash 保留）、过期/篡改/算法不匹配/
 //! 重用检测链吊销/错误密钥拒绝。
 //!
 //! ACC-JWT-010..014 吸收 tests/protocol/jwt_integration.rs（全生命周期
 //! login/verify/refresh/logout）与 jwt_edge_cases.rs（alg:none 注入、
-//! 空 claims、iat 时钟偏差、过期 refresh），Phase 4 迁移追溯。
+//! 空 claims、iat 时钟偏差、过期 refresh）。
 //!
 //! 场景编号约定：`ACC-JWT-NNN（正常|异常）`。
 //!
@@ -661,8 +661,8 @@ async fn acc_jwt_014_refresh_expired_token_returns_expired() {
 }
 
 // ============================================================================
-// ACC-JWT-015..019：JWT 三模式矩阵（T041 迁移自 tests/integration/jwt_modes.rs；
-// HS256/HS512 roundtrip、跨算法、Mixin 语义去重至 ACC-JWT-001/002/003/007，
+// ACC-JWT-015..019：JWT 三模式矩阵
+// （HS256/HS512 roundtrip、跨算法、Mixin 语义去重至 ACC-JWT-001/002/003/007，
 // refresh 轮换/无效拒绝去重至 ACC-JWT-010/011）
 // ============================================================================
 
@@ -735,7 +735,7 @@ async fn make_logic_with_jwt_mode(
     config.jwt_secret = "jwt-modes-test-secret-0123456789abcdef".to_string().into();
     config.timeout = 3600;
     config.throw_on_not_login = true;
-    // T017：Stateless JWT 模式必须启用 JWT 撤销黑名单（fail-closed 守卫）。
+    // Stateless JWT 模式必须启用 JWT 撤销黑名单（fail-closed 守卫）。
     if mode == JwtMode::Stateless {
         config.enable_jwt_revocation = true;
     }

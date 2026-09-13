@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! environment 域验收（spec `acceptance-matrix` R-acceptance-matrix-001，任务 T035）。
+//! environment 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
 //!
 //! 真实外部服务门控验收，场景编号 `ACC-ENV-NNN`：
 //! - ACC-ENV-001：`redis_available()` 探测辅助（`GARRISON_TEST_REDIS=1` 强制

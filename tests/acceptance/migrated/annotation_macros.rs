@@ -433,7 +433,7 @@ async fn check_role_and_all_returns_200() {
 
 /// `#[check_access_token]` 宏展开后调用 `GarrisonUtil::check_access_token`，无 token 时返回 401。
 ///
-/// 依据 tasks.md T004。验证宏展开为 wrapper 调用 `check_access_token`，
+/// 。验证宏展开为 wrapper 调用 `check_access_token`，
 /// loose 模式下未登录返回 401（NotLogin → 401）。
 #[tokio::test]
 #[serial]
@@ -463,7 +463,6 @@ async fn check_access_token_with_valid_token_returns_200() {
 
 /// `#[check_client_token]` 宏展开后调用 `GarrisonUtil::check_client_token`，无 token 时返回 401。
 ///
-/// 依据 tasks.md T006。
 #[tokio::test]
 #[serial]
 async fn check_client_token_expands_to_wrapper() {
@@ -491,7 +490,6 @@ async fn check_client_token_with_valid_token_returns_200() {
 
 /// `#[check_temp_token]` 宏展开后调用 `GarrisonUtil::check_temp_token`，无 token 时返回 401。
 ///
-/// 依据 tasks.md T008。
 #[tokio::test]
 #[serial]
 async fn check_temp_token_expands_to_wrapper() {

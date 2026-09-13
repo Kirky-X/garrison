@@ -1,8 +1,8 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! rbac 域验收（spec `acceptance-matrix` R-acceptance-matrix-002，
-//! 任务 T022）。权限 / 角色 / 层级继承 / 组合语义 / web 注解路由 / 策略热替换 /
+//! rbac 域验收（spec `acceptance-matrix` R-acceptance-matrix-002）。
+//! 权限 / 角色 / 层级继承 / 组合语义 / web 注解路由 / 策略热替换 /
 //! 数据源故障，「正常 + 异常」成对覆盖，场景编号 `ACC-RBAC-NNN`。
 //!
 //! 经 `GarrisonTestHarness` 全局单例的用例（001-004、007-009）标注 `#[serial]`；
@@ -573,8 +573,8 @@ async fn acc_rbac_009_interface_error_fails_loud_and_recovers() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RBAC-010..018：策略注册表域（T041 迁移自 tests/integration/strategy_registry.rs；
-// ACC-RBAC-008 已覆盖的 register/remove 生命周期与 runtime 热替换去重）
+// ACC-RBAC-010..018：策略注册表域
+// （ACC-RBAC-008 已覆盖的 register/remove 生命周期与 runtime 热替换去重）
 // ------------------------------------------------------------------------
 
 /// 构造测试用 `Arc<GarrisonLogicDefault>`（直构，不经全局单例；与
