@@ -75,7 +75,7 @@ full = [
     "tenant-isolation", "audit-log", "core-advanced", "keycloak-oidc",
     "social-wechat", "social-alipay",
     "abac", "backend-embedded", "backend-remote", "auth-server",
-    "firewall-bruteforce", "firewall-ratelimit", "firewall-ddos",
+    "firewall", "firewall-bruteforce", "firewall-ratelimit", "firewall-ddos",
     "firewall-anomalous", "firewall-geoip", "firewall-waf",
     "oauth2-server", "web-cors", "web-csrf",
     "credit-metering", "sms-rate-limit", "three-tier-cache",
@@ -83,6 +83,7 @@ full = [
 ]
 
 # 单特性转发到 garrison（保持与 garrison feature 名一致）
+firewall = ["garrison/firewall"]
 i18n = ["garrison/i18n"]
 secure-sign = ["garrison/secure-sign"]
 account-credential = ["garrison/account-credential"]
@@ -141,7 +142,7 @@ oauth2-server = ["garrison/oauth2-server"]
 web-cors = ["garrison/web-cors"]
 web-csrf = ["garrison/web-csrf"]
 
-# v0.9.0 补充特性转发（缺失的用户可接触功能）
+# 补充特性转发（用户可接触的完整功能面）
 secure-ct-eq = ["garrison/secure-ct-eq"]
 firewall-anomalous = ["garrison/firewall-anomalous"]
 firewall-geoip = ["garrison/firewall-geoip"]
@@ -250,6 +251,11 @@ path = "src/bin/basic_login.rs"
 name = "axum_integration"
 required-features = ["cache-memory", "web-axum"]
 path = "src/bin/axum_integration.rs"
+
+[[bin]]
+name = "readme_quickstart"
+required-features = ["cache-memory"]
+path = "src/bin/readme_quickstart.rs"
 
 [[bin]]
 name = "oidc_handler"
@@ -425,7 +431,7 @@ required-features = ["cache-memory", "db-sqlite"]
 path = "src/bin/health_check.rs"
 
 # ====================================================================
-# v0.9.0 补充示例（缺失的用户可接触功能）
+# 补充示例（用户可接触的完整功能面）
 # ====================================================================
 
 [[bin]]

@@ -180,7 +180,7 @@ pub async fn serve() -> GarrisonResult<()> {
     // tenant-isolation feature 启用时注入 HeaderTenantResolver，使
     // tenant_resolution_middleware 解析 X-Tenant-Id header 进入 TENANT scope。
     // 与 tests/e2e/mod.rs::start_e2e_server 行为保持一致，确保 spawn_child 模式
-    // 下跨租户隔离生效（T030 测试依赖此行为）。
+    // 下跨租户隔离生效（测试依赖此行为）。
     #[cfg(feature = "tenant-isolation")]
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)

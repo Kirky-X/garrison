@@ -36,13 +36,14 @@ pub fn run() -> GarrisonResult<()> {
     let now: i64 = 1700000000;
 
     // 4. 生成当前验证码（用户从 Authenticator App 看到的数字）
-    let code = handler.generate(now);
+    //    v0.9.0: generate 校验 now 合法性，返回 GarrisonResult<String>
+    let code = handler.generate(now)?;
     println!("[生成] 当前时间的 TOTP 验证码：{}", code);
     assert_eq!(code.len(), 6, "6 位验证码");
 
     // 5. 校验用户输入的验证码
     println!("[校验] 用户输入验证码 {} ...", code);
-    if handler.validate(&code, now) {
+    if handler.validate(&code, now)? {
         println!("       校验通过，2FA 完成");
     } else {
         println!("       校验失败");
@@ -50,18 +51,18 @@ pub fn run() -> GarrisonResult<()> {
 
     // 6. 演示时间窗口偏差容忍（±1 个 30 秒窗口）
     let prev_window = now - 30;
-    if handler.validate(&code, prev_window) {
+    if handler.validate(&code, prev_window)? {
         println!("[偏差] 前一窗口的验证码仍校验通过（±1 窗口容忍）");
     }
 
     let future_window = now + 30;
-    if handler.validate(&code, future_window) {
+    if handler.validate(&code, future_window)? {
         println!("[偏差] 后一窗口的验证码仍校验通过（±1 窗口容忍）");
     }
 
     // 7. 演示错误验证码被拒
     let wrong_code = "000000";
-    if !handler.validate(wrong_code, now) {
+    if !handler.validate(wrong_code, now)? {
         println!("[异常] 错误验证码 {} 被拒绝（预期）", wrong_code);
     }
 
@@ -74,7 +75,7 @@ pub fn run() -> GarrisonResult<()> {
         Ok(bytes) => {
             println!("[解码] Base32 密钥解码成功，{} 字节", bytes.len());
             let handler2 = TotpHandler::new(bytes, 30, 6).expect("TOTP 初始化失败");
-            let code2 = handler2.generate(now);
+            let code2 = handler2.generate(now)?;
             println!("       解码密钥生成的验证码：{}", code2);
         },
         Err(e) => println!("[解码] Base32 解码失败：{}", e),

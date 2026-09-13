@@ -106,6 +106,7 @@ async fn setup_audit_listener(
 /// 构造 GarrisonLogicDefault：注入 PermissionChecker + ListenerManager。
 fn construct_logic(
     session: Arc<GarrisonSession>,
+    dao: Arc<dyn GarrisonDao>,
     interface: Arc<dyn GarrisonInterface>,
     pc: Arc<dyn PermissionChecker>,
     lm: Arc<GarrisonListenerManager>,
@@ -269,12 +270,12 @@ fn demo_wechat_config() -> DemoResult<()> {
 pub async fn run() -> DemoResult<()> {
     println!("=== Garrison v0.5.0 生产能力综合演示 ===\n");
 
-    let (pool, _dao, session) = init_infrastructure().await?;
+    let (pool, dao, session) = init_infrastructure().await?;
     let (lm, audit_listener) = setup_audit_listener(pool).await?;
 
     let interface: Arc<dyn GarrisonInterface> = Arc::new(DemoInterface);
     let pc: Arc<dyn PermissionChecker> = Arc::new(PermissionCheckerDefault::new(interface.clone()));
-    let logic = construct_logic(session, interface, pc.clone(), lm);
+    let logic = construct_logic(session, dao.clone(), interface, pc.clone(), lm);
 
     demo_tenant_isolation(logic, pc).await?;
     query_audit_logs(audit_listener).await?;

@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! readme_quickstart 示例测试（T018：README 快速开始回归钉）。
+//! readme_quickstart 示例测试（README 快速开始回归钉）。
 //!
 //! 验证 README.md「最小示例」代码完整可运行：
 //! 登录 → 校验登录状态 → 校验权限 → 登出。

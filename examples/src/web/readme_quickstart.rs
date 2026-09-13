@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky.X. All rights reserved.
 //! See LICENSE for full license text.
 
-//! README 快速开始回归示例（T018）。
+//! README 快速开始回归示例。
 //!
 //! 本文件的 `readme_flow()` 与 README.md「最小示例」代码**逐字对应**，
 //! 由 [`crate::tests 旁的 examples/tests/readme_quickstart.rs`] 随 CI 运行，
