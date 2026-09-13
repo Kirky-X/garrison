@@ -36,7 +36,9 @@ pub async fn run() -> GarrisonResult<()> {
     // insert 校验 weight > 0，非法值返回 Err（示例中固定合法值，expect 即安全）
     schedule.insert("login", 1).expect("insert login schedule"); // 1 次登录 = 1 credit
     schedule.insert("sms", 5).expect("insert sms schedule"); // 1 条短信 = 5 credits
-    schedule.insert("api_call", 2).expect("insert api_call schedule"); // 1 次 API 调用 = 2 credits
+    schedule
+        .insert("api_call", 2)
+        .expect("insert api_call schedule"); // 1 次 API 调用 = 2 credits
 
     let config = CreditConfig {
         credit_limit: 100,                        // 每租户 100 credits/月

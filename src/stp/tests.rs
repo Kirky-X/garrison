@@ -4295,7 +4295,6 @@ async fn login_rolls_back_session_when_enforce_fails() {
     /// 测试用 DAO 包装器：在第 N 次 account:session: get 调用时注入失败。
     struct FailInjectionDao {
         inner: Arc<MockDao>,
-        fail_on_nth: AtomicU32,
         call_count: AtomicU32,
     }
 
@@ -4346,7 +4345,6 @@ async fn login_rolls_back_session_when_enforce_fails() {
     {
         let d = FailInjectionDao {
             inner: mock_dao.clone(),
-            fail_on_nth: AtomicU32::new(999),
             call_count: AtomicU32::new(0),
         };
         let _ = d.set_if_absent("a", "v", 60).await;
@@ -4374,7 +4372,6 @@ async fn login_rolls_back_session_when_enforce_fails() {
     }
     let fail_dao = Arc::new(FailInjectionDao {
         inner: mock_dao.clone(),
-        fail_on_nth: AtomicU32::new(u32::MAX), // 行为锚定注入，不再按序号
         call_count: AtomicU32::new(0),
     });
     let session = Arc::new(GarrisonSession::new(
