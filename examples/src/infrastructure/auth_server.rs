@@ -131,6 +131,9 @@ pub async fn run() -> GarrisonResult<()> {
 /// - `GARRISON_INTERNAL_PORT`（默认 8081）：内网端口（check-*/get-*/kickout）
 /// - `EXAMPLE_INTERNAL_API_KEY`（必填）：内网 API Key，缺失时 fail-closed 退出码 1
 /// - `GARRISON_RATE_LIMIT`（默认 100）：每 IP 限速阈值（req/s）
+/// - `GARRISON_EXTERNAL_LOGIN_ENABLED`（默认 true）：是否启用外网登录端点。
+///   示例默认开启以便演示/e2e 完整链路；框架 login 不校验凭证，
+///   生产部署应保持默认关闭（`AuthServerConfig` 默认 false）或先注入凭证校验
 ///
 /// 调用 `setup_garrison_manager()` 初始化全局单例后，构造 `GarrisonAuthServer`
 /// 并 `server.listen().await` 阻塞监听双端口。
@@ -163,6 +166,12 @@ pub async fn serve() -> GarrisonResult<()> {
         );
         std::process::exit(1);
     });
+    // C-1: 示例进程默认开启外网 login（演示/e2e 完整链路）；
+    // 库级默认为 false（secure-by-default），生产部署勿依赖此默认开启
+    let external_login_enabled = std::env::var("GARRISON_EXTERNAL_LOGIN_ENABLED")
+        .ok()
+        .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
+        .unwrap_or(true);
 
     // 2. 初始化 GarrisonManager 全局单例
     let backend: Arc<dyn AuthBackend> = Arc::new(setup_garrison_manager().await?);
@@ -177,6 +186,7 @@ pub async fn serve() -> GarrisonResult<()> {
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)
+        .with_external_login_enabled(external_login_enabled)
         .with_internal_api_key(&internal_api_key)
         .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
     #[cfg(not(feature = "tenant-isolation"))]
@@ -184,6 +194,7 @@ pub async fn serve() -> GarrisonResult<()> {
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)
+        .with_external_login_enabled(external_login_enabled)
         .with_internal_api_key(&internal_api_key);
 
     eprintln!(

@@ -416,15 +416,18 @@ impl SessionLogic for GarrisonLogicDefault {
                 #[cfg(feature = "protocol-jwt")]
                 self.blacklist_jwt_jti(&token).await;
                 self.session.logout(&token).await?;
+                // T008: 登出后立即失效请求内登录身份缓存（同请求内 get_login_id 回退 DAO）
+                crate::stp::context::invalidate_login_identity_by_token(&token);
                 // auto-wire: 触发 plugin on_logout + listener Logout 事件
                 if let (Some(pm), Some(id)) = (&self.plugin_manager, login_id.as_ref()) {
                     pm.on_logout(id, &token);
                 }
                 #[cfg(feature = "listener")]
                 if let (Some(lm), Some(id)) = (&self.listener_manager, login_id.as_ref()) {
+                    // CWE-532: 事件载荷统一携掩码 token
                     lm.broadcast(&GarrisonEvent::Logout {
                         login_id: id.clone(),
-                        token: token.clone(),
+                        token: crate::listener::mask_token_for_event(&token),
                         request_context: None,
                     })
                     .await;
@@ -444,6 +447,8 @@ impl SessionLogic for GarrisonLogicDefault {
 
     async fn logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()> {
         self.session.logout_by_login_id(login_id).await?;
+        // T008: 按主体失效请求内登录身份缓存
+        crate::stp::context::invalidate_login_identity_by_login_id(login_id);
         // three-tier-cache: 失效用户三层缓存（权限/角色/用户）
         #[cfg(feature = "three-tier-cache")]
         if let Some(ucs) = &self.user_cache_service {
@@ -465,6 +470,8 @@ impl SessionLogic for GarrisonLogicDefault {
         }
         // kickout 语义等同 logout_by_login_id
         self.session.logout_by_login_id(login_id).await?;
+        // T008: 按主体失效请求内登录身份缓存
+        crate::stp::context::invalidate_login_identity_by_login_id(login_id);
         // auto-wire: 触发 listener Kickout 事件（plugin 无 kickout 钩子）
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
@@ -484,12 +491,19 @@ impl SessionLogic for GarrisonLogicDefault {
         #[cfg(feature = "protocol-jwt")]
         self.blacklist_jwt_jti(token).await;
         // kickout_by_token 语义等同 logout(token)
-        self.session.logout(token).await
+        let result = self.session.logout(token).await;
+        if result.is_ok() {
+            // T008: 登出后立即失效请求内登录身份缓存
+            crate::stp::context::invalidate_login_identity_by_token(token);
+        }
+        result
     }
 
     async fn revoke_token(&self, token: &str) -> GarrisonResult<()> {
         // 销毁 Token-Session（幂等：token 不存在也返回 Ok）
         self.session.logout(token).await?;
+        // T008: 吊销后立即失效请求内登录身份缓存
+        crate::stp::context::invalidate_login_identity_by_token(token);
         // 广播 RevokeToken 事件
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
@@ -573,6 +587,11 @@ impl SessionLogic for GarrisonLogicDefault {
             },
         };
 
+        // T008: 登录身份缓存——check_login 校验成功后写入 (token, login_id)，
+        // 同请求内 handler 的 get_login_id/check_permission 命中缓存免 DAO 读取。
+        // 缓存作用域 `with_login_id_scope` 由 Web middleware 在请求开始时创建
+        // （覆盖整个请求处理期）；未在作用域内调用（直连 API/测试）时写入为
+        // no-op，get_login_id 回退 DAO 读取，语义不变。
         let result = match self.jwt_mode {
             JwtMode::Stateless => self.check_login_stateless(&token).await,
             JwtMode::Mixin => self.check_login_mixin(&token).await,
@@ -580,11 +599,9 @@ impl SessionLogic for GarrisonLogicDefault {
         };
         // T006: 异常检测（仅 valid 时，检测失败不中断主流程）
         #[cfg(feature = "security-extra")]
-        if let Ok(true) = &result {
-            if let Ok(Some(ts)) = self.session.get_token_session(&token).await {
-                self.run_anomaly_check_on_check_login(&ts.login_id, &token)
-                    .await;
-            }
+        if let Ok((true, Some(ref login_id))) = result {
+            self.run_anomaly_check_on_check_login(login_id, &token)
+                .await;
         }
 
         // CRIT-010: 认证失败计数（仅 Ok(false) 计入撞库尝试），成功路径清零。
@@ -595,7 +612,7 @@ impl SessionLogic for GarrisonLogicDefault {
             let strategy = BruteForceStrategy::new(BruteForceConfig::default(), self.dao().clone());
             let fw_ctx = FirewallContext::new(&ip);
             match &result {
-                Ok(true) => {
+                Ok((true, _)) => {
                     let count_key =
                         format!("{}{}:count", crate::constants::DaoKeyPrefix::BruteForce, ip);
                     if let Err(e) = self.dao().delete(&count_key).await {
@@ -606,7 +623,7 @@ impl SessionLogic for GarrisonLogicDefault {
                         );
                     }
                 },
-                Ok(false) => {
+                Ok((false, _)) => {
                     if let Err(record_err) = strategy.record_failure(&fw_ctx).await {
                         tracing::warn!(
                             ip = %ip,
@@ -620,14 +637,26 @@ impl SessionLogic for GarrisonLogicDefault {
                 },
             }
         }
-        result
+        // T008: 校验通过 → 缓存登录身份（get_login_id 按 token 匹配复用，登出即失效）
+        if let Ok((true, Some(ref login_id))) = result {
+            crate::stp::context::cache_login_identity(&token, login_id);
+        }
+        result.map(|(valid, _)| valid)
     }
 
     async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
         match current_token() {
-            Ok(token) => match self.session.get_token_session(&token).await? {
-                Some(ts) => Ok(Some(ts.login_id)),
-                None => Ok(None),
+            Ok(token) => {
+                // T008: 请求内缓存命中（check_login 已校验该 token）直接复用，
+                // 免一次 TokenSession DAO 读取；token 不匹配或未在缓存作用域内
+                // 回退 DAO 读取（语义不变）。
+                if let Some(login_id) = crate::stp::context::cached_login_id_for(&token) {
+                    return Ok(Some(login_id));
+                }
+                match self.session.get_token_session(&token).await? {
+                    Some(ts) => Ok(Some(ts.login_id)),
+                    None => Ok(None),
+                }
             },
             Err(_) => Ok(None),
         }

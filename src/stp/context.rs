@@ -141,6 +141,84 @@ pub fn current_token() -> GarrisonResult<String> {
 }
 
 // ============================================================================
+// CURRENT_LOGIN_ID task_local 上下文 API（T008 请求内登录身份复用）
+// ============================================================================
+//
+// 请求级登录身份缓存：`with_login_id_scope` 由 Web middleware 在请求开始时
+// 创建（与 `with_current_token` 同层），`check_login` 校验通过后经
+// [`cache_login_identity`] 写入 `(token, login_id)`，`get_login_id` /
+// `check_permission` 在 token 匹配时直接复用，消除同一请求内对 TokenSession
+// 的第二次读取。`logout` / `kickout` / `revoke_token` 成功后按 token（或
+// login_id）失效，保证登出后同请求内立即回退 DAO 读取路径。
+
+tokio::task_local! {
+    /// 请求级登录身份缓存（`(token, login_id)`）。
+    static CURRENT_LOGIN_ID: std::sync::Arc<std::sync::Mutex<Option<(String, String)>>>;
+}
+
+/// 在 `CURRENT_LOGIN_ID` 缓存作用域内执行 `f`（初始值为 `None`）。
+///
+/// Web 框架 middleware 在请求开始时调用（与 [`with_current_token`] 同层）：
+/// ```ignore
+/// with_login_id_scope(async { with_current_token(t, handler(req)).await }).await
+/// ```
+pub async fn with_login_id_scope<R>(f: impl Future<Output = R>) -> R {
+    CURRENT_LOGIN_ID.scope(Arc::new(Mutex::new(None)), f).await
+}
+
+/// 缓存校验通过的登录身份（crate 内部 API）。
+///
+/// 供 `check_login` 在校验成功后调用。未在 [`with_login_id_scope`] 作用域内
+/// 时为 no-op（不影响 check_login 返回值）。
+pub(crate) fn cache_login_identity(token: &str, login_id: &str) {
+    if let Ok(arc) = CURRENT_LOGIN_ID.try_get() {
+        *arc.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some((token.to_string(), login_id.to_string()));
+    }
+}
+
+/// 读取与 `token` 匹配的缓存登录身份。
+///
+/// token 不匹配（请求内换绑 token，如 login/refresh 写入新值）时返回 `None`，
+/// 调用方应回退 DAO 读取。未在作用域内时返回 `None`。
+pub(crate) fn cached_login_id_for(token: &str) -> Option<String> {
+    let arc = CURRENT_LOGIN_ID.try_get().ok()?;
+    let guard = arc.lock().unwrap_or_else(|p| p.into_inner());
+    let (cached_token, login_id) = guard.as_ref()?;
+    (cached_token == token).then(|| login_id.clone())
+}
+
+/// 按 token 失效缓存（crate 内部 API）。
+///
+/// 供 `logout` / `kickout_by_token` / `revoke_token` 成功后调用，保证登出后
+/// 同请求内 `get_login_id` 立即回退 DAO 读取（返回未登录）。
+pub(crate) fn invalidate_login_identity_by_token(token: &str) {
+    if let Ok(arc) = CURRENT_LOGIN_ID.try_get() {
+        let mut guard = arc.lock().unwrap_or_else(|p| p.into_inner());
+        if guard.as_ref().map(|(t, _)| t == token).unwrap_or(false) {
+            *guard = None;
+        }
+    }
+}
+
+/// 按 login_id 失效缓存（crate 内部 API）。
+///
+/// 供 `kickout(login_id)` / `logout_by_login_id` 成功后调用（被踢主体可能
+/// 持有多个 token，按 login_id 匹配清除）。
+pub(crate) fn invalidate_login_identity_by_login_id(login_id: &str) {
+    if let Ok(arc) = CURRENT_LOGIN_ID.try_get() {
+        let mut guard = arc.lock().unwrap_or_else(|p| p.into_inner());
+        if guard
+            .as_ref()
+            .map(|(_, id)| id == login_id)
+            .unwrap_or(false)
+        {
+            *guard = None;
+        }
+    }
+}
+
+// ============================================================================
 // CURRENT_IP task_local 上下文 API（IP 级失败限速，CWE-307）
 // ============================================================================
 

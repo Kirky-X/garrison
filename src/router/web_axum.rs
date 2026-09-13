@@ -16,7 +16,7 @@ use crate::context::tenant::TenantResolver;
 use crate::context::GarrisonRequest;
 use crate::error::GarrisonError;
 use crate::stp::context::{clear_renewed_token, get_renewed_token, with_renewed_token_scope};
-use crate::stp::with_current_token;
+use crate::stp::{with_current_token, with_login_id_scope};
 use axum::body::Body;
 use axum::extract::State;
 use axum::handler::Handler;
@@ -286,7 +286,9 @@ async fn garrison_middleware(
 
     with_renewed_token_scope(async {
         let result = match token {
-            Some(t) => with_current_token(t, handle).await,
+            // T008: 登录身份缓存作用域——覆盖 middleware 鉴权 + handler 整个处理期，
+            // check_login 写入 (token, login_id) 后，handler 内 get_login_id 免 DAO 读取
+            Some(t) => with_login_id_scope(with_current_token(t, handle)).await,
             None => handle.await,
         };
 

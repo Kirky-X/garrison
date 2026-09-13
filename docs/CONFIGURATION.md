@@ -323,6 +323,19 @@ GARRISON_REDIS_URL=redis://127.0.0.1:6379/0
 
 ---
 
+## 六点五、auth_server 二进制环境变量（src/bin/auth_server.rs）
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `GARRISON_EXTERNAL_PORT` / `GARRISON_INTERNAL_PORT` | 8080 / 8081 | 外网 / 内网监听端口 |
+| `GARRISON_RATE_LIMIT` | 100 | 外网每 IP 限速（必须 > 0，0 拒绝启动） |
+| `GARRISON_INTERNAL_API_KEY` | 无（必填） | 内网 API Key，缺失或为空时 fail-closed 拒绝启动 |
+| `GARRISON_EXTERNAL_LOGIN_ENABLED` | **false** | **是否启用外网登录端点**。框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），默认对 `POST /api/v1/auth/login` 返回 404（secure-by-default）。业务方注入凭证校验后才设为 `true`；开启时启动输出 warn 提醒 |
+
+对应库级配置：`AuthServerConfig::external_login_enabled`（`with_external_login_enabled(bool)`）。
+
+---
+
 ## 七、参考
 
 - 架构设计：[architecture.md](./ARCHITECTURE.md)

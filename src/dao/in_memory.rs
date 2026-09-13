@@ -3,9 +3,10 @@
 
 //! DAO 进程内实现（HashMap + Instant 模拟 TTL）。
 //!
-//! 提供 `InMemoryDao`（完整实现 `GarrisonDao` 的内存后端，含 CAS/set_if_absent/
-//! incr/lua 模拟），生产代码亦可用作单实例部署后端（如 PasswordRateLimiter /
-//! GarrisonFirewallCheckHookDefault 的内存模式）；
+//! 提供 `InMemoryDao`（完整实现 `GarrisonDao` 的**进程内**内存后端，含 CAS/
+//! set_if_absent/incr/lua 模拟）。定位：测试用 mock + 单实例部署的内存模式
+//! （如 PasswordRateLimiter / GarrisonFirewallCheckHookDefault 的内存后端）。
+//! **不跨实例共享**——多节点部署必须使用共享存储后端（Redis / 数据库）。
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -18,7 +19,7 @@ use std::time::{Duration, Instant};
 // Mock 实现：基于 HashMap + Instant 模拟 TTL，严格按 spec 语义
 // ------------------------------------------------------------------------
 
-/// 测试用 mock DAO，用于验证 trait 契约本身（与具体后端无关）。
+/// 进程内内存 DAO（HashMap 后端，用于验证 trait 契约与单实例内存模式）。
 ///
 /// 语义：
 /// - `set(ttl=0)`: 永久驻留（expire_at = None）

@@ -25,6 +25,7 @@
 
 use super::{Credential, CredentialModel, CredentialType};
 use crate::error::{GarrisonError, GarrisonResult};
+use std::sync::Arc;
 
 // argon2::password_hash::PasswordHasher / PasswordVerifier 与本模块自定义 PasswordHasher 同名，
 // 通过 `as _` 导入 trait 方法可用，但不引入名字，避免冲突。
@@ -270,15 +271,15 @@ impl PasswordVerifier {
 
 /// 密码凭证（实现 [`Credential`] trait，委托 [`PasswordHasher`] 校验）。
 ///
-/// 持有 `CredentialModel`（存储模型）+ `Box<dyn PasswordHasher>`（哈希器），
-/// `verify()` 委托 `PasswordHasher::verify(input, &model.secret_data)`。
+/// 持有 `CredentialModel`（存储模型）+ `Arc<dyn PasswordHasher>`（哈希器），
+/// `verify()` 委托 `PasswordHasher::verify(input, &model.secret_data)`（spawn_blocking 执行）。
 ///
 /// # 示例
 ///
 /// ```ignore
 /// use garrison::account::credential::password::{Argon2Hasher, PasswordCredential, PasswordHasher};
 /// use garrison::account::credential::CredentialModel;
-/// use std::boxed::Box;
+/// use std::sync::Arc;
 ///
 /// let hasher = Argon2Hasher::default();
 /// let hash = hasher.hash("secret")?;
@@ -292,21 +293,24 @@ impl PasswordVerifier {
 ///     enabled: true,
 ///     priority: 0,
 /// };
-/// let cred = PasswordCredential::new(model, Box::new(hasher));
+/// let cred = PasswordCredential::new(model, Arc::new(hasher));
 /// assert!(cred.verify("secret").await?);
 /// ```
 pub struct PasswordCredential {
     /// 凭证存储模型。
     model: CredentialModel,
     /// 密码哈希器（Argon2 / Bcrypt / 自定义）。
-    hasher: Box<dyn PasswordHasher>,
+    ///
+    /// v0.9.0 起为 `Arc`（原 `Box`）：`verify()` 需将哈希器移入
+    /// `spawn_blocking` 闭包把慢哈希移出 async worker（P2 修复），要求可克隆共享。
+    hasher: Arc<dyn PasswordHasher>,
 }
 
 /// 启用 `account-credential-zeroize` feature 时，drop 时清零 `model` 的敏感字段
 /// （`secret_data` 含密码哈希）。
 ///
 /// `hasher` 不含敏感数据（仅算法标识与参数），无需 zeroize。
-/// 因 `Box<dyn PasswordHasher>` 未实现 `Zeroize`，无法派生 `ZeroizeOnDrop`，
+/// 因 `dyn PasswordHasher` 未实现 `Zeroize`，无法派生 `ZeroizeOnDrop`，
 /// 改为手动实现 `Drop` 调用 `model.zeroize()`。
 #[cfg(feature = "credential-zeroize")]
 impl Drop for PasswordCredential {
@@ -321,8 +325,9 @@ impl PasswordCredential {
     ///
     /// # 参数
     /// - `model`: 凭证存储模型（`secret_data` 字段应包含已哈希的密码）
-    /// - `hasher`: 密码哈希器（用于 `verify` 时校验）
-    pub fn new(model: CredentialModel, hasher: Box<dyn PasswordHasher>) -> Self {
+    /// - `hasher`: 密码哈希器（用于 `verify` 时校验）。
+    ///   v0.9.0 起接受 `Arc`（原 `Box`），以支持 `verify` 内部的 `spawn_blocking`。
+    pub fn new(model: CredentialModel, hasher: Arc<dyn PasswordHasher>) -> Self {
         Self { model, hasher }
     }
 }
@@ -338,7 +343,14 @@ impl Credential for PasswordCredential {
     }
 
     async fn verify(&self, input: &str) -> GarrisonResult<bool> {
-        self.hasher.verify(input, &self.model.secret_data)
+        // P2: 慢哈希（bcrypt cost=12 约 100-300ms / Argon2id 19MiB 约 15-50ms）
+        // 为纯 CPU 工作，包 spawn_blocking 避免阻塞 tokio async worker 线程。
+        let hasher = Arc::clone(&self.hasher);
+        let secret_data = self.model.secret_data.clone();
+        let input = input.to_string();
+        tokio::task::spawn_blocking(move || hasher.verify(&input, &secret_data))
+            .await
+            .map_err(|e| GarrisonError::Internal(format!("credential-verify-blocking::{}", e)))?
     }
 }
 
@@ -668,7 +680,7 @@ mod tests {
             enabled: true,
             priority: 0,
         };
-        let cred = PasswordCredential::new(model, Box::new(hasher));
+        let cred = PasswordCredential::new(model, Arc::new(hasher));
         (cred, password.to_string())
     }
 
@@ -727,7 +739,7 @@ mod tests {
             enabled: true,
             priority: 0,
         };
-        let cred = PasswordCredential::new(model, Box::new(hasher));
+        let cred = PasswordCredential::new(model, Arc::new(hasher));
 
         // 正确密码
         assert!(

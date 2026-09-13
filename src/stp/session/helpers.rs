@@ -285,9 +285,10 @@ impl GarrisonLogicDefault {
         }
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
+            // CWE-532: 事件载荷统一携掩码 token，listener 打日志不泄露活动会话 token
             lm.broadcast(&GarrisonEvent::Login {
                 login_id: login_id.to_string(),
-                token: token.to_string(),
+                token: crate::listener::mask_token_for_event(token),
                 device: params.device.clone(),
                 request_context: None,
             })
@@ -377,16 +378,17 @@ impl GarrisonLogicDefault {
             return Ok(());
         }
 
-        let tokens = self.session.get_tokens_by_login_id(login_id);
-        if tokens.len() <= max as usize {
-            return Ok(());
-        }
-
-        // 从 AccountSession 获取每个 token 的 last_active_at（单次 DAO 查询）
+        // T009: 闸门改读 DAO AccountSession——本地 login_token_map 是进程内索引，
+        // 多节点共享存储部署时各节点本地计数互不可见（节点 A 登满 max 个后，
+        // 节点 B 本地 map 为空直接放行），max_login_count 形同虚设。
+        // AccountSession.tokens 为权威数据源；登录路径非热路径，1 次 DAO get 可承受。
         let account = match self.session.get_account_session(login_id).await? {
             Some(a) => a,
             None => return Ok(()),
         };
+        if account.tokens.len() <= max as usize {
+            return Ok(());
+        }
 
         // 按 last_active_at 升序排序（最旧排前面）
         let mut token_times: Vec<(String, i64)> = account
@@ -420,9 +422,10 @@ impl GarrisonLogicDefault {
             if let Some(lm) = &self.listener_manager {
                 match self.config.overflow_logout_mode {
                     OverflowLogoutMode::Logout => {
+                        // CWE-532: 事件载荷统一携掩码 token
                         lm.broadcast(&GarrisonEvent::Logout {
                             login_id: login_id.to_string(),
-                            token: token.clone(),
+                            token: crate::listener::mask_token_for_event(token),
                             request_context: None,
                         })
                         .await;
@@ -430,7 +433,7 @@ impl GarrisonLogicDefault {
                     OverflowLogoutMode::Kickout => {
                         lm.broadcast(&GarrisonEvent::Kickout {
                             login_id: login_id.to_string(),
-                            token: token.clone(),
+                            token: crate::listener::mask_token_for_event(token),
                             reason: loc!("session-overflow-kickout", ""),
                             request_context: None,
                         })
@@ -439,7 +442,7 @@ impl GarrisonLogicDefault {
                     OverflowLogoutMode::Replaced => {
                         lm.broadcast(&GarrisonEvent::Replaced {
                             login_id: login_id.to_string(),
-                            token: token.clone(),
+                            token: crate::listener::mask_token_for_event(token),
                             reason: loc!("session-overflow-replaced", ""),
                             request_context: None,
                         })
@@ -512,7 +515,10 @@ impl GarrisonLogicDefault {
     /// 要求启用 `protocol-jwt` feature 且 `token_style=jwt`，否则返回 `Config` 错误。
     /// JWT verify 失败时透传 `InvalidToken`/`ExpiredToken`（不查询 session）。
     /// H-14: `enable_jwt_revocation=true` 时，verify 成功后检查 jti 黑名单。
-    pub(super) async fn check_login_stateless(&self, token: &str) -> GarrisonResult<bool> {
+    pub(super) async fn check_login_stateless(
+        &self,
+        token: &str,
+    ) -> GarrisonResult<(bool, Option<String>)> {
         #[cfg(feature = "protocol-jwt")]
         {
             // R-sessiontokenconsistency / T017：stateless JWT 但未启用撤销 = 不可吊销的永久凭证（高危）。
@@ -546,7 +552,8 @@ impl GarrisonLogicDefault {
                     }
                 }
             }
-            Ok(true)
+            // T008: stateless 无 session，login_id 直接取自 claims（零额外读取）
+            Ok((true, Some(claims.login_id)))
         }
         #[cfg(not(feature = "protocol-jwt"))]
         {
@@ -562,7 +569,10 @@ impl GarrisonLogicDefault {
     /// 启用 `protocol-jwt` feature 且 `token_style=jwt` 时先 JWT verify 再查 session
     /// （JWT verify 失败直接返回错误，不查询 session）。否则仅查 session
     /// （无 protocol-jwt feature 或 token_style != jwt 时）。
-    pub(super) async fn check_login_mixin(&self, token: &str) -> GarrisonResult<bool> {
+    pub(super) async fn check_login_mixin(
+        &self,
+        token: &str,
+    ) -> GarrisonResult<(bool, Option<String>)> {
         #[cfg(feature = "protocol-jwt")]
         {
             if self.config.token_style == "jwt" {
@@ -572,7 +582,11 @@ impl GarrisonLogicDefault {
                 handler.verify(token)?;
             }
         }
-        let valid = self.session.is_valid(token).await?;
+        // T008: is_valid_with_session 返回 Token-Session 快照——hover 检查与
+        // 登录身份缓存复用同一快照，消除同一请求内的重复 DAO 读取
+        let ts_opt = self.session.is_valid_with_session(token).await?;
+        let valid = ts_opt.is_some();
+        let login_id = ts_opt.as_ref().map(|ts| ts.login_id.clone());
         if !valid {
             // token 无效时广播 SessionTimeout 事件
             // 若 token session 仍存在（account session 过期），可获取 login_id 并广播；
@@ -594,32 +608,36 @@ impl GarrisonLogicDefault {
         }
         // 悬停检查（仅 valid 时）
         if valid {
-            let hover_ok = self.check_and_update_hover(token).await?;
+            let hover_ok = self.check_and_update_hover(token, ts_opt).await?;
             if !hover_ok {
-                return Ok(false);
+                return Ok((false, None));
             }
             // Token 自动续签（若启用且剩余 TTL 低于阈值）
             if let Err(e) = self.check_and_renew(token).await {
                 tracing::warn!(error = %e, "Token auto-renewal failed, old Token still in use");
             }
-            return Ok(true);
+            return Ok((true, login_id));
         }
-        Ok(valid)
+        Ok((false, None))
     }
 
     /// 检查悬停超时并更新最后活跃时间。
     ///
-    /// 仅在会话有效时调用。获取 token session 后检查悬停超时：
+    /// 仅在会话有效时调用。Token-Session 快照由调用方传入（T008 请求内复用，
+    /// 不再重复读取）：
     /// - 悬停未超时：更新 `last_active`，返回 `Ok(true)`。
     /// - 悬停超时：执行 `logout` 并广播 `SessionTimeout` 事件。
     ///   - `throw_on_not_login=true`：返回 `Err(Session)`。
     ///   - `throw_on_not_login=false`：返回 `Ok(false)`。
-    /// - 无 token session（`get_token_session` 返回 `None` 或 `Err`）：返回 `Ok(true)`
-    ///   （无法检查悬停，视为有效，与原逻辑一致）。
+    /// - 快照为 `None`（无法检查悬停）：返回 `Ok(true)`（视为有效，与原逻辑一致）。
     ///
     /// logout 失败时记录 `warn` 日志而非静默吞掉（Fix M-4）。
-    pub(super) async fn check_and_update_hover(&self, token: &str) -> GarrisonResult<bool> {
-        if let Ok(Some(ts)) = self.session.get_token_session(token).await {
+    pub(super) async fn check_and_update_hover(
+        &self,
+        token: &str,
+        ts_opt: Option<crate::session::TokenSession>,
+    ) -> GarrisonResult<bool> {
+        if let Some(ts) = ts_opt {
             let now_millis = self.clock.now().timestamp_millis();
             let should_evict = self.config.session_hover_timeout > 0 && {
                 let timeout_millis = self.config.session_hover_timeout * 1000;
@@ -654,8 +672,15 @@ impl GarrisonLogicDefault {
     /// Simple 模式：仅 session 校验，不验证 JWT 签名。
     ///
     /// session 不存在时按 `throw_on_not_login` 决定返回 `Ok(false)` 或 `Session` 错误。
-    pub(super) async fn check_login_simple(&self, token: &str) -> GarrisonResult<bool> {
-        let valid = self.session.is_valid(token).await?;
+    pub(super) async fn check_login_simple(
+        &self,
+        token: &str,
+    ) -> GarrisonResult<(bool, Option<String>)> {
+        // T008: is_valid_with_session 返回 Token-Session 快照——hover 检查与
+        // 登录身份缓存复用同一快照，消除同一请求内的重复 DAO 读取
+        let ts_opt = self.session.is_valid_with_session(token).await?;
+        let valid = ts_opt.is_some();
+        let login_id = ts_opt.as_ref().map(|ts| ts.login_id.clone());
         if !valid {
             // token 无效时广播 SessionTimeout 事件
             // 若 token session 仍存在（account session 过期），可获取 login_id 并广播；
@@ -677,17 +702,17 @@ impl GarrisonLogicDefault {
         }
         // 悬停检查（仅 valid 时）
         if valid {
-            let hover_ok = self.check_and_update_hover(token).await?;
+            let hover_ok = self.check_and_update_hover(token, ts_opt).await?;
             if !hover_ok {
-                return Ok(false);
+                return Ok((false, None));
             }
             // Token 自动续签（若启用且剩余 TTL 低于阈值）
             if let Err(e) = self.check_and_renew(token).await {
                 tracing::warn!(error = %e, "Token auto-renewal failed, old Token still in use");
             }
-            return Ok(true);
+            return Ok((true, login_id));
         }
-        Ok(valid)
+        Ok((false, None))
     }
 }
 
@@ -724,8 +749,28 @@ impl GarrisonLogicDefault {
             return; // 已过期，无需加入黑名单
         }
         let key = format!("jwt:blacklist:{}", jti);
-        if let Err(e) = self.dao().set(&key, "1", ttl_secs as u64).await {
-            tracing::warn!(error = %e, jti = &jti[..jti.len().min(16)], "JWT blacklist write failed");
+        // T005（H-14 增强）: 写失败有界重试（退避 100/300ms，共 3 次尝试）。
+        // 撤销写失败若只 warn 放行，被吊销 token 在全部节点继续有效至自然过期
+        // （撤销传播延迟上界 = 剩余有效期）；重试消化瞬时抖动，最终失败升级为
+        // error 日志供部署侧告警监控该窗口。对外仍保持幂等成功（logout 不因
+        // 撤销存储故障而报错——用户以为登出失败比实际未撤销更危险）。
+        const RETRY_DELAYS_MS: [u64; 2] = [100, 300];
+        let mut result = self.dao().set(&key, "1", ttl_secs as u64).await;
+        for delay_ms in RETRY_DELAYS_MS {
+            if result.is_ok() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            result = self.dao().set(&key, "1", ttl_secs as u64).await;
+        }
+        if let Err(e) = result {
+            tracing::error!(
+                error = %e,
+                jti = &jti[..jti.len().min(16)],
+                attempts = RETRY_DELAYS_MS.len() + 1,
+                "JWT blacklist write failed after retries; \
+                 revoked token may remain valid until natural expiry"
+            );
         }
     }
 }

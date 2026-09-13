@@ -79,6 +79,13 @@ pub struct AuthServerConfig {
     pub external_body_limit: usize,
     /// 内网请求体大小上限（字节，默认 1MB）。
     pub internal_body_limit: usize,
+    /// 是否启用外网登录端点（默认 **false**，secure-by-default）。
+    ///
+    /// 框架的 login 端点不校验任何凭证（Sa-Token 模型：业务层先验密码、
+    /// 框架只负责签发会话），因此默认关闭外网 `/api/v1/auth/login`（返回 404）。
+    /// 业务方注入自己的凭证校验后，通过 `with_external_login_enabled(true)`
+    /// 或直接构造本字段显式开启；开启时 `listen()` 启动输出 warn 提醒。
+    pub external_login_enabled: bool,
 }
 
 impl std::fmt::Debug for AuthServerConfig {
@@ -98,6 +105,7 @@ impl std::fmt::Debug for AuthServerConfig {
             .field("internal_api_key", &"[REDACTED]")
             .field("external_body_limit", &self.external_body_limit)
             .field("internal_body_limit", &self.internal_body_limit)
+            .field("external_login_enabled", &self.external_login_enabled)
             .finish()
     }
 }

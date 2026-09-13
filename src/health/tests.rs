@@ -242,6 +242,79 @@ async fn db_health_check_unhealthy_when_manager_uninitialized() {
     );
 }
 
+/// T010: 探测路径下未注入连接池（`new()` 默认）时返回 `Degraded`，不再误报 `Healthy`。
+///
+/// 原实现探测内存 KV DAO（Postgres 宕机仍 Healthy，K8s 摘流失效）；
+/// v0.9.0 起无连接池句柄即诚实降级。
+#[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+#[tokio::test]
+#[serial_test::serial]
+async fn db_health_check_degraded_without_pool() {
+    use crate::manager::GarrisonManager;
+    use crate::stp::GarrisonInterface;
+
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .expect("init manager 应成功");
+
+    let checker = DbHealthCheck::new();
+    let status = checker.check().await.expect("check 应返回 Ok 而非 Err");
+    assert_eq!(
+        status,
+        HealthStatus::Degraded,
+        "未注入连接池时 DbHealthCheck 应返回 Degraded（T010，不误报 Healthy）"
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
+/// T010: 注入连接池后执行真实 ping——数据库可达 → `Healthy`。
+///
+/// 用 sqlite 内存池验证 `with_pool` 的 ping 接线路径（真实 pg/mysql 服务连通性
+/// 由 e2e_matrix 覆盖；此处验证接线与 ping 调用本身）。
+#[cfg(all(
+    any(feature = "db-postgres", feature = "db-mysql"),
+    feature = "db-sqlite"
+))]
+#[tokio::test]
+async fn db_health_check_with_pool_pings_real_db() {
+    use crate::manager::GarrisonManager;
+    use crate::stp::GarrisonInterface;
+
+    GarrisonManager::reset_for_test();
+    let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(crate::dao::InMemoryDao::new());
+    let config = Arc::new(GarrisonConfig::default_config());
+    let interface: Arc<dyn GarrisonInterface> = Arc::new(crate::stp::mock::MockInterface);
+    GarrisonManager::builder()
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await
+        .expect("init manager 应成功");
+
+    let pool = crate::dao::init_dbnexus("sqlite::memory:")
+        .await
+        .expect("sqlite 内存池应创建成功");
+    let checker = DbHealthCheck::with_pool(pool);
+    let status = checker.check().await.expect("check 应返回 Ok 而非 Err");
+    assert_eq!(
+        status,
+        HealthStatus::Healthy,
+        "注入连接池且数据库可达时应返回 Healthy（真实 ping 通过）"
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
 /// 探测路径下，`dao.get` hang 时 `CacheHealthCheck` 在 `HEALTH_PROBE_TIMEOUT`（2s）内返回 `Unhealthy`。
 ///
 /// 仅在启用 `cache-redis`（探测路径）时编译。

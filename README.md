@@ -194,19 +194,25 @@ graph TD
 
 ### 安装
 
-在 `Cargo.toml` 中添加依赖：
+在 `Cargo.toml` 中添加依赖（`development` 聚合 = 内存缓存 DAO + SQLite + axum 适配，
+可完整运行下方最小示例）：
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["web-axum"] }
+garrison = { version = "0.9.0-rc.1", features = ["development"] }
+async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
+
+> 仅启用 `web-axum` 不含任何可用的会话存储 DAO（default 只有 `backend-embedded`），
+> 生产部署请按需组合 `cache-memory` / `db-sqlite` / `db-postgres` / `cache-redis` 等；
+> 预发布版本（0.9.0-rc.x）需按上例显式写完整版本号，`"0.9"` 无法匹配 prerelease。
 
 如需启用全部协议层与安全模块：
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["full"] }
+garrison = { version = "0.9.0-rc.1", features = ["full"] }
 ```
 
 ### 最小示例
@@ -237,44 +243,41 @@ async fn main() -> GarrisonResult<()> {
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 
-    // 3. 初始化全局管理器（覆盖式注入 dao / config / interface）
+    // 3. 初始化全局管理器
     GarrisonManager::builder()
-    .dao(dao)
-    .config(config)
-    .interface(interface)
-    .build()
-    .await?;
+        .dao(dao)
+        .config(config)
+        .interface(interface)
+        .build()
+        .await?;
 
     // 4. 在 task_local 上下文中执行登录
     let token = garrison::stp::with_current_token(
         String::new(),
         GarrisonUtil::login("1001", &LoginParams::default()),
-    ).await?;
-    println!("登录成功，token = {}", token);
+    )
+    .await?;
+    println!("登录成功，token = {}", &token[..8.min(token.len())]);
 
     // 5. 校验登录状态
-    let logged_in = garrison::stp::with_current_token(
-        token.clone(),
-        GarrisonUtil::check_login(),
-    ).await?;
-    assert!(logged_in);
+    garrison::stp::with_current_token(token.clone(), GarrisonUtil::check_login()).await?;
 
-    // 6. 校验权限
-    let has_perm = garrison::stp::with_current_token(
-        token.clone(),
-        GarrisonUtil::check_permission("user:read"),
-    ).await?;
-    assert!(has_perm);
-
-    // 7. 登出
+    // 6. 校验权限（无权限时报错）
     garrison::stp::with_current_token(
         token.clone(),
-        GarrisonUtil::logout(),
-    ).await?;
+        GarrisonUtil::check_permission("user:read"),
+    )
+    .await?;
+
+    // 7. 登出
+    garrison::stp::with_current_token(token.clone(), GarrisonUtil::logout()).await?;
 
     Ok(())
 }
 ```
+
+> 本示例已由 [examples/tests/readme_quickstart.rs](./examples/tests/readme_quickstart.rs)
+> 持续验证（随 CI 运行），可直接复制使用。
 
 **预期输出：**
 
@@ -289,6 +292,9 @@ async fn main() -> GarrisonResult<()> {
 - `GarrisonRouter` 包装 axum Router
 - 4 个 `route_protected` 路由（带 `CheckLogin` / `CheckRole<AdminRole>` / `CheckPermission<ReadPerm>` 注解）
 - axum middleware 自动从 Authorization header 提取 token 并设置 task_local
+
+> 注意：`route_protected` 仅注册 **GET** 路由；POST 等其他方法请用
+> `GarrisonRouter::build()` 返回的中间件包装自有 Router，或注册后自行 `.route(...)` 扩展。
 
 > examples 已重组为独立 workspace member（`garrison-examples` crate），运行方式：
 > `cargo run -p garrison-examples --bin <name> --features full`。0.4.0 新增 5 个 example
@@ -376,7 +382,7 @@ async fn main() -> GarrisonResult<()> {
 | `listener`                    |  ❌  |  0.2.0   | 事件监听器（15 个事件变体，0.4.2 扩展）                                                                                                                                                                                          |
 | `tracing-log`                 |  ❌  |  0.1.0   | tracing 日志桥接                                                                                                                                                                                                                 |
 | `metrics-prometheus`          |  ❌  |  0.3.0   | Prometheus 指标                                                                                                                                                                                                                  |
-| `observability-otlp`          |  ❌  |  0.3.0   | OpenTelemetry OTLP 分布式追踪                                                                                                                                                                                                    |
+| `otlp`          |  ❌  |  0.3.0   | OpenTelemetry OTLP 分布式追踪                                                                                                                                                                                                    |
 
 > **v0.9.0 Feature 改名映射**：部分安全/协议模块在 v0.9.0 从 `secure-*` 命名空间统一迁移到 `protocol-*`（域归并到协议层）：
 >
@@ -385,10 +391,13 @@ async fn main() -> GarrisonResult<()> {
 > | `secure-saml`        | `protocol-saml`        | SAML 2.0 签名验证        |
 > | `secure-httpbasic`   | `protocol-httpbasic`   | HTTP Basic 认证          |
 > | `secure-httpdigest`  | `protocol-httpdigest`  | HTTP Digest 认证         |
+> | `observability-otlp` | `otlp`                 | OpenTelemetry OTLP       |
+> | `decision-trace` / `permission-registry` / `safe-defaults` | `core-advanced` | 核心增强合并 |
+> | `dynamic-active-timeout` / `login-token-map-persistence` / `anonymous-session` / `session-search` | `session-extra` | 会话增强合并 |
 >
 > 升级时请将 `Cargo.toml` 中的 feature 引用按上表重命名，功能与默认行为不变。
 >
-> **可观测性 no-op 契约**：`metrics-prometheus` / `observability-otlp` / `tracing-log` 均未启用时，
+> **可观测性 no-op 契约**：`metrics-prometheus` / `otlp` / `tracing-log` 均未启用时，
 > `observability` 模块仍可导入但所有 API 为 no-op（`None` 短路 / 零开销），避免用户误以为指标或追踪已启用。
 | `audit-inklog`                |  ❌  |  0.7.0   | inklog 结构化审计日志                                                                                                                                                                                                            |
 | `grpc`                        |  ❌  |  0.3.0   | gRPC 鉴权拦截器（tonic::Interceptor）                                                                                                                                                                                            |
@@ -408,19 +417,14 @@ async fn main() -> GarrisonResult<()> {
 | `firewall-maxminddb`          |  ❌  |  0.5.3   | MaxMindDb 生产后端                                                                                                                                                                                                               |
 | `anomalous-detector-dual`     |  ❌  |  0.6.2   | 异常登录双引擎检测                                                                                                                                                                                                               |
 | `keycloak-oidc`               |  ❌  |  0.5.0   | Keycloak OIDC RP 集成                                                                                                                                                                                                            |
-| `decision-trace`              |  ❌  |  0.4.2   | 决策溯源                                                                                                                                                                                                                         |
+| `core-advanced`               |  ❌  |  0.9.0   | 核心增强（决策溯源 / 权限注册表 / forbid 优先语义合并）          |
 | `authorize-api`               |  ❌  |  0.5.1   | 请求对象式授权 API                                                                                                                                                                                                               |
 | `manager-explicit`            |  ❌  |  0.5.1   | 显式 Manager API                                                                                                                                                                                                                 |
-| `permission-registry`         |  ❌  |  0.5.1   | 权限注册表                                                                                                                                                                                                                       |
-| `safe-defaults`               |  ❌  |  0.6.7   | forbid 优先语义（safe-defaults）                                                                                                                                                                                                 |
 | `security-alert`              |  ❌  |  0.6.5   | 安全告警系统                                                                                                                                                                                                                     |
 | `device-binding`              |  ❌  |  0.6.5   | 设备绑定                                                                                                                                                                                                                         |
 | `safe-auth`                   |  ❌  |  0.6.5   | 二级认证瞬态标记                                                                                                                                                                                                                 |
-| `dynamic-active-timeout`      |  ❌  |  0.6.2   | 动态活跃超时                                                                                                                                                                                                                     |
+| `session-extra`               |  ❌  |  0.9.0   | 会话增强（动态活跃超时 / login_token_map 持久化 / 匿名 Session / 会话搜索合并）          |
 | `three-tier-cache`            |  ❌  |  0.6.7   | 三层缓存架构                                                                                                                                                                                                                     |
-| `login-token-map-persistence` |  ❌  |  0.6.6   | login_token_map 持久化                                                                                                                                                                                                           |
-| `anonymous-session`           |  ❌  |  0.6.6   | 匿名 Session                                                                                                                                                                                                                     |
-| `session-search`              |  ❌  |  0.6.6   | 会话搜索                                                                                                                                                                                                                         |
 | `tls`                         |  ❌  |  0.7.0   | HTTPS/TLS 终止（axum-server rustls）                                                                                                                                                                                             |
 | `miette`                      |  ❌  |  0.5.1   | miette 富错误                                                                                                                                                                                                                    |
 | `i18n`                        |  ❌  |  0.3.0   | 国际化基础层（fluent-rs）                                                                                                                                                                                                        |

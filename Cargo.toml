@@ -33,7 +33,7 @@ categories = ["authentication", "web-programming"]
 garrison = { path = ".", default-features = false }
 garrison-macros = { path = "macros", version = "0.9.0-rc.1" }
 serde = { version = "1.0", features = ["derive"] }
-tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 async-trait = "0.1"
 parking_lot = "0.12"
 inventory = "0.3"
@@ -66,7 +66,7 @@ path = "src/lib.rs"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 confers = { version = "0.6.0-rc.2" }
-tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time"] }
+tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 inventory = "0.3"
 thiserror = "2.0"
 tracing = "0.1"
@@ -103,7 +103,7 @@ oxcache = { version = "0.5.0-rc.2", default-features = false }
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
 dbnexus = { optional = true, default-features = false, workspace = true }
-sea-orm = { version = "2.0.0-rc.43", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
+sea-orm = { version = "2.0", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 tracing-subscriber = { optional = true, default-features = false, features = ["fmt", "json", "env-filter"], workspace = true }
 opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
@@ -334,10 +334,13 @@ web-warp = ["warp"]
 tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 
 # === Server 增强 ===
-# 注：sdforge 0.4.7 无 health-check / graceful-shutdown 子特性（上游从未提供），
+# 注：sdforge 0.4.7 无 health-check 子特性（上游从未提供），
 # 聚合特性仅保留 auth-server，避免悬空 feature 引用导致解析失败
 server-health-check = ["auth-server"]
-server-graceful-shutdown = ["auth-server"]
+# [v0.9.0] T011：graceful shutdown 真实落地——SIGTERM/SIGINT 触发后停止接收
+# 新连接并 drain 在途请求。原为空壳（反向依赖 auth-server），现为独立门控；
+# auth-server 聚合默认包含
+server-graceful-shutdown = []
 
 # === Web 安全中间件 ===
 # [v0.9.0] web-waf 已废弃（与 firewall-waf 功能 100% 重叠），统一使用 firewall-waf
@@ -432,7 +435,7 @@ backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallbac
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
 secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
 # secure-simple-token 确保 SimpleTokenStyle 使用 HMAC 签名（A11 CRITICAL 修复）
-auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token", "dep:mimalloc"]
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown"]
 # dep:sha2：决策缓存 key 的 context_json 摘要成分（issue 6474/6477/6480/6482，SHA-256 前 16 字节）
 abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
@@ -554,12 +557,13 @@ opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = true
-# 注意：panic = "abort" 会使进程在遇到 panic 时直接终止，而非展开栈。
-# 因此 src/channel.rs 与 src/stp/context.rs 中依赖 std::panic::catch_unwind
-# 实现的“隔离单个任务 panic、避免污染全局状态”的语义，在 release 构建下会
-# 退化为整个进程终止。生产环境若依赖该隔离语义，请改用 panic = "unwind"
-# 或确保任务边界（线程/tokio task）已单独隔离，详见 docs/DEPLOYMENT.md。
-panic = "abort"
+# T012（v0.9.0）: panic 改为 unwind（原 "abort"）。
+# src/listener（插件广播隔离）、src/protocol/sso/channel.rs（SSO 订阅 handler）
+# 依赖 std::panic::catch_unwind 实现“隔离单个任务 panic、避免污染全局状态”——
+# abort 下该语义退化为整个认证节点终止，多租户/高并发部署单 listener panic
+# 即全服务下线。unwind 恢复隔离语义；体积/性能代价（fat LTO 下）可接受，
+# 认证基础设施可用性优先。
+panic = "unwind"
 
 # === 测试目标 ===
 # Phase 4 迁移（T040/T042/T043）：db_mysql_testcontainers / auth_server_integration /

@@ -201,7 +201,10 @@ pub struct TokenSession {
 /// #[async_trait]
 /// impl SessionExpiryListener for AuditListener {
 ///     async fn on_session_expired(&self, login_id: &str, token: &str) -> GarrisonResult<()> {
-///         tracing::info!(login_id, token, "session expired");
+///         // token 为敏感凭证：打日志前必须脱敏（CWE-532，完整 token 绝不进入日志）。
+///         // garrison::listener::mask_token_for_event 为框架提供的统一掩码实现。
+///         let masked = garrison::listener::mask_token_for_event(token);
+///         tracing::info!(login_id, token = %masked, "session expired");
 ///         Ok(())
 ///     }
 /// }

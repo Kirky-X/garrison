@@ -45,6 +45,8 @@ impl Default for AuthServerConfig {
             internal_api_key: String::new(),
             external_body_limit: 256 * 1024,  // 256 KB
             internal_body_limit: 1024 * 1024, // 1 MB
+            // C-1: 外网登录端点默认关闭（框架不校验凭证，secure-by-default）
+            external_login_enabled: false,
         }
     }
 }

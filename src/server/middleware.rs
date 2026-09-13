@@ -365,6 +365,30 @@ pub async fn external_path_filter(req: Request, next: Next) -> Response {
     }
 }
 
+/// 外网登录端点开关状态（C-1，供 `external_login_gate` 的 middleware state）。
+///
+/// `false`（默认）时 `POST /api/v1/auth/login` 返回 404——框架的 login 端点
+/// 不校验任何凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），
+/// 无条件对外暴露将允许任意主体获取任意用户的有效会话。
+#[derive(Debug, Clone, Copy)]
+pub struct ExternalLoginGate(pub bool);
+
+/// 外网登录端点 gate 中间件（C-1 fail-closed）。
+///
+/// 挂载在外网 router、`external_path_filter` 内层：path-filter 放行 login 后
+/// 由本中间件按 `ExternalLoginGate` 决定放行或 404。禁用状态下不打每请求日志
+/// （避免探测刷日志），启用与否由 `listen()` 启动日志声明。
+pub async fn external_login_gate(
+    axum::extract::State(gate): axum::extract::State<ExternalLoginGate>,
+    req: Request,
+    next: Next,
+) -> Response {
+    if !gate.0 && req.uri().path() == "/api/v1/auth/login" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    next.run(req).await
+}
+
 /// 内网 path-filter 中间件：拒绝外网路径，其余放行。
 ///
 /// 用于内网端口，防止内网调用方访问用户端端点（login/logout/refresh）。
@@ -1027,6 +1051,46 @@ mod tests {
                 path
             );
         }
+    }
+
+    /// C-1: gate 禁用（默认）时外网 login 返回 404，其余外网路径不受影响。
+    #[tokio::test]
+    async fn test_external_login_gate_disabled_blocks_login() {
+        let app = make_all_routes_router().layer(axum::middleware::from_fn_with_state(
+            ExternalLoginGate(false),
+            external_login_gate,
+        ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND, "默认应拒绝外网 login");
+    }
+
+    /// C-1: gate 启用时外网 login 正常到达 handler。
+    #[tokio::test]
+    async fn test_external_login_gate_enabled_allows_login() {
+        let app = make_all_routes_router().layer(axum::middleware::from_fn_with_state(
+            ExternalLoginGate(true),
+            external_login_gate,
+        ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/v1/auth/login")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "显式启用后 login 应放行");
     }
 
     /// C-1: 外网 path-filter 拒绝所有内网路径（返回 404）。

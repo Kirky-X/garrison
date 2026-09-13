@@ -3920,7 +3920,9 @@ async fn enforce_max_login_count_overflow_logout_mode_logout() {
         // 验证广播了 Logout 事件（至少 1 个，含被踢出 token）
         let events = captured_events.lock();
         let has_logout = events.iter().any(|e| match e {
-            crate::listener::GarrisonEvent::Logout { token, .. } => token == &t1,
+            crate::listener::GarrisonEvent::Logout { token, .. } => {
+                *token == crate::listener::mask_token_for_event(&t1)
+            },
             _ => false,
         });
         assert!(
@@ -3998,7 +4000,8 @@ async fn enforce_max_login_count_overflow_logout_mode_kickout() {
         let events = captured_events.lock();
         let has_kickout = events.iter().any(|e| match e {
             crate::listener::GarrisonEvent::Kickout { token, reason, .. } => {
-                token == &t1 && reason == "超过最大登录数限制"
+                *token == crate::listener::mask_token_for_event(&t1)
+                    && reason == "超过最大登录数限制"
             },
             _ => false,
         });
@@ -4083,7 +4086,7 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
                 ..
             } => {
                 login_id == "overflow-replaced-user-001"
-                    && token == &t1
+                    && *token == crate::listener::mask_token_for_event(&t1)
                     && reason == "超过最大登录数限制，被新会话顶替"
             },
             _ => false,
@@ -4300,12 +4303,23 @@ async fn login_rolls_back_session_when_enforce_fails() {
     impl GarrisonDao for FailInjectionDao {
         async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
             if key.starts_with("account:session:") {
-                let n = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
-                if n == self.fail_on_nth.load(Ordering::SeqCst) {
-                    return Err(GarrisonError::Dao(
-                        "injected failure for HIGH-002 test".to_string(),
-                    ));
+                // 行为锚定注入：当 AccountSession 已含 2 个 token（即超限登录的
+                // enforce 闸门读取）时首次返回 Err。相比固定调用序号，本方式对
+                // enforce 内部的读取次数变化鲁棒（T009 调整闸门读取时机后仍成立）。
+                let current = self.inner.get(key).await?;
+                let over_limit = current
+                    .as_deref()
+                    .map(|v| v.matches("\"token\"").count() >= 2)
+                    .unwrap_or(false);
+                if over_limit {
+                    let n = self.call_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    if n == 1 {
+                        return Err(GarrisonError::Dao(
+                            "injected failure for HIGH-002 test".to_string(),
+                        ));
+                    }
                 }
+                return Ok(current);
             }
             self.inner.get(key).await
         }
@@ -4360,7 +4374,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
     }
     let fail_dao = Arc::new(FailInjectionDao {
         inner: mock_dao.clone(),
-        fail_on_nth: AtomicU32::new(3), // 第 3 次 account:session: get = enforce 调用
+        fail_on_nth: AtomicU32::new(u32::MAX), // 行为锚定注入，不再按序号
         call_count: AtomicU32::new(0),
     });
     let session = Arc::new(GarrisonSession::new(
@@ -4396,9 +4410,9 @@ async fn login_rolls_back_session_when_enforce_fails() {
         "首次登录的 token 应有效"
     );
 
-    // 第二次登录 — create_inner 成功（#2 get），
-    // enforce_max_login_count 触发（count=2 > max=1），get_account_session 失败（#3 get），
-    // login 应回滚新 token（logout 调用 #4 get 恢复正常）
+    // 第二次登录 — create 成功后 enforce_max_login_count 触发（DAO 中已有
+    // 2 个 token > max=1），超限闸门读取注入 DAO 失败，login 应回滚新 token
+    // （行为锚定注入：仅在 AccountSession 含 2 个 token 的首次读取时失败）
     let login_result = logic
         .login("high002-user-001", &LoginParams::default())
         .await;

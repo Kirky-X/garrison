@@ -735,3 +735,42 @@ fn test_credit_alert_event_construct_and_match() {
     let debug_str = format!("{:?}", event);
     assert!(debug_str.contains("CreditAlert"));
 }
+
+// ========================================================================
+// mask_token_for_event 单测（T004 / CWE-532）
+// ========================================================================
+
+/// 长 token：前 8 字符 + `***`，不含完整 token。
+#[test]
+fn mask_token_for_event_long_token_gets_prefix_mask() {
+    let token = "abcdefgh-uuid-1234-5678";
+    let masked = mask_token_for_event(token);
+    assert_eq!(masked, "abcdefgh***");
+    assert_ne!(masked, token, "掩码不得等于原 token");
+    assert!(masked.len() < token.len(), "长 token 掩码应短于原 token");
+}
+
+/// 短 token（<= 8 字符）：固定占位 `***`。
+#[test]
+fn mask_token_for_event_short_token_gets_placeholder() {
+    assert_eq!(mask_token_for_event("abc"), "***");
+    assert_eq!(
+        mask_token_for_event("12345678"),
+        "***",
+        "恰 8 字符属短 token"
+    );
+    assert_eq!(mask_token_for_event(""), "***");
+}
+
+/// 多字节 UTF-8 边界安全：字节 8 落于多字节字符中间时不得 panic。
+#[test]
+fn mask_token_for_event_multibyte_safe() {
+    // "日本語..." 每字符 3 字节：字节 8 落在第 3 个字符中间
+    let token = "日本語テストtoken-123456";
+    let masked = mask_token_for_event(token);
+    assert!(
+        masked.ends_with("***") || masked == "***",
+        "不得 panic 且为掩码形式"
+    );
+    assert_ne!(masked, token);
+}

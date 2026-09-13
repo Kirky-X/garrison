@@ -10,33 +10,88 @@
 //!
 //! ## 快速开始
 //!
-//! 最小可用示例：初始化管理器 → 执行登录 → 校验登录状态。
+//! 最小可用示例：初始化管理器 → 执行登录 → 校验登录状态 → 校验权限 → 登出。
+//! （以下 doctest 随 `cargo test --doc` 持续验证，可直接复制使用；
+//!  `InMemoryDao` 为进程内实现，生产请替换为 `GarrisonDaoOxcache` /
+//!  `GarrisonDaoDbnexus` 等持久化后端。）
 //!
-//! ```ignore
-//! use std::sync::Arc;
+//! ```rust
+//! use async_trait::async_trait;
 //! use garrison::prelude::*;
+//! use std::sync::Arc;
 //!
-//! // 1. 准备依赖（业务方实现 GarrisonDao / GarrisonInterface）
-//! let dao: Arc<dyn GarrisonDao> = /* oxcache / dbnexus 实现 */;
+//! // 1. 业务方实现 GarrisonInterface（提供权限/角色数据）
+//! struct MyInterface;
+//!
+//! #[async_trait]
+//! impl GarrisonInterface for MyInterface {
+//!     async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+//!         Ok(vec!["user:read".into(), "user:write".into()])
+//!     }
+//!     async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+//!         Ok(vec!["user".into()])
+//!     }
+//! }
+//!
+//! # fn main() -> GarrisonResult<()> {
+//! #     tokio::runtime::Builder::new_current_thread()
+//! #         .enable_all()
+//! #         .build()
+//! #         .expect("runtime 初始化恒成功")
+//! #         .block_on(run())?;
+//! #     Ok(())
+//! # }
+//!
+//! # async fn run() -> GarrisonResult<()> {
+//! use garrison::context::tenant::{TenantContext, TenantSource, TENANT};
+//!
+//! // 2. 准备依赖（dao / config / interface）
+//! let dao: Arc<dyn GarrisonDao> = Arc::new(garrison::dao::InMemoryDao::new());
 //! let config = Arc::new(GarrisonConfig::default_config());
 //! let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface);
 //!
-//! // 2. 初始化全局管理器（覆盖式注入 dao / config / interface）
+//! // 3. 初始化全局管理器
 //! GarrisonManager::builder()
 //!     .dao(dao)
 //!     .config(config)
 //!     .interface(interface)
 //!     .build()
-//!     .await.unwrap();
+//!     .await?;
 //!
-//! // 3. 执行登录：生成 token 并写入会话
+//! // 租户上下文：tenant-isolation feature 启用时必需；单租户部署用 tenant_id=0
+//! let tenant = TenantContext {
+//!     tenant_id: 0,
+//!     resolved_from: TenantSource::Header,
+//! };
+//!
+//! TENANT.scope(tenant, async {
+//! // 4. 执行登录：生成 token 并写入会话
 //! //    注意：login / check_login 依赖 task_local 上下文中的当前 token，
 //! //    通常由 web 中间件（如 axum middleware）设置。
-//! let token = GarrisonUtil::login("1001", &LoginParams::default()).await.unwrap();
+//! let token = with_current_token(
+//!     String::new(),
+//!     GarrisonUtil::login("1001", &LoginParams::default()),
+//! )
+//! .await?;
 //!
-//! // 4. 校验登录状态
-//! let logged_in = GarrisonUtil::check_login().await.unwrap();
-//! assert!(logged_in);
+//! // 5. 校验登录状态
+//! with_current_token(token.clone(), async {
+//!     assert!(GarrisonUtil::check_login().await?);
+//!
+//!     // 6. 读取当前登录主体 / 校验权限
+//!     let login_id = GarrisonUtil::get_login_id().await?;
+//!     assert_eq!(login_id.as_deref(), Some("1001"));
+//!     GarrisonUtil::check_permission("user:read").await?;
+//!
+//!     // 7. 登出
+//!     GarrisonUtil::logout().await?;
+//!     Ok::<(), GarrisonError>(())
+//! })
+//! .await?;
+//! #         Ok::<(), GarrisonError>(())
+//! #     })
+//! #     .await
+//! # }
 //! ```
 //!
 //! ## 特性
@@ -118,14 +173,15 @@
 //!
 //! ```toml
 //! [dependencies]
-//! garrison = { version = "0.9", features = ["web-axum", "protocol-jwt"] }
+//! garrison = { version = "0.9.0-rc.1", features = ["web-axum", "protocol-jwt"] }
 //! ```
 //!
 //! ```rust
 //! use garrison::prelude::*;
 //!
-//! // 通过 prelude 引入核心类型
-//! // let _config: GarrisonConfig = GarrisonConfig::default();
+//! // 通过 prelude 引入核心类型（T014：LoginParams / GarrisonDaoOxcache /
+//! // Annotation / with_current_token / current_token 均已入 prelude）
+//! let _config: GarrisonConfig = GarrisonConfig::default_config();
 //! ```
 
 #![cfg_attr(docsrs, feature(doc_cfg))]

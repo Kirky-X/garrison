@@ -1191,9 +1191,20 @@ impl GarrisonSession {
     /// # 错误
     /// - DAO 读取失败：透传 `GarrisonError`。
     pub async fn is_valid(&self, token: &str) -> GarrisonResult<bool> {
+        Ok(self.is_valid_with_session(token).await?.is_some())
+    }
+
+    /// 与 [`Self::is_valid`] 同语义，但返回校验通过的 Token-Session 快照。
+    ///
+    /// T008 请求内复用：check_login 链路将快照传递给 hover 检查与登录身份缓存，
+    /// 消除同一请求内对同一 token 的重复 DAO 读取（原 3-4 次 → 1-2 次）。
+    pub async fn is_valid_with_session(
+        &self,
+        token: &str,
+    ) -> GarrisonResult<Option<crate::session::TokenSession>> {
         let ts = match self.get_token_session(token).await? {
             Some(ts) => ts,
-            None => return Ok(false),
+            None => return Ok(None),
         };
         // T011: per-token 动态活跃超时检查
         // 优先使用 token_session.dynamic_active_timeout，None 时回退到全局 active_timeout
@@ -1205,22 +1216,22 @@ impl GarrisonSession {
             // -1 表示永不过期（与全局 active_timeout 语义一致），负值跳过活跃超时检查
             let now = Utc::now().timestamp();
             if effective_active_timeout >= 0 && ts.last_active_at + effective_active_timeout < now {
-                return Ok(false);
+                return Ok(None);
             }
         }
         // 惰性检查 Account-Session 是否存在
         if self.get_account_session(&ts.login_id).await?.is_none() {
-            return Ok(false);
+            return Ok(None);
         }
         // 临时凭证过期联动。
         // 若 Token-Session 含 temp_credential_key 属性，检查该 key 是否仍存在于 dao；
         // 临时凭证过期后 token 立即失效，不论 token 自身 timeout 是否到期。
         if let Some(temp_key) = ts.attrs.get("temp_credential_key") {
             if self.dao.get(temp_key).await?.is_none() {
-                return Ok(false);
+                return Ok(None);
             }
         }
-        Ok(true)
+        Ok(Some(ts))
     }
 
     /// 活跃续期：更新 last_active_at 并重置 TTL。
@@ -1507,9 +1518,10 @@ impl GarrisonSession {
             if let Some(mgr) = &self.listener_manager {
                 let reason = format!("kicked by device: {}", device);
                 for (token, _) in &kicked {
+                    // CWE-532: 事件载荷统一携掩码 token
                     mgr.broadcast(&crate::listener::GarrisonEvent::Kickout {
                         login_id: login_id.clone(),
-                        token: token.clone(),
+                        token: crate::listener::mask_token_for_event(token),
                         reason: reason.clone(),
                         request_context: None,
                     })

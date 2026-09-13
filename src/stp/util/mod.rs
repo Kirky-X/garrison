@@ -45,15 +45,25 @@ use tokio::task::JoinHandle;
 // - 仅启用 `backend-remote` 但未 `init_backend()`：返回 `GarrisonError::Config`
 // - 未启用任何 backend feature：直接走 `GarrisonManager` 路径（v0.6.7 兼容）
 //
-// 实现说明：使用 `Mutex<Option<...>>` 而非 design.md 的 `OnceLock`，以支持测试重置。
-// 生产环境中 `init_backend()` 只应调用一次，Mutex 无竞争开销可忽略。
+// 实现说明：v0.9.0 起使用 `ArcSwapOption` 而非原 `Mutex<Option<...>>`——
+// `get_backend` 是每请求热路径（check_login / check_permission 各一次），
+// Mutex 会让全部 tokio worker 在同一把全局锁上串行排队；ArcSwap 读路径
+// 无锁（wait-free）。保留「测试可重置」能力（reset_backend_for_test）。
+
+/// 全局认证后端实例的 Sized 包装。
+///
+/// arc-swap 的 `RefCnt` 要求元素 Sized（`impl<T> RefCnt for Arc<T>` 隐含
+/// `T: Sized`），无法直接存放 `Arc<dyn AuthBackend>`，故以单字段结构包装。
+#[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+#[derive(Clone)]
+struct BackendHandle(Arc<dyn crate::backend::AuthBackend>);
 
 /// 全局认证后端实例。
 ///
 /// 通过 [`init_backend`] 初始化。未初始化时根据 feature flag 决定 fallback 行为。
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
-static CURRENT_BACKEND: std::sync::Mutex<Option<Arc<dyn crate::backend::AuthBackend>>> =
-    std::sync::Mutex::new(None);
+static CURRENT_BACKEND: arc_swap::ArcSwapOption<BackendHandle> =
+    arc_swap::ArcSwapOption::const_empty();
 
 /// 初始化全局认证后端。
 ///
@@ -77,15 +87,25 @@ static CURRENT_BACKEND: std::sync::Mutex<Option<Arc<dyn crate::backend::AuthBack
 /// ```
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 pub fn init_backend(backend: Arc<dyn crate::backend::AuthBackend>) -> GarrisonResult<()> {
-    let mut guard = CURRENT_BACKEND
-        .lock()
-        .map_err(|_| crate::error::GarrisonError::Config("stp-backend-lock-poisoned::".into()))?;
-    if guard.is_some() {
+    try_init_backend(&CURRENT_BACKEND, backend)
+}
+
+/// CAS 初始化核心（与全局 static 分离，便于在局部 store 上做并发测试）。
+///
+/// compare_and_swap 契约：仅当前值为 `None` 时写入；返回 Guard 持有写入前的
+/// 值——非 `None` 即 CAS 失败（已有其他线程先完成初始化）。
+#[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
+fn try_init_backend(
+    store: &arc_swap::ArcSwapOption<BackendHandle>,
+    backend: Arc<dyn crate::backend::AuthBackend>,
+) -> GarrisonResult<()> {
+    let none: Option<std::sync::Arc<BackendHandle>> = None;
+    let previous = store.compare_and_swap(&none, Some(Arc::new(BackendHandle(backend))));
+    if previous.is_some() {
         return Err(crate::error::GarrisonError::Config(
             "stp-backend-already-init::".into(),
         ));
     }
-    *guard = Some(backend);
     Ok(())
 }
 
@@ -97,11 +117,9 @@ pub fn init_backend(backend: Arc<dyn crate::backend::AuthBackend>) -> GarrisonRe
 /// - `Err(_)`: 未初始化，且 `backend-embedded` feature 未启用
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 fn get_backend() -> GarrisonResult<Option<Arc<dyn crate::backend::AuthBackend>>> {
-    let guard = CURRENT_BACKEND
-        .lock()
-        .map_err(|_| crate::error::GarrisonError::Config("stp-backend-lock-poisoned::".into()))?;
-    if let Some(backend) = guard.as_ref() {
-        return Ok(Some(backend.clone()));
+    let guard = CURRENT_BACKEND.load();
+    if let Some(handle) = &*guard {
+        return Ok(Some(Arc::clone(&handle.0)));
     }
     #[cfg(not(feature = "backend-embedded"))]
     {
@@ -122,8 +140,58 @@ fn get_backend() -> GarrisonResult<Option<Arc<dyn crate::backend::AuthBackend>>>
 #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
 #[cfg(test)]
 pub(crate) fn reset_backend_for_test() {
-    if let Ok(mut guard) = CURRENT_BACKEND.lock() {
-        *guard = None;
+    CURRENT_BACKEND.store(None);
+}
+
+#[cfg(all(test, any(feature = "backend-embedded", feature = "backend-remote")))]
+mod backend_bridge_tests {
+    use super::*;
+
+    /// R-perf-001: 并发 init_backend（CAS）下恰好一个成功、其余返回
+    /// Config("stp-backend-already-init")，且成功后 store 可读到该后端。
+    /// 在局部 store 上测试，避免污染全局 CURRENT_BACKEND 影响并行测试。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_init_exactly_one_wins() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let store = Arc::new(arc_swap::ArcSwapOption::const_empty());
+        let ok_count = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let store = Arc::clone(&store);
+            let ok_count = Arc::clone(&ok_count);
+            handles.push(tokio::spawn(async move {
+                if try_init_backend(
+                    &store,
+                    Arc::new(crate::backend::embedded::BackendEmbedded::new()),
+                )
+                .is_ok()
+                {
+                    ok_count.fetch_add(1, Ordering::SeqCst);
+                }
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+        assert_eq!(
+            ok_count.load(Ordering::SeqCst),
+            1,
+            "并发初始化应恰好一个成功（CAS 契约）"
+        );
+        assert!(store.load().is_some(), "初始化成功后 store 应持有后端实例");
+
+        // 重复初始化返回 Config 错误（既有语义保持）
+        let err = try_init_backend(
+            &store,
+            Arc::new(crate::backend::embedded::BackendEmbedded::new()),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, crate::error::GarrisonError::Config(ref m) if m.contains("stp-backend-already-init")),
+            "重复初始化应返回 already-init Config 错误，实际: {:?}",
+            err
+        );
     }
 }
 

@@ -13,6 +13,9 @@
 //! - `GARRISON_INTERNAL_PORT`：内网端口（默认 8081）
 //! - `GARRISON_RATE_LIMIT`：外网每 IP 限速（默认 100，必须 > 0，为 0 时拒绝启动）
 //! - `GARRISON_INTERNAL_API_KEY`：内网 API Key（必须配置，无默认值，fail-closed）
+//! - `GARRISON_EXTERNAL_LOGIN_ENABLED`：是否启用外网登录端点（默认 **false**）。
+//!   框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），
+//!   业务方注入凭证校验后才应设为 `true`；默认关闭时 `POST /api/v1/auth/login` 返回 404
 //! - `GARRISON_WORKER_THREADS`：Tokio worker 线程数（默认 = CPU 核数）
 //! - `GARRISON_MAX_BLOCKING_THREADS`：Tokio blocking 线程上限（默认 512）
 //!
@@ -131,6 +134,18 @@ async fn async_main() -> GarrisonResult<()> {
         eprintln!("FATAL: GARRISON_INTERNAL_API_KEY is empty, refusing to start (fail-closed)");
         std::process::exit(1);
     }
+    // C-1: 外网登录端点默认关闭（secure-by-default）；业务方注入凭证校验后显式开启
+    let external_login_enabled = std::env::var("GARRISON_EXTERNAL_LOGIN_ENABLED")
+        .ok()
+        .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
+        .unwrap_or(false);
+    if external_login_enabled {
+        eprintln!(
+            "WARN: external login endpoint ENABLED (GARRISON_EXTERNAL_LOGIN_ENABLED=true); \
+             auth_server does NOT verify credentials — ensure the business layer \
+             validates credentials before exposing the external port"
+        );
+    }
 
     // H-2: 初始化 tracing subscriber，避免所有 tracing::info!/error! 静默丢弃
     #[cfg(feature = "audit-inklog")]
@@ -178,6 +193,7 @@ async fn async_main() -> GarrisonResult<()> {
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)
+        .with_external_login_enabled(external_login_enabled)
         .with_internal_api_key(internal_api_key);
 
     tracing::info!(external_port, internal_port, "starting GarrisonAuthServer");

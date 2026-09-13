@@ -194,29 +194,18 @@ impl TokenLogic for GarrisonLogicDefault {
         // 广播 TokenRefresh 事件（替换原 Login 事件）。
         // batch-08 修复（#3682/#3683）：事件字段改携掩码后的 token——
         // listener 若直接打日志，活动会话 token 不再以明文进入日志。
+        // v0.9.0 起掩码实现统一收敛到 listener::mask_token_for_event。
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&GarrisonEvent::TokenRefresh {
                 login_id,
-                old_token: mask_token_for_event(token),
-                new_token: mask_token_for_event(&new_token),
+                old_token: crate::listener::mask_token_for_event(token),
+                new_token: crate::listener::mask_token_for_event(&new_token),
                 request_context: None,
             })
             .await;
         }
         Ok(new_token)
-    }
-}
-
-/// 脱敏事件中的 token：长 token 输出前 8 字符 + `***`；短 token 输出固定占位。
-///
-/// 与 `session::security_listener::mask_token` 同语义：完整 token（无论长度）
-/// 绝不进入事件载荷，防止 listener 打日志时泄露活动会话 token。
-#[cfg(all(feature = "listener", feature = "protocol-jwt"))]
-fn mask_token_for_event(token: &str) -> String {
-    match token.get(..8) {
-        Some(prefix) if token.len() > 8 => format!("{}***", prefix),
-        _ => "***".to_string(),
     }
 }
 

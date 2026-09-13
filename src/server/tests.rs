@@ -86,6 +86,97 @@ fn make_server() -> GarrisonAuthServer {
     GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
         .with_rate_limit(100)
+        // C-1: 框架默认拒绝外网 login（secure-by-default）；
+        // 既有 login 链路测试在此显式开启，默认拒绝行为见下方专用回归测试
+        .with_external_login_enabled(true)
+}
+
+/// C-1: 默认配置下外网 login 返回 404（secure-by-default 回归钉）。
+#[tokio::test]
+async fn test_external_router_login_disabled_by_default() {
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_internal_api_key("test-api-key")
+        .with_rate_limit(100);
+    assert!(
+        !server.config.external_login_enabled,
+        "AuthServerConfig 默认应关闭外网 login"
+    );
+    let app = server.external_router();
+    let body = serde_json::json!({
+        "login_id": "user1",
+        "params": LoginParams::default()
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "默认配置下外网 login 应返回 404（凭证校验由业务方注入后显式开启）"
+    );
+}
+
+/// C-1: 默认拒绝仅作用于 login，logout/refresh（凭证持有语义）不受影响。
+#[tokio::test]
+async fn test_external_router_logout_not_gated_by_login_flag() {
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_internal_api_key("test-api-key")
+        .with_rate_limit(100);
+    let app = server.external_router();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/logout")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"token":"token-user1"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "logout 属凭证持有语义，不应被 login gate 拦截"
+    );
+}
+
+/// C-1: with_external_login_enabled 显式开启后 login 恢复可达。
+#[tokio::test]
+async fn test_external_router_login_reachable_when_enabled() {
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_internal_api_key("test-api-key")
+        .with_rate_limit(100)
+        .with_external_login_enabled(true);
+    assert!(server.config.external_login_enabled);
+    let app = server.external_router();
+    let body = serde_json::json!({
+        "login_id": "user1",
+        "params": LoginParams::default()
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -157,7 +248,9 @@ async fn test_external_router_rate_limit() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
     let server = GarrisonAuthServer::new(backend)
         .with_internal_api_key("test-api-key")
-        .with_rate_limit(2);
+        .with_rate_limit(2)
+        // 限流断言以 login 为探测端点，需显式开启（框架默认 404，见 C-1 回归测试）
+        .with_external_login_enabled(true);
     let app = server.external_router();
     let body = serde_json::json!({
         "login_id": "user1",

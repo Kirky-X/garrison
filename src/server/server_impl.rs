@@ -105,6 +105,17 @@ impl GarrisonAuthServer {
         self
     }
 
+    /// 是否启用外网登录端点（默认 `false`，secure-by-default）。
+    ///
+    /// 框架的 login 端点不校验任何凭证（Sa-Token 模型：业务层先验密码、
+    /// 框架只负责签发会话）。禁用时外网端口对 `POST /api/v1/auth/login`
+    /// 一律返回 404。开启前请确保业务侧已注入凭证校验，否则任何主体
+    /// 都能获取任意用户的有效会话；开启后 `listen()` 启动时输出 warn。
+    pub fn with_external_login_enabled(mut self, enabled: bool) -> Self {
+        self.config.external_login_enabled = enabled;
+        self
+    }
+
     /// 设置限速 HashMap 最大条目数（默认 100_000）。
     ///
     /// 超过此值时 LRU 淘汰最久未访问的 bucket，防 DoS 内存耗尽。
@@ -233,6 +244,13 @@ impl GarrisonAuthServer {
             middleware::TrustedProxies(self.config.rate_limit_trusted_proxies.clone());
         let router = sdforge::http::build()
             .layer(Extension(self.backend.clone()))
+            // C-1: 外网 login 端点默认关闭（secure-by-default）。
+            // 框架 login 不校验凭证，业务方注入凭证校验后经
+            // with_external_login_enabled(true) 显式开启。
+            .layer(axum::middleware::from_fn_with_state(
+                middleware::ExternalLoginGate(self.config.external_login_enabled),
+                middleware::external_login_gate,
+            ))
             .layer(axum::middleware::from_fn(middleware::external_path_filter))
             // fix-security-gaps: IP 自动注入 middleware（path_filter 之后、rate_limit 之前）
             .layer(axum::middleware::from_fn(
@@ -390,9 +408,27 @@ impl GarrisonAuthServer {
     ///
     /// 启用 `tls` feature 且调用 `with_tls()` 后，两个端口均使用
     /// `axum_server::bind_rustls` 替代 `axum::serve`，实现 HTTPS/TLS 终止。
+    ///
+    /// # 优雅停机（feature = "server-graceful-shutdown"，T011）
+    ///
+    /// SIGTERM / SIGINT 触发后：停止接收新连接，等待在途请求完成（drain），
+    /// 复用 manager cleanup task 的 watch 基建语义。TLS 路径经
+    /// `axum_server::Handle::graceful_shutdown`（30s 上限）等效实现。
     pub async fn listen(self) -> GarrisonResult<()> {
         // 启动前校验配置合法性
         self.config.validate().map_err(GarrisonError::Config)?;
+
+        // T011: 信号监听 → Notify 广播给两个端口 serve future
+        #[cfg(feature = "server-graceful-shutdown")]
+        let shutdown_notify = {
+            let notify = Arc::new(tokio::sync::Notify::new());
+            let n2 = Arc::clone(&notify);
+            tokio::spawn(async move {
+                shutdown_signal().await;
+                n2.notify_waiters();
+            });
+            notify
+        };
 
         let external_addr = format!("0.0.0.0:{}", self.config.external_port);
         let internal_addr = format!("0.0.0.0:{}", self.config.internal_port);
@@ -410,8 +446,25 @@ impl GarrisonAuthServer {
             internal_port = self.config.internal_port,
             "GarrisonAuthServer starting"
         );
+        // C-1: 显式开启外网 login 时提醒业务方凭证校验责任
+        if self.config.external_login_enabled {
+            tracing::warn!(
+                external_port = self.config.external_port,
+                "external login endpoint ENABLED (external_login_enabled=true): \
+                 GarrisonAuthServer does NOT verify credentials; ensure the \
+                 business layer validates credentials before exposing this port"
+            );
+        }
+
+        // T011: 每 task 专属克隆（async move 捕获整块环境，须在闭包外克隆）
+        #[cfg(feature = "server-graceful-shutdown")]
+        let shutdown_notify_ext = Arc::clone(&shutdown_notify);
+        #[cfg(feature = "server-graceful-shutdown")]
+        let shutdown_notify_int = Arc::clone(&shutdown_notify);
 
         let mut external_handle = tokio::spawn(async move {
+            #[cfg(feature = "server-graceful-shutdown")]
+            let shutdown_notify = shutdown_notify_ext;
             #[cfg(feature = "tls")]
             if let Some(tc) = tls_config_ext.as_ref() {
                 let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
@@ -423,7 +476,22 @@ impl GarrisonAuthServer {
                 let addr: std::net::SocketAddr = external_addr.parse().map_err(|e| {
                     GarrisonError::Internal(format!("server-external-addr-parse::{}", e))
                 })?;
-                return axum_server::bind_rustls(addr, rustls_config)
+                // T011: TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
+                #[cfg(feature = "server-graceful-shutdown")]
+                let handle = {
+                    let handle = axum_server::Handle::new();
+                    let h2 = handle.clone();
+                    let notify = Arc::clone(&shutdown_notify);
+                    tokio::spawn(async move {
+                        notify.notified().await;
+                        h2.graceful_shutdown(std::time::Duration::from_secs(30));
+                    });
+                    handle
+                };
+                let bind = axum_server::bind_rustls(addr, rustls_config);
+                #[cfg(feature = "server-graceful-shutdown")]
+                let bind = bind.handle(handle);
+                return bind
                     .serve(
                         external_router
                             .into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -437,12 +505,16 @@ impl GarrisonAuthServer {
             let external_listener = tokio::net::TcpListener::bind(&external_addr)
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("server-external-bind::{}", e)))?;
-            if let Err(e) = axum::serve(
+            let serve = axum::serve(
                 external_listener,
                 external_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-            {
+            );
+            // T011: 信号触发后停止接收新连接并 drain 在途请求
+            #[cfg(feature = "server-graceful-shutdown")]
+            let serve = serve.with_graceful_shutdown(async move {
+                shutdown_notify.notified().await;
+            });
+            if let Err(e) = serve.await {
                 tracing::error!(error = %e, "external server error");
                 return Err(GarrisonError::Internal(format!(
                     "server-external-server-error::{}",
@@ -453,6 +525,8 @@ impl GarrisonAuthServer {
         });
 
         let mut internal_handle = tokio::spawn(async move {
+            #[cfg(feature = "server-graceful-shutdown")]
+            let shutdown_notify = shutdown_notify_int;
             #[cfg(feature = "tls")]
             if let Some(tc) = tls_config_int.as_ref() {
                 let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
@@ -464,7 +538,22 @@ impl GarrisonAuthServer {
                 let addr: std::net::SocketAddr = internal_addr.parse().map_err(|e| {
                     GarrisonError::Internal(format!("server-internal-addr-parse::{}", e))
                 })?;
-                return axum_server::bind_rustls(addr, rustls_config)
+                // T011: TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
+                #[cfg(feature = "server-graceful-shutdown")]
+                let handle = {
+                    let handle = axum_server::Handle::new();
+                    let h2 = handle.clone();
+                    let notify = Arc::clone(&shutdown_notify);
+                    tokio::spawn(async move {
+                        notify.notified().await;
+                        h2.graceful_shutdown(std::time::Duration::from_secs(30));
+                    });
+                    handle
+                };
+                let bind = axum_server::bind_rustls(addr, rustls_config);
+                #[cfg(feature = "server-graceful-shutdown")]
+                let bind = bind.handle(handle);
+                return bind
                     .serve(
                         // ocr #2236: 内网 TLS 路径同样注入 ConnectInfo，
                         // 与外网路径对齐（限速/IP 提取中间件依赖 ConnectInfo<SocketAddr>）
@@ -480,13 +569,17 @@ impl GarrisonAuthServer {
             let internal_listener = tokio::net::TcpListener::bind(&internal_addr)
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("server-internal-bind::{}", e)))?;
-            if let Err(e) = axum::serve(
+            let serve = axum::serve(
                 internal_listener,
                 // ocr #2236: 内网非 TLS 路径同样注入 ConnectInfo（与外网对齐）
                 internal_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-            )
-            .await
-            {
+            );
+            // T011: 信号触发后停止接收新连接并 drain 在途请求
+            #[cfg(feature = "server-graceful-shutdown")]
+            let serve = serve.with_graceful_shutdown(async move {
+                shutdown_notify.notified().await;
+            });
+            if let Err(e) = serve.await {
                 tracing::error!(error = %e, "internal server error");
                 return Err(GarrisonError::Internal(format!(
                     "server-internal-server-error::{}",
@@ -507,5 +600,103 @@ impl GarrisonAuthServer {
                 res.map_err(|e| GarrisonError::Internal(format!("server-internal-task-panic::{}", e)))?
             },
         }
+    }
+}
+
+// ============================================================================
+// 优雅停机（T011，feature = "server-graceful-shutdown"）
+// ============================================================================
+
+#[cfg(feature = "server-graceful-shutdown")]
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            },
+            Err(e) => {
+                // 信号处理器安装失败（罕见）：不 panic，退化为仅监听 Ctrl-C
+                tracing::warn!(error = %e, "failed to install SIGTERM handler");
+                std::future::pending::<()>().await;
+            },
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!(
+        "shutdown signal received; stopping new connections and draining in-flight requests"
+    );
+}
+
+#[cfg(all(test, feature = "server-graceful-shutdown"))]
+mod graceful_shutdown_tests {
+    use super::*;
+    use axum::routing::get;
+
+    /// T011: 触发 shutdown 通知后 serve future 完成（监听停止）；
+    /// 触发前到达的在途请求完整收到响应（drain 语义）。
+    #[tokio::test]
+    async fn graceful_shutdown_drains_and_stops() {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind 应成功");
+        let addr = listener.local_addr().unwrap();
+        // serve 侧持有专属克隆，外层 notify 留作触发端
+        let serve_notify = Arc::clone(&notify);
+
+        let app = Router::new().route(
+            "/ping",
+            get(|| async {
+                // 模拟在途处理耗时
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                "pong"
+            }),
+        );
+        let serve = tokio::spawn(async move {
+            let serve = axum::serve(
+                listener,
+                app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+            );
+            serve
+                .with_graceful_shutdown(async move { serve_notify.notified().await })
+                .await
+        });
+
+        // 在途请求先于关闭信号到达并应完整完成
+        let client = reqwest::get(format!("http://{addr}/ping"))
+            .await
+            .expect("请求应成功");
+        assert_eq!(client.status(), 200);
+        assert_eq!(client.text().await.unwrap(), "pong");
+
+        // 触发关闭：serve future 应在超时内完成（监听停止 + drain 完成）
+        notify.notify_waiters();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), serve).await;
+        assert!(
+            result.is_ok(),
+            "shutdown 通知后 serve 应在超时内完成（graceful drain）"
+        );
+        assert!(result.unwrap().is_ok(), "serve 任务不应 panic");
+
+        // 关闭后新连接被拒绝/超时（监听已停止）
+        let new_conn = tokio::time::timeout(
+            std::time::Duration::from_millis(300),
+            reqwest::get(format!("http://{addr}/ping")),
+        )
+        .await;
+        assert!(
+            new_conn.is_err() || new_conn.unwrap().is_err(),
+            "shutdown 后新请求应失败（监听已停止）"
+        );
     }
 }

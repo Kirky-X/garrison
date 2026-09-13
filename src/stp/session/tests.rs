@@ -2035,9 +2035,10 @@ mod suite {
                             login_id,
                             token: t,
                             ..
-                        } if login_id == "logout-user-001" && t == &token
+                        } if login_id == "logout-user-001"
+                            && *t == crate::listener::mask_token_for_event(&token)
                     )),
-                    "应广播 Logout 事件 (login_id=logout-user-001)，实际事件: {:?}",
+                    "应广播 Logout 事件 (login_id=logout-user-001, token 掩码形式)，实际事件: {:?}",
                     events
                 );
             }
@@ -2162,9 +2163,9 @@ mod suite {
                     events.iter().any(|e| matches!(
                         e,
                         GarrisonEvent::Logout { login_id, token, .. } if login_id == "max-logout-001"
-                            && token == &t1
+                            && *token == crate::listener::mask_token_for_event(&t1)
                     )),
-                    "应广播 Logout 事件 (最旧 token 被踢出)，实际事件: {:?}",
+                    "应广播 Logout 事件 (最旧 token 被踢出, 掩码形式)，实际事件: {:?}",
                     events
                 );
             }
@@ -2198,10 +2199,10 @@ mod suite {
                             reason,
                             ..
                         } if login_id == "max-kickout-001"
-                            && token == &t1
+                            && *token == crate::listener::mask_token_for_event(&t1)
                             && reason == "超过最大登录数限制"
                     )),
-                    "应广播 Kickout 事件 (reason=超过最大登录数限制)，实际事件: {:?}",
+                    "应广播 Kickout 事件 (reason=超过最大登录数限制, token 掩码形式)，实际事件: {:?}",
                     events
                 );
             }
@@ -2235,11 +2236,189 @@ mod suite {
                             token,
                             reason,
                             ..
-                        } if login_id == "max-replaced-001" && token == &t1
+                        } if login_id == "max-replaced-001"
+                            && *token == crate::listener::mask_token_for_event(&t1)
                     )),
-                    "应广播 Replaced 事件，实际事件: {:?}",
+                    "应广播 Replaced 事件 (token 掩码形式)，实际事件: {:?}",
                     events
                 );
+            }
+
+            /// T009: 本地 login_token_map 与 DAO AccountSession 分歧时闸门仍以 DAO 为准。
+            ///
+            /// 模拟多节点部署：节点 B 的本地 map 缺失节点 A 登录的 token（remove 后），
+            /// 旧实现闸门读本地 map（len=2 <= max=2）被短路放行；新实现读 DAO（3 > 2），
+            /// 正确踢出最旧会话。
+            #[tokio::test]
+            async fn enforce_max_login_count_gate_reads_dao_not_local_map() {
+                let logic = make_logic(false);
+                let t1 = logic
+                    .login("gate-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+                let t2 = logic
+                    .login("gate-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+                let t3 = logic
+                    .login("gate-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+
+                // 模拟「其他节点登录的会话不在本节点本地 map」：移除 t1 的本地索引
+                logic.session.remove_login_token("gate-user-001", &t1);
+                assert_eq!(
+                    logic.session.get_tokens_by_login_id("gate-user-001").len(),
+                    2,
+                    "前置条件：本地 map 应只剩 2 个 token"
+                );
+
+                logic
+                    .enforce_max_login_count("gate-user-001", 2)
+                    .await
+                    .unwrap();
+
+                // DAO 权威数据为 3 个 → 应踢出最旧的 t1
+                assert!(
+                    logic
+                        .session
+                        .get_token_session(&t1)
+                        .await
+                        .unwrap()
+                        .is_none(),
+                    "DAO 中超限的最旧会话应被踢出（闸门不得读本地 map）"
+                );
+                assert!(
+                    logic
+                        .session
+                        .get_token_session(&t2)
+                        .await
+                        .unwrap()
+                        .is_some()
+                        && logic
+                            .session
+                            .get_token_session(&t3)
+                            .await
+                            .unwrap()
+                            .is_some(),
+                    "未超限的新会话应保留"
+                );
+            }
+
+            // ==================================================================
+            // T008 请求内登录身份复用测试
+            // ==================================================================
+
+            /// T008: check_login 校验成功后 get_login_id 命中缓存（零 DAO 读取）；
+            /// logout 后缓存立即失效，回退 DAO 读取返回未登录。
+            #[tokio::test]
+            async fn login_id_cache_hit_and_logout_invalidation() {
+                use std::sync::atomic::{AtomicUsize, Ordering};
+
+                /// get 计数 DAO：委托 MockDao 并统计 get 调用次数。
+                struct CountingGetDao {
+                    inner: Arc<MockDao>,
+                    get_calls: AtomicUsize,
+                }
+                #[async_trait]
+                impl GarrisonDao for CountingGetDao {
+                    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
+                        self.get_calls.fetch_add(1, Ordering::SeqCst);
+                        self.inner.get(key).await
+                    }
+                    async fn set(
+                        &self,
+                        key: &str,
+                        value: &str,
+                        ttl_seconds: u64,
+                    ) -> GarrisonResult<()> {
+                        self.inner.set(key, value, ttl_seconds).await
+                    }
+                    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
+                        self.inner.update(key, value).await
+                    }
+                    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
+                        self.inner.expire(key, seconds).await
+                    }
+                    async fn delete(&self, key: &str) -> GarrisonResult<()> {
+                        self.inner.delete(key).await
+                    }
+                    crate::atomic_test_fallback!();
+                }
+
+                let inner = Arc::new(MockDao::new());
+                let counting = Arc::new(CountingGetDao {
+                    inner,
+                    get_calls: AtomicUsize::new(0),
+                });
+                let dao: Arc<dyn GarrisonDao> = counting.clone();
+                let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+                let mut config = GarrisonConfig::default_config();
+                config.throw_on_not_login = false;
+                config.token_style = "uuid".to_string();
+                let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+                    has_permission: true,
+                    has_role: true,
+                });
+                let logic = GarrisonLogicDefault::new(
+                    session,
+                    Arc::new(config),
+                    firewall,
+                    Arc::new(crate::account::disable::DefaultDisableRepository::new(dao)),
+                );
+                use crate::stp::session::SessionLogic as _;
+
+                let token = logic
+                    .login("reuse-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+
+                // 缓存作用域 + token 作用域（复刻 axum middleware 的包裹方式）
+                crate::stp::with_login_id_scope(async {
+                    crate::stp::with_current_token(token.clone(), async {
+                        assert!(logic.check_login().await.unwrap(), "check_login 应通过");
+                        let reads_after_check = counting.get_calls.load(Ordering::SeqCst);
+
+                        // 缓存命中：get_login_id 不触发任何 DAO 读取
+                        let login_id = logic.get_login_id().await.unwrap();
+                        assert_eq!(login_id.as_deref(), Some("reuse-user-001"));
+                        assert_eq!(
+                            counting.get_calls.load(Ordering::SeqCst),
+                            reads_after_check,
+                            "缓存命中时 get_login_id 不应触发 DAO 读取（T008）"
+                        );
+
+                        // logout 失效缓存：同请求内回退 DAO → 未登录
+                        logic.logout().await.unwrap();
+                        let login_id_after_logout = logic.get_login_id().await.unwrap();
+                        assert_eq!(
+                            login_id_after_logout, None,
+                            "登出后缓存应立即失效（回退 DAO 返回 None）"
+                        );
+                    })
+                    .await;
+                })
+                .await;
+            }
+
+            /// T008: 未在缓存作用域内（直连 API 场景）行为不变——回退 DAO 读取。
+            #[tokio::test]
+            async fn login_id_fallback_without_cache_scope() {
+                use crate::stp::session::SessionLogic as _;
+
+                let (logic, _recorder) = make_logic_with_listener(false);
+                let token = logic
+                    .login("fallback-user-001", &LoginParams::default())
+                    .await
+                    .unwrap();
+
+                // 无 with_login_id_scope：check_login 缓存写入为 no-op，get_login_id 走 DAO
+                crate::stp::with_current_token(token.clone(), async {
+                    assert!(logic.check_login().await.unwrap());
+                    let login_id = logic.get_login_id().await.unwrap();
+                    assert_eq!(login_id.as_deref(), Some("fallback-user-001"));
+                })
+                .await;
             }
 
             // ==================================================================
@@ -3203,6 +3382,152 @@ mod suite {
             let value = dao.get(&key).await.unwrap();
             assert!(value.is_some(), "logout 后 jti 应被写入黑名单");
             assert_eq!(value.unwrap(), "1");
+        }
+
+        /// T005: 黑名单写失败时执行有界重试——前 2 次瞬时失败，第 3 次成功。
+        #[tokio::test]
+        async fn blacklist_write_retries_then_succeeds() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            /// set 前 N 次失败的测试 DAO（其余方法最小实现）。
+            struct FlakySetDao {
+                set_calls: AtomicUsize,
+                fail_first: usize,
+            }
+            #[async_trait]
+            impl GarrisonDao for FlakySetDao {
+                async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
+                    Ok(None)
+                }
+                async fn set(
+                    &self,
+                    _key: &str,
+                    _value: &str,
+                    _ttl_seconds: u64,
+                ) -> GarrisonResult<()> {
+                    let n = self.set_calls.fetch_add(1, Ordering::SeqCst) + 1;
+                    if n <= self.fail_first {
+                        Err(GarrisonError::Dao("flaky-set::transient".to_string()))
+                    } else {
+                        Ok(())
+                    }
+                }
+                async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
+                    Ok(())
+                }
+                async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
+                    Ok(())
+                }
+                async fn delete(&self, _key: &str) -> GarrisonResult<()> {
+                    Ok(())
+                }
+                crate::atomic_test_fallback!();
+            }
+
+            let flaky = Arc::new(FlakySetDao {
+                set_calls: AtomicUsize::new(0),
+                fail_first: 2,
+            });
+            let dao: Arc<dyn GarrisonDao> = flaky.clone();
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+            let mut config = GarrisonConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.jwt_secret = "jwt-revocation-test-secret-32bytes!".to_string().into();
+            config.enable_jwt_revocation = true;
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(dao)),
+            )
+            .with_jwt_mode(JwtMode::Stateless);
+
+            let handler =
+                crate::protocol::jwt::JwtHandler::new("jwt-revocation-test-secret-32bytes!");
+            let token = handler.sign("user-retry", 3600).unwrap();
+
+            logic.blacklist_jwt_jti(&token).await;
+
+            assert_eq!(
+                flaky.set_calls.load(Ordering::SeqCst),
+                3,
+                "前 2 次失败应重试，第 3 次成功（共 3 次调用）"
+            );
+        }
+
+        /// T005: 黑名单写入持续失败时重试有界（恰好 3 次），函数不 panic、不向调用方传播错误。
+        #[tokio::test]
+        async fn blacklist_write_bounded_retry_on_persistent_failure() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            struct AlwaysFailSetDao {
+                set_calls: AtomicUsize,
+            }
+            #[async_trait]
+            impl GarrisonDao for AlwaysFailSetDao {
+                async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
+                    Ok(None)
+                }
+                async fn set(
+                    &self,
+                    _key: &str,
+                    _value: &str,
+                    _ttl_seconds: u64,
+                ) -> GarrisonResult<()> {
+                    self.set_calls.fetch_add(1, Ordering::SeqCst);
+                    Err(GarrisonError::Dao("flaky-set::persistent".to_string()))
+                }
+                async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
+                    Ok(())
+                }
+                async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
+                    Ok(())
+                }
+                async fn delete(&self, _key: &str) -> GarrisonResult<()> {
+                    Ok(())
+                }
+                crate::atomic_test_fallback!();
+            }
+
+            let flaky = Arc::new(AlwaysFailSetDao {
+                set_calls: AtomicUsize::new(0),
+            });
+            let dao: Arc<dyn GarrisonDao> = flaky.clone();
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+            let mut config = GarrisonConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.jwt_secret = "jwt-revocation-test-secret-32bytes!".to_string().into();
+            config.enable_jwt_revocation = true;
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(dao)),
+            )
+            .with_jwt_mode(JwtMode::Stateless);
+
+            let handler =
+                crate::protocol::jwt::JwtHandler::new("jwt-revocation-test-secret-32bytes!");
+            let token = handler.sign("user-retry-persistent", 3600).unwrap();
+
+            // 持续失败不应 panic/传播错误（幂等成功语义）
+            logic.blacklist_jwt_jti(&token).await;
+
+            assert_eq!(
+                flaky.set_calls.load(Ordering::SeqCst),
+                3,
+                "持续失败时应恰好尝试 3 次（1 次初始 + 2 次重试）"
+            );
         }
 
         /// stateless 模式对已撤销 JWT 返回 TokenRevoked 错误。

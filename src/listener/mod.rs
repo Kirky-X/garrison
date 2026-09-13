@@ -49,19 +49,45 @@ pub struct RequestContext {
     pub user_agent: Option<String>,
 }
 
+/// 事件载荷 token 脱敏（CWE-532 修复，v0.9.0）。
+///
+/// 长 token（>8 字符）输出前 8 字符 + `***`；短 token 输出固定占位 `***`。
+/// `get(..8)` 为字符安全截取（避免多字节 UTF-8 中间截断 panic）。
+///
+/// # 语义契约
+///
+/// 自 v0.9.0 起，`Login` / `Logout` / `Kickout` / `Replaced` / `TokenExpired` /
+/// `TokenRefresh` / `RevokeToken` / `SessionTimeout` 等事件的 token 类字段
+/// **统一携带掩码形式**（非完整 token）：listener 直接打日志不再泄露活动会话
+/// token，与 `GarrisonEvent` 手动 `Debug` 脱敏形成双保险（ocr #2370）。
+/// 需要完整 token 的消费方不应通过事件获取（框架自身消费走内部调用链）。
+/// `SessionExpiryListener` 等回调参数中的完整 token 打日志前也应使用本函数脱敏。
+pub fn mask_token_for_event(token: &str) -> String {
+    match token.get(..8) {
+        Some(prefix) if token.len() > 8 => format!("{}***", prefix),
+        _ => "***".to_string(),
+    }
+}
+
 /// 事件枚举，定义框架广播的所有事件变体。
 ///
 /// 派生 `Clone`、`PartialEq`；**`Debug` 为手动实现（非 derive）**：
 /// `token` / `old_token` / `new_token` / `old_key` / `new_key` 等敏感字段在
 /// `{:?}` 输出中脱敏（仅保留前 8 字节 + `***`，短密钥整体掩码），防止监听器或
 /// 框架代码用 `{:?}` 打日志时泄露明文 token（ocr #2370）。
+///
+/// # v0.9.0 载荷脱敏（CWE-532）
+///
+/// 上述 token 类**字段值本身**也统一为 [`mask_token_for_event`] 掩码形式
+/// （构造点脱敏）：即使 listener 以 `{:?}` 之外的方式（如 `token` 字段直读）
+/// 输出日志，活动会话 token 也不会以明文进入日志系统。
 #[derive(Clone, PartialEq)]
 pub enum GarrisonEvent {
     /// 登录成功事件。
     Login {
         /// 登录主体标识。
         login_id: String,
-        /// 登录后生成的 token。
+        /// 登录后生成的 token（**掩码形式**：前 8 字符 + `***`，v0.9.0 起不含完整 token）。
         token: String,
         /// 登录设备信息（可选）。
         device: Option<String>,
@@ -72,7 +98,7 @@ pub enum GarrisonEvent {
     Logout {
         /// 登录主体标识。
         login_id: String,
-        /// 被登出的 token。
+        /// 被登出的 token（**掩码形式**，v0.9.0 起不含完整 token）。
         token: String,
         /// 请求上下文（IP + User-Agent，T004 新增）。
         request_context: Option<RequestContext>,
@@ -81,7 +107,7 @@ pub enum GarrisonEvent {
     Kickout {
         /// 登录主体标识。
         login_id: String,
-        /// 被踢下线的 token。
+        /// 被踢下线的 token（**掩码形式**，v0.9.0 起不含完整 token；空字符串表示按 login_id 整体踢出）。
         token: String,
         /// 踢出原因。
         reason: String,
@@ -108,7 +134,7 @@ pub enum GarrisonEvent {
     },
     /// Token 过期事件。
     TokenExpired {
-        /// 过期的 token。
+        /// 过期的 token（**掩码形式**，v0.9.0 起不含完整 token）。
         token: String,
         /// 请求上下文（IP + User-Agent，T004 新增）。
         request_context: Option<RequestContext>,
@@ -135,9 +161,9 @@ pub enum GarrisonEvent {
     TokenRefresh {
         /// 登录主体标识。
         login_id: String,
-        /// 刷新前的旧 token。
+        /// 刷新前的旧 token（**掩码形式**，v0.9.0 起不含完整 token）。
         old_token: String,
-        /// 刷新后的新 token。
+        /// 刷新后的新 token（**掩码形式**，v0.9.0 起不含完整 token）。
         new_token: String,
         /// 请求上下文（IP + User-Agent，T004 新增）。
         request_context: Option<RequestContext>,

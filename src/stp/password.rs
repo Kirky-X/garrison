@@ -76,6 +76,21 @@ pub trait PasswordLogic: SessionLogic {
 // GarrisonLogicDefault impl
 // ============================================================================
 
+/// H-1（A-014 扩展）：dummy Argon2id 哈希，模块级惰性生成一次。
+///
+/// 参数与 [`crate::account::credential::password::Argon2Hasher`] 默认一致
+/// （Argon2id, m=19456, t=2, p=1）。「用户不存在」分支对它执行一次等价开销的
+/// verify（结果丢弃），使该分支与「密码错误」分支耗时同量级，消除响应时间
+/// 双峰分布——否则攻击者可借此枚举有效用户名（统一错误消息只防住了消息差，
+/// 未防住时序差）。
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
+static DUMMY_ARGON2_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+    use crate::account::credential::password::{Argon2Hasher, PasswordHasher as _};
+    Argon2Hasher::default()
+        .hash("garrison-h1-timing-equalizer")
+        .expect("固定输入的 Argon2 hash 生成恒成功（H-1 时序对齐 dummy）")
+});
+
 #[async_trait]
 impl PasswordLogic for GarrisonLogicDefault {
     /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
@@ -109,6 +124,17 @@ impl PasswordLogic for GarrisonLogicDefault {
         let user = match user {
             Some(u) => u,
             None => {
+                // H-1: 先执行一次与真实校验等价开销的 dummy Argon2 verify（结果丢弃），
+                // 对齐「用户不存在」与「密码错误」两分支的响应耗时（见 DUMMY_ARGON2_HASH）。
+                // spawn_blocking：慢哈希为纯 CPU 工作，移出 async worker 线程（P2 修复）。
+                let _verified_dummy = tokio::task::spawn_blocking({
+                    let hasher = std::sync::Arc::clone(hasher);
+                    let password = password.to_string();
+                    move || hasher.verify(&password, &DUMMY_ARGON2_HASH)
+                })
+                .await
+                .map_err(|e| GarrisonError::Internal(format!("stp-password-blocking::{}", e)))?;
+
                 // v0.4.2 安全审计 A-014: 日志和事件统一为 "invalid_credentials"，
                 // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
                 tracing::warn!(
@@ -133,7 +159,17 @@ impl PasswordLogic for GarrisonLogicDefault {
         };
 
         // 2. 校验密码（哈希格式不支持返回 "stp-unsupported-hash-format"，可泄露）
-        let verified = hasher.verify(password, &user.password_hash).map_err(|e| {
+        // P2: Argon2/bcrypt 为 50-300ms 级纯 CPU 慢哈希，包 spawn_blocking
+        // 避免登录风暴期间阻塞 tokio worker、拖慢同进程全部请求。
+        let verified = tokio::task::spawn_blocking({
+            let hasher = std::sync::Arc::clone(hasher);
+            let password = password.to_string();
+            let password_hash = user.password_hash.clone();
+            move || hasher.verify(&password, &password_hash)
+        })
+        .await
+        .map_err(|e| GarrisonError::Internal(format!("stp-password-blocking::{}", e)))?
+        .map_err(|e| {
             tracing::warn!(
                 login_id = login_id,
                 reason = EventReason::HashFormatError.as_str(),
@@ -506,6 +542,49 @@ mod tests {
             } else {
                 panic!("应广播 LoginFailure 事件，实际捕获: {:?}", events);
             }
+        }
+
+        /// H-1: 用户不存在分支执行一次 dummy verify（时序对齐），错误与事件语义不变。
+        #[tokio::test]
+        async fn login_with_password_user_not_found_performs_dummy_verify() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            /// 计数哈希器：记录 verify 调用次数（恒返回不匹配）。
+            struct CountingHasher {
+                verify_calls: AtomicUsize,
+            }
+
+            impl PasswordHasher for CountingHasher {
+                fn hash(&self, _password: &str) -> GarrisonResult<String> {
+                    Ok("$argon2id$v=19$m=19456,t=2,p=1$dummy$dummy".to_string())
+                }
+                fn verify(&self, _password: &str, _hash: &str) -> GarrisonResult<bool> {
+                    self.verify_calls.fetch_add(1, Ordering::Relaxed);
+                    Ok(false)
+                }
+            }
+
+            let logic = make_logic_without_creds();
+            let counter = Arc::new(CountingHasher {
+                verify_calls: AtomicUsize::new(0),
+            });
+            let hasher: Arc<dyn PasswordHasher> = counter.clone();
+            let repo: Arc<dyn UserRepository> = Arc::new(MockUserRepository::new()); // 空仓库
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(repo);
+
+            let result = logic.login_with_password("missing-user", "any").await;
+            assert!(
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+                "用户不存在应返回 InvalidParam(\"stp-invalid-password\")，实际: {:?}",
+                result
+            );
+            assert_eq!(
+                counter.verify_calls.load(Ordering::Relaxed),
+                1,
+                "用户不存在分支应恰好执行一次 dummy verify（H-1 时序对齐），实际 0 次"
+            );
         }
 
         /// 哈希格式不支持 → 返回 InvalidParam("stp-unsupported-hash-format")。

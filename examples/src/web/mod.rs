@@ -9,6 +9,8 @@ pub mod axum_integration;
 pub mod context_request;
 #[cfg(feature = "grpc")]
 pub mod grpc_interceptor;
+#[cfg(feature = "cache-memory")]
+pub mod readme_quickstart;
 #[cfg(feature = "web-actix")]
 pub mod web_actix_example;
 #[cfg(all(feature = "web-cors", feature = "web-csrf", feature = "web-axum"))]

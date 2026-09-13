@@ -80,7 +80,7 @@ const MAX_FLOW_DEPTH: usize = 10;
 /// struct PasswordCredentialBuilder;
 /// impl CredentialBuilder for PasswordCredentialBuilder {
 ///     fn build(&self, model: CredentialModel) -> GarrisonResult<Box<dyn Credential>> {
-///         let hasher = Box::new(Argon2Hasher::new());
+///         let hasher = std::sync::Arc::new(Argon2Hasher::new());
 ///         Ok(Box::new(PasswordCredential::new(model, hasher)))
 ///     }
 /// }

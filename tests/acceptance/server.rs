@@ -201,6 +201,8 @@ async fn start_test_server(
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)
+        // C-1: 验收测试显式开启外网 login（框架默认 404，secure-by-default）
+        .with_external_login_enabled(true)
         .with_internal_api_key(api_key);
 
     let external_router = server.external_router();
@@ -650,6 +652,8 @@ async fn start_test_server_with_oauth2(
         .with_external_port(external_port)
         .with_internal_port(internal_port)
         .with_rate_limit(rate_limit)
+        // C-1: 验收测试显式开启外网 login（框架默认 404，secure-by-default）
+        .with_external_login_enabled(true)
         .with_internal_api_key(api_key)
         .with_oauth2(state);
 

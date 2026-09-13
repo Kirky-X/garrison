@@ -9,7 +9,7 @@
 //! `Status::into_http` 构造）拒绝，成功则把 token 注入 task_local
 //! （`with_current_token`）后放行，handler 内可直接调用 `GarrisonUtil` API。
 
-use crate::stp::{with_current_token, GarrisonUtil};
+use crate::stp::{with_current_token, with_login_id_scope, GarrisonUtil};
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -92,7 +92,9 @@ where
         //    鉴权与内层调用同处 `with_current_token` 作用域——handler 经
         //    task_local 看到当前 token，`GarrisonUtil` 静态 API 可直接使用。
         let response_fut = self.inner.call(request);
-        Box::pin(with_current_token(token, async move {
+        // T008: 登录身份缓存作用域与 with_current_token 同层——鉴权 + handler
+        // 处理期内 get_login_id/check_permission 可命中缓存免 DAO 读取。
+        Box::pin(with_login_id_scope(with_current_token(token, async move {
             match GarrisonUtil::check_login().await {
                 Ok(true) => response_fut.await,
                 _ => Ok(
@@ -100,7 +102,7 @@ where
                         .into_http(),
                 ),
             }
-        }))
+        })))
     }
 }
 

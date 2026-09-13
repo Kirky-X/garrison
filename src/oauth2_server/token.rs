@@ -220,18 +220,22 @@ impl PasswordRateLimiter {
     /// 返回 `true` 表示允许尝试，`false` 表示已被锁定（窗口内失败次数达上限）。
     /// 窗口过期时由 `InMemoryDao` 的 TTL 语义自动重置（首次 `incr` 后过期会重新初始化）。
     ///
-    /// # Fail-Open 策略
+    /// # Fail-Closed 策略（v0.9.0 变更）
     ///
-    /// 当 `limiteron::get_count` 出错（如 DAO 通信失败 / 计数器值损坏）时返回 `true`，
-    /// 与原 `Mutex` 实现不失败的语义一致。错误经 `tracing::warn` 记录后吞掉，
-    /// 避免单次 DAO 故障导致用户被错误锁定。
+    /// 当 `limiteron::get_count` 出错（如 DAO 通信失败 / 计数器值损坏）时返回 `false`
+    /// （拒绝本次密码校验）。本计数器防御定向撞库——若故障时放行，攻击者可持续
+    /// 制造 DAO 故障使锁定失效、无限撞库（vuln M-3）。与 `check_client` 的
+    /// fail-open（可用性优先）刻意不同：撞库防护的失效代价高于单次请求拒绝。
     pub async fn check(&self, username: &str) -> bool {
         let key = format!("rate_limit:pw:{}", username);
         match self.limiter.get_count(&key).await {
             Ok(count) => count < self.max_attempts as u64,
             Err(e) => {
-                tracing::warn!("PasswordRateLimiter::check get_count failed: {}", e);
-                true
+                tracing::warn!(
+                    "PasswordRateLimiter::check get_count failed (fail-closed, rejecting): {}",
+                    e
+                );
+                false
             },
         }
     }
@@ -287,7 +291,8 @@ impl PasswordRateLimiter {
 /// - **limiteron 委托**：通过 `GarrisonDaoDistributedLimiter` + `InMemoryDao` 实现原子计数 + TTL，
 ///   `atomic_check_and_incr` 在 Redis 后端走 Lua 脚本原子 check-and-increment，
 ///   `InMemoryDao` 后端退化为 `incr` + 阈值判断（单进程原子）
-/// - **Fail-Open**：DAO 错误时返回 `true`（放行），避免单次故障导致全部 client 被锁
+/// - **Fail 策略（v0.9.0）**：username 维度（撞库防护）DAO 错误 fail-closed 拒绝；
+///   client QPS 维度 fail-open 放行（可用性优先，仅防滥用）
 /// - **独立于 PasswordRateLimiter**：后者是失败计数器（账户锁定），
 ///   本结构是请求速率限制（QPS 限制），两者互补
 ///
@@ -356,8 +361,10 @@ impl TokenRateLimiter {
     ///
     /// # Fail-Open
     ///
-    /// DAO 错误时返回 `true`（放行），与 `PasswordRateLimiter::check` 语义一致 ——
-    /// 避免单次 DAO 故障导致全部 client 被锁，可用性优先于限速准确性。
+    /// DAO 错误时返回 `true`（放行），可用性优先于限速准确性——本维度仅限
+    /// 请求 QPS（防滥用），失效代价可接受。注意与 `PasswordRateLimiter::check`
+    /// / [`Self::check_username`] 的 fail-closed 刻意不同：后两者是撞库防护，
+    /// 故障放行等于允许无限撞库。
     pub async fn check_client(&self, client_id: &str) -> bool {
         let key = format!("rate_limit:token:client:{}", client_id);
         let ttl = StdDuration::from_secs(self.client_window_secs);
@@ -379,9 +386,10 @@ impl TokenRateLimiter {
     /// 调用即计数（`atomic_check_and_incr` 原子 check-and-increment）。
     /// 仅 password grant type 调用，限制单账户的密码尝试 QPS。
     ///
-    /// # Fail-Open
+    /// # Fail-Closed 策略（v0.9.0 变更）
     ///
-    /// DAO 错误时返回 `true`（放行）。
+    /// DAO 错误时返回 `false`（拒绝）。本维度限制单账户密码尝试 QPS，
+    /// 属撞库防护面——故障放行等于允许绕过限速无限撞库（vuln M-3）。
     pub async fn check_username(&self, username: &str) -> bool {
         let key = format!("rate_limit:token:user:{}", username);
         let ttl = StdDuration::from_secs(self.username_window_secs);
@@ -392,8 +400,11 @@ impl TokenRateLimiter {
         {
             Ok(allowed) => allowed,
             Err(e) => {
-                tracing::warn!("TokenRateLimiter::check_username failed: {}", e);
-                true
+                tracing::warn!(
+                    "TokenRateLimiter::check_username failed (fail-closed, rejecting): {}",
+                    e
+                );
+                false
             },
         }
     }
@@ -2418,6 +2429,53 @@ mod tests {
         assert_eq!(limiter.client_window_secs, 1);
         assert_eq!(limiter.username_max, 1);
         assert_eq!(limiter.username_window_secs, 1);
+    }
+
+    /// M-3: `PasswordRateLimiter::check` DAO 故障（计数器值损坏）时 fail-closed 拒绝。
+    #[tokio::test]
+    async fn password_rate_limiter_check_fails_closed_on_dao_error() {
+        let dao = Arc::new(InMemoryDao::new());
+        // 注入非数字计数器值，模拟 DAO 数据/通信故障
+        dao.set("rate_limit:pw:alice", "not-a-number", 60)
+            .await
+            .unwrap();
+        let limiter = PasswordRateLimiter {
+            limiter: GarrisonDaoDistributedLimiter::new(dao.clone()),
+            dao,
+            max_attempts: 5,
+            window_seconds: 60,
+        };
+        assert!(
+            !limiter.check("alice").await,
+            "DAO 故障时应拒绝本次密码校验（fail-closed，防绕过撞库锁定）"
+        );
+    }
+
+    /// M-3: DAO 故障时 `check_username`（撞库防护）fail-closed、`check_client`（QPS 防滥用）fail-open。
+    #[tokio::test]
+    async fn token_rate_limiter_dao_error_applies_different_fail_strategies() {
+        let dao = Arc::new(InMemoryDao::new());
+        dao.set("rate_limit:token:user:bob", "corrupt", 60)
+            .await
+            .unwrap();
+        dao.set("rate_limit:token:client:c1", "corrupt", 60)
+            .await
+            .unwrap();
+        let limiter = TokenRateLimiter {
+            limiter: GarrisonDaoDistributedLimiter::new(dao.clone()),
+            client_max: 10,
+            client_window_secs: 1,
+            username_max: 5,
+            username_window_secs: 60,
+        };
+        assert!(
+            !limiter.check_username("bob").await,
+            "username 维度应 fail-closed（撞库防护不允许故障放行）"
+        );
+        assert!(
+            limiter.check_client("c1").await,
+            "client QPS 维度应保持 fail-open（可用性优先）"
+        );
     }
 
     /// per-client_id 限速：前 N 次允许，第 N+1 次拒绝。

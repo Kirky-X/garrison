@@ -103,7 +103,17 @@ pub struct CacheHealthCheck;
 
 /// 数据库健康检查器（feature-gated），探测 dbnexus 连接。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
-pub struct DbHealthCheck;
+pub struct DbHealthCheck {
+    /// SQL 连接池句柄（db-postgres / db-mysql 探测路径用，T010）。
+    ///
+    /// `None`（`new()` 默认）时探测路径返回 `Degraded`——不再误报 `Healthy`
+    /// （原实现探测内存 KV DAO，Postgres 宕机 readiness 仍 Healthy，
+    /// K8s 摘流失效）。部署方应经 [`DbHealthCheck::with_pool`] 注入真实连接池。
+    #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
+    pool: Option<std::sync::Arc<dbnexus::DbPool>>,
+    #[cfg(not(any(feature = "db-postgres", feature = "db-mysql")))]
+    _priv: (),
+}
 
 // ============================================================================
 // 子模块（impl 块与路由集成，规则 25 接口隔离）
