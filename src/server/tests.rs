@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 use super::*;
@@ -426,7 +426,7 @@ fn test_to_api_response_err() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("INTERNAL_ERROR"));
-    assert_eq!(resp.message.as_deref(), Some("内部错误"));
+    assert_eq!(resp.message.as_deref(), Some("Internal error"));
 }
 
 // ========================================================================
@@ -626,7 +626,7 @@ fn test_to_api_response_with_not_login_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_LOGIN"));
-    assert_eq!(resp.message.as_deref(), Some("未登录"));
+    assert_eq!(resp.message.as_deref(), Some("Not logged in"));
 }
 
 /// 测试 to_api_response 处理 Dao 错误（500 + DAO_ERROR）。
@@ -637,7 +637,7 @@ fn test_to_api_response_with_dao_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("DAO_ERROR"));
-    assert_eq!(resp.message.as_deref(), Some("数据访问错误"));
+    assert_eq!(resp.message.as_deref(), Some("Data access error"));
 }
 
 /// 测试 to_api_response 处理 InvalidParam 错误（400 + INVALID_PARAM）。
@@ -648,7 +648,7 @@ fn test_to_api_response_with_invalid_param_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("INVALID_PARAM"));
-    assert_eq!(resp.message.as_deref(), Some("参数无效"));
+    assert_eq!(resp.message.as_deref(), Some("Invalid parameter"));
 }
 
 /// 测试 to_api_response 处理 NotPermission 错误（403 + NOT_PERMISSION）。
@@ -659,7 +659,7 @@ fn test_to_api_response_with_not_permission_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_PERMISSION"));
-    assert_eq!(resp.message.as_deref(), Some("无权限"));
+    assert_eq!(resp.message.as_deref(), Some("Permission denied"));
 }
 
 /// 测试 to_api_response 处理 ExpiredToken 错误（401 + EXPIRED_TOKEN）。
@@ -670,7 +670,7 @@ fn test_to_api_response_with_expired_token_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("EXPIRED_TOKEN"));
-    assert_eq!(resp.message.as_deref(), Some("Token 已过期"));
+    assert_eq!(resp.message.as_deref(), Some("Token expired"));
 }
 
 // ========================================================================
@@ -684,7 +684,7 @@ fn test_to_api_response_with_not_role_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_ROLE"));
-    assert_eq!(resp.message.as_deref(), Some("无角色"));
+    assert_eq!(resp.message.as_deref(), Some("Role required"));
 }
 
 /// 测试 to_api_response 处理 InvalidToken 错误（401 + INVALID_TOKEN）。
@@ -695,7 +695,7 @@ fn test_to_api_response_with_invalid_token_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("INVALID_TOKEN"));
-    assert_eq!(resp.message.as_deref(), Some("Token 无效"));
+    assert_eq!(resp.message.as_deref(), Some("Invalid token"));
 }
 
 /// 测试 to_api_response 处理 TokenRevoked 错误（401 + TOKEN_REVOKED）。
@@ -706,7 +706,7 @@ fn test_to_api_response_with_token_revoked_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("TOKEN_REVOKED"));
-    assert_eq!(resp.message.as_deref(), Some("Token 已吊销"));
+    assert_eq!(resp.message.as_deref(), Some("Token revoked"));
 }
 
 /// 测试 to_api_response 处理 Config 错误（500 + CONFIG_ERROR）。
@@ -717,7 +717,7 @@ fn test_to_api_response_with_config_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("CONFIG_ERROR"));
-    assert_eq!(resp.message.as_deref(), Some("配置错误"));
+    assert_eq!(resp.message.as_deref(), Some("Configuration error"));
 }
 
 /// 测试 to_api_response 处理 Session 错误（500 + SESSION_ERROR）。
@@ -728,7 +728,7 @@ fn test_to_api_response_with_session_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SESSION_ERROR"));
-    assert_eq!(resp.message.as_deref(), Some("会话错误"));
+    assert_eq!(resp.message.as_deref(), Some("Session error"));
 }
 
 /// 测试 to_api_response 处理 Network 错误（502 + NETWORK_ERROR）。
@@ -738,7 +738,7 @@ fn test_to_api_response_with_network_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NETWORK_ERROR"));
-    assert_eq!(resp.message.as_deref(), Some("网络错误"));
+    assert_eq!(resp.message.as_deref(), Some("Network error"));
 }
 
 /// 测试 to_api_response 处理 NotImplemented 错误（501 + NOT_IMPLEMENTED）。
@@ -749,7 +749,7 @@ fn test_to_api_response_with_not_implemented_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_IMPLEMENTED"));
-    assert_eq!(resp.message.as_deref(), Some("未实现"));
+    assert_eq!(resp.message.as_deref(), Some("Not implemented"));
 }
 
 /// 测试 to_api_response 处理 FirewallBlocked 错误（403 + FIREWALL_BLOCKED）。
@@ -760,7 +760,7 @@ fn test_to_api_response_with_firewall_blocked_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("FIREWALL_BLOCKED"));
-    assert_eq!(resp.message.as_deref(), Some("防火墙拦截"));
+    assert_eq!(resp.message.as_deref(), Some("Firewall blocked"));
 }
 
 /// 测试 to_api_response 处理 DisableService 错误（403 + DISABLE_SERVICE）。
@@ -773,7 +773,7 @@ fn test_to_api_response_with_disable_service_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("DISABLE_SERVICE"));
-    assert_eq!(resp.message.as_deref(), Some("账号已被封禁"));
+    assert_eq!(resp.message.as_deref(), Some("Account disabled"));
 }
 
 /// 测试 to_api_response 处理 NotSafe 错误（400 + NOT_SAFE）。
@@ -785,7 +785,10 @@ fn test_to_api_response_with_not_safe_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_SAFE"));
-    assert_eq!(resp.message.as_deref(), Some("未完成二次认证"));
+    assert_eq!(
+        resp.message.as_deref(),
+        Some("Two-factor authentication required")
+    );
 }
 
 /// 测试 to_api_response 处理 SmsRateLimitExceeded 错误（429 + SMS_RATE_LIMIT_EXCEEDED）。
@@ -797,7 +800,7 @@ fn test_to_api_response_with_sms_rate_limit_exceeded_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SMS_RATE_LIMIT_EXCEEDED"));
-    assert_eq!(resp.message.as_deref(), Some("短信发送频繁"));
+    assert_eq!(resp.message.as_deref(), Some("SMS rate limit exceeded"));
 }
 
 /// 测试 to_api_response 处理 SmsVerifyMaxAttempts 错误（400 + SMS_VERIFY_MAX_ATTEMPTS）。
@@ -807,7 +810,10 @@ fn test_to_api_response_with_sms_verify_max_attempts_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SMS_VERIFY_MAX_ATTEMPTS"));
-    assert_eq!(resp.message.as_deref(), Some("验证码尝试次数超限"));
+    assert_eq!(
+        resp.message.as_deref(),
+        Some("Verification code attempts exceeded")
+    );
 }
 
 /// 测试 to_api_response 处理 SmsCodeNotFound 错误（400 + SMS_CODE_NOT_FOUND）。
@@ -817,7 +823,10 @@ fn test_to_api_response_with_sms_code_not_found_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SMS_CODE_NOT_FOUND"));
-    assert_eq!(resp.message.as_deref(), Some("验证码不存在或已过期"));
+    assert_eq!(
+        resp.message.as_deref(),
+        Some("Verification code not found or expired")
+    );
 }
 
 /// 测试 to_api_response 处理 SmsChannelRecycled 错误（403 + SMS_CHANNEL_RECYCLED）。
@@ -827,7 +836,7 @@ fn test_to_api_response_with_sms_channel_recycled_error() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("SMS_CHANNEL_RECYCLED"));
-    assert_eq!(resp.message.as_deref(), Some("短信通道已回收"));
+    assert_eq!(resp.message.as_deref(), Some("SMS channel recycled"));
 }
 
 /// 测试 to_api_response 处理 Exception(code=-1) 错误（401 + NOT_LOGIN + exception_code）。
@@ -840,7 +849,7 @@ fn test_to_api_response_with_exception_not_login() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_LOGIN"));
-    assert_eq!(resp.message.as_deref(), Some("未登录"));
+    assert_eq!(resp.message.as_deref(), Some("Not logged in"));
 }
 
 /// 测试 to_api_response 处理 Exception(code=-2) 错误（403 + NOT_PERMISSION + exception_code）。
@@ -853,7 +862,7 @@ fn test_to_api_response_with_exception_not_permission() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("NOT_PERMISSION"));
-    assert_eq!(resp.message.as_deref(), Some("无权限"));
+    assert_eq!(resp.message.as_deref(), Some("Permission denied"));
 }
 
 /// 测试 to_api_response 处理 Exception(其他 code) 错误（500 + EXCEPTION + exception_code）。
@@ -866,7 +875,7 @@ fn test_to_api_response_with_exception_other_code() {
     let resp = to_api_response(result);
     assert!(resp.data.is_none());
     assert_eq!(resp.error_code.as_deref(), Some("EXCEPTION"));
-    assert_eq!(resp.message.as_deref(), Some("业务异常"));
+    assert_eq!(resp.message.as_deref(), Some("Business exception"));
 }
 
 // ========================================================================

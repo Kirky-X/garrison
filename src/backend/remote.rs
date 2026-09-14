@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! BackendRemote — 远程认证后端实现。
@@ -221,7 +221,7 @@ fn validate_base_url(base_url: &str) -> GarrisonResult<String> {
         return Ok(trimmed.to_string());
     }
     Err(GarrisonError::InvalidParam(format!(
-        "backend-remote-base-url-invalid-scheme::{}（scheme 必须为 http:// 或 https://）",
+        "backend-remote-base-url-invalid-scheme::{}",
         base_url
     )))
 }

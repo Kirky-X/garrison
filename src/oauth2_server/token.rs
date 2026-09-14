@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! /oauth2/token 端点 — 支持 4 种 grant type + PKCE 强制。
@@ -13,6 +13,7 @@ use crate::constants::{DaoKeyPrefix, TokenType};
 use crate::dao::{GarrisonDao, InMemoryDao};
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::limiteron::GarrisonDaoDistributedLimiter;
+use crate::loc;
 // 导入 DistributedLimiter trait 以使用 get_count / incr_with_ttl 方法
 use crate::oauth2_server::authorize::AuthorizeHandler;
 use crate::oauth2_server::client::{GrantType, OAuth2Client, OAuth2ClientStore};
@@ -521,9 +522,10 @@ impl TokenHandler {
             .map(|(id, _)| id)
             .unwrap_or_else(|| req.client_id.clone());
         if !client_id.is_empty() && !self.token_rate_limiter.check_client(&client_id).await {
-            return Err(GarrisonError::OAuth2(
-                "rate_limited: 客户端请求过于频繁，请稍后再试".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-rate-limited-client",
+                "rate_limited: client requests too frequent, please retry later"
+            )));
         }
 
         // 1. 验证客户端凭证（优先 Basic Auth）
@@ -562,20 +564,24 @@ impl TokenHandler {
         };
 
         if client_id.is_empty() {
-            return Err(GarrisonError::OAuth2(
-                "invalid_client: client_id 缺失（既未在 Authorization 头也未在 body 中提供）"
-                    .into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-client-id-missing",
+                "invalid_client: client_id missing (provided neither in Authorization header nor body)"
+            )));
         }
 
-        let client =
-            self.store.get(&client_id).await?.ok_or_else(|| {
-                GarrisonError::OAuth2(format!("invalid_client: {client_id} 不存在"))
-            })?;
+        let client = self.store.get(&client_id).await?.ok_or_else(|| {
+            GarrisonError::OAuth2(loc!(
+                "oauth2-client-not-exist",
+                format!("invalid_client: client {client_id} does not exist"),
+                ("client_id", client_id.as_str())
+            ))
+        })?;
         if !client.verify_secret(&client_secret)? {
-            return Err(GarrisonError::OAuth2(
-                "invalid_client: client_secret 不匹配".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-client-secret-mismatch",
+                "invalid_client: client_secret mismatch"
+            )));
         }
         Ok(client)
     }
@@ -587,20 +593,29 @@ impl TokenHandler {
         req: &TokenRequest,
     ) -> GarrisonResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::AuthorizationCode) {
-            return Err(GarrisonError::OAuth2(
-                "unauthorized_client: 客户端未授权 authorization_code grant type".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-grant-not-allowed-auth-code",
+                "unauthorized_client: authorization_code grant type not allowed for this client"
+            )));
         }
 
-        let code = req
-            .code
-            .as_ref()
-            .ok_or_else(|| GarrisonError::OAuth2("invalid_request: code 参数缺失".into()))?;
+        let code = req.code.as_ref().ok_or_else(|| {
+            GarrisonError::OAuth2(loc!(
+                "oauth2-code-param-missing",
+                "invalid_request: missing code parameter"
+            ))
+        })?;
         let code_verifier = req.code_verifier.as_ref().ok_or_else(|| {
-            GarrisonError::OAuth2("invalid_request: code_verifier 参数缺失（PKCE 强制）".into())
+            GarrisonError::OAuth2(loc!(
+                "oauth2-code-verifier-missing",
+                "invalid_request: missing code_verifier parameter (PKCE enforced)"
+            ))
         })?;
         let redirect_uri = req.redirect_uri.as_ref().ok_or_else(|| {
-            GarrisonError::OAuth2("invalid_request: redirect_uri 参数缺失".into())
+            GarrisonError::OAuth2(loc!(
+                "oauth2-redirect-uri-param-missing",
+                "invalid_request: missing redirect_uri parameter"
+            ))
         })?;
 
         // 消费授权码（一次性）
@@ -608,28 +623,36 @@ impl TokenHandler {
             .authorize_handler
             .consume_code(code)
             .await?
-            .ok_or_else(|| GarrisonError::OAuth2("invalid_grant: 授权码无效或已过期".into()))?;
+            .ok_or_else(|| {
+                GarrisonError::OAuth2(loc!(
+                    "oauth2-code-invalid-or-expired",
+                    "invalid_grant: authorization code invalid or expired"
+                ))
+            })?;
 
         // 校验 client_id 一致性
         if auth_code.client_id != client.client_id {
-            return Err(GarrisonError::OAuth2(
-                "invalid_grant: 授权码与 client_id 不匹配".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-code-client-mismatch",
+                "invalid_grant: authorization code does not match client_id"
+            )));
         }
 
         // 校验 redirect_uri 一致性
         if auth_code.redirect_uri != *redirect_uri {
-            return Err(GarrisonError::OAuth2(
-                "invalid_grant: redirect_uri 与授权时不一致".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-redirect-uri-mismatch",
+                "invalid_grant: redirect_uri differs from the one used at authorization time"
+            )));
         }
 
         // PKCE 验证
         if !crate::oauth2_server::authorize::verify_pkce(code_verifier, &auth_code.code_challenge)?
         {
-            return Err(GarrisonError::OAuth2(
-                "invalid_grant: PKCE code_verifier 校验失败".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-pkce-verify-failed",
+                "invalid_grant: PKCE code_verifier verification failed"
+            )));
         }
 
         // 签发 token
@@ -667,13 +690,17 @@ impl TokenHandler {
         req: &TokenRequest,
     ) -> GarrisonResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::RefreshToken) {
-            return Err(GarrisonError::OAuth2(
-                "unauthorized_client: 客户端未授权 refresh_token grant type".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-grant-not-allowed-refresh-token",
+                "unauthorized_client: refresh_token grant type not allowed for this client"
+            )));
         }
 
         let refresh_token = req.refresh_token.as_ref().ok_or_else(|| {
-            GarrisonError::OAuth2("invalid_request: refresh_token 参数缺失".into())
+            GarrisonError::OAuth2(loc!(
+                "oauth2-refresh-token-param-missing",
+                "invalid_request: missing refresh_token parameter"
+            ))
         })?;
 
         // v0.7.1 统一路径：RefreshTokenRotation.rotate（reuse detection + hash chain）
@@ -686,22 +713,27 @@ impl TokenHandler {
                 let (new_access, new_refresh) = match rotation.rotate(refresh_token).await {
                     Ok(t) => t,
                     Err(GarrisonError::InvalidToken(_)) => {
-                        return Err(GarrisonError::OAuth2(
-                            "invalid_grant: refresh_token 无效或已过期".into(),
-                        ));
+                        return Err(GarrisonError::OAuth2(loc!(
+                            "oauth2-refresh-token-invalid-or-expired",
+                            "invalid_grant: refresh_token invalid or expired"
+                        )));
                     },
                     Err(e) => return Err(e),
                 };
                 // validate 新 token 获取 scopes + client_id 供响应
                 let record = rotation.validate(&new_refresh).await?.ok_or_else(|| {
-                    GarrisonError::Internal("rotate 后新 refresh_token validate 失败".into())
+                    GarrisonError::Internal(loc!(
+                        "oauth2-rotated-token-validate-failed",
+                        "validation failed for rotated refresh_token"
+                    ))
                 })?;
                 // 校验 client_id 一致性
                 let record_client_id = record.client_id.as_deref().unwrap_or("");
                 if record_client_id != client.client_id {
-                    return Err(GarrisonError::OAuth2(
-                        "invalid_grant: refresh_token 与 client_id 不匹配".into(),
-                    ));
+                    return Err(GarrisonError::OAuth2(loc!(
+                        "oauth2-refresh-token-client-mismatch",
+                        "invalid_grant: refresh_token does not match client_id"
+                    )));
                 }
                 let scopes: Vec<String> = record
                     .scopes
@@ -732,16 +764,25 @@ impl TokenHandler {
         // （隐式 reuse detection：旧 token 无法重用）
         let key = oauth2_refresh_token_key(refresh_token);
         let json = self.dao.get_and_delete(&key).await?.ok_or_else(|| {
-            GarrisonError::OAuth2("invalid_grant: refresh_token 无效或已过期".into())
+            GarrisonError::OAuth2(loc!(
+                "oauth2-refresh-token-invalid-or-expired",
+                "invalid_grant: refresh_token invalid or expired"
+            ))
         })?;
-        let record: TokenRecord = serde_json::from_str(&json)
-            .map_err(|e| GarrisonError::Internal(format!("TokenRecord 反序列化失败: {e}")))?;
+        let record: TokenRecord = serde_json::from_str(&json).map_err(|e| {
+            GarrisonError::Internal(loc!(
+                "oauth2-server-token-deserialize",
+                format!("TokenRecord deserialize failed: {e}"),
+                ("arg0", &e.to_string())
+            ))
+        })?;
 
         // 校验 client_id 一致性
         if record.client_id != client.client_id {
-            return Err(GarrisonError::OAuth2(
-                "invalid_grant: refresh_token 与 client_id 不匹配".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-refresh-token-client-mismatch",
+                "invalid_grant: refresh_token does not match client_id"
+            )));
         }
 
         // 签发新 access_token + 新 refresh_token（with_refresh=true 轮换）
@@ -785,9 +826,10 @@ impl TokenHandler {
         req: &TokenRequest,
     ) -> GarrisonResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::ClientCredentials) {
-            return Err(GarrisonError::OAuth2(
-                "unauthorized_client: 客户端未授权 client_credentials grant type".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-grant-not-allowed-client-credentials",
+                "unauthorized_client: client_credentials grant type not allowed for this client"
+            )));
         }
 
         let scopes: Vec<String> = req
@@ -811,41 +853,49 @@ impl TokenHandler {
         req: &TokenRequest,
     ) -> GarrisonResult<TokenResponse> {
         if !client.allows_grant_type(&GrantType::Password) {
-            return Err(GarrisonError::OAuth2(
-                "unauthorized_client: 客户端未授权 password grant type".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-grant-not-allowed-password",
+                "unauthorized_client: password grant type not allowed for this client"
+            )));
         }
 
         let verifier = self.password_verifier.as_ref().ok_or_else(|| {
-            GarrisonError::OAuth2(
-                "unauthorized_grant_type: password grant type 未配置 PasswordVerifier".into(),
-            )
+            GarrisonError::OAuth2(loc!(
+                "oauth2-password-verifier-not-configured",
+                "unauthorized_grant_type: PasswordVerifier not configured for password grant type"
+            ))
         })?;
 
-        let username = req
-            .username
-            .as_ref()
-            .ok_or_else(|| GarrisonError::OAuth2("invalid_request: username 参数缺失".into()))?;
-        let password = req
-            .password
-            .as_ref()
-            .ok_or_else(|| GarrisonError::OAuth2("invalid_request: password 参数缺失".into()))?;
+        let username = req.username.as_ref().ok_or_else(|| {
+            GarrisonError::OAuth2(loc!(
+                "oauth2-username-param-missing",
+                "invalid_request: missing username parameter"
+            ))
+        })?;
+        let password = req.password.as_ref().ok_or_else(|| {
+            GarrisonError::OAuth2(loc!(
+                "oauth2-password-param-missing",
+                "invalid_request: missing password parameter"
+            ))
+        })?;
 
         // per-username QPS 速率限制（在账户锁定检查前，防暴力撞库）
         //
         // 与 PasswordRateLimiter（失败计数器）互补 —— 后者限制窗口内失败次数，
         // 本结构限制窗口内请求 QPS，两者叠加形成纵深防御。
         if !self.token_rate_limiter.check_username(username).await {
-            return Err(GarrisonError::OAuth2(
-                "rate_limited: 用户请求过于频繁，请稍后再试".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-rate-limited-user",
+                "rate_limited: user requests too frequent, please retry later"
+            )));
         }
 
         // 验证密码前检查账户锁定状态（防 brute-force）
         if !self.password_rate_limiter.check(username).await {
-            return Err(GarrisonError::OAuth2(
-                "rate_limited: 账户已被临时锁定，请稍后再试".into(),
-            ));
+            return Err(GarrisonError::OAuth2(loc!(
+                "oauth2-account-temp-locked",
+                "rate_limited: account temporarily locked, please retry later"
+            )));
         }
 
         let user_id = match verifier.verify(username, password).await? {
@@ -853,9 +903,10 @@ impl TokenHandler {
             None => {
                 // 验证失败后增加失败计数
                 self.password_rate_limiter.record_failure(username).await;
-                return Err(GarrisonError::OAuth2(
-                    "invalid_grant: 用户名或密码错误".into(),
-                ));
+                return Err(GarrisonError::OAuth2(loc!(
+                    "oauth2-invalid-credentials",
+                    "invalid_grant: invalid username or password"
+                )));
             },
         };
 
@@ -917,8 +968,13 @@ impl TokenHandler {
         };
 
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(&access_token);
-        let at_json = serde_json::to_string(&at_record)
-            .map_err(|e| GarrisonError::Internal(format!("TokenRecord 序列化失败: {e}")))?;
+        let at_json = serde_json::to_string(&at_record).map_err(|e| {
+            GarrisonError::Internal(loc!(
+                "oauth2-server-token-serialize",
+                format!("TokenRecord serialize failed: {e}"),
+                ("arg0", &e.to_string())
+            ))
+        })?;
         self.dao
             .set(&at_key, &at_json, ACCESS_TOKEN_TTL_SECONDS)
             .await?;
@@ -999,8 +1055,13 @@ impl TokenHandler {
             username: username.map(|s| s.to_string()),
         };
         let rt_key = oauth2_refresh_token_key(&rt);
-        let rt_json = serde_json::to_string(&rt_record)
-            .map_err(|e| GarrisonError::Internal(format!("TokenRecord 序列化失败: {e}")))?;
+        let rt_json = serde_json::to_string(&rt_record).map_err(|e| {
+            GarrisonError::Internal(loc!(
+                "oauth2-server-token-serialize",
+                format!("TokenRecord serialize failed: {e}"),
+                ("arg0", &e.to_string())
+            ))
+        })?;
         self.dao
             .set(&rt_key, &rt_json, REFRESH_TOKEN_TTL_SECONDS)
             .await?;
@@ -1017,7 +1078,11 @@ impl TokenHandler {
         match json {
             Some(json) => {
                 let record: TokenRecord = serde_json::from_str(&json).map_err(|e| {
-                    GarrisonError::Internal(format!("TokenRecord 反序列化失败: {e}"))
+                    GarrisonError::Internal(loc!(
+                        "oauth2-server-token-deserialize",
+                        format!("TokenRecord deserialize failed: {e}"),
+                        ("arg0", &e.to_string())
+                    ))
                 })?;
                 Ok(Some(record))
             },
@@ -1075,7 +1140,11 @@ impl TokenHandler {
         match json {
             Some(json) => {
                 let record: TokenRecord = serde_json::from_str(&json).map_err(|e| {
-                    GarrisonError::Internal(format!("TokenRecord 反序列化失败: {e}"))
+                    GarrisonError::Internal(loc!(
+                        "oauth2-server-token-deserialize",
+                        format!("TokenRecord deserialize failed: {e}"),
+                        ("arg0", &e.to_string())
+                    ))
                 })?;
                 Ok(Some(record))
             },

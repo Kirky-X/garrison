@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! ABAC 全局引擎管理与策略校验（从 mod.rs 迁移，Rule 25 合规）。
@@ -12,6 +12,9 @@ use super::AbacEngine;
 
 #[cfg(feature = "abac")]
 use crate::error::{GarrisonError, GarrisonResult};
+
+#[cfg(feature = "abac")]
+use crate::loc;
 
 #[cfg(feature = "abac")]
 use std::sync::{Arc, Mutex};
@@ -109,36 +112,44 @@ const ABAC_EXPR_MAX_LEN: usize = 512;
 pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
     let trimmed = expr.trim();
     if trimmed.is_empty() {
-        return Err(GarrisonError::InvalidParam(
-            "abac_expr 不能为空".to_string(),
-        ));
+        return Err(GarrisonError::InvalidParam(loc!(
+            "abac-expr-empty",
+            "abac_expr must not be empty"
+        )));
     }
     // issue 6670：长度限制针对有效内容（trim 后），避免空白填充造成合法表达式误拒；
     // DoS 防御不受影响——空白填充本身的处理开销可忽略，恶意超长 payload 无需空白即超限
     if trimmed.len() > ABAC_EXPR_MAX_LEN {
-        return Err(GarrisonError::InvalidParam(format!(
-            "abac_expr 长度超过 {} 字符（DoS 防御）",
-            ABAC_EXPR_MAX_LEN
+        return Err(GarrisonError::InvalidParam(loc!(
+            "abac-expr-too-long",
+            format!(
+                "abac_expr exceeds {} characters (DoS protection)",
+                ABAC_EXPR_MAX_LEN
+            ),
+            ("max", ABAC_EXPR_MAX_LEN.to_string().as_str())
         )));
     }
     // 拒绝策略终止符（闭合 when 块并注入新策略）
     if expr.contains("};") {
-        return Err(GarrisonError::InvalidParam(
-            "abac_expr 含非法字符 `};`（疑似策略注入）".to_string(),
-        ));
+        return Err(GarrisonError::InvalidParam(loc!(
+            "abac-expr-illegal-chars",
+            "abac_expr contains illegal characters `};` (possible policy injection)"
+        )));
     }
     // 拒绝显式 permit/forbid 策略声明
     if expr.contains("permit(") || expr.contains("forbid(") {
-        return Err(GarrisonError::InvalidParam(
-            "abac_expr 不允许声明 permit/forbid 策略".to_string(),
-        ));
+        return Err(GarrisonError::InvalidParam(loc!(
+            "abac-expr-policy-forbidden",
+            "abac_expr must not declare permit/forbid policies"
+        )));
     }
     // 要求至少含 principal/resource/action 之一，拒绝纯字面量
     let lower = expr.to_lowercase();
     if !lower.contains("principal") && !lower.contains("resource") && !lower.contains("action") {
-        return Err(GarrisonError::InvalidParam(
-            "abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）".to_string(),
-        ));
+        return Err(GarrisonError::InvalidParam(loc!(
+            "abac-expr-must-reference-entity",
+            "abac_expr must reference principal/resource/action (plain literals rejected)"
+        )));
     }
     Ok(())
 }
@@ -183,9 +194,10 @@ pub async fn check_abac_with_policy(
     let engine = match get_abac_engine()? {
         Some(e) => e,
         None => {
-            return Err(GarrisonError::Config(
-                "AbacEngine 未初始化，ABAC 校验失败（fail-closed）".into(),
-            ))
+            return Err(GarrisonError::Config(loc!(
+                "abac-engine-not-initialized",
+                "AbacEngine not initialized; ABAC check failed (fail-closed)"
+            )))
         }, // R-abac-001: 未初始化 fail-closed
     };
     // A3: 校验 abac_expr 防止 Cedar 策略注入
@@ -194,9 +206,10 @@ pub async fn check_abac_with_policy(
     let login_id = match login_id {
         Some(id) => id,
         None => {
-            return Err(GarrisonError::NotLogin(
-                "ABAC 校验时未获取到 login_id".to_string(),
-            ))
+            return Err(GarrisonError::NotLogin(loc!(
+                "abac-login-id-missing",
+                "login_id not available during ABAC validation"
+            )))
         },
     };
     let principal = format!(r#"User::"{login_id}""#);
@@ -212,8 +225,11 @@ pub async fn check_abac_with_policy(
     if decision.allowed {
         Ok(())
     } else {
+        // expr 不编码进错误消息（避免破坏 `parse_keyed_detail` 解析），仅记录日志保持可观测性
+        tracing::debug!(expr = %abac_expr, "ABAC policy denied");
         Err(GarrisonError::NotPermission(format!(
-            "ABAC 策略拒绝: action={action}, resource={resource}, expr={abac_expr}"
+            "abac-policy-denied::{}::{}",
+            action, resource
         )))
     }
 }

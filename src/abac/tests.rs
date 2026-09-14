@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! ABAC 模块测试（从 mod.rs 迁移，Rule 25 合规）。
@@ -20,8 +20,8 @@ async fn check_abac_with_policy_no_engine_returns_err() {
     match result {
         Err(crate::error::GarrisonError::Config(msg)) => {
             assert!(
-                msg.contains("AbacEngine 未初始化"),
-                "错误消息应含 'AbacEngine 未初始化'，实际: {}",
+                msg.contains("AbacEngine not initialized"),
+                "错误消息应含 'AbacEngine not initialized'，实际: {}",
                 msg
             );
         },
@@ -295,8 +295,8 @@ async fn check_abac_with_policy_engine_initialized_deny() {
     match result {
         Err(crate::error::GarrisonError::NotPermission(msg)) => {
             assert!(
-                msg.contains("ABAC 策略拒绝"),
-                "错误消息应包含 'ABAC 策略拒绝'，实际: {}",
+                msg.contains("abac-policy-denied"),
+                "错误消息应包含 'abac-policy-denied'，实际: {}",
                 msg
             );
         },

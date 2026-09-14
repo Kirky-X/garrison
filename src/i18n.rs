@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 国际化模块，提供异常消息多语言切换（中英文）。
@@ -78,13 +78,13 @@ macro_rules! loc {
 
 /// 支持的语言枚举。
 ///
-/// 默认 `Zh`（中文）。
+/// 默认 `En`（英文）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GarrisonLocale {
-    /// 中文（默认语言）。
-    #[default]
+    /// 中文。
     Zh,
-    /// 英文。
+    /// 英文（默认语言）。
+    #[default]
     En,
 }
 
@@ -112,7 +112,7 @@ thread_local! {
 
 /// 获取当前 locale（线程本地）。
 ///
-/// 未调用 `set_locale()` 时返回默认 `GarrisonLocale::Zh`。
+/// 未调用 `set_locale()` 时返回默认 `GarrisonLocale::En`。
 pub fn current_locale() -> GarrisonLocale {
     CURRENT_LOCALE_STACK.with(|stack| stack.borrow().last().copied().unwrap_or_default())
 }
@@ -187,7 +187,7 @@ fn build_bundle(locale: GarrisonLocale) -> FluentBundle<FluentResource> {
 /// 将 `GarrisonError` 翻译为当前 locale 的本地化字符串。
 ///
 /// 依据 `current_locale()` 选取 bundle，查询错误对应的 message key 与 args。
-/// 缺失 key 时回退到硬编码中文（与 0.2.x 行为一致）。
+/// 缺失 key 时回退到硬编码英文（与 locales/en.ftl 模板一致）。
 pub fn translate_error(err: &GarrisonError) -> String {
     let locale = current_locale();
     let bundle = get_bundle(locale);
@@ -204,7 +204,7 @@ pub fn translate_error(err: &GarrisonError) -> String {
                 if errors.is_empty() {
                     value.into_owned()
                 } else {
-                    // 翻译失败回退到硬编码中文
+                    // 翻译失败回退到硬编码英文
                     fallback_display(err)
                 }
             },
@@ -397,50 +397,54 @@ fn error_to_key_args(err: &GarrisonError) -> (&'static str, Vec<(&'static str, S
     }
 }
 
-/// 翻译失败时的硬编码中文回退（与 0.2.x Display 输出一致）。
+/// 翻译失败时的硬编码英文回退（文案与 `locales/en.ftl` 英文模板一致）。
 fn fallback_display(err: &GarrisonError) -> String {
     match err {
-        GarrisonError::NotLogin(s) => format!("未登录: {}", s),
-        GarrisonError::NotPermission(s) => format!("无权限: {}", s),
-        GarrisonError::NotRole(s) => format!("无角色: {}", s),
-        GarrisonError::InvalidToken(s) => format!("Token 无效: {}", s),
-        GarrisonError::TokenRevoked(s) => format!("Token 已吊销: {}", s),
-        GarrisonError::ExpiredToken(s) => format!("Token 已过期: {}", s),
-        GarrisonError::Dao(s) => format!("DAO 错误: {}", s),
-        GarrisonError::Config(s) => format!("配置错误: {}", s),
-        GarrisonError::Internal(s) => format!("内部错误: {}", s),
-        GarrisonError::Session(s) => format!("会话错误: {}", s),
-        GarrisonError::Annotation(s) => format!("注解错误: {}", s),
-        GarrisonError::Context(s) => format!("上下文错误: {}", s),
-        GarrisonError::OAuth2(s) => format!("OAuth2 错误: {}", s),
-        GarrisonError::Network(s) => format!("网络错误: {}", s),
-        GarrisonError::InvalidResponse(s) => format!("上游响应无效: {}", s),
-        GarrisonError::InvalidParam(s) => format!("参数无效: {}", s),
-        GarrisonError::NotImplemented(s) => format!("未实现: {}", s),
-        GarrisonError::FirewallBlocked(s) => format!("防火墙拦截: {}", s),
+        GarrisonError::NotLogin(s) => format!("Not logged in: {}", s),
+        GarrisonError::NotPermission(s) => format!("Permission denied: {}", s),
+        GarrisonError::NotRole(s) => format!("Role denied: {}", s),
+        GarrisonError::InvalidToken(s) => format!("Invalid token: {}", s),
+        GarrisonError::TokenRevoked(s) => format!("Token revoked: {}", s),
+        GarrisonError::ExpiredToken(s) => format!("Token expired: {}", s),
+        GarrisonError::Dao(s) => format!("DAO error: {}", s),
+        GarrisonError::Config(s) => format!("Configuration error: {}", s),
+        GarrisonError::Internal(s) => format!("Internal error: {}", s),
+        GarrisonError::Session(s) => format!("Session error: {}", s),
+        GarrisonError::Annotation(s) => format!("Annotation error: {}", s),
+        GarrisonError::Context(s) => format!("Context error: {}", s),
+        GarrisonError::OAuth2(s) => format!("OAuth2 error: {}", s),
+        GarrisonError::Network(s) => format!("Network error: {}", s),
+        GarrisonError::InvalidResponse(s) => format!("Invalid upstream response: {}", s),
+        GarrisonError::InvalidParam(s) => format!("Invalid parameter: {}", s),
+        GarrisonError::NotImplemented(s) => format!("Not implemented: {}", s),
+        GarrisonError::FirewallBlocked(s) => format!("Firewall blocked: {}", s),
         GarrisonError::DisableService { service, until } => {
-            format!("账号已被封禁：service={}, until={:?}", service, until)
+            format!("Account disabled: service={}, until={:?}", service, until)
         },
-        GarrisonError::NotSafe { reason } => format!("未完成二次认证：{}", reason),
+        GarrisonError::NotSafe { reason } => {
+            format!("Second factor authentication required: {}", reason)
+        },
         GarrisonError::InvalidStateTransition { from, to } => {
-            format!("非法状态转换：{} -> {}", from, to)
+            format!("Invalid state transition: {} -> {}", from, to)
         },
         GarrisonError::SmsRateLimitExceeded { window } => {
-            format!("SMS 限速超出: {} 窗口", window)
+            format!("SMS rate limit exceeded: {} window", window)
         },
-        GarrisonError::SmsVerifyMaxAttempts => "SMS 验证码尝试次数超限".to_string(),
-        GarrisonError::SmsCodeNotFound => "SMS 验证码不存在".to_string(),
-        GarrisonError::SmsChannelRecycled => "SMS 通道已回收".to_string(),
+        GarrisonError::SmsVerifyMaxAttempts => "SMS verification max attempts exceeded".to_string(),
+        GarrisonError::SmsCodeNotFound => "SMS verification code not found".to_string(),
+        GarrisonError::SmsChannelRecycled => "SMS channel recycled".to_string(),
         #[cfg(feature = "email-verification")]
         GarrisonError::EmailRateLimitExceeded { window } => {
-            format!("邮箱验证码限速超出: {} 窗口", window)
+            format!("Email rate limit exceeded: {} window", window)
         },
         #[cfg(feature = "email-verification")]
-        GarrisonError::EmailVerifyMaxAttempts => "邮箱验证码尝试次数超限".to_string(),
+        GarrisonError::EmailVerifyMaxAttempts => {
+            "Email verification max attempts exceeded".to_string()
+        },
         #[cfg(feature = "email-verification")]
-        GarrisonError::EmailCodeNotFound => "邮箱验证码不存在".to_string(),
+        GarrisonError::EmailCodeNotFound => "Email verification code not found".to_string(),
         #[cfg(feature = "email-verification")]
-        GarrisonError::EmailChannelRecycled => "邮箱通道已回收".to_string(),
+        GarrisonError::EmailChannelRecycled => "Email channel recycled".to_string(),
         #[cfg(feature = "credit-metering")]
         GarrisonError::CreditInsufficient {
             tenant_id,
@@ -448,11 +452,11 @@ fn fallback_display(err: &GarrisonError) -> String {
             remaining,
         } => {
             format!(
-                "Credit 不足：tenant={}, requested={}, remaining={}",
+                "Credit insufficient: tenant={}, requested={}, remaining={}",
                 tenant_id, requested, remaining
             )
         },
-        GarrisonError::Exception(ex) => format!("业务异常[{}]: {}", ex.code, ex.message),
+        GarrisonError::Exception(ex) => format!("Business exception[{}]: {}", ex.code, ex.message),
     }
 }
 
@@ -534,11 +538,11 @@ mod tests {
     // GarrisonLocale 枚举测试
     // ========================================================================
 
-    /// 默认 locale 应为中文。
+    /// 默认 locale 应为英文。
     #[test]
-    fn default_locale_is_zh() {
+    fn default_locale_is_en() {
         let locale = GarrisonLocale::default();
-        assert_eq!(locale, GarrisonLocale::Zh);
+        assert_eq!(locale, GarrisonLocale::En);
     }
 
     /// as_lang_id 返回正确的 LanguageIdentifier。
@@ -552,13 +556,13 @@ mod tests {
     // current_locale / set_locale 测试
     // ========================================================================
 
-    /// 未设置 locale 时返回默认值 Zh。
+    /// 未设置 locale 时返回默认值 En。
     #[test]
-    fn current_locale_defaults_to_zh_when_not_set() {
+    fn current_locale_defaults_to_en_when_not_set() {
         // 注意：此测试依赖 thread_local 状态，可能受其他测试影响
         // 但因为使用栈式 scope，无 set_locale 调用时栈为空
         let locale = current_locale();
-        assert_eq!(locale, GarrisonLocale::Zh);
+        assert_eq!(locale, GarrisonLocale::En);
     }
 
     /// set_locale 后 current_locale 返回新值，drop 后恢复。
@@ -708,35 +712,44 @@ mod tests {
         }
     }
 
-    /// fallback_display 与硬编码 0.2.x 输出一致。
+    /// fallback_display 与硬编码英文回退（en.ftl 模板）一致。
     #[test]
-    fn fallback_display_matches_hardcoded_chinese() {
-        let err = GarrisonError::NotLogin("测试".to_string());
-        assert_eq!(fallback_display(&err), "未登录: 测试");
+    fn fallback_display_matches_hardcoded_english() {
+        let err = GarrisonError::NotLogin("test".to_string());
+        assert_eq!(fallback_display(&err), "Not logged in: test");
     }
 
     /// fallback_display 覆盖所有错误变体（确保每个 match arm 都有测试）。
     #[test]
     fn fallback_display_all_variants() {
         let cases: Vec<(GarrisonError, &str)> = vec![
-            (GarrisonError::NotLogin("x".into()), "未登录: x"),
-            (GarrisonError::NotPermission("x".into()), "无权限: x"),
-            (GarrisonError::NotRole("x".into()), "无角色: x"),
-            (GarrisonError::InvalidToken("x".into()), "Token 无效: x"),
-            (GarrisonError::ExpiredToken("x".into()), "Token 已过期: x"),
-            (GarrisonError::Dao("x".into()), "DAO 错误: x"),
-            (GarrisonError::Config("x".into()), "配置错误: x"),
-            (GarrisonError::Internal("x".into()), "内部错误: x"),
-            (GarrisonError::Session("x".into()), "会话错误: x"),
-            (GarrisonError::Annotation("x".into()), "注解错误: x"),
-            (GarrisonError::Context("x".into()), "上下文错误: x"),
-            (GarrisonError::OAuth2("x".into()), "OAuth2 错误: x"),
-            (GarrisonError::Network("x".into()), "网络错误: x"),
-            (GarrisonError::InvalidParam("x".into()), "参数无效: x"),
-            (GarrisonError::NotImplemented("x".into()), "未实现: x"),
+            (GarrisonError::NotLogin("x".into()), "Not logged in: x"),
+            (
+                GarrisonError::NotPermission("x".into()),
+                "Permission denied: x",
+            ),
+            (GarrisonError::NotRole("x".into()), "Role denied: x"),
+            (GarrisonError::InvalidToken("x".into()), "Invalid token: x"),
+            (GarrisonError::ExpiredToken("x".into()), "Token expired: x"),
+            (GarrisonError::Dao("x".into()), "DAO error: x"),
+            (GarrisonError::Config("x".into()), "Configuration error: x"),
+            (GarrisonError::Internal("x".into()), "Internal error: x"),
+            (GarrisonError::Session("x".into()), "Session error: x"),
+            (GarrisonError::Annotation("x".into()), "Annotation error: x"),
+            (GarrisonError::Context("x".into()), "Context error: x"),
+            (GarrisonError::OAuth2("x".into()), "OAuth2 error: x"),
+            (GarrisonError::Network("x".into()), "Network error: x"),
+            (
+                GarrisonError::InvalidParam("x".into()),
+                "Invalid parameter: x",
+            ),
+            (
+                GarrisonError::NotImplemented("x".into()),
+                "Not implemented: x",
+            ),
             (
                 GarrisonError::Exception(Box::new(GarrisonException::new(-1, "msg"))),
-                "业务异常[-1]: msg",
+                "Business exception[-1]: msg",
             ),
         ];
         for (err, expected) in cases {
@@ -1059,52 +1072,52 @@ mod tests {
         let cases: Vec<(GarrisonError, String)> = vec![
             (
                 GarrisonError::TokenRevoked("x".into()),
-                "Token 已吊销: x".to_string(),
+                "Token revoked: x".to_string(),
             ),
             (
                 GarrisonError::FirewallBlocked("x".into()),
-                "防火墙拦截: x".to_string(),
+                "Firewall blocked: x".to_string(),
             ),
             (
                 GarrisonError::DisableService {
                     service: "default".into(),
                     until: Some(until),
                 },
-                format!("账号已被封禁：service=default, until={:?}", Some(until)),
+                format!("Account disabled: service=default, until={:?}", Some(until)),
             ),
             (
                 GarrisonError::DisableService {
                     service: "oidc".into(),
                     until: None,
                 },
-                "账号已被封禁：service=oidc, until=None".to_string(),
+                "Account disabled: service=oidc, until=None".to_string(),
             ),
             (
                 GarrisonError::NotSafe { reason: "r".into() },
-                "未完成二次认证：r".to_string(),
+                "Second factor authentication required: r".to_string(),
             ),
             (
                 GarrisonError::InvalidStateTransition {
                     from: "A".into(),
                     to: "B".into(),
                 },
-                "非法状态转换：A -> B".to_string(),
+                "Invalid state transition: A -> B".to_string(),
             ),
             (
                 GarrisonError::SmsRateLimitExceeded { window: "w".into() },
-                "SMS 限速超出: w 窗口".to_string(),
+                "SMS rate limit exceeded: w window".to_string(),
             ),
             (
                 GarrisonError::SmsVerifyMaxAttempts,
-                "SMS 验证码尝试次数超限".to_string(),
+                "SMS verification max attempts exceeded".to_string(),
             ),
             (
                 GarrisonError::SmsCodeNotFound,
-                "SMS 验证码不存在".to_string(),
+                "SMS verification code not found".to_string(),
             ),
             (
                 GarrisonError::SmsChannelRecycled,
-                "SMS 通道已回收".to_string(),
+                "SMS channel recycled".to_string(),
             ),
         ];
         for (err, expected) in cases {
@@ -1180,11 +1193,14 @@ mod tests {
         );
     }
 
-    /// InvalidResponse 在 fallback_display 下输出硬编码中文。
+    /// InvalidResponse 在 fallback_display 下输出硬编码英文。
     #[test]
     fn fallback_display_invalid_response() {
         let err = GarrisonError::InvalidResponse("parse error".into());
-        assert_eq!(fallback_display(&err), "上游响应无效: parse error");
+        assert_eq!(
+            fallback_display(&err),
+            "Invalid upstream response: parse error"
+        );
     }
 
     /// get_bundle 对英文 locale 也返回缓存实例。

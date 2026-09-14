@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! `GarrisonJsonTemplate` 实现：JSON 模板解析与 `${key}` 占位符替换。
@@ -159,9 +159,10 @@ mod tests {
             GarrisonJsonTemplate::new(r#"{"o":{"s":"${x}"},"arr":["${x}",1,null],"n":5}"#).unwrap();
         let mut params = HashMap::new();
         params.insert("x".to_string(), "v".to_string());
+        // JSON 键序为实现细节（serde_json 默认按字母序排序输出），不保证插入序。
         assert_eq!(
             template.render(&params).unwrap(),
-            r#"{"o":{"s":"v"},"arr":["v",1,null],"n":5}"#
+            r#"{"arr":["v",1,null],"n":5,"o":{"s":"v"}}"#
         );
     }
 }

@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! axum middleware 集成测试：GarrisonRouter + route_protected + middleware 完整流程。
@@ -311,6 +311,8 @@ async fn middleware_extracts_token_from_cookie() {
 #[tokio::test]
 #[serial]
 async fn unauthorized_response_body_contains_error_json() {
+    // 断言中文消息，显式钉住 locale（框架默认 En）
+    let _zh = garrison::i18n::set_locale(garrison::i18n::GarrisonLocale::Zh);
     init_manager(&[], &[]).await;
 
     let app = make_app();
@@ -340,6 +342,8 @@ async fn unauthorized_response_body_contains_error_json() {
 #[tokio::test]
 #[serial]
 async fn forbidden_response_body_contains_error_json() {
+    // 断言中文消息，显式钉住 locale（框架默认 En）
+    let _zh = garrison::i18n::set_locale(garrison::i18n::GarrisonLocale::Zh);
     with_default_tenant(async {
         init_manager(&[], &[]).await; // 无权限
         let token = GarrisonUtil::login_simple("1001").await.unwrap();

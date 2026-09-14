@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! OAuth2 HTTP 端点路由（feature = "oauth2-server"）。
@@ -225,7 +225,7 @@ async fn authorize_endpoint(
             (StatusCode::FOUND, [("Location", login_url)]).into_response()
         },
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             (
                 StatusCode::BAD_REQUEST,
                 Json(json!({ "error": error_code, "message": message })),
@@ -274,7 +274,7 @@ async fn token_endpoint(
             apply_no_store((StatusCode::OK, Json(resp)).into_response())
         },
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             // RFC 6585 §4 — 速率限制错误返回 429 Too Many Requests。
             // ocr #2224：按 GarrisonError::OAuth2 变体 + "rate_limited" 消息前缀
             // 类型化判定（不再对整个 Display 做任意子串匹配）。
@@ -317,7 +317,7 @@ async fn revoke_endpoint(
         // RFC 7662 §2.2 — introspect/revoke 响应应带 no-store 缓存控制
         Ok(()) => apply_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             apply_no_store(
                 (
                     StatusCode::BAD_REQUEST,
@@ -344,7 +344,7 @@ async fn introspect_endpoint(
     match state.introspect_handler.handle(&req).await {
         Ok(resp) => apply_no_store((StatusCode::OK, Json(resp)).into_response()),
         Err(e) => {
-            let (_, error_code, message, _) = e.response_parts();
+            let (_, error_code, message, _) = e.response_parts_i18n();
             apply_no_store(
                 (
                     StatusCode::BAD_REQUEST,

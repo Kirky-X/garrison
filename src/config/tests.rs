@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! config 模块测试（从 mod.rs 迁移，Rule 25 合规）。
@@ -1708,7 +1708,7 @@ fn validate_rejects_zero_burst_threshold() {
 fn load_rejects_empty_path() {
     let err = GarrisonConfig::load(Some("")).unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("不能为空")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("must not be empty")),
         "空路径应被拒绝，实际: {:?}",
         err
     );
@@ -1719,7 +1719,7 @@ fn load_rejects_empty_path() {
 fn load_rejects_path_traversal() {
     let err = GarrisonConfig::load(Some("../etc/passwd")).unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("父目录引用")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("illegal parent")),
         "路径遍历 `..` 应被拒绝，实际: {:?}",
         err
     );
@@ -1735,7 +1735,7 @@ fn load_url_encoded_traversal_returns_enoent() {
     let err = GarrisonConfig::load(Some("%2e%2e/etc/passwd")).unwrap_err();
     // %2e%2e 是字面路径，文件不存在，应返回 Config 错误（打开失败）
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("打开配置文件失败")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("failed to open")),
         "%2e%2e 字面路径应返回打开失败，实际: {:?}",
         err
     );
@@ -1752,7 +1752,7 @@ fn load_rejects_oversized_config() {
     let path_str = path.to_str().expect("路径转 str 失败");
     let err = GarrisonConfig::load(Some(path_str)).unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("过大")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("too large")),
         "超大文件应被拒绝，实际: {:?}",
         err
     );
@@ -1765,7 +1765,7 @@ fn load_rejects_special_file() {
     // /dev/null 是字符设备，metadata.is_file() 返回 false
     let err = GarrisonConfig::load(Some("/dev/null")).unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("不是普通文件")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("not a regular file")),
         "字符设备应被拒绝，实际: {:?}",
         err
     );
@@ -1784,7 +1784,7 @@ fn load_rejects_directory() {
     let path_str = dir.path().to_str().expect("路径转 str 失败");
     let err = GarrisonConfig::load(Some(path_str)).unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("不是普通文件") || m.contains("打开配置文件失败")),
+        matches!(err, GarrisonError::Config(ref m) if m.contains("not a regular file") || m.contains("failed to open")),
         "目录应被拒绝（Linux 走 is_file 检查 / Windows 走 File::open EACCES），实际: {:?}",
         err
     );

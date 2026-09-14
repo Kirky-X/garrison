@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! MfaLogic trait — 二级认证（MFA）与账号禁用校验契约。
@@ -380,8 +380,8 @@ mod tests {
             display
         );
         assert!(
-            display.contains("未完成二次认证"),
-            "Display 应包含中文描述，实际: {}",
+            display.contains("authentication required") || display.contains("二次认证"),
+            "Display 应包含认证描述，实际: {}",
             display
         );
     }

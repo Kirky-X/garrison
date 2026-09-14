@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! resilience 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
@@ -213,6 +213,8 @@ async fn acc_res_001_oxcache_failure_jwt_stateless_token_still_verifiable() {
 /// 非法 cookie_same_site、超限 session_hover_timeout 均返回 Config 错误。
 #[test]
 fn acc_res_002_config_validate_fail_fast() {
+    // 断言中文校验消息，显式钉住 locale（框架默认 En）
+    let _zh = garrison::i18n::set_locale(garrison::i18n::GarrisonLocale::Zh);
     // timeout 必须 > 0（负值与零值均拒绝）
     for bad_timeout in [0i64, -1, -3600] {
         let mut c = GarrisonConfig::default_config();

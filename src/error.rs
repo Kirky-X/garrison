@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 错误类型定义模块。
@@ -365,109 +365,145 @@ impl GarrisonError {
     /// - `ex_code`: 仅 `Exception` 变体返回 `Some(code)`
     fn parts_and_msg_key(&self) -> (u16, &'static str, &'static str, &'static str, Option<i32>) {
         match self {
-            GarrisonError::NotLogin(_) => (401, "NOT_LOGIN", "not-login-msg", "未登录", None),
+            GarrisonError::NotLogin(_) => {
+                (401, "NOT_LOGIN", "not-login-msg", "Not logged in", None)
+            },
             GarrisonError::InvalidToken(_) => (
                 401,
                 "INVALID_TOKEN",
                 "invalid-token-msg",
-                "Token 无效",
+                "Invalid token",
                 None,
             ),
             GarrisonError::TokenRevoked(_) => (
                 401,
                 "TOKEN_REVOKED",
                 "token-revoked-msg",
-                "Token 已吊销",
+                "Token revoked",
                 None,
             ),
             GarrisonError::ExpiredToken(_) => (
                 401,
                 "EXPIRED_TOKEN",
                 "expired-token-msg",
-                "Token 已过期",
+                "Token expired",
                 None,
             ),
-            GarrisonError::NotPermission(_) => {
-                (403, "NOT_PERMISSION", "not-permission-msg", "无权限", None)
+            GarrisonError::NotPermission(_) => (
+                403,
+                "NOT_PERMISSION",
+                "not-permission-msg",
+                "Permission denied",
+                None,
+            ),
+            GarrisonError::NotRole(_) => (403, "NOT_ROLE", "not-role-msg", "Role required", None),
+            GarrisonError::Dao(_) => (500, "DAO_ERROR", "dao-msg", "Data access error", None),
+            GarrisonError::Config(_) => (
+                500,
+                "CONFIG_ERROR",
+                "config-msg",
+                "Configuration error",
+                None,
+            ),
+            GarrisonError::Internal(_) => (
+                500,
+                "INTERNAL_ERROR",
+                "internal-msg",
+                "Internal error",
+                None,
+            ),
+            GarrisonError::Session(_) => {
+                (500, "SESSION_ERROR", "session-msg", "Session error", None)
             },
-            GarrisonError::NotRole(_) => (403, "NOT_ROLE", "not-role-msg", "无角色", None),
-            GarrisonError::Dao(_) => (500, "DAO_ERROR", "dao-msg", "数据访问错误", None),
-            GarrisonError::Config(_) => (500, "CONFIG_ERROR", "config-msg", "配置错误", None),
-            GarrisonError::Internal(_) => (500, "INTERNAL_ERROR", "internal-msg", "内部错误", None),
-            GarrisonError::Session(_) => (500, "SESSION_ERROR", "session-msg", "会话错误", None),
-            GarrisonError::Annotation(_) => {
-                (500, "ANNOTATION_ERROR", "annotation-msg", "注解错误", None)
+            GarrisonError::Annotation(_) => (
+                500,
+                "ANNOTATION_ERROR",
+                "annotation-msg",
+                "Annotation error",
+                None,
+            ),
+            GarrisonError::Context(_) => {
+                (500, "CONTEXT_ERROR", "context-msg", "Context error", None)
             },
-            GarrisonError::Context(_) => (500, "CONTEXT_ERROR", "context-msg", "上下文错误", None),
-            GarrisonError::OAuth2(_) => (500, "OAUTH2_ERROR", "oauth2-msg", "OAuth2 错误", None),
-            GarrisonError::Network(_) => (502, "NETWORK_ERROR", "network-msg", "网络错误", None),
+            GarrisonError::OAuth2(_) => (500, "OAUTH2_ERROR", "oauth2-msg", "OAuth2 error", None),
+            GarrisonError::Network(_) => {
+                (502, "NETWORK_ERROR", "network-msg", "Network error", None)
+            },
             GarrisonError::InvalidResponse(_) => (
                 502,
                 "INVALID_RESPONSE",
                 "invalid-response-msg",
-                "上游响应无效",
+                "Invalid upstream response",
                 None,
             ),
-            GarrisonError::InvalidParam(_) => {
-                (400, "INVALID_PARAM", "invalid-param-msg", "参数无效", None)
-            },
+            GarrisonError::InvalidParam(_) => (
+                400,
+                "INVALID_PARAM",
+                "invalid-param-msg",
+                "Invalid parameter",
+                None,
+            ),
             GarrisonError::NotImplemented(_) => (
                 501,
                 "NOT_IMPLEMENTED",
                 "not-implemented-msg",
-                "未实现",
+                "Not implemented",
                 None,
             ),
             GarrisonError::FirewallBlocked(_) => (
                 403,
                 "FIREWALL_BLOCKED",
                 "firewall-blocked-msg",
-                "防火墙拦截",
+                "Firewall blocked",
                 None,
             ),
             GarrisonError::DisableService { .. } => (
                 403,
                 "DISABLE_SERVICE",
                 "disable-service-msg",
-                "账号已被封禁",
+                "Account disabled",
                 None,
             ),
-            GarrisonError::NotSafe { .. } => {
-                (400, "NOT_SAFE", "not-safe-msg", "未完成二次认证", None)
-            },
+            GarrisonError::NotSafe { .. } => (
+                400,
+                "NOT_SAFE",
+                "not-safe-msg",
+                "Two-factor authentication required",
+                None,
+            ),
             GarrisonError::InvalidStateTransition { .. } => (
                 500,
                 "INVALID_STATE_TRANSITION",
                 "invalid-state-transition-msg",
-                "非法状态转换",
+                "Invalid state transition",
                 None,
             ),
             GarrisonError::SmsRateLimitExceeded { .. } => (
                 429,
                 "SMS_RATE_LIMIT_EXCEEDED",
                 "sms-rate-limit-exceeded-msg",
-                "短信发送频繁",
+                "SMS rate limit exceeded",
                 None,
             ),
             GarrisonError::SmsVerifyMaxAttempts => (
                 400,
                 "SMS_VERIFY_MAX_ATTEMPTS",
                 "sms-verify-max-attempts-msg",
-                "验证码尝试次数超限",
+                "Verification code attempts exceeded",
                 None,
             ),
             GarrisonError::SmsCodeNotFound => (
                 400,
                 "SMS_CODE_NOT_FOUND",
                 "sms-code-not-found-msg",
-                "验证码不存在或已过期",
+                "Verification code not found or expired",
                 None,
             ),
             GarrisonError::SmsChannelRecycled => (
                 403,
                 "SMS_CHANNEL_RECYCLED",
                 "sms-channel-recycled-msg",
-                "短信通道已回收",
+                "SMS channel recycled",
                 None,
             ),
             #[cfg(feature = "email-verification")]
@@ -475,7 +511,7 @@ impl GarrisonError {
                 429,
                 "EMAIL_RATE_LIMIT_EXCEEDED",
                 "email-rate-limit-exceeded-msg",
-                "邮件发送频繁",
+                "Email sending too frequent",
                 None,
             ),
             #[cfg(feature = "email-verification")]
@@ -483,7 +519,7 @@ impl GarrisonError {
                 400,
                 "EMAIL_VERIFY_MAX_ATTEMPTS",
                 "email-verify-max-attempts-msg",
-                "验证码尝试次数超限",
+                "Verification max attempts exceeded",
                 None,
             ),
             #[cfg(feature = "email-verification")]
@@ -491,7 +527,7 @@ impl GarrisonError {
                 400,
                 "EMAIL_CODE_NOT_FOUND",
                 "email-code-not-found-msg",
-                "验证码不存在或已过期",
+                "Verification code not found or expired",
                 None,
             ),
             #[cfg(feature = "email-verification")]
@@ -499,7 +535,7 @@ impl GarrisonError {
                 403,
                 "EMAIL_CHANNEL_RECYCLED",
                 "email-channel-recycled-msg",
-                "邮件通道已回收",
+                "Email channel recycled",
                 None,
             ),
             #[cfg(feature = "credit-metering")]
@@ -507,7 +543,7 @@ impl GarrisonError {
                 402,
                 "CREDIT_INSUFFICIENT",
                 "credit-insufficient-msg",
-                "Credit 不足",
+                "Credit insufficient",
                 None,
             ),
             // Exception 依据 GarrisonException.code 字段映射状态码
@@ -517,21 +553,21 @@ impl GarrisonError {
                     401,
                     "NOT_LOGIN",
                     "exception-not-login-msg",
-                    "未登录",
+                    "Not logged in",
                     Some(ex.code),
                 ),
                 -2 => (
                     403,
                     "NOT_PERMISSION",
                     "exception-not-permission-msg",
-                    "无权限",
+                    "Permission denied",
                     Some(ex.code),
                 ),
                 _ => (
                     500,
                     "EXCEPTION",
                     "exception-default-msg",
-                    "业务异常",
+                    "Business exception",
                     Some(ex.code),
                 ),
             },
@@ -846,61 +882,64 @@ mod tests {
         let cases: [(GarrisonError, &str); 16] = [
             (
                 GarrisonError::Session("会话已过期".into()),
-                "会话错误: 会话已过期",
+                "Session error: 会话已过期",
             ),
             (
                 GarrisonError::Annotation("注解校验失败".into()),
-                "注解错误: 注解校验失败",
+                "Annotation error: 注解校验失败",
             ),
             (
                 GarrisonError::Context("上下文缺失".into()),
-                "上下文错误: 上下文缺失",
+                "Context error: 上下文缺失",
             ),
-            (GarrisonError::Dao("连接失败".into()), "DAO 错误: 连接失败"),
+            (GarrisonError::Dao("连接失败".into()), "DAO error: 连接失败"),
             (
                 GarrisonError::Config("配置非法".into()),
-                "配置错误: 配置非法",
+                "Configuration error: 配置非法",
             ),
             (
                 GarrisonError::InvalidToken("格式错误".into()),
-                "Token 无效: 格式错误",
+                "Invalid token: 格式错误",
             ),
             (
                 GarrisonError::ExpiredToken("已过期".into()),
-                "Token 已过期: 已过期",
+                "Token expired: 已过期",
             ),
             (
                 GarrisonError::NotPermission("无权限".into()),
-                "无权限: 无权限",
+                "Permission denied: 无权限",
             ),
-            (GarrisonError::NotRole("无角色".into()), "无角色: 无角色"),
+            (
+                GarrisonError::NotRole("无角色".into()),
+                "Role denied: 无角色",
+            ),
             (
                 GarrisonError::NotLogin("请先登录".into()),
-                "未登录: 请先登录",
+                "Not logged in: 请先登录",
             ),
             (
                 GarrisonError::Internal("内部错误".into()),
-                "内部错误: 内部错误",
+                "Internal error: 内部错误",
             ),
             (
                 GarrisonError::OAuth2("授权码无效".into()),
-                "OAuth2 错误: 授权码无效",
+                "OAuth2 error: 授权码无效",
             ),
             (
                 GarrisonError::Network("DNS 解析失败".into()),
-                "网络错误: DNS 解析失败",
+                "Network error: DNS 解析失败",
             ),
             (
                 GarrisonError::InvalidParam("client_id 为空".into()),
-                "参数无效: client_id 为空",
+                "Invalid parameter: client_id 为空",
             ),
             (
                 GarrisonError::NotImplemented("refresh_token 未实现".into()),
-                "未实现: refresh_token 未实现",
+                "Not implemented: refresh_token 未实现",
             ),
             (
                 GarrisonError::FirewallBlocked("IP 1.2.3.4 被拦截".into()),
-                "防火墙拦截: IP 1.2.3.4 被拦截",
+                "Firewall blocked: IP 1.2.3.4 被拦截",
             ),
         ];
         for (err, expected) in cases {
@@ -1051,7 +1090,7 @@ mod tests {
     fn exception_variant_display_includes_code_and_message() {
         use crate::exception::GarrisonException;
         let err = GarrisonError::Exception(Box::new(GarrisonException::new(-1, "请先登录")));
-        assert_eq!(err.to_string(), "业务异常[-1]: 请先登录");
+        assert_eq!(err.to_string(), "Business exception[-1]: 请先登录");
     }
 
     /// 验证 code=-1 的 Exception 映射为 401 Unauthorized。
@@ -1094,13 +1133,13 @@ mod tests {
     // InvalidResponse 变体测试（H6：上游响应解析失败专用错误类型）
     // ========================================================================
 
-    /// 验证 InvalidResponse 变体的 Display 输出包含原始消息（中文 locale）。
+    /// 验证 InvalidResponse 变体的 Display 输出包含原始消息（默认英文前缀）。
     ///
-    /// 覆盖 spec H6：InvalidResponse 在中文 locale 下输出 "上游响应无效: {detail}"。
+    /// 覆盖 spec H6：InvalidResponse 输出 "Invalid upstream response: {detail}"。
     #[test]
     fn invalid_response_variant_display_includes_message() {
         let err = GarrisonError::InvalidResponse("JSON 解析失败".to_string());
-        assert_eq!(err.to_string(), "上游响应无效: JSON 解析失败");
+        assert_eq!(err.to_string(), "Invalid upstream response: JSON 解析失败");
     }
 
     /// 验证 InvalidResponse 变体的 response_parts 返回 502 + INVALID_RESPONSE。
@@ -1117,7 +1156,7 @@ mod tests {
             "InvalidResponse 应映射为 502 Bad Gateway（上游响应问题）"
         );
         assert_eq!(error_code, "INVALID_RESPONSE");
-        assert_eq!(message, "上游响应无效");
+        assert_eq!(message, "Invalid upstream response");
         assert!(ex_code.is_none(), "InvalidResponse 不携带 exception code");
     }
 
@@ -1132,7 +1171,7 @@ mod tests {
         );
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "INVALID_RESPONSE");
-        assert_eq!(body["message"], "上游响应无效");
+        assert_eq!(body["message"], "Invalid upstream response");
         let message_str = body["message"].as_str().unwrap();
         assert!(
             !message_str.contains("internal parser stack trace"),
@@ -1191,7 +1230,7 @@ mod tests {
         let err = GarrisonError::NotLogin("token missing".to_string());
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "NOT_LOGIN");
-        assert_eq!(body["message"], "未登录");
+        assert_eq!(body["message"], "Not logged in");
         // 普通错误变体不应包含 code 字段
         assert!(body.get("code").is_none(), "普通错误变体不应包含 code 字段");
     }
@@ -1431,7 +1470,7 @@ mod tests {
     #[test]
     fn firewall_blocked_variant_display_includes_message() {
         let err = GarrisonError::FirewallBlocked("IP 1.2.3.4 被拦截".to_string());
-        assert_eq!(err.to_string(), "防火墙拦截: IP 1.2.3.4 被拦截");
+        assert_eq!(err.to_string(), "Firewall blocked: IP 1.2.3.4 被拦截");
     }
 
     /// 验证 FirewallBlocked 变体的 response_parts 返回 403 + FIREWALL_BLOCKED。
@@ -1443,7 +1482,7 @@ mod tests {
             GarrisonError::FirewallBlocked("bruteforce".to_string()).response_parts();
         assert_eq!(status, 403, "FirewallBlocked 应映射为 403 Forbidden");
         assert_eq!(error_code, "FIREWALL_BLOCKED");
-        assert_eq!(message, "防火墙拦截");
+        assert_eq!(message, "Firewall blocked");
         assert!(ex_code.is_none(), "FirewallBlocked 不携带 exception code");
     }
 
@@ -1453,7 +1492,7 @@ mod tests {
         let err = GarrisonError::FirewallBlocked("ratelimit".to_string());
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "FIREWALL_BLOCKED");
-        assert_eq!(body["message"], "防火墙拦截");
+        assert_eq!(body["message"], "Firewall blocked");
         assert!(
             body.get("code").is_none(),
             "FirewallBlocked 不应包含 code 字段"
@@ -1485,7 +1524,10 @@ mod tests {
             service: "default".to_string(),
             until: None,
         };
-        assert_eq!(err.to_string(), "账号已被封禁：service=default, until=None");
+        assert_eq!(
+            err.to_string(),
+            "Account disabled: service=default, until=None"
+        );
 
         // 带 until 的 Display
         let until = chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
@@ -1520,7 +1562,7 @@ mod tests {
         let (status, error_code, message, ex_code) = err.response_parts();
         assert_eq!(status, 403, "DisableService 应映射为 403 Forbidden");
         assert_eq!(error_code, "DISABLE_SERVICE");
-        assert_eq!(message, "账号已被封禁");
+        assert_eq!(message, "Account disabled");
         assert!(ex_code.is_none(), "DisableService 不携带 exception code");
     }
 
@@ -1535,7 +1577,7 @@ mod tests {
         };
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "DISABLE_SERVICE");
-        assert_eq!(body["message"], "账号已被封禁");
+        assert_eq!(body["message"], "Account disabled");
         // message 不应包含 service 字段值
         let message_str = body["message"].as_str().unwrap();
         assert!(
@@ -1552,7 +1594,10 @@ mod tests {
         let err = GarrisonError::NotSafe {
             reason: "MFA_TOTP_REQUIRED".to_string(),
         };
-        assert_eq!(err.to_string(), "未完成二次认证：MFA_TOTP_REQUIRED");
+        assert_eq!(
+            err.to_string(),
+            "Second factor authentication required: MFA_TOTP_REQUIRED"
+        );
     }
 
     /// 验证 NotSafe 变体的 response_parts 返回 400 + NOT_SAFE。
@@ -1566,7 +1611,7 @@ mod tests {
         let (status, error_code, message, ex_code) = err.response_parts();
         assert_eq!(status, 400, "NotSafe 应映射为 400 Bad Request");
         assert_eq!(error_code, "NOT_SAFE");
-        assert_eq!(message, "未完成二次认证");
+        assert_eq!(message, "Two-factor authentication required");
         assert!(ex_code.is_none(), "NotSafe 不携带 exception code");
     }
 
@@ -1578,7 +1623,7 @@ mod tests {
         };
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "NOT_SAFE");
-        assert_eq!(body["message"], "未完成二次认证");
+        assert_eq!(body["message"], "Two-factor authentication required");
         let message_str = body["message"].as_str().unwrap();
         assert!(
             !message_str.contains("internal-mfa-secret-leak"),
@@ -1595,7 +1640,10 @@ mod tests {
             from: "Expired".to_string(),
             to: "Active".to_string(),
         };
-        assert_eq!(err.to_string(), "非法状态转换：Expired -> Active");
+        assert_eq!(
+            err.to_string(),
+            "Invalid state transition: Expired -> Active"
+        );
     }
 
     /// 验证 InvalidStateTransition 变体的 response_parts 返回 500。
@@ -1613,7 +1661,7 @@ mod tests {
             "InvalidStateTransition 应映射为 500 Internal Server Error"
         );
         assert_eq!(error_code, "INVALID_STATE_TRANSITION");
-        assert_eq!(message, "非法状态转换");
+        assert_eq!(message, "Invalid state transition");
         assert!(ex_code.is_none());
     }
 
@@ -1626,7 +1674,7 @@ mod tests {
         };
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "INVALID_STATE_TRANSITION");
-        assert_eq!(body["message"], "非法状态转换");
+        assert_eq!(body["message"], "Invalid state transition");
         let message_str = body["message"].as_str().unwrap();
         assert!(
             !message_str.contains("InternalStateA"),

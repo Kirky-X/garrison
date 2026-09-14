@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Kirky.X
+// Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>
 // SPDX-License-Identifier: MIT
 
 //! sdforge 声明式路由（feature = "auth-server-sdforge"）。
@@ -36,6 +36,7 @@ use crate::backend::types::{
 };
 use crate::backend::AuthBackend;
 use crate::error::GarrisonError;
+use crate::loc;
 use sdforge::forge;
 use sdforge::prelude::ApiError;
 use serde::{Deserialize, Serialize};
@@ -81,7 +82,7 @@ pub struct GetSessionRequest {
     path = "/auth/login",
     method = "POST",
     tool_name = "auth_login",
-    description = "用户登录，返回 token"
+    description = "Log in and return a token"
 )]
 async fn login(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -97,7 +98,7 @@ async fn login(
     path = "/auth/logout",
     method = "POST",
     tool_name = "auth_logout",
-    description = "登出指定 token"
+    description = "Log out a token"
 )]
 async fn logout(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -113,7 +114,7 @@ async fn logout(
     path = "/auth/refresh",
     method = "POST",
     tool_name = "auth_refresh",
-    description = "刷新 token"
+    description = "Refresh a token"
 )]
 async fn refresh(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -133,7 +134,7 @@ async fn refresh(
     path = "/auth/check-login",
     method = "POST",
     tool_name = "auth_check_login",
-    description = "校验登录状态"
+    description = "Check login status"
 )]
 async fn check_login(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -149,7 +150,7 @@ async fn check_login(
     path = "/auth/check-permission",
     method = "POST",
     tool_name = "auth_check_permission",
-    description = "校验权限"
+    description = "Check permission"
 )]
 async fn check_permission(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -165,7 +166,7 @@ async fn check_permission(
     path = "/auth/check-role",
     method = "POST",
     tool_name = "auth_check_role",
-    description = "校验角色"
+    description = "Check role"
 )]
 async fn check_role(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -181,7 +182,7 @@ async fn check_role(
     path = "/auth/check-safe",
     method = "POST",
     tool_name = "auth_check_safe",
-    description = "校验二级认证"
+    description = "Check second-factor auth"
 )]
 async fn check_safe(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -197,7 +198,7 @@ async fn check_safe(
     path = "/auth/check-disable",
     method = "POST",
     tool_name = "auth_check_disable",
-    description = "校验封禁状态"
+    description = "Check ban status"
 )]
 async fn check_disable(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -213,7 +214,7 @@ async fn check_disable(
     path = "/auth/check-api-key",
     method = "POST",
     tool_name = "auth_check_api_key",
-    description = "校验 API Key"
+    description = "Verify API Key"
 )]
 async fn check_api_key(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -229,7 +230,7 @@ async fn check_api_key(
     path = "/auth/get-token-info",
     method = "POST",
     tool_name = "auth_get_token_info",
-    description = "获取 token 信息"
+    description = "Get token info"
 )]
 async fn get_token_info(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -248,9 +249,10 @@ async fn get_token_info(
                 session_login_id = %session.login_id,
                 "get_token_info 所有权校验失败：跨用户访问"
             );
-            return Ok(to_api_response(Err(GarrisonError::NotPermission(
-                "caller_login_id 与 session.login_id 不匹配".to_string(),
-            ))));
+            return Ok(to_api_response(Err(GarrisonError::NotPermission(loc!(
+                "caller-login-id-mismatch",
+                "caller_login_id does not match session.login_id"
+            )))));
         }
     } else {
         tracing::warn!("get_token_info 未提供 caller_login_id，跳过所有权校验");
@@ -265,7 +267,7 @@ async fn get_token_info(
     path = "/auth/get-session",
     method = "POST",
     tool_name = "auth_get_session",
-    description = "获取 session"
+    description = "Get session"
 )]
 async fn get_session(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -283,9 +285,10 @@ async fn get_session(
                 session_login_id = %session.login_id,
                 "get_session 所有权校验失败：跨用户访问"
             );
-            return Ok(to_api_response(Err(GarrisonError::NotPermission(
-                "caller_login_id 与 session.login_id 不匹配".to_string(),
-            ))));
+            return Ok(to_api_response(Err(GarrisonError::NotPermission(loc!(
+                "caller-login-id-mismatch",
+                "caller_login_id does not match session.login_id"
+            )))));
         }
     } else {
         tracing::warn!("get_session 未提供 caller_login_id，跳过所有权校验");
@@ -303,7 +306,7 @@ async fn get_session(
     path = "/auth/kickout",
     method = "POST",
     tool_name = "auth_kickout",
-    description = "踢出登录主体"
+    description = "Kick out a login subject"
 )]
 async fn kickout(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -319,7 +322,7 @@ async fn kickout(
     path = "/auth/switch-to",
     method = "POST",
     tool_name = "auth_switch_to",
-    description = "切换登录主体"
+    description = "Switch login subject"
 )]
 async fn switch_to(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -335,7 +338,7 @@ async fn switch_to(
     path = "/auth/renew-to-equivalent",
     method = "POST",
     tool_name = "auth_renew_to_equivalent",
-    description = "续期 token"
+    description = "Renew a token"
 )]
 async fn renew_to_equivalent(
     #[state] backend: Arc<dyn AuthBackend>,
@@ -351,7 +354,7 @@ async fn renew_to_equivalent(
     path = "/auth/health",
     method = "GET",
     tool_name = "auth_health",
-    description = "健康检查"
+    description = "Health check"
 )]
 async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
     Ok(ApiResponse::ok("ok"))
@@ -389,13 +392,20 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
     path = "/metrics",
     method = "GET",
     tool_name = "auth_metrics",
-    description = "Prometheus 指标端点"
+    description = "Prometheus metrics endpoint"
 )]
 async fn metrics() -> Result<String, ApiError> {
     let output = prometheus::TextEncoder::new()
         .encode_to_string(&prometheus::gather())
         .map_err(|e| {
-            ApiError::internal_with_source("Prometheus 指标编码失败", "metrics-encode-failure", e)
+            ApiError::internal_with_source(
+                loc!(
+                    "metrics-encode-failed",
+                    "Prometheus metrics encoding failed"
+                ),
+                "metrics-encode-failure",
+                e,
+            )
         })?;
     Ok(output)
 }

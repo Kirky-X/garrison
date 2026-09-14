@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! Garrison 过程宏 crate，提供鉴权注解属性宏。
@@ -205,7 +205,7 @@ pub fn check_permission(attr: TokenStream, item: TokenStream) -> TokenStream {
     if perms.is_empty() {
         return syn::Error::new(
             Span::call_site(),
-            "#[check_permission] 需要至少一个权限参数，例如 #[check_permission(\"user:read\")]",
+            "#[check_permission] requires at least one permission argument, e.g. #[check_permission(\"user:read\")]",
         )
         .to_compile_error()
         .into();
@@ -245,7 +245,7 @@ pub fn check_role(attr: TokenStream, item: TokenStream) -> TokenStream {
     if roles.is_empty() {
         return syn::Error::new(
             Span::call_site(),
-            "#[check_role] 需要至少一个角色参数，例如 #[check_role(\"admin\")]",
+            "#[check_role] requires at least one role argument, e.g. #[check_role(\"admin\")]",
         )
         .to_compile_error()
         .into();
@@ -540,7 +540,7 @@ pub fn check_permission_forge(attr: TokenStream, item: TokenStream) -> TokenStre
     if perms.is_empty() {
         return syn::Error::new(
             Span::call_site(),
-            "#[check_permission_forge] 需要至少一个权限参数，例如 #[check_permission_forge(\"admin\")]",
+            "#[check_permission_forge] requires at least one permission argument, e.g. #[check_permission_forge(\"admin\")]",
         )
         .to_compile_error()
         .into();
@@ -578,7 +578,7 @@ pub fn check_role_forge(attr: TokenStream, item: TokenStream) -> TokenStream {
     if roles.is_empty() {
         return syn::Error::new(
             Span::call_site(),
-            "#[check_role_forge] 需要至少一个角色参数，例如 #[check_role_forge(\"admin\")]",
+            "#[check_role_forge] requires at least one role argument, e.g. #[check_role_forge(\"admin\")]",
         )
         .to_compile_error()
         .into();
@@ -617,7 +617,7 @@ impl Parse for CheckApiKeyAttr {
         if ident != "namespace" {
             return Err(syn::Error::new(
                 ident.span(),
-                "不支持的属性参数，仅支持 `namespace = \"xxx\"`",
+                "unsupported attribute argument; only `namespace = \"xxx\"` is supported",
             ));
         }
         let _: Token![=] = input.parse()?;
@@ -661,7 +661,7 @@ impl Parse for CheckPermissionAttr {
                 _ => {
                     return Err(syn::Error::new(
                         ident.span(),
-                        "不支持的属性参数，仅支持 `permission`、`resource` 和 `abac`",
+                        "unsupported attribute argument; only `permission`, `resource` and `abac` are supported",
                     ))
                 },
             }
@@ -672,7 +672,7 @@ impl Parse for CheckPermissionAttr {
         let permission = permission.ok_or_else(|| {
             syn::Error::new(
                 Span::call_site(),
-                "#[check_permission] 命名参数形式需要 `permission` 参数",
+                "#[check_permission] named-argument form requires the `permission` argument",
             )
         })?;
         Ok(Self {
@@ -715,7 +715,7 @@ impl Parse for CheckAbacAttr {
                 _ => {
                     return Err(syn::Error::new(
                         ident.span(),
-                        "不支持的属性参数，仅支持 `action`、`resource` 和 `abac`",
+                        "unsupported attribute argument; only `action`, `resource` and `abac` are supported",
                     ))
                 },
             }
@@ -726,13 +726,13 @@ impl Parse for CheckAbacAttr {
         let action = action.ok_or_else(|| {
             syn::Error::new(
                 Span::call_site(),
-                "#[check_abac] 需要 `action` 参数，例如 #[check_abac(action = \"order:read\", abac = \"...\")]",
+                "#[check_abac] requires the `action` argument, e.g. #[check_abac(action = \"order:read\", abac = \"...\")]",
             )
         })?;
         let abac = abac.ok_or_else(|| {
             syn::Error::new(
                 Span::call_site(),
-                "#[check_abac] 需要 `abac` 参数，例如 #[check_abac(action = \"...\", abac = \"resource.user_id == principal.id\")]",
+                "#[check_abac] requires the `abac` argument, e.g. #[check_abac(action = \"...\", abac = \"resource.user_id == principal.id\")]",
             )
         })?;
         Ok(Self {
@@ -795,7 +795,10 @@ fn expand_check_login(item_fn: ItemFn) -> TokenStream {
                 ::std::result::Result::Ok(true) => {},
                 ::std::result::Result::Ok(false) => {
                     return ::axum::response::IntoResponse::into_response(
-                        ::garrison::GarrisonError::NotLogin("未登录（check_login 返回 false）".to_string())
+                        ::garrison::GarrisonError::NotLogin(::garrison::loc!(
+                            "check-login-returned-false",
+                            "Not logged in (check_login returned false)"
+                        ))
                     );
                 }
                 ::std::result::Result::Err(__garrison_err) => {
@@ -808,7 +811,10 @@ fn expand_check_login(item_fn: ItemFn) -> TokenStream {
                 ::std::result::Result::Ok(true) => {},
                 ::std::result::Result::Ok(false) => {
                     return ::axum::response::IntoResponse::into_response(
-                        ::garrison::GarrisonError::NotLogin("未登录（check_login 返回 false）".to_string())
+                        ::garrison::GarrisonError::NotLogin(::garrison::loc!(
+                            "check-login-returned-false",
+                            "Not logged in (check_login returned false)"
+                        ))
                     );
                 }
                 ::std::result::Result::Err(__garrison_err) => {
@@ -1093,7 +1099,10 @@ fn expand_check_login_forge(item_fn: ItemFn) -> proc_macro2::TokenStream {
             ::std::result::Result::Ok(true) => {},
             ::std::result::Result::Ok(false) => {
                 return ::std::result::Result::Err(::std::convert::Into::into(
-                    ::garrison::GarrisonError::NotLogin("未登录（check_login 返回 false）".to_string())
+                    ::garrison::GarrisonError::NotLogin(::garrison::loc!(
+                        "check-login-returned-false",
+                        "Not logged in (check_login returned false)"
+                    ))
                 ));
             }
             ::std::result::Result::Err(__garrison_err) => {

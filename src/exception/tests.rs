@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! exception 模块测试（从 mod.rs 迁移，Rule 25 合规）。
@@ -37,11 +37,11 @@ fn with_login_type_accepts_string() {
     assert_eq!(ex.login_type, "wechat");
 }
 
-/// 验证 `Display` 实现输出 "未登录: {message}" 格式。
+/// 验证 `Display` 实现输出 "Not logged in: {message}" 格式。
 #[test]
 fn display_formats_correctly() {
     let ex = NotLoginException::new("token 已过期");
-    assert_eq!(format!("{}", ex), "未登录: token 已过期");
+    assert_eq!(format!("{}", ex), "Not logged in: token 已过期");
 }
 
 /// ocr #621 回归：`with_login_type` 后 Display 输出必须跟随 login_type 变化。
@@ -63,7 +63,7 @@ fn display_includes_custom_login_type() {
     let default_ex = NotLoginException::new("token 已过期");
     assert_eq!(
         format!("{}", default_ex),
-        "未登录: token 已过期",
+        "Not logged in: token 已过期",
         "空 login_type 时 Display 格式不得变化"
     );
 }
@@ -192,7 +192,7 @@ fn garrison_exception_debug_sanitizes_extras() {
 #[test]
 fn garrison_exception_display_format() {
     let ex = GarrisonException::new(-1, "请先登录");
-    assert_eq!(format!("{}", ex), "业务异常[-1]: 请先登录");
+    assert_eq!(format!("{}", ex), "Business exception[-1]: 请先登录");
 }
 
 /// 验证 `GarrisonException` 通过 `From` 转换为 `GarrisonError::Exception`。
@@ -211,7 +211,7 @@ fn garrison_exception_into_garrison_error() {
 #[test]
 fn existing_garrison_error_variants_unaffected() {
     let err = GarrisonError::NotLogin("请先登录".to_string());
-    assert_eq!(err.to_string(), "未登录: 请先登录");
+    assert_eq!(err.to_string(), "Not logged in: 请先登录");
     // 确保新增 Exception 变体不破坏既有 match
     let errors: [GarrisonError; 2] = [
         GarrisonError::NotLogin("a".into()),

@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 注解系统集成测试：完整 axum app + extractor + 鉴权 + 401/403 响应。
@@ -303,6 +303,8 @@ async fn public_without_token_returns_200() {
 #[tokio::test]
 #[serial]
 async fn unauthorized_response_body_contains_error_json() {
+    // 断言中文消息，显式钉住 locale（框架默认 En）
+    let _zh = garrison::i18n::set_locale(garrison::i18n::GarrisonLocale::Zh);
     init_manager(&[], &[]).await;
 
     let app = make_app();
