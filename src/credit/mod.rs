@@ -12,18 +12,17 @@
 //!
 //! # 与现有模块的关系
 //!
-//! - `limiteron::quota`：per-user 限流配额（独立，不交互）
 //! - `listener::audit`：审计日志（CreditConsumed / CreditAlert 事件可被审计监听器捕获）
 //! - `context::tenant`：tenant_id 来源（CreditMeter 按 tenant 维度计量）
 //!
 //! # 消费语义与已知限制
 //!
 //! - `CreditMeter::consume_credit`：credits = cost × weight 经 `checked_mul`
-//!   计算，溢出返回错误（不静默回绕）；**被拒绝的请求不消耗配额**（预检拒绝
-//!   零副作用，并发交错超限时回滚本次扣减）。
+//! 计算，溢出返回错误（不静默回绕）；**被拒绝的请求不消耗配额**（预检拒绝
+//! 零副作用，并发交错超限时回滚本次扣减）。
 //! - `CreditMeterStorage::incr_consumed`：`GarrisonDao` 无 `INCRBY` 语义，
-//!   credits > 1 时循环单步 incr——整体非原子且为 N 次串行 DAO 往返（详见
-//!   `credit::storage` 模块文档）。
+//! credits > 1 时循环单步 incr——整体非原子且为 N 次串行 DAO 往返（详见
+//! `credit::storage` 模块文档）。
 
 /// Credit 配额周期模型。
 pub mod cycle;

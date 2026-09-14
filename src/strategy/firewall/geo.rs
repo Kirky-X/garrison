@@ -9,19 +9,20 @@
 //! - [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup)：IP → 坐标（lat/lon），供 `AnomalousLoginStrategy` 算 haversine 距离
 //! - [`CountryLookup`](crate::strategy::firewall::geo::CountryLookup)：IP → 国家码（ISO 3166-1 alpha-2），供 `GeoIPStrategy` 做 allow/block 匹配
 //!
-//! 生产实现可用 maxminddb 读取 MaxMind GeoIP2 数据库（City.mmdb 含坐标，Country.mmdb 含国家码），
+//! 生产实现委托 limiteron `GeoMatcher`（mmdb 读取 + LRU 查询缓存 + 批量查询），
 //! 测试可用 mock 实现（避免依赖真实数据库文件）。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
 
-/// MaxMindDb 生产后端（由 `firewall-maxminddb` feature 启用）。
+/// limiteron GeoMatcher 生产后端（由 `firewall-maxminddb` feature 启用；
+/// 后端实现已从 maxminddb 直读迁移至 limiteron GeoMatcher，feature 名保持不变）。
 #[cfg(feature = "firewall-maxminddb")]
-pub mod maxminddb;
+pub mod matcher;
 
 /// 地理坐标（纬度 / 经度，十进制度）。
 ///
-/// # 不变量与构造方式（issue #8028）
+/// # 不变量与构造方式
 ///
 /// `lat ∈ [-90.0, 90.0]`、`lon ∈ [-180.0, 180.0]`、非 NaN 的不变量由
 /// [`GeoCoord::new`] / [`GeoCoord::from_csv`] 在构造时校验。**字段为 `pub`**，
@@ -84,7 +85,7 @@ impl GeoCoord {
 
 /// IP 地理位置查询 trait（抽象 maxminddb 等后端）。
 ///
-/// 生产实现：`MaxMindDbGeoLookup`（依赖 maxminddb，读取 GeoIP2-City 数据库）。
+/// 生产实现：`GeoMatcherLookup`（委托 limiteron GeoMatcher，读取 GeoIP2-City 数据库）。
 /// 测试实现：`MockGeoLookup`（硬编码 IP → 坐标映射）。
 #[async_trait]
 pub trait GeoLookup: Send + Sync {
@@ -102,7 +103,7 @@ pub trait GeoLookup: Send + Sync {
 /// 与 [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup) 并列（单一职责）：`GeoLookup` 返回坐标供 haversine 距离计算，
 /// `CountryLookup` 返回 ISO 3166-1 alpha-2 国家码（如 `"CN"` / `"US"`）供 allow/block 匹配。
 ///
-/// 生产实现：`MaxMindDbCountryLookup`（依赖 maxminddb，读取 GeoIP2-Country 数据库）。
+/// 生产实现：`GeoMatcherCountryLookup`（委托 limiteron GeoMatcher）。
 /// 测试实现：`MockCountryLookup`（硬编码 IP → 国家码映射）。
 #[async_trait]
 pub trait CountryLookup: Send + Sync {

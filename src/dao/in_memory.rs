@@ -271,8 +271,8 @@ impl GarrisonDao for InMemoryDao {
             Ok(1)
         } else {
             let (val_str, _) = store.get(key).cloned().unwrap();
-            // Rule 12：解析失败显式报错，禁止静默按 0 处理导致限速计数器重置
-            //（安全审查 S1 修复，与 decr/compare_and_update_if_greater 对齐）
+            // 解析失败显式报错，禁止静默按 0 处理导致限速计数器重置
+            //（与 decr/compare_and_update_if_greater 对齐）
             let cur_val: u64 = val_str.parse().map_err(|_| {
                 GarrisonError::Dao(format!("dao-incr-parse-u64::{}::{}", key, val_str))
             })?;
@@ -348,7 +348,7 @@ impl GarrisonDao for InMemoryDao {
     ) -> GarrisonResult<bool> {
         let mut store = self.store.lock();
         let now = Instant::now();
-        // M1 修复：parse 失败必须显式报错（与 incr 方法一致，Rule 12 错误显性化），
+        // parse 失败必须显式报错（与 incr 方法一致，错误显性化），
         // 禁止 unwrap_or(0) 静默返回 0 导致 nc 计数器被错误重置
         let (current_val, existing_expire_at) = match store.get(key) {
             Some((v, Some(deadline))) if *deadline > now => (
@@ -435,18 +435,18 @@ impl GarrisonDao for InMemoryDao {
     /// # 支持的脚本模式
     ///
     /// 1. **INCR + EXPIRE**（limiteron BruteForceStrategy 用）：
-    ///    识别脚本中含 `INCR` + `EXPIRE`，提取 `KEYS[1]` 与 `ARGV[2]`（TTL），
-    ///    委托 `self.incr`，返回 `vec![count.to_string()]`。
+    /// 识别脚本中含 `INCR` + `EXPIRE`，提取 `KEYS[1]` 与 `ARGV[2]`（TTL），
+    /// 委托 `self.incr`，返回 `vec![count.to_string()]`。
     ///
-    /// 2. **rate_limit_sliding_window**（RateLimitStrategy 用，vuln-0009 修复）：
-    ///    识别脚本中含标记 `rate_limit_sliding_window`，在单次 `lock()` 作用域内
-    ///    原子执行 read → filter → check → write（消除 TOCTOU）。
-    ///    - `KEYS[1]`：时间戳列表 key
-    ///    - `ARGV[1]`：now_ms（u64）
-    ///    - `ARGV[2]`：window_start_ms（u64，此时刻之前的时间戳被滑出）
-    ///    - `ARGV[3]`：threshold（usize，>= 即拦截）
-    ///    - `ARGV[4]`：ttl_seconds（u64，窗口 TTL）
-    ///    - 返回 `vec!["1"]` 表示允许（已追加时间戳），`vec!["0"]` 表示拦截（未修改）
+    /// 2. **ZREMRANGEBYSCORE**（limiteron `SLIDING_WINDOW_SCRIPT`，RateLimitStrategy 用）：
+    /// 识别脚本中含 `ZREMRANGEBYSCORE`，在单次 `lock()` 作用域内原子执行
+    /// remove-outdated → count → check → add（消除 TOCTOU）。
+    /// - `KEYS[1]`：Sorted Set key（member=score=毫秒时间戳）
+    /// - `ARGV[1]`：窗口大小 ms（u64）
+    /// - `ARGV[2]`：最大请求数（usize，>= 即拦截）
+    /// - `ARGV[3]`：当前时间戳 ms（u64）
+    /// - 返回 `vec![allowed, count, reset_time]`（allowed "1"/"0"，
+    /// 与 limiteron 脚本返回 `{allowed, current_count, reset_time}` 对齐）
     async fn eval_lua(
         &self,
         script: &str,
@@ -458,8 +458,8 @@ impl GarrisonDao for InMemoryDao {
             return self.eval_lua_incr_mode(&keys, &args).await;
         }
 
-        // 模式 2：rate_limit_sliding_window（RateLimitStrategy vuln-0009 修复）
-        if script.contains("rate_limit_sliding_window") {
+        // 模式 2：ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT）
+        if script.contains("ZREMRANGEBYSCORE") {
             return self.eval_lua_sliding_window_mode(&keys, &args).await;
         }
 
@@ -485,7 +485,7 @@ impl InMemoryDao {
         Ok(vec![count.to_string()])
     }
 
-    /// rate_limit_sliding_window 模式：原子 read-filter-check-write。
+    /// ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT）模式：原子 remove→count→check→add。
     async fn eval_lua_sliding_window_mode(
         &self,
         keys: &[String],
@@ -494,15 +494,18 @@ impl InMemoryDao {
         let key = keys.first().ok_or_else(|| {
             GarrisonError::InvalidParam("dao-eval-lua-rl-missing-keys-1".to_string())
         })?;
-        let now_ms: u64 = parse_lua_arg(args, 0, "dao-eval-lua-rl-argv-1-now-ms")?;
-        let window_start_ms: u64 = parse_lua_arg(args, 1, "dao-eval-lua-rl-argv-2-window-start")?;
-        let threshold: usize = parse_lua_arg(args, 2, "dao-eval-lua-rl-argv-3-threshold")?;
-        let ttl_seconds: u64 = parse_lua_arg(args, 3, "dao-eval-lua-rl-argv-4-ttl")?;
+        let window_ms: u64 = parse_lua_arg(args, 0, "dao-eval-lua-rl-argv-1-window-ms")?;
+        let max_requests: usize = parse_lua_arg(args, 1, "dao-eval-lua-rl-argv-2-max")?;
+        let now_ms: u64 = parse_lua_arg(args, 2, "dao-eval-lua-rl-argv-3-now-ms")?;
+        let window_start_ms = now_ms.saturating_sub(window_ms);
 
-        // 原子 read-filter-check-write（单次 lock 作用域内）
+        // 原子 remove-outdated → count → check → add（单次 lock 作用域内）。
+        // member=score=毫秒时间戳，value 以逗号分隔 member 列表存储；
+        // `parse_timestamps` 的 `t > window_start` 过滤与
+        // `ZREMRANGEBYSCORE key -inf window_start`（移除 score <= window_start）语义一致。
         let mut store = self.store.lock();
         let now = Instant::now();
-        let mut timestamps: Vec<u64> = match store.get(key) {
+        let mut members: Vec<u64> = match store.get(key) {
             Some((raw, Some(deadline))) if *deadline > now => {
                 parse_timestamps(raw, window_start_ms)
             },
@@ -510,23 +513,26 @@ impl InMemoryDao {
             _ => Vec::new(),
         };
 
-        if timestamps.len() >= threshold {
-            return Ok(vec!["0".to_string()]);
+        let current_count = members.len();
+        let allowed = current_count < max_requests;
+        if allowed {
+            members.push(now_ms);
+            // limiteron 脚本：EXPIRE key ceil(window_ms / 1000) + 1
+            let ttl_secs = window_ms.div_ceil(1000) + 1;
+            let expire_at = Some(now + Duration::from_secs(ttl_secs));
+            let new_raw = members
+                .iter()
+                .map(|t| t.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            store.insert(key.to_string(), (new_raw, expire_at));
         }
-
-        timestamps.push(now_ms);
-        let new_raw = timestamps
-            .iter()
-            .map(|t| t.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        let expire_at = if ttl_seconds == 0 {
-            None
-        } else {
-            Some(now + Duration::from_secs(ttl_seconds))
-        };
-        store.insert(key.to_string(), (new_raw, expire_at));
-        Ok(vec!["1".to_string()])
+        let reset_time = window_start_ms + window_ms;
+        Ok(vec![
+            if allowed { "1" } else { "0" }.to_string(),
+            current_count.to_string(),
+            reset_time.to_string(),
+        ])
     }
 }
 

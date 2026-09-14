@@ -1309,8 +1309,6 @@ checksum = "6e8ccc4ea9f6acc32d102c0f6d471d11d913ad15f20c04de743374861fa1d414"
 [[package]]
 name = "confers"
 version = "0.6.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0e93a0924eabc16e4fd10766c890d0c661ac62d32243ce8d8197a105931dbfb8"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -1356,8 +1354,6 @@ dependencies = [
 [[package]]
 name = "confers-macros"
 version = "0.6.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "246b658b18e09a056e9a69f5e8bd3be8f34ebe8efe2a13cd369c286e40f9367a"
 dependencies = [
  "darling 0.24.1",
  "proc-macro2",
@@ -2610,7 +2606,6 @@ dependencies = [
  "jsonwebtoken",
  "lettre",
  "limiteron",
- "maxminddb 0.32.0",
  "md5",
  "miette",
  "mimalloc",
@@ -4182,8 +4177,6 @@ dependencies = [
 [[package]]
 name = "limiteron"
 version = "0.3.0-rc.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc73be0cd6c8f66d28fe6897b5412a3c03827ffe9a7550de37b66e6690c85d1b"
 dependencies = [
  "ahash",
  "async-trait",
@@ -4195,10 +4188,11 @@ dependencies = [
  "http 1.5.0",
  "ipnet",
  "log",
- "maxminddb 0.30.3",
+ "maxminddb",
  "oxcache",
  "parking_lot",
  "prometheus",
+ "redis",
  "reqwest",
  "scopeguard",
  "secrecy",
@@ -4336,18 +4330,6 @@ name = "maxminddb"
 version = "0.30.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6649a1829998559f076107dfff337f1d05195eec8d01964d96e53570cc8f8d75"
-dependencies = [
- "ipnetwork",
- "memchr",
- "serde",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "maxminddb"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b43d2458d977b610b04a3858e6504f06133663d303a1a0606601b530bfc9bc6"
 dependencies = [
  "ipnetwork",
  "memchr",

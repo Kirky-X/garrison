@@ -185,7 +185,7 @@ pub trait GarrisonDao: Send + Sync {
     /// # 性能警告
     /// - 大规模 key 场景下性能差（需全量扫描 + 过滤）
     ///
-    /// # 已知限制（A-010 评估结论）
+    /// # 已知限制
     ///
     /// `GarrisonDaoOxcache` 在 `dao-key-index` feature 关闭时走默认 `NotImplemented`，原因：
     /// - oxcache 0.3.3 的 `CacheReader`/`CacheBackend` trait 未暴露 iter/keys/scan API（2026-07-08 验证）
@@ -263,7 +263,7 @@ pub trait GarrisonDao: Send + Sync {
     ///
     /// 实现必须原子完成「读取 → 递增 → 写回」：并发调用不丢失更新。
     /// key 已存在时**不重置 TTL**（保留原窗口过期时间）；解析失败必须显式
-    /// 返回 `GarrisonError::Dao`，禁止静默返回 0 导致计数器重置（Rule 12）。
+    /// 返回 `GarrisonError::Dao`，禁止静默返回 0 导致计数器重置。
     /// 进程内实现用锁保护，Redis 用 `INCR` + 首次 `EXPIRE`。
     async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64>;
 
@@ -273,7 +273,7 @@ pub trait GarrisonDao: Send + Sync {
     /// - key 不存在或已过期：返回 0（不报错，不创建 key）
     /// - 当前值为 0：返回 0（不递减为负）
     /// - 当前值 > 0：递减 1；递减后值为 0 时删除 key（与 `SmsRateLimiter::decrement_counter` 语义一致）；
-    ///   递减后值 > 0 时保留原 TTL（不重置窗口）
+    /// 递减后值 > 0 时保留原 TTL（不重置窗口）
     ///
     /// 用于 SMS 限速计数器回滚（`SmsRateLimiter::decrement_counter`）等场景，
     /// 消除 `get → parse → update/delete` 三步组合的 TOCTOU 竞态。
@@ -577,7 +577,7 @@ pub trait GarrisonDao: Send + Sync {
 /// DAO 原子方法测试回退宏（编译期契约配套）——实现见 `atomic_fallback.rs`。
 /// `#[doc(hidden)]` + 测试域专用：生产 DAO 实现**禁止**使用组合语义。
 /// 注：完全的编译期门控（cfg testing）需 CI 测试命令追加 testing feature
-///（CI 现为 full-only，属 Non-Goals），已记录为后续 change（架构审查 A1）。
+///（CI 现为 full-only，属 Non-Goals），已记录为后续 change。
 #[doc(hidden)]
 pub mod atomic_fallback;
 
@@ -666,7 +666,7 @@ impl RedisConfig {
 
 // ============================================================================
 // `RedisDeploymentMode` 与 `RedisConfig` 的 trait 实现分离至 `defaults` 子模块
-// （规则 25：mod.rs 只放 trait/struct/enum 定义，impl 块拆到独立文件）
+// （mod.rs 只放 trait/struct/enum 定义，impl 块拆到独立文件）
 // ============================================================================
 pub mod defaults;
 
@@ -695,7 +695,7 @@ pub use oxcache_impl::GarrisonDaoOxcache;
 mod dbnexus_impl;
 
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
-pub use dbnexus_impl::{init_dbnexus, GarrisonMigration};
+pub use dbnexus_impl::{init_dbnexus, init_dbnexus_with_pool_config, GarrisonMigration};
 
 /// 统一 KV + SQL 的 `GarrisonDao` 实现（包装 `DbPool` + KV 委托）。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
@@ -748,7 +748,7 @@ pub mod tests {
     use std::time::Duration;
 
     // ------------------------------------------------------------------------
-    // GarrisonDaoOxcache keys() 测试（CRIT-001 修复验证）
+    // GarrisonDaoOxcache keys() 测试
     // 仅在 dao-key-index（由 protocol-apikey / anomalous-detector-dual 传递）
     // + cache-memory/cache-redis 启用时编译
     // ------------------------------------------------------------------------
@@ -890,7 +890,7 @@ pub mod tests {
     /// Scenario: update 更新值（保留 TTL）。
     /// WHEN set("key1", "value1", 3600) 后 update("key1", "value2")
     /// THEN get("key1") 返回 Some("value2")
-    /// AND  TTL 保持 3600（不重置）
+    /// AND TTL 保持 3600（不重置）
     #[tokio::test]
     async fn mock_update_preserves_ttl() {
         let dao = MockDao::new();
@@ -992,10 +992,10 @@ pub mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // 4 方法扩展测试（v0.4.2 spec dao-garrison-dao）
+    // 4 方法扩展测试
     // ------------------------------------------------------------------------
 
-    /// R-001: set_permanent 设置后 get 返回值。
+    /// set_permanent 设置后 get 返回值。
     #[tokio::test]
     async fn mock_set_permanent_persists_value() {
         let dao = MockDao::new();
@@ -1004,7 +1004,7 @@ pub mod tests {
         assert_eq!(got, Some("perm_value".to_string()));
     }
 
-    /// R-001: set_permanent 永久键短时间等待不过期。
+    /// set_permanent 永久键短时间等待不过期。
     #[tokio::test]
     async fn mock_set_permanent_does_not_expire_quickly() {
         let dao = MockDao::new();
@@ -1014,7 +1014,7 @@ pub mod tests {
         assert_eq!(got, Some("perm_value".to_string()), "永久键不应过期");
     }
 
-    /// R-002: get_timeout 永久键返回 None。
+    /// get_timeout 永久键返回 None。
     #[tokio::test]
     async fn mock_get_timeout_returns_none_for_permanent_key() {
         let dao = MockDao::new();
@@ -1023,7 +1023,7 @@ pub mod tests {
         assert!(timeout.is_none(), "永久键应返回 None");
     }
 
-    /// R-002: get_timeout TTL 键返回 Some(remaining)，剩余 ≤ 原 TTL。
+    /// get_timeout TTL 键返回 Some(remaining)，剩余 ≤ 原 TTL。
     #[tokio::test]
     async fn mock_get_timeout_returns_some_for_ttl_key() {
         let dao = MockDao::new();
@@ -1037,7 +1037,7 @@ pub mod tests {
         );
     }
 
-    /// R-002: get_timeout 不存在的键返回 None。
+    /// get_timeout 不存在的键返回 None。
     #[tokio::test]
     async fn mock_get_timeout_returns_none_for_missing_key() {
         let dao = MockDao::new();
@@ -1045,7 +1045,7 @@ pub mod tests {
         assert!(timeout.is_none(), "不存在的键应返回 None");
     }
 
-    /// R-003: keys("garrison:apikey:*") 返回命名空间下所有 key。
+    /// keys("garrison:apikey:*") 返回命名空间下所有 key。
     #[tokio::test]
     async fn mock_keys_returns_namespace_matches() {
         let dao = MockDao::new();
@@ -1058,7 +1058,7 @@ pub mod tests {
         assert!(keys.contains(&"garrison:apikey:def456".to_string()));
     }
 
-    /// R-003: keys("*") 返回所有 key。
+    /// keys("*") 返回所有 key。
     #[tokio::test]
     async fn mock_keys_star_returns_all() {
         let dao = MockDao::new();
@@ -1068,7 +1068,7 @@ pub mod tests {
         assert!(keys.len() >= 2, "应至少返回 2 个 key");
     }
 
-    /// R-003: keys 无匹配返回空 Vec。
+    /// keys 无匹配返回空 Vec。
     #[tokio::test]
     async fn mock_keys_no_match_returns_empty() {
         let dao = MockDao::new();
@@ -1077,7 +1077,7 @@ pub mod tests {
         assert!(keys.is_empty(), "无匹配应返回空 Vec");
     }
 
-    /// R-003: keys 支持 ? 单字符通配符。
+    /// keys 支持 ? 单字符通配符。
     #[tokio::test]
     async fn mock_keys_supports_question_mark() {
         let dao = MockDao::new();
@@ -1092,7 +1092,7 @@ pub mod tests {
         );
     }
 
-    /// R-004: rename 重命名后 old 不存在，new 存在。
+    /// rename 重命名后 old 不存在，new 存在。
     #[tokio::test]
     async fn mock_rename_moves_key() {
         let dao = MockDao::new();
@@ -1104,7 +1104,7 @@ pub mod tests {
         assert_eq!(new, Some("value".to_string()), "rename 后 new_key 应有值");
     }
 
-    /// R-004: rename 不存在的 old_key 返回 InvalidParam。
+    /// rename 不存在的 old_key 返回 InvalidParam。
     #[tokio::test]
     async fn mock_rename_missing_key_returns_invalid_param() {
         let dao = MockDao::new();
@@ -1327,10 +1327,10 @@ pub mod tests {
         }
 
         // --------------------------------------------------------------------
-        // v0.4.2 4 方法扩展测试
+        // 4 方法扩展测试
         // --------------------------------------------------------------------
 
-        /// R-001: set_permanent 写入永久键，短时间等待不过期。
+        /// set_permanent 写入永久键，短时间等待不过期。
         ///
         /// 覆盖 GarrisonDaoOxcache::set_permanent 重写实现（用 set_with_ttl_sync(None)）。
         #[tokio::test(flavor = "multi_thread")]
@@ -1346,7 +1346,7 @@ pub mod tests {
             );
         }
 
-        /// R-002: get_timeout 永久键返回 None。
+        /// get_timeout 永久键返回 None。
         ///
         /// 覆盖 GarrisonDaoOxcache::get_timeout 重写实现（用 ttl_sync）。
         #[tokio::test(flavor = "multi_thread")]
@@ -1357,7 +1357,7 @@ pub mod tests {
             assert!(timeout.is_none(), "永久键应返回 None");
         }
 
-        /// R-002: get_timeout TTL 键返回 Some(remaining)，剩余 ≤ 原 TTL。
+        /// get_timeout TTL 键返回 Some(remaining)，剩余 ≤ 原 TTL。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_timeout_returns_some_for_ttl_key() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1371,7 +1371,7 @@ pub mod tests {
             );
         }
 
-        /// R-002: get_timeout 不存在的键返回 None。
+        /// get_timeout 不存在的键返回 None。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_timeout_returns_none_for_missing_key() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1379,7 +1379,7 @@ pub mod tests {
             assert!(timeout.is_none(), "不存在的键应返回 None");
         }
 
-        /// R-003: keys 行为取决于 feature gate。
+        /// keys 行为取决于 feature gate。
         ///
         /// - 启用 `dao-key-index`（protocol-apikey / anomalous-detector-dual 传递）：keys() 通过 key_index 返回匹配的 key 列表
         /// - 未启用 `dao-key-index`：keys() 返回 NotImplemented（oxcache 不支持原生 key scan）
@@ -1407,7 +1407,7 @@ pub mod tests {
             }
         }
 
-        /// R-004: rename 重命名后 old 不存在，new 存在。
+        /// rename 重命名后 old 不存在，new 存在。
         ///
         /// 覆盖 GarrisonDaoOxcache::rename 重写实现（用 get → ttl_sync → set_with_ttl_sync → delete）。
         #[tokio::test(flavor = "multi_thread")]
@@ -1421,7 +1421,7 @@ pub mod tests {
             assert_eq!(new, Some("value".to_string()), "rename 后 oc_new 应有值");
         }
 
-        /// R-004: rename 不存在的 old_key 返回 InvalidParam。
+        /// rename 不存在的 old_key 返回 InvalidParam。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_rename_missing_key_returns_invalid_param() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1433,7 +1433,7 @@ pub mod tests {
             );
         }
 
-        /// R-004: rename 保留原键 TTL（重写实现的核心价值）。
+        /// rename 保留原键 TTL（重写实现的核心价值）。
         ///
         /// 验证 GarrisonDaoOxcache::rename 用 ttl_sync + set_with_ttl_sync 保留 TTL，
         /// 而非默认实现的 set_permanent（丢失 TTL）。
@@ -1457,7 +1457,7 @@ pub mod tests {
             );
         }
 
-        /// R-001: oxcache get_and_delete 返回值并删除 key。
+        /// oxcache get_and_delete 返回值并删除 key。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_and_delete_returns_value_and_removes_key() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1468,7 +1468,7 @@ pub mod tests {
             assert!(after.is_none(), "get_and_delete 后 key 应不存在");
         }
 
-        /// R-001: oxcache get_and_delete 不存在的 key 返回 None。
+        /// oxcache get_and_delete 不存在的 key 返回 None。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_and_delete_missing_returns_none() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1476,7 +1476,7 @@ pub mod tests {
             assert!(got.is_none());
         }
 
-        /// R-001: oxcache get_and_delete 并发原子性验证。
+        /// oxcache get_and_delete 并发原子性验证。
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_get_and_delete_concurrent_only_one_succeeds() {
             let dao = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
@@ -1505,7 +1505,7 @@ pub mod tests {
             assert_eq!(none_count, 9, "其他 9 个返回 None");
         }
 
-        /// R-002: oxcache set_if_absent 并发原子性验证。
+        /// oxcache set_if_absent 并发原子性验证。
         ///
         /// 10 个并发对同一 key（预先不存在）调用 set_if_absent，仅 1 个返回 true。
         /// 验证 Moka `_sync` 后端下 `parking_lot::Mutex` + `get_sync` + `set_with_ttl_sync`
@@ -1542,7 +1542,7 @@ pub mod tests {
             assert_eq!(already_exists, 9, "其他 9 个返回 false（已存在）");
         }
 
-        /// R-003: Moka `_sync` 单线程写后立即读可见性诊断。
+        /// Moka `_sync` 单线程写后立即读可见性诊断。
         ///
         /// 循环 200 次 set_with_ttl_sync → get_sync，统计 miss 率。
         /// 用于区分"Moka channel 异步写入导致的写后读不一致"与"并发调度问题"。
@@ -1567,7 +1567,7 @@ pub mod tests {
         // 多租户 key 前缀测试
         // --------------------------------------------------------------------
 
-        /// R-tenant-isolation-003: tenant-isolation feature 启用且 TENANT 上下文存在时，
+        /// tenant-isolation feature 启用且 TENANT 上下文存在时，
         /// GarrisonDao 的 set/get 实际操作的 key 为 `tenant:{tid}:original_key`。
         ///
         /// 通过公共 API 验证（不直接探测内部存储 key，避免 get 自身再次 prepend 前缀）：
@@ -1641,7 +1641,7 @@ pub mod tests {
                 .await;
         }
 
-        /// R-tenant-isolation-003: TENANT 上下文不存在时 key 不变（不 panic）。
+        /// TENANT 上下文不存在时 key 不变（不 panic）。
         ///
         /// 验证：不在 TENANT.scope 内调用 set/get，key 应保持原样（无前缀）。
         #[cfg(feature = "tenant-isolation")]
@@ -1666,7 +1666,7 @@ pub mod tests {
             );
         }
 
-        /// R-tenant-isolation-003: delete 也应使用带前缀的 key。
+        /// delete 也应使用带前缀的 key。
         ///
         /// 验证：在 TENANT.scope 内 set 后，用 delete 删除原始 key 应能成功删除
         ///（delete 内部加前缀 `tenant:42:`，与 set 写入的 key 匹配）。
@@ -1707,10 +1707,10 @@ pub mod tests {
     }
 
     // ------------------------------------------------------------------------
-    // get_and_delete 原子方法测试（v0.4.2 spec protocol-sso-toctou R-001）
+    // get_and_delete 原子方法测试（TOCTOU 修复）
     // ------------------------------------------------------------------------
 
-    /// R-001: get_and_delete 返回值并删除 key。
+    /// get_and_delete 返回值并删除 key。
     #[tokio::test]
     async fn mock_get_and_delete_returns_value_and_removes_key() {
         let dao = MockDao::new();
@@ -1722,7 +1722,7 @@ pub mod tests {
         assert!(after.is_none(), "get_and_delete 后 key 应不存在");
     }
 
-    /// R-001: get_and_delete 不存在的 key 返回 None。
+    /// get_and_delete 不存在的 key 返回 None。
     #[tokio::test]
     async fn mock_get_and_delete_missing_returns_none() {
         let dao = MockDao::new();
@@ -1730,7 +1730,7 @@ pub mod tests {
         assert!(got.is_none(), "不存在的 key 应返回 None");
     }
 
-    /// R-001: get_and_delete 并发调用同一 key 仅一个返回 Some（原子性验证）。
+    /// get_and_delete 并发调用同一 key 仅一个返回 Some（原子性验证）。
     ///
     /// 使用 10 个并发任务同时调用 get_and_delete，仅一个应返回 Some。
     /// 这是 TOCTOU 修复的核心验证测试。
@@ -1870,7 +1870,7 @@ pub mod tests {
         );
     }
 
-    /// 验证 MockDao::decr 非数字值返回 Dao 错误（Rule 12：禁止静默吞掉 parse 失败）。
+    /// 验证 MockDao::decr 非数字值返回 Dao 错误（禁止静默吞掉 parse 失败）。
     #[tokio::test]
     async fn mock_decr_non_numeric_value_returns_error() {
         let dao = MockDao::new();
@@ -1951,7 +1951,7 @@ pub mod tests {
         crate::atomic_test_fallback!();
     }
 
-    /// R-001: `set_permanent` 默认实现委托 `set(key, value, 0)`。
+    /// `set_permanent` 默认实现委托 `set(key, value, 0)`。
     #[tokio::test]
     async fn default_set_permanent_delegates_to_set_with_ttl_zero() {
         let dao = MinimalDao::new();
@@ -1962,7 +1962,7 @@ pub mod tests {
         assert_eq!(val.as_deref(), Some("perm_value"));
     }
 
-    /// R-002: `get_timeout` 默认实现返回 `NotImplemented`。
+    /// `get_timeout` 默认实现返回 `NotImplemented`。
     #[tokio::test]
     async fn default_get_timeout_returns_not_implemented() {
         let dao = MinimalDao::new();
@@ -1971,7 +1971,7 @@ pub mod tests {
         assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
-    /// R-003: `keys` 默认实现返回 `NotImplemented`。
+    /// `keys` 默认实现返回 `NotImplemented`。
     #[tokio::test]
     async fn default_keys_returns_not_implemented() {
         let dao = MinimalDao::new();
@@ -1980,7 +1980,7 @@ pub mod tests {
         assert!(matches!(result, Err(GarrisonError::NotImplemented(_))));
     }
 
-    /// R-004: `rename` 默认实现执行 `get → set_permanent → delete` 三步操作。
+    /// `rename` 默认实现执行 `get → set_permanent → delete` 三步操作。
     #[tokio::test]
     async fn default_rename_get_set_permanent_delete() {
         let dao = MinimalDao::new();
@@ -1996,7 +1996,7 @@ pub mod tests {
         );
     }
 
-    /// R-004: `rename` 对不存在的 key 返回 `InvalidParam`。
+    /// `rename` 对不存在的 key 返回 `InvalidParam`。
     #[tokio::test]
     async fn default_rename_missing_key_returns_invalid_param() {
         let dao = MinimalDao::new();
@@ -2079,7 +2079,7 @@ pub mod tests {
         );
     }
 
-    /// 安全审查 S1：`InMemoryDao::incr` 对非数字值必须显式报错（Rule 12），
+    /// `InMemoryDao::incr` 对非数字值必须显式报错，
     /// 禁止静默按 0 处理导致限速计数器重置（撞库防护旁路风险）。
     #[tokio::test]
     async fn in_memory_incr_non_numeric_value_errors_explicitly() {
@@ -2206,7 +2206,7 @@ pub mod tests {
         assert_eq!(val, 11, "已存在键 10 应递增为 11");
     }
 
-    /// `incr` 组合回退：非数字值返回 Dao 错误（Rule 12）。
+    /// `incr` 组合回退：非数字值返回 Dao 错误。
     #[tokio::test]
     async fn fallback_incr_non_numeric_returns_error() {
         let dao = MinimalDao::new();
@@ -2313,7 +2313,7 @@ pub mod tests {
     // Redis 部署模式配置测试
     // ========================================================================
 
-    /// R-002: RedisConfig::default() 返回 Single 模式，url 为 "redis://127.6379"。
+    /// RedisConfig::default() 返回 Single 模式，url 为 "redis://127.6379"。
     #[test]
     fn redis_config_default_returns_single_mode() {
         let config = RedisConfig::default();
@@ -2329,7 +2329,7 @@ pub mod tests {
         assert_eq!(config.pool_size, 10);
     }
 
-    /// R-002: RedisConfig serde 序列化/反序列化 round-trip。
+    /// RedisConfig serde 序列化/反序列化 round-trip。
     #[test]
     fn redis_config_serde_roundtrip() {
         let config = RedisConfig {
@@ -2357,7 +2357,7 @@ pub mod tests {
         assert_eq!(config.pool_size, deserialized.pool_size);
     }
 
-    /// R-002: RedisConfig serde 用 `#[serde(default)]` 支持部分覆盖。
+    /// RedisConfig serde 用 `#[serde(default)]` 支持部分覆盖。
     #[test]
     fn redis_config_serde_partial_override() {
         // 仅提供 mode，其余字段应使用 default
@@ -2376,7 +2376,7 @@ pub mod tests {
         assert_eq!(config.pool_size, 10);
     }
 
-    /// R-001: RedisDeploymentMode 各变体 Display 输出可读。
+    /// RedisDeploymentMode 各变体 Display 输出可读。
     #[test]
     fn redis_deployment_mode_display() {
         let single = RedisDeploymentMode::Single {
@@ -2410,7 +2410,7 @@ pub mod tests {
         assert!(m.contains("1 replicas"));
     }
 
-    /// R-001: RedisDeploymentMode PartialEq 比较。
+    /// RedisDeploymentMode PartialEq 比较。
     #[test]
     fn redis_deployment_mode_eq() {
         let a = RedisDeploymentMode::Single {
@@ -2426,7 +2426,7 @@ pub mod tests {
         assert_ne!(a, c);
     }
 
-    /// R-003: with_redis_config builder 方法在 cache-redis feature 下存在并存储配置。
+    /// with_redis_config builder 方法在 cache-redis feature 下存在并存储配置。
     #[cfg(feature = "cache-redis")]
     #[tokio::test(flavor = "multi_thread")]
     async fn with_redis_config_stores_config() {
@@ -2462,7 +2462,7 @@ pub mod tests {
         assert_eq!(stored.pool_size, 50);
     }
 
-    /// R-003: 未调用 with_redis_config 时 redis_config 为 None。
+    /// 未调用 with_redis_config 时 redis_config 为 None。
     #[cfg(feature = "cache-redis")]
     #[tokio::test(flavor = "multi_thread")]
     async fn without_redis_config_returns_none() {
@@ -2506,7 +2506,7 @@ pub mod tests {
 
     /// `incr` 默认实现对非数字值回退为 0 后递增。
     ///
-    /// 覆盖 Rule 12：非数字值必须显式报错，禁止静默回退为 0 导致计数器重置。
+    /// 非数字值必须显式报错，禁止静默回退为 0 导致计数器重置。
     #[tokio::test]
     async fn default_incr_rejects_non_numeric_value() {
         let dao = MinimalDao::new();
@@ -2653,7 +2653,7 @@ pub mod tests {
     // 原子方法错误路径 / eval_lua 参数校验
     // ------------------------------------------------------------------------
 
-    /// R-002: RedisDeploymentMode::default() 返回 Single 模式（本机默认地址）。
+    /// RedisDeploymentMode::default() 返回 Single 模式（本机默认地址）。
     ///
     /// 覆盖 `defaults.rs` 中 `RedisDeploymentMode` 的 `Default` 实现——
     /// 与 `RedisConfig::default()` 互补（后者内联构造 Single，不经此 Default）。
@@ -2765,7 +2765,7 @@ pub mod tests {
         assert!(timeout.is_none(), "永久键 incr 不应新增 TTL");
     }
 
-    /// incr 遇到非数字现存值返回 Dao 错误（Rule 12 显性化分支）。
+    /// incr 遇到非数字现存值返回 Dao 错误（显性化分支）。
     #[tokio::test]
     async fn in_memory_incr_parse_error_returns_dao_error() {
         let dao = MockDao::new();
@@ -2893,7 +2893,7 @@ pub mod tests {
             "现实现将永久键升级为 TTL 键（与 incr 的永久键语义不一致，见注释）"
         );
 
-        // 非数字现存值（TTL 与永久两种形态）→ Dao 错误（M1 修复，禁止静默按 0）
+        // 非数字现存值（TTL 与永久两种形态）→ Dao 错误（禁止静默按 0）
         dao.set("nc_bad_ttl", "oops", 3600).await.unwrap();
         let result = dao.compare_and_update_if_greater("nc_bad_ttl", 9, 60).await;
         assert!(
@@ -3046,50 +3046,47 @@ pub mod tests {
         );
     }
 
-    /// eval_lua：rate_limit_sliding_window 模式——未达阈值放行 "1"，达阈值拦截 "0"，
-    /// 且窗口外的旧时间戳被过滤（不占用阈值额度）。
+    /// eval_lua：ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT）模式——
+    /// 未达阈值放行 "1"，达阈值拦截 "0"，且窗口外的旧时间戳被过滤（不占用阈值额度）。
+    /// 返回与 limiteron 脚本对齐的三元组 `[allowed, count, reset_time]`。
     #[tokio::test]
     async fn in_memory_eval_lua_sliding_window_threshold_and_filter() {
         let dao = MockDao::new();
-        let script =
-            "return rate_limit_sliding_window(KEYS[1], ARGV[1], ARGV[2], ARGV[3], ARGV[4])";
+        // 识别标记：limiteron 脚本中的 ZREMRANGEBYSCORE 特征（合成最小脚本即可触发模拟器）
+        let script = "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', window_start)";
         let key = "lua_sliding_key".to_string();
         let keys = vec![key.clone()];
-        let now_ms: u64 = 10_000;
-        let window_start_ms: u64 = 5_000;
-        // threshold=2：第 1、2 次请求放行，第 3 次拦截
+        let window_ms: u64 = 5_000;
+        // max=2：第 1、2 次请求放行，第 3 次拦截
         let args = |now: u64| -> Vec<String> {
-            vec![
-                now.to_string(),
-                window_start_ms.to_string(),
-                "2".to_string(),
-                "60".to_string(),
-            ]
+            vec![window_ms.to_string(), "2".to_string(), now.to_string()]
         };
 
-        // 窗口外旧时间戳（<= window_start_ms）应被 parse_timestamps 过滤
+        // 窗口外旧时间戳（<= now - window_ms = 5000）应被过滤
         dao.set_permanent(&key, "1,5000,4999").await.unwrap();
+        // 首次：预置时间戳全部 <= window_start（5000）被过滤，count=0 < 2 → 放行并追加；
+        // reset = (now - window) + window = now
 
         assert_eq!(
-            dao.eval_lua(script, keys.clone(), args(now_ms))
+            dao.eval_lua(script, keys.clone(), args(10_000))
                 .await
                 .unwrap(),
-            vec!["1".to_string()],
-            "旧时间戳被过滤后未达阈值应放行"
+            vec!["1".to_string(), "0".to_string(), "10000".to_string()],
+            "旧时间戳被过滤后未达阈值应放行（返回 allowed/count/reset 三元组）"
         );
         assert_eq!(
-            dao.eval_lua(script, keys.clone(), args(now_ms + 1))
+            dao.eval_lua(script, keys.clone(), args(10_001))
                 .await
                 .unwrap(),
-            vec!["1".to_string()],
-            "窗口内第 2 个时间戳仍应放行（threshold=2）"
+            vec!["1".to_string(), "1".to_string(), "10001".to_string()],
+            "窗口内第 2 个时间戳仍应放行（count=1 < max=2）"
         );
         assert_eq!(
-            dao.eval_lua(script, keys.clone(), args(now_ms + 2))
+            dao.eval_lua(script, keys.clone(), args(10_002))
                 .await
                 .unwrap(),
-            vec!["0".to_string()],
-            "达到阈值后应拦截"
+            vec!["0".to_string(), "2".to_string(), "10002".to_string()],
+            "达到阈值后应拦截（count=2 保持，不追加）"
         );
     }
 
@@ -3097,19 +3094,14 @@ pub mod tests {
     #[tokio::test]
     async fn in_memory_eval_lua_sliding_window_param_validation() {
         let dao = MockDao::new();
-        let script = "rate_limit_sliding_window";
+        let script = "ZREMRANGEBYSCORE";
 
         // 缺 KEYS[1]
         let result = dao
             .eval_lua(
                 script,
                 vec![],
-                vec![
-                    "1".to_string(),
-                    "1".to_string(),
-                    "1".to_string(),
-                    "1".to_string(),
-                ],
+                vec!["1".to_string(), "1".to_string(), "1".to_string()],
             )
             .await;
         assert!(
@@ -3118,17 +3110,17 @@ pub mod tests {
             result
         );
 
-        // 缺 ARGV[4]（仅 3 个参数）
+        // 缺最后一个 ARGV[3]（仅 2 个参数）
         let result = dao
             .eval_lua(
                 script,
                 vec!["k".to_string()],
-                vec!["1".to_string(), "1".to_string(), "1".to_string()],
+                vec!["1".to_string(), "1".to_string()],
             )
             .await;
         assert!(
-            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("rl-argv-4-ttl")),
-            "缺 ARGV[4] 应返回 InvalidParam，实际: {:?}",
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("rl-argv-3-now-ms")),
+            "缺 ARGV[3] 应返回 InvalidParam，实际: {:?}",
             result
         );
 
@@ -3174,28 +3166,28 @@ pub mod tests {
         );
     }
 
-    /// eval_lua：sliding window 模式 ttl_seconds=0 时写入永久键（`ttl_seconds == 0` 分支）。
+    /// eval_lua：sliding window 写入的键带窗口推导 TTL（limiteron 脚本 EXPIRE 语义）。
     #[tokio::test]
-    async fn in_memory_eval_lua_sliding_window_zero_ttl_makes_key_permanent() {
+    async fn in_memory_eval_lua_sliding_window_sets_window_ttl() {
         let dao = MockDao::new();
-        let script = "rate_limit_sliding_window";
+        let script = "ZREMRANGEBYSCORE";
         let keys = vec!["lua_sliding_perm".to_string()];
-        // threshold=u64::MAX 保证永不拦截，仅验证写入路径
+        // max=u64::MAX 保证永不拦截，仅验证写入路径；
+        // limiteron 脚本约定 TTL 由窗口推导：ceil(window_ms / 1000) + 1 = 6s
         let args = vec![
-            "10000".to_string(),
             "5000".to_string(),
             u64::MAX.to_string(),
-            "0".to_string(),
+            "10000".to_string(),
         ];
 
         assert_eq!(
-            dao.eval_lua(script, keys, args).await.unwrap(),
-            vec!["1".to_string()],
+            dao.eval_lua(script, keys, args).await.unwrap()[0],
+            "1".to_string(),
             "未达阈值应放行"
         );
         assert!(
-            dao.get_timeout("lua_sliding_perm").await.unwrap().is_none(),
-            "ttl_seconds=0 时 sliding window 写入的键应为永久键"
+            dao.get_timeout("lua_sliding_perm").await.unwrap().is_some(),
+            "sliding window 写入的键应带窗口推导 TTL（非永久键）"
         );
     }
 }

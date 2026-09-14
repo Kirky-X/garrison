@@ -126,7 +126,6 @@ garrison-macros = { optional = true, workspace = true }
 # rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem", "getrandom"] }
 unicode-security = { version = "0.1", optional = true, default-features = false }
-maxminddb = { version = "0.32", optional = true, default-features = false }
 # IP 白名单 CIDR 解析（account-authflow 的 IpWhitelisted 条件真实求值）
 ipnetwork = { version = "0.21", optional = true, default-features = false }
 # HIBP k-anonymity 前缀哈希（policy-hibp 使用；sha2 0.11 不再包含 Sha1，
@@ -236,11 +235,6 @@ config-full = ["config-encryption", "config-validation", "config-hot-reload", "c
 # 内置校验器 + SecurityValidator 注册表，配置加载期 fail-fast
 config-security-rules = ["confers/security-rules"]
 
-# === 聚合特性：等价于原 default，方便快速启用全部默认后端 ===
-# `all-defaults` 已于 v0.8.2 移除（ARCH-01/DEP-03 修复）：
-# 与 `development` 聚合特性完全重复（均 = `["cache-memory", "db-sqlite", "web-axum"]`）。
-# 请改用 `development`。
-
 # === 缓存后端（通过 oxcache） ===
 cache-memory = ["oxcache/memory", "oxcache/serialization", "oxcache/metrics", "oxcache/bloom"]
 # 缓存审计事件流（吸收 oxcache/audit）：hit/miss/set/delete/evict/expired 结构化
@@ -249,9 +243,9 @@ cache-audit = ["cache-memory", "oxcache/audit", "oxcache/telemetry"]
 cache-redis = ["cache-memory", "oxcache/redis", "oxcache/lua", "dep:redis", "oxcache/compression"]
 cache-lock = ["cache-redis", "oxcache/lock"]
 cache-batch = ["cache-memory", "oxcache/batch"]
-# 跨实例缓存一致性：oxcache 键空间通知失效（多实例部署下 L1 自动同步，RICE 吸收方案 #1）
+# 跨实例缓存一致性：oxcache 键空间通知失效（多实例部署下 L1 自动同步）
 cache-invalidation = ["cache-redis", "oxcache/invalidation"]
-# 封禁记录跨实例同步：limiteron 经 oxcache Pub/Sub 广播封禁变更（RICE 吸收方案 #2）
+# 封禁记录跨实例同步：limiteron 经 oxcache Pub/Sub 广播封禁变更
 ban-sync = ["limiteron/ban-sync", "cache-invalidation"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
@@ -291,12 +285,11 @@ embedded-migrations = ["dep:include_dir", "dep:tempfile"]
 # === 协议层插件 ===
 protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64", "dep:percent-encoding"]
 # protocol-sso 隐含 protocol-jwt：OIDC exchange_code 必须验签 id_token（fail-closed）。
-# 历史：sso 单独启用时 exchange_code 不验签直接返回 id_token（fail-open，安全审计修复）。
 protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
 protocol-jwt = ["jsonwebtoken", "dep:sha2"]
 protocol-sign = ["dep:sha2", "hmac", "dep:base64", "dep:hkdf"]
 # protocol-apikey：API Key 生成/校验/吊销/轮换。
-# dep:sha2 + secure-ct-eq：secret 以 sha256 哈希存储（CWE-916 修复）+ 复用公共常量时间比较原语（消除本地副本，规则 7）。
+# dep:sha2 + secure-ct-eq：secret 以 sha256 哈希存储（CWE-916）+ 复用公共常量时间比较原语（消除本地副本）。
 # dao-key-index：启用 GarrisonDaoOxcache::keys() 生产实现，使 list_by_namespace 可用。
 protocol-apikey = ["dep:sha2", "secure-ct-eq", "dao-key-index"]
 protocol-temp = []
@@ -313,8 +306,8 @@ protocol-oidc = ["protocol-jwt", "protocol-oauth2", "dep:subtle"]
 oauth2-scope-handler = ["protocol-oauth2"]
 # SSO Server 独立抽象（SsoServer trait + CenterIdConverter + SsoChannel），依赖 protocol-sso
 protocol-sso-server = ["protocol-sso"]
-# protocol-saml：启用 XmlSecSamlProvider（vuln-0001 修复），使用 rsa crate 验证 SAML Assertion XML 签名
-# dep:subtle：CRIT-001 修复后 DigestValue 比对使用常量时间比较
+# protocol-saml：启用 XmlSecSamlProvider，使用 rsa crate 验证 SAML Assertion XML 签名
+# dep:subtle：DigestValue 比对使用常量时间比较
 protocol-saml = ["protocol-sso", "rsa", "dep:base64", "dep:subtle"]
 
 # === 安全模块 ===
@@ -326,7 +319,7 @@ protocol-httpbasic = ["dep:base64"]
 protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "dep:subtle", "dep:hkdf", "hmac"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
-# 依赖 regex：Custom mask 真实脱敏（vuln-0010 D6 修复，原 placeholder 实现静默泄露敏感数据）
+# 依赖 regex：Custom mask 真实脱敏（原 placeholder 实现静默泄露敏感数据）
 secure-masking = ["dep:regex"]
 secure-xss = []
 secure-sanitize = []
@@ -361,9 +354,8 @@ tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 # rate_limit/audit/api_key_auth，符合 K8s 探针语义。业务方可经
 # sdforge::health::register_readiness_check_fn 注册下游依赖就绪检查。
 server-health-check = ["auth-server", "sdforge/health"]
-# graceful shutdown 真实落地——SIGTERM/SIGINT 触发后停止接收
-# 新连接并 drain 在途请求。原为空壳（反向依赖 auth-server），现为独立门控；
-# auth-server 聚合默认包含
+# graceful shutdown——SIGTERM/SIGINT 触发后停止接收
+# 新连接并 drain 在途请求；auth-server 聚合默认包含
 server-graceful-shutdown = []
 
 # === Web 安全中间件 ===
@@ -391,32 +383,35 @@ audit-log = ["listener", "dep:sha2", "hmac", "dep:getrandom", "secure-masking", 
 # === 常量时间比较原语（CWE-208 防御）===
 # 提供 `secure::ct_eq::constant_time_eq` 公共函数，基于 subtle::ConstantTimeEq。
 # 所有需要常量时间比较的 feature（如 audit-log / oauth2-server）应依赖此 feature，
-# 避免在各模块重复实现（规则 7 先读再写、规则 5 简洁优先）。
+# 避免在各模块重复实现。
 secure-ct-eq = ["dep:subtle"]
 
 # === 安全防护套件 ===
-# v0.7.2：统一使用 limiteron GarrisonDaoDistributedLimiter，禁止手写限流实现。
+# 统一使用 limiteron GarrisonDaoDistributedLimiter，禁止手写限流实现。
 firewall = []
 # bruteforce 依赖封禁存储（GarrisonDaoBanStorage 经 firewall-ddos 导出），
 # 故隐含 firewall-ddos 保证 feature 自洽
 firewall-bruteforce = ["firewall", "firewall-ddos", "limiteron/ban-manager"]
-firewall-ratelimit = ["firewall", "dep:rand"]
+# lua-script：滑动窗口 Lua 脚本取自 limiteron oxcache_lua（Sorted Set 版，
+# 替代 garrison 手写逗号时间戳串脚本）
+firewall-ratelimit = ["firewall", "dep:rand", "limiteron/lua-script"]
 # 启用后可在配置中选择 Memory/Redis 限流后端（RateLimitBackend enum）
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall", "limiteron/geo-matching"]
-# v0.8.0 曾接入 limiteron AIMD 自适应限流；limiteron 0.2.10 曾将 adaptive-limiting /
+# limiteron 0.2.10 曾将 adaptive-limiting /
 # priority-queue 改为 no-op 占位（模块移除），故回落到固定阈值 fixed window counter。
 # limiteron 0.3.0-rc.4 起 adaptive-limiting 已恢复为真实 AIMD 实现（可评估重新接入），
 # 但 priority-queue / admission-control 仍为 no-op 占位
 firewall-ddos = ["firewall"]
 firewall-waf = ["firewall", "web-axum"]
-firewall-maxminddb = ["dep:maxminddb", "firewall-geoip", "firewall-anomalous"]
+# 后端已迁移至 limiteron GeoMatcher（geo-matching），maxminddb 直读依赖移除；
+# feature 名保持不变以兼容下游
+firewall-maxminddb = ["firewall-geoip", "firewall-anomalous"]
 anomalous-detector-dual = ["firewall", "listener", "dao-key-index"]
 # 防护增强特性（透传 limiteron 高级能力）
 firewall-gcra = ["firewall", "limiteron/gcra"]
 firewall-tower = ["firewall", "limiteron/tower-middleware"]
-firewall-quota = ["firewall", "limiteron/quota-control"]
 # [INTERNAL] admission-control 在 limiteron 0.3.0-rc.4 仍为 no-op 占位（无对应模块），
 # 改接已恢复真实实现的 adaptive-limiting（AIMD 自适应并发限流，错误率/慢调用反馈调窗）
 firewall-admission = ["firewall", "limiteron/adaptive-limiting"]
@@ -461,32 +456,31 @@ social-alipay = ["protocol-oauth2", "rsa", "dep:base64", "protocol-zeroize"]
 # === Keycloak OIDC RP ===
 keycloak-oidc = ["protocol-oidc"]
 
-# === v0.7.0 微服务架构 ===
+# === 微服务架构 ===
 backend-embedded = []
 backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallback"]
-# secure-simple-token：为 SimpleTokenStyle 启用 HMAC-SHA256 签名（A11 安全修复）
+# secure-simple-token：为 SimpleTokenStyle 启用 HMAC-SHA256 签名
 # 格式：<login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
 secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
-# secure-simple-token 确保 SimpleTokenStyle 使用 HMAC 签名（A11 CRITICAL 修复）
 auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown"]
-# dep:sha2：决策缓存 key 的 context_json 摘要成分（issue 6474/6477/6480/6482，SHA-256 前 16 字节）
+# dep:sha2：决策缓存 key 的 context_json 摘要成分（SHA-256 前 16 字节）
 abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:getrandom", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
 
-# === v0.7.0 inklog 结构化审计日志 ===
+# === inklog 结构化审计日志 ===
 audit-inklog = ["inklog/fast-masking", "inklog/compression"]
 audit-inklog-http = ["audit-inklog", "inklog/http"]
 # SIEM/SOC 实时外送（吸收 inklog/net-sink）：TCP（可 TLS）+ UDP 转发，断线缓冲重连。
 # TLS 为上游 MVP（支持 danger_accept_invalid_certs 豁免项，生产慎用）
 audit-inklog-siem = ["audit-inklog", "inklog/net-sink"]
 
-# === v0.7.0 trait-kit typestate DI 构建 ===
+# === trait-kit typestate DI 构建 ===
 backend-kit = ["backend-embedded", "trait-kit/lifecycle", "trait-kit/health", "trait-kit/observer"]
 backend-shutdown = ["backend-kit", "trait-kit/shutdown"]
 
-# === v0.7.0 sdforge 声明式路由 ===
+# === sdforge 声明式路由 ===
 # [INTERNAL] `http` feature 是 garrison 与 sdforge 之间的桥接 feature（cfg flag only）：
 # `#[forge]` 宏生成的 `inventory::submit!(RouteRegistration::new(...))` 被
 # `#[cfg(feature = "http")]` 保护，此 cfg 在 **garrison 上下文** 求值（不是 sdforge）。
@@ -505,7 +499,7 @@ metrics-prometheus = ["prometheus", "tracing-subscriber"]
 # [INTERNAL] OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
 otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
 grpc = ["tonic", "dep:tonic-health", "dep:tower", "sdforge/grpc"]
-# 0.7.x：基础层已无条件编译，此 feature 仅门控 i18n 相关测试代码，不改变运行时行为。
+# 基础层已无条件编译，此 feature 仅门控 i18n 相关测试代码，不改变运行时行为。
 i18n = []
 # ICU4X 增强层：复数规则 + 日期/数字本地化（依赖 i18n 基础层）
 i18n-icu = [
@@ -554,7 +548,7 @@ full = [
     # 自研库特性吸收
     "config-yaml", "config-audit", "config-consul", "config-etcd", "config-distributed",
     "db-sharding", "db-replica", "db-saga",
-    "firewall-gcra", "firewall-tower", "firewall-quota", "firewall-admission", "firewall-event", "firewall-monitoring", "firewall-parallel",
+    "firewall-gcra", "firewall-tower", "firewall-admission", "firewall-event", "firewall-monitoring", "firewall-parallel",
     "cache-batch", "audit-inklog-http",
 ]
 
@@ -610,8 +604,8 @@ path = "tests/acceptance.rs"
 required-features = ["full"]
 
 # === 数据库后端专用验收（dbnexus embedded/server-side 互斥的覆盖补齐） ===
-# full 聚合只含 db-sqlite（embedded），environment.rs 的 ACC-ENV-005..008
-# （Postgres/MySQL 真实服务路径）在 full 面下被 cfg 剥离、永不可达。
+# full 聚合只含 db-sqlite（embedded），environment.rs 的 Postgres/MySQL
+# 真实服务路径在 full 面下被 cfg 剥离、永不可达。
 # 经独立 target 以单 db 特性面执行（拆分为 postgres/mysql 两个 target：
 # required-features 是 AND 语义，单 target 无法表达「二选一」，
 # 且 db-postgres 与 db-mysql 均为 server-side、无需绑定出现）。
@@ -647,5 +641,17 @@ harness = false
 # 将 unexpected_cfgs 保持为 warn 级别（而非 allow）以便发现真正的意外 cfg。
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-invalidation", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-quota", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
+    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-invalidation", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
 ] }
+
+# === 本地 base 库桥接（⚠️ 临时，上游发布后拆除） ===
+# 承载尚未发布至 crates.io 的 base 修复：
+# - limiteron：GeoMatcher 文件大小下限降级为告警（Country/测试库合法地只有几十 KB）、
+#   lookup 对库外 IP 返回 GeoInfo::empty()（负缓存）而非 Err
+# - confers：load_file 补 is_file 特殊文件拒绝 + take(max+1) I/O 双保险 +
+#   redact_error_paths 错误路径脱敏；EnvSource 新增 exclude_keys
+# 【拆除条件】limiteron 0.3.0-rc.5 与 confers 0.6.0-rc.5 发布后：删除本节，
+# 并将 [dependencies] 中两库 req 升至 rc.5。
+[patch.crates-io]
+limiteron = { path = "../base/limiteron" }
+confers = { path = "../base/confers" }

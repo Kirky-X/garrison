@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 /// GeoIP 拦截配置。
 ///
-/// 不含 `db_path`（db_path 属于 `MaxMindDbCountryLookup` 构造参数，
+/// 不含 `db_path`（db_path 属于 `GeoMatcherCountryLookup` 构造参数，
 /// 通过 [`CountryLookup`] trait 注入到 [`GeoIPStrategy`]）。
 ///
 /// 国家码比较大小写不敏感（ISO 3166-1 alpha-2，如 `"CN"` / `"US"`）。
@@ -40,7 +40,7 @@ pub struct GeoIPConfig {
 
 /// GeoIP 地理位置拦截策略。
 ///
-/// 持有 [`CountryLookup`] trait 抽象（依赖注入），生产用 `MaxMindDbCountryLookup`，
+/// 持有 [`CountryLookup`] trait 抽象（依赖注入），生产用 `GeoMatcherCountryLookup`，
 /// 测试用 `MockCountryLookup`。
 ///
 /// # 构造
@@ -50,7 +50,7 @@ pub struct GeoIPConfig {
 /// use garrison::strategy::firewall::geo::CountryLookup;
 /// use garrison::strategy::firewall::geoip::{GeoIPConfig, GeoIPStrategy};
 ///
-/// let country_lookup: Arc<dyn CountryLookup> = /* MaxMindDbCountryLookup 或 mock */;
+/// let country_lookup: Arc<dyn CountryLookup> = /* GeoMatcherCountryLookup 或 mock */;
 /// let config = GeoIPConfig { allowed_countries: vec!["CN".into()], blocked_countries: vec![] };
 /// let strategy = GeoIPStrategy::new(config, country_lookup);
 /// ```
@@ -66,7 +66,7 @@ impl GeoIPStrategy {
     ///
     /// # 参数
     /// - `config`: 配置（白名单 / 黑名单国家列表）。
-    /// - `country_lookup`: IP → 国家码查询抽象（生产用 `MaxMindDbCountryLookup`，测试用 mock）。
+    /// - `country_lookup`: IP → 国家码查询抽象（生产用 `GeoMatcherCountryLookup`，测试用 mock）。
     pub fn new(config: GeoIPConfig, country_lookup: Arc<dyn CountryLookup>) -> Self {
         Self {
             config,

@@ -3,10 +3,9 @@
 
 //! 限流后端配置 enum。
 //!
-//! v0.7 起，所有限速实现统一由 `limiteron` 接管：
+//! 所有限速实现统一由 `limiteron` 接管：
 //! - 内存限流 → `crate::limiteron::GarrisonDaoDistributedLimiter`
 //! - 分布式限流 → `crate::limiteron::GarrisonDaoDistributedLimiter::atomic_check_and_incr`
-//! - 配额限流 → `crate::limiteron::GarrisonDaoQuotaStorage`
 //! - 封禁记录 → `crate::limiteron::GarrisonDaoBanStorage`
 //!
 //! 本模块仅保留 `RateLimitBackend` 配置 enum，用于 `GarrisonConfig`
@@ -23,7 +22,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// 默认 `Memory`（进程内限流）。启用 `rate-limit-redis` feature 后可选 `Redis`。
 ///
-/// # v0.7 行为
+/// # 行为
 ///
 /// 实际限流逻辑统一委托 `crate::limiteron::GarrisonDaoDistributedLimiter`，
 /// 此 enum 仅作为配置占位与可观测性标记，不再驱动具体实现切换（limiteron
@@ -41,7 +40,7 @@ pub enum RateLimitBackend {
     },
 }
 
-/// 手动实现 `Debug`（ocr #2841/3484）：`redis_url` 可能内嵌凭据
+/// 手动实现 `Debug`：`redis_url` 可能内嵌凭据
 /// （`redis://user:password@host:6379/0`）或敏感 query（`?password=...`），
 /// 派生 `Debug` 会在日志/错误输出中原样泄露。此处对 URL 脱敏后输出。
 impl std::fmt::Debug for RateLimitBackend {
@@ -137,7 +136,7 @@ mod tests {
         );
     }
 
-    /// ocr #2841/3484：Debug 输出必须脱敏凭据（userinfo / query）。
+    /// Debug 输出必须脱敏凭据（userinfo / query）。
     #[test]
     fn debug_redacts_credentials() {
         let backend = RateLimitBackend::Redis {

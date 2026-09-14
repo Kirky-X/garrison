@@ -12,8 +12,8 @@
 //!
 //! 最小可用示例：初始化管理器 → 执行登录 → 校验登录状态 → 校验权限 → 登出。
 //! （以下 doctest 随 `cargo test --doc` 持续验证，可直接复制使用；
-//!  `InMemoryDao` 为进程内实现，生产请替换为 `GarrisonDaoOxcache` /
-//!  `GarrisonDaoDbnexus` 等持久化后端。）
+//! `InMemoryDao` 为进程内实现，生产请替换为 `GarrisonDaoOxcache` /
+//! `GarrisonDaoDbnexus` 等持久化后端。）
 //!
 //! ```rust
 //! use async_trait::async_trait;
@@ -25,21 +25,21 @@
 //!
 //! #[async_trait]
 //! impl GarrisonInterface for MyInterface {
-//!     async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
-//!         Ok(vec!["user:read".into(), "user:write".into()])
-//!     }
-//!     async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
-//!         Ok(vec!["user".into()])
-//!     }
+//! async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+//! Ok(vec!["user:read".into(), "user:write".into()])
+//! }
+//! async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+//! Ok(vec!["user".into()])
+//! }
 //! }
 //!
 //! # fn main() -> GarrisonResult<()> {
-//! #     tokio::runtime::Builder::new_current_thread()
-//! #         .enable_all()
-//! #         .build()
-//! #         .expect("runtime 初始化恒成功")
-//! #         .block_on(run())?;
-//! #     Ok(())
+//! # tokio::runtime::Builder::new_current_thread()
+//! # .enable_all()
+//! # .build()
+//! # .expect("runtime 初始化恒成功")
+//! # .block_on(run())?;
+//! # Ok(())
 //! # }
 //!
 //! # async fn run() -> GarrisonResult<()> {
@@ -52,45 +52,45 @@
 //!
 //! // 3. 初始化全局管理器
 //! GarrisonManager::builder()
-//!     .dao(dao)
-//!     .config(config)
-//!     .interface(interface)
-//!     .build()
-//!     .await?;
+//! .dao(dao)
+//! .config(config)
+//! .interface(interface)
+//! .build()
+//! .await?;
 //!
 //! // 租户上下文：tenant-isolation feature 启用时必需；单租户部署用 tenant_id=0
 //! let tenant = TenantContext {
-//!     tenant_id: 0,
-//!     resolved_from: TenantSource::Header,
+//! tenant_id: 0,
+//! resolved_from: TenantSource::Header,
 //! };
 //!
 //! TENANT.scope(tenant, async {
 //! // 4. 执行登录：生成 token 并写入会话
-//! //    注意：login / check_login 依赖 task_local 上下文中的当前 token，
-//! //    通常由 web 中间件（如 axum middleware）设置。
+//! // 注意：login / check_login 依赖 task_local 上下文中的当前 token，
+//! // 通常由 web 中间件（如 axum middleware）设置。
 //! let token = with_current_token(
-//!     String::new(),
-//!     GarrisonUtil::login("1001", &LoginParams::default()),
+//! String::new(),
+//! GarrisonUtil::login("1001", &LoginParams::default()),
 //! )
 //! .await?;
 //!
 //! // 5. 校验登录状态
 //! with_current_token(token.clone(), async {
-//!     assert!(GarrisonUtil::check_login().await?);
+//! assert!(GarrisonUtil::check_login().await?);
 //!
-//!     // 6. 读取当前登录主体 / 校验权限
-//!     let login_id = GarrisonUtil::get_login_id().await?;
-//!     assert_eq!(login_id.as_deref(), Some("1001"));
-//!     GarrisonUtil::check_permission("user:read").await?;
+//! // 6. 读取当前登录主体 / 校验权限
+//! let login_id = GarrisonUtil::get_login_id().await?;
+//! assert_eq!(login_id.as_deref(), Some("1001"));
+//! GarrisonUtil::check_permission("user:read").await?;
 //!
-//!     // 7. 登出
-//!     GarrisonUtil::logout().await?;
-//!     Ok::<(), GarrisonError>(())
+//! // 7. 登出
+//! GarrisonUtil::logout().await?;
+//! Ok::<(), GarrisonError>(())
 //! })
 //! .await?;
-//! #         Ok::<(), GarrisonError>(())
-//! #     })
-//! #     .await
+//! # Ok::<(), GarrisonError>(())
+//! # })
+//! # .await
 //! # }
 //! ```
 //!
@@ -111,28 +111,28 @@
 //!
 //! ## 模块概览
 //!
-//! 0.2.0 在 0.1.0 基础上扩展了协议层、安全模块与可插拔扩展点：
+//! 涵盖协议层、安全模块与可插拔扩展点：
 //!
 //! - **核心扩展**（always on）
-//!   - [`core::token`]：`Token` trait + `TokenStyleFactory`（uuid / random_64 / simple / jwt 四种风格）
-//!   - [`core::auth`]：`AuthLogic` trait + `DefaultAuthLogic`（login_by_token / verify_token / refresh_token）
-//!   - [`core::permission`]：`PermissionChecker` trait + `DefaultPermissionChecker`
-//!   - [`plugin`]：`GarrisonPlugin` trait + `inventory` 编译期注册 + `GarrisonPluginManager`（on_login / on_logout / on_permission_check 钩子）
-//!   - [`strategy`]：`GarrisonPermissionStrategyDefault` 扩展 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存）
-//!   - [`session`]：`GarrisonSession` 扩展 SSO / OAuth2 / 临时凭证关联（`link_sso_ticket` / `link_oauth2_token` / `link_temp_credential`）
+//! - [`core::token`]：`Token` trait + `TokenStyleFactory`（uuid / random_64 / simple / jwt 四种风格）
+//! - [`core::auth`]：`AuthLogic` trait + `DefaultAuthLogic`（login_by_token / verify_token / refresh_token）
+//! - [`core::permission`]：`PermissionChecker` trait + `DefaultPermissionChecker`
+//! - [`plugin`]：`GarrisonPlugin` trait + `inventory` 编译期注册 + `GarrisonPluginManager`（on_login / on_logout / on_permission_check 钩子）
+//! - [`strategy`]：`GarrisonPermissionStrategyDefault` 扩展 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao`（权限缓存）
+//! - [`session`]：`GarrisonSession` 扩展 SSO / OAuth2 / 临时凭证关联（`link_sso_ticket` / `link_oauth2_token` / `link_temp_credential`）
 //! - **协议层**（特性门控）
-//!   - `protocol::jwt`：`JwtHandler`（sign / verify / refresh，HS256/HS512）
-//!   - `protocol::oauth2`：`OAuth2Client`（Authorization Code / Client Credentials / Password 三种流程）
-//!   - `protocol::sso`：`SsoClient`（ticket 签发 / 校验 / 销毁，一次性 60s TTL）
-//!   - `protocol::sign`：`SignHandler`（HMAC-SHA256 签名 + 防重放时间窗口）
-//!   - `protocol::apikey`：`ApiKeyHandler`（生成 / 校验 / 吊销 / 轮换）
-//!   - `protocol::temp`：`TempCredentialHandler`（issue / get / revoke / consume）
+//! - `protocol::jwt`：`JwtHandler`（sign / verify / refresh，HS256/HS512）
+//! - `protocol::oauth2`：`OAuth2Client`（Authorization Code / Client Credentials / Password 三种流程）
+//! - `protocol::sso`：`SsoClient`（ticket 签发 / 校验 / 销毁，一次性 60s TTL）
+//! - `protocol::sign`：`SignHandler`（HMAC-SHA256 签名 + 防重放时间窗口）
+//! - `protocol::apikey`：`ApiKeyHandler`（生成 / 校验 / 吊销 / 轮换）
+//! - `protocol::temp`：`TempCredentialHandler`（issue / get / revoke / consume）
 //! - **安全模块**（特性门控）
-//!   - `secure::totp`：`TotpHandler`（RFC 6238，±1 时间窗口偏差）
-//!   - `secure::sign`：`SignVerifier` trait
-//!   - `secure::httpbasic` / `secure::httpdigest`：HTTP Basic / Digest 认证
+//! - `secure::totp`：`TotpHandler`（RFC 6238，±1 时间窗口偏差）
+//! - `secure::sign`：`SignVerifier` trait
+//! - `secure::httpbasic` / `secure::httpdigest`：HTTP Basic / Digest 认证
 //! - **可观测性**
-//!   - `listener`：`GarrisonEvent` + `Listener` trait + `GarrisonListenerManager`（Login / Logout / PermissionCheck / Kickout 事件）
+//! - `listener`：`GarrisonEvent` + `Listener` trait + `GarrisonListenerManager`（Login / Logout / PermissionCheck / Kickout 事件）
 //!
 //! ## 特性域
 //!
@@ -156,13 +156,13 @@
 //! Garrison 采用双抽象层 + 全局单例的架构：
 //!
 //! - **双抽象层**
-//!   - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`GarrisonDao`] trait 屏蔽后端差异
-//!   - `oxcache`：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session
+//! - `dbnexus`：数据库抽象层（SQLite / PostgreSQL / MySQL），由 [`GarrisonDao`] trait 屏蔽后端差异
+//! - `oxcache`：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session
 //! - **GarrisonManager 单例模式**
-//!   - [`GarrisonManager`] 持有全局 `Arc<GarrisonLogicDefault>`（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持覆盖式重建）
-//!   - 业务方启动时通过 [`GarrisonManager::builder`] 链式注入 dao / config / interface 依赖
-//!   - `GarrisonLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
-//!   - [`GarrisonUtil::login`] / [`GarrisonUtil::check_login`] 等静态方法委托到全局单例
+//! - [`GarrisonManager`] 持有全局 `Arc<GarrisonLogicDefault>`（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持覆盖式重建）
+//! - 业务方启动时通过 [`GarrisonManager::builder`] 链式注入 dao / config / interface 依赖
+//! - `GarrisonLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取
+//! - [`GarrisonUtil::login`] / [`GarrisonUtil::check_login`] 等静态方法委托到全局单例
 //!
 //! ## 双抽象层
 //!
@@ -209,23 +209,15 @@ pub mod router;
 /// DAO 模块，定义持久化数据访问抽象层。
 pub mod dao;
 
-/// limiteron 适配器模块，将 GarrisonDao 桥接到 limiteron Storage/QuotaStorage/BanStorage/DistributedLimiter trait。
+/// limiteron 适配器模块，将 GarrisonDao 桥接到 limiteron Storage/BanStorage/DistributedLimiter trait。
 ///
-/// 启用 `sms-rate-limit` / `firewall-ratelimit` / `firewall-bruteforce` / `firewall-ddos` /
-/// `firewall` / `oauth2-server` feature 时编译。
+/// 无条件编译：`GarrisonDaoDistributedLimiter` 是防爆破计数的公共基座
+/// （invitation 防爆破锁定器在任意 feature 面下均委托它），且 `limiteron`
+/// 本身是非 optional 依赖。子模块仍有各自的 feature 门控（ban → `firewall-ddos`、
+/// circuit/fallback → `backend-remote`）。
 ///
-/// v0.7.2：`firewall` 和 `oauth2-server` 传递启用 `dep:limiteron`，
+/// `firewall` 和 `oauth2-server` 传递启用 `dep:limiteron`，
 /// 因 `GarrisonFirewallCheckHookDefault` / `PasswordRateLimiter` 统一使用 limiteron（禁止手写限流实现）。
-#[cfg(any(
-    feature = "sms-rate-limit",
-    feature = "email-verification",
-    feature = "firewall-ratelimit",
-    feature = "firewall-bruteforce",
-    feature = "firewall-ddos",
-    feature = "firewall",
-    feature = "oauth2-server",
-    feature = "backend-remote"
-))]
 pub mod limiteron;
 
 /// 策略模块，提供鉴权策略与防火墙策略。
@@ -246,7 +238,7 @@ pub mod cache;
 /// 状态机模块，定义 Token / User 显式状态机。
 ///
 /// 提供 [`state::TokenState`]（5 状态 + 6 条合法转换）与 [`state::UserStatus`]（5 状态 + 9 条合法转换），
-/// 严格遵循 FRD §4.2 / §4.3，不集成到现有 Session / User 模块（推迟到 v0.7.0）。
+/// 不集成到现有 Session / User 模块。
 pub mod state;
 
 /// 配置模块，提供 GarrisonConfig 全局配置。
@@ -384,7 +376,7 @@ pub mod account;
 /// 协议层模块，包含各协议插件子模块。
 ///
 /// 各重依赖子模块（oauth2/sso/jwt/sign/apikey/temp）在 `protocol/mod.rs` 内自行按 feature 门控；
-/// `protocol::social`（扩展点契约类型，MED-002）无 feature 依赖，始终编译。
+/// `protocol::social`（扩展点契约类型）无 feature 依赖，始终编译。
 pub mod protocol;
 
 /// 认证后端抽象模块，提供 AuthBackend trait + BackendEmbedded + BackendRemote。
@@ -402,7 +394,7 @@ pub mod backend;
 ///
 /// `abac` feature 关闭时仅提供 `check_abac_with_policy` fail-closed stub（endpoints without abac attr: no-op allow; with abac attr but feature disabled: Err(Config)），
 /// 确保宏 `#[check_permission(permission = "...", abac = "...")]` 生成的代码
-/// 在任意 feature 组合下均可编译（R-abac-005）。
+/// 在任意 feature 组合下均可编译。
 ///
 /// ABAC 作为 RBAC 的增量校验层，不替换 RBAC。RBAC 通过后再检查 ABAC。
 pub mod abac;
@@ -468,8 +460,8 @@ pub use context::GarrisonPrincipal;
 // 业务方可通过 `use garrison::{TokenState, UserStatus}` 直接使用，
 // 无需写完整路径 `garrison::state::TokenState`。
 //
-// 注：spec R-state-007 提及 `Mode` re-export，但 state-machine.md 未在 state 模块定义 Mode
-// （AnnotationMode 位于 annotation 模块），故仅 re-export TokenState / UserStatus（规则7）。
+// 注：`Mode` 未在 state 模块定义
+// （AnnotationMode 位于 annotation 模块），故仅 re-export TokenState / UserStatus。
 
 /// Token 生命周期状态（Issued / Active / Expired / Revoked / Refreshed）。
 pub use state::TokenState;
@@ -618,7 +610,7 @@ pub use protocol::social::provider_names;
 ///
 /// 允许外部 crate 注册自定义 `SocialLoginProvider` 实现（如华为 Account Kit），
 /// 实现 OCP 扩展点架构。扩展点契约类型（`SocialLoginProvider` / `SocialUserInfo` /
-/// `SocialLoginService` / `provider_names`）无 feature 门控，始终可用（架构 MED-002 修复）。
+/// `SocialLoginService` / `provider_names`）无 feature 门控，始终可用。
 /// 内置 provider 实现（`WechatProvider` / `AlipayProvider`）仍需对应 feature。
 pub use protocol::social::registry::SocialLoginService;
 
@@ -680,7 +672,7 @@ pub use protocol::oauth2::keycloak::RealmAccess;
 //
 // - `firewall` feature：基础 trait + Context + StrategyRegistration（inventory 注册）
 // - `firewall-bruteforce` / `firewall-ratelimit` / `firewall-anomalous` / `firewall-ddos` / `firewall-geoip`：
-//   5 个独立 strategy 实现，各自 feature 门控
+// 5 个独立 strategy 实现，各自 feature 门控
 // - `GeoCoord` / `GeoLookup` / `CountryLookup`：共享地理查询抽象（anomalous / geoip 共用）
 
 /// 防火墙策略 trait（IP 级安全检查契约）。
@@ -727,10 +719,10 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 ///
 /// 启用 `annotation-macros` feature 时，re-export `garrison-macros` crate 的 10 个
 /// `#[proc_macro_attribute]`：
-/// - `#[check_login]` / `#[check_permission]` / `#[check_role]`（0.4.2）
-/// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`（0.5.0 P2）
-/// - `#[check_api_key]`（0.6.1）
-/// - `#[check_mfa]` / `#[check_abac]`（v0.7.x）
+/// - `#[check_login]` / `#[check_permission]` / `#[check_role]`
+/// - `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]`
+/// - `#[check_api_key]`
+/// - `#[check_mfa]` / `#[check_abac]`
 /// - `#[check_disable]`
 ///
 /// 宏将 async fn 包装为 wrapper，在 body 前插入 `GarrisonUtil::check_*()` 调用，
@@ -744,7 +736,7 @@ pub use strategy::firewall::{CountryLookup, GeoCoord, GeoLookup};
 ///
 /// #[check_login]
 /// async fn handler() -> impl IntoResponse {
-///     "hello"
+/// "hello"
 /// }
 /// ```
 #[cfg(feature = "annotation-macros")]

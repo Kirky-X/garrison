@@ -18,7 +18,7 @@
 //! # 依赖
 //!
 //! - [`GeoLookup`](crate::strategy::firewall::geo::GeoLookup) trait 抽象 IP → geo 查询
-//! - 生产实现可用 maxminddb（待 `MaxMindDbGeoLookup` 引入时添加依赖）
+//! - 生产实现用 `GeoMatcherLookup`（limiteron GeoMatcher，`firewall-maxminddb` feature）
 //! - 测试用 `MockGeoLookup`（硬编码 IP → 坐标映射）
 
 use super::geo::{GeoCoord, GeoLookup};
@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 /// 异地登录检测配置。
 ///
-/// `known_geo_threshold` 显式配置（Rule 5 确定性逻辑），不交给模型判断"是否异常"。
+/// `known_geo_threshold` 显式配置（确定性逻辑），不交给模型判断"是否异常"。
 #[derive(Debug, Clone)]
 pub struct AnomalousConfig {
     /// 已知地理位置阈值（km），新登录地与历史地距离超此值则拦截。
@@ -308,7 +308,7 @@ mod tests {
         );
     }
 
-    /// 验证 login_id=None 返回 InvalidParam（显性失败，Rule 12）。
+    /// 验证 login_id=None 返回 InvalidParam（显性失败）。
     #[tokio::test]
     async fn anomalous_requires_login_id() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

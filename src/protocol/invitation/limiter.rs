@@ -3,13 +3,17 @@
 
 //! 邀请码防爆破尝试锁定器。
 //!
-//! 经 `GarrisonDao::incr` 的窗口 TTL 语义按来源标识（如 IP）计数，
+//! 委托 limiteron `DistributedLimiter` 适配器（[`GarrisonDaoDistributedLimiter`]，
+//! 与 `BruteForceStrategy` 同构的原子计数路径）按来源标识（如 IP）计数，
 //! 超过阈值后拒绝后续 `validate`/`redeem` 尝试，直至窗口过期或显式 `reset`。
 //!
 //! 仅在启用 `protocol-invitation` 特性时编译。
 
 use crate::dao::GarrisonDao;
+use crate::limiteron::GarrisonDaoDistributedLimiter;
+use limiteron::limiters::DistributedLimiter;
 use crate::error::{GarrisonError, GarrisonResult};
+use std::time::Duration;
 use std::sync::Arc;
 
 /// 尝试计数键前缀。
@@ -17,8 +21,8 @@ const ATTEMPT_KEY_PREFIX: &str = "garrison:invitation:attempt:";
 
 /// 防爆破尝试锁定器（默认 10 次 / 600 秒窗口）。
 pub struct InvitationAttemptLimiter {
-    /// DAO 抽象层，用于尝试计数。
-    pub(crate) dao: Arc<dyn GarrisonDao>,
+    /// limiteron 分布式限流适配器（原子计数 + 窗口 TTL）。
+    pub(crate) limiter: GarrisonDaoDistributedLimiter,
     /// 窗口内允许的最大尝试次数。
     pub(crate) max_attempts: u32,
     /// 计数窗口秒数。
@@ -28,17 +32,13 @@ pub struct InvitationAttemptLimiter {
 impl InvitationAttemptLimiter {
     /// 以默认阈值（10 次 / 600 秒窗口）创建。
     pub fn new(dao: Arc<dyn GarrisonDao>) -> Self {
-        Self {
-            dao,
-            max_attempts: 10,
-            window_seconds: 600,
-        }
+        Self::with_config(dao, 10, 600)
     }
 
     /// 自定义阈值与窗口创建。
     pub fn with_config(dao: Arc<dyn GarrisonDao>, max_attempts: u32, window_seconds: u64) -> Self {
         Self {
-            dao,
+            limiter: GarrisonDaoDistributedLimiter::new(dao),
             max_attempts,
             window_seconds,
         }
@@ -46,14 +46,19 @@ impl InvitationAttemptLimiter {
 
     /// 记录一次尝试并判断是否超限。
     ///
-    /// 经 `dao.incr` 原子计数（窗口 TTL 语义：键不存在时以 `window_seconds` 建键）；
-    /// 计数超过 `max_attempts` 时返回锁定错误。每次调用都计数——无论调用方后续成败。
+    /// 经 limiteron `DistributedLimiter::incr_with_ttl` 原子计数（窗口 TTL 语义：
+    /// 键不存在时以 `window_seconds` 建键）；计数超过 `max_attempts` 时返回锁定
+    /// 错误。每次调用都计数——无论调用方后续成败。
     ///
     /// # 错误
     /// - `GarrisonError::InvalidParam`: 超过阈值（`invitation-too-many-attempts::<source>` 前缀）。
     pub async fn check(&self, source: &str) -> GarrisonResult<()> {
         let key = format!("{}{}", ATTEMPT_KEY_PREFIX, source_digest_hex(source));
-        let count = self.dao.incr(&key, self.window_seconds).await?;
+        let count = self
+            .limiter
+            .incr_with_ttl(&key, 1, Duration::from_secs(self.window_seconds))
+            .await
+            .map_err(|e| GarrisonError::Dao(format!("invitation-incr-ttl::{}", e)))?;
         if count > self.max_attempts as u64 {
             return Err(GarrisonError::InvalidParam(format!(
                 "invitation-too-many-attempts::{}",
@@ -66,7 +71,10 @@ impl InvitationAttemptLimiter {
     /// 清除来源的尝试计数（redeem 成功后调用；对无计数来源幂等）。
     pub async fn reset(&self, source: &str) -> GarrisonResult<()> {
         let key = format!("{}{}", ATTEMPT_KEY_PREFIX, source_digest_hex(source));
-        self.dao.delete(&key).await
+        self.limiter
+            .reset(&key)
+            .await
+            .map_err(|e| GarrisonError::Dao(format!("invitation-reset::{}", e)))
     }
 }
 

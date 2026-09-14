@@ -4,16 +4,24 @@
 //! 速率限制策略。
 //!
 //! `RateLimitStrategy` 实现 [`GarrisonFirewallStrategy`] trait，
-//! 用 oxcache key `rl:{scope}:{id}` 存储请求时间戳列表（逗号分隔），
-//! 滑动窗口过滤过期时间戳后判断是否超阈值。
+//! 用 oxcache key `rl:{scope}:{id}` 以 Redis Sorted Set 存储请求时间戳
+//! （member=score=毫秒时间戳），滑动窗口过滤过期时间戳后判断是否超阈值。
+//! Lua 脚本取自 limiteron `oxcache_lua::SLIDING_WINDOW_SCRIPT`（库维护，
+//! Sorted Set 版：每条目 O(1) 内存，替代早期手写的逗号时间戳串方案）。
 //!
 //! # 算法（滑动窗口，非固定窗口）
 //!
 //! 1. 根据 scope 构造 key：`rl:ip:{ip}` / `rl:user:{login_id}` / `rl:tenant:{tenant_id}`
-//! 2. 读取 key → 解析为毫秒时间戳列表
-//! 3. 过滤掉 `now - window_seconds * 1000` 之前的时间戳（滑出窗口）
-//! 4. 剩余数量 >= max_requests → 返回 `FirewallBlocked`
-//! 5. 否则追加当前时间戳，回写（TTL=window_seconds，窗口无请求时自动过期）
+//! 2. Lua 脚本内 `ZREMRANGEBYSCORE` 移除窗口外时间戳 → `ZCARD` 计数
+//! 3. 计数 >= max_requests → 返回 `FirewallBlocked`
+//! 4. 否则 `ZADD` 当前时间戳并 `EXPIRE`（窗口大小 + 1s，窗口无请求时自动过期）
+//!
+//! # 存储格式迁移
+//!
+//! 早期版本以逗号拼接时间戳字符串存储（`GET/SETEX`）。升级到 Sorted Set
+//! 后旧格式 key 与 ZSET 命令不兼容（WRONGTYPE），存量 key 会在
+//! `window_seconds + 1s` 内自然过期；过渡窗口内命中旧 key 的请求将收到
+//! 错误（fail-close，不误放行）。
 //!
 //! # 与 BruteForce 的区别
 //!
@@ -21,7 +29,7 @@
 //! - RateLimit：滑动窗口（每次请求追加时间戳，过滤过期）
 //! - 滑动窗口避免边界突刺（固定窗口在窗口边界处可能瞬间放过 2× max_requests）
 //!
-//! # 原子性保证（vuln-0009 修复）
+//! # 原子性保证
 //!
 //! `check` 方法优先调用 `GarrisonDao::eval_lua` 执行原子 read-filter-check-write
 //! （Lua 脚本由 Redis 后端原子执行，`crate::dao::tests::MockDao` 也模拟此模式）。
@@ -31,7 +39,7 @@
 //! ## 跨进程限制
 //!
 //! 降级路径（oxcache 等不支持 Lua 的后端）仅进程内原子：
-//! 多进程共享同一后端时仍存在 TOCTOU（issue #2837）——`atomic_lock` 是
+//! 多进程共享同一后端时仍存在 TOCTOU——`atomic_lock` 是
 //! 进程内 `tokio::sync::Mutex`，各进程独立持锁，跨进程的 read-modify-write
 //! 互相不可见，每个进程都可能在自己的写入可见前通过阈值检查。
 //! 运行时无跨进程强制，缓解手段（二选一，文档化设计）：
@@ -55,26 +63,14 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-/// `eval_lua` 滑动窗口脚本标识（识别用，MockDao 据此分发到滑动窗口模拟路径）。
+/// 滑动窗口 Lua 脚本（limiteron 维护，Sorted Set 版）。
 ///
-/// 真正的 Redis 后端会执行完整 Lua 脚本，MockDao 识别此标记后在单次 `lock()` 内
-/// 原子执行 read-filter-check-write。
-const RATE_LIMIT_SLIDING_WINDOW_LUA: &str = "-- rate_limit_sliding_window\n\
-local raw = redis.call('GET', KEYS[1]) or ''\n\
-local timestamps = {}\n\
-for ts in string.gmatch(raw, '[^,]+') do\n\
-  local t = tonumber(ts)\n\
-  if t and t > tonumber(ARGV[2]) then\n\
-    table.insert(timestamps, t)\n\
-  end\n\
-end\n\
-if #timestamps >= tonumber(ARGV[3]) then\n\
-  return 0\n\
-end\n\
-table.insert(timestamps, tonumber(ARGV[1]))\n\
-local new_raw = table.concat(timestamps, ',')\n\
-redis.call('SETEX', KEYS[1], tonumber(ARGV[4]), new_raw)\n\
-return 1";
+/// 约定：`KEYS[1]`=key，`ARGV[1]`=窗口大小(ms)，`ARGV[2]`=最大请求数，
+/// `ARGV[3]`=当前时间戳(ms)；返回 `{allowed(0/1), current_count, reset_time}`。
+/// MockDao / InMemoryDao 模拟器以脚本中的 `ZREMRANGEBYSCORE` 特征识别此模式。
+fn sliding_window_lua() -> &'static str {
+    limiteron::oxcache_lua::SLIDING_WINDOW_SCRIPT
+}
 
 /// 速率限制作用域。
 ///
@@ -94,7 +90,7 @@ pub enum RateLimitScope {
 
 /// 速率限制配置。
 ///
-/// 所有阈值显式配置（Rule 5 确定性逻辑），不交给模型判断。
+/// 所有阈值显式配置（确定性逻辑），不交给模型判断。
 #[derive(Debug, Clone)]
 pub struct RateLimitConfig {
     /// 窗口内最大请求数（超阈值后拦截）。
@@ -107,7 +103,7 @@ pub struct RateLimitConfig {
     ///
     /// - `None`：禁用动态调整，固定使用 `max_requests` 作为阈值。
     /// - `Some(upper)`：允许 [`RateLimitStrategy::current_threshold`] 在
-    ///   `[max_requests, upper]` 区间内根据历史流量动态调整。
+    /// `[max_requests, upper]` 区间内根据历史流量动态调整。
     ///
     /// 调整规则见 [`RateLimitStrategy::adjust_threshold`]。
     pub dynamic_threshold: Option<usize>,
@@ -156,10 +152,10 @@ impl RateLimitConfig {
 ///
 /// let dao: Arc<dyn GarrisonDao> = /* oxcache 实现 */;
 /// let config = RateLimitConfig {
-///     max_requests: 10,
-///     window_seconds: 1,
-///     scope: RateLimitScope::Ip,
-///     dynamic_threshold: None,
+/// max_requests: 10,
+/// window_seconds: 1,
+/// scope: RateLimitScope::Ip,
+/// dynamic_threshold: None,
 /// };
 /// let strategy = RateLimitStrategy::new(config, dao);
 /// ```
@@ -168,13 +164,13 @@ pub struct RateLimitStrategy {
     config: RateLimitConfig,
     /// 存储（limiteron Storage 适配器，替换 dao 的 get/set/delete）。
     storage: Arc<dyn Storage>,
-    /// DAO 引用（vuln-0009 修复）：用于调用 `eval_lua` 执行原子滑动窗口。
+    /// DAO 引用：用于调用 `eval_lua` 执行原子滑动窗口。
     /// 与 `storage` 指向同一底层 DAO，仅用于 `eval_lua` 路径。
     dao: Arc<dyn GarrisonDao>,
-    /// 进程内原子锁（vuln-0009 修复降级路径）：保护 `eval_lua` 不可用时的
+    /// 进程内原子锁（降级路径）：保护 `eval_lua` 不可用时的
     /// read-modify-write。仅进程内原子，跨进程仍存在 TOCTOU（见模块文档）。
     ///
-    /// # 已知限制：全局串行瓶颈（issue #7888）
+    /// # 已知限制：全局串行瓶颈
     ///
     /// 整个策略实例仅此一把锁，`check_fallback` 每请求必获取：不同 key
     /// （不同 IP/用户/租户）的降级路径检查相互**串行阻塞**，高吞吐下
@@ -228,7 +224,7 @@ impl RateLimitStrategy {
     ///
     /// - `dynamic_threshold=None` 时恒返回 `max_requests`。
     /// - `dynamic_threshold=Some(_)` 时返回 DAO 中持久化的当前阈值
-    ///   （区间 `[max_requests, dynamic_threshold]`），缺省回退到 `max_requests`。
+    /// （区间 `[max_requests, dynamic_threshold]`），缺省回退到 `max_requests`。
     pub async fn current_threshold(&self, ctx: &FirewallContext) -> GarrisonResult<usize> {
         let max = self.config.max_requests as usize;
         let Some(upper) = self.config.dynamic_threshold else {
@@ -251,14 +247,14 @@ impl RateLimitStrategy {
 
     /// 根据观测到的历史流量调整阈值。
     ///
-    /// 调整规则（确定性，Rule 5）：
+    /// 调整规则（确定性）：
     /// - `traffic_count >= current * 80%`（高负载）：阈值上调一步，封顶 `dynamic_threshold`。
     /// - `traffic_count < current * 20%`（低负载）：阈值下调一步，下限 `max_requests`。
     /// - 其余区间：不变。
     ///
     /// 仅在 `dynamic_threshold=Some(_)` 时生效；`None` 时直接返回 `max_requests`。
     ///
-    /// # 已知限制：TOCTOU 竞争窗口（H-5）
+    /// # 已知限制：TOCTOU 竞争窗口
     ///
     /// 此方法使用 read-modify-write（`current_threshold → 计算 → storage.set`），
     /// 高并发下存在 TOCTOU 竞争：两个并发调用可能读到相同的 `current` 值，
@@ -279,7 +275,7 @@ impl RateLimitStrategy {
         let (key, _) = self.build_key(ctx)?;
         let threshold_key = format!("{}:threshold", key);
 
-        // H-5（issue #7876）：以下 read-modify-write（current_threshold → 计算 → set）
+        // 以下 read-modify-write（current_threshold → 计算 → set）
         // 无任何同步保护，动态阈值启用时并发调用存在末写覆盖竞争窗口（保留语义，
         // 见下方方法文档）。每次实际调整时 warn 提示运维该非原子语义。
         tracing::warn!(
@@ -290,12 +286,12 @@ impl RateLimitStrategy {
 
         let current = self.current_threshold(ctx).await?;
 
-        // 步长：max_requests 的 10%，至少 1（确定性，Rule 5）
+        // 步长：max_requests 的 10%，至少 1（确定性）
         let step = (max / 10).max(1);
 
-        // 用整数比较替代浮点（Rule 5），避免精度问题
-        // 高负载：traffic_count * 5 >= current * 4  <=>  traffic_count >= current * 0.8
-        // 低负载：traffic_count * 5 <  current * 1  <=>  traffic_count <  current * 0.2
+        // 用整数比较替代浮点，避免精度问题
+        // 高负载：traffic_count * 5 >= current * 4 <=> traffic_count >= current * 0.8
+        // 低负载：traffic_count * 5 < current * 1 <=> traffic_count < current * 0.2
         let new_threshold = if traffic_count.saturating_mul(5) >= current.saturating_mul(4) {
             (current + step).min(upper)
         } else if traffic_count.saturating_mul(5) < current {
@@ -320,7 +316,7 @@ impl RateLimitStrategy {
     /// 根据作用域构造计数 key 并返回作用域标识（用于错误消息）。
     ///
     /// # 错误
-    /// - `scope=User` 且 `ctx.login_id` 为 None → `InvalidParam`（显性失败，Rule 12）
+    /// - `scope=User` 且 `ctx.login_id` 为 None → `InvalidParam`（显性失败）
     /// - `scope=Tenant` 且 `ctx.tenant_id` 为 None → `InvalidParam`
     fn build_key(&self, ctx: &FirewallContext) -> GarrisonResult<(String, String)> {
         match self.config.scope {
@@ -345,7 +341,7 @@ impl RateLimitStrategy {
 impl GarrisonFirewallStrategy for RateLimitStrategy {
     async fn check(&self, ctx: &FirewallContext) -> GarrisonResult<()> {
         // 配置守卫：window/threshold 为 0 时 Lua 路径 SETEX TTL=0 会报错、
-        // 阈值 0 会恒拦截，显性返回 InvalidParam（Rule 12，fail-fast）
+        // 阈值 0 会恒拦截，显性返回 InvalidParam（fail-fast）
         self.config.validate()?;
         let (key, scope_id) = self.build_key(ctx)?;
         let now_ms = SystemTime::now()
@@ -355,25 +351,25 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
         let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
         // 阈值提前读取（Lua 路径与降级路径共用）
-        // 已知限制（issue #2173，H-5 同族 TOCTOU）：阈值读取在 eval_lua 原子边界之外，
+        // 已知限制（同族 TOCTOU）：阈值读取在 eval_lua 原子边界之外，
         // 与并发的 adjust_threshold 之间存在竞争窗口——若 adjust 恰在此间隙持久化
         // 新阈值，本次 Lua/降级判断仍用旧值（偏高或偏低一个步长，自愈于下一次请求）。
         // 将阈值读取纳入 Lua 脚本内（KEYS/ARGV 之外读 Dao）超出 Redis 脚本能力，
-        // 当前版本保留该窗口（与 adjust_threshold 的 H-5 处理一致：文档声明，不修复）。
+        // 当前版本保留该窗口（与 adjust_threshold 的 同类处理一致：文档声明，不修复）。
         let threshold = self.current_threshold(ctx).await?;
 
-        // 优先尝试 eval_lua 原子路径（vuln-0009 修复）。
+        // 优先尝试 eval_lua 原子路径。
+        // 参数按 limiteron SLIDING_WINDOW_SCRIPT 约定：ARGV=[window_ms, max, now_ms]。
         // Redis 后端 / MockDao 支持此模式，在单次原子操作内完成 read-filter-check-write。
         let lua_result = self
             .dao
             .eval_lua(
-                RATE_LIMIT_SLIDING_WINDOW_LUA,
+                sliding_window_lua(),
                 vec![key.clone()],
                 vec![
-                    now_ms.to_string(),
-                    window_start.to_string(),
+                    (self.config.window_seconds * 1000).to_string(),
                     threshold.to_string(),
-                    self.config.window_seconds.to_string(),
+                    now_ms.to_string(),
                 ],
             )
             .await;
@@ -401,7 +397,7 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
                     .await
             },
             Err(e) => {
-                // 其他错误（Dao / InvalidParam）显性抛出（Rule 12）
+                // 其他错误（Dao / InvalidParam）显性抛出
                 Err(GarrisonError::Dao(format!(
                     "strategy-limiter-eval-lua::{}",
                     e
@@ -484,7 +480,7 @@ impl RateLimitStrategy {
 #[async_trait]
 impl CaptchaChallenge for RateLimitStrategy {
     async fn should_challenge(&self, ctx: &FirewallContext) -> GarrisonResult<bool> {
-        // 同 check：0 值配置显性拒绝（Rule 12）
+        // 同 check：0 值配置显性拒绝
         self.config.validate()?;
         let (key, _) = self.build_key(ctx)?;
         let now_ms = SystemTime::now()
@@ -509,8 +505,8 @@ impl CaptchaChallenge for RateLimitStrategy {
             .count();
 
         let threshold = self.current_threshold(ctx).await?;
-        // 80% 阈值触发挑战（整数运算避免浮点，Rule 5）
-        // count >= threshold * 4/5  <=>  count * 5 >= threshold * 4
+        // 80% 阈值触发挑战（整数运算避免浮点）
+        // count >= threshold * 4/5 <=> count * 5 >= threshold * 4
         Ok(count.saturating_mul(5) >= threshold.saturating_mul(4))
     }
 
@@ -600,7 +596,7 @@ mod tests {
         assert!(strategy.check(&ctx_b).await.is_ok());
     }
 
-    /// 验证 scope=User 且 login_id=None 时返回 InvalidParam（显性失败，Rule 12）。
+    /// 验证 scope=User 且 login_id=None 时返回 InvalidParam（显性失败）。
     #[tokio::test]
     async fn ratelimit_scope_user_without_login_id_fails() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -936,10 +932,10 @@ mod tests {
     }
 
     // ========================================================================
-    // vuln-0009 修复验证：并发 check 同一 key 仅 max_requests 个返回 Ok
+    // 并发 check 同一 key 仅 max_requests 个返回 Ok
     // ========================================================================
 
-    /// 并发 check 同一 key 仅 max_requests 个返回 Ok（Lua 原子路径，vuln-0009 修复）。
+    /// 并发 check 同一 key 仅 max_requests 个返回 Ok（Lua 原子路径）。
     ///
     /// 场景：max_requests=5，并发发起 20 个 check 请求。
     /// 修复前（非原子 read-modify-write）：多个线程读到相同 timestamps 列表，
@@ -947,7 +943,7 @@ mod tests {
     /// 修复后（eval_lua 原子路径）：MockDao 在单次 lock() 内执行 read-filter-check-write，
     /// 仅 max_requests 个返回 Ok，其余返回 FirewallBlocked。
     ///
-    /// MockDao 支持 eval_lua 滑动窗口模式（识别 `rate_limit_sliding_window` 标记）。
+    /// MockDao 支持 eval_lua 滑动窗口模式（识别 limiteron 脚本的 `ZREMRANGEBYSCORE` 特征）。
     #[tokio::test(flavor = "multi_thread")]
     async fn check_concurrent_only_max_requests_allowed_lua_path() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -986,7 +982,7 @@ mod tests {
         assert_eq!(blocked, 15, "其余 15 个应被拦截");
     }
 
-    /// 并发 check 同一 key 仅 max_requests 个返回 Ok（降级路径，vuln-0009 修复）。
+    /// 并发 check 同一 key 仅 max_requests 个返回 Ok（降级路径）。
     ///
     /// 使用 `MinimalDao`（不重写 `eval_lua`，默认返回 `NotImplemented`）触发降级路径，
     /// 验证 `atomic_lock` 保护的 read-modify-write 在进程内原子。
@@ -1032,7 +1028,7 @@ mod tests {
         assert_eq!(blocked, 15, "其余 15 个应被拦截");
     }
 
-    /// 验证 Lua 路径下单次 check 行为与原有非原子路径一致（vuln-0009 修复回归）。
+    /// 验证 Lua 路径下单次 check 行为与原有非原子路径一致。
     ///
     /// max_requests=3，串行 check 4 次：前 3 次通过，第 4 次拦截。
     /// 确保 eval_lua 路径不破坏既有串行语义。
@@ -1059,7 +1055,7 @@ mod tests {
         );
     }
 
-    /// 0 值配置显性拒绝（issue #3474 修复）：max_requests=0 / window_seconds=0
+    /// 0 值配置显性拒绝：max_requests=0 / window_seconds=0
     /// 时 check 返回 InvalidParam，而非恒拦截 / SETEX TTL=0 报错。
     #[tokio::test]
     async fn zero_config_values_rejected_with_invalid_param() {
