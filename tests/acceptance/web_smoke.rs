@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! Web 三框架冒烟验收（ACC-WEB-SMOKE-NNN，spec test-harness R-test-harness-002）。

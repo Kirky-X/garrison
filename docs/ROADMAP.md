@@ -4,7 +4,7 @@
 
 > 仓库：<https://github.com/Kirky-X/garrison>
 > License：Apache-2.0
-> 作者：Kirky.X
+> 作者：Kirky-X <Kirky-X@outlook.com>
 > 变更管理：通过 specmark 工作流进行 proposal → design → tasks → archive
 > 架构设计详见 [architecture.md](./ARCHITECTURE.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。
 

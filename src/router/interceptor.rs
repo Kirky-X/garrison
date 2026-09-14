@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! `DefaultGarrisonInterceptor` 实现：根据 annotation 变体调用对应 `GarrisonUtil` 方法。

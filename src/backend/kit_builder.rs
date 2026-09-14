@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Kirky.X
+// Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>
 // SPDX-License-Identifier: MIT
 
 //! trait-kit AsyncKit 构建器集成（feature = "backend-kit"）。

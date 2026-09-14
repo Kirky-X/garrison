@@ -20,7 +20,7 @@ COMMENT_STYLES: dict[str, str] = {
     ".py": "# ",
 }
 
-LINE1_TEXT = "Copyright (c) 2026 Kirky.X. All rights reserved."
+LINE1_TEXT = "Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved."
 LINE2_TEXT = "See LICENSE for full license text."
 
 

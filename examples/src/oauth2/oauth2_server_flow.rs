@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! OAuth2 授权服务器完整流程示例：客户端注册 → 授权码 → Token 交换 → 内省 → 吊销。

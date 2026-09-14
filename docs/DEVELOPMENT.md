@@ -4,7 +4,7 @@
 
 - 仓库：<https://github.com/Kirky-X/garrison>
 - License：Apache-2.0
-- 作者：Kirky.X
+- 作者：Kirky-X <Kirky-X@outlook.com>
 - MSRV：Rust 1.85+
 - 设计参考：13 特性域领域建模
 

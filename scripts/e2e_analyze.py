@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Kirky.X. All rights reserved.
+# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 # See LICENSE for full license text.
 
 """E2E 测试日志聚合分析器（一键报告生成）。

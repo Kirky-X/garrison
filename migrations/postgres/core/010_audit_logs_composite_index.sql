@@ -1,4 +1,4 @@
--- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 -- See LICENSE for full license text.
 
 -- Migration: 审计日志三列覆盖索引（PostgreSQL 版本）

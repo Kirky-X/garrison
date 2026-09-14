@@ -1,4 +1,4 @@
--- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 -- See LICENSE for full license text.
 
 -- Migration: refresh_tokens 表扩展 OAuth2 字段（PostgreSQL 版本，v0.7.1 字段补齐）

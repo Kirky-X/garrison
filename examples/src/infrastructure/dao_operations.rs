@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! DAO 操作示例：演示 GarrisonDaoOxcache CRUD 与 GarrisonMigration 数据库迁移。

@@ -1,4 +1,4 @@
--- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 -- See LICENSE for full license text.
 
 -- Migration: 社交账号绑定表（PostgreSQL 版本，v0.5.0 新增，依据 proposal H2 / spec social-login R-social-login-004）

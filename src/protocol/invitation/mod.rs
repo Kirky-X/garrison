@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 邀请码定向注册协议模块，提供可设失效时间、单次/N 次有效、可吊销的邀请码全生命周期管理。

@@ -1,4 +1,4 @@
-//! Copyright (c)  2026 Kirky.X. All rights reserved.
+//! Copyright (c)  2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! EntityLoader 实现：为 AbacEngine 提供 Cedar Entities 数据源。

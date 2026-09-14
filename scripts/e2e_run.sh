@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2026 Kirky.X. All rights reserved.
+# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 # See LICENSE for full license text.
 
 # Garrison E2E 测试一键执行脚本。

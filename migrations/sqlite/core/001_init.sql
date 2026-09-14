@@ -1,4 +1,4 @@
--- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 -- See LICENSE for full license text.
 
 -- Migration: 初始化 8 张核心表 + app_user_ext 扩展表

@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! axum 域深度验收矩阵（ACC-WAX-NNN，spec acceptance-matrix R-acceptance-matrix-001）。

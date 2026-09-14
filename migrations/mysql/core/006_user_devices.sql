@@ -1,4 +1,4 @@
--- Copyright (c) 2026 Kirky.X. All rights reserved.
+-- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 -- See LICENSE for full license text.
 
 -- Migration: 用户设备表（MySQL 版本）

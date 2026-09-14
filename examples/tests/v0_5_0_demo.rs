@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! v0_5_0_demo 示例测试（tenant-isolation + audit-log + core-advanced + keycloak-oidc + social-wechat + db-sqlite + cache-memory feature）。

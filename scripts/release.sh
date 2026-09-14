@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Kirky.X. All rights reserved.
+# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 # See LICENSE for full license text.
 #
 # Release 工作流本地预检查脚本
