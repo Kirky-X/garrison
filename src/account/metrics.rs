@@ -19,7 +19,7 @@
 //! - `UserLockoutStrategy::record_failure`：触发锁定时调用 `record_lockout`
 //! - `PasswordPolicyEngine::validate`：每条规则校验后调用 `observe_policy_validate`
 //! - `AuthExecutor::execute_with_metrics`：流程执行前后计 `observe_authflow_execute`，
-//!   Login/Mfa 步骤 `Credential::verify` 前后计 `observe_credential_verify`
+//! Login/Mfa 步骤 `Credential::verify` 前后计 `observe_credential_verify`
 //!
 //! # Feature 门控
 //!
@@ -37,7 +37,7 @@ use std::time::Duration;
 ///
 /// 模式与 `crate::observability::GarrisonMetrics` 一致：4 个指标注册到指定 registry，
 /// 通过 `with_metrics` builder 注入到 `UserLockoutStrategy` / `PasswordPolicyEngine`，
-/// 或作为 `AuthExecutor::execute_with_metrics` 的参数传入（保持 R-008 五字段约束）。
+/// 或作为 `AuthExecutor::execute_with_metrics` 的参数传入（保持五字段约束）。
 ///
 /// # 使用示例
 ///
@@ -71,14 +71,14 @@ impl AccountMetrics {
     ///
     /// # Panics
     ///
-    /// 本方法**不会 panic**（Issue 3181）：若默认 registry 已存在同名指标
+    /// 本方法**不会 panic**：若默认 registry 已存在同名指标
     /// （重复调用 `new` / 与 `register_to(default_registry)` 混用），以
     /// `tracing::warn` 记录后返回一个未注册的本地实例（`observe_*` /
     /// `record_*` / `gather()` 均可用，仅默认 registry 不再新增采集——
     /// 已注册实例不受影响）。生产环境建议使用 [`Self::register_to`]
     /// 注册到自定义 registry。
     pub fn new() -> Self {
-        // Issue 25/112: 使用 OnceLock 确保只注册一次
+        // 使用 OnceLock 确保只注册一次
         use std::sync::OnceLock;
         static INSTANCE: OnceLock<AccountMetrics> = OnceLock::new();
         INSTANCE.get_or_init(Self::init_default).clone()
@@ -220,8 +220,8 @@ impl AccountMetrics {
         metric_families.extend(self.authflow_execute_duration.collect());
         let mut buffer = Vec::new();
         let encoder = prometheus::TextEncoder::new();
-        // Rule 12：编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）。
-        // Issue 6664/6857：编码失败时返回显式错误标记（Prometheus 文本注释行），
+        // 编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）。
+        // 编码失败时返回显式错误标记（Prometheus 文本注释行），
         // 调用方可区分「无指标记录」与「编码失败」，不再静默返回空串。
         match encoder.encode(&metric_families, &mut buffer) {
             Ok(()) => String::from_utf8_lossy(&buffer).into_owned(),

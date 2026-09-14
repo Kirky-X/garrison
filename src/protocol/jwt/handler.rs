@@ -14,7 +14,7 @@ use super::{GarrisonJwtClaims, JwtHandler};
 /// JWT 签名密钥最小长度（字节）。
 ///
 /// 256 位匹配 HS256 算法安全强度，与 OWASP / NIST SP 800-117 推荐一致。
-/// 短于此阈值的密钥可被暴力破解，导致 JWT 伪造（H-13 修复）。
+/// 短于此阈值的密钥可被暴力破解，导致 JWT 伪造。
 const MIN_SECRET_BYTES: usize = 32;
 
 impl JwtHandler {
@@ -66,7 +66,7 @@ impl JwtHandler {
         if self.secret.is_empty() {
             return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
         }
-        // H-13: JWT 密钥最小长度校验（防暴力破解）
+        // JWT 密钥最小长度校验（防暴力破解）
         if self.secret.len() < MIN_SECRET_BYTES {
             return Err(GarrisonError::Config(format!(
                 "jwt-secret-too-short::{}::{}",
@@ -119,7 +119,7 @@ impl JwtHandler {
         if self.secret.is_empty() {
             return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
         }
-        // H-13: JWT 密钥最小长度校验（防暴力破解）
+        // JWT 密钥最小长度校验（防暴力破解）
         if self.secret.len() < MIN_SECRET_BYTES {
             return Err(GarrisonError::Config(format!(
                 "jwt-secret-too-short::{}::{}",

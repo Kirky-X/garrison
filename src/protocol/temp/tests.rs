@@ -53,7 +53,7 @@ impl GarrisonDao for MockDao {
         Ok(())
     }
 
-    /// 原子地 get + delete（vuln-0005 测试支撑）。
+    /// 原子地 get + delete（测试支撑）。
     ///
     /// 在同一把 `tokio::sync::Mutex` 锁内完成 get + remove，
     /// 保证并发调用同一 key 时仅一个返回 Some（进程内原子）。
@@ -67,9 +67,9 @@ impl GarrisonDao for MockDao {
         Ok(value)
     }
 
-    // 架构审查 A3：其余 5 个原子方法经子集宏展开（逻辑单点维护于
+    // 其余 5 个原子方法经子集宏展开（逻辑单点维护于
     // dao::atomic_fallback::impls），本 mock 自定义的单锁原子 get_and_delete
-    //（vuln-0005 语义）保留不被覆盖。
+    //（一次性语义）保留不被覆盖。
     crate::atomic_test_fallback_no_get_and_delete!();
 }
 
@@ -83,7 +83,7 @@ fn make_handler() -> TempCredentialHandler {
 // TempCredentialHandler 构造测试
 // ========================================================================
 
-/// 构造 handler（spec Scenario）。
+/// 构造 handler）。
 #[test]
 fn new_creates_handler() {
     let _handler = make_handler();
@@ -93,7 +93,7 @@ fn new_creates_handler() {
 // issue 测试
 // ========================================================================
 
-/// 成功签发，key 前缀正确（spec Scenario）。
+/// 成功签发，key 前缀正确）。
 #[tokio::test]
 async fn issue_returns_key_with_correct_prefix() {
     let handler = make_handler();
@@ -101,7 +101,7 @@ async fn issue_returns_key_with_correct_prefix() {
     assert!(key.starts_with("garrison:temp:invite:"));
 }
 
-/// 复用同一 handler 多次签发返回不同 key（spec Scenario）。
+/// 复用同一 handler 多次签发返回不同 key）。
 #[tokio::test]
 async fn issue_multiple_times_returns_different_keys() {
     let handler = make_handler();
@@ -110,7 +110,7 @@ async fn issue_multiple_times_returns_different_keys() {
     assert_ne!(k1, k2);
 }
 
-/// 不同 prefix 产生不同命名空间（spec Scenario）。
+/// 不同 prefix 产生不同命名空间）。
 #[tokio::test]
 async fn issue_different_prefix_different_namespace() {
     let handler = make_handler();
@@ -120,7 +120,7 @@ async fn issue_different_prefix_different_namespace() {
     assert!(k2.starts_with("garrison:temp:reset:"));
 }
 
-/// ttl_seconds <= 0 返回错误（spec Scenario）。
+/// ttl_seconds <= 0 返回错误）。
 #[tokio::test]
 async fn issue_zero_ttl_returns_error() {
     let handler = make_handler();
@@ -132,7 +132,7 @@ async fn issue_zero_ttl_returns_error() {
     }
 }
 
-/// prefix 包含冒号返回错误（spec Scenario）。
+/// prefix 包含冒号返回错误）。
 #[tokio::test]
 async fn issue_prefix_with_colon_returns_error() {
     let handler = make_handler();
@@ -144,7 +144,7 @@ async fn issue_prefix_with_colon_returns_error() {
     }
 }
 
-/// value 为空字符串允许存储（spec Scenario）。
+/// value 为空字符串允许存储）。
 #[tokio::test]
 async fn issue_empty_value_allowed() {
     let dao = Arc::new(MockDao::new());
@@ -158,7 +158,7 @@ async fn issue_empty_value_allowed() {
 // get 测试
 // ========================================================================
 
-/// 读取存在的凭据，多次读取不删除（spec Scenario）。
+/// 读取存在的凭据，多次读取不删除）。
 #[tokio::test]
 async fn get_returns_value_without_deleting() {
     let handler = make_handler();
@@ -169,7 +169,7 @@ async fn get_returns_value_without_deleting() {
     assert_eq!(v2, Some("data".to_string()));
 }
 
-/// 读取不存在的凭据返回 None（spec Scenario）。
+/// 读取不存在的凭据返回 None）。
 #[tokio::test]
 async fn get_nonexistent_returns_none() {
     let handler = make_handler();
@@ -184,7 +184,7 @@ async fn get_nonexistent_returns_none() {
 // revoke 测试
 // ========================================================================
 
-/// 撤销存在的凭据（spec Scenario）。
+/// 撤销存在的凭据）。
 #[tokio::test]
 async fn revoke_existing_returns_ok() {
     let handler = make_handler();
@@ -212,7 +212,7 @@ async fn revoke_nonexistent_returns_ok() {
 // consume 测试
 // ========================================================================
 
-/// 成功消费存在的凭据（spec Scenario）。
+/// 成功消费存在的凭据）。
 #[tokio::test]
 async fn consume_returns_value_and_deletes() {
     let handler = make_handler();
@@ -224,7 +224,7 @@ async fn consume_returns_value_and_deletes() {
     assert_eq!(again, None);
 }
 
-/// 重复消费返回 None（spec Scenario）。
+/// 重复消费返回 None）。
 #[tokio::test]
 async fn consume_twice_returns_none_second_time() {
     let handler = make_handler();
@@ -235,7 +235,7 @@ async fn consume_twice_returns_none_second_time() {
     assert_eq!(v2, None);
 }
 
-/// 消费不存在的凭据返回 None（spec Scenario）。
+/// 消费不存在的凭据返回 None）。
 #[tokio::test]
 async fn consume_nonexistent_returns_none() {
     let handler = make_handler();
@@ -246,7 +246,7 @@ async fn consume_nonexistent_returns_none() {
     assert_eq!(value, None);
 }
 
-/// revoke 后 consume 失败返回 None（spec Scenario）。
+/// revoke 后 consume 失败返回 None）。
 #[tokio::test]
 async fn consume_after_revoke_returns_none() {
     let handler = make_handler();
@@ -257,10 +257,10 @@ async fn consume_after_revoke_returns_none() {
 }
 
 // ========================================================================
-// consume TOCTOU 原子性测试（vuln-0005 修复验证）
+// consume TOCTOU 原子性测试
 // ========================================================================
 
-/// 并发 consume 同一 key 仅一个返回 Some（vuln-0005 TOCTOU 修复验证）。
+/// 并发 consume 同一 key 仅一个返回 Some（TOCTOU 修复验证）。
 ///
 /// 场景：10 个并发任务同时 consume 同一 key，原 `get + delete` 两步操作下
 /// 可能多个任务都读到 value 然后才 delete，导致 double-spend。修复后
@@ -302,7 +302,7 @@ async fn consume_concurrent_only_one_succeeds() {
     assert_eq!(none_count, 9, "其余 9 个返回 None");
 }
 
-/// 串行 consume 一次性语义验证（vuln-0005 修复后回归）。
+/// 串行 consume 一次性语义验证（修复后回归）。
 ///
 /// 验证修复 `get_and_delete` 后仍保持原有一次性语义：
 /// 第一次返回 Some，第二次及之后返回 None。
@@ -322,7 +322,7 @@ async fn consume_atomic_still_one_time_use() {
 // Key 命名空间隔离测试
 // ========================================================================
 
-/// temp key 与 apikey 命名空间隔离（spec Scenario）。
+/// temp key 与 apikey 命名空间隔离）。
 #[tokio::test]
 async fn temp_namespace_isolated() {
     let dao = Arc::new(MockDao::new());

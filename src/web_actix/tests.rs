@@ -541,7 +541,7 @@ async fn middleware_with_header_tenant_allows_permission_with_tenant_header() {
 /// 验证配置 `HeaderTenantResolver` 后，缺失 `X-Tenant-Id` 的请求被拒绝（fail-closed）。
 ///
 /// 覆盖租户解析失败路径：`HeaderTenantResolver` 缺失 header 时返回 `Config` 错误，
-/// 中间件透传为错误响应（500），不静默默认 0（Rule 12 失败显性化）。
+/// 中间件透传为错误响应（500），不静默默认 0（失败显性化）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -730,7 +730,7 @@ async fn extractor_check_role_returns_403_without_role() {
 
 /// 验证 CheckRole extractor 通过 `web::Data<RequiredRole>` 服务端配置角色。
 ///
-/// CRITICAL-12 修复：角色不再从客户端 header/query 读取，必须通过服务端配置。
+/// 角色不再从客户端 header/query 读取，必须通过服务端配置。
 #[tokio::test]
 #[serial]
 async fn extractor_check_role_reads_role_from_server_config() {
@@ -755,7 +755,7 @@ async fn extractor_check_role_reads_role_from_server_config() {
     GarrisonManager::reset_for_test();
 }
 
-/// CRITICAL-12 安全回归：客户端 `X-Garrison-Role` header 不应影响角色检查。
+/// 安全回归：客户端 `X-Garrison-Role` header 不应影响角色检查。
 ///
 /// 攻击者发送 `X-Garrison-Role: admin` 不应绕过服务端配置的角色检查。
 #[tokio::test]
@@ -838,7 +838,7 @@ async fn extractor_check_permission_returns_403_without_permission() {
 
 /// 验证 CheckPermission extractor 通过 `web::Data<RequiredPermission>` 服务端配置权限。
 ///
-/// CRITICAL-12 修复：权限不再从客户端 header/query 读取，必须通过服务端配置。
+/// 权限不再从客户端 header/query 读取，必须通过服务端配置。
 #[tokio::test]
 #[serial]
 async fn extractor_check_permission_reads_from_server_config() {
@@ -865,7 +865,7 @@ async fn extractor_check_permission_reads_from_server_config() {
     GarrisonManager::reset_for_test();
 }
 
-/// CRITICAL-12 安全回归：客户端 `?permission=` query param 不应影响权限检查。
+/// 安全回归：客户端 `?permission=` query param 不应影响权限检查。
 ///
 /// 攻击者发送 `?permission=user:read` 不应绕过服务端配置的权限检查。
 #[tokio::test]

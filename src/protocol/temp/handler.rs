@@ -94,7 +94,7 @@ impl TempCredentialHandler {
     /// 消费临时凭据。
     ///
     /// 原子地读取并删除凭据（调用 `GarrisonDao::get_and_delete`），消除 TOCTOU 竞态，
-    /// 保证一次性使用语义（vuln-0005 修复：原 `get + delete` 两步操作存在 double-spend 风险）。
+    /// 保证一次性使用语义（原 `get + delete` 两步操作存在 double-spend 风险）。
     ///
     /// 成功消费（value 为 Some）时若注入了 `listener_manager`，
     /// 广播 `GarrisonEvent::TempCredentialConsumed`（需启用 `listener` feature）。

@@ -9,19 +9,19 @@
 //! # 行为
 //!
 //! - **安全方法**（不在 `protected_methods` 中的方法）：
-//!   - 若请求中不存在 CSRF cookie，生成新 token 并在响应中设置 `Set-Cookie`。
-//!   - 若已存在 CSRF cookie，直接放行。
-//!   - 始终放行到 handler。
+//! - 若请求中不存在 CSRF cookie，生成新 token 并在响应中设置 `Set-Cookie`。
+//! - 若已存在 CSRF cookie，直接放行。
+//! - 始终放行到 handler。
 //! - **受保护方法**（在 `protected_methods` 中的方法）：
-//!   - `enabled == false`：直接放行。
-//!   - 路径命中 `excluded_paths`：直接放行。
-//!   - Origin/Referer 同源校验失败返回 403。
-//!     注意：Origin 与 Referer **均缺失**时同样 403（fail-closed，ocr #6493）——
-//!     移动端 / curl / 服务间调用等非浏览器客户端需发送与 Host 一致的 Origin
-//!     header，或将端点加入 `excluded_paths`（见 `validate_same_origin` 文档）。
-//!   - 从 Cookie 和 Header 提取 token，任一缺失返回 403。
-//!   - `validate_csrf_token` 校验失败返回 403。
-//!   - 校验通过放行。
+//! - `enabled == false`：直接放行。
+//! - 路径命中 `excluded_paths`：直接放行。
+//! - Origin/Referer 同源校验失败返回 403。
+//! 注意：Origin 与 Referer **均缺失**时同样 403（fail-closed）——
+//! 移动端 / curl / 服务间调用等非浏览器客户端需发送与 Host 一致的 Origin
+//! header，或将端点加入 `excluded_paths`（见 `validate_same_origin` 文档）。
+//! - 从 Cookie 和 Header 提取 token，任一缺失返回 403。
+//! - `validate_csrf_token` 校验失败返回 403。
+//! - 校验通过放行。
 //!
 //! # 配置
 //!
@@ -222,7 +222,7 @@ fn build_set_cookie(
 /// 输入应为 `scheme://host[:port]/path` 形式。返回 `host[:port]` 字符串；
 /// 显式默认端口（https + `:443` / http + `:80`）被归一化去除——浏览器对
 /// `https://example.com:443/` 与 `https://example.com/` 发送的 Host 一致，
-/// 不归一化会造成同源请求被误拒（ocr #2152/#6979）。
+/// 不归一化会造成同源请求被误拒。
 /// 解析失败或无 host 时返回 `None`。
 fn extract_origin_host(uri_str: &str) -> Option<String> {
     let uri: axum::http::Uri = uri_str.parse().ok()?;
@@ -242,7 +242,7 @@ fn extract_origin_host(uri_str: &str) -> Option<String> {
 /// 归一化 Host header 值：去除默认端口（`:80` / `:443`）。
 ///
 /// Host header 不含 scheme，故对 `:80` / `:443` 一律视为默认端口去除，
-/// 与 [`extract_origin_host`] 的归一化结果对齐（ocr #2152/#6979——代理
+/// 与 [`extract_origin_host`] 的归一化结果对齐（代理
 /// 场景下 `Host: example.com:443` 与 `Origin: https://example.com` 应视为同源）。
 /// 非 80/443 的显式端口保留（不同端口即不同源）。IPv6（`[::1]:8080`）安全处理。
 fn normalize_host(host: &str) -> String {
@@ -279,7 +279,7 @@ fn normalize_host(host: &str) -> String {
 /// - 从 Origin/Referer 解析出 `host[:port]`（同样归一化默认端口），与 Host 严格比较。
 /// - Host header 缺失时返回 `false`（无法确定期望源）。
 ///
-/// # 非 HTTP 客户端（fail-closed，ocr #6493）
+/// # 非 HTTP 客户端（fail-closed）
 ///
 /// Origin 与 Referer **均缺失**时本函数返回 `false` → 请求以 403 拒绝
 /// （即使 CSRF token 校验正确）。这是刻意的 secure-by-default 取舍：
@@ -339,11 +339,11 @@ fn validate_same_origin(headers: &HeaderMap) -> bool {
 ///
 /// let config = CsrfConfig { enabled: true, ..Default::default() };
 /// let app = Router::new()
-///     .route("/api", axum::routing::get(|| async { "ok" }))
-///     .layer(axum::middleware::from_fn_with_state(
-///         Arc::new(config),
-///         garrison_csrf_middleware,
-///     ));
+/// .route("/api", axum::routing::get(|| async { "ok" }))
+/// .layer(axum::middleware::from_fn_with_state(
+/// Arc::new(config),
+/// garrison_csrf_middleware,
+/// ));
 /// ```
 pub async fn garrison_csrf_middleware(
     State(config): State<std::sync::Arc<CsrfConfig>>,
@@ -895,7 +895,7 @@ mod tests {
     }
 
     // ========================================================================
-    // 默认端口归一化（ocr #2152/#6979）
+    // 默认端口归一化
     // ========================================================================
 
     /// extract_origin_host 归一化默认端口：https:443 / http:80 → 不带端口。
@@ -938,7 +938,7 @@ mod tests {
     }
 
     /// 显式默认端口的同源请求（Origin https://example.com:443 vs Host example.com）
-    /// 不应被误拒（ocr #2152）。
+    /// 不应被误拒。
     #[tokio::test]
     async fn csrf_middleware_allows_origin_with_default_port() {
         let config = CsrfConfig {
@@ -964,7 +964,7 @@ mod tests {
         );
     }
 
-    /// Host 带显式默认端口（代理场景）与无端口 Origin 应视为同源（ocr #6979）。
+    /// Host 带显式默认端口（代理场景）与无端口 Origin 应视为同源。
     #[tokio::test]
     async fn csrf_middleware_allows_host_with_default_port() {
         let config = CsrfConfig {

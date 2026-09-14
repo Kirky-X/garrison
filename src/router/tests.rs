@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! router 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! router 模块测试（从 mod.rs 迁移）。
 
 use super::mock::{MockDao, MockInterface};
 use super::*;
@@ -635,7 +635,7 @@ async fn default_interceptor_check_access_token_error_contains_guidance() {
 
 /// 自定义拦截器：记录调用次数，用于验证 with_interceptor 注入。
 ///
-/// ocr #1837：计数器改为 `Arc<AtomicU32>`——拦截器被 move 进 `GarrisonRouter`
+/// 计数器改为 `Arc<AtomicU32>`——拦截器被 move 进 `GarrisonRouter`
 /// 后测试仍可读取最终计数（原普通字段在 move 后无法访问，导致无法事后断言）。
 struct CountingInterceptor {
     count: std::sync::Arc<std::sync::atomic::AtomicU32>,
@@ -664,7 +664,7 @@ impl GarrisonInterceptor for CountingInterceptor {
 /// 验证 `GarrisonRouter::with_interceptor` 注入自定义拦截器后，
 /// middleware 会调用自定义拦截器的 pre_handle。
 ///
-/// ocr #959/1835：补请求后的计数递增断言——仅断言初始计数 0 无法发现
+/// 补请求后的计数递增断言——仅断言初始计数 0 无法发现
 /// `with_interceptor` 注入失败或拦截器未被调用的情况。
 ///
 /// 覆盖 `with_interceptor` 方法体（设置 self.interceptor）。
@@ -692,7 +692,7 @@ async fn with_interceptor_uses_custom_interceptor() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
-    // ocr #959/1835 核心断言：请求后自定义拦截器的 pre_handle 应恰好被调用一次
+    // 核心断言：请求后自定义拦截器的 pre_handle 应恰好被调用一次
     assert_eq!(
         count.load(std::sync::atomic::Ordering::SeqCst),
         1,
@@ -732,7 +732,7 @@ async fn default_router_handles_request() {
 // tenant_resolution_middleware 测试
 // ----------------------------------------------------------------
 
-/// R-tenant-isolation-005: tenant_resolution_middleware 从 `X-Tenant-Id` header
+/// tenant_resolution_middleware 从 `X-Tenant-Id` header
 /// 解析租户上下文，在 `TENANT` task_local scope 内执行下游 handler。
 ///
 /// 验证：
@@ -784,7 +784,7 @@ async fn tenant_resolution_middleware_sets_tenant_context() {
     );
 }
 
-/// R-tenant-isolation-005: 缺失 `X-Tenant-Id` header 时 middleware 返回 400 Bad Request。
+/// 缺失 `X-Tenant-Id` header 时 middleware 返回 400 Bad Request。
 ///
 /// 验证：请求不带 `X-Tenant-Id` header，middleware 调用 `resolver.resolve()` 失败，
 /// 返回 `StatusCode::BAD_REQUEST`，不执行 handler。
@@ -986,7 +986,7 @@ async fn mode_annotation_is_noop_in_pre_handle() {
 // group 方法测试
 // ----------------------------------------------------------------
 
-/// R-router-group-001/002/004: group 为子路由附加前缀，
+/// group 为子路由附加前缀，
 /// RouteRule 同步包含完整前缀路径，middleware 据此执行鉴权。
 #[tokio::test]
 #[serial]
@@ -1018,7 +1018,7 @@ async fn group_applies_prefix_to_sub_routes() {
     GarrisonManager::reset_for_test();
 }
 
-/// R-router-group-003: group 注解为 Ignore 时覆盖路由自身注解（跳过鉴权）。
+/// group 注解为 Ignore 时覆盖路由自身注解（跳过鉴权）。
 #[tokio::test]
 #[serial]
 async fn group_with_ignore_annotation_overrides_route_annotation() {
@@ -1040,7 +1040,7 @@ async fn group_with_ignore_annotation_overrides_route_annotation() {
     GarrisonManager::reset_for_test();
 }
 
-/// R-router-group-003: group 注解非 Ignore 时保留路由自身注解。
+/// group 注解非 Ignore 时保留路由自身注解。
 /// group 注解 CheckLogin + 路由注解 CheckRole("admin") → 路由保留 CheckRole("admin")。
 /// 验证：已登录但无 admin 角色的用户访问 → 403（若被覆盖为 CheckLogin 则应 200）。
 #[tokio::test]
@@ -1073,7 +1073,7 @@ async fn group_non_ignore_annotation_preserves_route_annotation() {
     GarrisonManager::reset_for_test();
 }
 
-/// R-router-group-002: 嵌套 group 正确合并前缀
+/// 嵌套 group 正确合并前缀
 /// /api + /v1 + /users = /api/v1/users
 ///
 /// 注：group 注解非 Ignore 时保留路由自身注解。
@@ -1110,14 +1110,14 @@ async fn group_nested_merges_prefixes() {
     GarrisonManager::reset_for_test();
 }
 
-/// R-router-group-001: 空前缀 panic。
+/// 空前缀 panic。
 #[test]
 #[should_panic(expected = "prefix must not be empty")]
 fn group_empty_prefix_panics() {
     let _ = GarrisonRouter::new(Arc::new(make_config())).group("", Annotation::Ignore, |r| r);
 }
 
-/// R-router-group-002: 尾部 / 自动 trim（/api/v1/ 等价于 /api/v1）。
+/// 尾部 / 自动 trim（/api/v1/ 等价于 /api/v1）。
 #[tokio::test]
 #[serial]
 async fn group_trailing_slash_trimmed() {
@@ -1141,7 +1141,7 @@ async fn group_trailing_slash_trimmed() {
     GarrisonManager::reset_for_test();
 }
 
-/// R-router-group-002: 多个 group 可链式调用，各自注册独立前缀。
+/// 多个 group 可链式调用，各自注册独立前缀。
 #[tokio::test]
 #[serial]
 async fn group_chained_calls_register_separate_prefixes() {

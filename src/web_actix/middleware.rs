@@ -55,7 +55,7 @@ fn normalize_route_path(path: &str) -> &str {
     }
 }
 
-/// 路由规则匹配：支持精确匹配、单段参数与尾部通配（ocr #3506）。
+/// 路由规则匹配：支持精确匹配、单段参数与尾部通配。
 ///
 /// - 精确段：逐段相等比较（尾斜杠归一化后）
 /// - `{param}` / `:param`：匹配任意非空单段（与 axum/actix 参数语义对齐）
@@ -141,7 +141,7 @@ where
         let interceptor = self.interceptor.clone();
         let path = req.uri().path().to_string();
         let headers = req.headers().clone();
-        // ocr #3506: 规则匹配支持参数段（{id}/:id）与尾部通配（*/{*rest}），
+        // 规则匹配支持参数段（{id}/:id）与尾部通配（*/{*rest}），
         // 参数化路径不再因精确匹配失败而静默跳过鉴权；尾斜杠归一化对齐。
         let rule_annotation = self
             .rules
@@ -193,7 +193,7 @@ where
             match auth_result {
                 Ok(()) => {
                     // 鉴权通过，调用 inner service（req 在此 move）。
-                    // ocr #2141: 配置了 handler_timeout 时以 tokio::time::timeout 包裹
+                    // 配置了 handler_timeout 时以 tokio::time::timeout 包裹
                     // 内层调用，超时返回 504，防止挂起 handler 无限占用连接；
                     // 未配置（默认）保持历史行为。
                     let result = match handler_timeout {
@@ -238,12 +238,12 @@ mod route_match_tests {
     fn route_matches_rule_exact() {
         assert!(route_matches_rule("/api/users", "/api/users"));
         assert!(!route_matches_rule("/api/users", "/api/other"));
-        // 尾斜杠归一化（ocr #3506 场景之一）
+        // 尾斜杠归一化
         assert!(route_matches_rule("/api/users", "/api/users/"));
         assert!(route_matches_rule("/api/users/", "/api/users"));
     }
 
-    /// 单段参数匹配：{id} / :id（ocr #3506）。
+    /// 单段参数匹配：{id} / :id。
     #[test]
     fn route_matches_rule_param_segment() {
         assert!(route_matches_rule("/api/users/{id}", "/api/users/42"));

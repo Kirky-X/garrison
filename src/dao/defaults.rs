@@ -3,7 +3,7 @@
 
 //! `RedisDeploymentMode` 与 `RedisConfig` 的 trait 实现分离文件。
 //!
-//! 遵循规则 25（mod/crate 接口隔离）：mod.rs 只保留 trait 定义、struct/enum
+//! 遵循 mod/crate 接口隔离：mod.rs 只保留 trait 定义、struct/enum
 //! 定义、pub use re-export、mod 声明；impl 块迁移至本文件。
 
 use crate::dao::{RedisConfig, RedisDeploymentMode};

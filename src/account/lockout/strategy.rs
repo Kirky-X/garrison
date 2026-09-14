@@ -49,19 +49,19 @@ pub(super) fn now_timestamp() -> i64 {
 ///
 /// N 为当前临时锁定次数（调用前已自增，N >= 1）。n=0 时按 N=1 计算防御性兜底。
 fn calculate_lock_seconds(strategy: &WaitStrategy, n: u32) -> u64 {
-    // 防御性编程：n=0 时 `pow(n - 1)` 会下溢 panic，按 N=1 兖底（规则 12 显性化）
+    // 防御性编程：n=0 时 `pow(n - 1)` 会下溢 panic，按 N=1 兖底（显性化）
     let n = n.max(1);
     match strategy {
         WaitStrategy::Multiple {
             base_seconds,
             multiplier,
         } => {
-            // Issue 19/22: 使用饱和算术防止整数溢出
+            // 使用饱和算术防止整数溢出
             let factor = (*multiplier as u64).saturating_pow(n - 1);
             base_seconds.saturating_mul(factor)
         },
         WaitStrategy::Linear { base_seconds } => {
-            // Issue 19/22: 使用饱和算术防止整数溢出
+            // 使用饱和算术防止整数溢出
             base_seconds.saturating_mul(n as u64)
         },
     }
@@ -155,7 +155,7 @@ impl UserLockoutStrategy {
     ///
     /// 读（get/CAS-expected）→ 改 → 写（compare_and_swap）为原子序列：
     /// 同一用户并发调用时 CAS 冲突方自动重试（上限 [`MAX_STATE_CAS_RETRIES`]），
-    /// 消除 get→mutate→set 非原子读改写导致的丢失自增（Issue 3531/5817/7787/7805）。
+    /// 消除 get→mutate→set 非原子读改写导致的丢失自增。
     /// 重试耗尽返回 `GarrisonError::Dao`（fail-closed，不静默丢失失败计数）。
     pub async fn record_failure(&self, user_id: &str) -> GarrisonResult<()> {
         let now = now_timestamp();
@@ -209,7 +209,7 @@ impl UserLockoutStrategy {
                         &self.config.wait_strategy,
                         state.temporary_lockout_count,
                     );
-                    // Issue 2752: u64 → i64 用饱和转换（`as` 会把 u64::MAX 回绕为 -1，
+                    // u64 → i64 用饱和转换（`as` 会把 u64::MAX 回绕为 -1，
                     // 使 locked_until 落在过去、锁定即刻失效），并用 saturating_add 防溢出
                     let lock_seconds_i64 = i64::try_from(lock_seconds).unwrap_or(i64::MAX);
                     state.locked_until = now.saturating_add(lock_seconds_i64);
@@ -263,7 +263,7 @@ impl UserLockoutStrategy {
             };
             state.failure_count = 0;
             state.first_failure_at = None;
-            // Issue 23: 登录成功时清除临时锁定状态，避免下次失败立即触发更长锁定
+            // 登录成功时清除临时锁定状态，避免下次失败立即触发更长锁定
             state.temporary_lockout_count = 0;
             state.locked_until = 0;
 

@@ -3,7 +3,7 @@
 
 //! DaoCredentialRepository 实现块（从 mod.rs 迁移）。
 //!
-//! # IDOR 防护（vuln-0004 修复）
+//! # IDOR 防护
 //!
 //! `find_by_user` / `update` / `delete` 在执行前先校验 `caller_login_id` 与目标
 //! 凭证的 `user_id` 一致，否则返回 `GarrisonError::NotPermission`（HTTP 403）。
@@ -12,12 +12,12 @@
 //! # 并发语义（已知限制）
 //!
 //! - `update` 使用 `compare_and_swap`（expected = 读取值）写入，并发修改会显式
-//!   返回 `credential-concurrent-modification` 错误，不静默覆盖（Issue 2743）。
-//! - `delete` 采用两阶段（先全量校验 ownership 再删除，Issue 6852），消除混合
-//!   IDOR 结果下的部分删除；但校验与删除之间仍存在理论窗口——`GarrisonDao`
-//!   trait 暂无 compare-and-delete 原语，需要强一致删除时请在 DAO 后端层实现。
+//! 返回 `credential-concurrent-modification` 错误，不静默覆盖。
+//! - `delete` 采用两阶段（先全量校验 ownership 再删除），消除混合
+//! IDOR 结果下的部分删除；但校验与删除之间仍存在理论窗口——`GarrisonDao`
+//! trait 暂无 compare-and-delete 原语，需要强一致删除时请在 DAO 后端层实现。
 //! - `keys()` 的错误原样向上传播（不静默吞掉）；`GarrisonDaoOxcache` 默认
-//!   （未启用 `dao-key-index`）不支持 `keys()`，见 mod.rs「已知限制」。
+//! （未启用 `dao-key-index`）不支持 `keys()`，见 mod.rs「已知限制」。
 
 use super::*;
 
@@ -53,7 +53,7 @@ impl CredentialRepository for DaoCredentialRepository {
     async fn create(&self, credential: CredentialModel) -> GarrisonResult<()> {
         let key = Self::make_key(&credential.user_id, &credential.id);
         let json = Self::serialize_credential(&credential)?;
-        // Issue 10: 使用 set_if_absent 原子操作替代 get-then-set，消除 TOCTOU 竞态
+        // 使用 set_if_absent 原子操作替代 get-then-set，消除 TOCTOU 竞态
         let inserted = self.dao.set_if_absent(&key, &json, 0).await?;
         if !inserted {
             return Err(GarrisonError::InvalidParam(format!(
@@ -69,7 +69,7 @@ impl CredentialRepository for DaoCredentialRepository {
         caller_login_id: &str,
         user_id: &str,
     ) -> GarrisonResult<Vec<CredentialModel>> {
-        // IDOR 防护：caller 必须是自己（vuln-0004）
+        // IDOR 防护：caller 必须是自己
         if caller_login_id != user_id {
             tracing::warn!(
                 caller_login_id = caller_login_id,
@@ -139,7 +139,7 @@ impl CredentialRepository for DaoCredentialRepository {
         };
         let existing: CredentialModel = Self::deserialize_credential(&existing_json)?;
 
-        // IDOR 防护 1：caller 必须是凭证原 owner（vuln-0004）
+        // IDOR 防护 1：caller 必须是凭证原 owner
         if existing.user_id != caller_login_id {
             tracing::warn!(
                 caller_login_id = caller_login_id,
@@ -170,7 +170,7 @@ impl CredentialRepository for DaoCredentialRepository {
 
         // user_id 不可变 ⇒ existing_key 与新 key 一致，复用 existing_key 写回
         let json = Self::serialize_credential(&credential)?;
-        // Issue 2743: 用 CAS（expected = 读取时的值）替代 set_permanent 直写，
+        // 用 CAS（expected = 读取时的值）替代 set_permanent 直写，
         // 消除 keys→get→set TOCTOU 竞态下的静默覆盖：并发修改/删除本凭证时
         // CAS 失败，显式报错而非覆盖他方写入（CAS 重试会覆盖他人更新，不适用）。
         let swapped = self
@@ -202,7 +202,7 @@ impl CredentialRepository for DaoCredentialRepository {
             )));
         }
 
-        // Issue 6852: 两阶段删除——先校验全部命中 key 的 ownership，全部通过后才
+        // 两阶段删除——先校验全部命中 key 的 ownership，全部通过后才
         // 进入删除阶段。避免异常多键场景下「先删了本人的 key、后遇他人 key 返回
         // NotPermission」的部分删除无回滚问题。
         // 注意：校验与删除之间仍存在窗口（DAO trait 无 compare-and-delete 原语），

@@ -2,10 +2,10 @@
 //! See LICENSE for full license text.
 
 //! 密码策略规则实现。
-//! 提供 9 条可插拔密码策略规则（v0.6.0 一次性交付，v0.8.1 移除 3 条 NIST 不推荐规则）。
-//! 实现 6 条核心规则（R-005）， 实现 6 条扩展规则（R-006）。
+//! 提供 9 条可插拔密码策略规则。
+//! 分为核心规则与扩展规则两类。
 //!
-//! # 核心规则（R-005）
+//! # 核心规则
 //!
 //! | 规则 | `name()` | 说明 |
 //! |:---|:---|:---|
@@ -15,7 +15,7 @@
 //! | `NotUsernameRule` | `"not_username"` | 用户名相似规则（大小写不敏感子串） |
 //! | `NotCommonPasswordRule` | `"not_common_password"` | 常见密码规则（精确匹配） |
 //!
-//! # 扩展规则（R-006）
+//! # 扩展规则
 //!
 //! | 规则 | `name()` | 说明 |
 //! |:---|:---|:---|
@@ -44,8 +44,8 @@ use crate::loc;
 ///
 /// let rule = LengthRule::new(8, 128);
 /// let ctx = PolicyContext { /* ... */ };
-/// assert!(rule.validate(&ctx, "password").is_ok());  // 8 字符，边界通过
-/// assert!(rule.validate(&ctx, "short").is_err());    // 5 字符，过短
+/// assert!(rule.validate(&ctx, "password").is_ok()); // 8 字符，边界通过
+/// assert!(rule.validate(&ctx, "short").is_err()); // 5 字符，过短
 /// ```
 pub struct LengthRule {
     /// 最小长度（含）。
@@ -71,7 +71,7 @@ impl PasswordPolicyRule for LengthRule {
     }
 
     fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
-        // Issue 114: 使用 chars().count() 计算字符数而非字节数
+        // 使用 chars().count() 计算字符数而非字节数
         let len = password.chars().count() as u32;
         if len < self.min {
             return Err(PolicyError::new(
@@ -93,7 +93,7 @@ impl PasswordPolicyRule for LengthRule {
 // HistoryRule
 // ============================================================================
 
-/// `HistoryRule` 允许的最大历史比对条数（硬上限，DoS 防护 — Issue 2755/5824）。
+/// `HistoryRule` 允许的最大历史比对条数（硬上限，DoS 防护）。
 ///
 /// 每条历史 hash 的比对是 Argon2/Bcrypt KDF（数十毫秒/次）；`count` 无上限时，
 /// 攻击者触发频繁密码修改可放大为 CPU 耗尽。超过上限的 `count` 被钳制到 24
@@ -112,7 +112,7 @@ const MAX_HISTORY_COUNT: u32 = 24;
 /// （不阻塞密码修改，避免历史数据损坏影响正常使用），跳过时记录
 /// `tracing::warn` 保持可观测（fail-open 但不静默）。
 ///
-/// # 性能上限（Issue 2755/5824）
+/// # 性能上限
 ///
 /// 每条比对为同步 KDF 校验（Argon2id m=19456 约数十毫秒），`count` 在
 /// [`HistoryRule::new`] 中被钳制到 [`MAX_HISTORY_COUNT`]（24），单次密码修改
@@ -139,8 +139,8 @@ impl HistoryRule {
     ///
     /// # 参数
     /// - `count`: 比对的历史 hash 数量（从 `password_history` 末尾取最近
-    ///   `count` 条）。超过 [`MAX_HISTORY_COUNT`]（24）时钳制到上限，
-    ///   防止热路径无上限循环 KDF 校验（DoS/阻塞风险）。
+    /// `count` 条）。超过 [`MAX_HISTORY_COUNT`]（24）时钳制到上限，
+    /// 防止热路径无上限循环 KDF 校验（DoS/阻塞风险）。
     pub fn new(count: u32) -> Self {
         Self {
             count: count.min(MAX_HISTORY_COUNT),
@@ -167,7 +167,7 @@ impl PasswordPolicyRule for HistoryRule {
             // - Ok(true): 密码匹配历史 hash → 规则失败
             // - Ok(false): 不匹配 → 继续检查下一条
             // - Err(_): hash 格式无效 → 跳过（fail-open，不阻塞密码修改），
-            //   但记录 warn 保持可观测（Issue 2755：不静默吞掉）
+            // 但记录 warn 保持可观测（不静默吞掉）
             match PasswordVerifier::verify(password, hash) {
                 Ok(true) => {
                     return Err(PolicyError::new(
@@ -545,10 +545,10 @@ impl PasswordPolicyRule for RegexRule {
 /// use garrison::account::policy::rules::NistComplianceRule;
 /// use garrison::account::policy::{PasswordPolicyRule, PolicyContext};
 ///
-/// let rule = NistComplianceRule::new(8);  // NIST 推荐最小长度
+/// let rule = NistComplianceRule::new(8); // NIST 推荐最小长度
 /// let ctx = PolicyContext { /* ... */ };
-/// assert!(rule.validate(&ctx, "password").is_ok());     // 8 字符通过
-/// assert!(rule.validate(&ctx, "short").is_err());       // 5 字符拒绝
+/// assert!(rule.validate(&ctx, "password").is_ok()); // 8 字符通过
+/// assert!(rule.validate(&ctx, "short").is_err()); // 5 字符拒绝
 /// assert!(rule.validate(&ctx, "Password123!").is_ok()); // 不强制复杂度
 /// ```
 pub struct NistComplianceRule {
@@ -567,7 +567,7 @@ impl NistComplianceRule {
     /// ```ignore
     /// use garrison::account::policy::rules::NistComplianceRule;
     ///
-    /// let rule = NistComplianceRule::new(8);  // NIST 推荐
+    /// let rule = NistComplianceRule::new(8); // NIST 推荐
     /// let rule = NistComplianceRule::new(12); // 更严格策略
     /// ```
     pub fn new(min_length: u32) -> Self {
@@ -705,7 +705,7 @@ impl PasswordPolicyRule for NistComplianceRule {
     }
 
     fn validate(&self, _ctx: &PolicyContext, password: &str) -> Result<(), PolicyError> {
-        // Issue 114: 使用 chars().count() 计算字符数而非字节数
+        // 使用 chars().count() 计算字符数而非字节数
         let len = password.chars().count() as u32;
         if len < self.min_length {
             return Err(PolicyError::new(
@@ -739,7 +739,7 @@ mod tests {
     // LengthRule 测试
     // ========================================================================
 
-    /// R-005.1: 长度在范围内 → 通过。
+    /// 长度在范围内 → 通过。
     #[test]
     fn length_rule_passes_within_range() {
         let rule = LengthRule::new(8, 128);
@@ -747,7 +747,7 @@ mod tests {
         assert!(rule.validate(&ctx, "password").is_ok());
     }
 
-    /// R-005.1: 长度小于 min → 失败。
+    /// 长度小于 min → 失败。
     #[test]
     fn length_rule_fails_too_short() {
         let rule = LengthRule::new(8, 128);
@@ -758,7 +758,7 @@ mod tests {
         assert_eq!(err.rule_name, "length");
     }
 
-    /// R-005.1: 长度大于 max → 失败。
+    /// 长度大于 max → 失败。
     #[test]
     fn length_rule_fails_too_long() {
         let rule = LengthRule::new(8, 10);
@@ -768,7 +768,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "length");
     }
 
-    /// R-005.1: 边界值 == min 和 == max → 通过。
+    /// 边界值 == min 和 == max → 通过。
     #[test]
     fn length_rule_boundary_min_and_max_pass() {
         let rule = LengthRule::new(4, 8);
@@ -777,7 +777,7 @@ mod tests {
         assert!(rule.validate(&ctx, "abcdefgh").is_ok(), "== max 应通过");
     }
 
-    /// R-005.1: `name()` 返回 `"length"`。
+    /// `name()` 返回 `"length"`。
     #[test]
     fn length_rule_name_returns_length() {
         let rule = LengthRule::new(8, 128);
@@ -788,7 +788,7 @@ mod tests {
     // HistoryRule 测试
     // ========================================================================
 
-    /// R-005.3: 密码不匹配任何历史 hash → 通过。
+    /// 密码不匹配任何历史 hash → 通过。
     #[test]
     fn history_rule_passes_no_match() {
         let hasher = Argon2Hasher::default();
@@ -798,7 +798,7 @@ mod tests {
         assert!(rule.validate(&ctx, "new-password").is_ok());
     }
 
-    /// R-005.3: 密码匹配最近的历史 hash → 失败。
+    /// 密码匹配最近的历史 hash → 失败。
     #[test]
     fn history_rule_fails_matches_recent() {
         let hasher = Argon2Hasher::default();
@@ -810,7 +810,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "history");
     }
 
-    /// R-005.3: 空历史 → 通过。
+    /// 空历史 → 通过。
     #[test]
     fn history_rule_passes_empty_history() {
         let rule = HistoryRule::new(3);
@@ -818,7 +818,7 @@ mod tests {
         assert!(rule.validate(&ctx, "any").is_ok());
     }
 
-    /// R-005.3: 历史条目少于 count → 检查全部历史。
+    /// 历史条目少于 count → 检查全部历史。
     #[test]
     fn history_rule_passes_history_shorter_than_count() {
         let hasher = Argon2Hasher::default();
@@ -828,7 +828,7 @@ mod tests {
         assert!(rule.validate(&ctx, "pw2").is_ok());
     }
 
-    /// R-005.3: count=1 时仅检查最近 1 条 hash。
+    /// count=1 时仅检查最近 1 条 hash。
     #[test]
     fn history_rule_only_checks_recent_count() {
         let hasher = Argon2Hasher::default();
@@ -847,7 +847,7 @@ mod tests {
         );
     }
 
-    /// R-005.3: count=0 → 永远通过。
+    /// count=0 → 永远通过。
     #[test]
     fn history_rule_count_zero_always_passes() {
         let hasher = Argon2Hasher::default();
@@ -857,7 +857,7 @@ mod tests {
         assert!(rule.validate(&ctx, "same").is_ok());
     }
 
-    /// Issue 2755/5824: count 超上限被钳制到 MAX_HISTORY_COUNT（DoS 防护）。
+    /// count 超上限被钳制到 MAX_HISTORY_COUNT（DoS 防护）。
     #[test]
     fn history_rule_count_clamped_to_max() {
         let clamped = HistoryRule::new(10_000);
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(HistoryRule::new(MAX_HISTORY_COUNT).count, MAX_HISTORY_COUNT);
     }
 
-    /// R-005.3: `name()` 返回 `"history"`。
+    /// `name()` 返回 `"history"`。
     #[test]
     fn history_rule_name_returns_history() {
         let rule = HistoryRule::new(3);
@@ -881,7 +881,7 @@ mod tests {
     // BlacklistRule 测试
     // ========================================================================
 
-    /// R-005.4: 密码不在黑名单 → 通过。
+    /// 密码不在黑名单 → 通过。
     #[test]
     fn blacklist_rule_passes_not_in_list() {
         let rule = BlacklistRule::new(vec!["password".into(), "123456".into()]);
@@ -889,7 +889,7 @@ mod tests {
         assert!(rule.validate(&ctx, "secure-pw").is_ok());
     }
 
-    /// R-005.4: 密码在黑名单 → 失败。
+    /// 密码在黑名单 → 失败。
     #[test]
     fn blacklist_rule_fails_in_list() {
         let rule = BlacklistRule::new(vec!["password".into(), "123456".into()]);
@@ -899,7 +899,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "blacklist");
     }
 
-    /// R-005.4: 空黑名单 → 永远通过。
+    /// 空黑名单 → 永远通过。
     #[test]
     fn blacklist_rule_passes_empty_list() {
         let rule = BlacklistRule::new(vec![]);
@@ -907,7 +907,7 @@ mod tests {
         assert!(rule.validate(&ctx, "anything").is_ok());
     }
 
-    /// R-005.4: 精确匹配（非子串匹配）。
+    /// 精确匹配（非子串匹配）。
     #[test]
     fn blacklist_rule_exact_match_not_substring() {
         let rule = BlacklistRule::new(vec!["pass".into()]);
@@ -916,7 +916,7 @@ mod tests {
         assert!(rule.validate(&ctx, "password").is_ok());
     }
 
-    /// R-005.4: `name()` 返回 `"blacklist"`。
+    /// `name()` 返回 `"blacklist"`。
     #[test]
     fn blacklist_rule_name_returns_blacklist() {
         let rule = BlacklistRule::new(vec![]);
@@ -927,7 +927,7 @@ mod tests {
     // NotUsernameRule 测试
     // ========================================================================
 
-    /// R-005.5: ctx.username 为 None → 通过。
+    /// ctx.username 为 None → 通过。
     #[test]
     fn not_username_rule_passes_no_username() {
         let rule = NotUsernameRule::new();
@@ -935,7 +935,7 @@ mod tests {
         assert!(rule.validate(&ctx, "anything").is_ok());
     }
 
-    /// R-005.5: 密码不包含用户名 → 通过。
+    /// 密码不包含用户名 → 通过。
     #[test]
     fn not_username_rule_passes_does_not_contain() {
         let rule = NotUsernameRule::new();
@@ -943,7 +943,7 @@ mod tests {
         assert!(rule.validate(&ctx, "secure-pw").is_ok());
     }
 
-    /// R-005.5: 密码包含用户名 → 失败。
+    /// 密码包含用户名 → 失败。
     #[test]
     fn not_username_rule_fails_contains_username() {
         let rule = NotUsernameRule::new();
@@ -953,7 +953,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "not_username");
     }
 
-    /// R-005.5: 大小写不敏感检测。
+    /// 大小写不敏感检测。
     #[test]
     fn not_username_rule_case_insensitive() {
         let rule = NotUsernameRule::new();
@@ -968,7 +968,7 @@ mod tests {
         );
     }
 
-    /// R-005.5: `name()` 返回 `"not_username"`。
+    /// `name()` 返回 `"not_username"`。
     #[test]
     fn not_username_rule_name_returns_not_username() {
         let rule = NotUsernameRule::new();
@@ -979,7 +979,7 @@ mod tests {
     // NotCommonPasswordRule 测试
     // ========================================================================
 
-    /// R-005.6: 密码不在常见密码列表 → 通过。
+    /// 密码不在常见密码列表 → 通过。
     #[test]
     fn not_common_password_rule_passes_not_in_list() {
         let rule = NotCommonPasswordRule::new(vec!["123456".into(), "password".into()]);
@@ -987,7 +987,7 @@ mod tests {
         assert!(rule.validate(&ctx, "secure-pw").is_ok());
     }
 
-    /// R-005.6: 密码在常见密码列表 → 失败。
+    /// 密码在常见密码列表 → 失败。
     #[test]
     fn not_common_password_rule_fails_in_list() {
         let rule = NotCommonPasswordRule::new(vec!["123456".into(), "password".into()]);
@@ -997,7 +997,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "not_common_password");
     }
 
-    /// R-005.6: 空常见密码列表 → 永远通过。
+    /// 空常见密码列表 → 永远通过。
     #[test]
     fn not_common_password_rule_passes_empty_list() {
         let rule = NotCommonPasswordRule::new(vec![]);
@@ -1005,7 +1005,7 @@ mod tests {
         assert!(rule.validate(&ctx, "anything").is_ok());
     }
 
-    /// R-005.6: 精确匹配（非子串匹配）。
+    /// 精确匹配（非子串匹配）。
     #[test]
     fn not_common_password_rule_exact_match_not_substring() {
         let rule = NotCommonPasswordRule::new(vec!["pass".into()]);
@@ -1014,7 +1014,7 @@ mod tests {
         assert!(rule.validate(&ctx, "password").is_ok());
     }
 
-    /// R-005.6: `name()` 返回 `"not_common_password"`。
+    /// `name()` 返回 `"not_common_password"`。
     #[test]
     fn not_common_password_rule_name_returns_not_common_password() {
         let rule = NotCommonPasswordRule::new(vec![]);
@@ -1022,10 +1022,10 @@ mod tests {
     }
 
     // ========================================================================
-    // MaxAgeRule 测试（R-006.7）
+    // MaxAgeRule 测试
     // ========================================================================
 
-    /// R-006.7: `password_created_at=None` → fail-open，通过。
+    /// `password_created_at=None` → fail-open，通过。
     #[test]
     fn max_age_rule_no_created_at_passes() {
         let rule = MaxAgeRule::new(90);
@@ -1034,7 +1034,7 @@ mod tests {
         assert!(rule.validate(&ctx, "any-password").is_ok());
     }
 
-    /// R-006.7: 密码未过期 → 通过。
+    /// 密码未过期 → 通过。
     #[test]
     fn max_age_rule_password_not_expired_passes() {
         let rule = MaxAgeRule::new(90);
@@ -1044,7 +1044,7 @@ mod tests {
         assert!(rule.validate(&ctx, "any-password").is_ok());
     }
 
-    /// R-006.7: 密码已过期 → 失败。
+    /// 密码已过期 → 失败。
     #[test]
     fn max_age_rule_password_expired_fails() {
         let rule = MaxAgeRule::new(90);
@@ -1056,7 +1056,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "max_age");
     }
 
-    /// R-006.7: 边界值 — 恰好到期（超过 1 秒）→ 失败。
+    /// 边界值 — 恰好到期（超过 1 秒）→ 失败。
     #[test]
     fn max_age_rule_boundary_exactly_expired_fails() {
         let rule = MaxAgeRule::new(90);
@@ -1067,7 +1067,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// R-006.7: 边界值 — 恰好未到期（正好 90 天）→ 通过。
+    /// 边界值 — 恰好未到期（正好 90 天）→ 通过。
     #[test]
     fn max_age_rule_boundary_exactly_not_expired_passes() {
         let rule = MaxAgeRule::new(90);
@@ -1077,7 +1077,7 @@ mod tests {
         assert!(rule.validate(&ctx, "any-password").is_ok());
     }
 
-    /// R-006.7: `name()` 返回 `"max_age"`。
+    /// `name()` 返回 `"max_age"`。
     #[test]
     fn max_age_rule_name_returns_max_age() {
         let rule = MaxAgeRule::new(90);
@@ -1088,7 +1088,7 @@ mod tests {
     // DictionaryRule 测试
     // ========================================================================
 
-    /// R-006.8: 密码不在字典 → 通过。
+    /// 密码不在字典 → 通过。
     #[test]
     fn dictionary_rule_passes_not_in_dictionary() {
         let rule = DictionaryRule::new(vec!["hello".into(), "world".into()]);
@@ -1096,7 +1096,7 @@ mod tests {
         assert!(rule.validate(&ctx, "secure-pw").is_ok());
     }
 
-    /// R-006.8: 密码在字典 → 失败。
+    /// 密码在字典 → 失败。
     #[test]
     fn dictionary_rule_fails_in_dictionary() {
         let rule = DictionaryRule::new(vec!["hello".into(), "world".into()]);
@@ -1106,7 +1106,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "dictionary");
     }
 
-    /// R-006.8: 空字典 → 永远通过。
+    /// 空字典 → 永远通过。
     #[test]
     fn dictionary_rule_passes_empty_dictionary() {
         let rule = DictionaryRule::new(vec![]);
@@ -1114,7 +1114,7 @@ mod tests {
         assert!(rule.validate(&ctx, "anything").is_ok());
     }
 
-    /// R-006.8: 精确匹配（非子串匹配）。
+    /// 精确匹配（非子串匹配）。
     #[test]
     fn dictionary_rule_exact_match_not_substring() {
         let rule = DictionaryRule::new(vec!["hello".into()]);
@@ -1123,7 +1123,7 @@ mod tests {
         assert!(rule.validate(&ctx, "helloworld").is_ok());
     }
 
-    /// R-006.8: `name()` 返回 `"dictionary"`。
+    /// `name()` 返回 `"dictionary"`。
     #[test]
     fn dictionary_rule_name_returns_dictionary() {
         let rule = DictionaryRule::new(vec![]);
@@ -1134,7 +1134,7 @@ mod tests {
     // NotEmailRule 测试
     // ========================================================================
 
-    /// R-006.11: ctx.email 为 None → 通过。
+    /// ctx.email 为 None → 通过。
     #[test]
     fn not_email_rule_passes_no_email() {
         let rule = NotEmailRule::new();
@@ -1142,7 +1142,7 @@ mod tests {
         assert!(rule.validate(&ctx, "anything").is_ok());
     }
 
-    /// R-006.11: 密码不包含邮箱前缀 → 通过。
+    /// 密码不包含邮箱前缀 → 通过。
     #[test]
     fn not_email_rule_passes_does_not_contain() {
         let rule = NotEmailRule::new();
@@ -1157,7 +1157,7 @@ mod tests {
         assert!(rule.validate(&ctx, "secure-pw").is_ok());
     }
 
-    /// R-006.11: 密码包含邮箱前缀 → 失败。
+    /// 密码包含邮箱前缀 → 失败。
     #[test]
     fn not_email_rule_fails_contains_email_prefix() {
         let rule = NotEmailRule::new();
@@ -1174,7 +1174,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "not_email");
     }
 
-    /// R-006.11: 大小写不敏感检测。
+    /// 大小写不敏感检测。
     #[test]
     fn not_email_rule_case_insensitive() {
         let rule = NotEmailRule::new();
@@ -1192,7 +1192,7 @@ mod tests {
         );
     }
 
-    /// R-006.11: 无 @ 的 email → 通过。
+    /// 无 @ 的 email → 通过。
     #[test]
     fn not_email_rule_no_at_sign_passes() {
         let rule = NotEmailRule::new();
@@ -1207,7 +1207,7 @@ mod tests {
         assert!(rule.validate(&ctx, "alice123").is_ok());
     }
 
-    /// R-006.11: `name()` 返回 `"not_email"`。
+    /// `name()` 返回 `"not_email"`。
     #[test]
     fn not_email_rule_name_returns_not_email() {
         let rule = NotEmailRule::new();
@@ -1218,7 +1218,7 @@ mod tests {
     // RegexRule 测试
     // ========================================================================
 
-    /// R-006.12: 正则不匹配 → 通过。
+    /// 正则不匹配 → 通过。
     #[test]
     fn regex_rule_passes_no_match() {
         let rule = RegexRule::new(
@@ -1229,7 +1229,7 @@ mod tests {
         assert!(rule.validate(&ctx, "no_spaces").is_ok());
     }
 
-    /// R-006.12: 正则匹配 → 失败。
+    /// 正则匹配 → 失败。
     #[test]
     fn regex_rule_fails_match() {
         let rule = RegexRule::new(
@@ -1242,7 +1242,7 @@ mod tests {
         assert_eq!(result.unwrap_err().rule_name, "regex");
     }
 
-    /// R-006.12: 错误信息使用构造器传入的 error_msg。
+    /// 错误信息使用构造器传入的 error_msg。
     #[test]
     fn regex_rule_error_msg_in_error() {
         let rule = RegexRule::new(
@@ -1254,7 +1254,7 @@ mod tests {
         assert_eq!(err.message, "密码不能包含数字");
     }
 
-    /// R-006.12: `name()` 返回 `"regex"`。
+    /// `name()` 返回 `"regex"`。
     #[test]
     fn regex_rule_name_returns_regex() {
         let rule = RegexRule::new(regex::Regex::new(r".").unwrap(), "test".to_string());
@@ -1265,7 +1265,7 @@ mod tests {
     // 全部 9 个规则可作 Box<dyn PasswordPolicyRule> 使用（对象安全验证）
     // ========================================================================
 
-    /// R-005/R-006: 9 个规则均可作 `Box<dyn PasswordPolicyRule>` 使用。
+    /// 9 个规则均可作 `Box<dyn PasswordPolicyRule>` 使用。
     #[test]
     fn all_rules_usable_as_dyn_trait_object() {
         let rules: Vec<Box<dyn PasswordPolicyRule>> = vec![

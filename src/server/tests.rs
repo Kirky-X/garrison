@@ -589,13 +589,13 @@ async fn test_listen_starts_and_runs() {
         .with_internal_api_key("test-api-key");
 
     tokio::select! {
-        result = server.listen() => {
-            panic!("listen 不应在 300ms 内返回: {:?}", result);
-        },
-        _ = tokio::time::sleep(std::time::Duration::from_millis(300)) => {
-            // listen 在正常运行中，测试通过
-        },
-    }
+           result = server.listen() => {
+               panic!("listen 不应在 300ms 内返回: {:?}", result);
+           },
+           _ = tokio::time::sleep(std::time::Duration::from_millis(300)) => {
+    // listen 在正常运行中，测试通过
+           },
+       }
 }
 
 /// 测试 listen 在 TLS 证书文件不存在时返回错误（feature = "tls"）。

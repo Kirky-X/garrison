@@ -6,7 +6,7 @@
 //! 提供 `strip_bearer_prefix` 和 `extract_token_from_headers` 两个函数，
 //! 供 web 框架适配器（`web_actix` / `web_warp`）和 context 适配器
 //! （`axum_adapter` / `actix_adapter` / `warp_adapter`）共用，
-//! 消除跨文件重复实现（Rule 8：先读再写，不重复造轮子）。
+//! 消除跨文件重复实现（先读再写，不重复造轮子）。
 //!
 //! ## 设计
 //!
@@ -64,7 +64,7 @@ impl HeaderLookup for HeaderMap {
 /// - `Some(token)`: 成功剥离前缀后的 token 字符串切片（保证非空）。
 /// - `None`: 前缀不匹配、字符串过短，或前缀后为空
 ///   （如 `"Bearer "`——返回 `Some("")` 会让下游拿到空 token，
-///   构成认证旁路风险，ocr #3113）。
+///   构成认证旁路风险）。
 pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     let prefix = "bearer ";
     // 用 get(..n) 而非 auth_str[..n]：当 n 落在多字节 UTF-8 字符中间时
@@ -73,7 +73,7 @@ pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
     if head.eq_ignore_ascii_case(prefix) {
         let rest = &auth_str[prefix.len()..];
         if rest.is_empty() {
-            // "Bearer " 空前缀：无实际 token，返回 None 而非 Some("")（ocr #3113）
+            // "Bearer " 空前缀：无实际 token，返回 None 而非 Some("")
             return None;
         }
         Some(rest)
@@ -97,7 +97,7 @@ pub fn strip_bearer_prefix(auth_str: &str) -> Option<&str> {
 ///
 /// # 安全性
 ///
-/// 使用 `get(1..)` 而非 `&v[1..]` 防止空值 panic（如 `"name="`，Issue 38/41/42）。
+/// 使用 `get(1..)` 而非 `&v[1..]` 防止空值 panic（如 `"name="`）。
 pub fn parse_cookie_value(cookie_header: &str, name: &str) -> Option<String> {
     if cookie_header.is_empty() {
         return None;
@@ -232,7 +232,7 @@ pub fn extract_token_from_request_parts(
             );
             return Ok(None);
         }
-        // DoS 防护（ocr #3114）：解析前限制 body 大小。超大 body（数十 MB JSON）
+        // DoS 防护：解析前限制 body 大小。超大 body（数十 MB JSON）
         // 会在 token 校验前引发过量堆分配；超过上限直接跳过 body 提取。
         // 上限固定 1MB（与常见网关 body 限制对齐）；如需调整请修改本常量。
         const MAX_BODY_TOKEN_PARSE_BYTES: usize = 1024 * 1024; // 1MB
@@ -245,7 +245,7 @@ pub fn extract_token_from_request_parts(
             return Ok(None);
         }
         let content_type = header_fn("Content-Type")?.unwrap_or_default();
-        // 大小写不敏感匹配（RFC 9110：media type 不区分大小写，ocr #6437），
+        // 大小写不敏感匹配（RFC 9110：media type 不区分大小写），
         // `Application/JSON` 等非常规大小写不应静默跳过 body 提取
         if content_type
             .to_ascii_lowercase()
@@ -328,7 +328,7 @@ mod tests {
         assert_eq!(strip_bearer_prefix(auth_str), None);
     }
 
-    /// 仅前缀无 token 返回 None（ocr #3113：空 token 不得下发给下游）。
+    /// 仅前缀无 token 返回 None（空 token 不得下发给下游）。
     #[test]
     fn strip_bearer_prefix_only_prefix() {
         // 原固化行为为 Some("")，构成认证旁路风险（下游拿到空 token），已修正为 None
@@ -616,10 +616,10 @@ mod tests {
     }
 
     // ========================================================================
-    // extract_token_from_request_parts 补充测试（ocr #6437 / #3113 / #3114）
+    // extract_token_from_request_parts 补充测试
     // ========================================================================
 
-    /// ocr #6437 回归：Content-Type 大小写不敏感（RFC 9110）。
+    /// Content-Type 大小写不敏感（RFC 9110）。
     /// `Application/JSON` 不应静默跳过 body 提取。
     #[test]
     fn extract_from_body_content_type_case_insensitive() {
@@ -657,7 +657,7 @@ mod tests {
         }
     }
 
-    /// ocr #3114 回归：超过 1MB 上限的 body 不进入 JSON 解析，直接跳过 body 提取。
+    /// 超过 1MB 上限的 body 不进入 JSON 解析，直接跳过 body 提取。
     #[test]
     fn extract_from_body_skips_oversized_body() {
         let mut config = GarrisonConfig::default_config();
@@ -689,7 +689,7 @@ mod tests {
         );
     }
 
-    /// ocr #3113 回归：`Authorization: Bearer `（空前缀）不再返回空 token。
+    /// `Authorization: Bearer `（空前缀）不再返回空 token。
     #[test]
     fn extract_from_parts_empty_bearer_returns_none() {
         let config = GarrisonConfig::default_config();

@@ -16,10 +16,10 @@
 //!
 //! ```sql
 //! CREATE TABLE role_hierarchy (
-//!     tenant_id INTEGER NOT NULL DEFAULT 0,
-//!     child_role TEXT NOT NULL,
-//!     parent_role TEXT NOT NULL,
-//!     PRIMARY KEY (tenant_id, child_role, parent_role)
+//! tenant_id INTEGER NOT NULL DEFAULT 0,
+//! child_role TEXT NOT NULL,
+//! parent_role TEXT NOT NULL,
+//! PRIMARY KEY (tenant_id, child_role, parent_role)
 //! );
 //! ```
 
@@ -65,7 +65,7 @@ mod service {
     /// - `get_ancestors` 先查 oxcache 未命中则 `compute_closure` 并缓存
     /// - `add_edge` + `invalidate_cache` 增量失效
     ///
-    /// 自 v0.8.2 起（API-02 修复）：支持全部 db 后端
+    /// 支持全部 db 后端
     /// （`db-sqlite` / `db-postgres` / `db-mysql`），SQL 方言按连接后端自适应。
     ///
     /// # 字段
@@ -124,7 +124,7 @@ mod service {
         /// # 算法
         /// 1. 查询所有 `role_hierarchy` 记录，构建 `child → parents` 邻接表
         /// 2. 对每个 child，DFS 遍历收集所有祖先（避免环：用 visited 集合；
-        ///    并以备忘录复用无环子图的完整祖先集合，线性链从 O(n²) 降为 O(n+e)）
+        /// 并以备忘录复用无环子图的完整祖先集合，线性链从 O(n²) 降为 O(n+e)）
         /// 3. 返回闭包表
         ///
         /// # 语义（自环 / 环）
@@ -173,9 +173,9 @@ mod service {
         /// # 返回
         /// `(ancestors, complete)`：
         /// - `ancestors`: `role` 的祖先集合（**不含 `role` 自身**——自环 A→A 与
-        ///   环路均不会把 `role` 写入自身祖先集）
+        /// 环路均不会把 `role` 写入自身祖先集）
         /// - `complete`: 结果是否为全图完整祖先集（未因环截断）。
-        ///   仅 `complete == true` 的结果可安全写入 `memo` 复用。
+        /// 仅 `complete == true` 的结果可安全写入 `memo` 复用。
         fn dfs_ancestors(
             role: &str,
             adj: &HashMap<String, Vec<String>>,
@@ -412,7 +412,7 @@ mod tests {
     /// 断言 `RoleHierarchyRecord { child_role, parent_role, tenant_id }`
     /// 三字段可正确初始化与读取。
     ///
-    /// # 命名说明（Rule 7 冲突暴露）
+    /// # 命名说明
     ///
     /// 原描述用 `role` 字段， SQL 用 `child_role`。
     /// 决策：统一用 `child_role` / `parent_role`（对称清晰，与 SQL 一致），
@@ -447,10 +447,10 @@ mod tests {
     }
 
     // ========================================================================
-    // API-02 编译期守卫：RoleHierarchyService 对全部 db 后端 feature 可见
+    // 编译期守卫：RoleHierarchyService 对全部 db 后端 feature 可见
     // ========================================================================
 
-    /// API-02 编译期守卫：`db-postgres` / `db-mysql`（生产后端）单独启用时，
+    /// 编译期守卫：`db-postgres` / `db-mysql`（生产后端）单独启用时，
     /// `RoleHierarchyService` 必须可解析。
     ///
     /// 审查发现：服务仅门控 `db-sqlite`，`db-postgres`/`db-mysql` 用户无法
@@ -532,10 +532,10 @@ mod db_sqlite_tests {
 
     /// 验证 SQLite 迁移加载 `002_role_hierarchy.sql` 后 `role_hierarchy` 表存在。
     ///
-    /// Rule 11（惯例优先）：SQL 文件放 `migrations/sqlite/core/002_role_hierarchy.sql`，
+    /// 惯例优先：SQL 文件放 `migrations/sqlite/core/002_role_hierarchy.sql`，
     /// 复用现有 `migrate_core()` 自动加载机制，无需修改 sqlite/mod.rs 的 migration 段。
     ///
-    /// Rule 7（冲突暴露）： 原描述路径 `src/dao/repository/sqlite/role_hierarchy.sql`
+    /// 原描述路径 `src/dao/repository/sqlite/role_hierarchy.sql`
     /// 不符合现有 migration 目录结构（`migrations/sqlite/core/`），改为符合惯例的路径。
     #[tokio::test(flavor = "multi_thread")]
     async fn role_hierarchy_table_exists_after_migration() {

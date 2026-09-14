@@ -62,14 +62,14 @@ impl EmailSecretData {
 /// use std::sync::Arc;
 ///
 /// let model = CredentialModel {
-///     id: "cred-email-001".into(),
-///     user_id: "alice".into(),
-///     credential_type: "email-code".into(),
-///     secret_data: r#"{"email":"alice@example.com"}"#.into(),
-///     label: Some("邮箱验证码".into()),
-///     created_at: 0,
-///     enabled: true,
-///     priority: 0,
+/// id: "cred-email-001".into(),
+/// user_id: "alice".into(),
+/// credential_type: "email-code".into(),
+/// secret_data: r#"{"email":"alice@example.com"}"#.into(),
+/// label: Some("邮箱验证码".into()),
+/// created_at: 0,
+/// enabled: true,
+/// priority: 0,
 /// };
 /// let cred = EmailCodeCredential::new(model, service);
 /// // let ok = cred.verify("123456").await?;

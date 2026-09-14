@@ -83,7 +83,7 @@ pub struct HealthReport {
 /// 注册多个 `HealthCheck`，通过 `check_all()` 并发执行并聚合结果。
 pub struct HealthRegistry {
     pub(crate) checks: Vec<Box<dyn HealthCheck>>,
-    /// 单项检查超时（ocr #5514/5515/5358/5362：请求级护栏，默认 5 秒）。
+    /// 单项检查超时（请求级护栏，默认 5 秒）。
     /// 超时的检查按 `Unhealthy` 聚合，不会无限阻塞 readiness 探针。
     pub(crate) check_timeout: Duration,
 }
@@ -116,7 +116,7 @@ pub struct DbHealthCheck {
 }
 
 // ============================================================================
-// 子模块（impl 块与路由集成，规则 25 接口隔离）
+// 子模块（impl 块与路由集成，接口隔离）
 // ============================================================================
 
 /// 内置 `HealthCheck` 实现子模块（ConfigHealthCheck / CacheHealthCheck / DbHealthCheck）。

@@ -33,7 +33,7 @@ use std::time::Duration;
 
 /// 暴力破解防护配置。
 ///
-/// 所有阈值显式配置（Rule 5 确定性逻辑），不交给模型判断。
+/// 所有阈值显式配置（确定性逻辑），不交给模型判断。
 #[derive(Debug, Clone)]
 pub struct BruteForceConfig {
     /// 最大尝试次数（超阈值后拦截）。
@@ -55,7 +55,7 @@ impl Default for BruteForceConfig {
 }
 
 impl BruteForceConfig {
-    /// 校验配置合法性（issue #3463 修复，对齐 `AnomalousAnalyzerConfig::validate`）。
+    /// 校验配置合法性（对齐 `AnomalousAnalyzerConfig::validate`）。
     ///
     /// # 错误
     /// - `max_attempts` 为 0：计数从 1 开始，`1 > 0` 导致首个请求即被封禁。

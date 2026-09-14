@@ -173,7 +173,7 @@ impl GarrisonResponse for WarpResponse {
     }
 
     fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
-        // 注入防护（联动 ocr #2431/#3106）：与 axum/actix 适配器一致的 name/value 校验，
+        // 注入防护：与 axum/actix 适配器一致的 name/value 校验，
         // 拒绝控制字符与 `;`、`,` 等分隔符，防止注入 Domain 等恶意 Cookie 属性
         crate::context::validate_cookie_name_value(name, value)?;
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
@@ -187,7 +187,7 @@ impl GarrisonResponse for WarpResponse {
         value: &str,
         config: &crate::config::GarrisonConfig,
     ) -> GarrisonResult<()> {
-        // 注入防护（联动 ocr #2431/#3107）：同 set_cookie，name/value 校验后再拼接
+        // 注入防护：同 set_cookie，name/value 校验后再拼接
         crate::context::validate_cookie_name_value(name, value)?;
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
@@ -251,7 +251,7 @@ impl GarrisonStorage for WarpStorage {
 /// - 通过 `raw_response_mut()` 写入 status / headers / cookies
 /// - 通过 `raw_storage_mut()` 写入请求级临时数据
 ///
-/// # body 单一存储（ocr #4010/#6691）
+/// # body 单一存储
 ///
 /// `body_bytes` 仅存储在 `request_data: WarpRequest` 内部（单一事实来源），
 /// `WarpContext` 不再另行保存外层副本——`with_body()` 将字节直接注入 `WarpRequest::with_body`，
@@ -291,7 +291,7 @@ impl WarpContext {
     ///
     /// # 返回
     /// 包含请求数据与 body 字节的 `WarpContext` 实例（body 存储于 `request_data` 内，
-    /// 单一事实来源，ocr #4010/#6691）。
+    /// 单一事实来源）。
     pub fn with_body(
         path: String,
         method: String,
@@ -329,7 +329,7 @@ impl WarpContext {
 impl GarrisonContext for WarpContext {
     fn request(&self) -> GarrisonResult<Box<dyn GarrisonRequest>> {
         // WarpRequest 已 owned，直接克隆数据构造新实例。
-        // body_bytes 从 request_data（单一事实来源）读取并正确传递（ocr #4010/#6691）。
+        // body_bytes 从 request_data（单一事实来源）读取并正确传递。
         Ok(Box::new(WarpRequest::with_body(
             self.request_data.path.clone(),
             self.request_data.method.clone(),
@@ -776,13 +776,13 @@ mod tests {
     }
 
     // ========================================================================
-    // Context 层 body 读取测试（HIGH-002 回归）
+    // Context 层 body 读取测试
     // ========================================================================
 
     /// 验证 `WarpContext::with_body()` 通过 `request()` 传递 `body_bytes`，
     /// 使 `GarrisonRequest::get_token()` 能从 JSON body 提取 token。
     ///
-    /// 回归 HIGH-002：原 `WarpContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
+    /// 回归：原 `WarpContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
     /// `request()` 用 `WarpRequest::new()` 丢弃 body_bytes，导致 Context 层 body 读取功能不可用。
     #[test]
     fn warp_context_with_body_extracts_token_from_body() {

@@ -22,8 +22,8 @@
 //!
 //! - 外网 3 端点：login / logout / refresh
 //! - 内网 12 端点：check-login / check-permission / check-role / check-safe /
-//!   check-disable / check-api-key / get-token-info / get-session / kickout /
-//!   switch-to / renew-to-equivalent / health
+//! check-disable / check-api-key / get-token-info / get-session / kickout /
+//! switch-to / renew-to-equivalent / health
 
 #![cfg(feature = "auth-server-sdforge")]
 // #[forge] 宏生成的代码含 #[cfg(feature = "mcp")] / #[cfg(feature = "cli")] 等
@@ -42,7 +42,7 @@ use sdforge::prelude::ApiError;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-// 复用 mod.rs 的 to_api_response 逻辑（避免重复实现 — Rule 8）
+// 复用 mod.rs 的 to_api_response 逻辑（避免重复实现）
 use super::to_api_response;
 
 // ============================================================================
@@ -370,7 +370,7 @@ async fn health() -> Result<ApiResponse<&'static str>, ApiError> {
 /// （`GarrisonMetrics::new()` 注册的 `garrison_*` 指标），
 /// 用 `TextEncoder` 编码为 Prometheus 文本格式。
 ///
-/// # 设计权衡（已知限制，ocr #3670/#6172/#6809）
+/// # 设计权衡（已知限制）
 ///
 /// `#[forge]` 宏在非 streaming 模式下用 `Json(value).into_response()` 包装返回值，
 /// 本端点响应 **Content-Type 为 `application/json`**，body 为 JSON 序列化的字符串
@@ -851,7 +851,7 @@ mod tests {
     /// 测试解析 JSON 字符串后验证包含 `bulwark_` 前缀指标。
     ///
     /// 注：该测试固化了「metrics 经 #[forge] 输出 JSON 包装」的设计取舍
-    /// （ocr #3670/#6172/#6809）——标准 Prometheus `text/plain` 抓取需绕过
+    /// ——标准 Prometheus `text/plain` 抓取需绕过
     /// `#[forge]` 用 axum 原生路由注册，见 metrics handler 的文档说明。
     #[cfg(feature = "metrics-prometheus")]
     #[tokio::test]

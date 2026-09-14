@@ -76,13 +76,13 @@ pub struct Random64TokenStyle;
 // SimpleTokenStyle
 // ====================================================================
 
-/// Simple 风格 Token（A11 安全修复版）。
+/// Simple 风格 Token。
 ///
 /// 格式为 `<login_id>\x1f<uuid>.<exp>.<hmac_sha256_base64(secret, login_id|uuid|exp)>`，
 /// 通过 HMAC-SHA256 签名防止 token 伪造（CRITICAL 漏洞修复），并内嵌过期时间戳
-/// `exp`（Unix 秒）实现 token 级过期（issue 2425/3256 修复，对齐 JWT 语义）。
+/// `exp`（Unix 秒）实现 token 级过期（对齐 JWT 语义）。
 ///
-/// # 安全模型（A11）
+/// # 安全模型
 ///
 /// - **生成**：服务端用 `secret` 对 `login_id|uuid|exp` 计算 HMAC-SHA256，附加到 token 末尾；
 ///   `timeout <= 0` 时拒绝生成（fail-closed，杜绝无过期时间的永久 token）
@@ -98,7 +98,7 @@ pub struct Random64TokenStyle;
 ///
 /// # 迁移说明
 ///
-/// 旧格式 `<login_id>-<uuid>`（无 HMAC）与 A11 格式 `<login_id>\x1f<uuid>.<hmac>`
+/// 旧格式 `<login_id>-<uuid>`（无 HMAC）与 `<login_id>\x1f<uuid>.<hmac>`
 /// （无 exp 段）的 token 在 `verify` 时返回 `Ok(None)`，视为无效 token，
 /// 用户需重新登录获取新格式 token。
 #[derive(Clone, Default)]
@@ -107,7 +107,7 @@ pub struct SimpleTokenStyle {
     ///
     /// 仅在启用 `secure-simple-token` feature 时由 `Token` impl 读取。
     ///
-    /// # 安全说明（issue 2419 / 3252 / 3253 / 3577）
+    /// # 安全说明
     ///
     /// - **Debug 脱敏**：`Debug` 为手动实现，secret 以 `[REDACTED]` 输出，
     ///   防止 `{:#?}` / `{:?}` 日志泄露 HMAC 密钥。
@@ -124,7 +124,7 @@ pub struct SimpleTokenStyle {
 }
 
 impl std::fmt::Debug for SimpleTokenStyle {
-    /// 手动实现的 Debug：secret 脱敏输出（issue 2419——derive(Debug) 会打印 HMAC 密钥）。
+    /// 手动实现的 Debug：secret 脱敏输出（derive(Debug) 会打印 HMAC 密钥）。
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SimpleTokenStyle")
             .field("secret", &"[REDACTED]")

@@ -98,7 +98,7 @@ pub enum AnomalyType {
     GeoJump,
     /// 快速连续登录（短时间内多次登录）。
     RapidSuccessiveLogin,
-    /// 会话劫持疑似（当前请求 IP 与会话创建时存储的 IP 不一致，H-8 修复）。
+    /// 会话劫持疑似（当前请求 IP 与会话创建时存储的 IP 不一致）。
     SessionHijackSuspected,
 }
 

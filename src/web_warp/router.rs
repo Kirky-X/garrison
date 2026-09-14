@@ -28,7 +28,7 @@ fn normalize_route_path(path: &str) -> &str {
     }
 }
 
-/// 路由规则匹配：支持精确匹配、单段参数与尾部通配（ocr #2136/3513/6490）。
+/// 路由规则匹配：支持精确匹配、单段参数与尾部通配。
 ///
 /// - 精确段：逐段相等比较（尾斜杠归一化后，`/api/users/` 命中 `/api/users`）
 /// - `{param}` / `:param`：匹配任意非空单段（与 axum/actix 参数语义对齐）
@@ -94,12 +94,12 @@ impl super::GarrisonRouter {
     /// 注意：warp 的路由注册需在 `warp::path()` 链中单独配置，
     /// 此方法仅记录鉴权规则，由 `into_filter()` 生成的守卫 Filter 执行鉴权。
     ///
-    /// # 路径校验（ocr #2136/3513）
+    /// # 路径校验
     ///
     /// - 路径必须非空且以 `/` 开头：非法路径被**拒绝注册**并记录 error 日志
-    ///   （此类路径永不匹配请求，静默注册将导致路由不受保护）。
+    /// （此类路径永不匹配请求，静默注册将导致路由不受保护）。
     /// - 支持参数化模式：`{id}` / `:id` 单段参数、`*` / `{*rest}` 尾部通配
-    ///   （`into_filter` 按段匹配，注册 `/api/*` 即保护全部子路径）。
+    /// （`into_filter` 按段匹配，注册 `/api/*` 即保护全部子路径）。
     ///
     /// # 重复注册
     ///
@@ -143,7 +143,7 @@ impl super::GarrisonRouter {
                 let config = config.clone();
                 async move {
                     let path_str = path.as_str().to_string();
-                    // ocr #2136/3513/6490: 规则匹配支持参数段与尾部通配，
+                    // 规则匹配支持参数段与尾部通配，
                     // 参数化/子路径不再因精确匹配失败而静默跳过鉴权
                     let annotation = rules
                         .iter()

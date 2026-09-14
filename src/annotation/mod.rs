@@ -107,7 +107,7 @@ pub enum Annotation {
 
     /// API Key 校验（对应 `@CheckApiKey`）。
     ///
-    /// `namespace` 为 `Some(s)` 表示命名空间隔离（FRD §5.4.1），
+    /// `namespace` 为 `Some(s)` 表示命名空间隔离，
     /// `None` 表示使用默认命名空间 `"default"`。
     CheckApiKey {
         /// 命名空间标识；`None` 表示默认命名空间 `"default"`。
@@ -140,10 +140,10 @@ pub enum Annotation {
 ///
 /// 控制 `@CheckPermission` / `@CheckRole` 的多权限组合逻辑。
 ///
-/// # 规则7 命名冲突记录
+/// # 命名冲突记录
 ///
 /// spec 要求命名为 `Mode`，但现有 `Mode<M: ModeSpec>` extractor struct（web-axum feature）
-/// 已 re-export 为 `Mode`，会导致命名冲突。按规则11（惯例优先），保留现有 extractor 不变，
+/// 已 re-export 为 `Mode`，会导致命名冲突。按惯例优先原则，保留现有 extractor 不变，
 /// 新值级枚举命名为 `AnnotationMode`（语义更清晰：注解逻辑组合模式）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnnotationMode {
@@ -156,7 +156,7 @@ pub enum AnnotationMode {
 // ============================================================================
 // axum extractor（cfg(feature = "web-axum")）
 // ============================================================================
-// 具体实现已拆到 `extractors.rs`（规则 25：mod.rs 不放具体实现函数）。
+// 具体实现已拆到 `extractors.rs`（mod.rs 不放具体实现函数）。
 
 #[cfg(feature = "web-axum")]
 mod extractors;

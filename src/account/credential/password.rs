@@ -21,7 +21,7 @@
 //! ## 不引入的算法
 //!
 //! - MD5/SHA1 密码哈希（已废弃，仅 Digest 认证保留）
-//! - PBKDF2/SCrypt（v0.5.0+ 按需）
+//! - PBKDF2/SCrypt（按需）
 
 use super::{Credential, CredentialModel, CredentialType};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -125,7 +125,7 @@ impl PasswordHasher for Argon2Hasher {
         #[cfg(not(feature = "credential-zeroize"))]
         let password_ref: &[u8] = password.as_bytes();
 
-        // H4: 显式预分配 32 字节输出缓冲区（与 argon2 默认一致，但显式化意图并锁定行为）
+        // 显式预分配 32 字节输出缓冲区（与 argon2 默认一致，但显式化意图并锁定行为）
         let params = Params::new(self.m_cost, self.t_cost, self.p_cost, Some(32))
             .map_err(|e| GarrisonError::InvalidParam(format!("account-argon2-param::{}", e)))?;
         let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -191,7 +191,7 @@ impl BcryptHasher {
     /// # 参数
     /// - `cost`: cost 参数（4-31，建议 10-14）。超出范围自动钳制到 4。
     pub fn with_cost(cost: u32) -> Self {
-        // Issue 9: 验证 bcrypt cost 范围（bcrypt 规范要求 4-31）
+        // 验证 bcrypt cost 范围（bcrypt 规范要求 4-31）
         let cost = cost.clamp(4, 31);
         Self { cost }
     }
@@ -199,7 +199,7 @@ impl BcryptHasher {
 
 impl PasswordHasher for BcryptHasher {
     fn hash(&self, password: &str) -> GarrisonResult<String> {
-        // P2.1（Issue 2740/3160/3203）: 与 Argon2Hasher 对称——credential-zeroize
+        // P2.1: 与 Argon2Hasher 对称——credential-zeroize
         // feature 启用时，将密码字节拷贝到 Zeroizing<String>，函数返回时 wrapper
         // Drop 清零内部字节（bcrypt crate 直接消费 &str，无法清零调用方的 String）。
         #[cfg(feature = "credential-zeroize")]
@@ -215,7 +215,7 @@ impl PasswordHasher for BcryptHasher {
     }
 
     fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool> {
-        // P2.1（Issue 2740/3160/3203）: 同 hash，verify 后清零内部密码字节副本
+        // P2.1: 同 hash，verify 后清零内部密码字节副本
         #[cfg(feature = "credential-zeroize")]
         let password_bytes = zeroize::Zeroizing::new(password.to_string());
         #[cfg(feature = "credential-zeroize")]
@@ -284,14 +284,14 @@ impl PasswordVerifier {
 /// let hasher = Argon2Hasher::default();
 /// let hash = hasher.hash("secret")?;
 /// let model = CredentialModel {
-///     id: "cred-001".into(),
-///     user_id: "alice".into(),
-///     credential_type: "password".into(),
-///     secret_data: hash,
-///     label: None,
-///     created_at: 0,
-///     enabled: true,
-///     priority: 0,
+/// id: "cred-001".into(),
+/// user_id: "alice".into(),
+/// credential_type: "password".into(),
+/// secret_data: hash,
+/// label: None,
+/// created_at: 0,
+/// enabled: true,
+/// priority: 0,
 /// };
 /// let cred = PasswordCredential::new(model, Arc::new(hasher));
 /// assert!(cred.verify("secret").await?);
@@ -301,8 +301,8 @@ pub struct PasswordCredential {
     model: CredentialModel,
     /// 密码哈希器（Argon2 / Bcrypt / 自定义）。
     ///
-    /// v0.9.0 起为 `Arc`（原 `Box`）：`verify()` 需将哈希器移入
-    /// `spawn_blocking` 闭包把慢哈希移出 async worker（P2 修复），要求可克隆共享。
+    /// 现使用 `Arc`（原 `Box`）：`verify()` 需将哈希器移入
+    /// `spawn_blocking` 闭包把慢哈希移出 async worker，要求可克隆共享。
     hasher: Arc<dyn PasswordHasher>,
 }
 
@@ -326,7 +326,7 @@ impl PasswordCredential {
     /// # 参数
     /// - `model`: 凭证存储模型（`secret_data` 字段应包含已哈希的密码）
     /// - `hasher`: 密码哈希器（用于 `verify` 时校验）。
-    ///   v0.9.0 起接受 `Arc`（原 `Box`），以支持 `verify` 内部的 `spawn_blocking`。
+    /// 接受 `Arc`（原 `Box`），以支持 `verify` 内部的 `spawn_blocking`。
     pub fn new(model: CredentialModel, hasher: Arc<dyn PasswordHasher>) -> Self {
         Self { model, hasher }
     }
@@ -362,7 +362,7 @@ mod tests {
     // PasswordHasher trait 契约测试
     // ========================================================================
 
-    /// R-001: PasswordHasher trait 为 Send + Sync（编译期检查）。
+    /// PasswordHasher trait 为 Send + Sync（编译期检查）。
     #[test]
     fn password_hasher_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
@@ -375,7 +375,7 @@ mod tests {
     // Argon2Hasher 测试
     // ========================================================================
 
-    /// R-002: Argon2Hasher::default().hash("password") 返回 $argon2id$ 前缀字符串。
+    /// Argon2Hasher::default().hash("password") 返回 $argon2id$ 前缀字符串。
     #[test]
     fn argon2_hash_returns_argon2id_prefix() {
         let hasher = Argon2Hasher::default();
@@ -387,7 +387,7 @@ mod tests {
         );
     }
 
-    /// R-002: 相同密码两次 hash 产生不同结果（盐随机）。
+    /// 相同密码两次 hash 产生不同结果（盐随机）。
     #[test]
     fn argon2_hash_same_password_produces_different_results() {
         let hasher = Argon2Hasher::default();
@@ -396,7 +396,7 @@ mod tests {
         assert_ne!(h1, h2, "相同密码两次 hash 应产生不同结果（盐随机）");
     }
 
-    /// R-002: Argon2Hasher::verify 对正确密码返回 Ok(true)。
+    /// Argon2Hasher::verify 对正确密码返回 Ok(true)。
     #[test]
     fn argon2_verify_correct_password_returns_true() {
         let hasher = Argon2Hasher::default();
@@ -405,7 +405,7 @@ mod tests {
         assert!(result, "正确密码应返回 Ok(true)");
     }
 
-    /// R-002: Argon2Hasher::verify 对错误密码返回 Ok(false)。
+    /// Argon2Hasher::verify 对错误密码返回 Ok(false)。
     #[test]
     fn argon2_verify_wrong_password_returns_false() {
         let hasher = Argon2Hasher::default();
@@ -431,7 +431,7 @@ mod tests {
     // BcryptHasher 测试
     // ========================================================================
 
-    /// R-003: BcryptHasher::default().hash("password") 返回 $2b$ 前缀字符串。
+    /// BcryptHasher::default().hash("password") 返回 $2b$ 前缀字符串。
     #[test]
     fn bcrypt_hash_returns_2b_prefix() {
         let hasher = BcryptHasher::default();
@@ -443,7 +443,7 @@ mod tests {
         );
     }
 
-    /// R-003: BcryptHasher::verify 对正确密码返回 Ok(true)。
+    /// BcryptHasher::verify 对正确密码返回 Ok(true)。
     #[test]
     fn bcrypt_verify_correct_password_returns_true() {
         let hasher = BcryptHasher::default();
@@ -452,7 +452,7 @@ mod tests {
         assert!(result, "正确密码应返回 Ok(true)");
     }
 
-    /// R-003: BcryptHasher::verify 对错误密码返回 Ok(false)。
+    /// BcryptHasher::verify 对错误密码返回 Ok(false)。
     #[test]
     fn bcrypt_verify_wrong_password_returns_false() {
         let hasher = BcryptHasher::default();
@@ -461,7 +461,7 @@ mod tests {
         assert!(!result, "错误密码应返回 Ok(false)");
     }
 
-    /// R-003: BcryptHasher::verify 识别 $2a$ 格式（标准 bcrypt 前缀变体）。
+    /// BcryptHasher::verify 识别 $2a$ 格式（标准 bcrypt 前缀变体）。
     #[test]
     fn bcrypt_verify_recognizes_2a_format() {
         let hasher = BcryptHasher::default();
@@ -472,7 +472,7 @@ mod tests {
         assert!(result, "BcryptHasher 应识别 $2a$ 格式");
     }
 
-    /// R-003: BcryptHasher::verify 识别 $2y$ 格式（标准 bcrypt 前缀变体）。
+    /// BcryptHasher::verify 识别 $2y$ 格式（标准 bcrypt 前缀变体）。
     #[test]
     fn bcrypt_verify_recognizes_2y_format() {
         let hasher = BcryptHasher::default();
@@ -496,7 +496,7 @@ mod tests {
     // PasswordVerifier 自动识别测试
     // ========================================================================
 
-    /// R-004: PasswordVerifier::verify 委托 Argon2Hasher（$argon2id$ 前缀）。
+    /// PasswordVerifier::verify 委托 Argon2Hasher（$argon2id$ 前缀）。
     #[test]
     fn password_verifier_delegates_to_argon2() {
         let hasher = Argon2Hasher::default();
@@ -507,7 +507,7 @@ mod tests {
         assert!(!wrong, "PasswordVerifier 应委托 Argon2Hasher 校验错误密码");
     }
 
-    /// R-004: PasswordVerifier::verify 委托 BcryptHasher（$2b$ 前缀）。
+    /// PasswordVerifier::verify 委托 BcryptHasher（$2b$ 前缀）。
     #[test]
     fn password_verifier_delegates_to_bcrypt() {
         let hasher = BcryptHasher::default();
@@ -518,7 +518,7 @@ mod tests {
         assert!(!wrong, "PasswordVerifier 应委托 BcryptHasher 校验错误密码");
     }
 
-    /// R-004: PasswordVerifier::verify 不支持的 hash 格式返回 InvalidParam。
+    /// PasswordVerifier::verify 不支持的 hash 格式返回 InvalidParam。
     #[test]
     fn password_verifier_unsupported_format_returns_invalid_param() {
         let result = PasswordVerifier::verify("password", "$unknown$hash");
@@ -529,7 +529,7 @@ mod tests {
         );
     }
 
-    /// R-004: PasswordVerifier::verify 识别 $2a$ 前缀（Bcrypt 兼容）。
+    /// PasswordVerifier::verify 识别 $2a$ 前缀（Bcrypt 兼容）。
     #[test]
     fn password_verifier_delegates_to_bcrypt_2a_format() {
         let hasher = BcryptHasher::default();
@@ -543,7 +543,7 @@ mod tests {
     // Argon2 输出长度契约测试
     // ========================================================================
 
-    /// H4: Argon2Hasher::hash 输出长度为 32 字节（预分配缓冲区）。
+    /// Argon2Hasher::hash 输出长度为 32 字节（预分配缓冲区）。
     ///
     /// PHC 格式：`$argon2id$v=19$m=...,t=...,p=...$<salt>$<hash>`
     /// 末段为 hash 的 base64 编码（无 padding），解码后应为 32 字节。
@@ -566,7 +566,7 @@ mod tests {
         let hasher = Argon2Hasher::default();
         let hash = hasher.hash("test-password").expect("hash 应成功");
         // 以 $ 分隔：[0]=""（空前缀）, [1]="argon2id", [2]="v=19",
-        //          [3]="m=...,t=...,p=...", [4]="<salt>", [5]="<hash>"
+        // [3]="m=...,t=...,p=...", [4]="<salt>", [5]="<hash>"
         let parts: Vec<&str> = hash.split('$').collect();
         assert!(
             parts.len() >= 6,
@@ -601,7 +601,7 @@ mod tests {
     /// 的 Drop 实现清零内部字节。此处验证：
     /// 1. hash/verify 在 zeroize feature 启用时仍正确工作（无回归）
     /// 2. Zeroizing<Vec<u8>> 包装的 password 字节在 .zeroize() 后被清零
-    ///    （这是 hash 内部使用的清零机制）
+    /// （这是 hash 内部使用的清零机制）
     /// 3. Zeroizing<String> wrapper 可与 hash 配合使用（通过 Deref<Target=str>）
     #[cfg(feature = "credential-zeroize")]
     #[test]
@@ -632,13 +632,13 @@ mod tests {
         );
 
         // 2. 验证 hash 内部使用的 zeroize 机制：
-        //    a) Vec<u8>::zeroize() 先零填充字节再 clear（length=0，capacity 保留）
+        // a) Vec<u8>::zeroize() 先零填充字节再 clear（length=0，capacity 保留）
         let mut local_copy: Vec<u8> = password.as_bytes().to_vec();
         local_copy.zeroize();
         assert_eq!(local_copy.len(), 0, "Vec::zeroize 后 length 应为 0 (clear)");
 
-        //    b) [u8; N]::zeroize() 仅零填充字节（数组长度固定，不 clear）
-        //       证明 zeroize 的字节清零语义
+        // b) [u8; N]::zeroize() 仅零填充字节（数组长度固定，不 clear）
+        // 证明 zeroize 的字节清零语义
         let mut arr: [u8; 18] = [0; 18];
         arr.copy_from_slice(password.as_bytes());
         arr.zeroize();
@@ -649,7 +649,7 @@ mod tests {
         );
 
         // 3. Zeroizing<String> wrapper 可与 hash 配合（通过 Deref<Target=String> → str）
-        //    调用方可用此 wrapper 持有 password，wrapper Drop 时清零底层字节
+        // 调用方可用此 wrapper 持有 password，wrapper Drop 时清零底层字节
         let wrapped = Zeroizing::new(password.to_string());
         let hash2 = hasher.hash(wrapped.as_str()).expect("hash 应成功");
         assert!(
@@ -684,14 +684,14 @@ mod tests {
         (cred, password.to_string())
     }
 
-    /// R-004: `credential_type()` 返回常量 `"password"`。
+    /// `credential_type()` 返回常量 `"password"`。
     #[test]
     fn password_credential_type_returns_password() {
         let (cred, _) = make_password_cred("c1", "alice", "secret");
         assert_eq!(cred.credential_type(), "password");
     }
 
-    /// R-004: `to_model()` 返回原始 CredentialModel（字段一致）。
+    /// `to_model()` 返回原始 CredentialModel（字段一致）。
     #[test]
     fn password_credential_to_model_returns_original() {
         let (cred, _) = make_password_cred("c1", "alice", "secret");
@@ -705,7 +705,7 @@ mod tests {
         );
     }
 
-    /// R-004: `verify()` 正确密码返回 `Ok(true)`。
+    /// `verify()` 正确密码返回 `Ok(true)`。
     #[tokio::test]
     async fn password_credential_verify_correct_password() {
         let (cred, password) = make_password_cred("c1", "alice", "my-secret");
@@ -713,7 +713,7 @@ mod tests {
         assert!(result, "正确密码应校验通过");
     }
 
-    /// R-004: `verify()` 错误密码返回 `Ok(false)`。
+    /// `verify()` 错误密码返回 `Ok(false)`。
     #[tokio::test]
     async fn password_credential_verify_wrong_password() {
         let (cred, _) = make_password_cred("c1", "alice", "my-secret");
@@ -724,7 +724,7 @@ mod tests {
         assert!(!result, "错误密码应校验失败");
     }
 
-    /// R-004: `PasswordCredential` 支持 BcryptHasher（多 hasher 兼容）。
+    /// `PasswordCredential` 支持 BcryptHasher（多 hasher 兼容）。
     #[tokio::test]
     async fn password_credential_works_with_bcrypt_hasher() {
         let hasher = BcryptHasher::default();
@@ -753,7 +753,7 @@ mod tests {
         );
     }
 
-    /// R-004: `PasswordCredential` 可作 `Box<dyn Credential>` 使用（对象安全验证）。
+    /// `PasswordCredential` 可作 `Box<dyn Credential>` 使用（对象安全验证）。
     #[tokio::test]
     async fn password_credential_usable_as_dyn_credential() {
         let (cred, password) = make_password_cred("c1", "alice", "secret");
@@ -763,7 +763,7 @@ mod tests {
         assert!(result, "dyn Credential 正确密码应校验通过");
     }
 
-    /// R-004: `PasswordCredential` 在 `account-credential-zeroize` feature 启用时仍正确工作。
+    /// `PasswordCredential` 在 `account-credential-zeroize` feature 启用时仍正确工作。
     #[cfg(feature = "credential-zeroize")]
     #[tokio::test]
     async fn password_credential_zeroize_integration() {

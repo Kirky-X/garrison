@@ -3,7 +3,7 @@
 
 //! `GarrisonManager` 的实现块（含 `Drop` impl）。
 //!
-//! 本文件从 `mod.rs` 迁移而来，遵循 mod-crate-hardening（规则 25）：
+//! 本文件从 `mod.rs` 迁移而来，遵循 mod.rs 接口隔离约定：
 //! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
 //!
 //! 初始化职责已迁移至 [`crate::manager::builder`]（`GarrisonManager::builder()`），
@@ -79,7 +79,7 @@ impl GarrisonManager {
     /// use garrison::prelude::*;
     ///
     /// if let Some(repo) = GarrisonManager::disable_repository() {
-    ///     repo.disable("user-1", "default", None, 0, 0).await.unwrap();
+    /// repo.disable("user-1", "default", None, 0, 0).await.unwrap();
     /// }
     /// ```
     pub fn disable_repository() -> Option<Arc<dyn DisableRepository>> {
@@ -109,7 +109,7 @@ impl GarrisonManager {
     /// - `true`: 已通过 `builder().build()` 初始化且全局单例持有 `GarrisonLogicDefault`。
     /// - `false`: 未初始化或已 `reset_for_test`。
     pub fn is_initialized() -> bool {
-        // Issue 90: 同时检查 logic 和 strategy 是否都已初始化
+        // 同时检查 logic 和 strategy 是否都已初始化
         GARRISON_MANAGER.logic.load().is_some() && GARRISON_MANAGER.strategy.load().is_some()
     }
 

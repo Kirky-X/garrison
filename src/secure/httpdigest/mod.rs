@@ -24,7 +24,7 @@
 //! 注入 DAO 才会启用：
 //!
 //! - **未注入 DAO**：nc 校验被跳过（fail-open，仅进程级 warn 一次），
-//!   攻击者在 nonce TTL（默认 300s）窗口内可任意重放同一 Authorization header。
+//! 攻击者在 nonce TTL（默认 300s）窗口内可任意重放同一 Authorization header。
 //! - **注入 DAO**：nc 回退/重复被拒绝（fail-closed），DAO 故障时拒绝认证。
 //! - **未注入 server_key**：nonce 无 HMAC 签名，客户端可自铸 nonce（仍受 TTL 约束）。
 //!

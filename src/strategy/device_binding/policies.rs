@@ -20,7 +20,7 @@ use super::DeviceBindingPolicy;
 /// 通过遍历 `login_id` 的所有 token session,检查是否有 session 的 `device` 字段
 /// 匹配 `device_id`。任一 session 匹配则视为已知设备,全部不匹配则视为新设备。
 ///
-/// # 空设备标识（issue #3687/#2164：显式声明 fail 语义）
+/// # 空设备标识（显式声明 fail 语义）
 ///
 /// 空 `device_id` 返回 `Ok(false)`（视为已知设备,跳过检测）并 `tracing::warn!`。
 /// **安全语义**：`Ok(false)` 意味着空设备标识的登录会绕过新设备检测与

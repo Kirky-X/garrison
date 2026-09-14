@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Token 模块单元测试（从 mod.rs 迁移，遵守 mod.rs 接口隔离规则 25）。
+//! Token 模块单元测试（从 mod.rs 迁移，遵守 mod.rs 接口隔离约定）。
 //!
 //! 覆盖 `TokenClaims` 序列化、四种 Token 风格（uuid / random_64 / simple / jwt）
 //! 的 generate / verify / parse 行为，以及 `TokenStyleFactory` 的风格路由。
@@ -103,7 +103,7 @@ fn random64_style_verify_returns_none() {
 }
 
 // ========================================================================
-// SimpleTokenStyle 测试（A11: HMAC-SHA256 签名版）
+// SimpleTokenStyle 测试（HMAC-SHA256 签名版）
 // ========================================================================
 //
 // 测试需 `secure-simple-token` feature（已包含在 `auth-server` 中）。
@@ -119,7 +119,7 @@ fn make_simple_style() -> SimpleTokenStyle {
     SimpleTokenStyle::new(TEST_SECRET.to_string())
 }
 
-/// R-sessiontokenconsistency-002：secret 短于 32 字节时 generate/verify 失败，
+/// secret 短于 32 字节时 generate/verify 失败，
 /// 对齐 JWT 双向强校验；32 字节边界成功。
 #[cfg(feature = "secure-simple-token")]
 #[test]
@@ -159,7 +159,7 @@ fn simple_style_generates_login_id_prefix() {
         "token 应以 login_id + \\x1f 开头，实际: {}",
         token
     );
-    // A11: token 应含 '.' 分隔 HMAC 部分
+    // token 应含 '.' 分隔 HMAC 部分
     assert!(
         token.contains('.'),
         "token 应含 '.' 分隔 HMAC，实际: {}",
@@ -246,7 +246,7 @@ fn simple_style_parse_rejects_invalid_uuid_suffix() {
     assert!(result.is_err(), "UUID 部分无效的 token parse 应返回 Err");
 }
 
-/// A11 核心测试：verify 拒绝无 HMAC 的降级 token（防降级攻击）。
+/// verify 拒绝无 HMAC 的降级 token（防降级攻击）。
 ///
 /// 攻击场景：攻击者构造无 HMAC 的 `<login_id>-<uuid>` token，
 /// 试图绕过 HMAC 校验。应返回 None。
@@ -260,7 +260,7 @@ fn a11_simple_style_verify_rejects_unsigned_token_without_hmac() {
     assert_eq!(result, None, "A11: 无 HMAC 的 token 应被拒绝，防止降级攻击");
 }
 
-/// A11 核心测试：verify 拒绝 HMAC 不匹配的伪造 token。
+/// verify 拒绝 HMAC 不匹配的伪造 token。
 ///
 /// 攻击场景：攻击者知道 token 格式但不知道 secret，
 /// 构造 `<login_id>\x1f<valid_uuid>.<fake_hmac>` 试图冒充。
@@ -275,7 +275,7 @@ fn a11_simple_style_verify_rejects_forged_hmac() {
     assert_eq!(result, None, "A11: HMAC 不匹配的伪造 token 应被拒绝");
 }
 
-/// A11 核心测试：不同 secret 生成的 token 互不兼容。
+/// 不同 secret 生成的 token 互不兼容。
 ///
 /// 攻击场景：攻击者用自己的 secret 生成合法格式 token，
 /// 试图在受害者的服务端通过验证。应返回 None。
@@ -291,7 +291,7 @@ fn a11_simple_style_verify_rejects_token_from_different_secret() {
     assert_eq!(result, None, "A11: 不同 secret 生成的 token 不应通过验证");
 }
 
-/// A11 核心测试：空 secret 时 generate 返回 Err（fail-closed）。
+/// 空 secret 时 generate 返回 Err（fail-closed）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_empty_secret_generate_errors() {
@@ -304,7 +304,7 @@ fn a11_simple_style_empty_secret_generate_errors() {
     );
 }
 
-/// A11 核心测试：空 secret 时 verify 返回 None（fail-closed）。
+/// 空 secret 时 verify 返回 None（fail-closed）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_empty_secret_verify_returns_none() {
@@ -316,11 +316,11 @@ fn a11_simple_style_empty_secret_verify_returns_none() {
     );
 }
 
-/// A11 核心测试：generate + verify + parse 往返一致性。
+/// generate + verify + parse 往返一致性。
 ///
-/// H2 修复后 token 格式为 `<login_id>\x1f<uuid>.<exp>.<hmac>`，login_id 可含任意字符
-/// （除 `\x1f` 和 `.`，issue 2429 边界用例见下方专用测试）。
-/// issue 2425/3256：Simple token 现携带 exp，`expire_at` 应为正数（不再是 0）。
+/// token 格式为 `<login_id>\x1f<uuid>.<exp>.<hmac>`，login_id 可含任意字符
+/// （除 `\x1f` 和 `.`，边界用例见下方专用测试）。
+/// Simple token 现携带 exp，`expire_at` 应为正数（不再是 0）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_roundtrip() {
@@ -342,13 +342,13 @@ fn a11_simple_style_roundtrip() {
     assert_eq!(claims.device, None);
 }
 
-/// A11 核心测试：parse 拒绝 HMAC 不匹配的 token。
+/// parse 拒绝 HMAC 不匹配的 token。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn a11_simple_style_parse_rejects_forged_hmac() {
     let style = make_simple_style();
     // 伪造 token：合法 UUID + 合法形态的 exp 段 + 伪造 HMAC
-    //（issue 2425/3256 后格式含 exp 段，伪造样本同步更新以命中 HMAC 校验路径）
+    //（格式含 exp 段，伪造样本同步更新以命中 HMAC 校验路径）
     let forged = "admin\x1f550e8400-e29b-41d4-a716-446655440000.9999999999.fake-hmac";
     let result = style.parse(forged);
     assert!(
@@ -359,11 +359,11 @@ fn a11_simple_style_parse_rejects_forged_hmac() {
 }
 
 // ========================================================================
-// H2 修复测试：SimpleTokenStyle 支持含 `-` 的 login_id
+// SimpleTokenStyle 支持含 `-` 的 login_id
 //（原格式用 `-` 分割 login_id 与 uuid，login_id 含 `-` 时 verify 返回 None）
 // ========================================================================
 
-/// H2: login_id 含 `-`（email 形式）时 generate + verify + parse 往返一致。
+/// login_id 含 `-`（email 形式）时 generate + verify + parse 往返一致。
 ///
 /// 复现：login_id = "user-1@example.com"，原实现 verify 用 `split_once('-')`
 /// 会得到 login_id="user"、uuid_part="1@example.com-<uuid>"，UUID 解析失败 → 返回 None。
@@ -395,7 +395,7 @@ fn h2_simple_style_supports_dashed_login_id_email() {
     );
 }
 
-/// H2: login_id 为 UUID 格式（含 4 个 `-`）时 generate + verify + parse 往返一致。
+/// login_id 为 UUID 格式（含 4 个 `-`）时 generate + verify + parse 往返一致。
 ///
 /// 复现：login_id = "550e8400-e29b-41d4-a716-446655440000"（UUID 形式），
 /// 原实现 verify 用 `split_once('-')` 会得到 login_id="550e8400"、
@@ -419,7 +419,7 @@ fn h2_simple_style_supports_uuid_login_id() {
     );
 }
 
-/// H2: login_id 含多个连续 `-`（kebab-case）时往返一致。
+/// login_id 含多个连续 `-`（kebab-case）时往返一致。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn h2_simple_style_supports_kebab_case_login_id() {
@@ -436,7 +436,7 @@ fn h2_simple_style_supports_kebab_case_login_id() {
     assert_eq!(claims.login_id, login_id);
 }
 
-/// A11 核心测试：未启用 secure-simple-token feature 时 generate 返回 Err。
+/// 未启用 secure-simple-token feature 时 generate 返回 Err。
 #[cfg(not(feature = "secure-simple-token"))]
 #[test]
 fn a11_simple_style_without_feature_generate_errors() {
@@ -449,10 +449,10 @@ fn a11_simple_style_without_feature_generate_errors() {
 }
 
 // ========================================================================
-// 边界用例（issue 2429 / 3258 / 2425）：\x1f 分隔符、空 login_id、过期语义
+// 边界用例：\x1f 分隔符、空 login_id、过期语义
 // ========================================================================
 
-/// issue 2429: login_id 含 `\x1f`（与分隔符同字节）必须被拒绝，不得产生可解析歧义 token。
+/// login_id 含 `\x1f`（与分隔符同字节）必须被拒绝，不得产生可解析歧义 token。
 ///
 /// 攻击场景：login_id = "user\x1fadmin" 生成的 token 会被 verify 按**第一个** `\x1f`
 /// 切分出错误身份（"user" + 非法 uuid 段）。修复：generate 直接拒绝含 `\x1f` 的
@@ -479,7 +479,7 @@ fn boundary_login_id_containing_unit_separator_rejected() {
     );
 }
 
-/// issue 3258: 空 login_id 在 generate 时被拒绝（fail-closed，杜绝空身份 token）。
+/// 空 login_id 在 generate 时被拒绝（fail-closed，杜绝空身份 token）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn boundary_empty_login_id_rejected_at_generate() {
@@ -505,7 +505,7 @@ fn boundary_empty_login_id_rejected_at_generate() {
     );
 }
 
-/// issue 2425/3256（辅助验证）：generate 拒绝 timeout <= 0（无过期时间的永久 token 不允许生成）。
+/// generate 拒绝 timeout <= 0（无过期时间的永久 token 不允许生成）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn boundary_simple_token_rejects_non_positive_timeout() {
@@ -612,7 +612,7 @@ fn random64_style_parse_errors() {
     }
 }
 
-/// SimpleTokenStyle::verify 无分隔符时返回 Ok(None)（A11: 无 '.' 视为无效）。
+/// SimpleTokenStyle::verify 无分隔符时返回 Ok(None)（无 '.' 视为无效）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn simple_style_verify_no_separator_returns_none() {
@@ -621,12 +621,12 @@ fn simple_style_verify_no_separator_returns_none() {
     assert_eq!(result, None, "无 '.' 分隔符的 token verify 应返回 None");
 }
 
-/// SimpleTokenStyle::verify 非数字 login_id 返回 Ok（A11: 需合法 HMAC）。
+/// SimpleTokenStyle::verify 非数字 login_id 返回 Ok（需合法 HMAC）。
 #[cfg(feature = "secure-simple-token")]
 #[test]
 fn simple_style_verify_non_numeric_returns_ok() {
     let style = make_simple_style();
-    // A11: 用 generate 生成合法 token（含非数字 login_id + HMAC）
+    // 用 generate 生成合法 token（含非数字 login_id + HMAC）
     let token = style.generate("abc", 3600).unwrap();
     let result = style.verify(&token);
     assert!(result.is_ok(), "verify 应返回 Ok，实际: {:?}", result);

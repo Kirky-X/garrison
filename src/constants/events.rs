@@ -15,7 +15,7 @@ use std::fmt;
 /// - `crate::listener::GarrisonEvent::FirewallBlock`（`Revoked` / `Expired` 等）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EventReason {
-    /// 无效凭证（v0.4.2 安全审计 A-014：user_not_found 与 wrong_password 统一）
+    /// 无效凭证（user_not_found 与 wrong_password 统一）
     InvalidCredentials,
     /// 密码哈希格式不支持（hasher.verify 失败，可泄露给运维定位）
     HashFormatError,

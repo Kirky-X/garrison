@@ -11,13 +11,13 @@
 //! use garrison::account::authflow::{AuthenticationFlow, AuthCondition, AuthStep};
 //!
 //! let flow: AuthenticationFlow = FlowBuilder::new("default-password-flow")
-//!     .login("password")
-//!     .conditional(
-//!         AuthCondition::HasCredential("totp".to_string()),
-//!         AuthStep::Mfa { credential_type: Some("totp".to_string()) },
-//!         None,
-//!     )
-//!     .build();
+//! .login("password")
+//! .conditional(
+//! AuthCondition::HasCredential("totp".to_string()),
+//! AuthStep::Mfa { credential_type: Some("totp".to_string()) },
+//! None,
+//! )
+//! .build();
 //! assert_eq!(flow.steps.len(), 2);
 //! ```
 
@@ -38,8 +38,8 @@ use super::{AuthCondition, AuthStep, AuthenticationFlow};
 /// use garrison::account::authflow::AuthenticationFlow;
 ///
 /// let flow: AuthenticationFlow = FlowBuilder::new("test")
-///     .login("password")
-///     .build();
+/// .login("password")
+/// .build();
 /// assert_eq!(flow.name, "test");
 /// assert_eq!(flow.steps.len(), 1);
 /// assert!(!flow.allow_skip);
@@ -143,7 +143,7 @@ impl FlowBuilder {
 mod tests {
     use super::*;
 
-    /// 空 flow：仅指定名称，steps 为空，allow_skip 默认 false（R-auth-flow-dsl-006）。
+    /// 空 flow：仅指定名称，steps 为空，allow_skip 默认 false。
     #[test]
     fn empty_flow() {
         let flow = FlowBuilder::new("empty").build();
@@ -152,7 +152,7 @@ mod tests {
         assert!(!flow.allow_skip);
     }
 
-    /// 单步 flow：一个 Login 步骤（R-auth-flow-dsl-006）。
+    /// 单步 flow：一个 Login 步骤。
     #[test]
     fn single_step_flow() {
         let flow = FlowBuilder::new("single").login("password").build();
@@ -163,7 +163,7 @@ mod tests {
         ));
     }
 
-    /// 多步 flow：login + mfa + social + sso（R-auth-flow-dsl-006）。
+    /// 多步 flow：login + mfa + social + sso。
     #[test]
     fn multi_step_flow() {
         let flow = FlowBuilder::new("multi")
@@ -188,7 +188,7 @@ mod tests {
         ));
     }
 
-    /// conditional flow：条件分支含 Box 包装（R-auth-flow-dsl-006）。
+    /// conditional flow：条件分支含 Box 包装。
     #[test]
     fn conditional_flow() {
         let flow = FlowBuilder::new("cond")
@@ -219,7 +219,7 @@ mod tests {
         }
     }
 
-    /// sub_flow flow：子流程引用步骤（R-auth-flow-dsl-006）。
+    /// sub_flow flow：子流程引用步骤。
     #[test]
     fn sub_flow_step() {
         let flow = FlowBuilder::new("parent")
@@ -233,7 +233,7 @@ mod tests {
         ));
     }
 
-    /// allow_skip：显式开启后 build 返回的 flow allow_skip == true（R-auth-flow-dsl-006）。
+    /// allow_skip：显式开启后 build 返回的 flow allow_skip == true。
     #[test]
     fn allow_skip_flag() {
         let flow = FlowBuilder::new("skippable")
@@ -247,7 +247,7 @@ mod tests {
         assert!(!flow_default.allow_skip);
     }
 
-    /// mfa(None) 构造 Mfa { credential_type: None }（R-auth-flow-dsl-006 补充）。
+    /// mfa(None) 构造 Mfa { credential_type: None }。
     #[test]
     fn mfa_none_variant() {
         let flow = FlowBuilder::new("mfa-none").mfa(None).build();

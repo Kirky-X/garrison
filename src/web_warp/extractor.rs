@@ -9,8 +9,8 @@
 //! ## 设计
 //!
 //! - 与现有 `check_login` / `check_role` / `check_permission` Filter 互补：
-//!   现有 Filter 仅执行鉴权（返回 `()`），`garrison_principal` 携带
-//!   `login_id` 字段供 handler 直接读取当前用户身份。
+//! 现有 Filter 仅执行鉴权（返回 `()`），`garrison_principal` 携带
+//! `login_id` 字段供 handler 直接读取当前用户身份。
 //! - `GarrisonPrincipal` 类型定义在 [`crate::context`] 模块，与 actix extractor 共享。
 //!
 //! ## 使用示例
@@ -22,8 +22,8 @@
 //!
 //! let config = Arc::new(GarrisonConfig::default_config());
 //! let routes = warp::path("api")
-//!     .and(garrison_principal(config))
-//!     .map(|principal| format!("login_id = {}", principal.login_id));
+//! .and(garrison_principal(config))
+//! .map(|principal| format!("login_id = {}", principal.login_id));
 //! ```
 
 use crate::config::GarrisonConfig;
@@ -160,8 +160,6 @@ mod tests {
 
     /// 验证 `garrison_principal` Filter 从 `Authorization: Bearer <token>`
     /// header 解析出 `login_id`。
-    ///
-    /// 覆盖 spec web-adapters D12 Requirement: warp extractor 从 token 解析 login_id。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_extracted_from_warp_request() {
@@ -184,8 +182,6 @@ mod tests {
     }
 
     /// 验证 `garrison_principal` Filter 在无 token 时返回 Rejection。
-    ///
-    /// 覆盖 spec web-adapters D12 Requirement: extractor 在无 token 时拒绝请求。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_returns_rejection_without_token() {
@@ -205,8 +201,6 @@ mod tests {
     }
 
     /// 验证 `garrison_principal` Filter 在无效 token 时返回 Rejection。
-    ///
-    /// 覆盖 spec web-adapters D12 Requirement: extractor 在 token 无效时拒绝请求。
     #[tokio::test]
     #[serial]
     async fn garrison_principal_returns_rejection_with_invalid_token() {
@@ -239,9 +233,6 @@ mod tenant_tests {
     use serial_test::serial;
 
     /// 验证 `tenant_context` Filter 从 `X-Tenant-Id` header 解析出 `tenant_id`。
-    ///
-    /// 覆盖 spec web-adapters D12 + tenant-isolation Requirement:
-    /// warp extractor 从 X-Tenant-Id header 解析 tenant_id。
     #[tokio::test]
     #[serial]
     async fn tenant_context_extracted_from_warp_request_when_tenant_isolation_enabled() {
@@ -258,8 +249,7 @@ mod tenant_tests {
     }
 
     /// 验证 `tenant_context` Filter 在无 `X-Tenant-Id` header 时返回 Rejection。
-    ///
-    /// 覆盖 spec tenant-isolation Requirement: 缺失 header 时显式失败。
+    /// 缺失 header 时显式失败。
     #[tokio::test]
     #[serial]
     async fn tenant_context_returns_rejection_without_x_tenant_id_header() {
@@ -274,8 +264,7 @@ mod tenant_tests {
     }
 
     /// 验证 `tenant_context` Filter 在 `X-Tenant-Id` 非数字时返回 Rejection。
-    ///
-    /// 覆盖 spec tenant-isolation Requirement: 非法 tenant_id 显式失败。
+    /// 非法 tenant_id 显式失败。
     #[tokio::test]
     #[serial]
     async fn tenant_context_returns_rejection_with_non_numeric_x_tenant_id() {

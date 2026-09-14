@@ -210,7 +210,7 @@ async fn db_health_check_returns_healthy() {
 }
 
 // ============================================================================
-// D4 — 健康检查真实探测 + 超时 测试（W3，探测路径专属）
+// 健康检查真实探测 + 超时测试（探测路径专属）
 // ============================================================================
 
 /// 探测路径下，`GarrisonManager` 未初始化时 `DbHealthCheck` 返回 `Unhealthy`。
@@ -245,7 +245,7 @@ async fn db_health_check_unhealthy_when_manager_uninitialized() {
 /// 探测路径下未注入连接池（`new()` 默认）时返回 `Degraded`，不再误报 `Healthy`。
 ///
 /// 原实现探测内存 KV DAO（Postgres 宕机仍 Healthy，K8s 摘流失效）；
-/// v0.9.0 起无连接池句柄即诚实降级。
+/// 无连接池句柄即诚实降级。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 #[serial_test::serial]

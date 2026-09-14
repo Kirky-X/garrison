@@ -93,10 +93,10 @@ fn base64_decode_invalid_input_errors() {
 }
 
 // ========================================================================
-// verify_hmac_sha256 测试（D1：常量时间 HMAC 验证）
+// verify_hmac_sha256 测试（常量时间 HMAC 验证）
 // ========================================================================
 
-/// D1-1: 正确签名返回 true。
+/// 正确签名返回 true。
 #[test]
 fn verify_hmac_sha256_valid_signature_returns_true() {
     let secret = b"my-secret-key";
@@ -105,7 +105,7 @@ fn verify_hmac_sha256_valid_signature_returns_true() {
     assert!(Signer::verify_hmac_sha256(secret, data, &sig));
 }
 
-/// D1-2: 错误签名返回 false。
+/// 错误签名返回 false。
 #[test]
 fn verify_hmac_sha256_invalid_signature_returns_false() {
     let secret = b"my-secret-key";
@@ -114,7 +114,7 @@ fn verify_hmac_sha256_invalid_signature_returns_false() {
     assert!(!Signer::verify_hmac_sha256(secret, data, &tampered));
 }
 
-/// D1-3: 长度不符的签名返回 false（不 panic）。
+/// 长度不符的签名返回 false（不 panic）。
 #[test]
 fn verify_hmac_sha256_wrong_length_signature_returns_false() {
     let secret = b"my-secret-key";
@@ -123,21 +123,21 @@ fn verify_hmac_sha256_wrong_length_signature_returns_false() {
     assert!(!Signer::verify_hmac_sha256(secret, data, ""));
 }
 
-/// D1-4: secret 不匹配时返回 false。
+/// secret 不匹配时返回 false。
 #[test]
 fn verify_hmac_sha256_wrong_secret_returns_false() {
     let sig = Signer::hmac_sha256(b"secret-a", b"data");
     assert!(!Signer::verify_hmac_sha256(b"secret-b", b"data", &sig));
 }
 
-/// D1-5: data 不匹配时返回 false。
+/// data 不匹配时返回 false。
 #[test]
 fn verify_hmac_sha256_wrong_data_returns_false() {
     let sig = Signer::hmac_sha256(b"secret", b"data-a");
     assert!(!Signer::verify_hmac_sha256(b"secret", b"data-b", &sig));
 }
 
-/// D1-6: 大小写敏感（hex 小写，传入大写应 false）。
+/// 大小写敏感（hex 小写，传入大写应 false）。
 #[test]
 fn verify_hmac_sha256_case_sensitive() {
     let sig = Signer::hmac_sha256(b"secret", b"data");
@@ -145,14 +145,14 @@ fn verify_hmac_sha256_case_sensitive() {
     assert!(!Signer::verify_hmac_sha256(b"secret", b"data", &upper));
 }
 
-/// D1-7: 空数据 + 空 secret 仍可正确验证（边界）。
+/// 空数据 + 空 secret 仍可正确验证（边界）。
 #[test]
 fn verify_hmac_sha256_empty_inputs_boundary() {
     let sig = Signer::hmac_sha256(b"", b"");
     assert!(Signer::verify_hmac_sha256(b"", b"", &sig));
 }
 
-/// D1-8: 时序无显著差异（多次取均值，错误签名不应明显更快）。
+/// 时序无显著差异（多次取均值，错误签名不应明显更快）。
 /// 通过比较正确签名与错误签名的平均耗时，差异不应超过 3 倍。
 /// 注意：时序测试有抖动，使用宽松阈值避免 flaky。
 #[test]
@@ -235,7 +235,7 @@ fn signer_implements_default() {
 /// 强制启用 `dep:subtle`（signer 模块仅在 secure-sign 下编译），该 fallback
 /// 是**永远不可达的死代码**。
 ///
-/// 源码级守卫测试（与 E3 模式一致）：过滤注释后断言真实代码不再包含
+/// 源码级守卫测试：过滤注释后断言真实代码不再包含
 /// `constant_time_eq_manual` 标识符与 `not(subtle)` 分支，防止回归重新引入重复实现。
 #[test]
 fn deep02_signer_has_no_manual_constant_time_fallback() {

@@ -22,7 +22,7 @@ use tower::{Layer, Service};
 /// 1. 从 `Authorization: Bearer <token>` 提取 token（复用拦截器的严格 Bearer 校验）；
 /// 2. 缺失/格式错误/未登录/伪造 → `Status::unauthenticated` 拒绝（不再进入 handler）；
 /// 3. 已登录 → 在 `with_current_token` 作用域内调用内层 service，
-///    handler 内 `GarrisonUtil::check_login()` 等静态 API 可直接使用。
+/// handler 内 `GarrisonUtil::check_login()` 等静态 API 可直接使用。
 ///
 /// # 用法
 /// ```ignore
@@ -72,7 +72,7 @@ where
 
     fn call(&mut self, request: http::Request<tonic::body::Body>) -> Self::Future {
         // 1. 提取 token（零克隆直读 HTTP 头，与拦截器共享 parse_bearer 单点逻辑；
-        //    失败即拒绝，不进入 handler）
+        // 失败即拒绝，不进入 handler）
         let token =
             super::GarrisonGrpcInterceptor::extract_token_from_headers(request.headers()).ok();
 
@@ -86,11 +86,11 @@ where
         };
 
         // 2. 内层 future 先创建（tower 惯例：call() 内即发起；tonic 内置
-        //    Routes/Grpc 为 level-based ready 协议，无许可滞留问题。若在
-        //    本层之外叠加容量型中间件如 ConcurrencyLimit，其 poll_ready
-        //    预取的许可在拒绝路径会滞留至 service drop——性能审查 P1/A5 结论），
-        //    鉴权与内层调用同处 `with_current_token` 作用域——handler 经
-        //    task_local 看到当前 token，`GarrisonUtil` 静态 API 可直接使用。
+        // Routes/Grpc 为 level-based ready 协议，无许可滞留问题。若在
+        // 本层之外叠加容量型中间件如 ConcurrencyLimit，其 poll_ready
+        // 预取的许可在拒绝路径会滞留至 service drop——性能审查 P1/A5 结论），
+        // 鉴权与内层调用同处 `with_current_token` 作用域——handler 经
+        // task_local 看到当前 token，`GarrisonUtil` 静态 API 可直接使用。
         let response_fut = self.inner.call(request);
         // 登录身份缓存作用域与 with_current_token 同层——鉴权 + handler
         // 处理期内 get_login_id/check_permission 可命中缓存免 DAO 读取。
@@ -177,7 +177,7 @@ mod tests {
         );
     }
 
-    /// ACC-GRPC-AUTH-001（异常）：无 Authorization metadata → UNAUTHENTICATED。
+    /// 异常：无 Authorization metadata → UNAUTHENTICATED。
     #[tokio::test]
     #[serial]
     async fn auth_layer_missing_token_rejected() {
@@ -193,7 +193,7 @@ mod tests {
         assert_unauthenticated(resp).await;
     }
 
-    /// ACC-GRPC-AUTH-002（异常）：伪造（未登录）token → UNAUTHENTICATED。
+    /// 异常：伪造（未登录）token → UNAUTHENTICATED。
     #[tokio::test]
     #[serial]
     async fn auth_layer_forged_token_rejected() {
@@ -209,7 +209,7 @@ mod tests {
         assert_unauthenticated(resp).await;
     }
 
-    /// ACC-GRPC-AUTH-003（正常）：有效 token 放行，handler 内 check_login 为 true。
+    /// 正常：有效 token 放行，handler 内 check_login 为 true。
     #[tokio::test]
     #[serial]
     async fn auth_layer_valid_token_passes_and_propagates_token() {

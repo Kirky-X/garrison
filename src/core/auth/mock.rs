@@ -114,20 +114,20 @@ impl GarrisonDao for MockDao {
     /// 单次 lookup + 锁获取，避免 `get` + `get_timeout` 两次锁获取。
     /// 用于 `renew_to_equivalent` 热路径性能优化。
     ///
-    /// 过期语义与 [`Self::get`] 一致（issue 6430/6431）：
+    /// 过期语义与 [`Self::get`] 一致：
     /// - 单次 `Instant::now()` 同时用于过期判断与 TTL 计算（消除两次取时之间
-    ///   deadline 到期导致的「条目残留 + TTL 为 None」TOCTOU 窗口）
+    /// deadline 到期导致的「条目残留 + TTL 为 None」TOCTOU 窗口）
     /// - `deadline <= now` 时惰性删除并返回 `Ok(None)`（原实现在边界处返回
-    ///   `Some((value, None))` 且不删键，与 `get` 行为不一致）
+    /// `Some((value, None))` 且不删键，与 `get` 行为不一致）
     async fn get_with_ttl(&self, key: &str) -> GarrisonResult<Option<(String, Option<Duration>)>> {
         let mut store = self.store.lock().await;
         match store.get(key) {
             Some((value, expire_at)) => {
-                // 单次取时：过期判断与 TTL 计算使用同一 Instant（issue 6430）
+                // 单次取时：过期判断与 TTL 计算使用同一 Instant
                 let now = Instant::now();
                 match expire_at {
                     Some(deadline) if *deadline <= now => {
-                        // 惰性删除，与 get 行为一致（issue 6431）
+                        // 惰性删除，与 get 行为一致
                         store.remove(key);
                         Ok(None)
                     },
@@ -147,16 +147,16 @@ mod mock_dao_coverage_tests {
 
     /// 原子回退方法 + trait 默认方法的覆盖测试。
     ///
-    /// issue 326：原实现全部 `let _ = ...` 丢弃结果，仅验证编译与不 panic。
-    /// 修复：对每个方法的返回值断言（组合回退语义 / NotImplemented 契约）。
+    /// 对每个方法的返回值断言（组合回退语义 / NotImplemented 契约），
+    /// 而非仅验证编译与不 panic。
     ///
-    /// issue 328：trait 默认实现（keys / find_social_binding / eval_lua / DB 域方法等）
-    /// 返回 `NotImplemented`，原实现静默丢弃该错误。修复：用 `matches!` 锁定契约。
+    /// trait 默认实现（keys / find_social_binding / eval_lua / DB 域方法等）
+    /// 返回 `NotImplemented`，用 `matches!` 锁定契约，不静默丢弃错误。
     #[tokio::test]
     async fn mock_dao_atomic_and_default_methods_coverage() {
         let dao = MockDao::new();
 
-        // --- 原子回退方法：组合语义断言（issue 326） ---
+        // --- 原子回退方法：组合语义断言 ---
         dao.set("k1", "v1", 60).await.unwrap();
 
         // set_if_absent：不存在时插入成功，已存在时返回 false
@@ -227,7 +227,7 @@ mod mock_dao_coverage_tests {
         assert_eq!(v, "v2");
         assert!(ttl.is_some(), "设置了 TTL 的键应返回 Some(remaining)");
 
-        // --- trait 默认实现：NotImplemented 契约锁定（issue 328） ---
+        // --- trait 默认实现：NotImplemented 契约锁定 ---
         assert!(
             matches!(dao.keys("*").await, Err(GarrisonError::NotImplemented(_))),
             "keys 默认实现应返回 NotImplemented"

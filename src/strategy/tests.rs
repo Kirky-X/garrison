@@ -3,7 +3,7 @@
 
 //! `strategy` 模块的 inline tests。
 //!
-//! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
+//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
 //! 覆盖权限校验、角色层级、权限缓存、插件钩子、防火墙安全钩子等场景。
 //!
 //! 注意：引用 `GarrisonFirewallCheckHook` / `LoginContext` 的测试需 cfg 门控
@@ -466,7 +466,7 @@ async fn check_permission_triggers_plugin_hook() {
 
 /// 验证插件失败不中断 check_permission 主流程。
 ///
-/// 注意：当前实现遵循 task 21.3（Err → warn 不中断），不实现 spec 的 Override 机制。
+/// 注意：当前实现为 Err → warn 不中断，不实现 spec 的 Override 机制。
 #[tokio::test]
 async fn check_permission_plugin_failure_does_not_interrupt() {
     let mut iface = MockInterface::new();

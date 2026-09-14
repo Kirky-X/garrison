@@ -10,7 +10,7 @@
 //!
 //! - `tenant_id` 统一采用 `i64`：性能更优（INTEGER 索引/存储紧凑）、
 //!   类型安全（避免字符串业务码解析）、与 spec/tenant-isolation `TenantContext.tenant_id: i64` 一致。
-//!   origin FRD `VARCHAR(64)` 视为可偏离项；若需保留业务码（如 `tenant_001`），
+//!   原始设计将 `VARCHAR(64)` 视为可偏离项；若需保留业务码（如 `tenant_001`），
 //!   由调用方维护 `i64 ↔ String` 映射表，DAO 层只认 i64。
 //! - `create` 返回 `String` 而非 `LoginId`：dao 模块不应依赖 stp 模块（分层原则），
 //!   采用 `String` 返回新插入的 ID（UUID 字符串）。
@@ -1481,9 +1481,9 @@ mod tests {
     //
     // 此测试需要真实 PostgreSQL 实例，默认 #[ignore]。
     // 运行方式：
-    //   export DATABASE_URL=postgres://user:pass@localhost:5432/testdb
-    //   cargo test --features db-postgres --lib \
-    //     repository::tests::dbnexus_user_repository_works_with_postgres_backend -- --ignored
+    // export DATABASE_URL=postgres://user:pass@localhost:5432/testdb
+    // cargo test --features db-postgres --lib \
+    // repository::tests::dbnexus_user_repository_works_with_postgres_backend -- --ignored
 
     /// 验证 DbnexusUserRepository 在 PostgreSQL 后端下 find_by_id 正确执行。
     ///

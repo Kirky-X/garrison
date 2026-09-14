@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! observability 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! observability 模块测试（从 mod.rs 迁移）。
 
 // ============================================================================
 // GarrisonMetrics 测试（feature = "metrics-prometheus"）
@@ -164,7 +164,7 @@ mod tests_metrics {
         }
     }
 
-    /// ocr #6780/6923：重复调用 new()（含 Default）不再 panic——
+    /// 重复调用 new()（含 Default）不再 panic——
     /// 第二次起以 warn 提示并返回未注册的本地实例。
     #[test]
     #[serial]
@@ -407,7 +407,7 @@ mod tests_otlp {
     /// tonic channel 是惰性连接，build() 不需要 endpoint 可达，但 build() 内部
     /// 调用 tokio::spawn，因此需要 tokio runtime（使用 #[tokio::test] 提供）。
     /// 注意：set_tracer_provider 是全局一次性操作，用 #[serial] 隔离，
-    /// 避免与其他触碰全局 provider 的测试并发竞争（ocr #1764/2026）。
+    /// 避免与其他触碰全局 provider 的测试并发竞争。
     #[tokio::test]
     #[serial]
     async fn test_init_otlp_tracing_succeeds() {
@@ -426,7 +426,7 @@ mod tests_otlp {
     /// 含空格的字符串不是合法 URI → `Endpoint::from_shared` 解析失败 →
     /// `ExporterBuildError` 经 `From` 转换为 `GarrisonOtelError::Exporter`。
     /// 此路径在 build() 阶段即失败，不触达 `set_tracer_provider` 全局状态；
-    /// 仍加 #[serial] 与全局 provider 测试串行（ocr #1764/2026）。
+    /// 仍加 #[serial] 与全局 provider 测试串行。
     #[tokio::test]
     #[serial]
     async fn test_init_otlp_tracing_invalid_endpoint_returns_err() {
@@ -550,7 +550,7 @@ mod tests_inklog {
         assert!(!normal.is_degraded());
     }
 
-    /// M-4/R-dep-003: inklog 初始化失败时 init_inklog_logging 返回 Err。
+    /// inklog 初始化失败时 init_inklog_logging 返回 Err。
     ///
     /// 通过 RUST_LOG 注入 inklog 非法 level（合法集合仅 trace/debug/info/warn/
     /// warning/error/fatal/critical），使 builder 校验失败 → build() 返回
@@ -566,7 +566,7 @@ mod tests_inklog {
         assert!(result.is_err(), "非法 level 应使 inklog 初始化失败");
     }
 
-    /// R-dep-003: inklog 初始化失败时 with_fallback 降级（degraded=true, guard=None）。
+    /// inklog 初始化失败时 with_fallback 降级（degraded=true, guard=None）。
     ///
     /// RUST_LOG 设为 inklog 非法 level → build() 返回 Err → 走降级分支：
     /// metrics-prometheus 启用时先 try_init tracing-subscriber JSON（全局注册，

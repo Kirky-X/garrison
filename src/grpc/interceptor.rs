@@ -3,11 +3,11 @@
 
 //! gRPC 鉴权拦截器实现。
 //!
-//! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
+//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
 //! 包含 `GarrisonGrpcInterceptor` 的构造、token 提取方法
 //! 与 `tonic::Interceptor` trait 实现。
 //!
-//! ## 鉴权语义（ocr #2633/#3036/#3276/#3277）
+//! ## 鉴权语义
 //!
 //! `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的
 //! `GarrisonUtil::check_login()`。默认构造（`new()`）仅完成 token 提取与
@@ -27,7 +27,7 @@ use super::{GarrisonGrpcInterceptor, GarrisonGrpcToken, GarrisonGrpcTokenValidat
 /// Bearer token 最大长度（字节）。
 ///
 /// 超长 `Authorization` 头会在提取后产生无界堆分配并放大后续查找开销
-/// （ocr #2380），4KB 对合法 access token 而言余量充足。
+/// ，4KB 对合法 access token 而言余量充足。
 pub const MAX_TOKEN_LEN: usize = 4096;
 
 impl GarrisonGrpcInterceptor {
@@ -40,7 +40,7 @@ impl GarrisonGrpcInterceptor {
         Self { validator: None }
     }
 
-    /// 创建带**同步 token 校验器**的拦截器（真实鉴权扩展点，ocr #2633/#3036/#3276）。
+    /// 创建带**同步 token 校验器**的拦截器（真实鉴权扩展点）。
     ///
     /// 每个请求提取 token 后调用 `validator.validate(&token)`，
     /// 失败即以对应 `Status` 拒绝（不进入 handler）。
@@ -97,11 +97,11 @@ impl GarrisonGrpcInterceptor {
     /// scheme 按前 7 字节做 ASCII 大小写不敏感比较（`Bearer` / `bearer` /
     /// `bEaReR` 等任意大小写组合均接受），第 8 字节必须为空格。
     /// 不接受裸 token：避免将 Basic/Digest 凭证误认为 Bearer token。
-    /// 超过 [`MAX_TOKEN_LEN`] 的 token 直接拒绝（防无界分配，ocr #2380）。
+    /// 超过 [`MAX_TOKEN_LEN`] 的 token 直接拒绝（防无界分配）。
     #[allow(clippy::result_large_err)]
     fn parse_bearer(auth_header: &str) -> Result<String, Status> {
         // RFC 7235 §2: scheme 大小写不敏感——对前 7 字节（"Bearer " 含空格）做
-        // ASCII 不敏感比较，不再枚举三种硬编码大小写（修复 ocr #2631/#3034/#3275/#3588/#6239）
+        // ASCII 不敏感比较，不再枚举三种硬编码大小写
         let token = auth_header
             .get(..7)
             .filter(|prefix| prefix.eq_ignore_ascii_case("Bearer "))
@@ -124,14 +124,14 @@ impl Interceptor for GarrisonGrpcInterceptor {
         // 提取并校验 Authorization metadata（Bearer 前缀 + 非空 + 长度上限）
         let token = Self::extract_token(request.metadata())?;
 
-        // 认证上下文注入（ocr #3277）：token 存入 request extensions，
+        // 认证上下文注入：token 存入 request extensions，
         // handler 可通过 `request.extensions().get::<GarrisonGrpcToken>()` 读取，
         // 不再"提取即弃"。
         request
             .extensions_mut()
             .insert(GarrisonGrpcToken(token.clone()));
 
-        // 真实鉴权扩展点（ocr #2633/#3036/#3276）：`Interceptor::call` 为同步 trait，
+        // 真实鉴权扩展点：`Interceptor::call` 为同步 trait，
         // 无法 await `GarrisonUtil::check_login()`。配置了同步校验器时在此完成
         // 真实鉴权（失败 → UNAUTHENTICATED，不进入 handler）；需要 async 校验
         // 请使用 [`GarrisonGrpcAuthLayer`]（tower Layer，内部执行 check_login）。

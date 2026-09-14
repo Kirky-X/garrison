@@ -25,7 +25,7 @@ const DEFAULT_NONCE_TTL_SECONDS: u64 = 300;
 /// 超过此长度时 validate_inner 直接返回 false（拒绝认证），不进入 parse_authorization
 /// 避免 O(n) 解析 + 多次 hash 计算被恶意输入放大。
 const MAX_AUTHORIZATION_HEADER_LEN: usize = 8 * 1024;
-/// DAO 错误日志采样间隔（vuln-0012 性能修复：防止 DAO 持续故障期间日志洪水）。
+/// DAO 错误日志采样间隔（防止 DAO 持续故障期间日志洪水）。
 ///
 /// 每 `DAO_ERROR_LOG_INTERVAL` 次 DAO 错误只打一次 `warn!`，其余降级为 `debug!`。
 /// 100 是平衡可观测性与 I/O 开销的经验值（1000 QPS × 30s 故障 = 30000 次 → 300 条 warn）。
@@ -67,7 +67,7 @@ impl HttpDigestAuth {
         })
     }
 
-    /// 注入 DAO 用于 nc 单调性校验（vuln-0008 修复，RFC 7616 §3.4.6）。
+    /// 注入 DAO 用于 nc 单调性校验（RFC 7616 §3.4.6）。
     ///
     /// 注入后 `validate` / `validate_with_body` 会通过 DAO 跟踪每个 nonce 的最后 nc 值，
     /// 拒绝 nc 回退或重复（重放攻击）。DAO 为可选依赖：未注入时跳过 nc 校验，
@@ -82,7 +82,7 @@ impl HttpDigestAuth {
     /// 注入 DAO 后，validate 内部使用 `tokio::task::block_in_place` + `Handle::block_on`
     /// 桥接 sync-to-async，**要求在 multi_thread tokio runtime 上下文中调用**。
     /// 在无 runtime 或 current_thread runtime 下调用会拒绝 nc 校验（fail-closed，
-    /// vuln-0012 修复：原 fail-open 允许重放，违背 RFC 7616 §3.4.6）并记录 warn。
+    /// 原 fail-open 实现允许重放，违背 RFC 7616 §3.4.6）并记录 warn。
     ///
     /// # 容量规划
     ///
@@ -234,15 +234,15 @@ impl HttpDigestAuth {
         }
     }
 
-    /// 校验 nc（nonce count）单调性，拒绝重放攻击（vuln-0008，RFC 7616 §3.4.6）。
+    /// 校验 nc（nonce count）单调性，拒绝重放攻击（RFC 7616 §3.4.6）。
     ///
     /// 通过 DAO 跟踪每个 nonce 的最后接受的 nc 值，拒绝 nc 回退或重复。
     /// - `dao` 为 None：跳过校验（返回 true）。
-    ///   **安全代价**：仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
-    ///   生产环境强烈建议通过 `with_dao` 注入 DAO；仅单元测试 / 无重放风险场景可省略。
+    /// **安全代价**：仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
+    /// 生产环境强烈建议通过 `with_dao` 注入 DAO；仅单元测试 / 无重放风险场景可省略。
     /// - `dao` 为 Some：get `digest:nc:{nonce}` → 比较 → set 更新
-    /// - DAO 错误：fail-closed（返回 false，vuln-0012 修复：原 fail-open 允许重放，
-    ///   违背 RFC 7616 §3.4.6；nonce TTL 不足以防重放，仅时间 bounded）
+    /// - DAO 错误：fail-closed（返回 false，原 fail-open 实现允许重放，
+    /// 违背 RFC 7616 §3.4.6；nonce TTL 不足以防重放，仅时间 bounded）
     /// - nc 非法 hex 格式：返回 false（拒绝畸形请求）
     /// - 无 runtime / current_thread runtime：fail-closed（返回 false）
     ///
@@ -257,7 +257,7 @@ impl HttpDigestAuth {
     /// 注入 DAO 后，本方法使用 `tokio::task::block_in_place` + `Handle::block_on`
     /// 桥接 sync-to-async，要求 multi_thread tokio runtime。
     /// 无 runtime / current_thread runtime 时 fail-closed（返回 false）并记录 warn
-    /// （vuln-0012 修复：原 fail-open 允许重放）。
+    /// （原 fail-open 实现允许重放）。
     fn validate_nc(&self, nonce: &str, nc_hex: &str) -> bool {
         let dao = match &self.dao {
             Some(d) => d,
@@ -286,7 +286,7 @@ impl HttpDigestAuth {
         // `Handle::try_current()` 对 multi_thread 和 current_thread runtime
         // 都返回 `Ok(handle)`，但 `block_in_place` 在 current_thread runtime 下会 panic
         // （"Cannot block the current thread from within a runtime"）。
-        // vuln-0012 修复：原 fail-open 允许重放，改为 fail-closed（拒绝请求），
+        // 原 fail-open 实现允许重放，改为 fail-closed（拒绝请求），
         // 强制要求 multi_thread runtime 才能使用 DAO 注入的 nc 校验。
         match tokio::runtime::Handle::try_current() {
             Ok(handle) => {
@@ -295,7 +295,7 @@ impl HttpDigestAuth {
                         realm = %self.realm,
                         "validate_nc rejected: current_thread runtime does not support block_in_place (fail-closed per vuln-0012)"
                     );
-                    return false; // fail-closed (vuln-0012)
+                    return false; // fail-closed
                 }
                 let realm = self.realm.clone();
                 tokio::task::block_in_place(|| {
@@ -309,7 +309,7 @@ impl HttpDigestAuth {
                     realm = %self.realm,
                     "validate_nc rejected: no tokio runtime available (fail-closed per vuln-0012)"
                 );
-                false // fail-closed (vuln-0012)
+                false // fail-closed
             },
         }
     }
@@ -322,7 +322,7 @@ impl HttpDigestAuth {
     /// 逻辑：
     /// - `compare_and_update_if_greater` 返回 `Ok(true)`：nc > last_nc，已更新 → return true
     /// - `compare_and_update_if_greater` 返回 `Ok(false)`：nc <= last_nc，重放/回退 → return false
-    /// - DAO 错误 → fail-closed（return false）+ warn（vuln-0012 修复：原 fail-open 允许重放）
+    /// - DAO 错误 → fail-closed（return false）+ warn（原 fail-open 实现允许重放）
     async fn validate_nc_async(
         dao: &std::sync::Arc<dyn crate::dao::GarrisonDao>,
         realm: &str,
@@ -337,10 +337,10 @@ impl HttpDigestAuth {
         {
             Ok(updated) => updated,
             Err(e) => {
-                // fail-closed (vuln-0012)：DAO 错误时拒绝请求，强制要求 DAO 可用。
+                // fail-closed：DAO 错误时拒绝请求，强制要求 DAO 可用。
                 // nonce TTL 不足以防重放（300s 窗口内仍可重放），必须 fail-closed。
                 //
-                // 日志采样（vuln-0012 性能修复）：DAO 持续故障期间每次请求都会触发错误，
+                // 日志采样：DAO 持续故障期间每次请求都会触发错误，
                 // 高 QPS 下会瞬间打满日志磁盘。每 DAO_ERROR_LOG_INTERVAL 次错误只 warn 一次，
                 // 其余降级为 debug!（仅含 count，不传 error 避免 Display 求值开销），
                 // warn 中含采样计数 + realm + error，可推算真实错误量并定位受影响实例。
@@ -394,7 +394,7 @@ impl HttpDigestAuth {
     /// # 返回
     /// - `true`: 校验通过。
     /// - `false`: 校验失败（密码错误 / method 不匹配 / qop=auth-int 未携带 body /
-    ///   qop 不支持 / nonce 过期 / 格式错误）。
+    /// qop 不支持 / nonce 过期 / 格式错误）。
     pub fn validate(&self, authorization_header: &str, method: &str, uri: &str, ha1: &str) -> bool {
         self.validate_inner(authorization_header, method, uri, None, ha1)
     }
@@ -442,7 +442,7 @@ impl HttpDigestAuth {
                 if !self.is_nonce_valid(&resp.nonce) {
                     return false;
                 }
-                // vuln-0008: nc 单调性校验（RFC 7616 §3.4.6）
+                // nc 单调性校验（RFC 7616 §3.4.6）
                 // 拒绝同一 nonce 的 nc 回退或重复，防止重放攻击
                 if !self.validate_nc(&resp.nonce, &resp.nc) {
                     return false;

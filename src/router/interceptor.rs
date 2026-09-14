@@ -30,7 +30,7 @@ impl GarrisonInterceptor for DefaultGarrisonInterceptor {
             Annotation::CheckDisable => GarrisonUtil::check_disable().await,
             // HTTP Basic/Digest/Sign 需 HTTP 请求上下文（Authorization header / method / body），
             // pre_handle 签名仅有 path + annotation，无法获取请求头。
-            // Fail Loud（Rule 12）：明确返回 NotImplemented，指示用户使用 axum extractor 或 secure 模块直接调用。
+            // Fail Loud：明确返回 NotImplemented，指示用户使用 axum extractor 或 secure 模块直接调用。
             Annotation::CheckBasicAuth => Err(GarrisonError::NotImplemented(
                 "router-check-basic-auth-need-http-context".to_string(),
             )),

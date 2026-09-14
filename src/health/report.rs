@@ -3,7 +3,7 @@
 
 //! `HealthReport` 实现块。
 //!
-//! 从 `registry.rs` 拆分而出（规则 25：单一职责）。
+//! 从 `registry.rs` 拆分而出（单一职责）。
 
 use super::{HealthReport, HealthStatus};
 

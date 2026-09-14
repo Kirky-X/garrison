@@ -9,13 +9,13 @@
 //! ## 设计
 //!
 //! - `ParameterQuery` trait：定义 `with_login_id` / `with_device` / `with_token` /
-//!   `check_permission` / `check_role` 链式 API（check_* 为 async）
+//! `check_permission` / `check_role` 链式 API（check_* 为 async）
 //! - `ParameterQueryBuilder`：默认实现，持有 `Option<String>` login_id / `Option<String>`
-//!   device / `Option<String>` token 上下文，委托 `GarrisonUtil` 静态方法执行校验
+//! device / `Option<String>` token 上下文，委托 `GarrisonUtil` 静态方法执行校验
 //!
-//! ## v0.5.2 迁移
+//! ## login_id 形式
 //!
-//! `login_id` 由 `i64` 迁移至 `String`（与全局 login_id 迁移一致）：
+//! `login_id` 为 `String`（与全局 login_id 形式一致）：
 //! - `with_login_id` 接收 `String`（builder 持有所有权，避免每次校验克隆）
 //! - 校验路径透传 `&str` 给 `GarrisonUtil::login`
 
@@ -30,7 +30,7 @@ use async_trait::async_trait;
 ///
 /// # 上下文优先级
 ///
-/// 若同时设置 token 与 login_id，token 优先（spec Scenario: 设置 token 后使用 token 上下文）。
+/// 若同时设置 token 与 login_id，token 优先。
 ///
 /// # 示例
 ///
@@ -39,10 +39,10 @@ use async_trait::async_trait;
 ///
 /// # async fn example() -> garrison::error::GarrisonResult<()> {
 /// ParameterQueryBuilder::new()
-///     .with_login_id("1001".to_string())
-///     .with_device("dev1")
-///     .check_permission("user:create")
-///     .await?;
+/// .with_login_id("1001".to_string())
+/// .with_device("dev1")
+/// .check_permission("user:create")
+/// .await?;
 /// # Ok(())
 /// # }
 /// ```

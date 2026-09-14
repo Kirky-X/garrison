@@ -11,10 +11,10 @@
 ///
 /// ```ignore
 /// let session = self.pool.get_session("admin").await.map_err(|e| {
-///     GarrisonError::Dao(format!("PREFIX-session::{}", e))
+/// GarrisonError::Dao(format!("PREFIX-session::{}", e))
 /// })?;
 /// let conn = session.connection().map_err(|e| {
-///     GarrisonError::Dao(format!("PREFIX-connection::{}", e))
+/// GarrisonError::Dao(format!("PREFIX-connection::{}", e))
 /// })?;
 /// ```
 ///

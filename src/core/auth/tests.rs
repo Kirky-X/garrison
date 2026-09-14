@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use std::time::Duration;
 
 /// 辅助函数：创建 AuthLogicDefault 实例（使用 UuidTokenStyle + MockDao）。
-/// 默认使用 DenyAllSwitchToGuard（L4 安全默认）。
+/// 默认使用 DenyAllSwitchToGuard（安全默认）。
 fn make_auth_logic(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let session = Arc::new(GarrisonSession::new(dao, timeout, active_timeout, 0));
@@ -26,7 +26,7 @@ impl SwitchToGuard for TestAllowAllGuard {
     }
 }
 
-/// 辅助函数：创建 AuthLogicDefault 实例，注入 TestAllowAllGuard（L4 测试用）。
+/// 辅助函数：创建 AuthLogicDefault 实例，注入 TestAllowAllGuard。
 fn make_auth_logic_allow_switch(timeout: u64, active_timeout: u64) -> AuthLogicDefault {
     make_auth_logic(timeout, active_timeout).with_switch_to_guard(Arc::new(TestAllowAllGuard))
 }
@@ -182,7 +182,7 @@ async fn verify_token_expired_returns_error() {
 // switch_to 测试
 // ========================================================================
 
-/// R-001: switch_to 更新 login_id 并存储 switched_from（使用 AllowAll guard）。
+/// switch_to 更新 login_id 并存储 switched_from（使用 AllowAll guard）。
 #[tokio::test]
 async fn switch_to_updates_login_id_and_stores_switched_from() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -201,7 +201,7 @@ async fn switch_to_updates_login_id_and_stores_switched_from() {
     assert_eq!(switched_from, Some("1001".to_string()));
 }
 
-/// R-001: switch_to 后 token 仍然有效（is_login 返回 true）。
+/// switch_to 后 token 仍然有效（is_login 返回 true）。
 #[tokio::test]
 async fn switch_to_preserves_token_validity() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -212,7 +212,7 @@ async fn switch_to_preserves_token_validity() {
     assert!(auth.is_login(&token).await.unwrap());
 }
 
-/// R-001: switch_to 无效 token 返回 NotLogin 错误。
+/// switch_to 无效 token 返回 NotLogin 错误。
 #[tokio::test]
 async fn switch_to_invalid_token_returns_not_login() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -224,7 +224,7 @@ async fn switch_to_invalid_token_returns_not_login() {
     );
 }
 
-/// R-001: switch_to 空 target_login_id 返回 InvalidParam 错误。
+/// switch_to 空 target_login_id 返回 InvalidParam 错误。
 #[tokio::test]
 async fn switch_to_empty_target_returns_invalid_param() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -237,7 +237,7 @@ async fn switch_to_empty_target_returns_invalid_param() {
     );
 }
 
-/// R-001: switch_to 后 verify_token 返回新的 login_id。
+/// switch_to 后 verify_token 返回新的 login_id。
 #[tokio::test]
 async fn switch_to_verify_token_returns_new_login_id() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -248,7 +248,7 @@ async fn switch_to_verify_token_returns_new_login_id() {
     assert_eq!(auth.verify_token(&token).await.unwrap(), "9999");
 }
 
-/// R-001: switch_to 多次切换，switched_from 记录最近一次的原始 login_id。
+/// switch_to 多次切换，switched_from 记录最近一次的原始 login_id。
 #[tokio::test]
 async fn switch_to_multiple_times_updates_switched_from() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -275,7 +275,7 @@ async fn switch_to_multiple_times_updates_switched_from() {
     );
 }
 
-/// R-001: switch_to 保留 TokenSession 的其他 attrs（不丢失已有属性）。
+/// switch_to 保留 TokenSession 的其他 attrs（不丢失已有属性）。
 #[tokio::test]
 async fn switch_to_preserves_existing_attrs() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -295,13 +295,13 @@ async fn switch_to_preserves_existing_attrs() {
 }
 
 // ========================================================================
-// H1 修复测试：switch_to 必须从 original Account-Session 中移除 token
+// switch_to 必须从 original Account-Session 中移除 token
 //（数据一致性：避免 list_devices(original) 误返回已切换 token，
 // 避免 logout_by_login_id(original) 误杀已切到 target 的 token，
 // 避免 enforce_max_login_count(original) 误算已切换 token）
 // ========================================================================
 
-/// H1: switch_to 后，original login_id 的 AccountSession.tokens 不应再包含该 token。
+/// switch_to 后，original login_id 的 AccountSession.tokens 不应再包含该 token。
 ///
 /// 复现：login("1001") 创建 token；login("2002") 预创建 target Account-Session；
 /// switch_to(token, "2002") 后，原 1001 的 AccountSession.tokens 应不再含 token。
@@ -353,7 +353,7 @@ async fn switch_to_removes_token_from_original_account_session() {
     );
 }
 
-/// H1: switch_to 后，内存 login_token_map 也应从 original 移除该 token。
+/// switch_to 后，内存 login_token_map 也应从 original 移除该 token。
 ///
 /// `list_devices(original)` 通过 `get_tokens_by_login_id` 读内存索引，
 /// 若内存索引未同步移除，会导致 list_devices 误返回已切换的 token。
@@ -389,7 +389,7 @@ async fn switch_to_removes_token_from_original_login_token_map() {
     );
 }
 
-/// R-001: switch_to 默认实现返回 NotImplemented。
+/// switch_to 默认实现返回 NotImplemented。
 #[tokio::test]
 async fn switch_to_default_impl_returns_not_implemented() {
     struct NoSwitchAuth;
@@ -427,15 +427,15 @@ async fn switch_to_default_impl_returns_not_implemented() {
 }
 
 // ========================================================================
-// L4 新增：switch_to 权限校验测试（依据安全审计 L4）
+// switch_to 权限校验测试
 // ========================================================================
 
-/// L4: 默认 DenyAllSwitchToGuard 应拒绝所有 switch_to 调用（fail-closed）。
+/// 默认 DenyAllSwitchToGuard 应拒绝所有 switch_to 调用（fail-closed）。
 #[tokio::test]
 async fn switch_to_default_guard_denies_all_switches() {
     let auth = make_auth_logic(3600, 86400); // 默认 DenyAllSwitchToGuard
     let token = auth.login("1001", None).await.unwrap();
-    // A6: 需预先创建 target Account-Session，否则 target_account_exists 校验先返回 InvalidParam
+    // 需预先创建 target Account-Session，否则 target_account_exists 校验先返回 InvalidParam
     let _ = auth.login("2002", None).await.unwrap();
     let result = auth.switch_to(&token, "2002").await;
     assert!(
@@ -450,7 +450,7 @@ async fn switch_to_default_guard_denies_all_switches() {
     );
 }
 
-/// L4: 自定义 guard 拒绝时返回 NotPermission 且不修改 session。
+/// 自定义 guard 拒绝时返回 NotPermission 且不修改 session。
 #[tokio::test]
 async fn switch_to_custom_guard_denies_preserves_session() {
     struct DenyTargetGuard;
@@ -470,7 +470,7 @@ async fn switch_to_custom_guard_denies_preserves_session() {
     let token = auth.login("1001", None).await.unwrap();
     // 需预先创建 target Account-Session（user-2002 + admin）。
     let _ = auth.login("user-2002", None).await.unwrap();
-    // A6: admin 也需预先创建 Account-Session，否则 target_account_exists 校验先返回 InvalidParam
+    // admin 也需预先创建 Account-Session，否则 target_account_exists 校验先返回 InvalidParam
     let _ = auth.login("admin", None).await.unwrap();
 
     // 切换到 admin 应被拒绝
@@ -495,15 +495,14 @@ async fn switch_to_custom_guard_denies_preserves_session() {
 }
 
 // ========================================================================
-// A6 新增：target_account_exists 校验测试
+// target_account_exists 校验测试
 // ========================================================================
 
-/// A6: switch_to 切换到不存在的 target_login_id 应被拒绝。
+/// switch_to 切换到不存在的 target_login_id 应被拒绝。
 ///
-/// issue 2663（login_id 可枚举修复）：原实现返回专用错误码
-/// `core-auth-target-login-id-not-found`（InvalidParam），已认证调用方可据此枚举
-/// login_id 存在性。修复后统一返回模糊错误 `NotPermission("core-auth-switch-to-denied")`，
-/// 与「无权切换」在外部不可区分。本测试的契约从 InvalidParam 变更为 NotPermission。
+/// login_id 可枚举防护：切换到不存在的 target 统一返回模糊错误
+/// `NotPermission("core-auth-switch-to-denied")`，
+/// 与「无权切换」在外部不可区分。本测试断言错误类型为 NotPermission。
 #[tokio::test]
 async fn switch_to_nonexistent_target_returns_invalid_param() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -522,10 +521,10 @@ async fn switch_to_nonexistent_target_returns_invalid_param() {
     );
 }
 
-/// A6: target_account_exists 校验在 guard 之前执行（target 不存在时优先拒绝）。
+/// target_account_exists 校验在 guard 之前执行（target 不存在时优先拒绝）。
 ///
 /// 即使 guard 是 TestAllowAllGuard，target 不存在仍应被拒绝。
-/// issue 2663：拒绝错误为统一的模糊 NotPermission（与 guard 拒绝同类型，不可区分）。
+/// 拒绝错误为统一的模糊 NotPermission（与 guard 拒绝同类型，不可区分）。
 #[tokio::test]
 async fn switch_to_target_check_precedes_guard() {
     let auth = make_auth_logic_allow_switch(3600, 86400);
@@ -543,7 +542,7 @@ async fn switch_to_target_check_precedes_guard() {
 // renew_to_equivalent 测试
 // ========================================================================
 
-/// R-003: renew_to_equivalent 返回新 token，新 token 有效且 login_id 相同。
+/// renew_to_equivalent 返回新 token，新 token 有效且 login_id 相同。
 #[tokio::test]
 async fn renew_to_equivalent_returns_new_valid_token_with_same_login_id() {
     let auth = make_auth_logic(3600, 86400);
@@ -560,7 +559,7 @@ async fn renew_to_equivalent_returns_new_valid_token_with_same_login_id() {
     );
 }
 
-/// R-003: renew_to_equivalent 生成与旧 token 不同的字符串。
+/// renew_to_equivalent 生成与旧 token 不同的字符串。
 #[tokio::test]
 async fn renew_to_equivalent_generates_different_token_string() {
     let auth = make_auth_logic(3600, 86400);
@@ -569,7 +568,7 @@ async fn renew_to_equivalent_generates_different_token_string() {
     assert_ne!(old_token, new_token);
 }
 
-/// R-004: renew_to_equivalent 后旧 token 失效（session 已删除）。
+/// renew_to_equivalent 后旧 token 失效（session 已删除）。
 #[tokio::test]
 async fn renew_to_equivalent_invalidates_old_token() {
     let auth = make_auth_logic(3600, 86400);
@@ -580,7 +579,7 @@ async fn renew_to_equivalent_invalidates_old_token() {
     assert!(!auth.is_login(&old_token).await.unwrap());
 }
 
-/// R-003: renew_to_equivalent 保留旧 session 的 attrs。
+/// renew_to_equivalent 保留旧 session 的 attrs。
 #[tokio::test]
 async fn renew_to_equivalent_preserves_attrs() {
     let auth = make_auth_logic(3600, 86400);
@@ -600,7 +599,7 @@ async fn renew_to_equivalent_preserves_attrs() {
     assert_eq!(role, Some("admin".to_string()));
 }
 
-/// R-003: renew_to_equivalent 保留旧 session 的 device 字段。
+/// renew_to_equivalent 保留旧 session 的 device 字段。
 #[tokio::test]
 async fn renew_to_equivalent_preserves_device() {
     let auth = make_auth_logic(3600, 86400);
@@ -618,7 +617,7 @@ async fn renew_to_equivalent_preserves_device() {
     assert_eq!(ts.unwrap().device, Some("mobile-ios".to_string()));
 }
 
-/// R-003: renew_to_equivalent 无效 token 返回 NotLogin 错误。
+/// renew_to_equivalent 无效 token 返回 NotLogin 错误。
 #[tokio::test]
 async fn renew_to_equivalent_invalid_token_returns_not_login() {
     let auth = make_auth_logic(3600, 86400);
@@ -630,7 +629,7 @@ async fn renew_to_equivalent_invalid_token_returns_not_login() {
     );
 }
 
-/// R-003: renew_to_equivalent 继承剩余 TTL（不重置为原始 timeout）。
+/// renew_to_equivalent 继承剩余 TTL（不重置为原始 timeout）。
 #[tokio::test]
 async fn renew_to_equivalent_preserves_remaining_ttl() {
     // 手动构建 auth + dao，以便直接操作 DAO 的 TTL
@@ -665,7 +664,7 @@ async fn renew_to_equivalent_preserves_remaining_ttl() {
     );
 }
 
-/// R-003: renew_to_equivalent 默认实现返回 NotImplemented。
+/// renew_to_equivalent 默认实现返回 NotImplemented。
 #[tokio::test]
 async fn renew_to_equivalent_default_impl_returns_not_implemented() {
     struct NoRenewAuth;
@@ -703,19 +702,18 @@ async fn renew_to_equivalent_default_impl_returns_not_implemented() {
 }
 
 // ========================================================================
-// A9: renew_to_equivalent 顺序测试（先创建新 token，再失效旧 token）
+// renew_to_equivalent 顺序测试（先创建新 token，再失效旧 token）
 // ========================================================================
 //
-// 历史背景：原 VULN-0020 修复采用"先 delete 后 create"消除双 token 窗口。
-// strix vuln-0003（CWE-362 / CVSS 7.5）发现此顺序在 delete 与 create 之间
-// 存在 DoS gap window，用户在此窗口内无任何有效 token。
-// A9 修复：调换为"先 create 后 delete"，消除 DoS gap；双 token 窗口缩短至
-// 毫秒级（create 与 delete 之间），且旧 token 在 delete 成功后立即失效。
+// 顺序必须为"先 create 后 delete"以消除 DoS gap（CWE-362 / CVSS 7.5）：
+// 若"先 delete 后 create"，delete 与 create 之间存在窗口期，用户在此窗口内
+// 无任何有效 token。当前顺序下双 token 窗口缩短至毫秒级（create 与 delete
+// 之间），且旧 token 在 delete 成功后立即失效。
 
 /// 追踪 DAO 操作顺序的 wrapper。
 ///
 /// 包装 `MockDao`，记录 `set("token:session:{new}")` 与 `delete("token:session:{old}")`
-/// 的相对顺序，用于验证 A9 不变量：**新 token 必须在旧 token 删除之前创建**。
+/// 的相对顺序，用于验证不变量：**新 token 必须在旧 token 删除之前创建**。
 struct OrderTrackingDao {
     inner: MockDao,
     tracking_state: std::sync::Mutex<OrderTrackingState>,
@@ -733,7 +731,7 @@ struct OrderTrackingState {
     /// 旧 token 的 session key 是否已被 delete。
     old_token_deleted: bool,
     /// 是否检测到 DoS gap 违规（delete(old) 在 set(new) 之前）。
-    /// A9 不变量：此值应为 false（不允许 delete 先于 create）。
+    /// 不变量：此值应为 false（不允许 delete 先于 create）。
     dos_gap_violation: bool,
 }
 
@@ -762,7 +760,7 @@ impl OrderTrackingDao {
     }
 
     /// 是否检测到 DoS gap 违规（delete(old) 在 set(new) 之前）。
-    /// A9 不变量：应为 false。
+    /// 不变量：应为 false。
     fn was_dos_gap_violation(&self) -> bool {
         self.tracking_state.lock().unwrap().dos_gap_violation
     }
@@ -824,9 +822,9 @@ impl GarrisonDao for OrderTrackingDao {
     crate::atomic_test_fallback!();
 }
 
-/// A9: renew_to_equivalent 必须先创建新 token session，再失效旧 token session。
+/// renew_to_equivalent 必须先创建新 token session，再失效旧 token session。
 ///
-/// 顺序为"先 create 后 delete"，消除 DoS gap（vuln-0003 / CWE-362 / CVSS 7.5）。
+/// 顺序为"先 create 后 delete"，消除 DoS gap（CWE-362 / CVSS 7.5）。
 /// 旧实现"先 delete 后 create"在 delete 与 create 之间存在窗口期，用户无任何有效 token。
 #[tokio::test]
 async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
@@ -879,21 +877,21 @@ async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
         new_token.err()
     );
 
-    // A9 不变量 1：不允许 DoS gap（delete(old) 在 set(new) 之前）
+    // 不变量 1：不允许 DoS gap（delete(old) 在 set(new) 之前）
     assert!(
         !tracking_dao.was_dos_gap_violation(),
         "A9 违规：旧 token 在新 token 创建前被删除（DoS gap window），\
          应先创建新 token 再删除旧 token"
     );
 
-    // A9 不变量 2：旧 token 最终应被删除（清理完成，避免旧 token 永久残留）
+    // 不变量 2：旧 token 最终应被删除（清理完成，避免旧 token 永久残留）
     assert!(
         tracking_dao.was_old_token_deleted(),
         "A9 清理校验：旧 token session 应在 renew 完成后被删除"
     );
 }
 
-/// A9: renew_to_equivalent 期间旧 token 在新 token 创建时仍应有效（无 DoS gap）。
+/// renew_to_equivalent 期间旧 token 在新 token 创建时仍应有效（无 DoS gap）。
 ///
 /// 模拟攻击者/用户在 renew 过程中并发使用旧 token：旧 token 在新 token 完全建立前
 /// 不应被失效。此测试通过追踪 DAO 操作时序验证：set(new) 发生时 delete(old) 尚未执行。
@@ -930,7 +928,7 @@ async fn a9_renew_to_equivalent_old_token_valid_until_new_created() {
         "新 token 的 login_id 应与旧 token 相同"
     );
 
-    // A9 核心校验：整个 renew 过程中无 DoS gap
+    // 核心校验：整个 renew 过程中无 DoS gap
     assert!(
         !tracking_dao.was_dos_gap_violation(),
         "A9 违规：renew 过程中存在 DoS gap（旧 token 先于新 token 创建被删除）"
@@ -955,7 +953,7 @@ fn make_auth_logic_with_remember_me(
         .with_remember_me(rm_enabled, rm_timeout)
 }
 
-/// R-005: login with remember_me=true 且 enabled 时使用扩展超时。
+/// login with remember_me=true 且 enabled 时使用扩展超时。
 #[tokio::test]
 async fn login_with_remember_me_true_uses_extended_timeout() {
     let auth = make_auth_logic_with_remember_me(3600, 86400, true, 7_776_000);
@@ -973,7 +971,7 @@ async fn login_with_remember_me_true_uses_extended_timeout() {
     );
 }
 
-/// R-005: login with remember_me=true 但 disabled 时使用默认超时。
+/// login with remember_me=true 但 disabled 时使用默认超时。
 #[tokio::test]
 async fn login_with_remember_me_true_but_disabled_uses_default_timeout() {
     let auth = make_auth_logic_with_remember_me(3600, 86400, false, 7_776_000);
@@ -988,7 +986,7 @@ async fn login_with_remember_me_true_but_disabled_uses_default_timeout() {
     );
 }
 
-/// R-005: login with remember_me=false 使用默认超时。
+/// login with remember_me=false 使用默认超时。
 #[tokio::test]
 async fn login_with_remember_me_false_uses_default_timeout() {
     let auth = make_auth_logic_with_remember_me(3600, 86400, true, 7_776_000);
@@ -1003,7 +1001,7 @@ async fn login_with_remember_me_false_uses_default_timeout() {
     );
 }
 
-/// R-005: login with None params 使用默认超时。
+/// login with None params 使用默认超时。
 #[tokio::test]
 async fn login_with_none_params_uses_default_timeout() {
     let auth = make_auth_logic_with_remember_me(3600, 86400, true, 7_776_000);
@@ -1018,7 +1016,7 @@ async fn login_with_none_params_uses_default_timeout() {
     );
 }
 
-/// R-005: login with empty params 使用默认超时。
+/// login with empty params 使用默认超时。
 #[tokio::test]
 async fn login_with_empty_params_uses_default_timeout() {
     let auth = make_auth_logic_with_remember_me(3600, 86400, true, 7_776_000);
@@ -1033,7 +1031,7 @@ async fn login_with_empty_params_uses_default_timeout() {
     );
 }
 
-/// R-005: login with remember_me=true 与其他参数组合仍检测到 remember_me。
+/// login with remember_me=true 与其他参数组合仍检测到 remember_me。
 #[tokio::test]
 async fn login_with_remember_me_and_other_params() {
     let auth = make_auth_logic_with_remember_me(3600, 86400, true, 7_776_000);
@@ -1051,7 +1049,7 @@ async fn login_with_remember_me_and_other_params() {
     );
 }
 
-/// R-005: login with malformed params 使用默认超时（容错）。
+/// login with malformed params 使用默认超时（容错）。
 #[tokio::test]
 async fn login_with_malformed_params_uses_default_timeout() {
     let auth = make_auth_logic_with_remember_me(3600, 86400, true, 7_776_000);
@@ -1066,7 +1064,7 @@ async fn login_with_malformed_params_uses_default_timeout() {
     );
 }
 
-/// R-005: parse_remember_me_param 各种输入解析正确。
+/// parse_remember_me_param 各种输入解析正确。
 #[test]
 fn parse_remember_me_param_various_inputs() {
     assert!(parse_remember_me_param(Some("remember_me=true")));
@@ -1080,12 +1078,12 @@ fn parse_remember_me_param_various_inputs() {
 }
 
 // ========================================================================
-// renew_to_equivalent 并发串行化测试（fix-refresh-race-and-test-contracts）
+// renew_to_equivalent 并发串行化测试
 // ========================================================================
 
 /// 并发 renew_to_equivalent 同一 token 必须串行化（修复 CWE-362 TOCTOU 竞态）。
 ///
-/// spec R-refresh-token-001: 3 个并发 renew 同一 token，恰好 1 个 Ok + 2 个 Err。
+/// 3 个并发 renew 同一 token，恰好 1 个 Ok + 2 个 Err。
 ///
 /// **Red 阶段**：当前 src/ 无锁，3 个全部 Ok → 测试失败（success_count=3 ≠ 1）。
 /// **Green 阶段**：实现 per-token 锁后，第 1 个拿到锁成功，第 2/3 个拿到锁时旧 token
@@ -1130,7 +1128,7 @@ async fn renew_to_equivalent_concurrent_serialization() {
     );
 }
 
-/// HIGH-1 修复：renew 完成后 renew_locks DashMap 不残留无引用 entry。
+/// renew 完成后 renew_locks DashMap 不残留无引用 entry。
 ///
 /// 验证内存清理逻辑（`src/core/auth/default.rs:418-430`）：
 /// - renew 流程结束后 `drop(_renew_guard); drop(renew_lock);` 释放 Arc clone
@@ -1171,7 +1169,7 @@ async fn renew_locks_entry_cleaned_after_successful_renew() {
     assert!(auth.is_login(&new_token).await.unwrap(), "新 token 应有效");
 }
 
-/// HIGH-1 修复：renew 失败（NotLogin）后 renew_locks entry 也应被清理。
+/// renew 失败（NotLogin）后 renew_locks entry 也应被清理。
 ///
 /// 验证失败路径同样清理 entry（避免失败 renew 累积导致 OOM）。
 /// 此测试对同一无效 token 调用 renew 多次，每次失败后 entry 应被清理。
@@ -1194,7 +1192,7 @@ async fn renew_locks_entry_cleaned_after_failed_renew() {
     }
 }
 
-/// HIGH-1 修复：并发 renew 完成后 renew_locks 不残留 entry。
+/// 并发 renew 完成后 renew_locks 不残留 entry。
 ///
 /// 此测试与 `renew_to_equivalent_concurrent_serialization` 互补：
 /// 后者验证并发下的串行化语义，此测试验证并发完成后的内存清理。
@@ -1228,7 +1226,7 @@ async fn renew_locks_entry_cleaned_after_concurrent_renew() {
 }
 
 // ========================================================================
-// 覆盖率补测：renew_to_equivalent 错误路径（A9 三步失败分支 + 回滚）
+// 覆盖率补测：renew_to_equivalent 错误路径（三步失败分支 + 回滚）
 // ========================================================================
 //
 // `default.rs` 中 renew 流程的步骤 3（创建新 Token-Session）/ 步骤 5（加入
@@ -1319,7 +1317,7 @@ fn make_auth_logic_with_failing_dao(dao: Arc<FailingDao>) -> AuthLogicDefault {
 }
 
 /// renew 步骤 3 失败：创建新 Token-Session 的 DAO set 失败时返回 Internal，
-/// 旧 token 仍有效（A9 契约：无 DoS，旧 token 未被触碰）。
+/// 旧 token 仍有效（契约：无 DoS，旧 token 未被触碰）。
 #[tokio::test]
 async fn renew_create_new_token_session_fails_old_token_untouched() {
     // atomic + 默认 trait 方法覆盖
@@ -1412,7 +1410,7 @@ async fn renew_add_to_account_session_fails_rolls_back_new_token() {
 }
 
 /// renew 步骤 6 失败：失效旧 token 的 DAO delete 失败时**仍返回 Ok(new_token)**
-///（A9 决策：用户已持有新 token，返回 Err 反而制造新 DoS；旧 token 残留交由运维）。
+///（用户已持有新 token，返回 Err 反而制造新 DoS；旧 token 残留交由运维）。
 #[tokio::test]
 async fn renew_old_token_cleanup_failure_still_returns_new_token() {
     let failing = Arc::new(FailingDao::new());

@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! annotation 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! annotation 模块测试（从 mod.rs 迁移）。
 //!
 //! 此测试模块仅在启用 `web-axum` feature 时编译（与原 mod.rs 一致）。
 
@@ -379,8 +379,8 @@ fn session_error_returns_500() {
 
 /// Annotation::name 返回注解变体名称（16 个变体）。
 ///
-/// 覆盖 R-anno-001 / R-anno-002 验收标准：CheckApiKey 与 Mode 变体的 name() 返回正确字符串。
-/// 覆盖 R-annotation-oauth2-001/002：CheckAccessToken / CheckClientToken name() 返回正确字符串。
+/// 验收标准：CheckApiKey 与 Mode 变体的 name() 返回正确字符串。
+/// CheckAccessToken / CheckClientToken name() 返回正确字符串。
 #[test]
 fn annotation_name_returns_variant_string() {
     assert_eq!(Annotation::CheckLogin.name(), "CheckLogin");
@@ -398,7 +398,7 @@ fn annotation_name_returns_variant_string() {
     assert_eq!(Annotation::CheckBasicAuth.name(), "CheckBasicAuth");
     assert_eq!(Annotation::CheckDigestAuth.name(), "CheckDigestAuth");
     assert_eq!(Annotation::CheckSign.name(), "CheckSign");
-    // CheckApiKey（R-anno-001）— namespace None 与 Some 均返回同一字符串
+    // CheckApiKey— namespace None 与 Some 均返回同一字符串
     assert_eq!(
         Annotation::CheckApiKey { namespace: None }.name(),
         "CheckApiKey"
@@ -410,16 +410,16 @@ fn annotation_name_returns_variant_string() {
         .name(),
         "CheckApiKey"
     );
-    // Mode（R-anno-002）— And / Or 均返回 "Mode"
+    // Mode— And / Or 均返回 "Mode"
     assert_eq!(Annotation::Mode(AnnotationMode::And).name(), "Mode");
     assert_eq!(Annotation::Mode(AnnotationMode::Or).name(), "Mode");
-    // 新增：CheckAccessToken / CheckClientToken（R-annotation-oauth2-001/002）
+    // 新增：CheckAccessToken / CheckClientToken
     assert_eq!(Annotation::CheckAccessToken.name(), "CheckAccessToken");
     assert_eq!(Annotation::CheckClientToken.name(), "CheckClientToken");
 }
 
 // ----------------------------------------------------------------
-// AnnotationMode Display / Debug / Clone / PartialEq 测试（R-anno-002）
+// AnnotationMode Display / Debug / Clone / PartialEq 测试
 // ----------------------------------------------------------------
 
 /// AnnotationMode::And 的 Display 输出 "AND"，AnnotationMode::Or 输出 "OR"。
@@ -475,10 +475,10 @@ fn check_api_key_namespace_equality() {
 }
 
 // ----------------------------------------------------------------
-// Display / FromStr 测试（R-annotation-oauth2-001/002）
+// Display / FromStr 测试
 // ----------------------------------------------------------------
 
-/// R-annotation-oauth2-001: CheckAccessToken Display 格式化为 "CheckAccessToken"。
+/// CheckAccessToken Display 格式化为 "CheckAccessToken"。
 #[test]
 fn check_access_token_display_formats_correctly() {
     assert_eq!(
@@ -487,7 +487,7 @@ fn check_access_token_display_formats_correctly() {
     );
 }
 
-/// R-annotation-oauth2-002: CheckClientToken Display 格式化为 "CheckClientToken"。
+/// CheckClientToken Display 格式化为 "CheckClientToken"。
 #[test]
 fn check_client_token_display_formats_correctly() {
     assert_eq!(
@@ -496,7 +496,7 @@ fn check_client_token_display_formats_correctly() {
     );
 }
 
-/// R-annotation-oauth2-001: from_str("CheckAccessToken") 返回 Ok(CheckAccessToken)。
+/// from_str("CheckAccessToken") 返回 Ok(CheckAccessToken)。
 #[test]
 fn check_access_token_from_str_returns_ok() {
     let result: Result<Annotation, _> = "CheckAccessToken".parse();
@@ -504,7 +504,7 @@ fn check_access_token_from_str_returns_ok() {
     assert_eq!(result.unwrap(), Annotation::CheckAccessToken);
 }
 
-/// R-annotation-oauth2-002: from_str("CheckClientToken") 返回 Ok(CheckClientToken)。
+/// from_str("CheckClientToken") 返回 Ok(CheckClientToken)。
 #[test]
 fn check_client_token_from_str_returns_ok() {
     let result: Result<Annotation, _> = "CheckClientToken".parse();

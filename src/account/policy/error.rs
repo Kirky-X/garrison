@@ -49,7 +49,7 @@ impl std::error::Error for PolicyError {}
 mod tests {
     use super::*;
 
-    /// R-004: `PolicyError::new` 构造正确字段。
+    /// `PolicyError::new` 构造正确字段。
     #[test]
     fn policy_error_new_sets_fields() {
         let err = PolicyError::new("length", "密码长度不足");
@@ -57,7 +57,7 @@ mod tests {
         assert_eq!(err.message, "密码长度不足");
     }
 
-    /// R-004: `PolicyError` 实现 `Display`，输出含 `rule_name` 与 `message`。
+    /// `PolicyError` 实现 `Display`，输出含 `rule_name` 与 `message`。
     #[test]
     fn policy_error_display_contains_rule_name_and_message() {
         let err = PolicyError::new("complexity", "需包含大写字母");
@@ -74,7 +74,7 @@ mod tests {
         );
     }
 
-    /// R-004: `PolicyError` Clone 后字段一致。
+    /// `PolicyError` Clone 后字段一致。
     #[test]
     fn policy_error_clone_preserves_fields() {
         let err = PolicyError::new("blacklist", "密码在黑名单中");

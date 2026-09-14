@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! plugin 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! plugin 模块测试（从 mod.rs 迁移）。
 
 use super::mock::{reset_counters, OkPlugin, LOGIN_CALLS, LOGOUT_CALLS, PERM_CHECK_CALLS};
 use super::*;
@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 // GarrisonPlugin trait 测试
 // ========================================================================
 
-/// 默认实现返回 Ok(())（spec Scenario：生命周期钩子有默认空实现）。
+/// 默认实现返回 Ok(())（生命周期钩子有默认空实现）。
 #[test]
 #[serial]
 fn default_hooks_return_ok() {
@@ -28,7 +28,7 @@ fn default_hooks_return_ok() {
     assert!(plugin.on_permission_check("1", "p").is_ok());
 }
 
-/// name 方法必须由实现方提供（spec Scenario）。
+/// name 方法必须由实现方提供。
 #[test]
 #[serial]
 fn name_must_be_provided() {
@@ -40,7 +40,7 @@ fn name_must_be_provided() {
 // GarrisonPluginManager 测试
 // ========================================================================
 
-/// manager 收集所有已注册插件（spec Scenario）。
+/// manager 收集所有已注册插件。
 #[test]
 #[serial]
 fn manager_collects_registered_plugins() {
@@ -49,12 +49,12 @@ fn manager_collects_registered_plugins() {
     assert!(manager.count() >= 2);
 }
 
-/// on_login 调用所有插件钩子（spec Scenario）。
+/// on_login 调用所有插件钩子。
 #[test]
 #[serial]
 fn on_login_invokes_all_plugins() {
     reset_counters();
-    // ocr #251：验证 reset_counters 确实清零，防止 reset 失效时断言恒真
+    // 验证 reset_counters 确实清零，防止 reset 失效时断言恒真
     assert_eq!(
         LOGIN_CALLS.load(Ordering::SeqCst),
         0,
@@ -66,12 +66,12 @@ fn on_login_invokes_all_plugins() {
     assert!(LOGIN_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-/// on_logout 调用所有插件钩子（spec Scenario）。
+/// on_logout 调用所有插件钩子。
 #[test]
 #[serial]
 fn on_logout_invokes_all_plugins() {
     reset_counters();
-    // ocr #251：验证 reset_counters 确实清零
+    // 验证 reset_counters 确实清零
     assert_eq!(
         LOGOUT_CALLS.load(Ordering::SeqCst),
         0,
@@ -82,12 +82,12 @@ fn on_logout_invokes_all_plugins() {
     assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-/// on_permission_check 调用所有插件钩子（spec Scenario）。
+/// on_permission_check 调用所有插件钩子。
 #[test]
 #[serial]
 fn on_permission_check_invokes_all_plugins() {
     reset_counters();
-    // ocr #251：验证 reset_counters 确实清零
+    // 验证 reset_counters 确实清零
     assert_eq!(
         PERM_CHECK_CALLS.load(Ordering::SeqCst),
         0,
@@ -98,7 +98,7 @@ fn on_permission_check_invokes_all_plugins() {
     assert!(PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-/// ocr #251：reset_counters 自身有效性——污染计数器后 reset 必须归零。
+/// reset_counters 自身有效性——污染计数器后 reset 必须归零。
 #[test]
 #[serial]
 fn reset_counters_zeroes_all_counters() {
@@ -111,7 +111,7 @@ fn reset_counters_zeroes_all_counters() {
     assert_eq!(PERM_CHECK_CALLS.load(Ordering::SeqCst), 0);
 }
 
-/// 插件失败不中断主流程（spec Scenario）。
+/// 插件失败不中断主流程。
 #[test]
 #[serial]
 fn plugin_failure_does_not_interrupt() {

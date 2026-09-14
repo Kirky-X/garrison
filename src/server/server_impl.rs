@@ -165,7 +165,7 @@ impl GarrisonAuthServer {
     ///
     /// # 参数
     /// - `resolver`：`Arc<dyn TenantResolver>`（如 `HeaderTenantResolver` /
-    ///   `SubdomainTenantResolver` / `ClaimTenantResolver`）
+    /// `SubdomainTenantResolver` / `ClaimTenantResolver`）
     ///
     /// # 示例
     ///
@@ -174,7 +174,7 @@ impl GarrisonAuthServer {
     /// use std::sync::Arc;
     ///
     /// let server = GarrisonAuthServer::new(backend)
-    ///     .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
+    /// .with_tenant_resolver(Some(Arc::new(HeaderTenantResolver)));
     /// ```
     #[cfg(feature = "tenant-isolation")]
     pub fn with_tenant_resolver(
@@ -207,7 +207,7 @@ impl GarrisonAuthServer {
     ///
     /// ```ignore
     /// let server = GarrisonAuthServer::new(backend)
-    ///     .with_tls("/etc/garrison/cert.pem", "/etc/garrison/key.pem");
+    /// .with_tls("/etc/garrison/cert.pem", "/etc/garrison/key.pem");
     /// server.listen().await?;
     /// ```
     #[cfg(feature = "tls")]
@@ -257,7 +257,7 @@ impl GarrisonAuthServer {
                 middleware::inject_login_client_ip,
             ))
             .layer(axum::middleware::from_fn(middleware::inject_client_ip))
-            // H-8: User-Agent 注入 middleware（在 inject_client_ip 之后）
+            // User-Agent 注入 middleware（在 inject_client_ip 之后）
             .layer(axum::middleware::from_fn(middleware::inject_user_agent))
             .layer(Extension(trusted_proxies))
             .layer(axum::middleware::from_fn_with_state(
@@ -351,13 +351,13 @@ impl GarrisonAuthServer {
     /// 通过 `internal_path_filter` 中间件拒绝 3 个外网路径（login/logout/refresh），
     /// 其余内网路径放行（由 api_key_auth 保护）。
     ///
-    /// # 内网路由保护（ocr #2234 / #3425）
+    /// # 内网路由保护
     ///
     /// - 内网路由同样挂载 `rate_limit_middleware`（限速参数复用外网配置：
-    ///   `external_rate_limit_per_ip` / `rate_limit_max_entries` / `rate_limit_trusted_proxies`），
-    ///   防止持有合法 API Key 的调用方无限速打满后端资源。
+    /// `external_rate_limit_per_ip` / `rate_limit_max_entries` / `rate_limit_trusted_proxies`），
+    /// 防止持有合法 API Key 的调用方无限速打满后端资源。
     /// - OAuth2 内网路由（introspect）**先 merge 再统一挂中间件**：axum `merge` 不继承
-    ///   layer，若 introspect 路由在挂 layer 后 merge 会绕过 `api_key_auth`。
+    /// layer，若 introspect 路由在挂 layer 后 merge 会绕过 `api_key_auth`。
     ///
     /// 中间件栈（从外到内）：
     /// `tenant_resolution? → audit_log → rate_limit → api_key_auth → internal_path_filter → handler`
@@ -368,7 +368,7 @@ impl GarrisonAuthServer {
         let api_key_state = Arc::new(middleware::ApiKeyState {
             api_key: self.config.internal_api_key.clone(),
         });
-        // ocr #2234: 内网路由限速状态（参数与外网一致，独立 bucket 实例）
+        // 内网路由限速状态（参数与外网一致，独立 bucket 实例）
         let rate_limit_state = Arc::new(middleware::RateLimitState::with_options(
             self.config.external_rate_limit_per_ip,
             self.config.rate_limit_max_entries,
@@ -377,7 +377,7 @@ impl GarrisonAuthServer {
 
         let router = sdforge::http::build().layer(Extension(self.backend.clone()));
 
-        // ocr #3425: OAuth2 内网路由（introspect）先 merge，再统一在内网 router 上
+        // OAuth2 内网路由（introspect）先 merge，再统一在内网 router 上
         // 挂 path_filter / api_key_auth / rate_limit / audit_log，
         // 确保 merge 进来的路由不绕过 api_key_auth（axum merge 不继承 layer）。
         #[cfg(feature = "oauth2-server")]
@@ -583,7 +583,7 @@ impl GarrisonAuthServer {
                 let bind = bind.handle(handle);
                 return bind
                     .serve(
-                        // ocr #2236: 内网 TLS 路径同样注入 ConnectInfo，
+                        // 内网 TLS 路径同样注入 ConnectInfo，
                         // 与外网路径对齐（限速/IP 提取中间件依赖 ConnectInfo<SocketAddr>）
                         internal_router
                             .into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -599,7 +599,7 @@ impl GarrisonAuthServer {
                 .map_err(|e| GarrisonError::Internal(format!("server-internal-bind::{}", e)))?;
             let serve = axum::serve(
                 internal_listener,
-                // ocr #2236: 内网非 TLS 路径同样注入 ConnectInfo（与外网对齐）
+                // 内网非 TLS 路径同样注入 ConnectInfo（与外网对齐）
                 internal_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
             );
             // 信号触发后停止接收新连接并 drain 在途请求

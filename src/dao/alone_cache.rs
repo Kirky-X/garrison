@@ -122,7 +122,7 @@ impl GarrisonDao for AloneCache {
             .await
     }
 
-    /// M1 修复：decr 委托内部 dao（消除 TOCTOU 竞态）。
+    /// decr 委托内部 dao（消除 TOCTOU 竞态）。
     ///
     /// 与 `compare_and_update_if_greater` 对称：默认实现已改为返回 `NotImplemented`
     ///（fail-closed），AloneCache 必须显式 forward 到 inner dao，保证装饰器透明委托语义，
@@ -212,8 +212,6 @@ mod tests {
     use crate::dao::tests::MockDao;
 
     /// Scenario: AloneCache::new(dao, "perm:") 后 set("user:1001", ...) 内部 dao 收到 set("perm:user:1001", ...)。
-    ///
-    /// 覆盖 spec alone-cache Requirement "AloneCache 装饰器抽象" Scenario "AloneCache 自动添加 prefix"。
     #[tokio::test]
     async fn alone_cache_set_adds_prefix() {
         let mock = Arc::new(MockDao::new());
@@ -228,8 +226,6 @@ mod tests {
     }
 
     /// Scenario: AloneCache::new(dao, "perm:") 后 get("user:1001") 内部 dao 收到 get("perm:user:1001")。
-    ///
-    /// 覆盖 spec alone-cache Requirement "AloneCache 装饰器抽象" Scenario "AloneCache get/delete 同样添加 prefix"。
     #[tokio::test]
     async fn alone_cache_get_adds_prefix() {
         let mock = Arc::new(MockDao::new());
@@ -245,8 +241,6 @@ mod tests {
     }
 
     /// Scenario: AloneCache delete 同样加 prefix。
-    ///
-    /// 覆盖 spec alone-cache Requirement "AloneCache 装饰器抽象" Scenario "AloneCache get/delete 同样添加 prefix"。
     #[tokio::test]
     async fn alone_cache_delete_adds_prefix() {
         let mock = Arc::new(MockDao::new());
@@ -292,8 +286,6 @@ mod tests {
     }
 
     /// Scenario: AloneCache 透明委托返回值与 MockDao 直接调用一致。
-    ///
-    /// 覆盖 spec alone-cache Requirement "AloneCache 与既有 GarrisonDao 行为一致" Scenario "AloneCache 透明委托"。
     #[tokio::test]
     async fn alone_cache_transparent_delegation() {
         let mock = Arc::new(MockDao::new());
@@ -318,8 +310,6 @@ mod tests {
     }
 
     /// Scenario: AloneCacheManager::register + get 多实例。
-    ///
-    /// 覆盖 spec alone-cache Requirement "AloneCacheManager 多实例管理" Scenario "创建多个 AloneCache 实例"。
     #[tokio::test]
     async fn alone_cache_manager_register_and_get() {
         let manager = AloneCacheManager::new();
@@ -339,8 +329,6 @@ mod tests {
     }
 
     /// Scenario: 未注册的缓存名返回 None。
-    ///
-    /// 覆盖 spec alone-cache Requirement "AloneCacheManager 多实例管理" Scenario "未注册的缓存名"。
     #[tokio::test]
     async fn alone_cache_manager_unregistered_returns_none() {
         let manager = AloneCacheManager::new();
@@ -349,8 +337,6 @@ mod tests {
     }
 
     /// Scenario: 多实例注入不同 dao（多 Redis 实例路由）。
-    ///
-    /// 覆盖 spec alone-cache Requirement "AloneCacheManager 多实例管理" Scenario "创建多个 AloneCache 实例"。
     #[tokio::test]
     async fn alone_cache_manager_multiple_different_dao() {
         let redis1 = Arc::new(MockDao::new());
@@ -421,14 +407,11 @@ mod tests {
         );
     }
 
-    /// Scenario: AloneCache::decr 透明委托内部 dao（M1 修复，消除 TOCTOU 竞态）。
+    /// Scenario: AloneCache::decr 透明委托内部 dao（消除 TOCTOU 竞态）。
     ///
-    /// 覆盖 spec alone-cache Requirement "AloneCache 与既有 GarrisonDao 行为一致"
-    /// Scenario "AloneCache 透明委托"（扩展到 decr 方法）。
-    ///
-    /// M1 修复前：AloneCache 走默认实现（get → parse → update/delete 三步组合），
+    /// 此前 AloneCache 走默认实现（get → parse → update/delete 三步组合），
     /// 在并发场景下存在 TOCTOU 竞态，SMS 限速器等通过 AloneCache 部署的场景
-    /// 仍会触发 flaky test。M1 修复：AloneCache::decr 显式 forward 到 inner dao。
+    /// 仍会触发 flaky test。修复：AloneCache::decr 显式 forward 到 inner dao。
     ///
     /// 此测试验证：
     /// 1. AloneCache::decr 调用经 prefix 拼接后到达 inner dao
@@ -480,9 +463,9 @@ mod tests {
         assert!(v.is_none(), "inner dao 上 'perm:never' 不应存在");
     }
 
-    /// Scenario: AloneCache::decr 并发原子性验证（M1 修复核心目标）。
+    /// Scenario: AloneCache::decr 并发原子性验证。
     ///
-    /// 此测试是 M1 修复的关键验证：在 multi_thread runtime 下并发 10 个 task
+    /// 此测试是上述修复的关键验证：在 multi_thread runtime 下并发 10 个 task
     /// decr 同一 key（初始值 5），断言恰好 4 个返回非 0 + 6 个返回 0 + key 最终删除。
     ///
     /// 返回值分析（decr 返回 new_val = 递减后的值）：

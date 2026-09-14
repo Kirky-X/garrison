@@ -83,7 +83,7 @@ fn default_sso_flow() -> super::AuthenticationFlow {
 }
 
 // ============================================================================
-// inventory 编译期注册（R-auth-flow-dsl-012）
+// inventory 编译期注册
 // ============================================================================
 
 inventory::submit! {
@@ -120,7 +120,7 @@ mod tests {
     use crate::account::authflow::FlowRegistry;
 
     /// `default-password-flow` 可从 Registry 查询且结构正确
-    /// （Login + Conditional，R-auth-flow-dsl-012）。
+    /// （Login + Conditional）。
     #[test]
     fn default_password_flow_registered() {
         let registry = FlowRegistry::from_inventory();
@@ -153,7 +153,7 @@ mod tests {
     }
 
     /// `default-mfa-flow` 可从 Registry 查询且结构正确
-    /// （Login + Mfa，R-auth-flow-dsl-012）。
+    /// （Login + Mfa）。
     #[test]
     fn default_mfa_flow_registered() {
         let registry = FlowRegistry::from_inventory();
@@ -173,7 +173,7 @@ mod tests {
     }
 
     /// `default-social-flow` 可从 Registry 查询且结构正确
-    /// （SocialProvider + Conditional，R-auth-flow-dsl-012）。
+    /// （SocialProvider + Conditional）。
     #[test]
     fn default_social_flow_registered() {
         let registry = FlowRegistry::from_inventory();
@@ -190,7 +190,7 @@ mod tests {
     }
 
     /// `default-sso-flow` 可从 Registry 查询且结构正确
-    /// （SsoServer + Conditional，R-auth-flow-dsl-012）。
+    /// （SsoServer + Conditional）。
     #[test]
     fn default_sso_flow_registered() {
         let registry = FlowRegistry::from_inventory();

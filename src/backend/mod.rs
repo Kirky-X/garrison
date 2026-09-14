@@ -9,11 +9,11 @@
 //!
 //! # 设计原则
 //!
-//! - **trait + dyn object 切换**（Rule 2 简洁优先）：不使用 typestate 模式，
-//!   AuthBackend 只是一个 trait，通过 `Arc<dyn AuthBackend>` 在 Embedded/Remote 间切换
+//! - **trait + dyn object 切换**（简洁优先）：不使用 typestate 模式，
+//! AuthBackend 只是一个 trait，通过 `Arc<dyn AuthBackend>` 在 Embedded/Remote 间切换
 //! - **方法签名接受 token 参数**：与 GarrisonUtil 静态方法（从 task_local 获取 token）不同，
-//!   AuthBackend 方法显式接受 token/login_id 参数，适用于远程调用场景
-//! - **复用现有类型**（Rule 8）：LoginParams / TokenInfo / SessionData 复用 garrison 现有类型
+//! AuthBackend 方法显式接受 token/login_id 参数，适用于远程调用场景
+//! - **复用现有类型**：LoginParams / TokenInfo / SessionData 复用 garrison 现有类型
 
 use crate::error::GarrisonResult;
 use async_trait::async_trait;

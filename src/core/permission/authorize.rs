@@ -11,10 +11,10 @@
 //! - [`Authorizer`] 是公开 API，不假设具体实现，可由任何授权引擎实现
 //! - 通过 blanket impl 自动为所有 [`PermissionChecker`] 提供 [`Authorizer`] 实现
 //!
-//! # Rule 7 冲突说明
+//! # 冲突说明
 //!
 //! `AuthRequest` / `Decision` / `DecisionReason` 已在 `decision` 模块定义，
-//! 本文件仅新增 `Authorizer` trait，复用现有类型（Rule 8 先读再写 + Rule 11 惯例优先）。
+//! 本文件仅新增 `Authorizer` trait，复用现有类型（先读再写 + 惯例优先）。
 //!
 //! [`PermissionChecker`]: crate::core::permission::PermissionChecker
 
@@ -73,10 +73,10 @@ pub trait Authorizer: Send + Sync {
 /// `PermissionChecker` 实现（如 `PermissionCheckerDefault`）自动获得
 /// `Authorizer` 实现，无需重复实现。
 ///
-/// # Rule 7 冲突处理
+/// # 冲突处理
 ///
 /// `PermissionChecker` trait 已有 `authorize` 方法且 `PermissionCheckerDefault`
-/// 已实现之。通过 blanket impl 复用现有实现，避免重复代码（Rule 8 先读再写）。
+/// 已实现之。通过 blanket impl 复用现有实现，避免重复代码（先读再写）。
 ///
 /// [`PermissionChecker::authorize`]: crate::core::permission::PermissionChecker::authorize
 #[async_trait]

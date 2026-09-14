@@ -2,7 +2,7 @@
 //! See LICENSE for full license text.
 
 //! PermissionLogic trait — 权限与角色校验契约。
-//! 从 v0.5.2 起，从 `GarrisonLogic` 上帝 trait 拆分；本 trait 承接权限/角色校验 2 个方法。
+//! 本 trait 承接权限/角色校验 2 个方法。
 //! super-trait 为 [`SessionLogic`]（权限校验需先通过 `get_login_id` 获取当前登录主体）。
 
 use super::GarrisonLogicDefault;
@@ -230,7 +230,7 @@ impl PermissionLogic for GarrisonLogicDefault {
         // 回退到 firewall 路径（permission_checker 未注入时）
         // firewall 路径同样需要租户隔离校验，否则 tenant-isolation 启用 +
         // permission_checker 未注入时租户隔离被绕过。
-        // 修复（batch-08 #2190/#2192）：tenant_id 计算后不再弃用，经
+        // tenant_id 计算后不再弃用，经
         // `check_permission_in_tenant` 传入策略（支持租户的策略可据此隔离判定，
         // 默认实现将请求级租户纳入权限缓存键）。
         #[cfg(not(feature = "tenant-isolation"))]
@@ -272,8 +272,8 @@ impl PermissionLogic for GarrisonLogicDefault {
             },
         };
         // 优先委托 PermissionChecker（若注入），走 has_role + RoleCheck 事件路径——
-        // 与 check_permission 的 checker 分支对齐（修复 batch-08 #2191/#2193/#2855/#2858：
-        // check_role 此前绕过 permission_checker 直调 firewall）。
+        // 与 check_permission 的 checker 分支对齐
+        // （check_role 此前绕过 permission_checker 直调 firewall）。
         // 角色判定用 `has_role`（角色语义）而非 `authorize`（action 为权限语义）。
         if let Some(pc) = &self.permission_checker {
             // tenant-isolation feature 启用时强制 fail-closed（与 firewall 回退路径对齐）
@@ -305,7 +305,7 @@ impl PermissionLogic for GarrisonLogicDefault {
         }
 
         // 租户隔离：与 check_permission 对齐，防止跨租户角色检查绕过。
-        // 修复（batch-08）：tenant_id 不再弃用，经 `check_role_in_tenant` 传入策略。
+        // tenant_id 不再弃用，经 `check_role_in_tenant` 传入策略。
         #[cfg(not(feature = "tenant-isolation"))]
         let tenant_id = TENANT.try_get().map(|ctx| ctx.tenant_id).unwrap_or(0);
         #[cfg(feature = "tenant-isolation")]
@@ -967,7 +967,7 @@ mod tests {
             assert!(!result.unwrap(), "has_role=false 应返回 false");
         }
 
-        /// CRITICAL-7: 无租户上下文时 check_role 应 fail-closed 返回 Err(Config)。
+        /// 无租户上下文时 check_role 应 fail-closed 返回 Err(Config)。
         ///
         /// 验证 `tenant-isolation` feature 启用后，`check_role` 与 `check_permission` 一致，
         /// 在无 `TENANT.scope` 时拒绝执行（防止跨租户角色检查绕过）。

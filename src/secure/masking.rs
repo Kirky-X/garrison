@@ -9,7 +9,7 @@
 //! - `MaskType` 枚举定义脱敏类型，`SensitiveDataMasker` 持有 `(MaskType, field_name)` 规则列表
 //! - `mask_value` 对单个字符串值按指定类型脱敏
 //! - `mask_json` 递归遍历 JSON Object，匹配 field 名后调用 `mask_value`
-//! - `Custom(String)` 变体使用 `regex::Regex` 将所有匹配项替换为 `***`（vuln-0010 D6 修复）
+//! - `Custom(String)` 变体使用 `regex::Regex` 将所有匹配项替换为 `***`
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -60,7 +60,7 @@ pub enum MaskType {
 /// use serde_json::json;
 ///
 /// let masker = SensitiveDataMasker::new()
-///     .with_rule(MaskType::Phone, "phone");
+/// .with_rule(MaskType::Phone, "phone");
 /// let input = json!({"phone": "13812341234"});
 /// let masked = masker.mask_json(&input);
 /// assert_eq!(masked, json!({"phone": "138****1234"}));
@@ -241,7 +241,7 @@ fn mask_bank_card(value: &str) -> String {
     format!("{prefix}{stars}{suffix}")
 }
 
-/// 自定义正则脱敏（vuln-0010 D6 修复；编译结果经进程级缓存复用）。
+/// 自定义正则脱敏（编译结果经进程级缓存复用）。
 ///
 /// 使用 `regex::Regex` 将 `value` 中所有匹配 `regex_str` 的子串替换为 `"***"`。
 /// 正则按 pattern 缓存（见 [`regex_cache`]），同一 pattern 仅编译一次；
@@ -253,9 +253,9 @@ fn mask_bank_card(value: &str) -> String {
 ///
 /// - 正则编译成功 + 有匹配 → 返回真实脱敏后的值（匹配项替换为 `***`）
 /// - 正则编译成功 + 无匹配 → 返回原值（用户配置的正则不匹配任何内容，
-///   等价于无脱敏需求，由用户负责正则正确性）
+/// 等价于无脱敏需求，由用户负责正则正确性）
 /// - 正则编译失败 → 返回 `"***"`（无法解析用户意图时保守屏蔽全部内容，
-///   而非返回可能含敏感数据的原值；同时记录 error 日志便于排查）
+/// 而非返回可能含敏感数据的原值；同时记录 error 日志便于排查）
 ///
 /// # 示例
 ///
@@ -345,7 +345,7 @@ mod tests {
 
     /// Custom 类型真实脱敏 — 正则 `\d+` 匹配所有数字组替换为 `***`。
     /// SSN `123-45-6789` → `***-***-***`（每个数字组替换为 `***`，不论原长度）。
-    /// vuln-0010 D6 修复：原 placeholder 静默返回原值（敏感数据泄露）。
+    /// 原 placeholder 实现静默返回原值（敏感数据泄露）。
     #[test]
     fn mask_custom_redacts_matching_digits() {
         let masker = SensitiveDataMasker::new();
@@ -594,10 +594,10 @@ mod tests {
     }
 
     // ========================================================================
-    // D6 测试：Custom 正则脱敏（regex feature）
+    // Custom 正则脱敏测试（regex feature）
     // ========================================================================
 
-    /// D6-1: Custom 用 regex 替换 SSN 每个数字为 `***`。
+    /// Custom 用 regex 替换 SSN 每个数字为 `***`。
     /// "123-45-6789" → "*********-******-************"（每个数字替换为 `***`）。
     #[test]
     fn mask_custom_regex_replaces_digits_with_star() {
@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(result, "*********-******-************");
     }
 
-    /// D6-2: Custom 用 regex 替换 email 本地部分为 `***`。
+    /// Custom 用 regex 替换 email 本地部分为 `***`。
     /// `replace_all` 用 `***` 替换整个匹配（`^[^@]+` 匹配 "alice" → "***"）。
     #[test]
     fn mask_custom_regex_replaces_email_local_part() {
@@ -619,7 +619,7 @@ mod tests {
         assert_eq!(result, "***@example.com");
     }
 
-    /// D6-3: Custom regex 不匹配时返回原值。
+    /// Custom regex 不匹配时返回原值。
     #[test]
     fn mask_custom_regex_no_match_returns_original() {
         let masker = SensitiveDataMasker::new();
@@ -627,7 +627,7 @@ mod tests {
         assert_eq!(result, "no-digits-here");
     }
 
-    /// D6-4: Custom regex 空输入返回空字符串。
+    /// Custom regex 空输入返回空字符串。
     #[test]
     fn mask_custom_regex_empty_input_returns_empty() {
         let masker = SensitiveDataMasker::new();
@@ -635,7 +635,7 @@ mod tests {
         assert_eq!(result, "");
     }
 
-    /// D6-5: Custom regex 空 pattern 在每个位置匹配。
+    /// Custom regex 空 pattern 在每个位置匹配。
     /// 空 pattern 匹配每个字符间的位置，每个空匹配替换为 `***`。
     /// "anything" 8 字符 → 9 个空位置 → "***a***n***y***t***h***i***n***g***"。
     #[test]
@@ -645,7 +645,7 @@ mod tests {
         assert_eq!(result, "***a***n***y***t***h***i***n***g***");
     }
 
-    /// D6-6: Custom regex 无效 pattern 返回 `"***"` 作为安全 fallback。
+    /// Custom regex 无效 pattern 返回 `"***"` 作为安全 fallback。
     /// 无效正则 `[` 不能编译，返回 `"***"`（fail-closed，避免泄露原值）+ error 日志。
     #[test]
     fn mask_custom_regex_invalid_pattern_returns_safe_fallback() {
@@ -654,7 +654,7 @@ mod tests {
         assert_eq!(result, "***");
     }
 
-    /// D6-7: Custom regex 多处匹配全部替换。
+    /// Custom regex 多处匹配全部替换。
     /// "a1b2c3d4" → "a***b***c***d***"（每个数字替换为 `***`）。
     #[test]
     fn mask_custom_regex_replaces_all_matches() {
@@ -663,7 +663,7 @@ mod tests {
         assert_eq!(result, "a***b***c***d***");
     }
 
-    /// D6-8: Custom regex 银行卡部分脱敏（所有数字替换为 `***`）。
+    /// Custom regex 银行卡部分脱敏（所有数字替换为 `***`）。
     /// "6222021234567890" → 16 位数字 → 48 个 `*`（每个数字替换为 `***`）。
     #[test]
     fn mask_custom_regex_bank_card_partial_mask() {
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(result, "*".repeat(48));
     }
 
-    /// D6-10: mask_field Custom regex 错误时返回 `"***"`（fail-closed）。
+    /// mask_field Custom regex 错误时返回 `"***"`（fail-closed）。
     /// 验证 `mask_field` 在 regex 无效时不 panic，不返回原值，返回安全 fallback。
     #[test]
     fn mask_field_custom_regex_error_returns_safe_fallback() {
@@ -682,7 +682,7 @@ mod tests {
         assert_eq!(result, "***");
     }
 
-    /// D6-11: mask_field Custom regex 正常工作时正确脱敏。
+    /// mask_field Custom regex 正常工作时正确脱敏。
     /// 验证 `mask_field` 在 regex 有效时通过 `mask_value` 脱敏。
     #[test]
     fn mask_field_custom_regex_valid_masks_correctly() {

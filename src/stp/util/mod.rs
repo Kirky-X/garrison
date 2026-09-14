@@ -26,26 +26,21 @@ use tokio::task;
 use tokio::task::JoinHandle;
 
 // ============================================================================
-// AuthBackend 全局桥接（R-msa-005）
+// AuthBackend 全局桥接
 // ============================================================================
 //
-// 设计冲突说明（规则 7 — 暴露冲突）：
+// 设计决策说明：
 //
-// design.md §3.5 原设计使用 `CURRENT_BACKEND.get().expect("Backend not initialized")`，
-// 要求用户必须显式调用 `init_backend()`，否则 panic。
+// 显式初始化 panic 方案（`CURRENT_BACKEND.get().expect("Backend not initialized")`）
+// 属 breaking change；而 backend-embedded 模式必须与既有行为完全一致（zero-break）。
 //
-// spec R-msa-005 约束："backend-embedded 模式下 GarrisonUtil 行为与 v0.6.7 一致" +
-// Constraints："backend-embedded 模式必须与 v0.6.7 行为完全一致（zero-break）"。
-//
-// 两者冲突：design.md 要求显式初始化（breaking change），spec 要求 zero-break。
-//
-// 决策：采取 fallback 策略，优先满足 spec 的 zero-break 约束。
+// 因此采取 fallback 策略，优先满足 zero-break 约束。
 // - 启用 backend feature 且已 `init_backend()`：委托 `AuthBackend` trait
-// - 启用 `backend-embedded` 但未 `init_backend()`：fallback 到 `GarrisonManager`（v0.6.7 兼容）
+// - 启用 `backend-embedded` 但未 `init_backend()`：fallback 到 `GarrisonManager`
 // - 仅启用 `backend-remote` 但未 `init_backend()`：返回 `GarrisonError::Config`
-// - 未启用任何 backend feature：直接走 `GarrisonManager` 路径（v0.6.7 兼容）
+// - 未启用任何 backend feature：直接走 `GarrisonManager` 路径
 //
-// 实现说明：v0.9.0 起使用 `ArcSwapOption` 而非原 `Mutex<Option<...>>`——
+// 实现说明：使用 `ArcSwapOption` 而非 `Mutex<Option<...>>`——
 // `get_backend` 是每请求热路径（check_login / check_permission 各一次），
 // Mutex 会让全部 tokio worker 在同一把全局锁上串行排队；ArcSwap 读路径
 // 无锁（wait-free）。保留「测试可重置」能力（reset_backend_for_test）。
@@ -79,7 +74,7 @@ static CURRENT_BACKEND: arc_swap::ArcSwapOption<BackendHandle> =
 /// use garrison::backend::{AuthBackend, BackendEmbedded};
 /// use garrison::stp::init_backend;
 ///
-/// // Embedded 模式（v0.6.7 兼容）
+/// // Embedded 模式
 /// init_backend(Arc::new(BackendEmbedded::new())).unwrap();
 ///
 /// // Remote 模式
@@ -147,7 +142,7 @@ pub(crate) fn reset_backend_for_test() {
 mod backend_bridge_tests {
     use super::*;
 
-    /// R-perf-001: 并发 init_backend（CAS）下恰好一个成功、其余返回
+    /// 并发 init_backend（CAS）下恰好一个成功、其余返回
     /// Config("stp-backend-already-init")，且成功后 store 可读到该后端。
     /// 在局部 store 上测试，避免污染全局 CURRENT_BACKEND 影响并行测试。
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -308,7 +303,7 @@ impl GarrisonUtil {
     /// - 会话销毁失败：透传 `GarrisonError`。
     pub async fn logout_by_login_id(login_id: impl Into<String>) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
-        // batch-08 修复（#6157）：与同族 login/kickout 对齐补 backend 分发——
+        // 与同族 login/kickout 对齐补 backend 分发——
         // backend 模式下认证状态由后端持有，本地直调 GarrisonManager 会落空。
         // backend.kickout 为 login_id 维度销毁（语义等同 logout_by_login_id）。
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
@@ -358,7 +353,7 @@ impl GarrisonUtil {
     /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
     /// - 会话销毁失败：透传 `GarrisonError`。
     pub async fn kickout_by_token(token: &str) -> GarrisonResult<()> {
-        // batch-08 修复（#6157/#6159）：与同族 kickout 对齐补 backend 分发。
+        // 与同族 kickout 对齐补 backend 分发。
         // backend.logout 为 token 维度销毁，与 kickout_by_token 语义一致。
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
         {
@@ -371,7 +366,7 @@ impl GarrisonUtil {
             .await
     }
 
-    /// 密码修改后失效用户所有会话（H-7 修复）。
+    /// 密码修改后失效用户所有会话。
     ///
     /// 清除指定 `login_id` 的所有 Token-Session 和 Account-Session，
     /// 并广播 `GarrisonEvent::Kickout` 事件（reason: "password-changed"）。
@@ -432,7 +427,7 @@ impl GarrisonUtil {
     /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
     /// - 会话销毁失败：透传 `GarrisonError`。
     pub async fn revoke_token(token: &str) -> GarrisonResult<()> {
-        // batch-08 修复（#6157/#6160）：与同族 logout 对齐补 backend 分发。
+        // 与同族 logout 对齐补 backend 分发。
         // backend.logout 为 token 维度销毁，与 revoke_token 语义一致。
         #[cfg(any(feature = "backend-embedded", feature = "backend-remote"))]
         {
@@ -764,7 +759,7 @@ impl GarrisonUtil {
     ///
     /// # 兼容性
     ///
-    /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`（兼容 0.6.0 未启用 API Key 场景）。
+    /// `protocol-apikey` feature 关闭时，本方法返回 `Ok(())`（兼容未启用 API Key 场景）。
     ///
     /// # 示例
     ///
@@ -777,7 +772,7 @@ impl GarrisonUtil {
     ///
     /// // 或手动设置 token 作用域
     /// with_current_token("my-api-key".to_string(), async {
-    ///     GarrisonUtil::check_api_key("internal").await
+    /// GarrisonUtil::check_api_key("internal").await
     /// }).await?;
     /// ```
     pub async fn check_api_key(namespace: &str) -> GarrisonResult<()> {
@@ -847,7 +842,7 @@ impl GarrisonUtil {
 
     // ========================================================================
     // 同步版本（check_*_sync）：通过 block_in_place + Handle::current().block_on
-    // 包装 async 版本，供 sync fn 宏 wrapper 调用（v0.6.1 sync fn 支持）。
+    // 包装 async 版本，供 sync fn 宏 wrapper 调用。
     //
     // 设计约束：
     // - 必须在 tokio multi_thread runtime 上下文内调用（block_in_place 要求）
@@ -1017,7 +1012,7 @@ impl GarrisonUtil {
 /// 启动后台 task 定期清理 `login_token_map` 中的过期/已注销 token。
 ///
 /// 每 `interval_secs` 秒调用一次 [`GarrisonSession::cleanup_expired_tokens`]。
-/// 清理失败时仅记录 `tracing::warn!`，不中断 task（规则12：错误显性化但不阻断后台清理）。
+/// 清理失败时仅记录 `tracing::warn!`，不中断 task（错误显性化但不阻断后台清理）。
 ///
 /// # 参数
 /// - `session`: `GarrisonSession` 的 `Arc` 引用。

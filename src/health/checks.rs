@@ -106,8 +106,8 @@ impl HealthCheck for CacheHealthCheck {
 // -------------------- 探测路径：cache-redis 启用 --------------------
 //
 // cache-redis 后端通过网络连接 Redis，必须执行真实探测以发现连接断开 / 网络分区。
-// 通过 `GarrisonManager` 获取 dao 句柄，执行 `dao.get` 最小查询（与 design.md Alternative
-// Considered 决策一致：不修改 GarrisonDao trait，复用现有查询能力做探测）。
+// 通过 `GarrisonManager` 获取 dao 句柄，执行 `dao.get` 最小查询（设计决策：
+// 不修改 GarrisonDao trait，复用现有查询能力做探测）。
 #[cfg(feature = "cache-redis")]
 impl HealthCheck for CacheHealthCheck {
     fn name(&self) -> &str {

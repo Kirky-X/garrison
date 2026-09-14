@@ -9,7 +9,7 @@
 //!
 //! - [`XssMode::EscapeAll`](crate::secure::xss::XssMode::EscapeAll)：转义所有 HTML 特殊字符（`<` / `>` / `&` / `"` / `'`）
 //! - [`XssMode::Whitelist`](crate::secure::xss::XssMode::Whitelist)：白名单内的标签保留原样（属性值中的特殊字符仍转义），
-//!   非白名单标签全部转义，纯文本内容中的特殊字符也转义
+//! 非白名单标签全部转义，纯文本内容中的特殊字符也转义
 //! - 转义顺序：`&` 必须最先转义，避免二次转义
 //!
 //! ## 使用指南
@@ -17,9 +17,9 @@
 //! `XssProtector` 需在**应用层**对用户输入显式调用转义，框架不会自动处理响应中的 XSS。
 //!
 //! - **JSON 响应**：认证服务器响应为 JSON（`Content-Type: application/json`），
-//!   浏览器不会将其解析为 HTML，通常不需要 HTML 转义。
+//! 浏览器不会将其解析为 HTML，通常不需要 HTML 转义。
 //! - **HTML 页面**：OAuth2 authorize 授权页、SSO 重定向页等返回 HTML 的场景，
-//!   必须对所有用户可控输入（如 `redirect_uri`、`state`、用户名）调用 `sanitize`。
+//! 必须对所有用户可控输入（如 `redirect_uri`、`state`、用户名）调用 `sanitize`。
 //!
 //! ### EscapeAll 模式（纯文本场景）
 //!
@@ -367,7 +367,7 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
 /// - 三种引号形式：双引号、单引号、无引号
 /// - `=` 与引号间空白：`href= "javascript:alert(1)"`（值解析前先跳过空白）
 /// - 属性紧跟引号无空白：`<a title="x"href="javascript:alert(1)">`
-///   （属性边界识别含 `"`/`'`，与 `strip_event_handlers` 一致）
+/// （属性边界识别含 `"`/`'`，与 `strip_event_handlers` 一致）
 ///
 /// # 实现策略
 ///
@@ -984,7 +984,7 @@ mod tests {
     }
 
     // ========================================================================
-    // XSS 绕过回归测试（CRITICAL 修复验证）
+    // XSS 绕过回归测试
     // ========================================================================
 
     /// 绕过 #1: `onclick =alert(1)` — 属性名与 `=` 之间有空格。

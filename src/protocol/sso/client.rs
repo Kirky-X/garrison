@@ -3,8 +3,7 @@
 
 //! `SsoClient` 实现模块。
 //!
-//! 从 `mod.rs` 迁移以符合规则 25（mod.rs 接口隔离）：
-//! impl 块与顶层 `fn sign_ticket` / `fn verify_ticket_signature` 不允许留在 `mod.rs`。
+//! mod.rs 接口隔离：impl 块与顶层 `fn sign_ticket` / `fn verify_ticket_signature` 不允许留在 `mod.rs`。
 //!
 //! 包含 HMAC-SHA256 ticket 签名工具与 `SsoClient` 方法实现。
 //! `server.rs` 通过 `use super::client::{sign_ticket, verify_ticket_signature}` 直接引用。
@@ -26,7 +25,7 @@ type HmacSha256 = Hmac<Sha256>;
 /// SSO ticket 默认 TTL（秒）。
 const DEFAULT_TICKET_TTL: u64 = 60;
 
-/// 计算 ticket 随机部分的 HMAC-SHA256 签名（M5 修复，供 SsoClient / DefaultSsoServer 共用）。
+/// 计算 ticket 随机部分的 HMAC-SHA256 签名（供 SsoClient / DefaultSsoServer 共用）。
 ///
 /// 签名输入为 `random_part`，输出为 base64 编码的 HMAC-SHA256。
 pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> GarrisonResult<String> {
@@ -36,7 +35,7 @@ pub(crate) fn sign_ticket(secret: &str, random_part: &str) -> GarrisonResult<Str
     Ok(BASE64_STANDARD.encode(mac.finalize().into_bytes()))
 }
 
-/// 验证 ticket 的 HMAC 签名（M5 修复，供 SsoClient / DefaultSsoServer 共用）。
+/// 验证 ticket 的 HMAC 签名（供 SsoClient / DefaultSsoServer 共用）。
 ///
 /// 返回 `Ok(random_part)` 验证通过，`Err` 表示签名无效或格式错误。
 pub(crate) fn verify_ticket_signature(secret: &str, ticket: &str) -> GarrisonResult<String> {
@@ -131,7 +130,7 @@ impl SsoClient {
     /// 校验 SSO ticket。
     ///
     /// 校验逻辑：
-    /// 1. 验证 ticket 的 HMAC 签名（M5 新增，防止 DAO 攻破后伪造）；
+    /// 1. 验证 ticket 的 HMAC 签名（防止 DAO 攻破后伪造）；
     /// 2. `get` 读取票据（不删除），校验 `client_id` 是否匹配；
     /// 3. `client_id` 匹配后，`get_and_delete` 原子消费票据（消除 TOCTOU）。
     ///
@@ -154,7 +153,7 @@ impl SsoClient {
     /// 消除 TOCTOU 竞态。并发调用同一 ticket（同 client_id）仅一个返回 `Ok`，
     /// 其他返回 `InvalidToken`（"已被并发消费"）。
     pub async fn validate_ticket(&self, ticket: &str, client_id: i64) -> GarrisonResult<String> {
-        // M5 修复：先验签，防止 DAO 攻破后伪造 ticket
+        // 先验签，防止 DAO 攻破后伪造 ticket
         let _random_part = self.verify_ticket_signature(ticket)?;
 
         let key = format!("garrison:sso:ticket:{}", ticket);

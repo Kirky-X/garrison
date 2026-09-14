@@ -24,9 +24,9 @@
 //! ## 偏差说明
 //!
 //! - `login_id` 使用 `&str` 而非 `LoginId` newtype，遵循子 trait（`SessionLogic` / `PermissionLogic`）现有惯例
-//!   （依据规则 11：惯例优先于新颖）
+//! （惯例优先于新颖）
 //! - [`FirewallStrategy`] 与现有 [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy)
-//!   trait 共存，两者名称不同，不冲突
+//! trait 共存，两者名称不同，不冲突
 
 use crate::error::GarrisonResult;
 use crate::stp::{GarrisonLogicDefault, LoginParams, PermissionLogic, SessionLogic, TokenLogic};
@@ -334,9 +334,9 @@ impl FirewallStrategy for DefaultFirewallStrategy {
 /// struct MyLoginHandler;
 /// #[async_trait::async_trait]
 /// impl LoginHandler for MyLoginHandler {
-///     async fn handle_login(&self, login_id: &str) -> garrison::GarrisonResult<String> {
-///         Ok(format!("custom-token-{}", login_id))
-///     }
+/// async fn handle_login(&self, login_id: &str) -> garrison::GarrisonResult<String> {
+/// Ok(format!("custom-token-{}", login_id))
+/// }
 /// }
 /// strategy.write().register_login_handler(Arc::new(MyLoginHandler));
 ///
@@ -584,7 +584,7 @@ mod tests {
     }
 
     // ========================================================================
-    // R-strategy-registry-001: 6 个策略 trait 可被实现
+    // 6 个策略 trait 可被实现
     // ========================================================================
 
     /// 验证 `LoginHandler` trait 可被自定义实现。
@@ -701,7 +701,7 @@ mod tests {
     }
 
     // ========================================================================
-    // R-strategy-registry-002: Strategy 注册表
+    // Strategy 注册表
     // ========================================================================
 
     /// 验证 `Strategy::new(logic)` 构造成功，6 个策略均为默认实现。
@@ -839,7 +839,7 @@ mod tests {
     }
 
     // ========================================================================
-    // R-strategy-registry-004: 策略可插拔（替换一个不影响其他）
+    // 策略可插拔（替换一个不影响其他）
     // ========================================================================
 
     /// 验证替换 `LoginHandler` 不影响 `LogoutHandler`。

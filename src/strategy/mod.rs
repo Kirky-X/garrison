@@ -10,7 +10,7 @@
 //!
 //! - `GarrisonPermissionStrategy` trait：定义权限/角色校验的可插拔契约
 //! - `GarrisonPermissionStrategyDefault`：默认实现，持有 `GarrisonInterface` 回调获取权限/角色数据，
-//!   做字符串匹配校验
+//! 做字符串匹配校验
 //!
 //! ## 数据来源（依据用户决策：方案 B）
 //!
@@ -64,7 +64,7 @@ pub mod rate_limiter_backend;
 /// 策略注册表模块。
 pub mod registry;
 
-/// `GarrisonPermissionStrategyDefault` 的实现块（规则 25：mod.rs 接口隔离）。
+/// `GarrisonPermissionStrategyDefault` 的实现块（mod.rs 接口隔离）。
 mod default;
 
 // Re-export 核心 trait 与类型以便外部使用
@@ -142,7 +142,7 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// 校验权限（带租户维度）。
     ///
     /// stp 层 `check_permission` 的 firewall 回退路径通过此方法把请求级 `tenant_id`
-    /// 传入策略（batch-08 修复：此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
+    /// 传入策略（此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
     ///
     /// # 必须实现
     ///
@@ -178,7 +178,7 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// 校验角色（带租户维度）。
     ///
     /// stp 层 `check_role` 的 firewall 回退路径通过此方法把请求级 `tenant_id`
-    /// 传入策略（batch-08 修复：此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
+    /// 传入策略（此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
     ///
     /// # 必须实现
     ///
@@ -298,7 +298,7 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
 /// 权限/角色数据由 `GarrisonInterface` 回调提供（依据用户决策方案 B），
 /// 不委托 dbnexus `PermissionProvider` trait（因其 API 模型与 Garrison 不匹配）。
 ///
-/// # 0.2.0 扩展
+/// # 扩展字段
 ///
 /// - `permission_checker`：注入后 `check_permission` 委托到 `PermissionChecker`
 /// - `dao`：注入后启用权限缓存（`cache_permission` / `get_cached_permission`）
@@ -317,7 +317,7 @@ pub struct GarrisonPermissionStrategyDefault {
     /// `Some(t)` 时缓存键为 `garrison:perm:cache:<t>:<login_id>:<permission>`；
     /// `None` 时使用占位符 `_`（未配置租户隔离，所有租户共享缓存键）。
     tenant_id: Option<i64>,
-    /// 默认 login_type（多账号体系，batch-08 接线 `_with_type` 回调）。
+    /// 默认 login_type（多账号体系，接线 `_with_type` 回调）。
     ///
     /// 未设置时默认 `"default"`，通过 `with_login_type` builder 设置。
     /// `get_permission_list` / `get_role_list` 经

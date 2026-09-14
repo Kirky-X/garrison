@@ -5,16 +5,16 @@
 //!
 //! # 存储格式
 //! - 封禁记录：`limiteron:ban:{type}:{value}` →
-//!   `expires_at_ts|ban_times|is_manual|duration_secs|reason`
+//! `expires_at_ts|ban_times|is_manual|duration_secs|reason`
 //! - 封禁次数：`limiteron:ban:times:{type}:{value}` → `u64`
 //! - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
 //!
 //! # 一致性与 TTL 语义
 //! - `save` 先写主记录（`is_banned` 执行依据），times/history 失败时 best-effort
-//!   回滚已写 key 并返回错误。`GarrisonDao` 无事务接口，回滚本身也可能失败，
-//!   此时以 `tracing::warn` 记录（部分失败语义）。
+//! 回滚已写 key 并返回错误。`GarrisonDao` 无事务接口，回滚本身也可能失败，
+//! 此时以 `tracing::warn` 记录（部分失败语义）。
 //! - `increment_ban_times` 与封禁记录的剩余 TTL 对齐（incr 仅在 key 首次创建时
-//!   生效 TTL），避免 record 过期后 times 键永久残留。
+//! 生效 TTL），避免 record 过期后 times 键永久残留。
 //! - `is_banned` 在查询时检查过期时间（过期返回 None）。
 
 use crate::dao::GarrisonDao;
@@ -173,7 +173,7 @@ fn deserialize_ban_record(target: &BanTarget, val: &str) -> Option<BanRecord> {
 ///
 /// # 存储格式
 /// - 封禁记录：`limiteron:ban:{type}:{value}` →
-///   `expires_at_ts|ban_times|is_manual|duration_secs|reason`
+/// `expires_at_ts|ban_times|is_manual|duration_secs|reason`
 /// - 封禁次数：`limiteron:ban:times:{type}:{value}` → `u64`
 /// - 封禁历史：`limiteron:ban:history:{type}:{value}` → `ban_times|last_banned_at_ts`
 ///
@@ -221,8 +221,8 @@ impl BanStorage for GarrisonDaoBanStorage {
     /// `GarrisonDao` 无事务/批量接口，三个 key 无法原子写入。策略：
     /// - **先写主记录**（`is_banned` 的执行依据）：失败即止，不产生任何部分状态；
     /// - times / history 失败时 **best-effort 回滚已写 key** 并返回明确错误，
-    ///   避免「record 存在但 times/history 缺失」的不一致状态；回滚 delete
-    ///   本身失败仅 `tracing::warn`（部分失败语义，不掩盖原始错误）。
+    /// 避免「record 存在但 times/history 缺失」的不一致状态；回滚 delete
+    /// 本身失败仅 `tracing::warn`（部分失败语义，不掩盖原始错误）。
     async fn save(&self, record: &BanRecord) -> Result<(), StorageError> {
         let key = ban_record_key(&record.target);
         let val = serialize_ban_record(record);

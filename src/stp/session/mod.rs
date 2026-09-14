@@ -2,7 +2,6 @@
 //! See LICENSE for full license text.
 
 //! SessionLogic trait — 会话生命周期管理契约（登录/登出/踢出/校验）。
-//! 从 v0.5.2 起，原 `GarrisonLogic` 上帝 trait 拆分为 6 个细粒度 trait；
 //! 本 trait 承接会话生命周期相关 10 个方法，super-trait 为 [`GarrisonCore`]。
 //!
 //! # LoginId 迁移
@@ -49,7 +48,7 @@ use tokio::sync::Mutex as TokioMutex;
 /// # 方法分组
 ///
 /// - 登录：[`login`](Self::login) / [`login_with_token`](Self::login_with_token) /
-///   [`login_by_token`](Self::login_by_token)（默认返回 `NotImplemented`）
+/// [`login_by_token`](Self::login_by_token)（默认返回 `NotImplemented`）
 /// - 登出：[`logout`](Self::logout) / [`logout_by_login_id`](Self::logout_by_login_id)
 /// - 踢出：[`kickout`](Self::kickout) / [`kickout_by_token`](Self::kickout_by_token)
 /// - 吊销：[`revoke_token`](Self::revoke_token)
@@ -76,16 +75,16 @@ pub trait SessionLogic: GarrisonCore {
     /// - token 生成失败（如 `token_style` 非法）：`GarrisonError::Config`。
     /// - 会话创建失败：透传 `GarrisonError`。
     ///
-    /// # 时序契约（架构审查 MEDIUM-1，fix-refresh-race-and-test-contracts）
+    /// # 时序契约
     ///
     /// `login` 返回 `Ok(token)` 时，DAO 层面的会话已完全建立（Token-Session +
     /// Account-Session 已写入，`enforce_max_login_count` 已执行）。但 **plugin
     /// `on_login` 回调与 listener `Login` 事件广播在 `login` 返回后异步触发**，
     /// 调用方**不应假设** `login` 返回时 plugin/listener 已执行完成。
     ///
-    /// 该设计权衡（HIGH-1 修复）：
+    /// 该设计权衡：
     /// - 避免持锁跨 `listener.broadcast().await`（broadcast 串行调用 listener，
-    ///   阻塞同 `login_id` 的其他请求 5-25ms）
+    /// 阻塞同 `login_id` 的其他请求 5-25ms）
     /// - 避免"幽灵登录"（enforce 失败回滚后 Login 事件已广播）
     ///
     /// 调用方若需强一致事件序，应在 listener 内做事件去重/序号化，而非依赖
@@ -255,7 +254,7 @@ pub trait SessionLogic: GarrisonCore {
 // GarrisonLogicDefault impl
 // ============================================================================
 
-/// A8: `login_with_token` 入口校验 — 阻断会话固定/劫持的常见攻击向量。
+/// `login_with_token` 入口校验 — 阻断会话固定/劫持的常见攻击向量。
 ///
 /// 在 `with_token_session_lock` 之前执行纯输入校验，避免无谓持锁。
 ///
@@ -264,8 +263,8 @@ pub trait SessionLogic: GarrisonCore {
 /// - `login_id` 非空：防止空标识创建无主会话（攻击者可借此构造游离会话）
 /// - `token` 非空：空 token 无法标识会话，且可能在下游 DAO 层产生异常键
 /// - `token` 长度 `8..=256`：
-///   - 下限 8：拒绝过短 token（易碰撞/伪造，如 "0"/"1" 等单字符 token）
-///   - 上限 256：拒绝超长 token（DoS 防护，避免 DAO 存储与序列化开销过大）
+/// - 下限 8：拒绝过短 token（易碰撞/伪造，如 "0"/"1" 等单字符 token）
+/// - 上限 256：拒绝超长 token（DoS 防护，避免 DAO 存储与序列化开销过大）
 /// - `token` 不含控制字符（U+0000..=U+001F / U+007F..=U+009F）：
 ///   阻断 CRLF 注入、HTTP header smuggling、日志污染等攻击
 ///
@@ -312,7 +311,7 @@ impl SessionLogic for GarrisonLogicDefault {
         #[cfg(feature = "metrics-prometheus")]
         let start = std::time::Instant::now();
 
-        // CRIT-010: 暴力破解防护（firewall-bruteforce 启用时）。
+        // 暴力破解防护（firewall-bruteforce 启用时）。
         // 前置短路：已封禁 IP 直接拒绝（不消耗校验资源）。
         #[cfg(feature = "firewall-bruteforce")]
         if let Some(ip) = crate::stp::current_ip() {
@@ -330,7 +329,7 @@ impl SessionLogic for GarrisonLogicDefault {
 
         let result = self.login_inner(login_id, params).await;
 
-        // CRIT-010: 失败计数（仅失败路径）；成功路径清零失败计数。
+        // 失败计数（仅失败路径）；成功路径清零失败计数。
         #[cfg(feature = "firewall-bruteforce")]
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
@@ -370,7 +369,7 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn login_with_token(&self, login_id: &str, token: &str) -> GarrisonResult<()> {
-        // A8: 入口校验 — 阻断会话固定/劫持的常见攻击向量。
+        // 入口校验 — 阻断会话固定/劫持的常见攻击向量。
         // 校验在锁外执行：纯输入校验无需临界区保护，避免无谓持锁。
         //
         // - login_id 非空：防止空标识创建无主会话
@@ -412,7 +411,7 @@ impl SessionLogic for GarrisonLogicDefault {
                     .get_token_session(&token)
                     .await?
                     .map(|ts| ts.login_id);
-                // H-14: JWT 撤销黑名单（注销前写入，确保 jti 在 TTL 内被拒绝）
+                // JWT 撤销黑名单（注销前写入，确保 jti 在 TTL 内被拒绝）
                 #[cfg(feature = "protocol-jwt")]
                 self.blacklist_jwt_jti(&token).await;
                 self.session.logout(&token).await?;
@@ -460,7 +459,7 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn kickout(&self, login_id: &str) -> GarrisonResult<()> {
-        // H-14: JWT 撤销黑名单（踢出前将所有 token 的 jti 写入黑名单）
+        // JWT 撤销黑名单（踢出前将所有 token 的 jti 写入黑名单）
         #[cfg(feature = "protocol-jwt")]
         {
             let tokens = self.session.get_tokens_by_login_id(login_id);
@@ -487,7 +486,7 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn kickout_by_token(&self, token: &str) -> GarrisonResult<()> {
-        // H-14: JWT 撤销黑名单
+        // JWT 撤销黑名单
         #[cfg(feature = "protocol-jwt")]
         self.blacklist_jwt_jti(token).await;
         // kickout_by_token 语义等同 logout(token)
@@ -561,7 +560,7 @@ impl SessionLogic for GarrisonLogicDefault {
 
     #[tracing::instrument(skip_all)]
     async fn check_login(&self) -> GarrisonResult<bool> {
-        // CRIT-010: 暴力破解防护前置短路（已封禁 IP 直接拒绝）。
+        // 暴力破解防护前置短路（已封禁 IP 直接拒绝）。
         #[cfg(feature = "firewall-bruteforce")]
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
@@ -604,7 +603,7 @@ impl SessionLogic for GarrisonLogicDefault {
                 .await;
         }
 
-        // CRIT-010: 认证失败计数（仅 Ok(false) 计入撞库尝试），成功路径清零。
+        // 认证失败计数（仅 Ok(false) 计入撞库尝试），成功路径清零。
         #[cfg(feature = "firewall-bruteforce")]
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};

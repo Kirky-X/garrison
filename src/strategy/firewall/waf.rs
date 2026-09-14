@@ -88,7 +88,7 @@ impl WafHookChain {
 
     /// 追加 Hook 到链尾。
     ///
-    /// # 注册顺序约束（MED-001）
+    /// # 注册顺序约束（架构评审修复）
     ///
     /// 链按注册顺序执行，任一 `Deny` 短路拒绝、`AllowAndSkip` 短路放行。
     /// **安全关键 Hook（`DangerCharacterHook` / `BannedCharacterHook` /

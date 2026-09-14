@@ -81,8 +81,7 @@ mod tests {
         }
     }
 
-    /// inventory 注册：FlowRegistration 通过 submit! 注册后可被 from_inventory 收集
-    /// （R-auth-flow-dsl-007）。
+    /// inventory 注册：FlowRegistration 通过 submit! 注册后可被 from_inventory 收集。
     #[test]
     fn inventory_registration_works() {
         let registry = FlowRegistry::from_inventory();
@@ -90,7 +89,7 @@ mod tests {
         assert!(registry.get("test-registry-flow").is_some());
     }
 
-    /// from_inventory 收集所有注册 flow（R-auth-flow-dsl-007）。
+    /// from_inventory 收集所有注册 flow。
     #[test]
     fn from_inventory_collects_flows() {
         let registry = FlowRegistry::from_inventory();
@@ -101,14 +100,14 @@ mod tests {
         assert_eq!(flow.steps.len(), 1);
     }
 
-    /// get 查询：存在返回 Some，不存在返回 None（R-auth-flow-dsl-007）。
+    /// get 查询：存在返回 Some，不存在返回 None。
     #[test]
     fn get_returns_none_for_unknown() {
         let registry = FlowRegistry::from_inventory();
         assert!(registry.get("non-existent-flow").is_none());
     }
 
-    /// register 运行期追加 flow 后可被 get 查询（R-auth-flow-dsl-007）。
+    /// register 运行期追加 flow 后可被 get 查询。
     #[test]
     fn register_appends_flow() {
         let mut registry = FlowRegistry::from_inventory();
@@ -122,7 +121,7 @@ mod tests {
         assert_eq!(flow.steps.len(), 2);
     }
 
-    /// 重复注册：register 同名 flow 覆盖旧值（R-auth-flow-dsl-007）。
+    /// 重复注册：register 同名 flow 覆盖旧值。
     #[test]
     fn register_overrides_existing() {
         let mut registry = FlowRegistry::from_inventory();
@@ -145,8 +144,7 @@ mod tests {
         assert_eq!(flow.steps.len(), 3);
     }
 
-    /// from_inventory 返回的 registry 初始包含所有编译期注册项
-    /// （R-auth-flow-dsl-007 补充：空查询验证）。
+    /// from_inventory 返回的 registry 初始包含所有编译期注册项。
     #[test]
     fn from_inventory_initial_state() {
         let registry = FlowRegistry::from_inventory();

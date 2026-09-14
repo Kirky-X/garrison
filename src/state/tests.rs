@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! state 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! state 模块测试（从 mod.rs 迁移）。
 
 use super::*;
 
@@ -19,7 +19,7 @@ fn token_state_display_outputs_uppercase() {
 }
 
 // ----------------------------------------------------------------
-// TokenState can_transition_to 合法路径测试（R-state-002，6 条）
+// TokenState can_transition_to 合法路径测试（6 条）
 // ----------------------------------------------------------------
 
 #[test]
@@ -53,7 +53,7 @@ fn token_state_refreshed_to_revoked_is_valid() {
 }
 
 // ----------------------------------------------------------------
-// TokenState can_transition_to 非法路径测试（R-state-002）
+// TokenState can_transition_to 非法路径测试
 // ----------------------------------------------------------------
 
 #[test]
@@ -111,7 +111,7 @@ fn token_state_refreshed_to_refreshed_is_invalid() {
 }
 
 // ----------------------------------------------------------------
-// TokenState transition_to 测试（R-state-003）
+// TokenState transition_to 测试
 // ----------------------------------------------------------------
 
 #[test]
@@ -159,7 +159,7 @@ fn user_status_display_outputs_uppercase() {
 }
 
 // ----------------------------------------------------------------
-// UserStatus can_transition_to 合法路径测试（R-state-005，9 条）
+// UserStatus can_transition_to 合法路径测试（9 条）
 // ----------------------------------------------------------------
 
 #[test]
@@ -208,7 +208,7 @@ fn user_status_inactive_to_deleted_is_valid() {
 }
 
 // ----------------------------------------------------------------
-// UserStatus can_transition_to 非法路径测试（R-state-005）
+// UserStatus can_transition_to 非法路径测试
 // ----------------------------------------------------------------
 
 #[test]
@@ -259,7 +259,7 @@ fn user_status_deleted_cannot_transition_to_anything() {
 }
 
 // ----------------------------------------------------------------
-// UserStatus transition_to 测试（R-state-006）
+// UserStatus transition_to 测试
 // ----------------------------------------------------------------
 
 #[test]

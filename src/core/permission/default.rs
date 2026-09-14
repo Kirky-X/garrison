@@ -33,7 +33,7 @@ impl PermissionChecker for PermissionCheckerDefault {
     }
 
     async fn has_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
-        // issue 3079：与 has_permission 对齐——NFC 规范化 + 长度校验。
+        // 与 has_permission 对齐——NFC 规范化 + 长度校验。
         // 原实现直接字节比较且无规范化，NFD/NFC 视觉同形字符串可绕过角色校验。
         let normalized = role.nfc().collect::<String>();
         if normalized.is_empty() {
@@ -51,9 +51,9 @@ impl PermissionChecker for PermissionCheckerDefault {
     }
 
     // check_permission / check_role 使用 trait 默认实现（委托 authorize / has_role），
-    // 保持与 0.5.0 决策溯源路径一致。
+    // 保持与决策溯源路径一致。
 
-    // issue 2669/3249/3573/8233/8382：批量校验的错误处理。
+    // 批量校验的错误处理。
     // 返回类型保持 `bool`（trait 公开 API，变更会破坏所有实现方/调用方），
     // 但接口错误**不再静默**：逐条 `tracing::warn!`（含 login_id / permission / 错误），
     // 并按 fail-closed 降级为「不满足」。调用方仍无法从返回值区分「无权限」与「故障」

@@ -3,7 +3,7 @@
 
 //! AuthBackend 内联测试。
 //!
-//! 从 `src/backend/mod.rs` 外移（规则 10 mod/crate 接口隔离）。
+//! 从 `src/backend/mod.rs` 外移（mod/crate 接口隔离）。
 //! 测试 MockAuthBackend 实现 trait 基本结构 + 序列化/反序列化。
 
 use super::*;

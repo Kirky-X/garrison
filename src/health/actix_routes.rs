@@ -3,7 +3,7 @@
 
 //! actix-web 框架的健康检查路由集成。
 //!
-//! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
+//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
 //! 提供 `/health/live` 与 `/health/ready` 端点。
 
 use super::{HealthRegistry, HealthStatus};
@@ -18,7 +18,7 @@ pub async fn live() -> impl Responder {
 
 /// Readiness 探针 handler。
 ///
-/// ocr #5514/5515：单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
+/// 单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
 /// 内部强制执行（`HealthRegistry::with_check_timeout` 可配置），挂起/panic 的检查按
 /// `Unhealthy` 聚合，不会阻塞 actix worker 线程。
 pub async fn ready(registry: web::Data<Arc<HealthRegistry>>) -> HttpResponse {
@@ -41,8 +41,8 @@ pub async fn ready(registry: web::Data<Arc<HealthRegistry>>) -> HttpResponse {
 ///
 /// let registry = Arc::new(HealthRegistry::new());
 /// let app = actix_web::App::new()
-///     .app_data(actix_web::web::Data::new(registry))
-///     .configure(configure_health_routes);
+/// .app_data(actix_web::web::Data::new(registry))
+/// .configure(configure_health_routes);
 /// ```
 pub fn configure_health_routes(cfg: &mut web::ServiceConfig) {
     cfg.service(web::resource("/health/live").route(web::get().to(live)));

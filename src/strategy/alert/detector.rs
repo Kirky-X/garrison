@@ -60,7 +60,7 @@ impl AnomalyDetector for IpChangeDetector {
         }
 
         // 找到 last_active_at 最大的 session。
-        // issue #8243：单个 token 的 DAO 读取失败不再用 `?` 传播中断整个检测
+        // 单个 token 的 DAO 读取失败不再用 `?` 传播中断整个检测
         // （那样一个 transient 错误会抑制所有其他 token 的告警），改为
         // warn 跳过该 token、继续处理剩余（错误聚合）。
         let mut latest_ip: Option<String> = None;
@@ -117,7 +117,7 @@ impl AnomalyDetector for IpChangeDetector {
 }
 
 // ============================================================================
-// SessionHijackDetector（H-8：会话劫持检测）
+// SessionHijackDetector：会话劫持检测）
 // ============================================================================
 
 /// 会话劫持检测器，对比当前请求 IP 与会话创建时存储的 IP。
@@ -217,9 +217,9 @@ impl AnomalyDetector for SessionHijackDetector {
 ///
 /// 实现 `AnomalyDetector` trait，在 `check_on_login` 时：
 /// 1. 通过 `GarrisonSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
-/// 2. 逐个 `get_token_session` 验证存活性（issue #6495：**只统计未过期 token**，
-///    `get_token_session` 对已过期 session 返回 `None` 并顺带触发过期清理，
-///    长期堆积的过期 token 不再造成误报）
+/// 2. 逐个 `get_token_session` 验证存活性（**只统计未过期 token**，
+/// `get_token_session` 对已过期 session 返回 `None` 并顺带触发过期清理，
+/// 长期堆积的过期 token 不再造成误报）
 /// 3. 若活跃 token 数量 >= 阈值，发出 `AnomalyLogin { anomaly_type: RapidSuccessiveLogin }`
 ///
 /// 默认阈值为 5，可通过 `with_threshold` 自定义。
@@ -271,7 +271,7 @@ impl AnomalyDetector for RapidSuccessiveDetector {
     ) -> GarrisonResult<Vec<SecurityAlertEvent>> {
         let tokens = self.session.get_tokens_by_login_id(login_id);
 
-        // issue #6495：逐个验证 token 存活性，只统计未过期 token
+        // 逐个验证 token 存活性，只统计未过期 token
         // （索引中的过期 token 待周期清理，直接 len() 会把过期项计入造成误报）。
         // 单 token 读取失败 warn 跳过、不中断检测（与 IpChangeDetector 聚合策略一致）。
         let mut count = 0usize;
@@ -615,7 +615,7 @@ mod tests {
         }
     }
 
-    /// 过期 token 不计入同时在线数量（issue #6495 修复）。
+    /// 过期 token 不计入同时在线数量。
     ///
     /// 6 个索引 token 中将 4 个回拨 last_active_at 到远超 timeout（3600s）之前
     /// 使其过期：仅剩 2 个活跃 token < 阈值 5，不应告警（旧实现按索引 len()=6
@@ -640,7 +640,7 @@ mod tests {
     }
 
     /// 单个 token session 损坏（读取失败）不中断 IpChangeDetector 检测
-    /// （issue #8243 修复：错误聚合，warn 跳过该 token 继续处理剩余）。
+    /// （错误聚合，warn 跳过该 token 继续处理剩余）。
     #[tokio::test]
     async fn corrupted_token_session_does_not_break_detection() {
         let (dao, session) = make_session();
@@ -662,7 +662,7 @@ mod tests {
     }
 
     // ========================================================================
-    // SessionHijackDetector 测试（H-8）
+    // SessionHijackDetector 测试
     // ========================================================================
 
     #[cfg(feature = "session-hijack-detection")]

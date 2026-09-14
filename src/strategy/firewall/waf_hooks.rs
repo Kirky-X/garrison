@@ -33,7 +33,7 @@ use async_trait::async_trait;
 /// 语义：白名单匹配时返回 `AllowAndSkip`（放行并跳过后续 Hook），
 /// 不匹配时返回 `Allow`（继续执行后续 Hook）。
 ///
-/// # 注册顺序约束（MED-001）
+/// # 注册顺序约束（架构评审修复）
 ///
 /// **警告**：WhitePathHook 必须注册在所有安全关键 Hook（如
 /// [`DirectoryTraversalHook`] / [`DangerCharacterHook`]）**之后**。
@@ -55,7 +55,7 @@ impl WhitePathHook {
     ///
     /// 匹配任一前缀时返回 `AllowAndSkip`，短路后续 Hook。
     ///
-    /// # 注册顺序约束（MED-001）
+    /// # 注册顺序约束（架构评审修复）
     ///
     /// **警告**：WhitePathHook 必须注册在所有安全关键 Hook（如
     /// [`DirectoryTraversalHook`] / [`DangerCharacterHook`]）**之后**。
@@ -83,7 +83,7 @@ impl WafHook for WhitePathHook {
 
     /// 校验请求上下文。
     ///
-    /// # 注册顺序约束（MED-001）
+    /// # 注册顺序约束（架构评审修复）
     ///
     /// **警告**：本 Hook 必须注册在所有安全关键 Hook（如
     /// [`DirectoryTraversalHook`] / [`DangerCharacterHook`]）**之后**。
@@ -845,10 +845,10 @@ mod tests {
     }
 
     // ========================================================================
-    // 10. WAF 绕过场景测试（HIGH-004，10 个）
+    // 10. WAF 绕过场景测试（10 个）
     // ========================================================================
 
-    /// 验证 path 含 `%00` 编码返回 Deny（HIGH-001）。
+    /// 验证 path 含 `%00` 编码返回 Deny。
     #[tokio::test]
     async fn danger_char_percent_00_encoded_returns_deny() {
         let hook = DangerCharacterHook::new();
@@ -860,7 +860,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 `%5c` 编码返回 Deny（HIGH-001）。
+    /// 验证 path 含 `%5c` 编码返回 Deny。
     #[tokio::test]
     async fn danger_char_percent_5c_encoded_returns_deny() {
         let hook = DangerCharacterHook::new();
@@ -872,7 +872,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 `%3b` 编码返回 Deny（HIGH-001）。
+    /// 验证 path 含 `%3b` 编码返回 Deny。
     #[tokio::test]
     async fn danger_char_percent_3b_encoded_returns_deny() {
         let hook = DangerCharacterHook::new();
@@ -884,7 +884,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 `%0a` 编码返回 Deny（HIGH-001）。
+    /// 验证 path 含 `%0a` 编码返回 Deny。
     #[tokio::test]
     async fn danger_char_percent_0a_encoded_returns_deny() {
         let hook = DangerCharacterHook::new();
@@ -896,7 +896,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 `%0d` 编码返回 Deny（HIGH-001）。
+    /// 验证 path 含 `%0d` 编码返回 Deny。
     #[tokio::test]
     async fn danger_char_percent_0d_encoded_returns_deny() {
         let hook = DangerCharacterHook::new();
@@ -908,7 +908,7 @@ mod tests {
         );
     }
 
-    /// 验证大写百分号编码返回 Deny（大小写不敏感，HIGH-001）。
+    /// 验证大写百分号编码返回 Deny（大小写不敏感）。
     #[tokio::test]
     async fn danger_char_uppercase_percent_encoded_returns_deny() {
         let hook = DangerCharacterHook::new();
@@ -932,7 +932,7 @@ mod tests {
         );
     }
 
-    /// 验证 query 参数值含 `//` 返回 Deny（HIGH-003）。
+    /// 验证 query 参数值含 `//` 返回 Deny。
     #[tokio::test]
     async fn danger_char_query_param_value_returns_deny() {
         let hook = DangerCharacterHook::new();
@@ -945,7 +945,7 @@ mod tests {
         );
     }
 
-    /// 验证 header 值含 `\` 返回 Deny（HIGH-003）。
+    /// 验证 header 值含 `\` 返回 Deny。
     #[tokio::test]
     async fn danger_char_header_value_returns_deny() {
         let hook = DangerCharacterHook::new();
@@ -958,7 +958,7 @@ mod tests {
         );
     }
 
-    /// 验证 WhitePathHook 匹配时短路，后续 Hook 不执行（HIGH-002）。
+    /// 验证 WhitePathHook 匹配时短路，后续 Hook 不执行。
     #[tokio::test]
     async fn white_path_match_short_circuits_chain() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -979,7 +979,7 @@ mod tests {
         );
     }
 
-    /// 验证 WhitePathHook 不匹配时后续 Hook 继续执行（HIGH-002）。
+    /// 验证 WhitePathHook 不匹配时后续 Hook 继续执行。
     #[tokio::test]
     async fn white_path_no_match_continues_chain() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -1002,10 +1002,10 @@ mod tests {
     }
 
     // ========================================================================
-    // 11. HIGH-001 修复测试（5 个）
+    // 11. 回归测试（5 个）
     // ========================================================================
 
-    /// 验证 path 含 `..` 时 WhitePathHook 不短路（HIGH-001 修复）。
+    /// 验证 path 含 `..` 时 WhitePathHook 不短路。
     ///
     /// `/api/../admin` 虽然以 `/api` 开头，但含 `..` 可疑模式，
     /// 应返回 Allow 交给后续安全 Hook（如 DirectoryTraversalHook）处理。
@@ -1029,7 +1029,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 `//` 时 WhitePathHook 不短路（HIGH-001 修复）。
+    /// 验证 path 含 `//` 时 WhitePathHook 不短路。
     #[tokio::test]
     async fn white_path_double_slash_not_short_circuited() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -1092,7 +1092,7 @@ mod tests {
         );
     }
 
-    /// 验证精确匹配白名单路径返回 AllowAndSkip（HIGH-001 修复）。
+    /// 验证精确匹配白名单路径返回 AllowAndSkip。
     #[tokio::test]
     async fn white_path_exact_match_returns_allow_and_skip() {
         let hook = WhitePathHook::new(vec!["/api".to_string()]);
@@ -1104,7 +1104,7 @@ mod tests {
         );
     }
 
-    /// 验证段前缀匹配白名单路径返回 AllowAndSkip（HIGH-001 修复）。
+    /// 验证段前缀匹配白名单路径返回 AllowAndSkip。
     #[tokio::test]
     async fn white_path_segment_match_returns_allow_and_skip() {
         let hook = WhitePathHook::new(vec!["/api".to_string()]);
@@ -1116,7 +1116,7 @@ mod tests {
         );
     }
 
-    /// 验证前缀混淆路径不匹配白名单（HIGH-001 修复）。
+    /// 验证前缀混淆路径不匹配白名单。
     ///
     /// `/api-v2/secret` 虽然以 `/api` 开头，但不是精确匹配也不是段前缀匹配，
     /// 应返回 Allow（不命中白名单）。
@@ -1160,7 +1160,7 @@ mod tests {
     // 13. 覆盖率补充：边界分支与空列表路径
     // ========================================================================
 
-    /// 验证 path 含 `%5c` 时 WhitePathHook 不短路（HIGH-001 修复）。
+    /// 验证 path 含 `%5c` 时 WhitePathHook 不短路。
     ///
     /// 覆盖 WhitePathHook::check 中 `%5c` 可疑模式分支。
     #[tokio::test]

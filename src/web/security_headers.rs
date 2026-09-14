@@ -56,7 +56,7 @@ const HSTS_MAX_AGE: HeaderValue = HeaderValue::from_static("max-age=31536000; in
 /// - （`tls` feature 启用时）`Strict-Transport-Security: max-age=31536000; includeSubDomains`
 ///
 /// 静态资源等公开可缓存内容不应走本中间件（no-store 全响应注入会使
-/// 浏览器/CDN 缓存失效，ocr #5244）；确需同路由混布时可改用
+/// 浏览器/CDN 缓存失效）；确需同路由混布时可改用
 /// [`security_headers_middleware_with_config`] 关闭缓存头注入。
 ///
 /// # 示例
@@ -66,14 +66,14 @@ const HSTS_MAX_AGE: HeaderValue = HeaderValue::from_static("max-age=31536000; in
 /// use garrison::web::security_headers::security_headers_middleware;
 ///
 /// let app = Router::new()
-///     .route("/api", get(handler))
-///     .layer(middleware::from_fn(security_headers_middleware));
+/// .route("/api", get(handler))
+/// .layer(middleware::from_fn(security_headers_middleware));
 /// ```
 pub async fn security_headers_middleware(req: axum::extract::Request, next: Next) -> Response {
     inject_security_headers(next.run(req).await, true)
 }
 
-/// 缓存头注入开关配置（ocr #5244）。
+/// 缓存头注入开关配置。
 ///
 /// `no_store_cache == false` 时不注入 `Cache-Control: no-store` / `Pragma: no-cache`，
 /// 供静态资源等公开可缓存路由复用其余安全头；默认 `true` 保持原行为。
@@ -102,8 +102,8 @@ impl Default for SecurityHeadersConfig {
 ///
 /// let config = Arc::new(SecurityHeadersConfig { no_store_cache: false });
 /// let app = Router::new()
-///     .route("/static", get(handler))
-///     .layer(middleware::from_fn_with_state(config, security_headers_middleware_with_config));
+/// .route("/static", get(handler))
+/// .layer(middleware::from_fn_with_state(config, security_headers_middleware_with_config));
 /// ```
 pub async fn security_headers_middleware_with_config(
     axum::extract::State(config): axum::extract::State<std::sync::Arc<SecurityHeadersConfig>>,
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
     }
 
-    /// 可配置中间件：no_store_cache=false 时跳过缓存头，其余安全头保留（ocr #5244）。
+    /// 可配置中间件：no_store_cache=false 时跳过缓存头，其余安全头保留。
     #[tokio::test]
     async fn config_middleware_can_disable_no_store() {
         let config = Arc::new(SecurityHeadersConfig {

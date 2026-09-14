@@ -44,7 +44,7 @@ fn make_logic(
     let mut config = GarrisonConfig::default_config();
     config.throw_on_not_login = throw_on_not_login;
     config.token_style = token_style.to_string();
-    // A11: simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
+    //simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
     // 设置非空 jwt_secret 避免 fail-closed（generate_token 仍走 stp 自有 simple UUID 路径）。
     if token_style == "simple" {
         config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
@@ -63,12 +63,12 @@ fn make_logic(
     )
 }
 
-/// A11: simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
+///simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
 ///
 /// 用于 SimpleTokenStyle::new 生成合法 HMAC token，供 verify_token 委托测试使用。
 const STP_SIMPLE_TEST_SECRET: &str = "stp-simple-test-secret-0123456789abcd";
 
-/// A11: 构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
+///构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
 ///
 /// 与 `config::helpers::default_jwt_secret` 风格一致，避免 clippy::useless_conversion 警告。
 fn test_jwt_secret(secret: &str) -> crate::config::JwtSecret {
@@ -101,7 +101,7 @@ fn make_logic_with_dao(
     let mut config = GarrisonConfig::default_config();
     config.throw_on_not_login = throw_on_not_login;
     config.token_style = token_style.to_string();
-    // A11: simple 模式下同步设置非空 jwt_secret（与 make_logic 一致）
+    //simple 模式下同步设置非空 jwt_secret（与 make_logic 一致）
     if token_style == "simple" {
         config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
     }
@@ -241,7 +241,7 @@ async fn login_with_random_64_style() {
 
 /// 验证 token_style=simple 生成含 HMAC '.' 分隔符的 token。
 ///
-/// R-sessiontokenconsistency-002 后 simple 生成委托 `SimpleTokenStyle`（HMAC），
+/// simple 生成委托 `SimpleTokenStyle`（HMAC），
 /// 仅在 `secure-simple-token` feature 下可用（与下方 fail-closed 用例互补覆盖）。
 #[cfg(feature = "secure-simple-token")]
 #[serial]
@@ -405,10 +405,10 @@ async fn kickout_by_token_destroys_token_session() {
 }
 
 // ------------------------------------------------------------------------
-// H-7: invalidate_sessions_after_password_change
+// invalidate_sessions_after_password_change
 // ------------------------------------------------------------------------
 
-/// H-7: 密码修改后失效所有会话。
+/// 密码修改后失效所有会话。
 ///
 /// 调用 `invalidate_sessions_after_password_change` 后该用户所有
 /// Token-Session 和 Account-Session 均被清除。
@@ -517,7 +517,7 @@ async fn check_login_returns_false_when_no_token() {
 
 /// 验证 check_login 未登录且 throw_on_not_login=true 抛异常。
 ///
-/// spec config-system Requirement: 配置校验——throw_on_not_login。
+/// 配置校验——throw_on_not_login。
 #[tokio::test]
 async fn check_login_throws_when_throw_on_not_login() {
     let logic = make_logic(3600, 86400, true, "uuid", true, true);
@@ -1282,7 +1282,7 @@ async fn util_get_login_id_returns_current_id() {
 ///
 /// - 未启用 `safe-auth`：`is_safe` trait default 返回 `Ok(true)`，`check_safe` 返回 `Ok(())`。
 /// - 启用 `safe-auth`：`is_safe` inherent method 查询 `safe_services`，
-///   未调用 `open_safe` 时返回 `Ok(false)`，`check_safe` 返回 `Err(NotSafe)`。
+/// 未调用 `open_safe` 时返回 `Ok(false)`，`check_safe` 返回 `Err(NotSafe)`。
 #[tokio::test]
 #[serial]
 async fn util_check_safe_returns_ok_by_default() {
@@ -1335,9 +1335,9 @@ async fn util_check_disable_returns_ok_by_default() {
 // API 测试：login_by_token / verify_token / refresh_token
 // ------------------------------------------------------------------------
 
-/// GarrisonLogicDefault::login_by_token 对 uuid style token 返回 InvalidToken（0.2.1 auto-wire 修复）。
+/// GarrisonLogicDefault::login_by_token 对 uuid style token 返回 InvalidToken（auto-wire 修复）。
 ///
-/// 0.2.1 起login_by_token 被 override：优先委托 auth_logic，否则使用 verify_token。
+/// login_by_token 被 override：优先委托 auth_logic，否则使用 verify_token。
 /// uuid token 不包含 login_id，verify_token 返回 InvalidToken。
 #[serial]
 #[tokio::test]
@@ -1365,14 +1365,14 @@ async fn util_login_by_token_fails_when_not_initialized() {
 
 /// verify_token 对 simple style token 返回 login_id（spec Scenario）。
 ///
-/// A11: core-token `SimpleTokenStyle` 改为 HMAC-SHA256 签名格式
+///core-token `SimpleTokenStyle` 改为 HMAC-SHA256 签名格式
 /// `<login_id>-<uuid>.<hmac>`，需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
 #[cfg(feature = "secure-simple-token")]
 #[serial]
 #[tokio::test]
 async fn verify_token_simple_style_returns_login_id() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
-    // A11: 用 SimpleTokenStyle 生成合法 HMAC token（secret 与 make_logic 中 jwt_secret 一致）
+    //用 SimpleTokenStyle 生成合法 HMAC token（secret 与 make_logic 中 jwt_secret 一致）
     let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
     let token = style.generate("1001", 3600).unwrap();
     let login_id = logic.verify_token(&token).await.unwrap();
@@ -1412,13 +1412,13 @@ async fn verify_token_invalid_returns_error() {
 
 /// verify_token 对合法 HMAC 的 simple-format token 返回 login_id（spec Scenario）。
 ///
-/// A11: SimpleTokenStyle 要求 token 含合法 HMAC-SHA256 签名，防止身份伪造。
+///SimpleTokenStyle 要求 token 含合法 HMAC-SHA256 签名，防止身份伪造。
 #[cfg(feature = "secure-simple-token")]
 #[serial]
 #[tokio::test]
 async fn verify_token_malformed_returns_invalid_token() {
     let logic = make_logic(3600, 86400, false, "simple", true, true);
-    // A11: 用 SimpleTokenStyle 生成合法 HMAC token（login_id="abc"）
+    //用 SimpleTokenStyle 生成合法 HMAC token（login_id="abc"）
     let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
     let token = style.generate("abc", 3600).unwrap();
     let result = logic.verify_token(&token).await;
@@ -1469,7 +1469,7 @@ async fn util_refresh_token_fails_when_not_initialized() {
 
 /// GarrisonUtil::verify_token 端到端：simple style token → 返回 login_id。
 ///
-/// A11: core-token SimpleTokenStyle 改为 HMAC-SHA256 签名格式，
+///core-token SimpleTokenStyle 改为 HMAC-SHA256 签名格式，
 /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token（secret 与 config.jwt_secret 一致）。
 #[cfg(feature = "secure-simple-token")]
 #[tokio::test]
@@ -1481,7 +1481,7 @@ async fn util_verify_token_returns_login_id() {
     config.timeout = 3600;
     config.active_timeout = -1;
     config.token_style = "simple".to_string();
-    // A11: 设置非空 jwt_secret，与 SimpleTokenStyle 生成 token 用的 secret 一致
+    //设置非空 jwt_secret，与 SimpleTokenStyle 生成 token 用的 secret 一致
     config.jwt_secret = test_jwt_secret(STP_SIMPLE_TEST_SECRET);
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface);
     GarrisonManager::builder()
@@ -1492,7 +1492,7 @@ async fn util_verify_token_returns_login_id() {
         .await
         .unwrap();
 
-    // A11: 用 SimpleTokenStyle 生成合法 HMAC token
+    //用 SimpleTokenStyle 生成合法 HMAC token
     let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
     let token = style.generate("1001", 3600).unwrap();
     let login_id = GarrisonUtil::verify_token(&token).await.unwrap();
@@ -1762,7 +1762,7 @@ async fn refresh_token_invalid_jwt_returns_error() {
     );
 }
 
-/// refresh_token 对有效 JWT token 成功刷新（0.2.1 auto-wire 触发 plugin/listener）。
+/// refresh_token 对有效 JWT token 成功刷新（auto-wire 触发 plugin/listener）。
 #[cfg(feature = "protocol-jwt")]
 #[tokio::test]
 async fn refresh_token_valid_jwt_returns_new_token() {
@@ -1810,7 +1810,7 @@ async fn refresh_token_valid_jwt_returns_new_token() {
 // ------------------------------------------------------------------------
 
 /// 最小化子 trait mock，仅用于测试 trait default 方法。
-/// 所有必需方法返回 `GarrisonError::NotImplemented`（Rule 12 失败显性化，不 panic），
+/// 所有必需方法返回 `GarrisonError::NotImplemented`（失败显性化，不 panic），
 /// 仅保留 default 方法（login_by_token/verify_token/refresh_token）。
 struct MinimalLogic {
     config: Arc<GarrisonConfig>,
@@ -1939,7 +1939,7 @@ async fn trait_default_refresh_token_returns_not_implemented() {
 }
 
 /// MinimalLogic mock 必需方法返回 `NotImplemented`（替换原 `unreachable!()` panic，
-/// 依据 Rule 12 失败显性化）。
+/// 失败显性化）。
 ///
 /// 覆盖 11 个 mock 方法：login / login_with_token / logout / logout_by_login_id /
 /// kickout / kickout_by_token / revoke_token / check_login / get_login_id /
@@ -2043,7 +2043,7 @@ async fn minimal_logic_returns_not_implemented() {
 
 /// login_by_token 注入 plugin_manager + listener_manager 后触发 auto-wire 钩子（simple style）。
 ///
-/// A11: SimpleTokenStyle 改为 HMAC 签名格式，需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
+///SimpleTokenStyle 改为 HMAC 签名格式，需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
 #[cfg(feature = "secure-simple-token")]
 #[tokio::test]
 async fn login_by_token_with_managers_triggers_hooks() {
@@ -2053,7 +2053,7 @@ async fn login_by_token_with_managers_triggers_hooks() {
     #[cfg(feature = "listener")]
     let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
-    // A11: 用 SimpleTokenStyle 生成合法 HMAC token（secret 与 make_logic 中 jwt_secret 一致）
+    //用 SimpleTokenStyle 生成合法 HMAC token（secret 与 make_logic 中 jwt_secret 一致）
     let style = crate::core::token::SimpleTokenStyle::new(STP_SIMPLE_TEST_SECRET.to_string());
     let token = style.generate("8008", 3600).unwrap();
 
@@ -2067,7 +2067,7 @@ async fn login_by_token_with_managers_triggers_hooks() {
 }
 
 // ------------------------------------------------------------------------
-// 0.4.2 : login_with_password 测试
+// login_with_password 测试
 // ------------------------------------------------------------------------
 
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
@@ -2090,9 +2090,8 @@ fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {
     }
 }
 
-/// R-001: 正确密码返回 token。
+/// 正确密码返回 token。
 ///
-/// 覆盖 spec auth-password-login R-001 验收 case 1：
 /// 注入 Argon2Hasher + MockUserRepository（含正确 hash）→ 调用 login_with_password → Ok(token)。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
@@ -2115,9 +2114,7 @@ async fn login_with_password_correct_returns_token() {
     assert!(!token.is_empty(), "token 应非空");
 }
 
-/// R-001: 错误密码返回 InvalidParam("stp-invalid-password")。
-///
-/// 覆盖 spec auth-password-login R-001 验收 case 2。
+/// 错误密码返回 InvalidParam("stp-invalid-password")。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
 #[serial]
@@ -2141,12 +2138,11 @@ async fn login_with_password_wrong_password_returns_invalid_param() {
     );
 }
 
-/// R-001: 用户不存在返回 InvalidParam("stp-invalid-password")。
+/// 用户不存在返回 InvalidParam("stp-invalid-password")。
 ///
-/// 覆盖 spec auth-password-login R-001 验收 case 3。
-/// 注：spec R-001 说"用户不存在返回 NotLogin"，但 Constraints 说"不泄露具体原因"。
+/// 注：spec 说"用户不存在返回 NotLogin"，但 Constraints 说"不泄露具体原因"。
 /// 决策：遵循 Constraints 安全要求，统一返回 InvalidParam 防止用户枚举。
-/// v0.4.2 安全审计 A-014: 日志和事件 reason 也统一为 "invalid_credentials"，
+/// 日志和事件 reason 也统一为 "invalid_credentials"，
 /// 不区分 user_not_found/wrong_password。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
@@ -2168,9 +2164,8 @@ async fn login_with_password_user_not_found_returns_invalid_param() {
     );
 }
 
-/// R-001: 密码哈希格式不支持返回 InvalidParam。
+/// 密码哈希格式不支持返回 InvalidParam。
 ///
-/// 覆盖 spec auth-password-login R-001 验收 case 4。
 /// 注：此错误可泄露（不暴露用户是否存在），返回 "stp-unsupported-hash-format"。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
@@ -2195,7 +2190,7 @@ async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
 }
 
 // ------------------------------------------------------------------------
-// 0.3.0 TG1: metrics 集成测试
+// metrics 集成测试
 // ------------------------------------------------------------------------
 
 /// with_metrics builder 注入 GarrisonMetrics 后 login 触发 record_login(success)。
@@ -2260,12 +2255,12 @@ async fn login_without_metrics_does_not_panic() {
 }
 
 // ------------------------------------------------------------------------
-// 0.4.2 : login_type Multi-Account 测试
+// login_type Multi-Account 测试
 // ------------------------------------------------------------------------
 
-/// R-001: `get_permission_list_with_type` 默认委托 `get_permission_list`。
+/// `get_permission_list_with_type` 默认委托 `get_permission_list`。
 ///
-/// 偏差说明：spec R-001 要求"基础方法委托 _with_type 方法"，实际实现为
+/// 偏差说明：spec 要求"基础方法委托 _with_type 方法"，实际实现为
 /// "_with_type 方法默认委托基础方法"（数据源未按 login_type 隔离的实现者无需覆写）。
 /// MockInterface 基础方法返回空 Vec，_with_type 默认委托基础方法应返回相同结果。
 #[tokio::test]
@@ -2279,7 +2274,7 @@ async fn get_permission_list_with_type_delegates_to_default() {
     assert!(result.unwrap().is_empty(), "默认委托旧方法应返回空 Vec");
 }
 
-/// R-001: 新方法 get_role_list_with_type 默认委托旧方法。
+/// 新方法 get_role_list_with_type 默认委托旧方法。
 #[tokio::test]
 #[serial]
 async fn get_role_list_with_type_delegates_to_default() {
@@ -2289,9 +2284,7 @@ async fn get_role_list_with_type_delegates_to_default() {
     assert!(result.unwrap().is_empty(), "默认委托旧方法应返回空 Vec");
 }
 
-/// R-002: admin login_type 的权限查询不返回 user 的权限。
-///
-/// 覆盖 spec login-type-multi-account R-002 验收 case 1。
+/// admin login_type 的权限查询不返回 user 的权限。
 #[tokio::test]
 #[serial]
 async fn get_permission_list_with_type_admin_isolated_from_user() {
@@ -2313,10 +2306,9 @@ async fn get_permission_list_with_type_admin_isolated_from_user() {
     );
 }
 
-/// R-002: 同一 login_id 在不同 login_type 下可拥有不同权限。
+/// 同一 login_id 在不同 login_type 下可拥有不同权限。
 ///
-/// 覆盖 spec login-type-multi-account R-002 验收 case 2。
-/// BW-AC-014（FRD §8.1）：多账号体系（user/admin）隔离，Token 命名空间独立、互不干扰。
+/// 多账号体系（user/admin）隔离，Token 命名空间独立、互不干扰。
 #[tokio::test]
 #[serial]
 async fn same_login_id_different_login_type_different_permissions() {
@@ -2340,9 +2332,7 @@ async fn same_login_id_different_login_type_different_permissions() {
     assert_eq!(user_perms, vec!["user:*"]);
 }
 
-/// R-003: with_login_type builder 设置 login_type 字段。
-///
-/// 覆盖 spec login-type-multi-account R-003 验收 case 1。
+/// with_login_type builder 设置 login_type 字段。
 #[tokio::test]
 #[serial]
 async fn with_login_type_builder_sets_login_type() {
@@ -2358,9 +2348,7 @@ async fn with_login_type_builder_sets_login_type() {
     );
 }
 
-/// R-003: with_login_type 链式调用不破坏其他 builder。
-///
-/// 覆盖 spec login-type-multi-account R-003 验收 case 1（链式调用兼容性）。
+/// with_login_type 链式调用不破坏其他 builder。
 #[tokio::test]
 #[serial]
 async fn with_login_type_chains_with_other_builders() {
@@ -2375,20 +2363,16 @@ async fn with_login_type_chains_with_other_builders() {
 }
 
 // ------------------------------------------------------------------------
-// spec protocol-jwt-modes: JwtMode 三模式（Stateless/Mixin/Simple）
+// JwtMode 三模式（Stateless/Mixin/Simple）
 // ------------------------------------------------------------------------
 
-/// R-001: JwtMode::default() == JwtMode::Mixin（推荐模式为默认）。
-///
-/// 覆盖 spec protocol-jwt-modes R-001 验收 case 1。
+/// JwtMode::default() == JwtMode::Mixin（推荐模式为默认）。
 #[test]
 fn jwt_mode_default_is_mixin() {
     assert_eq!(JwtMode::default(), JwtMode::Mixin);
 }
 
-/// R-001: JwtMode 是 Copy（无需 Arc 包装）。
-///
-/// 覆盖 spec protocol-jwt-modes R-001 验收 case 2。
+/// JwtMode 是 Copy（无需 Arc 包装）。
 #[serial]
 #[test]
 fn jwt_mode_is_copy() {
@@ -2398,9 +2382,7 @@ fn jwt_mode_is_copy() {
     assert_eq!(mode, JwtMode::Stateless);
 }
 
-/// R-005: with_jwt_mode builder 设置 jwt_mode 字段，默认 Mixin。
-///
-/// 覆盖 spec protocol-jwt-modes R-005 验收 case 1（默认 Mixin + builder 切换）。
+/// with_jwt_mode builder 设置 jwt_mode 字段，默认 Mixin。
 #[tokio::test]
 #[serial]
 async fn with_jwt_mode_builder_sets_mode() {
@@ -2419,9 +2401,7 @@ async fn with_jwt_mode_builder_sets_mode() {
     );
 }
 
-/// R-002: Stateless 模式仅 JWT verify，不查询 session。
-///
-/// 覆盖 spec protocol-jwt-modes R-002 验收 case 1（有效 JWT 通过 + 不查 DAO）。
+/// Stateless 模式仅 JWT verify，不查询 session。
 #[cfg(feature = "protocol-jwt")]
 #[tokio::test]
 #[serial]
@@ -2466,9 +2446,7 @@ async fn check_login_stateless_only_jwt_verify() {
     .await;
 }
 
-/// R-003: Mixin 模式 JWT verify + session 二级校验。
-///
-/// 覆盖 spec protocol-jwt-modes R-003 验收 case 2（有效 JWT + session 存在 → 通过）。
+/// Mixin 模式 JWT verify + session 二级校验。
 #[cfg(feature = "protocol-jwt")]
 #[tokio::test]
 #[serial]
@@ -2507,9 +2485,7 @@ async fn check_login_mixin_jwt_and_session() {
     .await;
 }
 
-/// R-004: Simple 模式仅 session 校验，不验证 JWT 签名。
-///
-/// 覆盖 spec protocol-jwt-modes R-004 验收 case 1（session 存在 → 通过，不验证 JWT）。
+/// Simple 模式仅 session 校验，不验证 JWT 签名。
 #[tokio::test]
 #[serial]
 async fn check_login_simple_only_session() {
@@ -2882,7 +2858,7 @@ async fn util_check_temp_token_delegates_to_logic() {
 ///
 /// 设计说明：
 /// - `block_in_place` 将当前 worker 线程转为阻塞模式，`Handle::current().block_on`
-///   在当前 runtime 上执行 future，组合使用在 multi_thread runtime 内安全
+/// 在当前 runtime 上执行 future，组合使用在 multi_thread runtime 内安全
 /// - task_local `CURRENT_TOKEN` 在同 task 内自动继承（block_in_place 不 spawn 新 task）
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
@@ -3062,10 +3038,10 @@ async fn sync_check_api_key_executes_without_panic() {
 }
 
 // ============================================================================
-// 会话悬停超时集成测试（spec R-hover-001 ~ R-hover-004）
+// 会话悬停超时集成测试
 // ========================================================================
 
-/// R-hover-003: `session_hover_timeout=1`（1秒），login 后 check_login 返回 true，
+/// `session_hover_timeout=1`（1秒），login 后 check_login 返回 true，
 /// MockClock 推进 2 秒后 check_login 返回 false（踢出）。
 ///
 /// 使用 MockClock 替代 `tokio::time::sleep` 消除 flaky 测试。
@@ -3113,7 +3089,7 @@ async fn hover_timeout_evicts_inactive_session() {
     assert!(!second_check, "悬停超时后 check_login 应返回 false");
 }
 
-/// R-hover-004: `session_hover_timeout=10`（10秒），login 后立即 check_login 返回 true。
+/// `session_hover_timeout=10`（10秒），login 后立即 check_login 返回 true。
 #[serial]
 #[tokio::test]
 async fn hover_timeout_active_session_not_evicted() {
@@ -3149,7 +3125,7 @@ async fn hover_timeout_active_session_not_evicted() {
     .await;
 }
 
-/// R-hover-001: 默认配置 `session_hover_timeout=-1`，login 后 check_login 返回 true（不受悬停影响）。
+/// 默认配置 `session_hover_timeout=-1`，login 后 check_login 返回 true（不受悬停影响）。
 #[serial]
 #[tokio::test]
 async fn hover_timeout_disabled_by_default() {
@@ -3317,7 +3293,7 @@ mod check_api_key_tests {
 }
 
 // ============================================================================
-// v0.6.3 D1: Token 自动续签（check_and_renew）测试
+// Token 自动续签（check_and_renew）测试
 // ============================================================================
 
 use super::context::{current_renewed_token, with_renewed_token_scope};
@@ -3484,7 +3460,7 @@ async fn check_login_renews_token_when_threshold_reached() {
 }
 
 // ============================================================================
-// v0.6.3 D2: LoginParams 测试
+// LoginParams 测试
 // ========================================================================
 
 /// LoginParams::default() 所有字段为 None/false。
@@ -3516,7 +3492,7 @@ async fn login_with_default_params_creates_session() {
 }
 
 // ============================================================================
-// v0.6.3 D2 : is_share 复用现有 token 测试
+// is_share 复用现有 token 测试
 // ========================================================================
 
 /// is_share=true 时，重复登录同一 login_id 应复用现有有效 token，不创建新会话。
@@ -3564,7 +3540,7 @@ async fn login_with_is_share_creates_new_when_no_existing() {
 }
 
 // ============================================================================
-// v0.6.3 D2 : is_concurrent=false 踢出现有会话测试
+// is_concurrent=false 踢出现有会话测试
 // ========================================================================
 
 /// is_concurrent=false + is_share=false 时，重复登录同一 login_id 应踢出旧 token。
@@ -3731,7 +3707,7 @@ async fn login_with_is_concurrent_true_preserves_existing() {
     assert!(ts1.is_some(), "is_concurrent=true 应保留旧 token");
 }
 
-// v0.6.3 D2 : enforce_max_login_count 测试
+// enforce_max_login_count 测试
 
 /// enforce_max_login_count 应踢出最旧的 token，保留较新的。
 ///
@@ -3808,7 +3784,7 @@ async fn enforce_max_login_count_no_op_when_under_limit() {
         .is_some());
 }
 
-// v0.6.3 D2 : login 调用 enforce_max_login_count 测试
+// login 调用 enforce_max_login_count 测试
 
 /// login 在 max_login_count > 0 时应自动踢出最旧的会话。
 ///
@@ -3824,10 +3800,10 @@ async fn login_with_max_login_count_evicts_oldest_session() {
     //
     // LOW 时序断言说明（fix-refresh-race-and-test-contracts）：
     // - last_active_at 用 `Utc::now().timestamp()`（秒级精度），同一秒内创建的
-    //   token 时间戳相同，enforce_max_login_count 排序结果不确定
+    // token 时间戳相同，enforce_max_login_count 排序结果不确定
     // - sleep(1s) 确保下次 login 的 last_active_at 至少比上次大 1，排序确定
     // - 这是确定性断言（非 flaky）：sleep(1s) >> Unix 秒精度 1s，且 tokio::time::sleep
-    //   保证至少 sleep 指定时长
+    // 保证至少 sleep 指定时长
     // - 替代方案（已否决）：mock 时间——项目未引入 mock 时间库，引入会增加依赖
     let t1 = logic
         .login("max-login-user-001", &LoginParams::default())
@@ -3854,7 +3830,7 @@ async fn login_with_max_login_count_evicts_oldest_session() {
 }
 
 // ============================================================================
-// v0.6.6 : enforce_max_login_count 集成 overflow_logout_mode 测试
+// enforce_max_login_count 集成 overflow_logout_mode 测试
 // ============================================================================
 
 /// 测试用录音监听器：捕获广播事件供测试断言。
@@ -4127,7 +4103,7 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
     }
 }
 
-// v0.6.3 D3 : refresh_access_token 默认实现返回 NotImplemented
+// refresh_access_token 默认实现返回 NotImplemented
 
 /// `refresh_access_token` 默认实现应返回 `GarrisonError::NotImplemented`。
 ///
@@ -4143,7 +4119,7 @@ async fn session_logic_refresh_default_returns_not_implemented() {
     );
 }
 
-// v0.6.3 D3 : refresh_access_token 覆盖实现——未注入/未启用 feature 时返回 NotImplemented
+// refresh_access_token 覆盖实现——未注入/未启用 feature 时返回 NotImplemented
 
 /// 未注入 RefreshTokenRotation 时返回 NotImplemented（db-sqlite + protocol-jwt 启用）。
 ///
@@ -4179,7 +4155,7 @@ async fn refresh_access_token_returns_not_implemented_without_db_sqlite() {
 }
 
 // ========================================================================
-// v0.6.3 D4 : login 自动生成设备指纹
+// login 自动生成设备指纹
 // ========================================================================
 
 /// login 时 `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值，
@@ -4233,16 +4209,16 @@ async fn login_auto_generates_device_fingerprint() {
 }
 
 // ============================================================================
-// HIGH-001 + HIGH-002 测试
+// check_and_renew 续签竞态与会话回滚测试
 // ============================================================================
 
-/// HIGH-001: 续签后对旧 token 再次调用 check_and_renew 应返回 None（非错误）。
+/// 续签后对旧 token 再次调用 check_and_renew 应返回 None（非错误）。
 ///
 /// 验证 per-login_id 锁 + 二次 TTL 检查的行为：
 /// 1. 首次 check_and_renew 续签成功（旧 token 删除，新 token 创建）
 /// 2. 对旧 token 再次调用 check_and_renew：
-///    - 快速路径 get_token_timeout 返回 None（旧 token 已删除）→ Ok(None)
-///    - 即使进入锁路径，二次检查也会发现 token 不存在 → Ok(None)
+/// - 快速路径 get_token_timeout 返回 None（旧 token 已删除）→ Ok(None)
+/// - 即使进入锁路径，二次检查也会发现 token 不存在 → Ok(None)
 /// 3. 不应返回 Err（避免 "会话假活" 场景下旧 token 被误判为有效）
 #[tokio::test]
 async fn check_and_renew_returns_none_for_old_token_after_renewal() {
@@ -4280,7 +4256,7 @@ async fn check_and_renew_returns_none_for_old_token_after_renewal() {
     );
 }
 
-/// HIGH-002: enforce_max_login_count 失败时，新创建的会话应被回滚（logout）。
+/// enforce_max_login_count 失败时，新创建的会话应被回滚（logout）。
 ///
 /// 使用 FailInjectionDao 在第 N 次 account:session: 查询时注入失败，
 /// 模拟 enforce_max_login_count 内部 get_account_session 失败的场景。

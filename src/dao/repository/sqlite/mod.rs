@@ -10,8 +10,8 @@
 //! ## 设计要点
 //!
 //! - **参数化查询**：所有 WHERE 条件用 `?` 占位符，防 SQL 注入。
-//! - **多租户过滤**（R-004）：有 tenant_id 的表自动注入 `WHERE tenant_id = ?`；
-//!   `app_permission` 表无 tenant_id（全局表）。
+//! - **多租户过滤**：有 tenant_id 的表自动注入 `WHERE tenant_id = ?`；
+//! `app_permission` 表无 tenant_id（全局表）。
 //! - **find_by_\*** 返回 `Option<Row>`，不存在返回 `Ok(None)`。
 //! - **create** 返回 `NewXxx.id`（调用方生成的 UUID），不依赖数据库自增 ID。
 //! - **delete** 幂等，不存在返回 `Ok(())`。
@@ -23,7 +23,7 @@ use dbnexus::DbPool;
 use sea_orm::{QueryResult, Value};
 
 // ============================================================================
-// 子模块声明（impl 块拆分到独立文件，遵循 mod.rs 加固规则 D1）
+// 子模块声明（impl 块拆分到独立文件，遵循 mod.rs 加固规则）
 // ============================================================================
 
 mod auth_method_repo;
@@ -133,7 +133,7 @@ pub struct DbnexusUserExtRepository {
 /// SQLite 用户设备表 Repository 实现。
 ///
 /// UA 解析当前用简单字符串启发式（提取 Browser/OS 关键字）。
-/// 完整 `ua-parser` regex 集需启用 `ua-parser-precompiled` feature（设计 A4 决策延后）。
+/// 完整 `ua-parser` regex 集需启用 `ua-parser-precompiled` feature（设计决策延后）。
 pub struct DbnexusUserDeviceRepository {
     pool: DbPool,
 }
@@ -235,15 +235,14 @@ mod tests {
         pool
     }
 
-    /// R-tenant-isolation-004: Repository SQL 强制 tenant_id 过滤。
+    /// Repository SQL 强制 tenant_id 过滤。
     ///
-    /// 验证 v0.4.2 已无条件实现的 `WHERE tenant_id = ?` 过滤行为：
+    /// 验证无条件实现的 `WHERE tenant_id = ?` 过滤行为：
     /// - 构造 tenant_id=42 与 tenant_id=1 的用户
     /// - 跨租户查询应返回 None（SQL 含 `WHERE tenant_id = ?` 过滤）
     /// - list 按 tenant 隔离
     ///
-    /// 注：v0.5.0 决策（Rule 7 暴露冲突后用户选择"保留 v0.4.2 无条件过滤"）：
-    /// SQL 过滤不门控 `tenant-isolation` feature，始终生效——因 tenant_id 已是所有表必需字段，
+    /// 注：SQL 过滤不门控 `tenant-isolation` feature，始终生效——因 tenant_id 已是所有表必需字段，
     /// 不过滤会导致跨租户数据泄露（安全优先）。
     #[tokio::test(flavor = "multi_thread")]
     async fn repository_filters_by_tenant_id_when_tenant_isolation_enabled() {

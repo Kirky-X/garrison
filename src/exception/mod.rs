@@ -36,7 +36,7 @@ pub struct NotLoginException {
 /// `GarrisonException` 使用手动 `Debug` 实现，对 `token_value` 默认脱敏
 /// （仅输出前 8 字符 + `***`）。避免敏感信息通过 `{:?}` 格式化泄露到日志。
 ///
-/// # 字段可见性说明（ocr #2637）
+/// # 字段可见性说明
 ///
 /// 字段保持 `pub`（pre-1.0 兼容既有构造/断言用法）：构造后仍可原地修改字段值。
 /// 已知风险与既有缓解：
@@ -62,7 +62,7 @@ pub struct GarrisonException {
 
     /// 关联的登录主体（可能为 `None`）。
     ///
-    /// 与全局 login_id 一致为 `String`（0.9.0 起 login_id 已由 i64 迁移为 String）。
+    /// 与全局 login_id 一致为 `String`（login_id 为 String）。
     pub login_id: Option<String>,
 
     /// 额外键值对上下文。

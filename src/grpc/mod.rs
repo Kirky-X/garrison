@@ -6,12 +6,12 @@
 //! ## 设计
 //!
 //! - `GarrisonGrpcInterceptor`：实现 `tonic::Interceptor` trait
-//!   - 从 gRPC 请求 metadata 提取 `authorization: Bearer <token>` header
-//!   - 调用 `GarrisonUtil::check_login()` 鉴权
-//!   - 鉴权失败返回 `tonic::Status::UNAUTHENTICATED`（code = 16）
+//! - 从 gRPC 请求 metadata 提取 `authorization: Bearer <token>` header
+//! - 调用 `GarrisonUtil::check_login()` 鉴权
+//! - 鉴权失败返回 `tonic::Status::UNAUTHENTICATED`（code = 16）
 //! - `health_service`：返回 `tonic_health::server::HealthServer<impl Health>`
-//!   - gRPC 标准健康检查协议（grpc.health.v1.Health）
-//!   - 默认设置 ServingStatus::Serving，供 kubelet / 服务网格探针调用
+//! - gRPC 标准健康检查协议（grpc.health.v1.Health）
+//! - 默认设置 ServingStatus::Serving，供 kubelet / 服务网格探针调用
 //!
 //! ## 使用示例
 //!
@@ -24,15 +24,15 @@
 //! // 否则 kubelet / 服务网格探针因缺少 Authorization 头而被拒绝。
 //! let health = health_service().await;
 //! Server::builder()
-//!     .add_service(health)
-//!     .serve(health_addr)
-//!     .await?;
+//! .add_service(health)
+//! .serve(health_addr)
+//! .await?;
 //!
 //! Server::builder()
-//!     .interceptor(GarrisonGrpcInterceptor::new())
-//!     .add_service(my_service)
-//!     .serve(app_addr)
-//!     .await?;
+//! .interceptor(GarrisonGrpcInterceptor::new())
+//! .add_service(my_service)
+//! .serve(app_addr)
+//! .await?;
 //! ```
 //!
 //! ## Feature 门控
@@ -54,7 +54,7 @@ pub use interceptor::MAX_TOKEN_LEN;
 ///
 /// 拦截器 / 鉴权层把校验通过的 Bearer token 以 `GarrisonGrpcToken` 存入
 /// request extensions，handler 侧可经
-/// `request.extensions().get::<GarrisonGrpcToken>()` 读取（ocr #3277）。
+/// `request.extensions().get::<GarrisonGrpcToken>()` 读取。
 /// `Debug` 手动实现为脱敏输出，防止误打印泄露 token。
 #[derive(Clone, PartialEq, Eq)]
 pub struct GarrisonGrpcToken(pub String);
@@ -67,7 +67,7 @@ impl std::fmt::Debug for GarrisonGrpcToken {
     }
 }
 
-/// gRPC 拦截器**同步** token 校验扩展点（ocr #2633/#3036/#3276）。
+/// gRPC 拦截器**同步** token 校验扩展点。
 ///
 /// `tonic::Interceptor::call` 是同步 trait，无法直接调用异步的
 /// `GarrisonUtil::check_login()`。为让 [`GarrisonGrpcInterceptor`] 具备真实鉴权
@@ -93,9 +93,9 @@ pub trait GarrisonGrpcTokenValidator: Send + Sync + 'static {
 /// `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的
 /// `GarrisonUtil::check_login()`：
 /// - **未配置校验器**（`new()` / 默认）：仅做上述格式校验，**不**执行登录态校验，
-///   实际鉴权须在 handler 内通过 `task_local`（`with_current_token`）显式调用。
+/// 实际鉴权须在 handler 内通过 `task_local`（`with_current_token`）显式调用。
 /// - **配置了同步校验器**（`with_token_validator`）：在拦截器内执行真实鉴权，
-///   失败直接以 `Status::UNAUTHENTICATED` 拒绝。
+/// 失败直接以 `Status::UNAUTHENTICATED` 拒绝。
 ///
 /// # 完整 async 鉴权请使用 [`GarrisonGrpcAuthLayer`]
 ///
@@ -115,10 +115,10 @@ pub trait GarrisonGrpcTokenValidator: Send + Sync + 'static {
 /// use tonic::transport::Server;
 ///
 /// Server::builder()
-///     .interceptor(GarrisonGrpcInterceptor::new())
-///     .add_service(my_service)
-///     .serve(addr)
-///     .await?;
+/// .interceptor(GarrisonGrpcInterceptor::new())
+/// .add_service(my_service)
+/// .serve(addr)
+/// .await?;
 /// ```
 #[derive(Default, Clone)]
 pub struct GarrisonGrpcInterceptor {

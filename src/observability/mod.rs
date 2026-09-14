@@ -6,13 +6,13 @@
 //! ## 三层架构
 //!
 //! - **Metrics**（`GarrisonMetrics`）：Prometheus 格式指标，覆盖登录成功率 / Token 验证延迟 /
-//!   权限查询 QPS / 角色查询 QPS。启用 `metrics-prometheus` feature。
+//! 权限查询 QPS / 角色查询 QPS。启用 `metrics-prometheus` feature。
 //! - **Logs**（[`init_inklog_logging`](crate::observability::inklog::init_inklog_logging) /
-//!   [`init_inklog_logging_with_fallback`](crate::observability::inklog::init_inklog_logging_with_fallback)）：
-//!   inklog 结构化日志（含降级到 tracing-subscriber JSON）。启用 `audit-inklog` feature；
-//!   降级路径在 `metrics-prometheus` 或 `tracing-log` 启用时使用 tracing-subscriber JSON。
+//! [`init_inklog_logging_with_fallback`](crate::observability::inklog::init_inklog_logging_with_fallback)）：
+//! inklog 结构化日志（含降级到 tracing-subscriber JSON）。启用 `audit-inklog` feature；
+//! 降级路径在 `metrics-prometheus` 或 `tracing-log` 启用时使用 tracing-subscriber JSON。
 //! - **Traces**（[`init_otlp_tracing`](crate::observability::otlp::init_otlp_tracing)）：
-//!   OpenTelemetry 分布式追踪，OTLP gRPC 导出。启用 `otlp` feature。
+//! OpenTelemetry 分布式追踪，OTLP gRPC 导出。启用 `otlp` feature。
 //!
 //! ## 集成点
 //!
@@ -54,7 +54,7 @@ pub struct GarrisonMetrics {
     pub(crate) role_query_total: prometheus::CounterVec,
     /// 实例级 registry 引用（`gather()` 从此 registry 收集，而非全局 default registry）。
     ///
-    /// 修复 CRITICAL-6：`gather()` 读全局 registry 导致自定义 registry 场景返回空数据。
+    /// 修复：`gather()` 读全局 registry 导致自定义 registry 场景返回空数据。
     pub(crate) registry: prometheus::Registry,
 }
 

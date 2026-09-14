@@ -16,14 +16,14 @@
 //!
 //! ```sql
 //! CREATE TABLE refresh_tokens (
-//!     token_hash TEXT PRIMARY KEY,
-//!     parent_token_hash TEXT,
-//!     login_id TEXT NOT NULL,
-//!     tenant_id INTEGER NOT NULL DEFAULT 0,
-//!     key_version INTEGER NOT NULL,
-//!     expires_at INTEGER NOT NULL,
-//!     revoked INTEGER NOT NULL DEFAULT 0,
-//!     created_at INTEGER NOT NULL
+//! token_hash TEXT PRIMARY KEY,
+//! parent_token_hash TEXT,
+//! login_id TEXT NOT NULL,
+//! tenant_id INTEGER NOT NULL DEFAULT 0,
+//! key_version INTEGER NOT NULL,
+//! expires_at INTEGER NOT NULL,
+//! revoked INTEGER NOT NULL DEFAULT 0,
+//! created_at INTEGER NOT NULL
 //! );
 //! ```
 
@@ -56,7 +56,7 @@
 /// - `scopes`: OAuth2 授权的 scope 列表（空格分隔，JWT 模块不使用）
 /// - `username`: OAuth2 password grant type 用户名（JWT 模块不使用）
 /// - `user_id`: OAuth2 user_id（与 `login_id` 区分：`login_id` 是 JWT 模块的 i64 ID，
-///   `user_id` 是 OAuth2 的 `Option<i64>`，`client_credentials` 时为 `None`）
+/// `user_id` 是 OAuth2 的 `Option<i64>`，`client_credentials` 时为 `None`）
 ///
 /// 反序列化时这 4 个字段必须**显式存在**（值可为 `null`），缺失任一字段即失败
 /// （fail-closed，见 [`deserialize_required_option`]）。
@@ -135,7 +135,7 @@ mod service {
     /// - `jwt_handler`: JWT 处理器（签发新 access token）
     /// - `key_version`: 密钥轮换版本号（写入新 record 的 key_version 字段）
     ///
-    /// # Rule 7 冲突暴露
+    /// # 冲突暴露
     ///
     /// 原描述 `pub dao: Arc<dyn GarrisonDao>` 不够——
     /// `rotate` 需查 SQL（DbPool）+ 签发 access token（JwtHandler）+ 读 key_version。
@@ -191,16 +191,16 @@ mod service {
         /// 1. 计算 `old_hash = SHA-256(old_token)`
         /// 2. 预检 reuse：`old_hash` 已 revoked 则吊销整个链后返回 `TokenRevoked`
         /// 3. **原子消费**：条件 UPDATE（`revoked = 0 → 1`）作为 compare-and-swap，
-        ///    并发对同一 old_token 的 rotate 仅有一个调用方 `rows_affected = 1`；
-        ///    未抢到的调用方直接返回 `InvalidToken`（不吊销链——并发落败方与
-        ///    胜者是同一客户端的同时请求/网络重试，误吊销会击落胜者的新
-        ///    session；真正的重用由步骤 2 预检识别）。据此消除 SELECT/UPDATE
-        ///    分离的 TOCTOU 双花窗口：并发同 token 刷新只能一个成功
+        /// 并发对同一 old_token 的 rotate 仅有一个调用方 `rows_affected = 1`；
+        /// 未抢到的调用方直接返回 `InvalidToken`（不吊销链——并发落败方与
+        /// 胜者是同一客户端的同时请求/网络重试，误吊销会击落胜者的新
+        /// session；真正的重用由步骤 2 预检识别）。据此消除 SELECT/UPDATE
+        /// 分离的 TOCTOU 双花窗口：并发同 token 刷新只能一个成功
         /// 4. SELECT 读取 login_id / tenant_id 及 OAuth2 扩展字段（此时已独占持有
-        ///    消费权，无需再过滤 `revoked = 0`）
+        /// 消费权，无需再过滤 `revoked = 0`）
         /// 5. 生成新 refresh token（UUID v4）+ 签发新 access token（JwtHandler，1 小时有效期）
         /// 6. 计算 `new_hash = SHA-256(new_refresh)`，INSERT new record
-        ///    （`parent_token_hash = old_hash`, `revoked=0`，7 天过期，继承 OAuth2 扩展字段）
+        /// （`parent_token_hash = old_hash`, `revoked=0`，7 天过期，继承 OAuth2 扩展字段）
         /// 7. 返回 `(new_access, new_refresh)`
         ///
         /// 崩溃语义（fail-closed）：若在原子消费后、INSERT 前进程崩溃，旧 token 已
@@ -579,7 +579,7 @@ mod service {
         /// 已抢到消费权、INSERT 尚未落库的在途子代——该子代落下后其 parent
         /// 必已 revoked，后续对它的任何 `validate`/`rotate` 均可见链被破坏
         /// 状态；如需强一致收口，调用方应在 reuse 响应路径上层加互斥
-        /// （与 apikey rotate LOW-5 同风格：库层不内置分布式锁）。
+        /// （与 apikey rotate 同风格：库层不内置分布式锁）。
         ///
         /// # 错误
         /// - `GarrisonError::Dao`: SQL 查询/UPDATE 失败
@@ -707,7 +707,7 @@ mod tests {
         assert_eq!(record.expires_at, 9999);
         assert!(!record.revoked);
         assert_eq!(record.created_at, 0);
-        // v0.7.1 OAuth2 扩展字段默认为 None
+        // OAuth2 扩展字段默认为 None
         assert_eq!(record.client_id, None);
         assert_eq!(record.scopes, None);
         assert_eq!(record.username, None);
@@ -799,7 +799,7 @@ mod db_sqlite_tests {
     /// 验证 SQLite 迁移加载 `003_refresh_tokens.sql` 后
     /// `refresh_tokens` 表存在。
     ///
-    /// Rule 11（惯例优先）：SQL 文件放 `migrations/sqlite/core/003_refresh_tokens.sql`，
+    /// 惯例优先：SQL 文件放 `migrations/sqlite/core/003_refresh_tokens.sql`，
     /// 复用现有 `migrate_core()` 自动加载机制（与 002_role_hierarchy.sql 同惯例），
     /// 而非 原描述的 `src/dao/repository/sqlite/refresh_tokens.sql`。
     #[tokio::test(flavor = "multi_thread")]
@@ -919,7 +919,7 @@ mod db_sqlite_tests {
         let old_hash = sha256_hex(old_token);
         insert_refresh_token(&pool, &old_hash, None, 1, 0, 1, 9999, 0).await;
 
-        // 构造 RefreshTokenRotation（Rule 7：持有 pool + jwt_handler + key_version）
+        // 构造 RefreshTokenRotation（持有 pool + jwt_handler + key_version）
         let jwt_handler = Arc::new(JwtHandler::new("test_secret_that_is_at_least_32_bytes"));
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
@@ -999,9 +999,9 @@ mod db_sqlite_tests {
     ///
     /// 断言：t1/t2/t3 的 revoked 字段全为 1
     ///
-    /// **Rule 7 命名说明**：原测试名 `revoke_chain_revokes_all_parent_tokens`
+    /// **命名说明**：原测试名 `revoke_chain_revokes_all_parent_tokens`
     /// 与实际语义有歧义——实际撤销的是 t1 及其所有"子代"（descendant），
-    /// 而非"父代"（parent）。此处沿用原命名以保持一致（Rule 11），
+    /// 而非"父代"（parent）。此处沿用原命名以保持一致，
     /// 但语义以 doc comment 为准。
     #[tokio::test(flavor = "multi_thread")]
     async fn revoke_chain_revokes_all_parent_tokens() {

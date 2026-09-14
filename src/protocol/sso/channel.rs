@@ -10,12 +10,12 @@
 //! # 订阅生命周期（错误处理/可靠性修复）
 //!
 //! - `subscribe` 通过 oneshot 回传首次连接+订阅结果：连接/订阅失败时向调用方
-//!   返回 `Err`（不再"假成功"）；
+//! 返回 `Err`（不再"假成功"）；
 //! - 后台任务句柄保存到结构体（[`RedisPubSubSsoChannel::shutdown`] 可主动停止，
-//!   `Drop` 时自动 abort），任务失败可观测、资源可回收；
+//! `Drop` 时自动 abort），任务失败可观测、资源可回收；
 //! - 订阅建立后若连接断开（stream 结束），后台任务按可配置次数重连并重新
-//!   SUBSCRIBE（指数退避，见 [`RedisPubSubSsoChannel::with_reconnect_attempts`]），
-//!   超过次数后记 error 日志退出。
+//! SUBSCRIBE（指数退避，见 [`RedisPubSubSsoChannel::with_reconnect_attempts`]），
+//! 超过次数后记 error 日志退出。
 
 use super::server::SsoChannel;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -38,7 +38,7 @@ const RECONNECT_BACKOFF_MAX_MS: u64 = 5000;
 /// 使用 `redis::aio::ConnectionManager` 执行 PUBLISH 命令（支持自动重连），
 /// 使用 `redis::Client` 创建独立的 PubSub 连接进行 SUBSCRIBE（订阅模式需要独占连接）。
 ///
-/// **设计说明**：spec R-005 原始设计为 `new(connection_manager) -> Self`，
+/// **设计说明**：原始设计为 `new(connection_manager) -> Self`，
 /// 但 `ConnectionManager` 是多路复用连接，不支持 pub/sub 订阅模式（SUBSCRIBE 会独占连接）。
 /// 因此额外存储 `redis::Client` 用于创建独立的 PubSub 订阅连接。
 pub struct RedisPubSubSsoChannel {
@@ -60,7 +60,7 @@ impl RedisPubSubSsoChannel {
     /// - `client`: Redis 客户端（用于创建独立的 PubSub 订阅连接）。
     ///
     /// # 设计偏差
-    /// spec R-005 原始签名为 `new(connection_manager) -> Self`，
+    /// 原始签名为 `new(connection_manager) -> Self`，
     /// 但 `ConnectionManager` 不支持 pub/sub 订阅模式，需额外传入 `redis::Client`。
     pub fn new(connection_manager: redis::aio::ConnectionManager, client: redis::Client) -> Self {
         Self {
@@ -181,7 +181,7 @@ impl SsoChannel for RedisPubSubSsoChannel {
                         let payload: Result<String, _> = msg.get_payload();
                         match payload {
                             Ok(payload_str) => {
-                                // 在 catch_unwind 中调用 handler，防止 panic 中断订阅（spec R-005）
+                                // 在 catch_unwind 中调用 handler，防止 panic 中断订阅
                                 let handler_clone = handler.clone();
                                 let result =
                                     std::panic::catch_unwind(AssertUnwindSafe(move || {
@@ -271,7 +271,7 @@ mod tests {
     // 编译时验证（不需要真实 Redis 连接）
     // ========================================================================
 
-    /// RedisPubSubSsoChannel 实现 SsoChannel trait（spec R-005 验收标准）。
+    /// RedisPubSubSsoChannel 实现 SsoChannel trait（验收标准）。
     ///
     /// 编译时验证，不需要真实 Redis 连接。
     #[test]
@@ -280,7 +280,7 @@ mod tests {
         assert_sso_channel::<RedisPubSubSsoChannel>();
     }
 
-    /// RedisPubSubSsoChannel 是 Send + Sync（spec R-005 约束）。
+    /// RedisPubSubSsoChannel 是 Send + Sync（约束）。
     #[test]
     fn redis_pubsub_sso_channel_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
@@ -441,7 +441,7 @@ mod tests {
         RedisPubSubSsoChannel::new(connection_manager, client)
     }
 
-    /// 构造 RedisPubSubSsoChannel 实例（spec R-005 验收标准）。
+    /// 构造 RedisPubSubSsoChannel 实例（验收标准）。
     ///
     /// Redis 不可达时 [SKIP] 跳过（不失败）。
     #[tokio::test]
@@ -458,7 +458,7 @@ mod tests {
         let _ = &channel.connection_manager;
     }
 
-    /// push 执行 PUBLISH 命令并返回 Ok（spec R-005 验收标准）。
+    /// push 执行 PUBLISH 命令并返回 Ok（验收标准）。
     #[tokio::test]
     async fn push_executes_publish_command() {
         let reachable = redis_reachable().await;
@@ -472,7 +472,7 @@ mod tests {
         assert!(result.is_ok(), "PUBLISH 应返回 Ok: {:?}", result);
     }
 
-    /// subscribe 启动后台 task 并接收消息（spec R-005 验收标准）。
+    /// subscribe 启动后台 task 并接收消息（验收标准）。
     #[tokio::test]
     async fn subscribe_receives_published_message() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -591,7 +591,7 @@ mod tests {
         channel.shutdown();
     }
 
-    /// subscribe 的 handler panic 不中断订阅（spec R-005 约束，
+    /// subscribe 的 handler panic 不中断订阅（约束，
     /// 覆盖 catch_unwind panic 恢复分支）。
     #[tokio::test]
     async fn subscribe_handler_panic_does_not_interrupt() {

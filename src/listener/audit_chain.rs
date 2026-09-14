@@ -59,7 +59,7 @@ pub struct AuditChainEntry {
 /// # 用法
 ///
 /// - 运行期：`new(key)` 创建 → 每个 `GarrisonEvent` 序列化后 `append` →
-///   周期性将 [`entries`](Self::entries) JSONL 导出到独立存储。
+/// 周期性将 [`entries`](Self::entries) JSONL 导出到独立存储。
 /// - 取证：读回 JSONL 后用 [`verify_entries`](Self::verify_entries) 重算整链。
 ///
 /// key 建议 ≥32 字节（复用 JWT secret 或独立审计密钥，勿与签名密钥混用）。

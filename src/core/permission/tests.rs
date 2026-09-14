@@ -35,7 +35,7 @@ async fn has_permission_not_held_returns_false() {
 
 /// has_permission 空字符串返回 InvalidParam 错误（spec Scenario）。
 ///
-/// issue 338/344：断言强度补强——锁定具体错误变体与错误码，
+/// 断言强度补强——锁定具体错误变体与错误码，
 /// 任意其他错误变体（NotPermission/Dao/...）不再能蒙混通过。
 #[tokio::test]
 async fn has_permission_empty_string_returns_error() {
@@ -66,7 +66,7 @@ async fn has_role_not_held_returns_false() {
     assert!(!checker.has_role("1001", "superadmin").await.unwrap());
 }
 
-/// issue 3079: has_role 对 role 字符串做 NFC 规范化（与 has_permission 对齐）。
+/// has_role 对 role 字符串做 NFC 规范化（与 has_permission 对齐）。
 ///
 /// NFD 形式 `"role\u{0301}1"`（e + COMBINING ACUTE ACCENT）应规范化为 NFC 形式
 /// `"rol\u{00e9}1"` 后匹配，防止视觉同形字符串绕过角色校验。

@@ -24,8 +24,8 @@ use std::collections::HashMap;
 ///
 /// ```ignore
 /// let mut schedule = CreditSchedule::new();
-/// schedule.insert("sms", 5);    // 1 SMS = 5 credits
-/// schedule.insert("login", 1);  // 1 login = 1 credit
+/// schedule.insert("sms", 5); // 1 SMS = 5 credits
+/// schedule.insert("login", 1); // 1 login = 1 credit
 /// assert_eq!(schedule.weight_for("sms"), 5);
 /// assert_eq!(schedule.weight_for("unknown"), 1); // 默认权重
 /// ```

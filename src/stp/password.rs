@@ -2,13 +2,13 @@
 //! See LICENSE for full license text.
 
 //! PasswordLogic trait — 密码登录契约。
-//! 从 v0.5.2 起，从 `GarrisonLogic` 上帝 trait 拆分；本 trait 承接密码登录 1 个方法。
+//! 本 trait 承接密码登录 1 个方法。
 //! super-trait 为 [`SessionLogic`]（密码校验通过后调用
 //! [`login`](SessionLogic::login) 签发 token）。
 //!
-//! # v0.5.2 LoginId 迁移：删除 LoginId newtype，全栈使用 String/&str
+//! # LoginId 形式：全栈使用 String/&str
 //!
-//! `login_id` 参数从 `i64` 迁移为 `&str`（字符串形式，对象安全）。
+//! `login_id` 参数为 `&str`（字符串形式，对象安全）。
 
 use super::GarrisonLogicDefault;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
@@ -39,7 +39,7 @@ use async_trait::async_trait;
 /// # 安全约束
 ///
 /// 用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，
-/// 日志和事件 reason 统一为 "invalid_credentials"（v0.4.2 安全审计 A-014），
+/// 日志和事件 reason 统一为 "invalid_credentials"，
 /// 防止攻击者通过返回值或日志差异进行用户枚举。
 #[async_trait]
 pub trait PasswordLogic: SessionLogic {
@@ -57,7 +57,7 @@ pub trait PasswordLogic: SessionLogic {
     /// - 未注入 `password_hasher`：`GarrisonError::Config("password hasher not configured")`。
     /// - 未注入 `user_repository`：`GarrisonError::Config("user repository not configured")`。
     /// - 用户不存在 / 密码错误：`GarrisonError::InvalidParam("stp-invalid-password")`
-    ///   （不泄露具体原因，防止用户枚举）。
+    /// （不泄露具体原因，防止用户枚举）。
     /// - 哈希格式不支持：`GarrisonError::InvalidParam("unsupported hash format")`。
     /// - DAO 查询失败：透传 `GarrisonError::Dao`。
     async fn login_with_password(
@@ -76,7 +76,7 @@ pub trait PasswordLogic: SessionLogic {
 // GarrisonLogicDefault impl
 // ============================================================================
 
-/// H-1（A-014 扩展）：dummy Argon2id 哈希，模块级惰性生成一次。
+/// dummy Argon2id 哈希，模块级惰性生成一次。
 ///
 /// 参数与 [`crate::account::credential::password::Argon2Hasher`] 默认一致
 /// （Argon2id, m=19456, t=2, p=1）。「用户不存在」分支对它执行一次等价开销的
@@ -95,7 +95,7 @@ static DUMMY_ARGON2_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new
 impl PasswordLogic for GarrisonLogicDefault {
     /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
     ///
-    /// R-002：1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
+    /// 1) UserRepository 查询 2) PasswordHasher 校验 3) login 签发。
     /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，真实原因记录在 tracing 日志。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     async fn login_with_password(&self, login_id: &str, password: &str) -> GarrisonResult<String> {
@@ -109,7 +109,7 @@ impl PasswordLogic for GarrisonLogicDefault {
 
         // 1. 查询用户（login_id 转字符串作为 username 查询）
         let username = login_id.to_string();
-        // batch-08 修复（#2188/#2852/#3446/#3448）：tenant_id 不再硬编码 0，
+        // tenant_id 不再硬编码 0，
         // 从租户上下文读取真实租户（多租户部署按调用方租户查询；
         // 无租户上下文时回退默认租户 0，与旧单租户行为兼容）
         let tenant_id = crate::context::tenant::TENANT
@@ -124,9 +124,9 @@ impl PasswordLogic for GarrisonLogicDefault {
         let user = match user {
             Some(u) => u,
             None => {
-                // H-1: 先执行一次与真实校验等价开销的 dummy Argon2 verify（结果丢弃），
+                // 先执行一次与真实校验等价开销的 dummy Argon2 verify（结果丢弃），
                 // 对齐「用户不存在」与「密码错误」两分支的响应耗时（见 DUMMY_ARGON2_HASH）。
-                // spawn_blocking：慢哈希为纯 CPU 工作，移出 async worker 线程（P2 修复）。
+                // spawn_blocking：慢哈希为纯 CPU 工作，移出 async worker 线程。
                 let _verified_dummy = tokio::task::spawn_blocking({
                     let hasher = std::sync::Arc::clone(hasher);
                     let password = password.to_string();
@@ -135,7 +135,7 @@ impl PasswordLogic for GarrisonLogicDefault {
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("stp-password-blocking::{}", e)))?;
 
-                // v0.4.2 安全审计 A-014: 日志和事件统一为 "invalid_credentials"，
+                // 日志和事件统一为 "invalid_credentials"，
                 // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
                 tracing::warn!(
                     login_id = login_id,
@@ -180,7 +180,7 @@ impl PasswordLogic for GarrisonLogicDefault {
         })?;
 
         if !verified {
-            // v0.4.2 安全审计 A-014: 日志和事件统一为 "invalid_credentials"，
+            // 日志和事件统一为 "invalid_credentials"，
             // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
             tracing::warn!(
                 login_id = login_id,
@@ -544,7 +544,7 @@ mod tests {
             }
         }
 
-        /// H-1: 用户不存在分支执行一次 dummy verify（时序对齐），错误与事件语义不变。
+        /// 用户不存在分支执行一次 dummy verify（时序对齐），错误与事件语义不变。
         #[tokio::test]
         async fn login_with_password_user_not_found_performs_dummy_verify() {
             use std::sync::atomic::{AtomicUsize, Ordering};
@@ -589,7 +589,7 @@ mod tests {
 
         /// 哈希格式不支持 → 返回 InvalidParam("stp-unsupported-hash-format")。
         ///
-        /// 覆盖 password.rs 第 127-135 行 `hasher.verify(...).map_err(...)` 返回 Err 路径。
+        /// 覆盖 password.rs 中 `hasher.verify(...).map_err(...)` 返回 Err 路径。
         #[tokio::test]
         async fn login_with_password_unsupported_hash_format_returns_error() {
             let logic = make_logic_without_creds();

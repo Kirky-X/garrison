@@ -2,14 +2,14 @@
 //! See LICENSE for full license text.
 
 //! TokenLogic trait — Token 类型校验与刷新契约。
-//! 从 v0.5.2 起，从 `GarrisonLogic` 上帝 trait 拆分；本 trait 承接 token 类型校验、
+//! 本 trait 承接 token 类型校验、
 //! 显式 token 验证、token 刷新 5 个方法。super-trait 为 [`SessionLogic`]
 //! （token 校验依赖会话状态，默认实现委托 [`check_login`](SessionLogic::check_login)）。
 //!
-//! # 返回类型迁移
+//! # 返回类型
 //!
-//! `verify_token()` 返回类型从 `GarrisonResult<i64>` 迁移为 `GarrisonResult<String>`
-//! （v0.5.2 LoginId 迁移：删除 LoginId newtype，全栈使用 String/&str）。
+//! `verify_token()` 返回类型为 `GarrisonResult<String>`
+//! （LoginId 形式：全栈使用 String/&str）。
 
 use super::GarrisonLogicDefault;
 use crate::core::token::TokenStyleFactory;
@@ -192,9 +192,9 @@ impl TokenLogic for GarrisonLogicDefault {
             pm.on_login(&login_id, &new_token);
         }
         // 广播 TokenRefresh 事件（替换原 Login 事件）。
-        // batch-08 修复（#3682/#3683）：事件字段改携掩码后的 token——
+        // 事件字段改携掩码后的 token——
         // listener 若直接打日志，活动会话 token 不再以明文进入日志。
-        // v0.9.0 起掩码实现统一收敛到 listener::mask_token_for_event。
+        // 掩码实现统一收敛到 listener::mask_token_for_event。
         #[cfg(feature = "listener")]
         if let Some(lm) = &self.listener_manager {
             lm.broadcast(&GarrisonEvent::TokenRefresh {
@@ -497,10 +497,10 @@ mod tests {
         use crate::strategy::GarrisonPermissionStrategy;
         use std::sync::Arc;
 
-        /// A11: simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
+        ///simple 模式测试用的 HMAC 密钥（与 make_logic 中设置的 jwt_secret 一致）。
         const STP_TOKEN_SIMPLE_TEST_SECRET: &str = "stp-token-simple-test-secret-0123456789";
 
-        /// A11: 构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
+        ///构造测试用 JwtSecret（兼容 protocol-zeroize 启用/禁用两种配置）。
         fn test_jwt_secret(secret: &str) -> crate::config::JwtSecret {
             #[cfg(feature = "protocol-zeroize")]
             {
@@ -519,7 +519,7 @@ mod tests {
             let mut config = GarrisonConfig::default_config();
             config.throw_on_not_login = false;
             config.token_style = token_style.to_string();
-            // A11: simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
+            //simple 模式下 verify_token 委托 core-token SimpleTokenStyle（需 HMAC），
             // 设置非空 jwt_secret 避免 fail-closed。
             if token_style == "simple" {
                 config.jwt_secret = test_jwt_secret(STP_TOKEN_SIMPLE_TEST_SECRET);
@@ -543,14 +543,14 @@ mod tests {
         /// 覆盖 token.rs 第 147-159 行 GarrisonLogicDefault::verify_token 的
         /// `Ok(Some(login_id))` 分支。
         ///
-        /// A11: SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>-<uuid>.<hmac>`，
+        ///SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>-<uuid>.<hmac>`，
         /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token。
         /// 注意：login_id 不能含 `-`（verify 在首个 `-` 处分割 login_id 与 uuid 部分）。
         #[cfg(feature = "secure-simple-token")]
         #[tokio::test]
         async fn verify_token_simple_style_returns_login_id() {
             let logic = make_logic("simple");
-            // A11: 用 SimpleTokenStyle 生成合法 HMAC token
+            //用 SimpleTokenStyle 生成合法 HMAC token
             let style =
                 crate::core::token::SimpleTokenStyle::new(STP_TOKEN_SIMPLE_TEST_SECRET.to_string());
             let token = crate::core::token::Token::generate(&style, "verifyuser", 3600).unwrap();

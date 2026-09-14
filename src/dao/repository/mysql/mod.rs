@@ -33,9 +33,9 @@
 //! let pool = init_dbnexus("mysql://root:root@localhost:3306/garrison_test").await?;
 //! let repo = DbnexusMysqlUserRepository::new(pool);
 //! let user_id = repo.create(1, NewUser {
-//!     username: "alice".to_string(),
-//!     password_hash: "hashed".to_string(),
-//!     status: "active".to_string(),
+//! username: "alice".to_string(),
+//! password_hash: "hashed".to_string(),
+//! status: "active".to_string(),
 //! }).await?;
 //! # Ok(())
 //! # }
@@ -43,7 +43,7 @@
 // 复用 sqlite 模块的 backend-agnostic Repository 实现。
 // sqlite 模块通过 make_statement(conn, sql, values) 在运行时根据 conn.get_database_backend()
 // 自动转换占位符（SQLite ? / MySQL ? / PostgreSQL $1,$2），因此同一份代码三种后端通用。
-// 此处仅以 MySQL 命名空间 re-export，避免代码重复（Rule 8：不重复造轮子）。
+// 此处仅以 MySQL 命名空间 re-export，避免代码重复（不重复造轮子）。
 pub use crate::dao::repository::sqlite::{
     DbnexusAuthMethodRepository as DbnexusMysqlAuthMethodRepository,
     DbnexusLoginLogRepository as DbnexusMysqlLoginLogRepository,

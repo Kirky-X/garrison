@@ -13,7 +13,7 @@
 //!
 //! `AlertListenerManager` 为 `Option`，`None` 表示未部署告警系统，此时跳过广播。
 //!
-//! # HIGH-001 修复 + 新设备校验（issue #2160）
+//! # 新设备校验
 //!
 //! `require_secondary_auth` 不再重复信任调用方的 `is_new_device` 结果：
 //! 本方法**内部自行调用 `is_new_device`**，仅在确认是新设备时才广播
@@ -21,7 +21,7 @@
 //! `is_new_device` 就调用本方法），已知设备的登录也不会产生误报广播。
 //! 代价是新设备路径多一次 DAO 查询（换取语义自洽，消除对调用方的隐式依赖）。
 //!
-//! # IP 透传（issue #2159）
+//! # IP 透传
 //!
 //! trait 方法 `require_secondary_auth` 签名无 IP 参数（调用方 stp 层契约约束，
 //! 无法破坏性变更），事件中 `ip` 为 `None`；需要携带真实来源 IP 的调用方
@@ -82,8 +82,8 @@ impl LooseBinding {
     /// 二级认证判定（带请求来源 IP）：新设备时广播 `NewDeviceLogin`（事件携带 `ip`）。
     ///
     /// 内部先调用 [`is_new_device`](DeviceBindingPolicy::is_new_device) 确认设备
-    /// 新颖性（issue #2160：不信任调用方契约，已知设备不广播），新设备时经
-    /// `alert_manager` 广播事件（`ip` 为调用方透传的真实来源 IP，issue #2159），
+    /// 新颖性（不信任调用方契约，已知设备不广播），新设备时经
+    /// `alert_manager` 广播事件（`ip` 为调用方透传的真实来源 IP），
     /// 并返回 `Ok(false)`（宽松模式不阻断登录）。
     ///
     /// trait 方法 [`require_secondary_auth`](DeviceBindingPolicy::require_secondary_auth)
@@ -95,7 +95,7 @@ impl LooseBinding {
         device_id: &str,
         ip: Option<&str>,
     ) -> GarrisonResult<bool> {
-        // 新设备校验（issue #2160）：仅新设备才广播，与文档"新设备时广播"一致。
+        // 新设备校验：仅新设备才广播，与文档"新设备时广播"一致。
         let is_new = self.is_new_device(login_id, device_id).await?;
         if !is_new {
             return Ok(false);
@@ -240,7 +240,7 @@ mod tests {
         }
     }
 
-    /// 已知设备调用 require_secondary_auth 不广播（issue #2160 修复：
+    /// 已知设备调用 require_secondary_auth 不广播（
     /// 内部自行调用 is_new_device，不信任调用方契约，消除误报广播）。
     #[tokio::test]
     async fn require_secondary_auth_known_device_does_not_broadcast() {
@@ -325,7 +325,7 @@ mod tests {
         );
     }
 
-    /// 新设备校验后按设备新颖性广播：已知设备不广播，新设备广播（issue #2160 修复）。
+    /// 新设备校验后按设备新颖性广播：已知设备不广播，新设备广播。
     #[tokio::test]
     async fn multiple_sessions_broadcast_only_for_new_device() {
         let (_dao, session) = make_session();
@@ -356,7 +356,7 @@ mod tests {
     }
 
     /// require_secondary_auth_with_ip 将真实来源 IP 透传到 NewDeviceLogin 事件
-    /// （issue #2159 修复）。
+    /// 。
     #[tokio::test]
     async fn with_ip_variant_forwards_ip_to_event() {
         let (_dao, session) = make_session();

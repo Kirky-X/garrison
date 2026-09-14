@@ -1,17 +1,17 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! credential 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! credential 模块测试。
 
 use super::mock::MockCredentialRepository;
 use super::*;
 use crate::dao::tests::MockDao;
 
 // ========================================================================
-// R-001: Credential trait 对象安全测试
+// Credential trait 对象安全测试
 // ========================================================================
 
-/// R-001: `Credential` trait 可作 `Box<dyn Credential>` 使用（对象安全编译验证）。
+/// `Credential` trait 可作 `Box<dyn Credential>` 使用（对象安全编译验证）。
 ///
 /// 若 `Credential` trait 非对象安全（如使用了泛型方法），此测试无法编译。
 #[test]
@@ -22,17 +22,17 @@ fn credential_trait_is_object_safe() {
     // 空函数，仅验证类型签名编译通过
 }
 
-/// R-001: `CredentialRepository` trait 可作 `Arc<dyn CredentialRepository>` 使用。
+/// `CredentialRepository` trait 可作 `Arc<dyn CredentialRepository>` 使用。
 #[test]
 fn credential_repository_trait_is_object_safe() {
     fn _assert_object_safe(_repo: std::sync::Arc<dyn CredentialRepository>) {}
 }
 
 // ========================================================================
-// R-002: CredentialModel 序列化测试
+// CredentialModel 序列化测试
 // ========================================================================
 
-/// R-002: `CredentialModel` serde 序列化输出包含全部 8 字段。
+/// `CredentialModel` serde 序列化输出包含全部 8 字段。
 #[test]
 fn credential_model_serializes_all_8_fields() {
     let model = CredentialModel {
@@ -89,7 +89,7 @@ fn credential_model_serializes_all_8_fields() {
     );
 }
 
-/// R-002: `CredentialModel` serde 反序列化可解析包含全部 8 字段的完整 JSON。
+/// `CredentialModel` serde 反序列化可解析包含全部 8 字段的完整 JSON。
 #[test]
 fn credential_model_deserializes_from_full_json() {
     let json = r#"{
@@ -113,7 +113,7 @@ fn credential_model_deserializes_from_full_json() {
     assert_eq!(model.priority, 1);
 }
 
-/// R-002: `label` 字段为 `None` 时序列化为 JSON `null`。
+/// `label` 字段为 `None` 时序列化为 JSON `null`。
 #[test]
 fn credential_model_label_none_serializes_as_null() {
     let model = CredentialModel {
@@ -134,7 +134,7 @@ fn credential_model_label_none_serializes_as_null() {
     );
 }
 
-/// R-002: `CredentialModel` Clone 后字段一致。
+/// `CredentialModel` Clone 后字段一致。
 #[test]
 fn credential_model_clone_preserves_fields() {
     let model = CredentialModel {
@@ -159,7 +159,7 @@ fn credential_model_clone_preserves_fields() {
 }
 
 // ========================================================================
-// R-003: CredentialRepository mock CRUD 测试
+// CredentialRepository mock CRUD 测试
 // ========================================================================
 
 /// 辅助函数：构造测试用 CredentialModel。
@@ -176,7 +176,7 @@ fn make_model(id: &str, user: &str, cred_type: &str, priority: i32) -> Credentia
     }
 }
 
-/// R-003: `create` + `find_by_user` 正常路径。
+/// `create` + `find_by_user` 正常路径。
 #[tokio::test]
 async fn repository_create_and_find_by_user() {
     let repo = MockCredentialRepository::default();
@@ -192,7 +192,7 @@ async fn repository_create_and_find_by_user() {
     assert_eq!(found[1].id, "c2");
 }
 
-/// R-003: `create` 重复 ID 返回错误。
+/// `create` 重复 ID 返回错误。
 #[tokio::test]
 async fn repository_create_duplicate_returns_error() {
     let repo = MockCredentialRepository::default();
@@ -203,7 +203,7 @@ async fn repository_create_duplicate_returns_error() {
     assert!(result.is_err(), "重复 create 应返回错误");
 }
 
-/// R-003: `find_by_user_and_type` 按 credential_type 过滤。
+/// `find_by_user_and_type` 按 credential_type 过滤。
 #[tokio::test]
 async fn repository_find_by_user_and_type_filters() {
     let repo = MockCredentialRepository::default();
@@ -229,7 +229,7 @@ async fn repository_find_by_user_and_type_filters() {
     assert_eq!(totps[0].id, "c2");
 }
 
-/// R-003: `update` 覆盖写 + 不存在返回错误。
+/// `update` 覆盖写 + 不存在返回错误。
 #[tokio::test]
 async fn repository_update_overwrites_and_errors_on_missing() {
     let repo = MockCredentialRepository::default();
@@ -260,7 +260,7 @@ async fn repository_update_overwrites_and_errors_on_missing() {
     assert!(result.is_err(), "更新不存在的凭证应返回错误");
 }
 
-/// R-003: `delete` 删除 + 不存在返回错误。
+/// `delete` 删除 + 不存在返回错误。
 #[tokio::test]
 async fn repository_delete_removes_and_errors_on_missing() {
     let repo = MockCredentialRepository::default();
@@ -278,7 +278,7 @@ async fn repository_delete_removes_and_errors_on_missing() {
     assert!(result.is_err(), "删除不存在的凭证应返回错误");
 }
 
-/// R-003: 多用户隔离 — 不同用户的凭证互不影响。
+/// 多用户隔离 — 不同用户的凭证互不影响。
 #[tokio::test]
 async fn repository_multi_user_isolation() {
     let repo = MockCredentialRepository::default();
@@ -301,7 +301,7 @@ async fn repository_multi_user_isolation() {
     assert_eq!(empty.len(), 0);
 }
 
-/// R-003: `CredentialRepository` 可作 `Arc<dyn CredentialRepository>` 使用。
+/// `CredentialRepository` 可作 `Arc<dyn CredentialRepository>` 使用。
 #[tokio::test]
 async fn repository_usable_as_trait_object() {
     let repo: std::sync::Arc<dyn CredentialRepository> =
@@ -314,7 +314,7 @@ async fn repository_usable_as_trait_object() {
 }
 
 // ========================================================================
-// R-006: DaoCredentialRepository 测试（基于 MockDao）
+// DaoCredentialRepository 测试（基于 MockDao）
 // ========================================================================
 
 /// 辅助函数：构造 DaoCredentialRepository（基于 MockDao）。
@@ -322,7 +322,7 @@ fn make_dao_repo() -> DaoCredentialRepository {
     DaoCredentialRepository::new(Arc::new(MockDao::new()))
 }
 
-/// R-006: `create` + `find_by_user` 正常路径（DAO key = `cred:{user_id}:{cred_id}`）。
+/// `create` + `find_by_user` 正常路径（DAO key = `cred:{user_id}:{cred_id}`）。
 #[tokio::test]
 async fn dao_repo_create_and_find_by_user() {
     let repo = make_dao_repo();
@@ -336,7 +336,7 @@ async fn dao_repo_create_and_find_by_user() {
     assert_eq!(found[0].credential_type, "password");
 }
 
-/// R-006: `find_by_user` 未知用户返回空 Vec。
+/// `find_by_user` 未知用户返回空 Vec。
 #[tokio::test]
 async fn dao_repo_find_by_user_returns_empty_for_unknown() {
     let repo = make_dao_repo();
@@ -348,7 +348,7 @@ async fn dao_repo_find_by_user_returns_empty_for_unknown() {
     assert!(found.is_empty(), "未知用户应返回空 Vec");
 }
 
-/// R-006: `find_by_user_and_type` 按 `credential_type` 过滤。
+/// `find_by_user_and_type` 按 `credential_type` 过滤。
 #[tokio::test]
 async fn dao_repo_find_by_user_and_type_filters() {
     let repo = make_dao_repo();
@@ -374,7 +374,7 @@ async fn dao_repo_find_by_user_and_type_filters() {
     assert_eq!(totps[0].id, "c2");
 }
 
-/// R-006: `update` 覆盖写 + 不存在返回错误。
+/// `update` 覆盖写 + 不存在返回错误。
 #[tokio::test]
 async fn dao_repo_update_overwrites_and_errors_on_missing() {
     let repo = make_dao_repo();
@@ -406,7 +406,7 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
     assert!(result.is_err(), "更新不存在的凭证应返回错误");
 }
 
-/// R-006: `delete` 删除 + 不存在返回错误。
+/// `delete` 删除 + 不存在返回错误。
 #[tokio::test]
 async fn dao_repo_delete_removes_and_errors_on_missing() {
     let repo = make_dao_repo();
@@ -423,7 +423,7 @@ async fn dao_repo_delete_removes_and_errors_on_missing() {
     assert!(result.is_err(), "删除不存在的凭证应返回错误");
 }
 
-/// R-006: 多用户隔离 — 不同用户的凭证互不影响（DAO key 含 user_id 前缀）。
+/// 多用户隔离 — 不同用户的凭证互不影响（DAO key 含 user_id 前缀）。
 #[tokio::test]
 async fn dao_repo_multi_user_isolation() {
     let repo = make_dao_repo();
@@ -447,7 +447,7 @@ async fn dao_repo_multi_user_isolation() {
     assert!(carol.is_empty());
 }
 
-/// R-006: 单用户多凭证类型（password + totp + webauthn 共存）。
+/// 单用户多凭证类型（password + totp + webauthn 共存）。
 #[tokio::test]
 async fn dao_repo_multi_credential_types_per_user() {
     let repo = make_dao_repo();
@@ -469,7 +469,7 @@ async fn dao_repo_multi_credential_types_per_user() {
     assert!(types.contains(&"webauthn"));
 }
 
-/// R-006: `find_by_user` 返回含 `enabled=false` 的凭证（trait 层不过滤 enabled，业务层负责）。
+/// `find_by_user` 返回含 `enabled=false` 的凭证（trait 层不过滤 enabled，业务层负责）。
 #[tokio::test]
 async fn dao_repo_find_returns_disabled_credentials() {
     let repo = make_dao_repo();
@@ -499,7 +499,7 @@ async fn dao_repo_find_returns_disabled_credentials() {
     assert!(!disabled_cred.enabled, "disabled 凭证 enabled 应为 false");
 }
 
-/// R-006: `find_by_user` 按 `priority` 升序返回（trait 契约）。
+/// `find_by_user` 按 `priority` 升序返回（trait 契约）。
 #[tokio::test]
 async fn dao_repo_priority_order_ascending() {
     let repo = make_dao_repo();
@@ -525,7 +525,7 @@ async fn dao_repo_priority_order_ascending() {
     assert_eq!(found[2].priority, 5);
 }
 
-/// R-006: `create` 重复 ID 返回错误。
+/// `create` 重复 ID 返回错误。
 #[tokio::test]
 async fn dao_repo_create_duplicate_returns_error() {
     let repo = make_dao_repo();
@@ -537,7 +537,7 @@ async fn dao_repo_create_duplicate_returns_error() {
     assert!(result.is_err(), "重复 create 应返回错误");
 }
 
-/// R-006: `DaoCredentialRepository` 可作 `Arc<dyn CredentialRepository>` 使用。
+/// `DaoCredentialRepository` 可作 `Arc<dyn CredentialRepository>` 使用。
 #[tokio::test]
 async fn dao_repo_usable_as_trait_object() {
     let repo: Arc<dyn CredentialRepository> = Arc::new(make_dao_repo());
@@ -549,7 +549,7 @@ async fn dao_repo_usable_as_trait_object() {
 }
 
 // ========================================================================
-// R-IDOR: IDOR 防护测试（vuln-0004 修复）
+// IDOR 防护测试
 //
 // 验证 CredentialRepository 的 find_by_user / update / delete 在 caller_login_id
 // 与目标凭证 owner 不一致时返回 GarrisonError::NotPermission（403 Forbidden）。
@@ -678,7 +678,7 @@ async fn dao_delete_succeeds_when_caller_is_owner() {
 
 /// IDOR: Mock - alice 尝试更新 bob 的凭证应被拒绝。
 ///
-/// Issue 757: forged 使用与原凭证不同的 `secret_data`（"attacker-hash"），
+/// forged 使用与原凭证不同的 `secret_data`（"attacker-hash"），
 /// 使事后断言（remaining[0].secret_data == "hash"）具备鉴别力——若 update 意外
 /// 成功，secret_data 会变成 attacker-hash 而非 hash，断言即可捕获。
 #[tokio::test]
@@ -872,12 +872,12 @@ async fn trait_object_enforces_idor_on_find_by_user() {
 }
 
 // ------------------------------------------------------------------------
-// IDOR: find_by_user_and_type / create 覆盖缺口（Issue 1651/3169/3537/3168）
+// IDOR: find_by_user_and_type / create 覆盖缺口
 // ------------------------------------------------------------------------
 
 /// IDOR: `find_by_user_and_type` 严格按 user_id 隔离，不泄露他人凭证。
 ///
-/// Issue 1651/3169/3537: 该方法签名无 `caller_login_id` 参数（认证上下文内部
+/// 该方法签名无 `caller_login_id` 参数（认证上下文内部
 /// 受信接口，见 trait 文档「安全语义」），caller-vs-owner 拒绝路径不存在；
 /// 此处验证其可测的安全性质——查询结果严格限定在给定 user_id 内，跨用户
 /// 数据不会泄露（alice/bob 各自的 password 凭证互不可见）。
@@ -948,7 +948,7 @@ async fn dao_find_by_user_and_type_isolated_per_user() {
 
 /// IDOR: `create` 是受信边界 API——仓库层不做 caller 校验（设计文档化测试）。
 ///
-/// Issue 3168: `create(credential)` 签名无 caller 参数，IDOR 边界在**调用方**：
+/// `create(credential)` 签名无 caller 参数，IDOR 边界在**调用方**：
 /// `CredentialModel.user_id` 必须由服务端从认证会话构造，绝不接受外部输入的
 /// user_id 直传（否则即跨用户创建/提权）。仓库层以 `set_if_absent` 保证
 /// key（`cred:{user_id}:{cred_id}`）唯一性。本测试固化该设计行为：

@@ -14,7 +14,7 @@ use thiserror::Error;
 ///
 /// # Display 行为
 ///
-/// - 未启用 `i18n` feature：硬编码中文（与 0.2.x 行为一致）
+/// - 未启用 `i18n` feature：硬编码中文
 /// - 启用 `i18n` feature：依据线程本地 locale 切换中英文（详见 [`crate::i18n`]）
 #[derive(Error)]
 pub enum GarrisonError {
@@ -89,7 +89,7 @@ pub enum GarrisonError {
 
     /// 账号被封禁异常。
     ///
-    /// 对应 PRD §3.1.6 DisableServiceException / FRD §3.4 BW-ERR-010。
+    /// 对应 DisableServiceException（BW-ERR-010）。
     /// `service` 记录被封禁的服务名（如 "default" / "oidc"），
     /// `until` 为 `Some(time)` 表示定时解封，`None` 表示永久封禁。
     /// 不泄露 user_id / tenant_id 等敏感信息。
@@ -102,7 +102,7 @@ pub enum GarrisonError {
 
     /// 未完成二次认证异常。
     ///
-    /// 对应 PRD §3.1.6 NotSafeException / FRD §5.4.1。
+    /// 对应 NotSafeException（BW-ERR-012）。
     /// `reason` 说明未完成的具体认证（如 "MFA_TOTP_REQUIRED" / "WEBAUTHN_REQUIRED"）。
     NotSafe {
         /// 未完成认证的原因标识。
@@ -111,7 +111,7 @@ pub enum GarrisonError {
 
     /// 非法状态转换。
     ///
-    /// 供 E-005 状态机使用，`from` / `to` 为状态枚举的 Debug 输出。
+    /// 供状态机使用，`from` / `to` 为状态枚举的 Debug 输出。
     /// HTTP status = 500（内部状态错误，非用户错误）。
     InvalidStateTransition {
         /// 源状态（`format!("{:?}", state)` Debug 输出）。
@@ -179,7 +179,7 @@ impl std::fmt::Debug for GarrisonError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let display = self.to_string();
         let truncated = if display.len() > 200 {
-            // ocr #2130/#6138：不能用 &display[..197] 按字节硬切——截断点落在
+            // 不能用 &display[..197] 按字节硬切——截断点落在
             // 多字节 UTF-8 字符（中文/emoji）中间会 panic（经 into_response 的
             // error=?self 日志路径可达，构成远程 DoS）。回退到最近的 char boundary。
             let mut end = 197;
@@ -286,29 +286,29 @@ impl GarrisonError {
     // ========================================================================
     // 与 response_parts() 返回的字符串 error_code（如 "DISABLE_SERVICE"）解耦：
     // - response_parts().1 → 面向 HTTP 响应体（既有惯例）
-    // - BW_ERR_XXX 常量 → 面向 audit-log / 监控埋点 / FRD §3.4 数值追溯
+    // - BW_ERR_XXX 常量 → 面向 audit-log / 监控埋点数值追溯
     //
     // 编码规则（项目特定，非 Java 手册 5 位格式）：
-    //   error_code = HTTP_status × 1000 + 序号
-    //   示例：409001 = 409 (Conflict) × 1000 + 01（第一个 409 类错误）
-    //   示例：403003 = 403 (Forbidden) × 1000 + 03
+    // error_code = HTTP_status × 1000 + 序号
+    // 示例：409001 = 409 (Conflict) × 1000 + 01（第一个 409 类错误）
+    // 示例：403003 = 403 (Forbidden) × 1000 + 03
 
-    /// BW-ERR-009：并发登录冲突（FRD §3.4）。
+    /// BW-ERR-009：并发登录冲突。
     ///
     /// 超出设备并发上限时抛出，HTTP 409 Conflict。
     pub const BW_ERR_009: u32 = 409001;
 
-    /// BW-ERR-010：账号被封禁（FRD §3.4）。
+    /// BW-ERR-010：账号被封禁。
     ///
     /// 对应 `GarrisonError::DisableService`，HTTP 403 Forbidden。
     pub const BW_ERR_010: u32 = 403003;
 
-    /// BW-ERR-011：多账号体系冲突（FRD §3.4）。
+    /// BW-ERR-011：多账号体系冲突。
     ///
     /// 同一 login_id 在不同 account_type 下冲突，HTTP 401 Unauthorized。
     pub const BW_ERR_011: u32 = 401004;
 
-    /// BW-ERR-012：第三方登录失败（FRD §3.4）。
+    /// BW-ERR-012：第三方登录失败。
     ///
     /// 对应 `GarrisonError::NotSafe`（第三方登录回退），HTTP 400 Bad Request。
     pub const BW_ERR_012: u32 = 400001;
@@ -654,7 +654,7 @@ impl axum::response::IntoResponse for GarrisonError {
         // 完整错误记录到日志（不返回给客户端）
         tracing::error!(error = ?self, "garrison rejection");
 
-        // 单次调用 response_parts_i18n() 获取所有字段（M2+LOW-002：消除冗余调用），
+        // 单次调用 response_parts_i18n() 获取所有字段消除冗余调用），
         // 复用 response_parts_i18n() 保证三框架行为一致（L1：更新注释）。
         let (status_code, error_code, message, ex_code) = self.response_parts_i18n();
         let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
@@ -1130,12 +1130,12 @@ mod tests {
     }
 
     // ========================================================================
-    // InvalidResponse 变体测试（H6：上游响应解析失败专用错误类型）
+    // InvalidResponse 变体测试（上游响应解析失败专用错误类型）
     // ========================================================================
 
     /// 验证 InvalidResponse 变体的 Display 输出包含原始消息（默认英文前缀）。
     ///
-    /// 覆盖 spec H6：InvalidResponse 输出 "Invalid upstream response: {detail}"。
+    /// InvalidResponse 输出 "Invalid upstream response: {detail}"。
     #[test]
     fn invalid_response_variant_display_includes_message() {
         let err = GarrisonError::InvalidResponse("JSON 解析失败".to_string());
@@ -1144,7 +1144,7 @@ mod tests {
 
     /// 验证 InvalidResponse 变体的 response_parts 返回 502 + INVALID_RESPONSE。
     ///
-    /// 覆盖 spec H6：HTTP status = 502 Bad Gateway（上游响应问题），
+    /// HTTP status = 502 Bad Gateway（上游响应问题），
     /// error_code = "INVALID_RESPONSE"。
     #[test]
     fn invalid_response_response_parts_returns_502() {
@@ -1162,7 +1162,7 @@ mod tests {
 
     /// 验证 InvalidResponse 变体不泄露原始 detail 到响应体 message。
     ///
-    /// 覆盖 spec H6 安全约束：to_json_body 的 message 字段为通用描述，
+    /// 安全约束：to_json_body 的 message 字段为通用描述，
     /// 不含变体 detail（如内部解析错误细节）。
     #[test]
     fn invalid_response_to_json_body_does_not_leak_detail() {
@@ -1444,7 +1444,7 @@ mod tests {
 
     /// 验证 `miette::Report::new(error)` 可构造，且 Debug 渲染输出包含错误代码。
     ///
-    /// 验收 spec R-error-001 的"source chain 渲染"要求：miette::Report 接受任何
+    /// 验证"source chain 渲染"要求：miette::Report 接受任何
     /// `Diagnostic + Send + Sync + 'static`，GarrisonError 通过 thiserror::Error derive
     /// 满足 `std::error::Error`，本测试验证集成可达。
     #[cfg(feature = "miette")]
@@ -1517,7 +1517,7 @@ mod tests {
 
     /// 验证 DisableService 变体的 Display 输出包含 service 与 until。
     ///
-    /// 覆盖 spec R-error-001：Display 输出 `"账号已被封禁：service={service}, until={until:?}"`。
+    /// Display 输出 `"账号已被封禁：service={service}, until={until:?}"`。
     #[test]
     fn disable_service_display_includes_service_and_until() {
         let err = GarrisonError::DisableService {
@@ -1552,7 +1552,7 @@ mod tests {
 
     /// 验证 DisableService 变体的 response_parts 返回 403 + DISABLE_SERVICE。
     ///
-    /// 覆盖 spec R-error-001：HTTP status = 403，error_code 字符串 = "DISABLE_SERVICE"。
+    /// HTTP status = 403，error_code 字符串 = "DISABLE_SERVICE"。
     #[test]
     fn disable_service_response_parts_returns_403() {
         let err = GarrisonError::DisableService {
@@ -1568,7 +1568,7 @@ mod tests {
 
     /// 验证 DisableService 变体不泄露敏感信息（service 字段不暴露到响应体）。
     ///
-    /// 覆盖 spec R-error-001 约束：to_json_body 的 message 字段为通用描述，不含 service 值。
+    /// to_json_body 的 message 字段为通用描述，不含 service 值。
     #[test]
     fn disable_service_to_json_body_does_not_leak_service() {
         let err = GarrisonError::DisableService {
@@ -1588,7 +1588,7 @@ mod tests {
 
     /// 验证 NotSafe 变体的 Display 输出包含 reason。
     ///
-    /// 覆盖 spec R-error-002：Display 输出 `"未完成二次认证：{reason}"`。
+    /// Display 输出 `"未完成二次认证：{reason}"`。
     #[test]
     fn not_safe_display_includes_reason() {
         let err = GarrisonError::NotSafe {
@@ -1602,7 +1602,7 @@ mod tests {
 
     /// 验证 NotSafe 变体的 response_parts 返回 400 + NOT_SAFE。
     ///
-    /// 覆盖 spec R-error-002：HTTP status = 400，error_code = "NOT_SAFE"。
+    /// HTTP status = 400，error_code = "NOT_SAFE"。
     #[test]
     fn not_safe_response_parts_returns_400() {
         let err = GarrisonError::NotSafe {
@@ -1633,7 +1633,7 @@ mod tests {
 
     /// 验证 InvalidStateTransition 变体的 Display 输出包含 from 与 to。
     ///
-    /// 覆盖 spec R-error-003：Display 输出 `"非法状态转换：{from} -> {to}"`。
+    /// Display 输出 `"非法状态转换：{from} -> {to}"`。
     #[test]
     fn invalid_state_transition_display_includes_from_and_to() {
         let err = GarrisonError::InvalidStateTransition {
@@ -1648,7 +1648,7 @@ mod tests {
 
     /// 验证 InvalidStateTransition 变体的 response_parts 返回 500。
     ///
-    /// 覆盖 spec R-error-003：HTTP status = 500（内部状态错误）。
+    /// HTTP status = 500（内部状态错误）。
     #[test]
     fn invalid_state_transition_response_parts_returns_500() {
         let err = GarrisonError::InvalidStateTransition {
@@ -1690,7 +1690,7 @@ mod tests {
     // BW-ERR 错误码常量测试
     // ========================================================================
 
-    /// 验证 BW_ERR 常量值与 FRD §3.4 定义一致。
+    /// 验证 BW_ERR 常量值与错误码定义一致。
     #[test]
     fn bw_err_constants_match_frd_spec() {
         assert_eq!(GarrisonError::BW_ERR_009, 409001); // 并发登录冲突

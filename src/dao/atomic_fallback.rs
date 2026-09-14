@@ -5,7 +5,7 @@
 //!
 //! `#[doc(hidden)]` + 测试域专用：生产 DAO 实现**禁止**使用本模块的组合语义
 //! （完整编译期门控需 CI 测试命令追加 `testing` feature，CI 现为 full-only，
-//! 属本变更 Non-Goals；已记录为后续 change——架构审查 A1）。
+//! 属本变更 Non-Goals；已记录为后续 change）。
 //!
 //! # 与生产实现的语义差异（实现方必读）
 //!
@@ -20,7 +20,7 @@
 //! 仅适用于单线程 / `serial_test` 串行化测试环境。生产后端**禁止**使用
 //! （参阅 [`crate::dao::GarrisonDao`] trait 文档「原子性编译期契约」）。
 //!
-//! # 门控状态（架构审查 A1 遗留缺口，已知限制）
+//! # 门控状态（遗留缺口，已知限制）
 //!
 //! 本模块宣称的 `testing` feature 门控**尚未落地**：下方三个 `#[macro_export]`
 //! 宏（`atomic_test_fallback!` / `atomic_test_fallback_no_get_and_delete!` /
@@ -28,13 +28,13 @@
 //! `#[cfg(any(test, feature = "testing"))]` 编译期门控。原因：`testing`
 //! feature 虽已在 Cargo.toml 定义，但 CI 测试命令仍为 full-only，
 //! tests/acceptance 与 benches 在未启用 `testing` 的情况下直接使用这些宏，
-//! 立即门控会使其编译失败（已记录为后续 change——架构审查 A1）。
+//! 立即门控会使其编译失败（已记录为后续 change）。
 //! 因此当前**仅以文档约定约束**：
 //!
 //! - 这三个宏是**测试回退专用**，任何生产 DAO 实现 / 业务代码**严禁**调用；
 //! - 外部 crate 仅应在集成测试 / bench 目标中使用；
 //! - 待 CI 追加 `testing` feature 后，将补上 `#[cfg(any(test, feature = "testing"))]`
-//!   门控，使生产构建无法触及（届时无需改动宏展开体）。
+//! 门控，使生产构建无法触及（届时无需改动宏展开体）。
 
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
@@ -82,7 +82,7 @@ pub mod impls {
         Ok(value)
     }
 
-    /// incr 组合语义（TOCTOU：并发丢失更新；解析失败显式报错，Rule 12）。
+    /// incr 组合语义（TOCTOU：并发丢失更新；解析失败显式报错）。
     pub async fn incr<D: GarrisonDao + ?Sized>(
         dao: &D,
         key: &str,

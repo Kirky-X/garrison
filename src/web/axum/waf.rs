@@ -22,11 +22,11 @@
 //! let mut chain = WafHookChain::new();
 //! // chain.register(...);
 //! let app = Router::new()
-//!     .route("/api", axum::routing::get(|| async { "ok" }))
-//!     .layer(axum::middleware::from_fn_with_state(
-//!         Arc::new(chain),
-//!         waf_middleware,
-//!     ));
+//! .route("/api", axum::routing::get(|| async { "ok" }))
+//! .layer(axum::middleware::from_fn_with_state(
+//! Arc::new(chain),
+//! waf_middleware,
+//! ));
 //! ```
 
 use crate::error::GarrisonError;
@@ -94,9 +94,9 @@ fn parse_firewall_blocked(s: &str) -> (&str, &str) {
 ///
 /// ```json
 /// {
-///     "error": "firewall_blocked",
-///     "hook": "black_path",
-///     "reason": "路径 /admin 命中黑名单"
+/// "error": "firewall_blocked",
+/// "hook": "black_path",
+/// "reason": "路径 /admin 命中黑名单"
 /// }
 /// ```
 pub async fn waf_middleware(

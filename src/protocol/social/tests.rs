@@ -65,9 +65,9 @@ fn provider_names_constants_match_expected_strings() {
 ///
 /// 测试模式与 `role_hierarchy_table_exists_after_migration` 一致：
 /// 1. `DbPool::with_config` 创建**单连接**内存 SQLite（修复：原
-///    `init_dbnexus("sqlite::memory:")` 默认 `min_connections=5`，而
-///    `:memory:` 每连接独立数据库——迁移只落在其中一条连接上，
-///    `get_session` 拿到其他预建连接时表不存在，测试 flaky）
+/// `init_dbnexus("sqlite::memory:")` 默认 `min_connections=5`，而
+/// `:memory:` 每连接独立数据库——迁移只落在其中一条连接上，
+/// `get_session` 拿到其他预建连接时表不存在，测试 flaky）
 /// 2. `GarrisonMigration::with_base_dir` 指向项目根目录 `migrations/sqlite/`
 /// 3. `migrate_core()` 执行 `core/*.sql`（含 005_social_bindings.sql）
 /// 4. 查询 `sqlite_master` 验证 `social_bindings` 表存在
@@ -156,8 +156,8 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
     use std::sync::Arc;
 
     // 1. 初始化 SQLite 单连接内存数据库 + 迁移
-    //    用 DbPool::with_config 而非 init_dbnexus，强制 max/min_connections=1
-    //    避免 :memory: 的 per-connection 独立内存数据库问题
+    // 用 DbPool::with_config 而非 init_dbnexus，强制 max/min_connections=1
+    // 避免 :memory: 的 per-connection 独立内存数据库问题
     let config = DbConfig {
         url: "sqlite::memory:".to_string(),
         pool_config: PoolConfig {
@@ -205,7 +205,7 @@ async fn social_binding_service_find_or_create_creates_new_binding() {
     );
 
     // 6. 查询 social_bindings 表，验证有 1 行记录
-    //    用 {} 作用域限制 session 生命周期，确保 connection 在第二次 find_or_create 前归还
+    // 用 {} 作用域限制 session 生命周期，确保 connection 在第二次 find_or_create 前归还
     {
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();

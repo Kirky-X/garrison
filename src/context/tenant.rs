@@ -80,7 +80,7 @@ pub use tenant_local::TENANT;
 ///
 /// 与 [`current_tenant_id_or_error`] 的差异：后者在无上下文时返回 `Err(Config)`，
 /// 本函数返回 `None`，用于多租户严格隔离场景——调用方必须显式处理“无租户上下文”的情况，
-/// 避免租户隔离被静默绕过（Rule 12 失败显性化）。
+/// 避免租户隔离被静默绕过（失败显性化）。
 ///
 /// # 返回
 ///
@@ -99,7 +99,7 @@ pub fn current_tenant_id_strict() -> Option<i64> {
 ///
 /// 与 [`current_tenant_id_strict`] 的差异：后者返回 `Option<i64>` 由调用方决定如何处理 `None`，
 /// 本函数直接返回 `GarrisonResult<i64>`，无上下文时返回 `Err(GarrisonError::Config)`，
-/// 强制 fail-closed（Rule 12 失败显性化 + 安全框架默认拒绝）。
+/// 强制 fail-closed（失败显性化 + 安全框架默认拒绝）。
 ///
 /// # 返回
 ///
@@ -128,7 +128,7 @@ pub fn current_tenant_id_or_error() -> GarrisonResult<i64> {
 /// # 设计
 ///
 /// - 接受 `&HeaderMap`（`http::HeaderMap`，框架无关），actix/warp/axum 均基于 http crate
-/// - 失败时返回 `GarrisonError`，不静默默认 0（Rule 12 失败显性化）
+/// - 失败时返回 `GarrisonError`，不静默默认 0（失败显性化）
 #[async_trait]
 pub trait TenantResolver: Send + Sync {
     /// 从请求头解析租户上下文。
@@ -154,7 +154,7 @@ pub trait TenantResolver: Send + Sync {
 ///
 /// # 设计
 ///
-/// 不默认 0（Rule 12 失败显性化），缺失即报错——避免租户隔离被静默绕过。
+/// 不默认 0（失败显性化），缺失即报错——避免租户隔离被静默绕过。
 #[derive(Debug, Clone, Default)]
 pub struct HeaderTenantResolver;
 
@@ -190,7 +190,7 @@ impl TenantResolver for HeaderTenantResolver {
 /// # 设计
 ///
 /// - Host 含端口时（如 `tenant42.example.com:8080`）先 strip port 再提取 subdomain
-/// - 不默认 0（Rule 12 失败显性化），未命中即报错——避免租户隔离被静默绕过
+/// - 不默认 0（失败显性化），未命中即报错——避免租户隔离被静默绕过
 #[derive(Debug, Clone, Default)]
 pub struct SubdomainTenantResolver {
     /// subdomain → tenant_id 映射表（如 `{"tenant42": 42}`）。
@@ -240,7 +240,7 @@ impl TenantResolver for SubdomainTenantResolver {
 /// # 行为
 ///
 /// - Authorization header 存在且为 `Bearer <jwt>`（大小写不敏感，RFC 7235）：
-///   验证 JWT 签名（HS256）+ exp + 解码 `tenant_id` claim
+/// 验证 JWT 签名（HS256）+ exp + 解码 `tenant_id` claim
 /// - Authorization 缺失：返回 `GarrisonError::InvalidToken`
 /// - 非 Bearer scheme：返回 `GarrisonError::InvalidToken`
 /// - JWT 签名验证失败：返回 `GarrisonError::InvalidToken`
@@ -251,11 +251,11 @@ impl TenantResolver for SubdomainTenantResolver {
 ///
 /// - 门控在 `protocol-jwt` feature 下（依赖 `jsonwebtoken` crate）
 /// - Bearer scheme 大小写不敏感（RFC 7235：`Bearer`/`bearer`/`BEARER` 均合法）
-/// - 不默认 0（Rule 12 失败显性化），任何失败均返回 `InvalidToken`
-/// - **多租户安全建议**（ocr #2434/#3556）：多服务共享同一 HS256 secret 时，
-///   务必通过 `with_expected_issuers` 配置期望的 `iss`，防止其他服务签发的合法 JWT
-///   被跨服务重放。`aud` 同理（jsonwebtoken 对 token 携带 `aud` 而本地未配置期望值的
-///   情况默认 fail-closed 拒绝）。
+/// - 不默认 0（失败显性化），任何失败均返回 `InvalidToken`
+/// - **多租户安全建议**：多服务共享同一 HS256 secret 时，
+/// 务必通过 `with_expected_issuers` 配置期望的 `iss`，防止其他服务签发的合法 JWT
+/// 被跨服务重放。`aud` 同理（jsonwebtoken 对 token 携带 `aud` 而本地未配置期望值的
+/// 情况默认 fail-closed 拒绝）。
 #[cfg(feature = "protocol-jwt")]
 #[derive(Clone)]
 pub struct ClaimTenantResolver {
@@ -264,7 +264,7 @@ pub struct ClaimTenantResolver {
     /// # 安全性
     ///
     /// 手动实现 `Debug`（非 derive）：`{:?}` 输出时 `jwt_secret` 脱敏为 `<redacted>`，
-    /// 防止密钥经日志/调试输出明文泄露（ocr #3110）。`Clone` 保留（构造方按值持有）。
+    /// 防止密钥经日志/调试输出明文泄露。`Clone` 保留（构造方按值持有）。
     pub jwt_secret: String,
     /// 可选：期望的 `iss`（issuer）claim 集合。非空时启用 issuer 校验（fail-closed）。
     pub expected_issuers: Vec<String>,
@@ -275,7 +275,7 @@ pub struct ClaimTenantResolver {
 #[cfg(feature = "protocol-jwt")]
 impl std::fmt::Debug for ClaimTenantResolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // 手动脱敏：jwt_secret 不得以明文出现在 Debug 输出（ocr #3110）
+        // 手动脱敏：jwt_secret 不得以明文出现在 Debug 输出
         f.debug_struct("ClaimTenantResolver")
             .field("jwt_secret", &"<redacted>")
             .field("expected_issuers", &self.expected_issuers)
@@ -298,7 +298,7 @@ impl ClaimTenantResolver {
     /// 配置期望的 `iss`（issuer）claim 集合（builder 模式）。
     ///
     /// 非空时 JWT 校验启用 issuer 白名单：token 的 `iss` 缺失或不匹配即拒绝。
-    /// 多服务共享 secret 时建议配置，防止跨服务 token 重放（ocr #2434/#3556）。
+    /// 多服务共享 secret 时建议配置，防止跨服务 token 重放。
     pub fn with_expected_issuers(mut self, issuers: Vec<String>) -> Self {
         self.expected_issuers = issuers;
         self
@@ -352,12 +352,12 @@ impl TenantResolver for ClaimTenantResolver {
         let mut validation = Validation::new(Algorithm::HS256);
         validation.validate_exp = true;
         validation.leeway = 0;
-        // issuer 校验（ocr #2434/#3556）：配置了期望 iss 才启用；
+        // issuer 校验：配置了期望 iss 才启用；
         // 启用后 token 的 iss 缺失或不匹配均拒绝（jsonwebtoken fail-closed）。
         if !self.expected_issuers.is_empty() {
             validation.set_issuer(&self.expected_issuers);
         }
-        // audience 校验（ocr #2434/#3556）：配置了期望 aud 才显式设置白名单。
+        // audience 校验：配置了期望 aud 才显式设置白名单。
         // 未配置时保留库默认（validate_aud=true 且期望为 None）：
         // token 不带 aud 可通过；token 带 aud 而本地未配置期望值时拒绝（fail-closed）。
         if !self.expected_audiences.is_empty() {
@@ -374,7 +374,7 @@ impl TenantResolver for ClaimTenantResolver {
 }
 
 // ============================================================================
-// 测试专用 helper（Rule 9：测试桩显式设置 TENANT scope，避免 Rule 12 fail-closed 误触发）
+// 测试专用 helper（测试桩显式设置 TENANT scope，避免 fail-closed 误触发）
 // ============================================================================
 
 /// 测试专用：用默认 `TenantContext { tenant_id: 0, resolved_from: Header }` 包裹 future。
@@ -382,17 +382,17 @@ impl TenantResolver for ClaimTenantResolver {
 /// `tenant-isolation` feature 启用时，`GarrisonLogicDefault::check_permission` 会调用
 /// `current_tenant_id_or_error()`（fail-closed）。permission 相关测试验证的是权限逻辑，
 /// 不是 tenant 隔离——tenant 隔离有专门测试（本模块 `tests`）。因此 permission 测试应
-/// 显式设置默认 TENANT scope 作为测试桩（Rule 9 测试必须有意义），而非修改生产代码
-/// 用 `unwrap_or(0)` 规避（Rule 12 失败必须显性化）。
+/// 显式设置默认 TENANT scope 作为测试桩，而非修改生产代码
+/// 用 `unwrap_or(0)` 规避（失败必须显性化）。
 ///
 /// # 使用
 ///
 /// ```ignore
 /// #[tokio::test]
 /// async fn my_permission_test() {
-///     with_default_tenant(async {
-///         // 此处调用 check_permission / has_permission / handler
-///     }).await;
+/// with_default_tenant(async {
+/// // 此处调用 check_permission / has_permission / handler
+/// }).await;
 /// }
 /// ```
 ///
@@ -416,7 +416,7 @@ where
 mod tests {
     use super::*;
 
-    /// R-tenant-isolation-001: TenantContext 携带 tenant_id 与来源标识。
+    /// TenantContext 携带 tenant_id 与来源标识。
     ///
     /// 构造 `TenantContext { tenant_id: 42, resolved_from: TenantSource::Header }`，
     /// 断言字段可读。
@@ -430,7 +430,7 @@ mod tests {
         assert!(matches!(ctx.resolved_from, TenantSource::Header));
     }
 
-    /// R-tenant-isolation-002: HeaderTenantResolver 从 `X-Tenant-Id` 提取 tenant_id。
+    /// HeaderTenantResolver 从 `X-Tenant-Id` 提取 tenant_id。
     ///
     /// 构造含 `X-Tenant-Id: 42` 的 `HeaderMap`，断言 `HeaderTenantResolver.resolve(&headers)`
     /// 返回 `TenantContext { tenant_id: 42, resolved_from: TenantSource::Header }`。
@@ -446,7 +446,7 @@ mod tests {
         assert!(matches!(ctx.resolved_from, TenantSource::Header));
     }
 
-    /// R-tenant-isolation-002: HeaderTenantResolver 在 header 缺失时返回 Config 错误（不默认 0）。
+    /// HeaderTenantResolver 在 header 缺失时返回 Config 错误（不默认 0）。
     #[tokio::test]
     async fn header_tenant_resolver_returns_config_error_when_header_missing() {
         let headers = http::HeaderMap::new();
@@ -454,7 +454,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::Config(_))));
     }
 
-    /// R-tenant-isolation-002: HeaderTenantResolver 在 header 非法 i64 时返回 Config 错误。
+    /// HeaderTenantResolver 在 header 非法 i64 时返回 Config 错误。
     #[tokio::test]
     async fn header_tenant_resolver_returns_config_error_when_header_not_i64() {
         let mut headers = http::HeaderMap::new();
@@ -463,7 +463,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::Config(_))));
     }
 
-    /// R-tenant-isolation-001: TENANT.scope 进入租户上下文后 TENANT.get() 可取到 ctx.tenant_id。
+    /// TENANT.scope 进入租户上下文后 TENANT.get() 可取到 ctx.tenant_id。
     ///
     /// 验证 task_local! 的 scope/get 语义：在 scope 闭包内 `TENANT.get()` 返回
     /// 进入 scope 时传入的 `TenantContext` 引用。
@@ -477,7 +477,7 @@ mod tests {
         assert_eq!(tenant_id, 42);
     }
 
-    /// R-tenant-isolation-003: TENANT.try_get() 在无 scope 上下文时返回 Err（不 panic）。
+    /// TENANT.try_get() 在无 scope 上下文时返回 Err（不 panic）。
     ///
     /// 验证 DAO key 前缀逻辑的兜底条件：`TENANT.try_get().is_err()` 时 key 保持原样。
     #[tokio::test]
@@ -486,17 +486,17 @@ mod tests {
         assert!(TENANT.try_get().is_err());
     }
 
-    /// H2: `current_tenant_id_strict` 在未进入 `TENANT.scope` 时返回 `None`（不 panic）。
+    /// `current_tenant_id_strict` 在未进入 `TENANT.scope` 时返回 `None`（不 panic）。
     ///
     /// 与 `current_tenant_id_or_error` 的 `Err` 不同，strict 版本返回 `None` 而非错误，
     /// 要求调用方显式处理无上下文场景，
-    /// 避免租户隔离被静默绕过（Rule 12 失败显性化）。
+    /// 避免租户隔离被静默绕过（失败显性化）。
     #[tokio::test]
     async fn strict_returns_none_without_scope() {
         assert_eq!(current_tenant_id_strict(), None);
     }
 
-    /// H2: `current_tenant_id_strict` 在 `TENANT.scope` 内返回 `Some(tenant_id)`。
+    /// `current_tenant_id_strict` 在 `TENANT.scope` 内返回 `Some(tenant_id)`。
     ///
     /// 在 `TENANT.scope(TenantContext { tenant_id: 42, .. }, async { current_tenant_id_strict() })` 内
     /// 断言返回 `Some(42)`，验证 strict 版本能正确读取 task_local 上下文。
@@ -518,7 +518,7 @@ mod tests {
 
     /// `current_tenant_id_or_error` 在无 `TENANT.scope` 时返回 `Err(Config)`（fail-closed）。
     ///
-    /// 本函数强制返回错误，避免租户隔离被静默绕过（Rule 12 失败显性化）。
+    /// 本函数强制返回错误，避免租户隔离被静默绕过（失败显性化）。
     #[tokio::test]
     async fn or_error_returns_err_when_no_scope() {
         let result = current_tenant_id_or_error();
@@ -586,7 +586,7 @@ mod tests {
         assert_eq!(result_max.unwrap(), i64::MAX);
     }
 
-    /// R-tenant-isolation-002: SubdomainTenantResolver 从 Host 提取 subdomain 并查 mapping。
+    /// SubdomainTenantResolver 从 Host 提取 subdomain 并查 mapping。
     ///
     /// 构造 `Host: tenant42.example.com`，预置映射 `{"tenant42": 42}`，
     /// 断言 `SubdomainTenantResolver.resolve(&headers)` 返回 `tenant_id == 42`。
@@ -605,7 +605,7 @@ mod tests {
         assert!(matches!(ctx.resolved_from, TenantSource::Subdomain));
     }
 
-    /// R-tenant-isolation-002: SubdomainTenantResolver 在 mapping 未命中时返回 Config 错误。
+    /// SubdomainTenantResolver 在 mapping 未命中时返回 Config 错误。
     #[tokio::test]
     async fn subdomain_tenant_resolver_returns_config_error_when_mapping_miss() {
         let mut headers = http::HeaderMap::new();
@@ -617,7 +617,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::Config(_))));
     }
 
-    /// R-tenant-isolation-002: SubdomainTenantResolver 在 Host 缺失时返回 Config 错误。
+    /// SubdomainTenantResolver 在 Host 缺失时返回 Config 错误。
     #[tokio::test]
     async fn subdomain_tenant_resolver_returns_config_error_when_host_missing() {
         let headers = http::HeaderMap::new();
@@ -628,7 +628,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::Config(_))));
     }
 
-    /// R-tenant-isolation-002: SubdomainTenantResolver 处理带端口的 Host（如 tenant42.example.com:8080）。
+    /// SubdomainTenantResolver 处理带端口的 Host（如 tenant42.example.com:8080）。
     #[tokio::test]
     async fn subdomain_tenant_resolver_strips_port_from_host() {
         let mut headers = http::HeaderMap::new();
@@ -643,7 +643,7 @@ mod tests {
         assert_eq!(ctx.tenant_id, 42);
     }
 
-    /// ocr #6435 回归：IPv6 字面量 Host（`[::1]:8080`）不得被 `split(':').next()`
+    /// IPv6 字面量 Host（`[::1]:8080`）不得被 `split(':').next()`
     /// 截断出 `[`。IPv6 主机无 subdomain 语义，应报 unknown-subdomain 类错误而非 panic/误配。
     #[tokio::test]
     async fn subdomain_tenant_resolver_handles_ipv6_host_without_panic() {
@@ -671,7 +671,7 @@ mod tests {
         }
     }
 
-    /// ocr #6435 回归：裸 IPv6 Host（无端口 `[::1]`）同样正确解析。
+    /// 裸 IPv6 Host（无端口 `[::1]`）同样正确解析。
     #[tokio::test]
     async fn subdomain_tenant_resolver_handles_ipv6_host_without_port() {
         let mut headers = http::HeaderMap::new();
@@ -686,7 +686,7 @@ mod tests {
         );
     }
 
-    /// R-tenant-isolation-002: ClaimTenantResolver 从 Authorization Bearer JWT 提取 tenant_id claim。
+    /// ClaimTenantResolver 从 Authorization Bearer JWT 提取 tenant_id claim。
     ///
     /// 构造含 `Authorization: Bearer <jwt>` 的 headers（JWT payload 含 `tenant_id: 42`），
     /// 断言 `ClaimTenantResolver::new(secret).resolve(&headers)` 返回 `tenant_id == 42`。
@@ -725,7 +725,7 @@ mod tests {
         assert!(matches!(ctx.resolved_from, TenantSource::Claim));
     }
 
-    /// R-tenant-isolation-002: ClaimTenantResolver 在 Authorization 缺失时返回 InvalidToken。
+    /// ClaimTenantResolver 在 Authorization 缺失时返回 InvalidToken。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn claim_tenant_resolver_returns_invalid_token_when_auth_missing() {
@@ -735,7 +735,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::InvalidToken(_))));
     }
 
-    /// R-tenant-isolation-002: ClaimTenantResolver 在 JWT 签名验证失败时返回 InvalidToken。
+    /// ClaimTenantResolver 在 JWT 签名验证失败时返回 InvalidToken。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn claim_tenant_resolver_returns_invalid_token_when_signature_bad() {
@@ -766,7 +766,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::InvalidToken(_))));
     }
 
-    /// R-tenant-isolation-002: ClaimTenantResolver 在 tenant_id claim 缺失时返回 InvalidToken。
+    /// ClaimTenantResolver 在 tenant_id claim 缺失时返回 InvalidToken。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn claim_tenant_resolver_returns_invalid_token_when_claim_missing() {
@@ -793,7 +793,7 @@ mod tests {
         assert!(matches!(result, Err(GarrisonError::InvalidToken(_))));
     }
 
-    /// R-tenant-isolation-002: ClaimTenantResolver 接受小写 bearer scheme（RFC 7235 大小写不敏感）。
+    /// ClaimTenantResolver 接受小写 bearer scheme（RFC 7235 大小写不敏感）。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn claim_tenant_resolver_accepts_lowercase_bearer_scheme() {
@@ -826,7 +826,7 @@ mod tests {
         assert_eq!(ctx.tenant_id, 42);
     }
 
-    /// ocr #3110 回归：ClaimTenantResolver 的 Debug 输出必须脱敏 jwt_secret。
+    /// ClaimTenantResolver 的 Debug 输出必须脱敏 jwt_secret。
     #[cfg(feature = "protocol-jwt")]
     #[test]
     fn claim_tenant_resolver_debug_redacts_jwt_secret() {
@@ -842,7 +842,7 @@ mod tests {
         );
     }
 
-    /// ocr #2434/#3556：配置了 expected_issuers 时，iss 不匹配的 JWT 应被拒绝。
+    /// 配置了 expected_issuers 时，iss 不匹配的 JWT 应被拒绝。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn claim_tenant_resolver_rejects_wrong_issuer_when_configured() {
@@ -878,7 +878,7 @@ mod tests {
         );
     }
 
-    /// ocr #2434/#3556：配置了 expected_issuers 时，iss 匹配的 JWT 应通过。
+    /// 配置了 expected_issuers 时，iss 匹配的 JWT 应通过。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn claim_tenant_resolver_accepts_matching_issuer_when_configured() {
@@ -911,7 +911,7 @@ mod tests {
         assert_eq!(ctx.tenant_id, 7);
     }
 
-    /// ocr #2434/#3556：配置了 expected_audiences 时，aud 不匹配的 JWT 应被拒绝。
+    /// 配置了 expected_audiences 时，aud 不匹配的 JWT 应被拒绝。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn claim_tenant_resolver_rejects_wrong_audience_when_configured() {

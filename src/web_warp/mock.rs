@@ -151,7 +151,7 @@ mod mock_dao_coverage_tests {
 
     /// MockDao 组合回退方法覆盖测试。
     ///
-    /// ocr #7586：不再对结果一律 `let _ =`——确定性路径补断言，
+    /// 不再对结果一律 `let _ =`——确定性路径补断言，
     /// 回归（如 rename 丢值 / incr 不计数）将使测试失败。
     #[tokio::test]
     async fn mock_dao_atomic_and_default_methods_coverage() {

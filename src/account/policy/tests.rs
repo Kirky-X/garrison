@@ -3,7 +3,7 @@
 
 //! `PasswordPolicyEngine` 单元测试。
 //!
-//! 测试自父模块迁移（规则 25：mod.rs 接口隔离）。
+//! 测试自父模块迁移（mod.rs 接口隔离）。
 
 use super::*;
 
@@ -36,10 +36,10 @@ impl PasswordPolicyRule for AlwaysFailRule {
 }
 
 // ------------------------------------------------------------------------
-// R-001: PasswordPolicyRule trait 对象安全测试
+// PasswordPolicyRule trait 对象安全测试
 // ------------------------------------------------------------------------
 
-/// R-001: `PasswordPolicyRule` trait 可作 `Box<dyn PasswordPolicyRule>` 使用（对象安全）。
+/// `PasswordPolicyRule` trait 可作 `Box<dyn PasswordPolicyRule>` 使用（对象安全）。
 #[test]
 fn password_policy_rule_is_object_safe() {
     fn _assert_object_safe(_rule: Box<dyn PasswordPolicyRule>) {}
@@ -47,7 +47,7 @@ fn password_policy_rule_is_object_safe() {
     _assert_object_safe(rule);
 }
 
-/// R-001: `Vec<Box<dyn PasswordPolicyRule>>` 可构造（引擎 rules 字段类型验证）。
+/// `Vec<Box<dyn PasswordPolicyRule>>` 可构造（引擎 rules 字段类型验证）。
 #[test]
 fn password_policy_rule_vec_of_boxed_dyn() {
     let rules: Vec<Box<dyn PasswordPolicyRule>> = vec![
@@ -60,10 +60,10 @@ fn password_policy_rule_vec_of_boxed_dyn() {
 }
 
 // ------------------------------------------------------------------------
-// R-002: PolicyContext 构造测试
+// PolicyContext 构造测试
 // ------------------------------------------------------------------------
 
-/// R-002: `PolicyContext` 6 字段构造（类型与 design.md §3.2 一致）。
+/// `PolicyContext` 6 字段构造（类型与 design.md §3.2 一致）。
 #[test]
 fn policy_context_constructs_with_6_fields() {
     let ctx = PolicyContext {
@@ -82,7 +82,7 @@ fn policy_context_constructs_with_6_fields() {
     assert_eq!(ctx.password_created_at, Some(1700000000));
 }
 
-/// R-002: `PolicyContext` 可选字段为 `None` 时构造正常。
+/// `PolicyContext` 可选字段为 `None` 时构造正常。
 #[test]
 fn policy_context_optional_fields_none() {
     let ctx = PolicyContext {
@@ -101,10 +101,10 @@ fn policy_context_optional_fields_none() {
 }
 
 // ------------------------------------------------------------------------
-// R-003: PasswordPolicyEngine 测试
+// PasswordPolicyEngine 测试
 // ------------------------------------------------------------------------
 
-/// R-003: 空规则集 + 任意密码 → `Ok(())`。
+/// 空规则集 + 任意密码 → `Ok(())`。
 #[test]
 fn engine_empty_rules_returns_ok() {
     let engine = PasswordPolicyEngine::new(Vec::new(), ErrorMode::FirstError);
@@ -119,7 +119,7 @@ fn engine_empty_rules_returns_ok() {
     assert!(engine.validate(&ctx, "any").is_ok());
 }
 
-/// R-003: 全部规则通过 → `Ok(())`。
+/// 全部规则通过 → `Ok(())`。
 #[test]
 fn engine_all_pass_returns_ok() {
     let engine = PasswordPolicyEngine::new(
@@ -137,7 +137,7 @@ fn engine_all_pass_returns_ok() {
     assert!(engine.validate(&ctx, "password").is_ok());
 }
 
-/// R-003: `FirstError` 模式 — 首条失败即返回单元素 Vec 并短路。
+/// `FirstError` 模式 — 首条失败即返回单元素 Vec 并短路。
 #[test]
 fn engine_first_error_mode_short_circuits() {
     // 第一条失败，第二条也失败；FirstError 应只返回第一条错误
@@ -163,7 +163,7 @@ fn engine_first_error_mode_short_circuits() {
     assert_eq!(errors[0].message, "fail1", "应短路在第一条失败规则");
 }
 
-/// R-003: `AllErrors` 模式 — 收集全部失败规则错误。
+/// `AllErrors` 模式 — 收集全部失败规则错误。
 #[test]
 fn engine_all_errors_mode_collects_all() {
     // 第一条通过，第二、三条失败；AllErrors 应返回 2 个错误
@@ -191,7 +191,7 @@ fn engine_all_errors_mode_collects_all() {
     assert_eq!(errors[1].message, "fail2");
 }
 
-/// R-003: `FirstError` 模式 — 首条通过、第二条失败时返回第二条错误。
+/// `FirstError` 模式 — 首条通过、第二条失败时返回第二条错误。
 #[test]
 fn engine_first_error_mode_skips_passing_rules() {
     let engine = PasswordPolicyEngine::new(

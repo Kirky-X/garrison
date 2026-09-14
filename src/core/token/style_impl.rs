@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Token 风格实现块（从 mod.rs 迁移，遵守 mod.rs 接口隔离规则 25）。
+//! Token 风格实现块（从 mod.rs 迁移，遵守 mod.rs 接口隔离约定）。
 //!
 //! 包含 `UuidTokenStyle` / `Random64TokenStyle` / `SimpleTokenStyle` /
 //! `JwtTokenStyle` / `TokenStyleFactory` 的 `impl` 块。
@@ -78,7 +78,7 @@ impl SimpleTokenStyle {
 
     /// 将字节切片编码为 URL-safe Base64（无 padding）。
     ///
-    /// # 实现说明（issue 2424 / 3097 / 3100）
+    /// # 实现说明
     ///
     /// 手写实现属 crypto-adjacent 原语，理想方案是切换到 `base64` crate
     ///（已是本 crate 的 optional 依赖）。当前保持手写实现的原因：
@@ -87,7 +87,7 @@ impl SimpleTokenStyle {
     /// - 本函数是纯函数，RFC 4648 test vectors 在 `#[cfg(test)]` 中锁定行为
     /// - 输入恒为 HMAC-SHA256 输出（32 字节定长），编码分支极少
     /// - 切换 `base64::engine::general_purpose::URL_SAFE_NO_PAD` 已列入
-    ///   protocol-zeroize 迁移同一批次（见 SimpleTokenStyle 文档）
+    /// protocol-zeroize 迁移同一批次（见 SimpleTokenStyle 文档）
     fn base64_url_no_pad(bytes: &[u8]) -> String {
         // 手动实现 URL-safe Base64 无 padding，避免引入额外 base64 依赖
         // （base64 crate 已是 optional dep，但 secure-simple-token feature 未启用它）
@@ -115,8 +115,8 @@ impl SimpleTokenStyle {
 /// (login_id, uuid, exp, hmac)。任一段缺失或 exp 非法时返回 None。
 #[cfg(feature = "secure-simple-token")]
 fn split_simple_token_parts(token: &str) -> Option<(&str, &str, i64, &str)> {
-    // 格式：<login_id>\x1f<uuid>.<exp>.<hmac>（\x1f = ASCII Unit Separator，见 H2；
-    // exp 为 Unix 秒时间戳，issue 2425/3256：Simple token 携带过期时间）
+    // 格式：<login_id>\x1f<uuid>.<exp>.<hmac>（\x1f = ASCII Unit Separator；
+    // exp 为 Unix 秒时间戳，Simple token 携带过期时间）
     // 先按 '.' 分离出 HMAC 部分，再取 body 的 exp 段，最后按 \x1f 分离 login_id 与 uuid
     let (body, hmac_part) = token.rsplit_once('.')?;
     let (left, exp_str) = body.rsplit_once('.')?;
@@ -128,17 +128,17 @@ fn split_simple_token_parts(token: &str) -> Option<(&str, &str, i64, &str)> {
 #[cfg(feature = "secure-simple-token")]
 impl Token for SimpleTokenStyle {
     fn generate(&self, login_id: &str, timeout: i64) -> GarrisonResult<String> {
-        // R-sessiontokenconsistency / 对齐 JWT 双向强校验：secret 短于 32 字节拒绝生成 token
+        // 对齐 JWT 双向强校验：secret 短于 32 字节拒绝生成 token
         if self.secret.len() < 32 {
             return Err(GarrisonError::Config(
                 "core-simple-secret-too-short::".to_string(),
             ));
         }
-        // issue 2425/3256：Simple token 必须携带过期时间。timeout <= 0 无法构造
+        // Simple token 必须携带过期时间。timeout <= 0 无法构造
         // 有意义的 exp，拒绝生成（fail-closed），杜绝事实永久的泄露 token。
-        // 空 login_id 同样拒绝（issue 3258）：空 login_id 会产生 `\x1f<uuid>.<exp>.<hmac>`
+        // 空 login_id 同样拒绝：空 login_id 会产生 `\x1f<uuid>.<exp>.<hmac>`
         // 形态 token，verify 可还原出空身份，属身份旁路风险。
-        // 含 `\x1f` 的 login_id 拒绝（issue 2429）：`\x1f` 是 token body 的字段分隔符，
+        // 含 `\x1f` 的 login_id 拒绝：`\x1f` 是 token body 的字段分隔符，
         // 内嵌 `\x1f` 的 login_id 会造成 verify 身份切分歧义（fail-closed 拒绝生成）。
         if login_id.is_empty() {
             return Err(GarrisonError::InvalidParam(
@@ -162,7 +162,7 @@ impl Token for SimpleTokenStyle {
         let exp = chrono::Utc::now().timestamp() + timeout;
         let exp_str = exp.to_string();
         // 格式：<login_id>\x1f<uuid>.<exp>.<hmac_sha256_base64(secret, login_id|uuid|exp)>
-        //（\x1f = ASCII Unit Separator，替代 `-` 避免 login_id 含 `-` 时分割歧义，见 H2）
+        //（\x1f = ASCII Unit Separator，替代 `-` 避免 login_id 含 `-` 时分割歧义）
         let hmac = self.compute_hmac(login_id, &uuid_str, exp)?;
         Ok(format!("{}\x1f{}.{}.{}", login_id, uuid_str, exp_str, hmac))
     }
@@ -170,16 +170,16 @@ impl Token for SimpleTokenStyle {
     fn verify(&self, token: &str) -> GarrisonResult<Option<String>> {
         use subtle::ConstantTimeEq;
 
-        // R-sessiontokenconsistency / 对齐 JWT：secret 短于 32 字节视为无效（所有 token 拒绝）
+        // 对齐 JWT：secret 短于 32 字节视为无效（所有 token 拒绝）
         if self.secret.len() < 32 {
             return Ok(None);
         }
-        // issue 2425/3256：携带 exp 的三段 body；旧格式（无 exp 段 / 无 HMAC）一律 None
+        // 携带 exp 的三段 body；旧格式（无 exp 段 / 无 HMAC）一律 None
         let (login_id, uuid_part, exp, hmac_part) = match split_simple_token_parts(token) {
             Some(parts) => parts,
             None => return Ok(None),
         };
-        // issue 3258：空 login_id 段防御性拒绝（generate 已禁止，防御手工构造）
+        // 空 login_id 段防御性拒绝（generate 已禁止，防御手工构造）
         if login_id.is_empty() {
             return Ok(None);
         }
@@ -187,7 +187,7 @@ impl Token for SimpleTokenStyle {
         if Uuid::parse_str(uuid_part).is_err() {
             return Ok(None);
         }
-        // issue 2425/3256：exp 已过期 → 视为无效（对齐 JWT verify 的过期语义）
+        // exp 已过期 → 视为无效（对齐 JWT verify 的过期语义）
         if exp != 0 && chrono::Utc::now().timestamp() >= exp {
             return Ok(None);
         }
@@ -206,16 +206,16 @@ impl Token for SimpleTokenStyle {
     }
 
     fn parse(&self, token: &str) -> GarrisonResult<TokenClaims> {
-        // R-sessiontokenconsistency / 对齐 JWT：secret 短于 32 字节拒绝解析
+        // 对齐 JWT：secret 短于 32 字节拒绝解析
         if self.secret.len() < 32 {
             return Err(GarrisonError::Config(
                 "core-simple-secret-too-short::".to_string(),
             ));
         }
-        // issue 2425/3256：三段 body；缺段返回 Internal（格式错误）
+        // 三段 body；缺段返回 Internal（格式错误）
         let (login_id, uuid_part, exp, hmac_part) = split_simple_token_parts(token)
             .ok_or_else(|| GarrisonError::Internal("core-simple-token-no-sep::".to_string()))?;
-        // issue 3258：空 login_id 段防御性拒绝
+        // 空 login_id 段防御性拒绝
         if login_id.is_empty() {
             return Err(GarrisonError::InvalidToken(
                 "core-simple-token-login-id-empty::".to_string(),
@@ -227,7 +227,7 @@ impl Token for SimpleTokenStyle {
                 "core-simple-token-uuid-invalid::".to_string(),
             ));
         }
-        // issue 2425/3256：过期 token 解析失败（对齐 JWT parse 语义）
+        // 过期 token 解析失败（对齐 JWT parse 语义）
         if exp != 0 && chrono::Utc::now().timestamp() >= exp {
             return Err(GarrisonError::ExpiredToken(
                 "core-simple-token-expired::".to_string(),
@@ -242,7 +242,7 @@ impl Token for SimpleTokenStyle {
                 "core-simple-token-hmac-failed::".to_string(),
             ));
         }
-        // exp 段即 token 过期时间（issue 2425/3256：不再是永不过期的 0）
+        // exp 段即 token 过期时间（不再是永不过期的 0）
         Ok(TokenClaims {
             login_id: login_id.to_string(),
             expire_at: exp,
@@ -254,14 +254,14 @@ impl Token for SimpleTokenStyle {
 #[cfg(not(feature = "secure-simple-token"))]
 impl Token for SimpleTokenStyle {
     fn generate(&self, _login_id: &str, _timeout: i64) -> GarrisonResult<String> {
-        // A11 fail-closed：未启用 secure-simple-token feature 时拒绝生成 token
+        // fail-closed：未启用 secure-simple-token feature 时拒绝生成 token
         Err(GarrisonError::Config(
             "core-simple-requires-feature::".to_string(),
         ))
     }
 
     fn verify(&self, _token: &str) -> GarrisonResult<Option<String>> {
-        // A11 fail-closed：未启用 feature 时所有 token 视为无效
+        // fail-closed：未启用 feature 时所有 token 视为无效
         Ok(None)
     }
 
@@ -331,7 +331,7 @@ impl TokenStyleFactory {
         match style {
             "uuid" => Ok(Box::new(UuidTokenStyle)),
             "random_64" => Ok(Box::new(Random64TokenStyle)),
-            // A11: SimpleTokenStyle 需传入 secret 用于 HMAC-SHA256 签名
+            // SimpleTokenStyle 需传入 secret 用于 HMAC-SHA256 签名
             "simple" => Ok(Box::new(SimpleTokenStyle::new(secret.to_string()))),
             #[cfg(feature = "protocol-jwt")]
             "jwt" => Ok(Box::new(JwtTokenStyle::new(secret))),
@@ -351,7 +351,7 @@ impl TokenStyleFactory {
 }
 
 // ====================================================================
-// base64_url_no_pad 与 exp 过期语义的行为锁定测试（issue 2424/3097/3100/2425 补偿控制）
+// base64_url_no_pad 与 exp 过期语义的行为锁定测试（补偿控制）
 //
 // 手写 URL-safe Base64（无 padding）用于 HMAC 签名输出路径，属 crypto-adjacent
 // 原语。在切换到 `base64` crate 前，用 RFC 4648 test vectors + 定长输出契约
@@ -407,7 +407,7 @@ mod simple_token_impl_tests {
         assert_eq!(encoded.len(), 43, "32 字节输入应编码为 43 字符");
     }
 
-    /// issue 2425/3256：过期 token verify 返回 None、parse 返回 ExpiredToken；
+    /// 过期 token verify 返回 None、parse 返回 ExpiredToken；
     /// 未过期 token 正常通过；篡改 exp 段因 HMAC 绑定而失效。
     #[test]
     fn simple_token_expiry_enforced() {

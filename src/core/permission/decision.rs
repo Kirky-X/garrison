@@ -165,7 +165,7 @@ pub struct AuthRequest {
     pub resource: Option<String>,
     /// 请求上下文（任意 JSON，用于扩展校验逻辑）。
     ///
-    /// # 安全说明（Issue 46）
+    /// # 安全说明
     ///
     /// `context` 接受任意 `serde_json::Value`，未设置大小限制或深度约束。
     /// 若此字段由外部输入填充，攻击者可构造深层嵌套 JSON 导致内存耗尽。

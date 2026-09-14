@@ -16,7 +16,7 @@
 //!
 //! - 规则为同步纯函数（无 IO/await），可在任意上下文调用
 //! - 引擎按 `ErrorMode` 执行：`FirstError` 短路，`AllErrors` 收集全部
-//! - 规则参数由构造器注入（v0.6.5 支持 `GarrisonConfig` 加载）
+//! - 规则参数由构造器注入（支持 `GarrisonConfig` 加载）
 
 pub mod engine;
 mod error;
@@ -47,10 +47,10 @@ use std::sync::Arc;
 ///
 /// struct AlwaysPassRule;
 /// impl PasswordPolicyRule for AlwaysPassRule {
-///     fn name(&self) -> &'static str { "always_pass" }
-///     fn validate(&self, _ctx: &PolicyContext, _password: &str) -> Result<(), PolicyError> {
-///         Ok(())
-///     }
+/// fn name(&self) -> &'static str { "always_pass" }
+/// fn validate(&self, _ctx: &PolicyContext, _password: &str) -> Result<(), PolicyError> {
+/// Ok(())
+/// }
 /// }
 /// ```
 pub trait PasswordPolicyRule: Send + Sync {
@@ -134,12 +134,12 @@ pub enum ErrorMode {
 /// // 实现具体规则后注入
 /// let engine = PasswordPolicyEngine::new(Vec::new(), ErrorMode::FirstError);
 /// let ctx = PolicyContext {
-///     user_id: "alice".into(),
-///     tenant_id: None,
-///     username: None,
-///     email: None,
-///     password_history: Vec::new(),
-///     password_created_at: None,
+/// user_id: "alice".into(),
+/// tenant_id: None,
+/// username: None,
+/// email: None,
+/// password_history: Vec::new(),
+/// password_created_at: None,
 /// };
 /// assert!(engine.validate(&ctx, "password").is_ok()); // 空规则集 → Ok
 /// ```

@@ -12,7 +12,7 @@ use std::sync::Arc;
 ///
 /// `SmsVerificationService::verify_code` 在验证码不匹配时返回
 /// `InvalidParam(ERR_SMS_CODE_WRONG)`（带 `::` 后缀）。
-/// 消费方用此常量做 `starts_with` 匹配，避免硬编码字符串契约（架构 HIGH-002 修复）。
+/// 消费方用此常量做 `starts_with` 匹配，避免硬编码字符串契约。
 pub const ERR_SMS_CODE_WRONG: &str = "secure-sms-code-wrong";
 
 impl SmsVerificationService {
@@ -92,7 +92,7 @@ impl SmsVerificationService {
         if unverified_count > self.unverified_threshold as u64 {
             // 回滚限速计数器
             if let Err(e) = self.rate_limiter.rollback_with(phone, &windows).await {
-                // MEDIUM-2 修复：decr 失败不再 warn 吞错，改为 error 触发运维告警
+                // decr 失败不再 warn 吞错，改为 error 触发运维告警
                 tracing::error!(
                     error = %e,
                     phone = %mask_phone(phone),
@@ -101,7 +101,7 @@ impl SmsVerificationService {
             }
             // 回滚未验证计数
             if let Err(e) = SmsRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
-                // MEDIUM-2 修复：decr 失败不再 warn 吞错，改为 error 触发运维告警
+                // decr 失败不再 warn 吞错，改为 error 触发运维告警
                 tracing::error!(
                     error = %e,
                     key = %mask_phone_in_key(&unverified_key),
@@ -135,7 +135,7 @@ impl SmsVerificationService {
             }
             // 递减未验证计数
             if let Err(re) = SmsRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
-                // MEDIUM-2 修复：decr 失败不再 warn 吞错，改为 error 触发运维告警
+                // decr 失败不再 warn 吞错，改为 error 触发运维告警
                 tracing::error!(
                     error = %re,
                     key = %mask_phone_in_key(&unverified_key),

@@ -73,7 +73,7 @@ pub use token_extract::{
 /// use garrison::context::GarrisonPrincipal;
 ///
 /// fn handler(principal: GarrisonPrincipal) -> String {
-///     format!("login_id = {}", principal.login_id)
+/// format!("login_id = {}", principal.login_id)
 /// }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -168,8 +168,8 @@ pub trait GarrisonResponse {
     /// # 前后端分离模式
     ///
     /// 本便捷方法无 `config` 参数，`frontend_separation` 检查基于
-    /// `GarrisonConfig::default_config()`（对齐 [`GarrisonResponse::set_cookie_with_frontend_check`]，
-    /// ocr #2680）。需要 per-request 配置时，请使用
+    /// `GarrisonConfig::default_config()`（对齐 [`GarrisonResponse::set_cookie_with_frontend_check`]）。
+    /// 需要 per-request 配置时，请使用
     /// `set_cookie_with_frontend_check(name, value, &config)`。
     ///
     /// # 参数
@@ -249,14 +249,14 @@ pub trait GarrisonStorage {
 }
 
 // ============================================================================
-// 前后端分离模式辅助函数（实现迁移至 helpers.rs，Rule 25 合规）
+// 前后端分离模式辅助函数（实现迁移至 helpers.rs）
 // ============================================================================
 
 mod helpers;
 pub use helpers::{effective_is_read_cookie, effective_is_read_header};
 
 // ============================================================================
-// Set-Cookie 注入防护（供各框架适配器共用，ocr #3106/#3107/#6873/#2431）
+// Set-Cookie 注入防护（供各框架适配器共用）
 // ============================================================================
 
 /// 校验 Set-Cookie 的 name/value 合法性，防止 Cookie 头注入。
@@ -268,7 +268,7 @@ pub use helpers::{effective_is_read_cookie, effective_is_read_header};
 /// # 规则
 ///
 /// - `name`：非空，且仅允许 RFC 6265 `token` 字符（字母数字与 `!#$%&'*+-.^_`|~`），
-///   拒绝 `=`、`;`、空格与控制字符。
+/// 拒绝 `=`、`;`、空格与控制字符。
 /// - `value`：允许空串（用于清除 cookie），但拒绝控制字符（< 0x21 或 0x7F）、
 ///   空格、`;`、`,`、`\`、`"`。
 ///

@@ -44,7 +44,7 @@ pub trait DisableRepository: Send + Sync {
     /// - `level`: 封禁级别（0=普通，1+=阶梯）。
     /// - `duration_secs`: DAO 存储 TTL（秒）；0 表示永久驻留（不自动过期）。
     ///
-    /// # TTL 与 until 双语义（Issue 6294/6467/6662）
+    /// # TTL 与 until 双语义
     ///
     /// `duration_secs` 控制 DAO key 的存储 TTL，`until` 控制业务层封禁到期。
     /// 两者可能分歧（如 `duration_secs` 小于 `until - now()` 时 key 会被提前
@@ -88,7 +88,7 @@ pub trait DisableRepository: Send + Sync {
     /// # 返回
     /// - `Ok(Some(time))`: 处于活跃封禁中，`time` 为定时解封时间。
     /// - `Ok(None)`: 未封禁、永久封禁（无到期时间）或封禁**已过期**
-    ///   （与 [`is_disable`](Self::is_disable) 的过期判定一致，Issue 6660/6661）。
+    /// （与 [`is_disable`](Self::is_disable) 的过期判定一致）。
     async fn get_disable_time(
         &self,
         login_id: &str,
@@ -104,7 +104,7 @@ pub trait DisableRepository: Send + Sync {
     /// # 返回
     /// - `Ok(Some(level))`: 处于活跃封禁中，level 为封禁级别（0=普通，1+=阶梯）。
     /// - `Ok(None)`: 未封禁或封禁**已过期**
-    ///   （与 [`is_disable`](Self::is_disable) 的过期判定一致，Issue 6660/6661）。
+    /// （与 [`is_disable`](Self::is_disable) 的过期判定一致）。
     async fn get_disable_level(&self, login_id: &str, service: &str)
         -> GarrisonResult<Option<u32>>;
 }
@@ -161,7 +161,7 @@ impl DefaultDisableRepository {
 
     /// 读取「当前仍生效」的封禁条目（统一过期语义）。
     ///
-    /// # 返回 `Ok(None)` 的情况（视为未封禁，Issue 6468/6660/6661）
+    /// # 返回 `Ok(None)` 的情况（视为未封禁）
     ///
     /// - DAO 中无 key（未封禁或 DAO TTL 已淘汰）
     /// - 条目 `until` 已过期（`is_disable` 同样判定为未封禁，
@@ -211,7 +211,7 @@ impl DisableRepository for DefaultDisableRepository {
         let json = serde_json::to_string(&entry)
             .map_err(|e| GarrisonError::Internal(format!("account-disable-serialize::{}", e)))?;
         let key = Self::disable_key(service, login_id)?;
-        // Issue 6294/6467/6662: TTL 取更晚过期者（max(duration_secs, until 剩余秒数)），
+        // TTL 取更晚过期者（max(duration_secs, until 剩余秒数)），
         // 防止 DAO key 在业务封禁到期前被 TTL 淘汰导致封禁提前解除；
         // until=None（永久封禁）或 duration_secs=0（永久驻留）语义不变。
         let effective_ttl = match until {
@@ -235,7 +235,7 @@ impl DisableRepository for DefaultDisableRepository {
     }
 
     async fn is_disable(&self, login_id: &str, service: &str) -> GarrisonResult<bool> {
-        // Issue 6468/6660/6661: 统一过期语义——活跃性判断收敛到 get_active_entry
+        // 统一过期语义——活跃性判断收敛到 get_active_entry
         Ok(self.get_active_entry(login_id, service).await?.is_some())
     }
 
@@ -244,7 +244,7 @@ impl DisableRepository for DefaultDisableRepository {
         login_id: &str,
         service: &str,
     ) -> GarrisonResult<Option<DateTime<Utc>>> {
-        // Issue 6468/6660/6661: 与 is_disable 一致——条目过期时返回 Ok(None)，
+        // 与 is_disable 一致——条目过期时返回 Ok(None)，
         // 不再返回已失效的到期时间误导调用方
         let entry = self.get_active_entry(login_id, service).await?;
         Ok(entry.and_then(|e| e.until))
@@ -255,7 +255,7 @@ impl DisableRepository for DefaultDisableRepository {
         login_id: &str,
         service: &str,
     ) -> GarrisonResult<Option<u32>> {
-        // Issue 6468/6660/6661: 与 is_disable 一致——条目过期时返回 Ok(None)，
+        // 与 is_disable 一致——条目过期时返回 Ok(None)，
         // 不再返回已失效的封禁级别误导调用方
         let entry = self.get_active_entry(login_id, service).await?;
         Ok(entry.map(|e| e.level))
@@ -664,7 +664,7 @@ mod tests {
     }
 
     // ========================================================================
-    // H-1 修复：key 注入防护测试
+    // key 注入防护测试
     // ========================================================================
 
     /// service 含 `:` 时 disable 返回 Err，阻止 key 注入。
@@ -686,7 +686,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Issue 6468/6660/6661: 过期条目三方法语义统一
+    // 过期条目三方法语义统一
     // ========================================================================
 
     /// 过期封禁（key 仍存在）：is_disable=false 且 get_disable_time /
@@ -729,7 +729,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Issue 6294/6467/6662: duration_secs TTL 与 until 双语义统一（取更晚过期者）
+    // duration_secs TTL 与 until 双语义统一（取更晚过期者）
     // ========================================================================
 
     /// duration_secs 小于 until 剩余时长时，实际写入的 TTL 应取更晚过期者

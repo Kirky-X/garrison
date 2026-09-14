@@ -3,7 +3,7 @@
 
 //! axum 框架的健康检查路由集成。
 //!
-//! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
+//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
 //! 提供 `/health/live` 与 `/health/ready` 端点。
 
 use super::HealthRegistry;
@@ -23,7 +23,7 @@ pub async fn live() -> impl IntoResponse {
 
 /// Readiness 探针 handler——检查依赖项就绪状态。
 ///
-/// ocr #5358：单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
+/// 单项检查的超时护栏（默认 5 秒）由 [`HealthRegistry::check_all`]
 /// 内部强制执行（`HealthRegistry::with_check_timeout` 可配置），挂起/panic 的检查按
 /// `Unhealthy` 聚合，不会阻塞 axum worker task。
 pub async fn ready(
@@ -48,7 +48,7 @@ pub async fn ready(
 ///
 /// let registry = Arc::new(HealthRegistry::new());
 /// let app = axum::Router::new()
-///     .merge(health_routes(registry));
+/// .merge(health_routes(registry));
 /// ```
 pub fn health_routes(registry: Arc<HealthRegistry>) -> axum::Router {
     axum::Router::new()

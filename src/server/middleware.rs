@@ -11,7 +11,7 @@
 //!
 //! # 设计
 //!
-//! - **简化原则**（Rule 2）：限速用 in-memory HashMap，不依赖 Redis
+//! - **简化原则**：限速用 in-memory HashMap，不依赖 Redis
 //! - **parking_lot::Mutex**：比 std::sync::Mutex 更高效，无需 await 持锁
 //! - **from_fn_with_state**：通过 axum middleware state 共享配置
 
@@ -142,7 +142,7 @@ pub async fn rate_limit_middleware(
     // （limiteron allow 内部用原子 CAS，不阻塞，但避免跨 await 持有 parking_lot 锁）
     // DashMap 分片锁：不同 IP 的读写操作可并行，避免全局 Mutex 瓶颈
     //
-    // TOCTOU 修复（ocr #2219）：先原子 insert（entry() 持分片写锁），再在锁外做
+    // TOCTOU 修复：先原子 insert（entry() 持分片写锁），再在锁外做
     // 超限检查与 LRU 淘汰。并发插入不同新 IP 时可能短暂超过 max_entries，
     // 但每个新插入都会触发一次淘汰检查，保证最终收敛到 max_entries 以内；
     // 淘汰扫描仅在真正超限时发生（低于上限的新 IP 插入不再全表扫描）。
@@ -180,7 +180,7 @@ pub async fn rate_limit_middleware(
         Ok(allowed) => allowed,
         Err(e) => {
             // LimiteronError 仅在 cost 非法时出现（cost=0 或超限），cost=1 不应触发，
-            // 但仍按 fail-closed 处理为限速拒绝并记录日志（规则12：失败显性化）
+            // 但仍按 fail-closed 处理为限速拒绝并记录日志（失败显性化）
             tracing::warn!(error = %e, "rate limiter error");
             false
         },
@@ -225,9 +225,9 @@ const CT_EQ_FIXED_WORKLOAD: usize = 256;
 ///
 /// - 长度比较用 `u64::ct_eq`（常量时间），不 early return
 /// - 字节比较执行**固定工作量**（`CT_EQ_FIXED_WORKLOAD` 次迭代，与输入长度无关），
-///   短的一方用 0 padding 对齐
+/// 短的一方用 0 padding 对齐
 /// - 任一输入超过固定工作量上限时返回 false：仅泄露"长度 > 256"这一粗粒度信息，
-///   不再泄露精确长度（合法 API Key 不会达到该长度）
+/// 不再泄露精确长度（合法 API Key 不会达到该长度）
 fn constant_time_eq(a: &str, b: &str) -> bool {
     use subtle::ConstantTimeEq;
 
@@ -436,7 +436,7 @@ pub async fn inject_client_ip(mut req: Request, next: Next) -> Response {
         .unwrap_or_default();
 
     let ip = extract_client_ip(&req, trusted_proxies);
-    // H-8: 同步写入 task_local，供 SessionHijackDetector 在 check_login 路径读取
+    // 同步写入 task_local，供 SessionHijackDetector 在 check_login 路径读取
     #[cfg(feature = "session-hijack-detection")]
     {
         let _ = CLIENT_IP.try_with(|cell| {
@@ -448,7 +448,7 @@ pub async fn inject_client_ip(mut req: Request, next: Next) -> Response {
 }
 
 // ============================================================================
-// H-8: task_local 客户端上下文（供 SessionHijackDetector 读取）
+// task_local 客户端上下文（供 SessionHijackDetector 读取）
 // ============================================================================
 
 // 当前请求客户端 IP（task_local，`session-hijack-detection` feature 启用时可用）。
@@ -538,7 +538,7 @@ pub async fn inject_login_client_ip(mut req: Request, next: Next) -> Response {
                 },
             };
 
-            // fix ocr #6171：畸形 JSON body 不再静默替换为 null——
+            // 畸形 JSON body 不再静默替换为 null——
             // 直接返回 400 Bad Request（fail-fast），避免下游 handler 收到被破坏的请求体。
             let mut json: serde_json::Value = match serde_json::from_slice(&bytes) {
                 Ok(v) => v,

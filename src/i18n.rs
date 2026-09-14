@@ -41,7 +41,7 @@ use unic_langid::LanguageIdentifier;
 ///
 /// i18n 基础层已无条件编译，本宏始终委托 [`translate_detail`]，无需 feature 门控。
 ///
-/// # 回退语义（ocr #6139）
+/// # 回退语义
 ///
 /// 历史实现丢弃了 `$fallback` 参数（缺 key 时直接返回 key）。现行为：
 /// 1. `translate_detail` 命中 key → 返回翻译；
@@ -53,8 +53,8 @@ use unic_langid::LanguageIdentifier;
 ///
 /// ```ignore
 /// let err = GarrisonError::Network(loc!(
-///     "wechat-response-missing-openid",
-///     "wechat response missing openid field".to_string()
+/// "wechat-response-missing-openid",
+/// "wechat response missing openid field".to_string()
 /// ));
 /// ```
 #[macro_export]
@@ -236,7 +236,7 @@ pub fn translate_detail(key: &str, args: &[(&str, &str)]) -> String {
         Some(msg) => match msg.value() {
             Some(pattern) => {
                 let mut errors = vec![];
-                // LOW-001：args 为空时短路，避免无意义的 FluentArgs 分配
+                // args 为空时短路，避免无意义的 FluentArgs 分配
                 let value = if args.is_empty() {
                     bundle.format_pattern(pattern, None, &mut errors)
                 } else {
@@ -280,7 +280,7 @@ fn parse_keyed_detail(s: &str) -> Option<(&'static str, Vec<(&'static str, Strin
     if key.chars().any(|c| !c.is_ascii_lowercase() && c != '-') {
         return None;
     }
-    // Issue 79: 使用全局缓存避免重复 Box::leak 内存泄漏
+    // 使用全局缓存避免重复 Box::leak 内存泄漏
     let static_key = intern_string(key);
     let a0 = parts.next();
     let a1 = parts.next();
@@ -294,7 +294,7 @@ fn parse_keyed_detail(s: &str) -> Option<(&'static str, Vec<(&'static str, Strin
     }
 }
 
-/// Issue 79: 全局字符串缓存，避免 parse_keyed_detail 每次调用都 Box::leak。
+/// 全局字符串缓存，避免 parse_keyed_detail 每次调用都 Box::leak。
 /// 相同 key 只泄漏一次，后续复用已缓存的 &'static str。
 fn intern_string(s: &str) -> &'static str {
     use std::collections::HashMap;
@@ -795,7 +795,7 @@ mod tests {
     }
 
     // ========================================================================
-    // loc! 宏 fallback 语义测试（ocr #6139）
+    // loc! 宏 fallback 语义测试
     // ========================================================================
 
     /// loc! 缺 key 且 fallback 非空时使用 fallback（而非丢弃参数返回 key）。
@@ -865,7 +865,7 @@ mod tests {
     }
 
     // ========================================================================
-    // 0.6.1 新增错误变体 translate_error 测试
+    // translate_error 测试
     // ========================================================================
 
     /// TokenRevoked 在中文 locale 下输出翻译消息。
@@ -1060,10 +1060,10 @@ mod tests {
     }
 
     // ========================================================================
-    // fallback_display 补充测试（0.6.1 新增变体）
+    // fallback_display 补充测试
     // ========================================================================
 
-    /// fallback_display 覆盖 0.6.1 新增变体。
+    /// fallback_display 覆盖 translate_error 变体。
     #[test]
     fn fallback_display_new_variants() {
         let until = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
@@ -1171,7 +1171,7 @@ mod tests {
     }
 
     // ========================================================================
-    // InvalidResponse 变体 i18n 测试（H6：上游响应解析失败专用错误类型）
+    // InvalidResponse 变体 i18n 测试（上游响应解析失败专用错误类型）
     // ========================================================================
 
     /// InvalidResponse 在中文 locale 下输出翻译消息。

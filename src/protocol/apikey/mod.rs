@@ -17,7 +17,7 @@
 //! API Key 采用 `key_id.key_secret` 双段格式（各 32 hex，`.` 分隔）：
 //! - `key_id`：公开标识，作为存储 key 后缀（`garrison:apikey:<ns>:<key_id>`），可安全记录到日志用于审计。
 //! - `key_secret`：机密部分，**永不落库**；仅存储 `sha256(key_secret)` 到 `ApiKeyInfo::secret_hash`，
-//!   校验时用常量时间比较（`subtle::ConstantTimeEq`）。数据库/KV 泄露也无法还原 secret。
+//! 校验时用常量时间比较（`subtle::ConstantTimeEq`）。数据库/KV 泄露也无法还原 secret。
 //!
 //! `verify` 只接受双段格式：不含 `.` 分隔符的输入无法定位存储记录，直接返回
 //! `InvalidToken`（fail-closed，CWE-916 强化：杜绝任何"按存在性校验"的路径）。

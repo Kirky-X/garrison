@@ -41,7 +41,7 @@ fn sha256_hex(input: &str) -> String {
     let digest = hasher.finalize();
     let mut out = String::with_capacity(64);
     for byte in digest {
-        // LOW-3：write! 写入预分配 buffer，替代 format! 每字节一次 String 分配
+        // write! 写入预分配 buffer，替代 format! 每字节一次 String 分配
         let _ = write!(out, "{:02x}", byte);
     }
     out
@@ -70,7 +70,7 @@ pub(crate) fn idx_key_for(key_id: &str) -> String {
 /// 都不得写入明文 secret：
 /// - 双段格式 `key_id.key_secret`：仅返回 `key_id`（公开标识，永不含 secret）；
 /// - 不含 `.` 的输入（格式异常）：截断为前 8 hex 字符 + `…`，
-///   避免将完整凭证写入审计层（8/64 hex ≈ 32 bit，不足以暴力还原剩余 224 bit）。
+/// 避免将完整凭证写入审计层（8/64 hex ≈ 32 bit，不足以暴力还原剩余 224 bit）。
 ///
 /// 仅 `listener` 启用时编译（唯一调用方是 rotate 的 TokenRotate 事件广播）。
 #[cfg(feature = "listener")]
@@ -457,9 +457,9 @@ impl ApiKeyHandler {
     /// 节流更新 `last_used_at`（仅在启用追踪且距上次记录超过阈值时写回）。
     ///
     /// 写回失败**不影响校验结果**（元数据更新失败不应拒绝有效 key，availability 优先），
-    /// 但会以 `warn` 级别记录，避免静默吞掉（Rule 12）。
+    /// 但会以 `warn` 级别记录，避免静默吞掉。
     ///
-    /// # lost-revoke 防护（MEDIUM-1）
+    /// # lost-revoke 防护
     ///
     /// 不复用 `verify` 进入时读到的 `info`（可能已过期于并发 `revoke`），而是 **re-read
     /// 最新值**；若发现 `revoked == true` 则放弃写回，避免整 JSON 覆盖把已吊销状态回退
@@ -480,7 +480,7 @@ impl ApiKeyHandler {
         if !stale {
             return;
         }
-        // MEDIUM-1：re-read 最新值，绝不用 verify 进入时的旧 info 覆盖写
+        // re-read 最新值，绝不用 verify 进入时的旧 info 覆盖写
         let current = match self.dao.get(dao_key).await {
             Ok(Some(v)) => v,
             Ok(None) => return, // key 已删，放弃更新
@@ -612,7 +612,7 @@ impl ApiKeyHandler {
         let info = self.verify(key).await?;
         // verify 成功 ⇒ 必为双段格式 key，`key_id` 非空，可由 namespace + key_id 重建 dao_key
         let dao_key = format!("garrison:apikey:{}:{}", info.namespace, info.key_id);
-        // MEDIUM-1：写回前 re-read 最新值，避免用 verify 时的旧快照把并发 revoke 回退
+        // 写回前 re-read 最新值，避免用 verify 时的旧快照把并发 revoke 回退
         let current = self
             .dao
             .get(&dao_key)
@@ -646,7 +646,7 @@ impl ApiKeyHandler {
     /// generate 失败 → 原 key 永久丢失且无替代"的不可恢复窗口。代价是吊销前
     /// 存在极短的 double-valid 窗口，安全性远优于单向丢 key。
     ///
-    /// # 并发警告（LOW-5）
+    /// # 并发警告
     ///
     /// `rotate` 非原子（verify → generate → revoke 跨 await）。并发 rotate 同一 old_key
     /// 会各自成功并生成不同新 key（old_key 被吊销一次）。调用方应在 rotate 入口加
@@ -710,7 +710,7 @@ mod lost_revoke_tests {
     use crate::error::GarrisonError;
     use std::sync::Arc;
 
-    /// MEDIUM-1 回归：并发 revoke 后，`maybe_touch_last_used` 用 verify 进入时的旧快照
+    /// 回归测试：并发 revoke 后，`maybe_touch_last_used` 用 verify 进入时的旧快照
     /// 写回时，必须 re-read 发现 `revoked` 并放弃，不得把已吊销状态回退（lost-revoke）。
     ///
     /// 修复前实现（`info.clone()` 整 JSON 覆盖）会让此断言失败：旧快照 revoked=false
@@ -746,7 +746,7 @@ mod lost_revoke_tests {
         );
     }
 
-    /// LOW-4：`update_last_used` 对已吊销 key 返回 `InvalidToken`（与 verify 对称）。
+    /// `update_last_used` 对已吊销 key 返回 `InvalidToken`（与 verify 对称）。
     #[tokio::test]
     async fn update_last_used_rejects_revoked_key() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

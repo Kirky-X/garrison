@@ -243,7 +243,7 @@ async fn run_handles_authorizer_error() {
     assert_eq!(report.failed, 1);
     let failure = &report.failures[0];
     assert_eq!(failure.case_name, "u2_errors");
-    // ocr #8250/6143：authorize Err 时 actual 为 None（不再用 deny 占位），
+    // authorize Err 时 actual 为 None（不再用 deny 占位），
     // 与真实拒绝明确区分
     assert!(
         failure.actual.is_none(),

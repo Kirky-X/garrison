@@ -20,7 +20,7 @@
 //! `Manager` 持有 [`TaskHandles`](crate::manager::builder::TaskHandles)：
 //! - `Manager::new(logic)`：不启动任何后台 task，`task_handles` 为空。
 //! - `GarrisonManager::builder().build_explicit().await`：完整构造 logic + 启动
-//!   cleanup_task / anomalous_analyzer_task，`task_handles` 非空，`Manager` Drop 时 abort。
+//! cleanup_task / anomalous_analyzer_task，`task_handles` 非空，`Manager` Drop 时 abort。
 //!
 //! # `PermissionLogic` trait 与 `Manager` API 的差异
 //!

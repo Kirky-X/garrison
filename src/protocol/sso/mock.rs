@@ -9,7 +9,7 @@
 //!
 //! TTL 语义（对齐产品 `dao::InMemoryDao`）：
 //! - `set(key, value, ttl_seconds)`：`ttl_seconds == 0` 表示永不过期，
-//!   否则记录过期时间点；
+//! 否则记录过期时间点；
 //! - `get` 读取时惰性判断过期，过期键即删即返 `None`；
 //! - `expire(key, seconds)`：改写过期时间点，键不存在返回 `Err(Dao)`（与产品一致）。
 
@@ -128,9 +128,9 @@ impl GarrisonDao for MockDao {
         }
     }
 
-    // 架构审查 A3：其余 5 个原子方法经子集宏展开（逻辑单点维护于
+    // 其余 5 个原子方法经子集宏展开（逻辑单点维护于
     // dao::atomic_fallback::impls），本 mock 自定义的单锁原子 get_and_delete
-    //（vuln-0005 语义）保留不被覆盖。
+    //（一次性语义）保留不被覆盖。
     crate::atomic_test_fallback_no_get_and_delete!();
 }
 

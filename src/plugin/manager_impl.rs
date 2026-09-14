@@ -8,7 +8,7 @@ use super::*;
 impl GarrisonPluginManager {
     /// 创建插件管理器并收集所有已注册插件。
     ///
-    /// # panic 隔离（ocr #2594）
+    /// # panic 隔离
     ///
     /// 单个插件工厂 panic 被 `catch_unwind` 捕获并降级为 `tracing::warn!`，
     /// 该插件被跳过，其余插件照常加载，应用启动不中断。与

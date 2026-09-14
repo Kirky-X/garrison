@@ -156,7 +156,7 @@ impl GarrisonResponse for ActixResponse {
     }
 
     fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
-        // 注入防护（ocr #2431）：name/value 先经合法性校验，
+        // 注入防护：name/value 先经合法性校验，
         // 拒绝控制字符与 `;`、`,` 等分隔符，防止注入 Domain 等恶意 Cookie 属性
         crate::context::validate_cookie_name_value(name, value)?;
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
@@ -170,7 +170,7 @@ impl GarrisonResponse for ActixResponse {
         value: &str,
         config: &crate::config::GarrisonConfig,
     ) -> GarrisonResult<()> {
-        // 注入防护（同 ocr #2431）：同 set_cookie，name/value 校验后再拼接
+        // 注入防护：同 set_cookie，name/value 校验后再拼接
         crate::context::validate_cookie_name_value(name, value)?;
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
@@ -828,13 +828,13 @@ mod tests {
     }
 
     // ========================================================================
-    // Context 层 body 读取测试（HIGH-001 回归）
+    // Context 层 body 读取测试
     // ========================================================================
 
     /// 验证 `ActixContext::with_body()` 通过 `request()` 传递 `body_bytes`，
     /// 使 `GarrisonRequest::get_token()` 能从 JSON body 提取 token。
     ///
-    /// 回归 HIGH-001：原 `ActixContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
+    /// 回归：原 `ActixContext` 缺失 `body_bytes` 字段与 `with_body` 方法，
     /// `request()` 也不传递 body_bytes，导致 Context 层 body 读取功能不可用。
     #[test]
     fn actix_context_with_body_extracts_token_from_body() {

@@ -3,7 +3,7 @@
 
 //! 用户级双态锁定策略测试。
 //!
-//! 测试覆盖 R-user-lockout-001/002/003 验收标准及 UserLockoutStrategy 行为。
+//! 测试覆盖各验收标准及 UserLockoutStrategy 行为。
 
 use super::strategy::now_timestamp;
 use super::*;
@@ -12,8 +12,7 @@ use crate::error::GarrisonError;
 use crate::strategy::firewall::{FirewallContext, GarrisonFirewallStrategy, StrategyRegistration};
 use std::sync::Arc;
 
-/// 验证 UserLockoutConfig::default() 返回预期默认值
-/// （R-user-lockout-001 验收标准）。
+/// 验证 UserLockoutConfig::default() 返回预期默认值。
 #[test]
 fn config_default_matches_spec() {
     let config = UserLockoutConfig::default();
@@ -33,8 +32,7 @@ fn config_default_matches_spec() {
     }
 }
 
-/// 验证 WaitStrategy::Multiple 可被 serde 序列化与反序列化
-/// （R-user-lockout-002 验收标准）。
+/// 验证 WaitStrategy::Multiple 可被 serde 序列化与反序列化。
 #[test]
 fn wait_strategy_multiple_serde_roundtrip() {
     let strategy = WaitStrategy::Multiple {
@@ -55,8 +53,7 @@ fn wait_strategy_multiple_serde_roundtrip() {
     }
 }
 
-/// 验证 WaitStrategy::Linear 可被 serde 序列化与反序列化
-/// （R-user-lockout-002 验收标准）。
+/// 验证 WaitStrategy::Linear 可被 serde 序列化与反序列化。
 #[test]
 fn wait_strategy_linear_serde_roundtrip() {
     let strategy = WaitStrategy::Linear { base_seconds: 30 };
@@ -70,8 +67,7 @@ fn wait_strategy_linear_serde_roundtrip() {
     }
 }
 
-/// 验证 LockoutState 可被 serde 序列化与反序列化
-/// （R-user-lockout-003 验收标准）。
+/// 验证 LockoutState 可被 serde 序列化与反序列化。
 #[test]
 fn lockout_state_serde_roundtrip() {
     let state = LockoutState {
@@ -91,7 +87,7 @@ fn lockout_state_serde_roundtrip() {
 }
 
 /// 验证 UserLockoutConfig 可在外部构造自定义配置
-/// （R-user-lockout-001 验收标准：所有字段为 pub）。
+/// （所有字段为 pub）。
 #[test]
 fn config_custom_construction() {
     let config = UserLockoutConfig {
@@ -336,7 +332,7 @@ async fn wait_strategy_linear_record_failure_duration() {
 
 /// 验证 record_success 重置 failure_count，并清除**已触发**的临时锁定状态。
 ///
-/// Issue 1619/1620 修复：先以 max_failure_factor=1 触发一次真实临时锁定，
+/// 先以 max_failure_factor=1 触发一次真实临时锁定，
 /// 再调 record_success，验证 failure_count 与临时锁定状态
 /// （temporary_lockout_count / locked_until）被清零、
 /// permanent_locked 不受影响（永久锁定不可通过登录成功解除）。
@@ -391,7 +387,7 @@ async fn record_success_resets_failure_count() {
     );
 }
 
-/// Issue 7806: 并发 record_failure 丢失更新回归测试。
+/// 并发 record_failure 丢失更新回归测试。
 ///
 /// 多任务并发对同一用户 record_failure（每次 +1），CAS 原子读改写保证
 /// 全部自增不丢失：最终 failure_count == 并发任务数。
@@ -432,7 +428,7 @@ async fn concurrent_record_failure_no_lost_updates() {
     );
 }
 
-/// Issue 3178: UserLockoutConfig::validate 拒绝零值退化配置。
+/// UserLockoutConfig::validate 拒绝零值退化配置。
 #[test]
 fn config_validate_rejects_degenerate_values() {
     // max_failure_factor = 0 → 首败即锁，应拒绝
@@ -497,7 +493,7 @@ fn config_validate_rejects_degenerate_values() {
     assert!(UserLockoutConfig::default().validate().is_ok());
 }
 
-/// Issue 3178: UserLockoutStrategy::new 对非法配置回退默认值（退化行为不生效）。
+/// UserLockoutStrategy::new 对非法配置回退默认值（退化行为不生效）。
 #[tokio::test]
 async fn new_with_invalid_config_falls_back_to_default() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

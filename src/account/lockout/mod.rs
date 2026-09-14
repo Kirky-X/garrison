@@ -22,7 +22,7 @@ use std::sync::Arc;
 
 /// 锁定状态存储抽象子模块。
 ///
-/// v0.6.0 的 `UserLockoutStrategy` 直接通过 `GarrisonDao` 持久化 `LockoutState`，
+/// `UserLockoutStrategy` 直接通过 `GarrisonDao` 持久化 `LockoutState`，
 /// 本子模块预留给未来版本的专用存储后端实现（Redis TTL / SQL 持久化 / 分布式锁定）。
 pub mod storage;
 
@@ -56,7 +56,7 @@ pub enum WaitStrategy {
 ///
 /// 含 5 个公开字段，控制锁定行为阈值与策略。
 ///
-/// # 配置校验（Issue 3178）
+/// # 配置校验
 ///
 /// 字段均为 pub 以支持外部构造；零值/退化值（如 `max_failure_factor = 0` 会
 /// 导致首败即锁）由 [`validate`](Self::validate) 校验。
@@ -84,9 +84,9 @@ impl UserLockoutConfig {
     /// - `max_failure_factor > 0`：0 会导致首次失败即触发锁定
     /// - `failure_window_seconds > 0`：0 使窗口判断退化（永不重置计数）
     /// - `permanent_lockout == true` 时 `max_temporary_lockouts > 0`：
-    ///   0 会在第一次临时锁定时立即升级为永久锁定
+    /// 0 会在第一次临时锁定时立即升级为永久锁定
     /// - `wait_strategy` 的 `base_seconds` / `multiplier > 0`：0 会使锁定时长为 0
-    ///   （锁定即刻过期，等于没有锁定）
+    /// （锁定即刻过期，等于没有锁定）
     ///
     /// # 返回
     /// - `Ok(())`: 配置合法。

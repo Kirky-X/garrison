@@ -42,7 +42,7 @@ pub mod audit_chain;
 /// - `ip`: 客户端 IP 地址（可选，未知时为 `None`）
 /// - `user_agent`: 客户端 User-Agent（可选，未知时为 `None`）
 ///
-/// # ⚠️ PII 说明（ocr #3028）
+/// # ⚠️ PII 说明
 ///
 /// `ip` 与 `user_agent` 属于**个人身份信息（PII）**：任何 listener / audit sink
 /// 若将其持久化或输出到日志，即把 PII 写入存储层。实现方应：
@@ -57,17 +57,17 @@ pub struct RequestContext {
     pub user_agent: Option<String>,
 }
 
-/// 事件载荷 token 脱敏（CWE-532 修复，v0.9.0）。
+/// 事件载荷 token 脱敏（CWE-532）。
 ///
 /// 长 token（>8 字符）输出前 8 字符 + `***`；短 token 输出固定占位 `***`。
 /// `get(..8)` 为字符安全截取（避免多字节 UTF-8 中间截断 panic）。
 ///
 /// # 语义契约
 ///
-/// 自 v0.9.0 起，`Login` / `Logout` / `Kickout` / `Replaced` / `TokenExpired` /
+/// `Login` / `Logout` / `Kickout` / `Replaced` / `TokenExpired` /
 /// `TokenRefresh` / `RevokeToken` / `SessionTimeout` 等事件的 token 类字段
 /// **统一携带掩码形式**（非完整 token）：listener 直接打日志不再泄露活动会话
-/// token，与 `GarrisonEvent` 手动 `Debug` 脱敏形成双保险（ocr #2370）。
+/// token，与 `GarrisonEvent` 手动 `Debug` 脱敏形成双保险。
 /// 需要完整 token 的消费方不应通过事件获取（框架自身消费走内部调用链）。
 /// `SessionExpiryListener` 等回调参数中的完整 token 打日志前也应使用本函数脱敏。
 pub fn mask_token_for_event(token: &str) -> String {
@@ -82,9 +82,9 @@ pub fn mask_token_for_event(token: &str) -> String {
 /// 派生 `Clone`、`PartialEq`；**`Debug` 为手动实现（非 derive）**：
 /// `token` / `old_token` / `new_token` / `old_key` / `new_key` 等敏感字段在
 /// `{:?}` 输出中脱敏（仅保留前 8 字节 + `***`，短密钥整体掩码），防止监听器或
-/// 框架代码用 `{:?}` 打日志时泄露明文 token（ocr #2370）。
+/// 框架代码用 `{:?}` 打日志时泄露明文 token。
 ///
-/// # v0.9.0 载荷脱敏（CWE-532）
+/// # 载荷脱敏（CWE-532）
 ///
 /// 上述 token 类**字段值本身**也统一为 [`mask_token_for_event`] 掩码形式
 /// （构造点脱敏）：即使 listener 以 `{:?}` 之外的方式（如 `token` 字段直读）
@@ -95,7 +95,7 @@ pub enum GarrisonEvent {
     Login {
         /// 登录主体标识。
         login_id: String,
-        /// 登录后生成的 token（**掩码形式**：前 8 字符 + `***`，v0.9.0 起不含完整 token）。
+        /// 登录后生成的 token（**掩码形式**：前 8 字符 + `***`，不含完整 token）。
         token: String,
         /// 登录设备信息（可选）。
         device: Option<String>,
@@ -106,7 +106,7 @@ pub enum GarrisonEvent {
     Logout {
         /// 登录主体标识。
         login_id: String,
-        /// 被登出的 token（**掩码形式**，v0.9.0 起不含完整 token）。
+        /// 被登出的 token（**掩码形式**，不含完整 token）。
         token: String,
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
@@ -115,7 +115,7 @@ pub enum GarrisonEvent {
     Kickout {
         /// 登录主体标识。
         login_id: String,
-        /// 被踢下线的 token（**掩码形式**，v0.9.0 起不含完整 token；空字符串表示按 login_id 整体踢出）。
+        /// 被踢下线的 token（**掩码形式**，不含完整 token；空字符串表示按 login_id 整体踢出）。
         token: String,
         /// 踢出原因。
         reason: String,
@@ -142,7 +142,7 @@ pub enum GarrisonEvent {
     },
     /// Token 过期事件。
     TokenExpired {
-        /// 过期的 token（**掩码形式**，v0.9.0 起不含完整 token）。
+        /// 过期的 token（**掩码形式**，不含完整 token）。
         token: String,
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
@@ -150,14 +150,13 @@ pub enum GarrisonEvent {
     /// 登录失败事件。
     ///
     /// 在 `login_with_password` 失败路径广播（invalid_credentials / hash_format_error）。
-    /// 注意：login_id 字段使用 `String` 类型，以保持与现有变体一致
-    ///（偏差 D--1，依据规则 11 惯例优先于新颖）。
+    /// 注意：login_id 字段使用 `String` 类型，以保持与现有变体一致。
     LoginFailure {
         /// 登录主体标识。
         login_id: String,
         /// 失败原因（"invalid_credentials" / "hash_format_error"）。
         ///
-        /// v0.4.2 安全审计 A-014: user_not_found 与 wrong_password 统一为 "invalid_credentials"，
+        /// user_not_found 与 wrong_password 统一为 "invalid_credentials"，
         /// 防止日志/事件泄露用户存在性（防用户枚举）。
         reason: String,
         /// 请求上下文（IP + User-Agent）。
@@ -169,9 +168,9 @@ pub enum GarrisonEvent {
     TokenRefresh {
         /// 登录主体标识。
         login_id: String,
-        /// 刷新前的旧 token（**掩码形式**，v0.9.0 起不含完整 token）。
+        /// 刷新前的旧 token（**掩码形式**，不含完整 token）。
         old_token: String,
-        /// 刷新后的新 token（**掩码形式**，v0.9.0 起不含完整 token）。
+        /// 刷新后的新 token（**掩码形式**，不含完整 token）。
         new_token: String,
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
@@ -244,9 +243,9 @@ pub enum GarrisonEvent {
         request_context: Option<RequestContext>,
     },
     // ========================================================================
-    // 变体（spec R-audit-log-005 要求）
+    // 变体
     // ========================================================================
-    /// 社交登录事件（spec R-audit-log-005）。
+    /// 社交登录事件。
     ///
     /// 在社交登录（微信/支付宝等）成功时广播。
     SocialLogin {
@@ -259,7 +258,7 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
-    /// 租户切换事件（spec R-audit-log-005）。
+    /// 租户切换事件。
     ///
     /// 在用户切换租户上下文时广播。
     TenantSwitch {
@@ -272,7 +271,7 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
-    /// 设备封禁事件（spec R-audit-log-005）。
+    /// 设备封禁事件。
     ///
     /// 在设备被风控封禁时广播。
     DeviceBlock {
@@ -283,7 +282,7 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
-    /// 设备解封事件（spec R-audit-log-005）。
+    /// 设备解封事件。
     ///
     /// 在设备被封禁后解封时广播。
     DeviceUnblock {
@@ -294,7 +293,7 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
-    /// 配置热重载事件（spec R-audit-log-005）。
+    /// 配置热重载事件。
     ///
     /// 在运行时配置被热重载时广播。
     ConfigReload {
@@ -303,7 +302,7 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
-    /// 异常登录检测事件（spec R-anomalous-detector-dual-006）。
+    /// 异常登录检测事件。
     ///
     /// 在定时分析引擎检测到异常登录模式时广播。
     #[cfg(feature = "anomalous-detector-dual")]
@@ -395,7 +394,7 @@ pub enum GarrisonEvent {
     },
 }
 
-/// Debug 脱敏 helper（ocr #2370）：敏感字符串不输出明文。
+/// Debug 脱敏 helper：敏感字符串不输出明文。
 ///
 /// 超过 8 字节保留前 8 字节 + `***`（保留可识别前缀供排障关联）；
 /// 不超过 8 字节整体掩码为 `***`（短密钥全量输出即泄露）。
@@ -699,7 +698,7 @@ pub trait GarrisonListener: Send + Sync {
     /// 实现方按事件类型选择性处理，默认空实现返回 `Ok(())`。
     /// 监听器实现应快速返回或内部 spawn，避免阻塞主流程。
     ///
-    /// v0.5.0 改为 async：支持 SQL-backed 监听器（如 AuditLogListener）
+    /// 支持异步监听器实现（如 SQL-backed AuditLogListener）
     /// 执行异步持久化操作。所有实现与调用方需 `.await`。
     async fn on_event(&self, _event: &GarrisonEvent) -> GarrisonResult<()> {
         Ok(())

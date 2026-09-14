@@ -96,7 +96,7 @@ impl CacheWarmupService {
 mod tests {
     use super::*;
 
-    /// R-warmup-001: warmup 从 DAO 加载所有角色的权限列表。
+    /// warmup 从 DAO 加载所有角色的权限列表。
     ///
     /// 插入 3 个 role:* key，warmup 后 roles_loaded == 3。
     #[tokio::test]
@@ -113,7 +113,7 @@ mod tests {
         assert_eq!(stats.tenants_loaded, 0);
     }
 
-    /// R-warmup-002: warmup 从 DAO 加载所有租户配置。
+    /// warmup 从 DAO 加载所有租户配置。
     ///
     /// 插入 2 个 tenant:* key，warmup 后 tenants_loaded == 2。
     #[tokio::test]
@@ -129,7 +129,7 @@ mod tests {
         assert_eq!(stats.tenants_loaded, 2);
     }
 
-    /// R-warmup-003: 空数据库不报错，返回零统计。
+    /// 空数据库不报错，返回零统计。
     #[tokio::test]
     async fn warmup_empty_db_returns_zero_stats() {
         let dao = Arc::new(crate::dao::InMemoryDao::new());

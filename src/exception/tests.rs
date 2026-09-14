@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! exception 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! exception 模块测试（从 mod.rs 迁移）。
 
 use super::*;
 
@@ -44,7 +44,7 @@ fn display_formats_correctly() {
     assert_eq!(format!("{}", ex), "Not logged in: token 已过期");
 }
 
-/// ocr #621 回归：`with_login_type` 后 Display 输出必须跟随 login_type 变化。
+/// `with_login_type` 后 Display 输出必须跟随 login_type 变化。
 ///
 /// 若 Display 硬编码"未登录"前缀而忽略 login_type 字段，此测试将失败。
 #[test]
@@ -152,7 +152,7 @@ fn garrison_exception_debug_masks_login_id() {
     );
 }
 
-/// ocr #2382 回归：短 token / 短 login_id 不得全量明文输出（统一整体掩码）。
+/// 短 token / 短 login_id 不得全量明文输出（统一整体掩码）。
 #[test]
 fn garrison_exception_debug_masks_short_values() {
     let ex = GarrisonException::new(-1, "请先登录")
@@ -170,7 +170,7 @@ fn garrison_exception_debug_masks_short_values() {
     assert!(debug.contains("***"), "掩码占位符应出现，实际: {debug}");
 }
 
-/// ocr #2383/#2635 回归：Debug 与响应体中 extras 的敏感 key 值必须掩码、
+/// Debug 与响应体中 extras 的敏感 key 值必须掩码、
 /// 超长值截断（web-axum 未启用时仅验证 Debug 路径）。
 #[test]
 fn garrison_exception_debug_sanitizes_extras() {
@@ -350,7 +350,7 @@ fn garrison_exception_into_response_500() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-/// ocr #2635 回归：into_response 响应体中 extras 的敏感 key 值必须掩码，
+/// into_response 响应体中 extras 的敏感 key 值必须掩码，
 /// 不得原样序列化给客户端。
 #[cfg(feature = "web-axum")]
 #[tokio::test]

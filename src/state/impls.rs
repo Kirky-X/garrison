@@ -20,11 +20,11 @@ impl TokenState {
     /// # 非法转换路径（返回 false）
     ///
     /// - `Issued → Expired` / `Issued → Revoked` / `Issued → Refreshed`
-    ///   （FRD §4.3 不允许，必须先经过 Active）
+    ///   （状态机不允许，必须先经过 Active）
     /// - `Expired → *`（终态，不可转换）
     /// - `Revoked → *`（终态，不可转换）
     /// - `Refreshed → Active` / `Refreshed → Expired` / `Refreshed → Refreshed`
-    ///   （FRD §4.3 不允许，旧 Token 立即作废）
+    ///   （状态机不允许，旧 Token 立即作废）
     pub fn can_transition_to(self, target: TokenState) -> bool {
         use TokenState::*;
         matches!(

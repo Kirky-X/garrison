@@ -52,7 +52,7 @@ impl<'a> AxumRequest<'a> {
     /// # 参数
     /// - `request`: axum `Request<Body>` 引用。
     /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中通过
-    ///   `http_body_util::BodyExt::collect` 等方式读取后传入）。
+    /// `http_body_util::BodyExt::collect` 等方式读取后传入）。
     ///
     /// # 返回
     /// 包装该请求引用与 body 字节的 `AxumRequest` 实例。
@@ -165,7 +165,7 @@ impl GarrisonResponse for AxumResponse {
     }
 
     fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
-        // 注入防护（ocr #3106/#6873）：name/value 先经合法性校验，
+        // 注入防护：name/value 先经合法性校验，
         // 拒绝控制字符与 `;`、`,` 等分隔符，防止注入 Domain 等恶意 Cookie 属性
         crate::context::validate_cookie_name_value(name, value)?;
         // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
@@ -179,7 +179,7 @@ impl GarrisonResponse for AxumResponse {
         value: &str,
         config: &crate::config::GarrisonConfig,
     ) -> GarrisonResult<()> {
-        // 注入防护（ocr #3107）：同 set_cookie，name/value 校验后再拼接
+        // 注入防护：同 set_cookie，name/value 校验后再拼接
         crate::context::validate_cookie_name_value(name, value)?;
         // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
         let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
@@ -466,10 +466,10 @@ mod tests {
     }
 
     // ========================================================================
-    // get_token 测试（spec context-abstraction Requirement: GarrisonRequest）
+    // get_token 测试（GarrisonRequest）
     // ========================================================================
 
-    /// 验证从 Authorization: Bearer 提取 token（spec Scenario: 从 header 提取 token）。
+    /// 验证从 Authorization: Bearer 提取 token。
     #[test]
     fn get_token_from_bearer_header() {
         let req = make_request("/", "GET", &[("Authorization", "Bearer my_token_123")]);
@@ -510,7 +510,7 @@ mod tests {
         assert_eq!(token, Some("header_token_456".to_string()));
     }
 
-    /// 验证从 cookie 提取 token（spec Scenario: 从 cookie 提取 token）。
+    /// 验证从 cookie 提取 token。
     #[test]
     fn get_token_from_cookie() {
         let req = make_request("/", "GET", &[("Cookie", "garrison_token=cookie_token_789")]);
@@ -520,7 +520,7 @@ mod tests {
         assert_eq!(token, Some("cookie_token_789".to_string()));
     }
 
-    /// 验证 header 优先级高于 cookie（spec Scenario: token 不存在 的反向）。
+    /// 验证 header 优先级高于 cookie。
     #[test]
     fn get_token_header_priority_over_cookie() {
         let req = make_request(
@@ -537,7 +537,7 @@ mod tests {
         assert_eq!(token, Some("header_token".to_string()));
     }
 
-    /// 验证无 token 时返回 None（spec Scenario: token 不存在）。
+    /// 验证无 token 时返回 None。
     #[test]
     fn get_token_returns_none_when_missing() {
         let req = make_request("/", "GET", &[]);
@@ -560,10 +560,10 @@ mod tests {
     }
 
     // ========================================================================
-    // AxumResponse 测试（spec context-abstraction Requirement: GarrisonResponse）
+    // AxumResponse 测试（GarrisonResponse）
     // ========================================================================
 
-    /// 验证 set_status 设置状态码（spec Scenario: 写入 401 状态码）。
+    /// 验证 set_status 设置状态码。
     #[test]
     fn response_set_status() {
         let mut resp = AxumResponse::new();
@@ -571,7 +571,7 @@ mod tests {
         assert_eq!(resp.status, StatusCode::UNAUTHORIZED);
     }
 
-    /// 验证 set_header 设置响应头（spec Scenario: 写入 token 到 header）。
+    /// 验证 set_header 设置响应头。
     #[test]
     fn response_set_header() {
         let mut resp = AxumResponse::new();
@@ -601,7 +601,7 @@ mod tests {
         assert!(set_cookie.contains("Path=/"));
     }
 
-    /// ocr #3106/#3107/#6873 回归：含 `;`、控制字符等非法字符的 cookie name/value
+    /// 含 `;`、控制字符等非法字符的 cookie name/value
     /// 必须被拒绝，不得拼入 Set-Cookie 头（防 Domain 等属性注入）。
     #[test]
     fn response_set_cookie_rejects_injection() {
@@ -694,10 +694,10 @@ mod tests {
     }
 
     // ========================================================================
-    // AxumStorage 测试（spec context-abstraction Requirement: GarrisonStorage）
+    // AxumStorage 测试（GarrisonStorage）
     // ========================================================================
 
-    /// 验证 set/get 存储数据（spec Scenario: 存储请求数据）。
+    /// 验证 set/get 存储数据。
     #[test]
     fn storage_set_get() {
         let mut storage = AxumStorage::new();
@@ -717,7 +717,7 @@ mod tests {
         assert_eq!(storage.get("key1").unwrap(), None);
     }
 
-    /// 验证请求间隔离（spec Scenario: 请求间隔离）。
+    /// 验证请求间隔离。
     #[test]
     fn storage_request_isolation() {
         // 请求 A

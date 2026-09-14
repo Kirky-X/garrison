@@ -36,7 +36,7 @@ pub mod scope;
 /// 提供 `KeycloakProvider` 作为 OIDC 依赖方（RP），对接 Keycloak IdP：
 /// - `KeycloakConfig`：配置 base_url / client_id / client_secret / redirect_uri
 /// - `KeycloakProvider`：discover（fetch discovery metadata）/ verify_id_token（JWKS 验签）
-///   / exchange_code（authorization_code → token set）
+/// / exchange_code（authorization_code → token set）
 /// - `KeycloakClaims`：Keycloak 特有 claim（realm_access.roles / resource_access / tenant_id）
 ///
 /// 仅在启用 `keycloak-oidc` feature 时编译。
@@ -135,7 +135,7 @@ pub struct TokenIntrospectionResponse {
 }
 
 // ============================================================================
-// OAuth2Client struct + impl + Drop 已迁移至 `client.rs`（规则 25：mod.rs 接口隔离）。
+// OAuth2Client struct + impl + Drop 位于 `client.rs`（mod.rs 接口隔离）。
 // URL 编码工具由 `percent-encoding` crate 提供，详见 `client.rs` 中的 `url_encode`。
 // ============================================================================
 

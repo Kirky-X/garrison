@@ -3,7 +3,7 @@
 
 //! GarrisonLogicFactory：编译期注册的工厂子系统。
 //!
-//! 本文件从 `mod.rs` 迁移而来，遵循 mod-crate-hardening（规则 25）：
+//! 本文件从 `mod.rs` 迁移而来，遵循 mod.rs 接口隔离约定：
 //! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
 //!
 //! 工厂上下文 [`GarrisonLogicFactoryContext`] 持有 init 阶段构造的 5 个 manager（用于 auto-wire）。
@@ -56,8 +56,8 @@ pub struct GarrisonLogicFactoryContext {
 ///
 /// 使用裸函数指针（`Fn` trait object 的简化形式）以便 `inventory::submit!` 静态注册。
 ///
-/// # 0.2.1 变更
-/// 签名新增第 4 个参数 `&GarrisonLogicFactoryContext`，用于 auto-wire 4 个 manager。
+/// # 变更说明
+/// 签名新增第 4 个参数 `&GarrisonLogicFactoryContext`，用于 auto-wire manager。
 /// 自定义 factory 可选择忽略 context（保持旧行为）或使用 builder 链注入 manager。
 pub type GarrisonLogicFactoryFn = fn(
     session: Arc<GarrisonSession>,
@@ -72,14 +72,14 @@ pub type GarrisonLogicFactoryFn = fn(
 ///
 /// ```ignore
 /// inventory::submit! {
-///     GarrisonLogicFactoryEntry {
-///         name: "default",
-///         factory: garrison_logic_factory_default,
-///     }
+/// GarrisonLogicFactoryEntry {
+/// name: "default",
+/// factory: garrison_logic_factory_default,
+/// }
 /// }
 /// ```
 pub struct GarrisonLogicFactoryEntry {
-    /// 工厂名称（用于诊断与优先级排序，0.1.0 不强制唯一）。
+    /// 工厂名称（用于诊断与优先级排序）。
     pub name: &'static str,
     /// 工厂函数指针。
     pub factory: GarrisonLogicFactoryFn,

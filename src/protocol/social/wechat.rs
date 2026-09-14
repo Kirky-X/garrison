@@ -267,10 +267,10 @@ impl SocialLoginProvider for WechatProvider {
     /// # 参数
     ///
     /// - `access_token`: 复合格式 `"{access_token}|{openid}"`，用 `|` 分隔 access_token 与 openid。
-    ///   微信 userinfo 端点必须同时传入 access_token 和 openid，而 `SocialLoginProvider::get_user_info`
-    ///   trait 签名只接受单参数，故采用复合格式编码两个字段。调用方应在 `exchange_token` 后保存
-    ///   `SocialUserInfo.provider_user_id`（即 openid），调用时拼接为 `"access_token|openid"`。
-    ///   若不含 `|`，整个字符串作为 access_token、openid 为空字符串（微信会返回 errcode，最终映射为 `GarrisonError::Network`）。
+    /// 微信 userinfo 端点必须同时传入 access_token 和 openid，而 `SocialLoginProvider::get_user_info`
+    /// trait 签名只接受单参数，故采用复合格式编码两个字段。调用方应在 `exchange_token` 后保存
+    /// `SocialUserInfo.provider_user_id`（即 openid），调用时拼接为 `"access_token|openid"`。
+    /// 若不含 `|`，整个字符串作为 access_token、openid 为空字符串（微信会返回 errcode，最终映射为 `GarrisonError::Network`）。
     ///
     /// # 错误
     ///
@@ -467,12 +467,12 @@ impl SocialLoginProvider for WechatMiniAppProvider {
     /// # 参数
     ///
     /// - `access_token`: 实际为小程序 `wx.login()` 返回的 `js_code`（trait 签名限制，
-    ///   复用 `access_token` 参数位）
+    /// 复用 `access_token` 参数位）
     ///
     /// # 错误
     ///
     /// - `GarrisonError::Network`: HTTP 请求失败、状态码非 2xx、JSON 解析失败、
-    ///   或微信返回 `errcode != 0`、或响应缺少 `openid` 字段
+    /// 或微信返回 `errcode != 0`、或响应缺少 `openid` 字段
     async fn get_user_info(&self, access_token: &str) -> GarrisonResult<SocialUserInfo> {
         // access_token 参数位实际为小程序 wx.login() 返回的 js_code
         let js_code = access_token;

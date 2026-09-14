@@ -26,12 +26,12 @@
 //!
 //! // 2. 初始化全局管理器
 //! GarrisonManager::builder()
-//!     .dao(dao)
-//!     .config(config)
-//!     .interface(interface)
-//!     .build()
-//!     .await
-//!     .unwrap();
+//! .dao(dao)
+//! .config(config)
+//! .interface(interface)
+//! .build()
+//! .await
+//! .unwrap();
 //!
 //! // 3. 使用静态 API（task_local 上下文由 middleware 设置）
 //! let token = GarrisonUtil::login_simple("1001").await.unwrap();
@@ -75,7 +75,7 @@ pub use builder::GarrisonManagerBuilder;
 /// 注入依赖。未初始化时调用 `GarrisonUtil::login(id)` 等返回 `GarrisonError::Session`
 /// （错误码 `manager-not-init`，与 locales 键一致）。
 ///
-/// # 并发写入契约（ocr #7774/#6334）
+/// # 并发写入契约
 ///
 /// `logic` 与 `strategy` 是两个独立的 `ArcSwapOption`，单次 `store` 原子但两者成对
 /// 非原子；并发调用 `GarrisonManagerBuilder::build()` 可能产生 `(logic_B, strategy_A)`

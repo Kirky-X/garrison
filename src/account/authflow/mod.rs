@@ -35,7 +35,7 @@ use crate::error::{GarrisonError, GarrisonResult};
 
 /// 认证步骤 enum，定义流程中的 7 种步骤类型。
 ///
-/// 使用 enum 而非 trait object（决策 D3），保证可序列化与编译期穷尽匹配。
+/// 使用 enum 而非 trait object，保证可序列化与编译期穷尽匹配。
 #[derive(Debug, Clone)]
 pub enum AuthStep {
     /// 密码登录，调用 `Credential::verify`。
@@ -58,7 +58,7 @@ pub enum AuthStep {
         /// SSO 服务器标识。
         server_id: String,
     },
-    /// 必需动作（v0.6 仅占位，v0.6.5 实现）。
+    /// 必需动作（当前未实现，执行返回 Failed）。
     RequiredAction {
         /// 动作标识。
         action: String,
@@ -156,7 +156,7 @@ pub struct AuthenticationFlow {
 ///
 /// 作为 `AuthExecutor::execute` 的可变引用参数，执行过程中更新 `completed_steps`。
 ///
-/// # 安全（Debug 脱敏 — Issue 2460/2728/3147）
+/// # 安全（Debug 脱敏）
 ///
 /// `input` 字段承载密码 / TOTP code / 社交 authorization_code 等敏感凭证。
 /// `Debug` 为手动实现：`input` 一律输出 `<redacted>`，防止 `dbg!(ctx)` /
@@ -193,7 +193,7 @@ impl std::fmt::Debug for AuthContext {
 
 /// 认证执行结果。
 ///
-/// # 安全（Debug 脱敏 — Issue 2727/3146/3199）
+/// # 安全（Debug 脱敏）
 ///
 /// `Success.token` 为会话 token（敏感）。`Debug` 为手动实现：token 掩码输出
 /// （保留前 4 字符用于问题定位，其余以 `<redacted>` 替代；短 token 全掩码），

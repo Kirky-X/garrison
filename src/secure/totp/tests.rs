@@ -14,14 +14,14 @@ const TEST_SECRET: &[u8] = b"12345678901234567890";
 // 构造测试
 // ========================================================================
 
-/// 使用默认参数构造 TotpHandler（spec Scenario）。
+/// 使用默认参数构造 TotpHandler。
 #[test]
 fn new_with_default_params() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6);
     assert!(handler.is_ok());
 }
 
-/// 自定义时间步长与位数（spec Scenario）。
+/// 自定义时间步长与位数。
 #[test]
 fn new_with_custom_params() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 60, 8).unwrap();
@@ -41,7 +41,7 @@ fn new_with_short_secret_errors() {
 // generate 测试
 // ========================================================================
 
-/// 生成 6 位验证码（spec Scenario）。
+/// 生成 6 位验证码。
 #[test]
 fn generate_returns_6_digits() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -50,7 +50,7 @@ fn generate_returns_6_digits() {
     assert!(code.chars().all(|c| c.is_ascii_digit()));
 }
 
-/// 相同 secret + 时间戳生成一致验证码（spec Scenario）。
+/// 相同 secret + 时间戳生成一致验证码。
 #[test]
 fn generate_is_deterministic() {
     let h1 = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -61,7 +61,7 @@ fn generate_is_deterministic() {
     );
 }
 
-/// 同一 30 秒窗口内验证码稳定（spec Scenario）。
+/// 同一 30 秒窗口内验证码稳定。
 #[test]
 fn same_time_window_produces_same_code() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -70,7 +70,7 @@ fn same_time_window_produces_same_code() {
     assert_eq!(c1, c2);
 }
 
-/// 跨时间窗口验证码变化（spec Scenario）。
+/// 跨时间窗口验证码变化。
 #[test]
 fn different_time_window_produces_different_code() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -125,7 +125,7 @@ async fn validate_and_consume_negative_now_returns_invalid_param() {
 // validate 测试
 // ========================================================================
 
-/// 当前窗口验证码校验通过（spec Scenario）。
+/// 当前窗口验证码校验通过。
 #[test]
 fn validate_current_window_succeeds() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -133,7 +133,7 @@ fn validate_current_window_succeeds() {
     assert!(handler.validate(&code, 1700000000).unwrap());
 }
 
-/// 允许前一个时间窗口的验证码（spec Scenario，±1 窗口容差）。
+/// 允许前一个时间窗口的验证码（±1 窗口容差）。
 #[test]
 fn validate_previous_window_succeeds() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -141,7 +141,7 @@ fn validate_previous_window_succeeds() {
     assert!(handler.validate(&code, 1700000000).unwrap());
 }
 
-/// 允许后一个时间窗口的验证码（spec Scenario，±1 窗口容差）。
+/// 允许后一个时间窗口的验证码（±1 窗口容差）。
 #[test]
 fn validate_next_window_succeeds() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -149,7 +149,7 @@ fn validate_next_window_succeeds() {
     assert!(handler.validate(&code, 1700000000).unwrap());
 }
 
-/// 超出容差窗口的验证码校验失败（spec Scenario）。
+/// 超出容差窗口的验证码校验失败。
 #[test]
 fn validate_beyond_tolerance_fails() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -168,7 +168,7 @@ fn validate_wrong_code_fails() {
 // secret_from_base32 测试
 // ========================================================================
 
-/// 解码合法 Base32 密钥（spec Scenario）。
+/// 解码合法 Base32 密钥。
 #[test]
 fn secret_from_base32_decodes_valid() {
     // 使用足够长的 Base32 字符串（解码后 >= 16 字节 / 128 位）
@@ -177,13 +177,13 @@ fn secret_from_base32_decodes_valid() {
     assert!(bytes.len() >= 16); // 满足 totp-rs 的 128 位最低要求
 }
 
-/// 解码非法 Base32 字符串失败（spec Scenario）。
+/// 解码非法 Base32 字符串失败。
 #[test]
 fn secret_from_base32_rejects_invalid() {
     assert!(TotpHandler::secret_from_base32("invalid!base32").is_err());
 }
 
-/// Base32 密钥生成的验证码与原始字节一致（spec Scenario）。
+/// Base32 密钥生成的验证码与原始字节一致。
 #[test]
 fn base32_secret_matches_raw_bytes() {
     let b32_str = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP";
@@ -299,10 +299,10 @@ async fn validate_and_consume_different_codes_both_succeed() {
 }
 
 // ========================================================================
-// FMEA #7：TOCTOU 竞态防护
+// TOCTOU 竞态防护
 // ========================================================================
 
-/// FMEA #7: 验证 `validate_and_consume` 在并发调用下不会让同一 code 通过两次。
+/// 验证 `validate_and_consume` 在并发调用下不会让同一 code 通过两次。
 ///
 /// 10 个并发任务对同一 login_id + code 调用 `validate_and_consume`，
 /// 应只有 1 个返回 `Ok(true)`，其余 9 个返回 `Ok(false)`（重放拒绝）。
@@ -349,7 +349,7 @@ async fn validate_and_consume_concurrent_no_double_accept() {
 // E3 修复验证：DashMap → GarrisonDao::incr 原子操作
 // ========================================================================
 
-/// E3: 验证 handler.rs 源码不再使用 DashMap / once_cell / TOTP_LOCKS 无界 static。
+/// 验证 handler.rs 源码不再使用 DashMap / once_cell / TOTP_LOCKS 无界 static。
 ///
 /// 通过 `include_str!` 读取源文件并检查关键代码模式的缺失/存在，作为编译期的
 /// 源码级守护测试，防止后续回归引入无界内存增长。
@@ -403,7 +403,7 @@ fn e3_source_has_no_dashmap_or_unbounded_static() {
     );
 }
 
-/// E3: 验证 `dao.incr` 在首次调用时返回 1。
+/// 验证 `dao.incr` 在首次调用时返回 1。
 ///
 /// 直接调用 InMemoryDao::incr 验证契约：key 不存在时初始化为 "1" 并返回 1。
 #[tokio::test]
@@ -413,7 +413,7 @@ async fn e3_incr_returns_1_on_first_call() {
     assert_eq!(count, 1, "E3: incr 首次调用应返回 1（视为首次使用验证码）");
 }
 
-/// E3: 验证 `dao.incr` 在第二次调用时返回 2（重放检测）。
+/// 验证 `dao.incr` 在第二次调用时返回 2（重放检测）。
 #[tokio::test]
 async fn e3_incr_returns_2_on_replay() {
     let dao = crate::dao::InMemoryDao::new();
@@ -427,7 +427,7 @@ async fn e3_incr_returns_2_on_replay() {
     );
 }
 
-/// E3: 验证 replay_key 格式为 `totp:used:<login_id>:<code>`。
+/// 验证 replay_key 格式为 `totp:used:<login_id>:<code>`。
 ///
 /// 通过 `dao.get_timeout` 间接验证 key 存在（首次 validate_and_consume 后写入）。
 #[tokio::test]
@@ -448,7 +448,7 @@ async fn e3_replay_key_format_is_correct() {
     );
 }
 
-/// E3: 验证 replay_key 的 TTL = step * 3（覆盖 skew=1 的 3 个时间窗口）。
+/// 验证 replay_key 的 TTL = step * 3（覆盖 skew=1 的 3 个时间窗口）。
 ///
 /// step=30 → TTL=90 秒。
 #[tokio::test]
@@ -503,7 +503,7 @@ async fn e3_step_60_produces_ttl_180() {
     );
 }
 
-/// E3: 验证前一窗口（skew=1 容差内）的验证码首次使用应通过。
+/// 验证前一窗口（skew=1 容差内）的验证码首次使用应通过。
 #[tokio::test]
 async fn e3_previous_window_code_accepted_first_time() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -517,7 +517,7 @@ async fn e3_previous_window_code_accepted_first_time() {
     assert!(result, "E3: 前一窗口验证码首次使用应通过（skew=1 容差）");
 }
 
-/// E3: 验证前一窗口的验证码重放应被拒绝。
+/// 验证前一窗口的验证码重放应被拒绝。
 #[tokio::test]
 async fn e3_previous_window_code_rejected_on_replay() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -576,7 +576,7 @@ async fn e3_concurrent_different_login_ids_no_interference() {
     );
 }
 
-/// E3: 验证不同 code 的 replay_key 互不影响（同一 login_id 的不同 code 都能首次通过）。
+/// 验证不同 code 的 replay_key 互不影响（同一 login_id 的不同 code 都能首次通过）。
 #[tokio::test]
 async fn e3_replay_key_isolated_per_code() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -612,7 +612,7 @@ async fn e3_replay_key_isolated_per_code() {
     assert!(t2.is_some(), "code2 的 replay_key 应存在");
 }
 
-/// E3: 验证错误验证码不调用 incr（不写入 replay_key，不占用缓存）。
+/// 验证错误验证码不调用 incr（不写入 replay_key，不占用缓存）。
 #[tokio::test]
 async fn e3_wrong_code_does_not_write_replay_key() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();
@@ -633,7 +633,7 @@ async fn e3_wrong_code_does_not_write_replay_key() {
     assert!(timeout.is_none(), "E3: 错误验证码的 replay_key 不应有 TTL");
 }
 
-/// E3: 验证 replay_key 的 incr 计数随重放次数递增（3 次重放后 count=4）。
+/// 验证 replay_key 的 incr 计数随重放次数递增（3 次重放后 count=4）。
 #[tokio::test]
 async fn e3_incr_count_increments_with_replays() {
     let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 6).unwrap();

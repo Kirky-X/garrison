@@ -41,7 +41,7 @@ const ALIPAY_GATEWAY_URL: &str = "https://openapi.alipay.com/gateway.do";
 /// SHA256withRSA（RSA2）签名。签名流程：参数按 key ASCII 升序排序 →
 /// 拼接 `key=value&...`（不含 sign/sign_type）→ RSA PKCS1v15 签名 → base64 编码。
 ///
-/// # 性能优化（diting performance MEDIUM-1 修复）
+/// # 性能优化
 ///
 /// `new` 时预解析 PEM 为 `RsaPrivateKey` 缓存，避免每次 `sign_request` 重复解析
 /// （base64 解码 + ASN.1 DER 解析 + 大数构造，单次开销 1-5ms）。
@@ -65,7 +65,7 @@ pub struct AlipayProvider {
     private_key_pem: String,
     /// 预构造的 RSA2 签名器（`new` 时一次性构造，`sign_request` 时直接使用）。
     ///
-    /// 性能 MED-1 修复：缓存 `SigningKey<Sha256>` 替代每次 `sign_request` 中
+    /// 性能优化：缓存 `SigningKey<Sha256>` 替代每次 `sign_request` 中
     /// `SigningKey::new(self.private_key.clone())`——消除每次签名的 `RsaPrivateKey::clone()`
     /// （7 次 BigUint 堆分配，约 500ns-2μs）。`SigningKey<D>` 是 `Send + Sync`
     /// （仅含 `RsaPrivateKey` + `PhantomData`），满足 `Arc<dyn SocialLoginProvider>` 线程安全。
@@ -94,7 +94,7 @@ impl AlipayProvider {
                 ("detail", &e.to_string())
             ))
         })?;
-        // 性能 MED-1 修复：一次性构造 SigningKey，避免每次 sign_request 重复 clone RsaPrivateKey
+        // 性能优化：一次性构造 SigningKey，避免每次 sign_request 重复 clone RsaPrivateKey
         let signing_key = SigningKey::<Sha256>::new(private_key);
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
@@ -160,7 +160,7 @@ impl AlipayProvider {
             .join("&");
 
         // 3. RSA2 签名（SHA256withRSA, PKCS1v15 padding）
-        // 直接用 `new` 时预构造的 SigningKey 签名，无需每次 clone RsaPrivateKey（性能 MED-1 修复）
+        // 直接用 `new` 时预构造的 SigningKey 签名，无需每次 clone RsaPrivateKey（性能优化）
         let signature = self.signing_key.sign(data_to_sign.as_bytes());
 
         // 4. base64 编码
@@ -493,8 +493,8 @@ mod tests {
     /// # 测试流程
     /// 1. 生成测试 RSA 私钥（PKCS#1 PEM）
     /// 2. wiremock 模拟两个 `POST /gateway.do` 请求：
-    ///    - body 含 `alipay.system.oauth.token` → 返回 `alipay_system_oauth_token_response`
-    ///    - body 含 `alipay.user.info.share` → 返回 `alipay_user_info_share_response`
+    /// - body 含 `alipay.system.oauth.token` → 返回 `alipay_system_oauth_token_response`
+    /// - body 含 `alipay.user.info.share` → 返回 `alipay_user_info_share_response`
     /// 3. 调用 `exchange_token("auth_code", "state")`
     /// 4. 断言返回完整 `SocialUserInfo`（user_id + nickname + avatar）
     #[tokio::test]
@@ -547,7 +547,7 @@ mod tests {
         );
     }
 
-    /// 验证 `AlipayProvider::new` 在私钥 PEM 无效时返回 `Err(Config)` 而非 panic（Rule 12 失败显性化）。
+    /// 验证 `AlipayProvider::new` 在私钥 PEM 无效时返回 `Err(Config)` 而非 panic（失败显性化）。
     ///
     /// PEM 在 `new` 时预解析为 `RsaPrivateKey` 缓存，无效 PEM → `GarrisonError::Config`。
     #[test]
@@ -581,7 +581,7 @@ mod tests {
     /// 3. 构造 `AlipayProvider::new("app_id", &pem).with_gateway_url(server.uri() + "/gateway.do")`
     /// 4. 调用 `get_user_info("valid_access_token")`
     /// 5. 断言返回 `SocialUserInfo { provider: Alipay, provider_user_id: "user123",
-    ///    nickname: Some("Bob"), avatar: Some("https://img.example.com/b.png") }`
+    /// nickname: Some("Bob"), avatar: Some("https://img.example.com/b.png") }`
     #[tokio::test]
     async fn alipay_provider_get_user_info_parses_nick_and_avatar() {
         let pem = generate_test_rsa_pem();

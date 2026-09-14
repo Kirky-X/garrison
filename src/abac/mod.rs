@@ -59,10 +59,10 @@ pub use loader::{EmptyEntityLoader, StaticEntityLoader};
 /// ```ignore
 /// #[async_trait::async_trait]
 /// impl EntityLoader for MyDbEntityLoader {
-///     async fn load_entities(&self) -> GarrisonResult<cedar_policy::Entities> {
-///         // 从数据库查询实体并构造 Entities
-///         (未实现占位)
-///     }
+/// async fn load_entities(&self) -> GarrisonResult<cedar_policy::Entities> {
+/// // 从数据库查询实体并构造 Entities
+/// (未实现占位)
+/// }
 /// }
 /// ```
 ///
@@ -74,11 +74,11 @@ pub use loader::{EmptyEntityLoader, StaticEntityLoader};
 ///
 /// - `EntityLoader` 返回**稳定**实体集合（同一实体多次加载结果一致）时无需任何干预；
 /// - 实体属性在运行期发生变化（如 `resource.owner` 转移、组成员变更）时，
-///   调用方必须在变更点调用 [`AbacEngine::invalidate_entities`] 清空决策缓存，
-///   否则最长 TTL 60s 内 `evaluate` 会返回基于旧实体属性的陈旧决策
-///  （安全风险：用户可能保留已失去的访问权限）；
+/// 调用方必须在变更点调用 [`AbacEngine::invalidate_entities`] 清空决策缓存，
+/// 否则最长 TTL 60s 内 `evaluate` 会返回基于旧实体属性的陈旧决策
+/// （安全风险：用户可能保留已失去的访问权限）；
 /// - 策略集变更（`load_policy` / `unload_policy` / `reload_all`）由引擎内部
-///   自动清空缓存，无需调用方干预。
+/// 自动清空缓存，无需调用方干预。
 ///
 /// 若 `load_entities` 返回错误，错误通过 `?` 传播，缓存不受污染。
 #[cfg(feature = "abac")]
@@ -99,7 +99,7 @@ pub use init::*;
 
 // ============================================================================
 // `abac` feature 关闭时：`check_abac_with_policy` 必须始终可用（宏无条件生成调用），
-// 但降级为 fail-closed（CRIT-009 / R-abac-001）。
+// 但降级为 fail-closed。
 // ============================================================================
 
 /// `abac` feature 缺失时的降级策略。
@@ -167,7 +167,7 @@ mod no_feature_tests {
     // 否则并行执行下 opt-in 测试的"置 1→恢复 0"窗口会让 fail-closed 测试读到 1。
     static ABAC_POLICY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// CRIT-009: 声明了 abac 策略但 feature 关闭 → 必须 fail-closed Err(Config)。
+    /// 声明了 abac 策略但 feature 关闭 → 必须 fail-closed Err(Config)。
     #[tokio::test]
     #[allow(clippy::await_holding_lock)] // 测试进程退出即释放；互斥正确性优先
     async fn abac_with_expr_but_feature_off_is_fail_closed() {

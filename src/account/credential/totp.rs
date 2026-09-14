@@ -40,8 +40,7 @@ struct TotpSecretData {
 /// TOTP 时间步长合理上界（秒）。
 ///
 /// RFC 6238 常见值为 30/60；超过 1 小时的 step 视为配置错误。
-/// 上界同时防御下游重放 TTL（`step * 3`）的整数溢出（Issue 2475/2479：
-/// 超大 step 可能使 TTL 计算回绕为极小值，削弱重放防护）。
+/// 上界同时防御下游重放 TTL（`step * 3`）的整数溢出（超大 step 可能使 TTL 计算回绕为极小值，削弱重放防护）。
 const MAX_TOTP_STEP: u64 = 3600;
 
 impl TotpSecretData {
@@ -53,8 +52,8 @@ impl TotpSecretData {
 
     /// 构造 `TotpHandler`。
     fn to_handler(&self) -> GarrisonResult<TotpHandler> {
-        // Issue 108: 验证 step > 0，防止除零错误
-        // Issue 2475/2479: 验证 step 上界（≤ MAX_TOTP_STEP），防止下游
+        // 验证 step > 0，防止除零错误
+        // 验证 step 上界（≤ MAX_TOTP_STEP），防止下游
         // `step * 3` 重放 TTL 计算溢出回绕出错误的短 TTL
         if self.step == 0 || self.step > MAX_TOTP_STEP {
             return Err(GarrisonError::InvalidParam(format!(
@@ -79,14 +78,14 @@ impl TotpSecretData {
 /// use garrison::account::credential::CredentialModel;
 ///
 /// let model = CredentialModel {
-///     id: "cred-001".into(),
-///     user_id: "alice".into(),
-///     credential_type: "totp".into(),
-///     secret_data: r#"{"secret":"JBSWY3DPEHPK3PXP","step":30,"digits":6}"#.into(),
-///     label: Some("iPhone TOTP".into()),
-///     created_at: 0,
-///     enabled: true,
-///     priority: 0,
+/// id: "cred-001".into(),
+/// user_id: "alice".into(),
+/// credential_type: "totp".into(),
+/// secret_data: r#"{"secret":"JBSWY3DPEHPK3PXP","step":30,"digits":6}"#.into(),
+/// label: Some("iPhone TOTP".into()),
+/// created_at: 0,
+/// enabled: true,
+/// priority: 0,
 /// };
 /// let cred = TotpCredential::new(model);
 /// // let ok = cred.verify("123456").await?;
@@ -101,7 +100,7 @@ pub struct TotpCredential {
 }
 
 impl TotpCredential {
-    /// 进程内 TOTP `verify` 重放缓存（Issue 3173/3208/3526）。
+    /// 进程内 TOTP `verify` 重放缓存。
     ///
     /// `Credential::verify` 的 trait 签名无 DAO 参数（对象安全 + 兼容既有实现），
     /// 无法复用 [`TotpHandler::validate_and_consume`] 的 DAO 原子 `incr` 方案。
@@ -113,7 +112,7 @@ impl TotpCredential {
     ///
     /// - 进程内防重放：同一进程内重复提交同一验证码（同一凭证）会被拒绝
     /// - 多实例/多进程部署的跨进程重放防护请使用
-    ///   [`verify_with_replay_check`](Self::verify_with_replay_check)（DAO 原子记录）
+    /// [`verify_with_replay_check`](Self::verify_with_replay_check)（DAO 原子记录）
     /// - 缓存容量有界（超限时先清理过期条目），不会无界增长
     ///
     /// # 返回
@@ -214,9 +213,9 @@ impl Credential for TotpCredential {
     }
 
     async fn verify(&self, input: &str) -> GarrisonResult<bool> {
-        // Issue 17/107: trait `verify` 签名无 DAO 参数（对象安全 + 兼容既有实现），
+        // trait `verify` 签名无 DAO 参数（对象安全 + 兼容既有实现），
         // 无法走 DAO 原子记录；多实例部署请使用 verify_with_replay_check()。
-        // Issue 3173/3208/3526: 重放防护现已内置——校验通过后以进程内缓存原子
+        // 重放防护现已内置——校验通过后以进程内缓存原子
         // 记录已用的 (user_id, credential_id, code)，同一验证码在 3×step 窗口内
         // 重复提交将被拒绝（跨进程防护仍需 verify_with_replay_check）。
         let data = TotpSecretData::from_json(&self.model.secret_data)?;
@@ -262,14 +261,14 @@ mod tests {
         (cred, code)
     }
 
-    /// R-005: `credential_type()` 返回常量 `"totp"`。
+    /// `credential_type()` 返回常量 `"totp"`。
     #[test]
     fn totp_credential_type_returns_totp() {
         let (cred, _) = make_totp_cred("t001");
         assert_eq!(cred.credential_type(), "totp");
     }
 
-    /// R-005: `to_model()` 返回原始 CredentialModel（字段一致）。
+    /// `to_model()` 返回原始 CredentialModel（字段一致）。
     #[test]
     fn totp_credential_to_model_returns_original() {
         let (cred, _) = make_totp_cred("t002");
@@ -281,7 +280,7 @@ mod tests {
         assert_eq!(model.label, Some("iPhone TOTP".to_string()));
     }
 
-    /// R-005: `verify()` 正确验证码返回 `Ok(true)`。
+    /// `verify()` 正确验证码返回 `Ok(true)`。
     #[tokio::test]
     async fn totp_credential_verify_correct_code() {
         let (cred, code) = make_totp_cred("t003");
@@ -289,7 +288,7 @@ mod tests {
         assert!(result, "正确 TOTP code 应校验通过");
     }
 
-    /// R-005: `verify()` 错误验证码返回 `Ok(false)`。
+    /// `verify()` 错误验证码返回 `Ok(false)`。
     #[tokio::test]
     async fn totp_credential_verify_wrong_code() {
         let (cred, _) = make_totp_cred("t004");
@@ -300,7 +299,7 @@ mod tests {
         assert!(!result, "错误 TOTP code 应校验失败");
     }
 
-    /// Issue 3173/3208/3526: `verify()` 重放防护——同一验证码第二次提交被拒绝。
+    /// `verify()` 重放防护——同一验证码第二次提交被拒绝。
     #[tokio::test]
     async fn totp_credential_verify_rejects_replayed_code() {
         let (cred, code) = make_totp_cred("t005");
@@ -312,7 +311,7 @@ mod tests {
         assert!(!replay, "同一验证码窗口内重复提交应被拒绝（重放防护）");
     }
 
-    /// Issue 2475/2479: step 超过上界（MAX_TOTP_STEP）时返回错误（防止下游 TTL 溢出）。
+    /// step 超过上界（MAX_TOTP_STEP）时返回错误（防止下游 TTL 溢出）。
     #[tokio::test]
     async fn totp_credential_step_over_upper_bound_returns_error() {
         let model = CredentialModel {
@@ -334,7 +333,7 @@ mod tests {
         );
     }
 
-    /// Issue 2475/2479: step=0 时返回错误（保留既有防御）。
+    /// step=0 时返回错误（保留既有防御）。
     #[tokio::test]
     async fn totp_credential_step_zero_returns_error() {
         let model = CredentialModel {
@@ -357,7 +356,7 @@ mod tests {
         );
     }
 
-    /// R-005: `secret_data` JSON 解析 — 非法 JSON 返回错误。
+    /// `secret_data` JSON 解析 — 非法 JSON 返回错误。
     #[tokio::test]
     async fn totp_credential_invalid_secret_data_returns_error() {
         let model = CredentialModel {
@@ -379,7 +378,7 @@ mod tests {
         );
     }
 
-    /// R-005: `secret_data` JSON 解析 — 合法 JSON 但 Base32 非法返回错误。
+    /// `secret_data` JSON 解析 — 合法 JSON 但 Base32 非法返回错误。
     #[tokio::test]
     async fn totp_credential_invalid_base32_returns_error() {
         let model = CredentialModel {
@@ -397,7 +396,7 @@ mod tests {
         assert!(result.is_err(), "非法 Base32 应返回错误");
     }
 
-    /// R-005: `generate_current()` 生成 6 位数字验证码。
+    /// `generate_current()` 生成 6 位数字验证码。
     #[test]
     fn totp_credential_generate_current_returns_6_digits() {
         let (cred, _) = make_totp_cred("t006");
@@ -411,7 +410,7 @@ mod tests {
         );
     }
 
-    /// R-005: `TotpCredential` 可作 `Box<dyn Credential>` 使用（对象安全验证）。
+    /// `TotpCredential` 可作 `Box<dyn Credential>` 使用（对象安全验证）。
     #[tokio::test]
     async fn totp_credential_usable_as_dyn_credential() {
         let (cred, code) = make_totp_cred("t007");

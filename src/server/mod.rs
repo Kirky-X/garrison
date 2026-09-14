@@ -22,10 +22,10 @@
 //!
 //! let backend: Arc<dyn garrison::backend::AuthBackend> = Arc::new(BackendEmbedded::new());
 //! let server = GarrisonAuthServer::new(backend)
-//!     .with_external_port(8080)
-//!     .with_internal_port(8081)
-//!     .with_internal_api_key("secret-api-key")
-//!     .with_rate_limit(100);
+//! .with_external_port(8080)
+//! .with_internal_port(8081)
+//! .with_internal_api_key("secret-api-key")
+//! .with_rate_limit(100);
 //! server.listen().await?;
 //! ```
 
@@ -60,7 +60,7 @@ pub use server_impl::to_api_response;
 /// Auth Server 配置。
 ///
 /// `Debug` 实现为手动实现：`internal_api_key` 以 `[REDACTED]` 输出，
-/// 防止误打日志/错误报告时泄露机密（ocr #2221）。
+/// 防止误打日志/错误报告时泄露机密。
 #[derive(Clone)]
 pub struct AuthServerConfig {
     /// 外网端口（面向用户）。

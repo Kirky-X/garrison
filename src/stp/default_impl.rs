@@ -111,7 +111,7 @@ impl GarrisonLogicDefault {
     ///
     /// 注入后 `check_permission` 优先委托 `PermissionChecker::authorize`（走 Decision 路径），
     /// 并广播 `PermissionCheck` 事件供 `AuditLogListener` 记录审计日志。
-    /// 未注入时回退到 `firewall.check_permission`（0.4.2 行为）。
+    /// 未注入时回退到 `firewall.check_permission`。
     pub fn with_permission_checker(mut self, pc: Arc<dyn PermissionChecker>) -> Self {
         self.permission_checker = Some(pc);
         self
@@ -163,7 +163,7 @@ impl GarrisonLogicDefault {
     /// # 示例
     /// ```ignore
     /// let logic = GarrisonLogicDefault::new(session, config, firewall)
-    ///     .with_login_type("admin");
+    /// .with_login_type("admin");
     /// ```
     pub fn with_login_type(mut self, login_type: &str) -> Self {
         self.login_type = login_type.to_string();
@@ -188,7 +188,7 @@ impl GarrisonLogicDefault {
     /// # 示例
     /// ```ignore
     /// let logic = GarrisonLogicDefault::new(session, config, firewall)
-    ///     .with_jwt_mode(JwtMode::Stateless);
+    /// .with_jwt_mode(JwtMode::Stateless);
     /// ```
     pub fn with_jwt_mode(mut self, mode: JwtMode) -> Self {
         self.jwt_mode = mode;
@@ -298,8 +298,8 @@ impl GarrisonLogicDefault {
     /// # 兼容性
     ///
     /// `protocol-apikey` feature 关闭时，本方法返回
-    /// `Err(GarrisonError::Config)`（CRIT-008 fail-closed：杜绝"编译通过但校验
-    /// 全部放行"的安全假象，对齐 SimpleTokenStyle 的 A11 修复模式）。
+    /// `Err(GarrisonError::Config)`（fail-closed：杜绝"编译通过但校验
+    /// 全部放行"的安全假象，对齐 SimpleTokenStyle 的修复模式）。
     #[cfg(feature = "protocol-apikey")]
     pub async fn check_api_key(&self, namespace: &str) -> GarrisonResult<()> {
         // 无 token 上下文 = 请求未携带 API Key，返回 NotLogin（映射 401）
@@ -313,14 +313,14 @@ impl GarrisonLogicDefault {
         };
         let handler = crate::protocol::apikey::ApiKeyHandler::new(self.session.dao().clone());
 
-        // #4 (CWE-307): IP 级认证失败限速。
+        // IP 级认证失败限速（CWE-307）。
         // 仅在 firewall-bruteforce 启用且存在客户端 IP 上下文时生效（fail-open 兼容）：
         // 校验前检查是否已封禁（短路）；仅在校验失败时计入失败次数（成功路径零写入）。
         #[cfg(feature = "firewall-bruteforce")]
         if let Some(ip) = crate::stp::current_ip() {
             use crate::strategy::firewall::brute_force::{BruteForceConfig, BruteForceStrategy};
             use crate::strategy::firewall::FirewallContext;
-            // batch-08 修复（#5264）：复用惰性初始化的 BruteForceStrategy 实例，
+            // 复用惰性初始化的 BruteForceStrategy 实例，
             // 不再每次调用 `BruteForceStrategy::new(BruteForceConfig::default(), dao)`
             // 重新分配 ban_storage / limiter 两个 Arc 适配器并丢弃已配置实例。
             let strategy = self.brute_force_strategy.get_or_init(|| {
@@ -359,7 +359,7 @@ impl GarrisonLogicDefault {
 
     /// 校验 API Key（`protocol-apikey` feature 关闭时的兼容实现）。
     ///
-    /// CRIT-008（fix-security-audit-findings）：fail-closed 返回配置错误。
+    /// fail-closed 返回配置错误。
     /// 原实现静默返回 `Ok(())`——宏在任意 feature 组合下都会生成对本方法的调用，
     /// feature 缺失时所有携带任意字符串的请求均通过校验（API Key 认证完全失效）。
     #[cfg(not(feature = "protocol-apikey"))]
@@ -379,7 +379,7 @@ mod no_feature_tests {
     use crate::stp::mock::MockInterface;
     use serial_test::serial;
 
-    /// CRIT-008: feature 关闭时 check_api_key 必须 fail-closed 返回 Err(Config)。
+    /// feature 关闭时 check_api_key 必须 fail-closed 返回 Err(Config)。
     #[serial]
     #[tokio::test]
     async fn check_api_key_without_feature_returns_config_error() {

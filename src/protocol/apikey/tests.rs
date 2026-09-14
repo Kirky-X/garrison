@@ -24,7 +24,7 @@ fn key_id_of(token: &str) -> &str {
 // ApiKeyHandler 构造测试
 // ========================================================================
 
-/// 构造 ApiKeyHandler（spec Scenario）。
+/// 构造 ApiKeyHandler）。
 #[test]
 fn new_creates_handler() {
     let _handler = make_handler();
@@ -51,7 +51,7 @@ async fn generate_returns_dual_segment_format() {
     assert!(key_secret.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
-/// 复用同一 handler 多次生成不同 key（spec Scenario）。
+/// 复用同一 handler 多次生成不同 key）。
 #[tokio::test]
 async fn generate_multiple_times_returns_different_keys() {
     let handler = make_handler();
@@ -60,7 +60,7 @@ async fn generate_multiple_times_returns_different_keys() {
     assert_ne!(k1, k2);
 }
 
-/// timeout <= 0 返回错误（spec Scenario）。
+/// timeout <= 0 返回错误）。
 #[tokio::test]
 async fn generate_zero_timeout_returns_error() {
     let handler = make_handler();
@@ -68,7 +68,7 @@ async fn generate_zero_timeout_returns_error() {
     assert!(result.is_err());
 }
 
-/// key 前缀正确（spec Scenario）。
+/// key 前缀正确）。
 ///
 /// generate 默认 namespace="default"，存储格式变为
 /// `garrison:apikey:default:<key>`。
@@ -94,7 +94,7 @@ async fn generate_uses_correct_key_prefix() {
 // verify 测试
 // ========================================================================
 
-/// 成功校验返回 ApiKeyInfo（spec Scenario）。
+/// 成功校验返回 ApiKeyInfo）。
 #[tokio::test]
 async fn verify_success_returns_info() {
     let handler = make_handler();
@@ -108,7 +108,7 @@ async fn verify_success_returns_info() {
     assert!(!info.revoked);
 }
 
-/// 校验不存在的 key 返回错误（spec Scenario）。
+/// 校验不存在的 key 返回错误）。
 #[tokio::test]
 async fn verify_nonexistent_returns_error() {
     let handler = make_handler();
@@ -120,7 +120,7 @@ async fn verify_nonexistent_returns_error() {
     }
 }
 
-/// 校验已吊销的 key 返回错误（spec Scenario）。
+/// 校验已吊销的 key 返回错误）。
 #[tokio::test]
 async fn verify_revoked_returns_error() {
     let handler = make_handler();
@@ -134,7 +134,7 @@ async fn verify_revoked_returns_error() {
     }
 }
 
-/// 校验已过期的 key 返回错误（spec Scenario）。
+/// 校验已过期的 key 返回错误）。
 #[tokio::test]
 async fn verify_expired_returns_error() {
     let handler = make_handler();
@@ -154,7 +154,7 @@ async fn verify_expired_returns_error() {
 // revoke 测试
 // ========================================================================
 
-/// 成功吊销（spec Scenario）。
+/// 成功吊销）。
 #[tokio::test]
 async fn revoke_success() {
     let handler = make_handler();
@@ -170,7 +170,7 @@ async fn revoke_success() {
     );
 }
 
-/// 吊销不存在的 key 返回错误（spec Scenario）。
+/// 吊销不存在的 key 返回错误）。
 #[tokio::test]
 async fn revoke_nonexistent_returns_error() {
     let handler = make_handler();
@@ -186,7 +186,7 @@ async fn revoke_nonexistent_returns_error() {
 // rotate 测试
 // ========================================================================
 
-/// 成功轮换（spec Scenario）。
+/// 成功轮换）。
 #[tokio::test]
 async fn rotate_success() {
     let handler = make_handler();
@@ -209,7 +209,7 @@ async fn rotate_success() {
     assert_eq!(info.scopes, vec!["read".to_string()]);
 }
 
-/// 轮换不存在的 key 返回错误（spec Scenario）。
+/// 轮换不存在的 key 返回错误）。
 #[tokio::test]
 async fn rotate_nonexistent_returns_error() {
     let handler = make_handler();
@@ -287,7 +287,7 @@ async fn generate_accepts_login_id_numeric() {
 // API Key Namespace
 // ========================================================================
 
-/// R-001: ApiKeyInfo 序列化包含 namespace 字段。
+/// ApiKeyInfo 序列化包含 namespace 字段。
 #[test]
 fn apikey_info_serializes_with_namespace() {
     let info = ApiKeyInfo {
@@ -303,7 +303,7 @@ fn apikey_info_serializes_with_namespace() {
     assert!(json.contains("\"internal\""), "namespace 值应为 internal");
 }
 
-/// R-002: generate_with_namespace 用 `garrison:apikey:<namespace>:<key>` 存储
+/// generate_with_namespace 用 `garrison:apikey:<namespace>:<key>` 存储
 #[tokio::test]
 #[serial_test::serial]
 async fn generate_with_namespace_stores_new_format_key() {
@@ -326,7 +326,7 @@ async fn generate_with_namespace_stores_new_format_key() {
     assert!(ns_less_value.is_none(), "无 namespace 的存储路径不应存在");
 }
 
-/// R-003: list_by_namespace 返回指定 namespace 下未吊销的 ApiKeyInfo
+/// list_by_namespace 返回指定 namespace 下未吊销的 ApiKeyInfo
 #[tokio::test]
 #[serial_test::serial]
 async fn list_by_namespace_returns_only_matching_namespace() {
@@ -356,7 +356,7 @@ async fn list_by_namespace_returns_only_matching_namespace() {
     assert!(empty.is_empty(), "不存在的 namespace 应返回空 Vec");
 }
 
-/// R-003: list_by_namespace 过滤已吊销的 key
+/// list_by_namespace 过滤已吊销的 key
 #[tokio::test]
 #[serial_test::serial]
 async fn list_by_namespace_filters_revoked_keys() {
@@ -377,7 +377,7 @@ async fn list_by_namespace_filters_revoked_keys() {
     assert_eq!(keys[0].login_id, "1002");
 }
 
-/// R-004: namespace 隔离——verify_with_namespace 严格匹配 namespace
+/// namespace 隔离——verify_with_namespace 严格匹配 namespace
 #[tokio::test]
 #[serial_test::serial]
 async fn verify_with_namespace_enforces_isolation() {
@@ -404,7 +404,7 @@ async fn verify_with_namespace_enforces_isolation() {
     );
 }
 
-/// R-004: 普通 verify（不带 namespace）能找到任意 namespace 下的 key
+/// 普通 verify（不带 namespace）能找到任意 namespace 下的 key
 #[tokio::test]
 #[serial_test::serial]
 async fn verify_without_namespace_scans_all_namespaces() {
@@ -912,7 +912,7 @@ async fn e4_verify_falls_through_when_dao_key_deleted() {
 }
 
 // ========================================================================
-// v0.7.x: CWE-916 哈希存储 + 双段格式 + 归属 + scope 校验 + 密钥管理
+// CWE-916 哈希存储 + 双段格式 + 归属 + scope 校验 + 密钥管理
 // ========================================================================
 
 /// CWE-916: 存储的 value 不含明文 key_secret，仅含 sha256 哈希。

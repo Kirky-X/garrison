@@ -318,10 +318,10 @@ async fn init_overwrites_existing() {
 
 /// 验证 inventory 已注册 default factory。
 ///
-/// BW-AC-012（FRD §8.1）：处理器编译期注册（inventory::submit!）+ 运行时单例枚举。
-/// 注：FRD 原文以 `AnnotationHandler` trait 表述，实现中该语义由
-/// `GarrisonLogicFactoryEntry` inventory 注册承载（设计演进，见 specmark
-/// specs/module-structure）。
+/// 处理器编译期注册（inventory::submit!）+ 运行时单例枚举。
+/// 注：原设计以 `AnnotationHandler` trait 表述，实现中该语义由
+/// `GarrisonLogicFactoryEntry` inventory 注册承载（设计演进，
+/// 见 specs/module-structure）。
 #[serial]
 #[test]
 fn default_factory_registered_via_inventory() {
@@ -945,7 +945,7 @@ async fn manager_init_cleanup_task_runs_after_init() {
     );
 
     // 等待 token TTL 过期 + 清理周期。
-    // ocr #1758：不用固定 sleep（CI 慢机器上 3s 余量不足导致 flaky），
+    // 不用固定 sleep（CI 慢机器上 3s 余量不足导致 flaky），
     // 改为轮询断言：最长等 10s，token 被清理即提前返回。
     let mut cleaned = false;
     for _ in 0..50 {

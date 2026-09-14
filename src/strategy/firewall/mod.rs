@@ -23,7 +23,7 @@
 //!
 //! - [`GarrisonPermissionStrategy`](crate::strategy::GarrisonPermissionStrategy)：权限/角色校验
 //! - [`FirewallStrategy`](crate::strategy::registry::FirewallStrategy)：登录前钩子检查
-//! - [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy)（v0.5.0，本 trait）：IP 级防火墙拦截
+//! - [`GarrisonFirewallStrategy`](crate::strategy::firewall::GarrisonFirewallStrategy)（本 trait）：IP 级防火墙拦截
 
 use crate::error::GarrisonResult;
 use async_trait::async_trait;
@@ -108,8 +108,8 @@ pub use waf_hooks::{BlackPathHook, DangerCharacterHook};
 /// use garrison::strategy::firewall::FirewallContext;
 ///
 /// let ctx = FirewallContext::new("192.168.1.1")
-///     .with_login_id("1001")
-///     .with_tenant_id(0);
+/// .with_login_id("1001")
+/// .with_tenant_id(0);
 /// ```
 #[derive(Debug, Clone)]
 pub struct FirewallContext {
@@ -163,7 +163,7 @@ pub trait GarrisonFirewallStrategy: Send + Sync {
 ///
 /// - `GarrisonFirewallStrategy::check`：硬拦截，直接返回 `FirewallBlocked`。
 /// - `CaptchaChallenge::should_challenge`：软挑战，返回 true 时调用方应弹出验证码，
-///   用户通过 `verify_challenge` 后才允许后续请求。
+/// 用户通过 `verify_challenge` 后才允许后续请求。
 ///
 /// # 调用流程
 ///

@@ -9,7 +9,7 @@
 //! ## 核心设计
 //!
 //! - 5 个子 trait（`SessionLogic`/`PermissionLogic`/`TokenLogic`/`MfaLogic`/`PasswordLogic`）：
-//!   v0.5.2 拆分原 `GarrisonLogic` 上帝 trait，按职责域分离，super-trait 为 `GarrisonCore`
+//! 按职责域分离，super-trait 为 `GarrisonCore`
 //! - `GarrisonLogicDefault`：默认实现，组合 `GarrisonSession` + `GarrisonConfig`，实现全部 5 个子 trait
 //! - `tokio::task_local`：存储当前请求的 token（类似 `SaHolder`，但适配 async）
 //!
@@ -73,7 +73,7 @@ pub use self::token::TokenLogic;
 pub use self::util::init_backend;
 pub use self::util::{GarrisonUtil, JwtMode};
 
-/// 登录参数（v0.6.3 新增）。
+/// 登录参数。
 ///
 /// 封装登录时的可选元数据，传递给 `SessionLogic::login`。
 /// 对应 `SaLoginParameter`，但简化为 5 个字段。
@@ -84,7 +84,7 @@ pub use self::util::{GarrisonUtil, JwtMode};
 /// - `ip`: 客户端 IP 地址，写入 `TokenSession.ip`
 /// - `user_agent`: 客户端 User-Agent，写入 `TokenSession.user_agent`
 /// - `remember_me`: 是否启用记住我（延长 Token 有效期至 `remember_me_timeout`）
-/// - `require_mfa`: 是否要求二级认证（由 `DeviceBindingPolicy` 在 login 流程中设置，v0.6.5 新增）
+/// - `require_mfa`: 是否要求二级认证（由 `DeviceBindingPolicy` 在 login 流程中设置）
 ///
 /// # 用法
 ///
@@ -96,11 +96,11 @@ pub use self::util::{GarrisonUtil, JwtMode};
 ///
 /// // 带设备信息
 /// let params = LoginParams {
-///     device: Some("ios".to_string()),
-///     ip: Some("192.168.1.1".to_string()),
-///     user_agent: Some("Mozilla/5.0".to_string()),
-///     remember_me: false,
-///     require_mfa: false,
+/// device: Some("ios".to_string()),
+/// ip: Some("192.168.1.1".to_string()),
+/// user_agent: Some("Mozilla/5.0".to_string()),
+/// remember_me: false,
+/// require_mfa: false,
 /// };
 /// let token = logic.login("user-1", &params).await?;
 /// ```
@@ -114,7 +114,7 @@ pub struct LoginParams {
     pub user_agent: Option<String>,
     /// 是否启用记住我（延长 Token 有效期）。
     pub remember_me: bool,
-    /// 是否要求二级认证（v0.6.5 新增）。
+    /// 是否要求二级认证。
     ///
     /// 由 `DeviceBindingPolicy` 在 login 流程中设置：strict 模式下新设备登录时置为 `true`，
     /// 业务方可在登录后检查此标记触发 MFA 流程。默认 `false`（不要求二级认证）。
@@ -134,7 +134,7 @@ tokio::task_local! {
     static CURRENT_TOKEN: String;
 }
 
-// `with_current_token` / `current_token` 实现已迁移至 `context.rs`（规则 25）。
+// `with_current_token` / `current_token` 实现已迁移至 `context.rs`（接口隔离）。
 // 此处通过 re-export 保持外部调用路径 `crate::stp::with_current_token` 不变。
 
 // ============================================================================
@@ -162,15 +162,15 @@ tokio::task_local! {
 ///
 /// // 在当前 task 设置 token 并捕获上下文
 /// let ctx = with_current_token("my-token".to_string(), async {
-///     GarrisonContext::capture()
+/// GarrisonContext::capture()
 /// }).await;
 ///
 /// // spawn 子任务，在子任务内恢复上下文
 /// let handle = tokio::spawn(async move {
-///     ctx.within(async {
-///         // 此处 current_token() 可正常读取
-///         assert!(current_token().is_ok());
-///     }).await
+/// ctx.within(async {
+/// // 此处 current_token() 可正常读取
+/// assert!(current_token().is_ok());
+/// }).await
 /// });
 /// handle.await.unwrap();
 /// ```
@@ -250,13 +250,13 @@ pub struct GarrisonLogicDefault {
     /// Refresh Token 轮换器（可选，注入后 refresh_access_token 委托此实现）。
     #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
     refresh_token_rotation: Option<crate::protocol::jwt::refresh::RefreshTokenRotation>,
-    /// per-login_id 续签锁（HIGH-001 修复）。
+    /// per-login_id 续签锁。
     ///
     /// 独立于 `GarrisonSession::login_locks`，避免 `check_and_renew` 持有
     /// `login_locks` 后调用 `renew_to_equivalent`（内部 `logout` 再次获取
     /// `login_locks`）导致死锁。续签锁仅序列化并发 `check_and_renew` 调用。
     ///
-    /// 生命周期（batch-08 修复）：`check_and_renew` 完成后会在安全点
+    /// 生命周期：`check_and_renew` 完成后会在安全点
     /// `remove_if(strong_count == 1)` 清理无等待者的条目，防止条目随
     /// 唯一 login_id 数量无界增长（OOM / CWE-770）。
     renewal_locks: DashMap<String, Arc<TokioMutex<()>>>,
@@ -301,7 +301,7 @@ pub struct GarrisonLogicDefault {
     pub(crate) marker: Option<&'static str>,
     /// 复用的 IP 级暴力破解防护策略（`check_api_key` 专用）。
     ///
-    /// batch-08 修复（#5264）：此前每次 `check_api_key` 都
+    /// 此前每次 `check_api_key` 都
     /// `BruteForceStrategy::new(BruteForceConfig::default(), dao)` 重新分配两个
     /// `Arc<dyn ...>` 适配器并丢弃已配置实例；改为惰性初始化一次、全实例复用。
     #[cfg(all(feature = "protocol-apikey", feature = "firewall-bruteforce"))]
@@ -321,7 +321,7 @@ mod tests;
 // security-extra（safe-auth）关闭时的 MfaLogic trait default 行为验证
 // ============================================================================
 
-// batch-08 修复（issue #857 死测试）：原测试 `t026_safe_auth_not_in_scope_when_disabled`
+// 原安全关闭验证测试
 // 置于 safe.rs（`security-extra` 门控模块）内且标注
 // `#[cfg(not(feature = "security-extra"))]`——条件矛盾，任何配置下都不编译。
 // 移至非门控的 mod.rs 并保持 `cfg(not(security-extra))` 门控，

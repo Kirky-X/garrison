@@ -56,13 +56,13 @@ struct MiddlewareState {
 /// use std::sync::Arc;
 ///
 /// let router = GarrisonRouter::new(Arc::new(GarrisonConfig::default_config()))
-///     .route_protected("/api/user", || async { "user ok" }, Annotation::CheckLogin)
-///     .route_protected(
-///         "/api/admin",
-///         || async { "admin ok" },
-///         Annotation::CheckRole("admin".to_string()),
-///     )
-///     .build();
+/// .route_protected("/api/user", || async { "user ok" }, Annotation::CheckLogin)
+/// .route_protected(
+/// "/api/admin",
+/// || async { "admin ok" },
+/// Annotation::CheckRole("admin".to_string()),
+/// )
+/// .build();
 /// ```
 pub struct GarrisonRouter {
     inner: Router,
@@ -95,7 +95,7 @@ impl GarrisonRouter {
     ///
     /// # 参数
     /// - `path`: 请求路径模式（精确匹配 / `:param`、`{param}` 参数段 / `{*wildcard}` 通配段，
-    ///   语义见 [`route_matches`]）。
+    /// 语义见 [`route_matches`]）。
     /// - `handler`: axum handler（GET 方法）。
     /// - `annotation`: 鉴权注解。
     pub fn route_protected<H, T>(mut self, path: &str, handler: H, annotation: Annotation) -> Self
@@ -115,7 +115,7 @@ impl GarrisonRouter {
     ///
     /// # 参数
     /// - `prefix`: 路由前缀（如 `/api/v1`），必须非空，以 `/` 开头。
-    ///   尾部 `/` 自动 trim（`/api/v1/` → `/api/v1`）。
+    /// 尾部 `/` 自动 trim（`/api/v1/` → `/api/v1`）。
     /// - `annotation`: 组级公共注解。`Annotation::Ignore` 时组内所有路由跳过注解校验。
     /// - `f`: 闭包，接收子 `GarrisonRouter`，返回注册完路由后的 `GarrisonRouter`。
     ///
@@ -125,7 +125,7 @@ impl GarrisonRouter {
     /// # 示例
     /// ```ignore
     /// router.group("/api/v1", Annotation::CheckLogin, |r| {
-    ///     r.route_protected("/users", || async { "users" }, Annotation::CheckLogin)
+    /// r.route_protected("/users", || async { "users" }, Annotation::CheckLogin)
     /// })
     /// ```
     pub fn group<F>(self, prefix: &str, annotation: Annotation, f: F) -> Self
@@ -134,7 +134,7 @@ impl GarrisonRouter {
     {
         assert!(!prefix.is_empty(), "prefix must not be empty");
 
-        // R-router-group-002: 尾部 / 自动 trim
+        // 尾部 / 自动 trim
         let trimmed = prefix.trim_end_matches('/');
 
         // 创建子 router，继承父 router 的 interceptor 和 config
@@ -148,11 +148,11 @@ impl GarrisonRouter {
         // 执行闭包，在子 router 上注册路由
         let child = f(child);
 
-        // R-router-group-004: 合并子 router 的 rules 到父 router（附加前缀 + 注解处理）
+        // 合并子 router 的 rules 到父 router（附加前缀 + 注解处理）
         let mut parent = self;
         for rule in child.rules {
             let merged_path = format!("{}{}", trimmed, rule.path);
-            // R-router-group-003: group 注解为 Ignore 时覆盖路由注解；否则保留路由自身注解
+            // group 注解为 Ignore 时覆盖路由注解；否则保留路由自身注解
             let merged_annotation = if annotation == Annotation::Ignore {
                 Annotation::Ignore
             } else {
@@ -197,10 +197,10 @@ impl GarrisonRouter {
 /// - 静态段：精确相等
 /// - `:param`（旧语法）与 `{param}`（axum 0.8 语法）：匹配任意非空单段
 /// - `{*wildcard}`（axum 0.8 通配）：匹配剩余所有段（含零段，前缀保护语义，
-///   如 `/api/{*rest}` 覆盖 `/api` 与 `/api/a/b`）
+/// 如 `/api/{*rest}` 覆盖 `/api` 与 `/api/a/b`）
 /// - 段数不一致（除尾部通配外）不匹配——未命中规则时 middleware 跳过
-///   `pre_handle`（fail-closed 由注册侧保证：需要保护的路径必须注册；
-///   通配段可显式声明前缀保护）。
+/// `pre_handle`（fail-closed 由注册侧保证：需要保护的路径必须注册；
+/// 通配段可显式声明前缀保护）。
 fn route_matches(pattern: &str, path: &str) -> bool {
     let mut pi = pattern.split('/');
     let mut ri = path.split('/');
@@ -300,7 +300,7 @@ async fn garrison_middleware(
         // 检查是否有续签 Token，写入响应
         if let Some(renewed_token) = get_renewed_token() {
             if config.is_write_header {
-                // ocr #2516: header/cookie 构造失败不再静默丢弃——记 debug 日志
+                // header/cookie 构造失败不再静默丢弃——记 debug 日志
                 // （生产排查续签 token 丢失的关键线索）
                 match (
                     HeaderName::from_bytes(config.token_name.as_bytes()),
@@ -357,7 +357,7 @@ async fn garrison_middleware(
 /// 租户解析 middleware：从请求 headers 解析 `TenantContext`，在 `TENANT` task_local
 /// scope 内执行下游 handler。
 ///
-/// 解析失败时返回 `400 Bad Request`（不默认租户 0，Rule 12 失败显性化——
+/// 解析失败时返回 `400 Bad Request`（不默认租户 0，失败显性化——
 /// 静默回退默认租户会让跨租户数据泄露被掩盖）。
 ///
 /// # 参数
@@ -378,11 +378,11 @@ async fn garrison_middleware(
 ///
 /// let resolver: Arc<dyn TenantResolver> = Arc::new(HeaderTenantResolver);
 /// let app = Router::new()
-///     .route("/api", axum::routing::get(handler))
-///     .layer(axum::middleware::from_fn_with_state(
-///         resolver,
-///         garrison::router::tenant_resolution_middleware,
-///     ));
+/// .route("/api", axum::routing::get(handler))
+/// .layer(axum::middleware::from_fn_with_state(
+/// resolver,
+/// garrison::router::tenant_resolution_middleware,
+/// ));
 /// ```
 #[cfg(feature = "tenant-isolation")]
 pub async fn tenant_resolution_middleware(
@@ -403,14 +403,14 @@ pub async fn tenant_resolution_middleware(
 mod tests {
     use super::*;
 
-    /// CRITICAL-6: 精确路径匹配 — 静态路径应仅匹配完全相同的路径。
+    /// 精确路径匹配 — 静态路径应仅匹配完全相同的路径。
     #[test]
     fn route_matches_exact_static_path() {
         assert!(route_matches("/admin", "/admin"));
         assert!(!route_matches("/admin", "/other"));
     }
 
-    /// CRITICAL-6: 参数化路由 `:id` 应匹配任意非空段。
+    /// 参数化路由 `:id` 应匹配任意非空段。
     #[test]
     fn route_matches_param_segment() {
         assert!(route_matches("/users/:id", "/users/123"));
@@ -418,7 +418,7 @@ mod tests {
         assert!(!route_matches("/users/:id", "/users/")); // 空段不匹配
     }
 
-    /// CRITICAL-6: 参数化路由应匹配多段路径中的中间参数。
+    /// 参数化路由应匹配多段路径中的中间参数。
     #[test]
     fn route_matches_mixed_static_and_param() {
         assert!(route_matches("/api/:version/users/:id", "/api/v1/users/42"));
@@ -429,7 +429,7 @@ mod tests {
         ));
     }
 
-    /// CRITICAL-6: 段数不匹配时应返回 false。
+    /// 段数不匹配时应返回 false。
     #[test]
     fn route_matches_segment_count_mismatch() {
         assert!(!route_matches("/users/:id", "/users/123/extra"));

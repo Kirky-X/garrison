@@ -40,7 +40,7 @@ use crate::protocol::social::{SocialLoginProvider, SocialUserInfo};
 ///
 /// `SocialLoginService::get_authorization_url` / `exchange_token` / `get_user_info`
 /// 在 provider 未注册时返回 `InvalidParam(loc!(ERR_SOCIAL_PROVIDER_NOT_REGISTERED, ...))`。
-/// 消费方（如 sinnan）用此常量做 `starts_with` 匹配，避免硬编码字符串契约（架构 HIGH-002 修复）。
+/// 消费方（如 sinnan）用此常量做 `starts_with` 匹配，避免硬编码字符串契约。
 pub const ERR_SOCIAL_PROVIDER_NOT_REGISTERED: &str = "social-provider-not-registered";
 
 /// 错误码：社交登录 provider 名称格式非法。

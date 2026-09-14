@@ -78,7 +78,7 @@ mod suite {
         mock.login_with_token("user-uuid", "tok").await.unwrap();
     }
 
-    /// 验证 `get_login_id` 返回 `String`（v0.5.2 返回类型迁移）。
+    /// 验证 `get_login_id` 返回 `String`。
     #[tokio::test]
     async fn get_login_id_returns_string() {
         let mock = MockSession {
@@ -768,10 +768,10 @@ mod suite {
         }
 
         // --------------------------------------------------------------------
-        // 7 个集成测试（A10 新增 hard block 验证）
+        // 7 个集成测试（hard block 验证）
         // --------------------------------------------------------------------
 
-        /// A10 修复：strict 模式下新设备 login 被 hard block（require_secondary_auth=true
+        /// strict 模式下新设备 login 被 hard block（require_secondary_auth=true
         /// → 返回 `Err(NotPermission)`），login 失败且不创建 session。
         #[tokio::test]
         async fn test_strict_mode_new_device_triggers_mfa() {
@@ -787,7 +787,7 @@ mod suite {
             };
             let result = logic.login("1001", &params).await;
 
-            // A10: login 应返回 Err(NotPermission) 而非成功
+            // login 应返回 Err(NotPermission) 而非成功
             assert!(
                 result.is_err(),
                 "strict 模式新设备 login 应被 hard block 阻断（A10 修复）"
@@ -804,7 +804,7 @@ mod suite {
             }
         }
 
-        /// A10 修复：strict 模式新设备 login 被阻断后不创建 session（无孤儿会话泄漏）。
+        /// strict 模式新设备 login 被阻断后不创建 session（无孤儿会话泄漏）。
         #[tokio::test]
         async fn test_strict_mode_new_device_block_creates_no_session() {
             let logic = make_logic_base();
@@ -2433,7 +2433,7 @@ mod suite {
             ///
             /// 覆盖 lines 416-440：无 auth_logic → self.verify_token → session.create → broadcast Login。
             ///
-            /// A11: SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>\x1f<uuid>.<hmac>`，
+            ///SimpleTokenStyle 改为 HMAC-SHA256 签名格式 `<login_id>\x1f<uuid>.<hmac>`，
             /// 需用 SimpleTokenStyle::new(secret).generate 生成合法 token（secret 与 config.jwt_secret 一致）。
             #[cfg(feature = "secure-simple-token")]
             #[tokio::test]
@@ -2443,7 +2443,7 @@ mod suite {
                 let mut config = GarrisonConfig::default_config();
                 config.throw_on_not_login = false;
                 config.token_style = "simple".to_string();
-                // A11: simple 模式下 verify_token 委托 SimpleTokenStyle（需 HMAC），
+                //simple 模式下 verify_token 委托 SimpleTokenStyle（需 HMAC），
                 // 设置非空 jwt_secret 避免 fail-closed。
                 const SESSION_SIMPLE_TEST_SECRET: &str =
                     "stp-session-simple-test-secret-0123456789";
@@ -2465,7 +2465,7 @@ mod suite {
                 )
                 .with_listener_manager(lm);
 
-                // A11: 用 SimpleTokenStyle 生成合法 HMAC token（与 verify_token 使用相同 secret）
+                //用 SimpleTokenStyle 生成合法 HMAC token（与 verify_token 使用相同 secret）
                 use crate::core::token::Token;
                 let style = crate::core::token::SimpleTokenStyle::new(
                     SESSION_SIMPLE_TEST_SECRET.to_string(),
@@ -2752,10 +2752,10 @@ mod suite {
         }
 
         // ==================================================================
-        // A8: login_with_token 入口校验（会话固定/劫持防护）
+        //login_with_token 入口校验（会话固定/劫持防护）
         // ==================================================================
 
-        /// A8: 空 `login_id` 应被拒绝。
+        ///空 `login_id` 应被拒绝。
         ///
         /// 攻击场景：攻击者尝试用空 login_id 创建无主会话，绕过账号绑定。
         /// 期望返回 `InvalidParam`，且不创建任何会话。
@@ -2780,7 +2780,7 @@ mod suite {
             );
         }
 
-        /// A8: 空 `token` 应被拒绝。
+        ///空 `token` 应被拒绝。
         ///
         /// 攻击场景：空 token 无法标识会话，且可能在下游 DAO 层产生异常键。
         /// 期望返回 `InvalidParam`。
@@ -2795,7 +2795,7 @@ mod suite {
             );
         }
 
-        /// A8: 过短 token（< 8 字节）应被拒绝。
+        ///过短 token（< 8 字节）应被拒绝。
         ///
         /// 攻击场景：过短 token 易碰撞/伪造（如 "0"/"1"/"abc"），
         /// 攻击者可枚举短 token 劫持他人会话。
@@ -2812,7 +2812,7 @@ mod suite {
             );
         }
 
-        /// A8: 超长 token（> 256 字节）应被拒绝。
+        ///超长 token（> 256 字节）应被拒绝。
         ///
         /// 攻击场景：超长 token 可触发 DAO 存储放大 / 序列化开销过大（DoS）。
         /// 期望返回 `InvalidParam`。
@@ -2829,7 +2829,7 @@ mod suite {
             );
         }
 
-        /// A8: 含控制字符的 token 应被拒绝。
+        ///含控制字符的 token 应被拒绝。
         ///
         /// 攻击场景：控制字符（如 `\r\n`）可触发 CRLF 注入 / HTTP header
         /// smuggling / 日志污染。例如 token="valid\r\nX-Evil: 1" 可在日志
@@ -2856,7 +2856,7 @@ mod suite {
             );
         }
 
-        /// A8: 边界值 — 8 字节 token 应通过校验（下限包含）。
+        ///边界值 — 8 字节 token 应通过校验（下限包含）。
         ///
         /// 验证 `8..=256` 区间为闭区间，避免 off-by-one 错误。
         #[tokio::test]
@@ -2877,7 +2877,7 @@ mod suite {
             assert_eq!(ts.login_id, "user-001");
         }
 
-        /// A8: 边界值 — 256 字节 token 应通过校验（上限包含）。
+        ///边界值 — 256 字节 token 应通过校验（上限包含）。
         ///
         /// 验证 `8..=256` 区间为闭区间，避免 off-by-one 错误。
         #[tokio::test]
@@ -2992,7 +2992,7 @@ mod suite {
 
         /// token_style=simple 复用 `SimpleTokenStyle`（HMAC 签名），主登录路径产出的 token
         /// 格式为 `<login_id>\x1f<uuid>.<hmac>`，且可被同一 `SimpleTokenStyle::verify` 通过
-        /// （R-sessiontokenconsistency-002：单点真相，generate 与 verify 不再格式分裂）。
+        /// （单点真相：generate 与 verify 不再格式分裂）。
         #[cfg(feature = "secure-simple-token")]
         #[tokio::test]
         async fn generate_token_simple_style_is_hmac_and_verifiable() {
@@ -3319,7 +3319,7 @@ mod suite {
     }
 
     // ========================================================================
-    // JWT 撤销黑名单测试（H-14）
+    // JWT 撤销黑名单测试
     // ========================================================================
 
     #[cfg(feature = "protocol-jwt")]
@@ -3640,7 +3640,7 @@ mod firewall_tests {
             .unwrap();
     }
 
-    /// CRIT-010: 同一 IP 反复认证失败 → 触发暴力破解封禁（FirewallBlocked）。
+    /// 同一 IP 反复认证失败 → 触发暴力破解封禁（FirewallBlocked）。
     #[tokio::test]
     #[serial]
     async fn brute_force_blocks_ip_after_repeated_failed_check_login() {
@@ -3668,7 +3668,7 @@ mod firewall_tests {
         );
     }
 
-    /// CRIT-010: 认证成功路径应清零失败计数（不触发封禁）。
+    /// 认证成功路径应清零失败计数（不触发封禁）。
     #[tokio::test]
     #[serial]
     async fn successful_login_resets_failure_count() {

@@ -3,7 +3,7 @@
 
 //! `grpc` 模块的 inline tests。
 //!
-//! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
+//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
 //! 覆盖 `GarrisonGrpcInterceptor` 的 token 提取、`Interceptor::call` 行为、
 //! Clone/Debug trait，以及 `health_service()` 健康检查服务。
 
@@ -46,7 +46,7 @@ fn test_extract_token_bearer_uppercase() {
 }
 
 /// 测试 extract_token 支持任意混合大小写 scheme（RFC 7235 大小写不敏感，
-/// 不再限于三种硬编码前缀，ocr #2631/#3034/#3275/#3588/#6239）。
+/// 不再限于三种硬编码前缀）。
 #[test]
 fn test_extract_token_bearer_mixed_case() {
     for header in ["BeArEr tok1", "bEaReR tok2", "BEARER tok3", "bearer tok4"] {
@@ -58,7 +58,7 @@ fn test_extract_token_bearer_mixed_case() {
     }
 }
 
-/// 测试 extract_token 拒绝超过 MAX_TOKEN_LEN 的超长 token（ocr #2380）。
+/// 测试 extract_token 拒绝超过 MAX_TOKEN_LEN 的超长 token。
 #[test]
 fn test_extract_token_rejects_overlong_token() {
     let mut metadata = MetadataMap::new();
@@ -153,7 +153,7 @@ fn test_interceptor_call_missing_metadata() {
 }
 
 /// 测试 Interceptor::call() 把提取的 token 以 GarrisonGrpcToken 注入 request
-/// extensions（不再"提取即弃"，ocr #3277），且 Debug 输出脱敏。
+/// extensions（不再"提取即弃"），且 Debug 输出脱敏。
 #[test]
 fn test_interceptor_call_injects_token_into_extensions() {
     let mut interceptor = GarrisonGrpcInterceptor::new();
@@ -177,7 +177,7 @@ fn test_interceptor_call_injects_token_into_extensions() {
 }
 
 /// 测试配置同步校验器后 Interceptor::call() 执行真实鉴权：
-/// 校验失败的 token 以 UNAUTHENTICATED 拒绝，不进入 handler（ocr #2633/#3036/#3276）。
+/// 校验失败的 token 以 UNAUTHENTICATED 拒绝，不进入 handler。
 #[test]
 fn test_interceptor_with_validator_rejects_invalid_token() {
     struct RejectAll;
@@ -240,7 +240,7 @@ fn test_interceptor_debug() {
 ///
 /// 断言返回的 server 是标准 gRPC health 服务（NamedService::NAME 正确），
 /// 函数内部通过 HealthReporter 设置 ServingStatus::Serving，
-/// 成功返回即表示状态已正确设置（ocr #2001：补真实断言，不再纯冒烟）。
+/// 成功返回即表示状态已正确设置（补真实断言，不再纯冒烟）。
 #[tokio::test]
 async fn test_health_service_returns_server() {
     let server = super::health_service().await;
@@ -275,7 +275,7 @@ async fn test_health_service_implements_named_service() {
 #[tokio::test]
 async fn test_health_service_named_service_name() {
     let server = super::health_service().await;
-    // ocr #615：补真实断言——验证 NAME 确为标准健康检查服务名，
+    // 补真实断言——验证 NAME 确为标准健康检查服务名，
     // 而非仅调用后丢弃（原测试无任何断言）。
     fn name_of<T: tonic::server::NamedService>(_: &T) -> &'static str {
         T::NAME

@@ -12,15 +12,15 @@
 //! - `check_login()` / `check_role(role)` / `check_permission(perm)`：guard Filter，per-handler 鉴权
 //! - `garrison_principal` / `tenant_context`：value-extracting Filter
 //! - `impl Reply for GarrisonError` / `impl Reply`+`Reject`+`Display for GarrisonRejection` +
-//!   `garrison_recover()`：错误响应。warp 拒绝链不会自动调用 `Reply`，须显式挂
-//!   `.recover(garrison_recover)` 才能得到与 axum/actix 一致的 `error_code`/`message` JSON
+//! `garrison_recover()`：错误响应。warp 拒绝链不会自动调用 `Reply`，须显式挂
+//! `.recover(garrison_recover)` 才能得到与 axum/actix 一致的 `error_code`/`message` JSON
 //!
-//! ## 模块结构（Rule 25 接口隔离）
+//! ## 模块结构（接口隔离）
 //!
 //! - `mod.rs`：仅声明 `GarrisonRouter` / `GarrisonRejection` 结构体 + re-export
 //! - `extractor`：value-extracting Filter（`garrison_principal` / `tenant_context`）
 //! - `extractors`：guard Filter（`check_login` / `check_role` / `check_permission`）+
-//!   `Reject` / `Reply` / `Display` impl + `garrison_recover()`
+//! `Reject` / `Reply` / `Display` impl + `garrison_recover()`
 //! - [`router`]：`impl GarrisonRouter` + `impl Default`
 //!
 //! ## 使用示例
@@ -31,12 +31,12 @@
 //! use warp::Filter;
 //!
 //! let router = GarrisonRouter::new(std::sync::Arc::new(GarrisonConfig::default_config()))
-//!     .route_protected("/api/user", Annotation::CheckLogin);
+//! .route_protected("/api/user", Annotation::CheckLogin);
 //!
 //! let routes = warp::path("api")
-//!     .and(warp::path("user"))
-//!     .and(check_login(std::sync::Arc::new(GarrisonConfig::default_config())))
-//!     .map(|| "authenticated");
+//! .and(warp::path("user"))
+//! .and(check_login(std::sync::Arc::new(GarrisonConfig::default_config())))
+//! .map(|| "authenticated");
 //! ```
 
 use crate::annotation::Annotation;
@@ -81,7 +81,7 @@ pub struct GarrisonRejection(pub GarrisonError);
 /// 对应 axum 版 `GarrisonRouter`，API 对齐。
 /// `impl GarrisonRouter` + `impl Default` 见 [`router`]。
 ///
-/// # 封装性（ocr #3726/8024）
+/// # 封装性
 ///
 /// 内部字段（`rules` / `interceptor` / `config`）不对外暴露：
 /// 直接公开可变字段会让调用方绕过任何校验任意改写路由表、替换拦截器或
@@ -89,11 +89,11 @@ pub struct GarrisonRejection(pub GarrisonError);
 /// （[`GarrisonRouter::new`] / [`GarrisonRouter::with_interceptor`] /
 /// [`GarrisonRouter::route_protected`]）注册规则。
 pub struct GarrisonRouter {
-    /// 路径 → 注解映射（私有：防外部绕过校验直接改写，ocr #3726/8024）。
+    /// 路径 → 注解映射（私有：防外部绕过校验直接改写）。
     rules: HashMap<String, Annotation>,
-    /// 拦截器（私有：防外部运行时替换，ocr #3726/8024）。
+    /// 拦截器（私有：防外部运行时替换）。
     interceptor: Arc<dyn GarrisonInterceptor>,
-    /// 配置（私有：防外部运行时更换，ocr #3726/8024）。
+    /// 配置（私有：防外部运行时更换）。
     config: Arc<GarrisonConfig>,
 }
 

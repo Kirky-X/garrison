@@ -14,7 +14,7 @@ impl GarrisonMetrics {
     ///
     /// # Panics
     ///
-    /// 本方法**不会 panic**（ocr #6780/6923）：若默认 registry 已存在同名指标
+    /// 本方法**不会 panic**：若默认 registry 已存在同名指标
     /// （重复调用 `new` / 与 `register_to(default_registry)` 混用），以
     /// `tracing::warn` 记录后返回一个未注册的本地实例（`record_*` / `gather()`
     /// 均可用，仅默认 registry 不再新增采集——已注册实例不受影响）。
@@ -142,7 +142,7 @@ impl GarrisonMetrics {
         let encoder = prometheus::TextEncoder::new();
         // 从实例级 registry 收集（而非全局 default registry），保证自定义 registry 场景正确
         let metric_families = self.registry.gather();
-        // Rule 12：编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）
+        // 编码失败显式记录 warn（不中断主流程，但禁止静默吞掉）
         if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
             tracing::warn!(error = %e, "GarrisonMetrics::gather prometheus encode failed");
         }

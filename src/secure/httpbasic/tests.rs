@@ -51,7 +51,7 @@ fn encode_decode_special_characters() {
 // decode 测试
 // ========================================================================
 
-/// 解码合法 Base64 凭证（spec Scenario）。
+/// 解码合法 Base64 凭证。
 #[test]
 fn decode_valid_base64_credential() {
     // "alice:secret" 的 Base64
@@ -60,7 +60,7 @@ fn decode_valid_base64_credential() {
     assert_eq!(cred.pass, "secret");
 }
 
-/// 解码非法 Base64 字符串失败（spec Scenario）。
+/// 解码非法 Base64 字符串失败。
 #[test]
 fn decode_invalid_base64_errors() {
     let result = HttpBasicAuth::decode("!!!not-base64!!!");
@@ -72,7 +72,7 @@ fn decode_invalid_base64_errors() {
     );
 }
 
-/// 解码后缺失冒号分隔符失败（spec Scenario）。
+/// 解码后缺失冒号分隔符失败。
 #[test]
 fn decode_missing_colon_errors() {
     // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
@@ -167,7 +167,7 @@ fn credential_debug_redacts_pass() {
 // parse_authorization_header 测试
 // ========================================================================
 
-/// 解析完整 Authorization Header（spec Scenario）。
+/// 解析完整 Authorization Header。
 #[test]
 fn parse_full_authorization_header() {
     let cred = HttpBasicAuth::parse_authorization_header("Basic YWxpY2U6c2VjcmV0").unwrap();
@@ -175,14 +175,14 @@ fn parse_full_authorization_header() {
     assert_eq!(cred.pass, "secret");
 }
 
-/// Header 前缀非 Basic 失败（spec Scenario）。
+/// Header 前缀非 Basic 失败。
 #[test]
 fn parse_non_basic_scheme_errors() {
     let result = HttpBasicAuth::parse_authorization_header("Bearer some.token.value");
     assert!(result.is_err());
 }
 
-/// Header 缺少凭证部分失败（spec Scenario）。
+/// Header 缺少凭证部分失败。
 #[test]
 fn parse_missing_credentials_errors() {
     let result = HttpBasicAuth::parse_authorization_header("Basic");

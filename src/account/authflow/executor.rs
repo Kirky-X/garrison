@@ -5,13 +5,13 @@
 //!
 //! 提供认证流程执行引擎，按 [`AuthenticationFlow`] 步骤顺序执行认证逻辑。
 //!
-//! # 设计冲突解决（R-008 五字段 vs Login 步骤需要 CredentialBuilder）
+//! # 设计冲突解决（严格 5 字段 vs Login 步骤需要 CredentialBuilder）
 //!
-//! spec R-008 要求 [`AuthExecutor`] 严格 5 字段，但 Login 步骤需要
+//! [`AuthExecutor`] 要求严格 5 字段，但 Login 步骤需要
 //! `CredentialModel → dyn Credential` 转换（需 `CredentialBuilder`）。
 //!
 //! 解决方案：定义 [`CredentialBuilder`] trait 作为 `execute_with_builder` 的参数
-//! （非 struct 字段），保持 5 字段不变。`execute`（spec R-009 签名）在遇到 Login
+//! （非 struct 字段），保持 5 字段不变。`execute` 在遇到 Login
 //! 步骤时返回 `Failed`（无 builder），完整 Login 支持使用 `execute_with_builder`。
 //!
 //! # SocialProvider + SsoServer 步骤扩展
@@ -54,7 +54,7 @@ use std::sync::Arc;
 const MAX_FLOW_DEPTH: usize = 10;
 
 // ============================================================================
-// CredentialBuilder trait（解决 R-008 五字段约束）
+// CredentialBuilder trait（解决五字段约束）
 // ============================================================================
 
 /// 凭证构造 trait，将 `CredentialModel` 转换为 `Box<dyn Credential>`。
@@ -64,9 +64,9 @@ const MAX_FLOW_DEPTH: usize = 10;
 ///
 /// # 设计理由
 ///
-/// 此 trait 不作为 [`AuthExecutor`] 的字段（R-008 严格 5 字段约束），
+/// 此 trait 不作为 [`AuthExecutor`] 的字段（严格 5 字段约束），
 /// 而是作为 [`AuthExecutor::execute_with_builder`] 的参数传入。
-/// [`AuthExecutor::execute`]（spec R-009 签名）不接收 builder，
+/// [`AuthExecutor::execute`] 不接收 builder，
 /// 遇到 Login 步骤时返回 `Failed`。
 ///
 /// # 示例
@@ -79,10 +79,10 @@ const MAX_FLOW_DEPTH: usize = 10;
 ///
 /// struct PasswordCredentialBuilder;
 /// impl CredentialBuilder for PasswordCredentialBuilder {
-///     fn build(&self, model: CredentialModel) -> GarrisonResult<Box<dyn Credential>> {
-///         let hasher = std::sync::Arc::new(Argon2Hasher::new());
-///         Ok(Box::new(PasswordCredential::new(model, hasher)))
-///     }
+/// fn build(&self, model: CredentialModel) -> GarrisonResult<Box<dyn Credential>> {
+/// let hasher = std::sync::Arc::new(Argon2Hasher::new());
+/// Ok(Box::new(PasswordCredential::new(model, hasher)))
+/// }
 /// }
 /// ```
 pub trait CredentialBuilder: Send + Sync {
@@ -95,12 +95,12 @@ pub trait CredentialBuilder: Send + Sync {
 }
 
 // ============================================================================
-// SocialProviderResolver / SsoServerResolver（解决 R-008 五字段约束）
+// SocialProviderResolver / SsoServerResolver（解决五字段约束）
 // ============================================================================
 
 /// 社交登录 provider 解析 trait。
 ///
-/// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持 R-008
+/// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持
 /// 5 字段不变）。实现方在内部委托
 /// `protocol::social::SocialLoginProvider::exchange_token(code, state)` 并返回
 /// `provider_user_id`（作为 `login_id`）。
@@ -114,7 +114,7 @@ pub trait CredentialBuilder: Send + Sync {
 /// # 参数语义
 ///
 /// - `provider`: provider 名称（`AuthStep::SocialProvider { provider }` 字段，如
-///   `"wechat"` / `"alipay"` / `"keycloak"`）
+/// `"wechat"` / `"alipay"` / `"keycloak"`）
 /// - `code`: OAuth2 授权码（来自 `ctx.input`）
 /// - `state`: OAuth2 state 参数（来自 `ctx.extras["state"]`，CSRF 防护）
 ///
@@ -133,18 +133,18 @@ pub trait CredentialBuilder: Send + Sync {
 /// use garrison::error::{GarrisonError, GarrisonResult};
 ///
 /// struct Registry {
-///     providers: HashMap<String, Arc<dyn garrison::protocol::social::SocialLoginProvider>>,
+/// providers: HashMap<String, Arc<dyn garrison::protocol::social::SocialLoginProvider>>,
 /// }
 ///
 /// #[async_trait::async_trait]
 /// impl SocialProviderResolver for Registry {
-///     async fn resolve_login_id(&self, provider: &str, code: &str, state: &str)
-///         -> GarrisonResult<String> {
-///         let p = self.providers.get(provider)
-///             .ok_or_else(|| GarrisonError::InvalidParam(format!("unknown: {}", provider)))?;
-///         let user = p.exchange_token(code, state).await?;
-///         Ok(user.provider_user_id)
-///     }
+/// async fn resolve_login_id(&self, provider: &str, code: &str, state: &str)
+/// -> GarrisonResult<String> {
+/// let p = self.providers.get(provider)
+/// .ok_or_else(|| GarrisonError::InvalidParam(format!("unknown: {}", provider)))?;
+/// let user = p.exchange_token(code, state).await?;
+/// Ok(user.provider_user_id)
+/// }
 /// }
 /// ```
 #[async_trait]
@@ -160,7 +160,7 @@ pub trait SocialProviderResolver: Send + Sync {
 
 /// SSO Server 解析 trait。
 ///
-/// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持 R-008
+/// 在 [`AuthExecutor::execute_with_full`] 中作为参数传入（非 struct 字段，保持
 /// 5 字段不变）。实现方在内部委托
 /// `protocol::sso::server::SsoServer::validate_ticket(ticket, client_id)` 并返回
 /// `login_id`。
@@ -202,7 +202,7 @@ pub trait SsoServerResolver: Send + Sync {
 /// 按 [`AuthenticationFlow`] 步骤顺序执行认证逻辑，支持 Login / Mfa / Conditional /
 /// SubFlow / SocialProvider / SsoServer 六种步骤类型。
 ///
-/// # 5 字段 schema（R-008 严格约束）
+/// # 5 字段 schema
 ///
 /// | 字段 | 类型 | 说明 |
 /// |:---|:---|:---|
@@ -215,7 +215,7 @@ pub trait SsoServerResolver: Send + Sync {
 /// # 设计冲突解决
 ///
 /// Login 步骤需要 `CredentialBuilder` 将 `CredentialModel → dyn Credential` 转换，
-/// 但 R-008 限制 5 字段。解决方案：[`CredentialBuilder`] 作为
+/// 但执行器限制为 5 字段。解决方案：[`CredentialBuilder`] 作为
 /// [`execute_with_builder`](Self::execute_with_builder) 的参数而非 struct 字段。
 ///
 /// # 示例
@@ -226,11 +226,11 @@ pub trait SsoServerResolver: Send + Sync {
 /// use garrison::account::authflow::registry::FlowRegistry;
 ///
 /// let executor = AuthExecutor::new(
-///     logic,
-///     credential_repo,
-///     None,               // policy_engine
-///     None,               // lockout
-///     Arc::new(FlowRegistry::from_inventory()),
+/// logic,
+/// credential_repo,
+/// None, // policy_engine
+/// None, // lockout
+/// Arc::new(FlowRegistry::from_inventory()),
 /// );
 /// let result = executor.execute_with_builder(&flow, &mut ctx, &builder).await?;
 /// ```
@@ -332,7 +332,7 @@ impl AuthExecutor {
         self.lockout.as_ref()
     }
 
-    /// 执行认证流程（spec R-009 签名，无 CredentialBuilder / 无 Resolver）。
+    /// 执行认证流程（无 CredentialBuilder / 无 Resolver）。
     ///
     /// 遇到 Login / Mfa(Some) 步骤时返回 `Failed`（无 builder 无法构造 Credential）。
     /// 遇到 SocialProvider / SsoServer 步骤时返回 `Failed`（无 resolver）。
@@ -422,14 +422,13 @@ impl AuthExecutor {
         .await
     }
 
-    /// 执行认证流程（带 CredentialBuilder + AccountMetrics，支持指标采集，
-    /// D-001）。
+    /// 执行认证流程（带 CredentialBuilder + AccountMetrics，支持指标采集）。
     ///
     /// 与 [`execute_with_builder`](Self::execute_with_builder) 一致，额外注入
     /// `metrics` 用于采集 `authflow_execute_duration`（label = `flow.name`）与
     /// `credential_verify_duration`（label = `credential_type`，Login/Mfa 步骤 verify 前后）。
     ///
-    /// 保持 R-008 五字段约束：`metrics` 作为方法参数传入，非 struct 字段。
+    /// 保持五字段约束：`metrics` 作为方法参数传入，非 struct 字段。
     ///
     /// # 参数
     /// - `flow`: 认证流程定义。
@@ -858,7 +857,7 @@ impl AuthExecutor {
 
     /// 执行 SubFlow 步骤（内部方法）。
     ///
-    /// v0.6.0 简化：SubFlow 返回的 Pending 视为 Failed（不支持嵌套 Pending 传播）。
+    /// SubFlow 返回的 Pending 视为 Failed（不支持嵌套 Pending 传播）。
     async fn execute_subflow(
         &self,
         flow_name: &str,
@@ -890,7 +889,7 @@ impl AuthExecutor {
             },
         };
 
-        // 递归深度检查（v0.6.5 实现：depth >= MAX_FLOW_DEPTH 时返回 Failed）
+        // 递归深度检查（depth >= MAX_FLOW_DEPTH 时返回 Failed）
         let result = self
             .execute_inner(
                 sub_flow,
@@ -904,7 +903,7 @@ impl AuthExecutor {
             .await?;
 
         match result {
-            // Issue 6456: 透传子流程生成的会话 token（Login/Social/SSO 步骤产生），
+            // 透传子流程生成的会话 token（Login/Social/SSO 步骤产生），
             // 不再丢弃；子流程未生成 token（空串）时保持 None 语义。
             AuthResult::Success { token, .. } => Ok(StepOutcome::Success {
                 token: if token.is_empty() { None } else { Some(token) },
@@ -1002,7 +1001,7 @@ impl AuthExecutor {
     /// 2. `ctx.input` 为空 → `ChallengeRequired`（提示用户提交 SSO ticket）。
     /// 3. 从 `ctx.extras["client_id"]` 取客户端标识（解析为 `i64`，缺失则 0）。
     /// 4. 调用 `sso_resolver.validate_and_get_login_id(server_id, ctx.input, client_id)`
-    ///    取得 `login_id`（内部委托 `SsoServer::validate_ticket`，一次性消费 ticket）。
+    /// 取得 `login_id`（内部委托 `SsoServer::validate_ticket`，一次性消费 ticket）。
     /// 5. 用 `login_id` 调用 `logic.login` 建立本地会话，返回 `token`。
     /// 6. 写回 `ctx.user_id = Some(login_id)`。
     async fn execute_sso(
@@ -1227,7 +1226,7 @@ mod tests {
             caller_login_id: &str,
             user_id: &str,
         ) -> GarrisonResult<Vec<CredentialModel>> {
-            // IDOR 防护（vuln-0004）：caller 必须是自己
+            // IDOR 防护：caller 必须是自己
             if caller_login_id != user_id {
                 return Err(GarrisonError::NotPermission(format!(
                     "caller {} cannot query credentials of {}",
@@ -1423,7 +1422,7 @@ mod tests {
     // 测试 1: password_login_success
     // ------------------------------------------------------------------------
 
-    /// R-009: Login 步骤 — 密码校验成功 → AuthResult::Success。
+    /// Login 步骤 — 密码校验成功 → AuthResult::Success。
     #[tokio::test]
     async fn password_login_success() {
         let repo = make_repo_with_password("alice").await;
@@ -1453,10 +1452,10 @@ mod tests {
     // 测试 2: password_login_failure
     // ------------------------------------------------------------------------
 
-    /// R-009: Login 步骤 — 密码校验失败 → AuthResult::Failed。
+    /// Login 步骤 — 密码校验失败 → AuthResult::Failed。
     #[tokio::test]
     async fn password_login_failure() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
@@ -1489,7 +1488,7 @@ mod tests {
     // 测试 3: mfa_check_safe_success
     // ------------------------------------------------------------------------
 
-    /// R-009: Mfa(None) 步骤 — check_safe 默认返回 Ok → Success。
+    /// Mfa(None) 步骤 — check_safe 默认返回 Ok → Success。
     ///
     /// 仅在 safe-auth 禁用时有效：safe-auth 启用时 check_safe 调用 inherent is_safe
     /// 检查 safe_services 标记，未 open_safe 时返回 NotSafe 错误。
@@ -1515,7 +1514,7 @@ mod tests {
     // 测试 4: mfa_totp_success
     // ------------------------------------------------------------------------
 
-    /// R-009: Mfa(Some("totp")) 步骤 — TOTP 校验成功 → Success。
+    /// Mfa(Some("totp")) 步骤 — TOTP 校验成功 → Success。
     #[tokio::test]
     async fn mfa_totp_success() {
         let repo = make_repo_with_password_and_totp("alice").await;
@@ -1542,7 +1541,7 @@ mod tests {
     // 测试 5: mfa_totp_failure
     // ------------------------------------------------------------------------
 
-    /// R-009: Mfa(Some("totp")) 步骤 — TOTP 校验失败 → Failed。
+    /// Mfa(Some("totp")) 步骤 — TOTP 校验失败 → Failed。
     #[tokio::test]
     async fn mfa_totp_failure() {
         let repo = make_repo_with_password_and_totp("alice").await;
@@ -1572,10 +1571,10 @@ mod tests {
     // 测试 6: conditional_true
     // ------------------------------------------------------------------------
 
-    /// R-009: Conditional 步骤 — 条件为真执行 if_step（Login verify=false → Failed）。
+    /// Conditional 步骤 — 条件为真执行 if_step（Login verify=false → Failed）。
     #[tokio::test]
     async fn conditional_true() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password_and_totp("alice").await;
         let executor = make_executor(repo, None);
@@ -1618,7 +1617,7 @@ mod tests {
     // 测试 7: conditional_false
     // ------------------------------------------------------------------------
 
-    /// R-009: Conditional 步骤 — 条件为假且 else_step=None → 跳过 → Success。
+    /// Conditional 步骤 — 条件为假且 else_step=None → 跳过 → Success。
     #[tokio::test]
     async fn conditional_false() {
         // 用户只有 password 凭证，没有 totp 凭证 → HasCredential("totp") = false
@@ -1649,7 +1648,7 @@ mod tests {
     // 测试 8: subflow_executes_child
     // ------------------------------------------------------------------------
 
-    /// R-009: SubFlow 步骤 — 子流程 Login 成功 → 父流程 Success。
+    /// SubFlow 步骤 — 子流程 Login 成功 → 父流程 Success。
     #[tokio::test]
     async fn subflow_executes_child() {
         let repo = make_repo_with_password("alice").await;
@@ -1681,7 +1680,7 @@ mod tests {
     // 测试 9: empty_steps_returns_success
     // ------------------------------------------------------------------------
 
-    /// R-009: 空步骤流程 → 直接返回 Success。
+    /// 空步骤流程 → 直接返回 Success。
     #[tokio::test]
     async fn empty_steps_returns_success() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
@@ -1703,7 +1702,7 @@ mod tests {
     // 测试 10: multi_step_flow_success
     // ------------------------------------------------------------------------
 
-    /// R-009: 多步流程（Login + Mfa(None)）— 两步均通过 → Success。
+    /// 多步流程（Login + Mfa(None)）— 两步均通过 → Success。
     ///
     /// 仅在 safe-auth 禁用时有效：safe-auth 启用时 Mfa(None) 步骤的 check_safe
     /// 检查 safe_services 标记，未 open_safe 时返回 NotSafe 错误。
@@ -1741,7 +1740,7 @@ mod tests {
     // 测试 11: pending_intermediate_state
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step 标记 — Login 成功后暂停 → Pending。
+    /// pause_after_step 标记 — Login 成功后暂停 → Pending。
     #[tokio::test]
     async fn pending_intermediate_state() {
         let repo = make_repo_with_password("alice").await;
@@ -1781,7 +1780,7 @@ mod tests {
     // 测试 12: challenge_required_for_mfa
     // ------------------------------------------------------------------------
 
-    /// R-009: Mfa(Some("totp")) 输入为空 → ChallengeRequired。
+    /// Mfa(Some("totp")) 输入为空 → ChallengeRequired。
     #[tokio::test]
     async fn challenge_required_for_mfa() {
         let repo = make_repo_with_password_and_totp("alice").await;
@@ -1814,10 +1813,10 @@ mod tests {
     // 测试 13: lockout_blocks_login
     // ------------------------------------------------------------------------
 
-    /// R-009: Login 步骤前检查锁定 — 用户被锁定 → Failed。
+    /// Login 步骤前检查锁定 — 用户被锁定 → Failed。
     #[tokio::test]
     async fn lockout_blocks_login() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
@@ -1862,7 +1861,7 @@ mod tests {
     // 测试: login_without_user_id_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: Login 步骤 — ctx.user_id 为 None → Failed（"Login 步骤需要 user_id"）。
+    /// Login 步骤 — ctx.user_id 为 None → Failed（"Login 步骤需要 user_id"）。
     #[tokio::test]
     async fn login_without_user_id_returns_failed() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
@@ -1897,10 +1896,10 @@ mod tests {
     // 测试: login_credential_not_found_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: Login 步骤 — 凭证存储为空 → Failed（"未找到 X 类型的凭证"）。
+    /// Login 步骤 — 凭证存储为空 → Failed（"未找到 X 类型的凭证"）。
     #[tokio::test]
     async fn login_credential_not_found_returns_failed() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         let executor = make_executor(repo, None);
@@ -1934,7 +1933,7 @@ mod tests {
     // 测试: execute_without_builder_login_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: execute()（spec R-009 签名）遇到 Login 步骤 → Failed（无 CredentialBuilder）。
+    /// execute() 遇到 Login 步骤 → Failed（无 CredentialBuilder）。
     #[tokio::test]
     async fn execute_without_builder_login_returns_failed() {
         let repo = make_repo_with_password("alice").await;
@@ -1961,7 +1960,7 @@ mod tests {
     // 测试: mfa_some_without_builder_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: execute() 遇到 Mfa(Some("totp")) 步骤 → Failed（无 CredentialBuilder）。
+    /// execute() 遇到 Mfa(Some("totp")) 步骤 → Failed（无 CredentialBuilder）。
     /// 需 ctx.input 非空，否则会先返回 ChallengeRequired。
     #[tokio::test]
     async fn mfa_some_without_builder_returns_failed() {
@@ -1989,7 +1988,7 @@ mod tests {
     // 测试: mfa_without_user_id_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: Mfa(Some) 步骤 — ctx.user_id 为 None → Failed（"Mfa 步骤需要 user_id"）。
+    /// Mfa(Some) 步骤 — ctx.user_id 为 None → Failed（"Mfa 步骤需要 user_id"）。
     #[tokio::test]
     async fn mfa_without_user_id_returns_failed() {
         let repo = make_repo_with_password_and_totp("alice").await;
@@ -2024,10 +2023,10 @@ mod tests {
     // 测试: mfa_credential_not_found_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: Mfa(Some) 步骤 — 凭证存储中无对应类型 → Failed（"未找到 X 类型的凭证"）。
+    /// Mfa(Some) 步骤 — 凭证存储中无对应类型 → Failed（"未找到 X 类型的凭证"）。
     #[tokio::test]
     async fn mfa_credential_not_found_returns_failed() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         // repo 只有 password 凭证，没有 totp 凭证
         let repo = make_repo_with_password("alice").await;
@@ -2062,10 +2061,10 @@ mod tests {
     // 测试: subflow_unknown_flow_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: SubFlow 步骤 — registry 中无对应 flow_name → Failed（"未找到子流程: X"）。
+    /// SubFlow 步骤 — registry 中无对应 flow_name → Failed（"未找到子流程: X"）。
     #[tokio::test]
     async fn subflow_unknown_flow_returns_failed() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         // 空 registry（from_inventory 默认无注册流程）
@@ -2099,11 +2098,11 @@ mod tests {
     // 测试: subflow_max_depth_exceeded_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: SubFlow 步骤 — 递归深度超过 MAX_FLOW_DEPTH（10）→ Failed（"嵌套深度超过上限"）。
+    /// SubFlow 步骤 — 递归深度超过 MAX_FLOW_DEPTH（10）→ Failed（"嵌套深度超过上限"）。
     /// 构造自引用流程（flow 引用自身），递归至 depth=10 时被截断。
     #[tokio::test]
     async fn subflow_max_depth_exceeded_returns_failed() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         let mut registry = FlowRegistry::from_inventory();
@@ -2132,7 +2131,7 @@ mod tests {
     // 测试: required_action_step_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: RequiredAction 步骤 — v0.6.0 未实现 → Failed（"RequiredAction 步骤在 v0.6.0 未实现"）。
+    /// RequiredAction 步骤未实现 → Failed（错误消息 "RequiredAction 步骤在 v0.6.0 未实现"）。
     /// FlowBuilder 未提供 required_action 方法，直接构造 AuthenticationFlow。
     #[tokio::test]
     async fn required_action_step_returns_failed() {
@@ -2166,7 +2165,7 @@ mod tests {
     // 测试: allow_skip_continues_after_failed_step
     // ------------------------------------------------------------------------
 
-    /// R-009: allow_skip=true — 第一步 Failed (RequiredAction) 被跳过，
+    /// allow_skip=true — 第一步 Failed (RequiredAction) 被跳过，
     /// 第二步 Conditional (IpWhitelisted=false → else_step=None → Success) → 流程 Success。
     #[tokio::test]
     async fn allow_skip_continues_after_failed_step() {
@@ -2175,7 +2174,7 @@ mod tests {
         let flow = AuthenticationFlow {
             name: "test".to_string(),
             steps: vec![
-                // 必失败步骤：RequiredAction 在 v0.6.0 未实现
+                // 必失败步骤：RequiredAction 未实现
                 AuthStep::RequiredAction {
                     action: "verify_email".to_string(),
                 },
@@ -2213,7 +2212,7 @@ mod tests {
     // 测试: pause_after_last_step_returns_success
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step 指向最后一步 — 无 next_step 可暂停 → 返回 Success（不 Pending）。
+    /// pause_after_step 指向最后一步 — 无 next_step 可暂停 → 返回 Success（不 Pending）。
     #[tokio::test]
     async fn pause_after_last_step_returns_success() {
         let repo = make_repo_with_password("alice").await;
@@ -2247,11 +2246,11 @@ mod tests {
     // 测试: conditional_with_else_step_executed_when_false
     // ------------------------------------------------------------------------
 
-    /// R-009: Conditional 步骤 — 条件为假且 else_step=Some(...) → 执行 else_step。
+    /// Conditional 步骤 — 条件为假且 else_step=Some(...) → 执行 else_step。
     /// 验证 else_step 不为 None 时分支被实际执行（而非跳过）。
     #[tokio::test]
     async fn conditional_with_else_step_executed_when_false() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
@@ -2299,12 +2298,12 @@ mod tests {
     // 测试: subflow_child_failed_propagates_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: SubFlow 步骤 — 子流程返回 Failed → 父流程 Failed（"子流程 X 失败: ..."）。
+    /// SubFlow 步骤 — 子流程返回 Failed → 父流程 Failed（"子流程 X 失败: ..."）。
     #[tokio::test]
     async fn subflow_child_failed_propagates_failed() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         let mut registry = FlowRegistry::from_inventory();
-        // 子流程：RequiredAction 步骤（v0.6.0 必失败）
+        // 子流程：RequiredAction 步骤（必失败）
         let child = AuthenticationFlow {
             name: "failing-child".to_string(),
             steps: vec![AuthStep::RequiredAction {
@@ -2349,7 +2348,7 @@ mod tests {
     // 测试: accessors_return_some_when_provided
     // ------------------------------------------------------------------------
 
-    /// R-008: AuthExecutor::policy_engine / lockout 访问器 — 注入 Some 时返回 Some，None 时返回 None。
+    /// AuthExecutor::policy_engine / lockout 访问器 — 注入 Some 时返回 Some，None 时返回 None。
     #[tokio::test]
     async fn accessors_return_some_when_provided() {
         use crate::account::policy::{ErrorMode, PasswordPolicyEngine};
@@ -2402,7 +2401,7 @@ mod tests {
     // 测试: conditional_is_locked_true_executes_if_step
     // ------------------------------------------------------------------------
 
-    /// R-009: Conditional 步骤 — IsLocked 条件为真（用户被锁定）→ 执行 if_step。
+    /// Conditional 步骤 — IsLocked 条件为真（用户被锁定）→ 执行 if_step。
     /// 覆盖 evaluate_condition 的 IsLocked 分支返回 true 的路径。
     /// 使用 RequiredAction 作为 if_step（不走 Login 的 lockout 检查，避免与条件判断耦合）。
     #[tokio::test]
@@ -2680,11 +2679,11 @@ mod tests {
     // 测试: pause_after_step_challenge_for_login_step
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step 标记 — 验证 step_challenge 对 Login 步骤的输出格式。
+    /// pause_after_step 标记 — 验证 step_challenge 对 Login 步骤的输出格式。
     /// 在 Login 成功后暂停，下一步为 Login → challenge 应含 "请输入"。
     #[tokio::test]
     async fn pause_after_step_challenge_for_login_step() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password_and_totp("alice").await;
         let executor = make_executor(repo, None);
@@ -2734,7 +2733,7 @@ mod tests {
     // 测试: login_with_lockout_success_resets_failure_count
     // ------------------------------------------------------------------------
 
-    /// R-009: Login 步骤 — lockout=Some 且 verify=true → record_success 重置失败计数。
+    /// Login 步骤 — lockout=Some 且 verify=true → record_success 重置失败计数。
     /// 验证：[fail, ok, fail] 后第 4 次 login 仍可成功（count=1 < 2）；
     /// 若 record_success 未调用，count=3 → 已锁定，第 4 次会返回 Failed。
     #[tokio::test]
@@ -2784,7 +2783,7 @@ mod tests {
             .unwrap();
 
         // Step 4: correct → 若 record_success 在 step 2 调用，count=1 < 2 → check 通过 → Success
-        //         若未调用，count=3 >= 2 → 已锁定 → Failed
+        // 若未调用，count=3 >= 2 → 已锁定 → Failed
         let mut ctx4 = make_context("alice", "correct");
         let result = executor
             .execute_with_builder(&flow, &mut ctx4, &builder_ok)
@@ -2812,11 +2811,11 @@ mod tests {
     // 测试: login_with_lockout_failure_triggers_lockout
     // ------------------------------------------------------------------------
 
-    /// R-009: Login 步骤 — lockout=Some 且 verify=false → record_failure 增加失败计数。
+    /// Login 步骤 — lockout=Some 且 verify=false → record_failure 增加失败计数。
     /// 验证：max_failure_factor=1 时，1 次失败 login 后第 2 次 login 被 lockout.check 拦截。
     #[tokio::test]
     async fn login_with_lockout_failure_triggers_lockout() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
@@ -2879,12 +2878,12 @@ mod tests {
     // 测试: subflow_pending_propagates_as_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: SubFlow 步骤 — 子流程返回 Pending → 父流程 Failed（"子流程 X 返回 Pending"）。
+    /// SubFlow 步骤 — 子流程返回 Pending → 父流程 Failed（"子流程 X 返回 Pending"）。
     /// 子流程含 2 步（Login + Mfa(None)），ctx.extras 设 pause_after_step="0"
-    /// 使子流程 Login 成功后返回 Pending。验证 v0.6.0 不支持嵌套 Pending 传播。
+    /// 使子流程 Login 成功后返回 Pending。验证不支持嵌套 Pending 传播。
     #[tokio::test]
     async fn subflow_pending_propagates_as_failed() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let mut registry = FlowRegistry::from_inventory();
@@ -2942,7 +2941,7 @@ mod tests {
     // 测试: subflow_challenge_required_propagates
     // ------------------------------------------------------------------------
 
-    /// R-009: SubFlow 步骤 — 子流程返回 ChallengeRequired → 父流程 ChallengeRequired。
+    /// SubFlow 步骤 — 子流程返回 ChallengeRequired → 父流程 ChallengeRequired。
     /// 子流程含 Mfa(Some("totp"))，ctx.input 为空 → ChallengeRequired。
     #[tokio::test]
     async fn subflow_challenge_required_propagates() {
@@ -2986,7 +2985,7 @@ mod tests {
     // 测试: conditional_has_credential_without_user_id_returns_false
     // ------------------------------------------------------------------------
 
-    /// R-009: Conditional 步骤 — HasCredential 条件且 ctx.user_id=None → 返回 false → else_step=None → Success。
+    /// Conditional 步骤 — HasCredential 条件且 ctx.user_id=None → 返回 false → else_step=None → Success。
     /// 覆盖 evaluate_condition 的 HasCredential 分支中 user_id=None 的路径。
     #[tokio::test]
     async fn conditional_has_credential_without_user_id_returns_false() {
@@ -3024,7 +3023,7 @@ mod tests {
     // 测试: conditional_is_locked_without_lockout_returns_false
     // ------------------------------------------------------------------------
 
-    /// R-009: Conditional 步骤 — IsLocked 条件且 lockout=None → 返回 false → else_step=None → Success。
+    /// Conditional 步骤 — IsLocked 条件且 lockout=None → 返回 false → else_step=None → Success。
     /// 覆盖 evaluate_condition 的 IsLocked 分支中 lockout=None 的路径。
     #[tokio::test]
     async fn conditional_is_locked_without_lockout_returns_false() {
@@ -3056,7 +3055,7 @@ mod tests {
     // 测试: conditional_is_locked_without_user_id_returns_false
     // ------------------------------------------------------------------------
 
-    /// R-009: Conditional 步骤 — IsLocked 条件且 lockout=Some 但 ctx.user_id=None → 返回 false。
+    /// Conditional 步骤 — IsLocked 条件且 lockout=Some 但 ctx.user_id=None → 返回 false。
     /// 覆盖 evaluate_condition 的 IsLocked 分支中 user_id=None 的路径。
     #[tokio::test]
     async fn conditional_is_locked_without_user_id_returns_false() {
@@ -3100,11 +3099,11 @@ mod tests {
     // 测试: pause_after_step_challenge_for_mfa_some_step
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step — 验证 step_challenge 对 Mfa(Some("totp")) 的输出格式。
+    /// pause_after_step — 验证 step_challenge 对 Mfa(Some("totp")) 的输出格式。
     /// Login 成功后暂停，下一步为 Mfa(Some("totp")) → challenge 应含 "请输入 totp 验证码"。
     #[tokio::test]
     async fn pause_after_step_challenge_for_mfa_some_step() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
@@ -3151,7 +3150,7 @@ mod tests {
     // 测试: pause_after_step_challenge_for_mfa_none_step
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step — 验证 step_challenge 对 Mfa(None) 的输出格式。
+    /// pause_after_step — 验证 step_challenge 对 Mfa(None) 的输出格式。
     /// Login 成功后暂停，下一步为 Mfa(None) → challenge 应为 "请完成 MFA 校验"。
     #[tokio::test]
     async fn pause_after_step_challenge_for_mfa_none_step() {
@@ -3190,10 +3189,10 @@ mod tests {
     // 测试: pause_after_step_challenge_for_required_action_step
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step — 验证 step_challenge 对 RequiredAction 的输出格式。
+    /// pause_after_step — 验证 step_challenge 对 RequiredAction 的输出格式。
     #[tokio::test]
     async fn pause_after_step_challenge_for_required_action_step() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
@@ -3243,10 +3242,10 @@ mod tests {
     // 测试: pause_after_step_challenge_for_conditional_step
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step — 验证 step_challenge 对 Conditional 的输出格式。
+    /// pause_after_step — 验证 step_challenge 对 Conditional 的输出格式。
     #[tokio::test]
     async fn pause_after_step_challenge_for_conditional_step() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
@@ -3295,10 +3294,10 @@ mod tests {
     // 测试: pause_after_step_challenge_for_subflow_step
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step — 验证 step_challenge 对 SubFlow 的输出格式。
+    /// pause_after_step — 验证 step_challenge 对 SubFlow 的输出格式。
     #[tokio::test]
     async fn pause_after_step_challenge_for_subflow_step() {
-        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
         let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let mut registry = FlowRegistry::from_inventory();
@@ -3351,7 +3350,7 @@ mod tests {
     // 测试: pause_after_step_invalid_value_does_not_pause
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step 值非数字 → parse 失败 → 不触发暂停 → 全部步骤完成 → Success。
+    /// pause_after_step 值非数字 → parse 失败 → 不触发暂停 → 全部步骤完成 → Success。
     #[tokio::test]
     async fn pause_after_step_invalid_value_does_not_pause() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
@@ -3398,7 +3397,7 @@ mod tests {
     // 测试: pause_after_step_out_of_range_index_does_not_pause
     // ------------------------------------------------------------------------
 
-    /// R-009: pause_after_step 值越界（99，无对应步骤索引）→ 不触发暂停 → Success。
+    /// pause_after_step 值越界（99，无对应步骤索引）→ 不触发暂停 → Success。
     #[tokio::test]
     async fn pause_after_step_out_of_range_index_does_not_pause() {
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
@@ -3448,7 +3447,7 @@ mod tests {
     // 测试: empty_flow_without_user_id_returns_success_with_empty_login_id
     // ------------------------------------------------------------------------
 
-    /// R-009: 空步骤流程且 ctx.user_id=None → Success（login_id 为空串）。
+    /// 空步骤流程且 ctx.user_id=None → Success（login_id 为空串）。
     /// 覆盖 execute_inner 中 `ctx.user_id.clone().unwrap_or_default()` 的 None 分支。
     #[tokio::test]
     async fn empty_flow_without_user_id_returns_success_with_empty_login_id() {
@@ -3473,7 +3472,7 @@ mod tests {
     // 测试: sso_step_without_resolver_returns_failed
     // ------------------------------------------------------------------------
 
-    /// R-009: SsoServer 步骤 — execute()（无 resolver）→ Failed（"需要 SsoServerResolver"）。
+    /// SsoServer 步骤 — execute()（无 resolver）→ Failed（"需要 SsoServerResolver"）。
     /// 覆盖 execute_sso 中 sso_resolver=None 的分支（非 门控路径）。
     #[tokio::test]
     async fn sso_step_without_resolver_returns_failed() {
@@ -3501,7 +3500,7 @@ mod tests {
     // 测试: execute_with_metrics_records_durations (metrics-prometheus)
     // ------------------------------------------------------------------------
 
-    /// D-001: execute_with_metrics — Login 步骤成功 → 记录 authflow_execute_duration + credential_verify_duration。
+    /// execute_with_metrics — Login 步骤成功 → 记录 authflow_execute_duration + credential_verify_duration。
     /// 覆盖 execute_with_metrics 方法及 execute_inner / execute_login 中的 metrics 观测分支。
     #[cfg(feature = "metrics-prometheus")]
     #[tokio::test]
@@ -3547,7 +3546,7 @@ mod tests {
     // 测试: execute_with_metrics_records_mfa_verify_duration (metrics-prometheus)
     // ------------------------------------------------------------------------
 
-    /// D-001: execute_with_metrics — Mfa(Some("totp")) 步骤成功 → 记录 credential_verify_duration（label=totp）。
+    /// execute_with_metrics — Mfa(Some("totp")) 步骤成功 → 记录 credential_verify_duration（label=totp）。
     /// 覆盖 execute_mfa 中的 metrics 观测分支。
     #[cfg(feature = "metrics-prometheus")]
     #[tokio::test]
@@ -3587,7 +3586,7 @@ mod tests {
     // 测试: execute_with_metrics_empty_flow_records_duration (metrics-prometheus)
     // ------------------------------------------------------------------------
 
-    /// D-001: execute_with_metrics — 空流程 → 记录 authflow_execute_duration（空流程提前返回路径）。
+    /// execute_with_metrics — 空流程 → 记录 authflow_execute_duration（空流程提前返回路径）。
     #[cfg(feature = "metrics-prometheus")]
     #[tokio::test]
     async fn execute_with_metrics_empty_flow_records_duration() {
@@ -3859,7 +3858,7 @@ mod tests {
         // 测试 14: t017_social_login_success
         // --------------------------------------------------------------------
 
-        /// R-010: SocialProvider 步骤 — exchange_token 成功 → Success。
+        /// SocialProvider 步骤 — exchange_token 成功 → Success。
         /// 验证 executor 通过 resolver 委托调用了 SocialLoginProvider::exchange_token。
         #[tokio::test]
         async fn t017_social_login_success() {
@@ -3896,7 +3895,7 @@ mod tests {
         // 测试 15: t017_social_login_unknown_provider_returns_failed
         // --------------------------------------------------------------------
 
-        /// R-010: SocialProvider 步骤 — provider 未注册 → Failed。
+        /// SocialProvider 步骤 — provider 未注册 → Failed。
         #[tokio::test]
         async fn t017_social_login_unknown_provider_returns_failed() {
             let social_resolver = MockSocialProviderResolver::new(); // 空 resolver
@@ -3929,7 +3928,7 @@ mod tests {
         // 测试 16: t017_social_login_empty_input_challenge_required
         // --------------------------------------------------------------------
 
-        /// R-010: SocialProvider 步骤 — ctx.input 为空 → ChallengeRequired。
+        /// SocialProvider 步骤 — ctx.input 为空 → ChallengeRequired。
         #[tokio::test]
         async fn t017_social_login_empty_input_challenge_required() {
             let social_resolver = MockSocialProviderResolver::new();
@@ -3964,7 +3963,7 @@ mod tests {
         // 测试 17: t017_social_login_multiple_providers_switch
         // --------------------------------------------------------------------
 
-        /// R-010: 多 Provider 切换 — wechat 与 alipay 分别返回不同 login_id。
+        /// 多 Provider 切换 — wechat 与 alipay 分别返回不同 login_id。
         #[tokio::test]
         async fn t017_social_login_multiple_providers_switch() {
             let wechat = Arc::new(MockSocialLoginProvider::new("wx_openid"));
@@ -4025,7 +4024,7 @@ mod tests {
         // 测试 18: t017_sso_login_success
         // --------------------------------------------------------------------
 
-        /// R-011: SsoServer 步骤 — validate_ticket 成功 → Success。
+        /// SsoServer 步骤 — validate_ticket 成功 → Success。
         /// 验证 executor 通过 resolver 委托调用了 SsoServer::validate_ticket。
         #[tokio::test]
         async fn t017_sso_login_success() {
@@ -4061,10 +4060,10 @@ mod tests {
         // 测试 19: t017_sso_login_invalid_ticket_returns_failed
         // --------------------------------------------------------------------
 
-        /// R-011: SsoServer 步骤 — validate_ticket 失败 → Failed。
+        /// SsoServer 步骤 — validate_ticket 失败 → Failed。
         #[tokio::test]
         async fn t017_sso_login_invalid_ticket_returns_failed() {
-            // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+            // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
             let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
             let server = Arc::new(MockSsoServer::new_failing());
             let server_ref = server.clone() as Arc<dyn SsoServer>;
@@ -4105,10 +4104,10 @@ mod tests {
         // 测试 20: t017_sso_login_empty_input_challenge_required
         // --------------------------------------------------------------------
 
-        /// R-011: SsoServer 步骤 — ctx.input 为空 → ChallengeRequired。
+        /// SsoServer 步骤 — ctx.input 为空 → ChallengeRequired。
         #[tokio::test]
         async fn t017_sso_login_empty_input_challenge_required() {
-            // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+            // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
             let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
             let sso_resolver = MockSsoServerResolver::new();
             let social_resolver = MockSocialProviderResolver::new();
@@ -4142,7 +4141,7 @@ mod tests {
         // 测试 21: t017_social_sso_combined_flow_success
         // --------------------------------------------------------------------
 
-        /// R-010 + R-011: SocialProvider + SsoServer 组合流程 — 两步均成功。
+        /// SocialProvider + SsoServer 组合流程 — 两步均成功。
         /// 验证多步流程中 resolver 链可用，且最后一步的 login_id 覆盖前一步。
         #[tokio::test]
         async fn t017_social_sso_combined_flow_success() {
@@ -4193,7 +4192,7 @@ mod tests {
         // 测试 22: t017_social_step_without_resolver_returns_failed
         // --------------------------------------------------------------------
 
-        /// R-010: SocialProvider 步骤 — execute_with_builder 无 resolver → Failed。
+        /// SocialProvider 步骤 — execute_with_builder 无 resolver → Failed。
         /// 覆盖 execute_with_builder 路径，验证占位失败信息。
         #[tokio::test]
         async fn t017_social_step_without_resolver_returns_failed() {
@@ -4226,11 +4225,11 @@ mod tests {
         // 测试: t017_pause_after_step_challenge_for_social_step
         // --------------------------------------------------------------------
 
-        /// R-010: pause_after_step — 验证 step_challenge 对 SocialProvider 的输出格式。
+        /// pause_after_step — 验证 step_challenge 对 SocialProvider 的输出格式。
         /// Login 成功后暂停，下一步为 SocialProvider("wechat") → challenge 应含 "请完成 wechat 社交登录"。
         #[tokio::test]
         async fn t017_pause_after_step_challenge_for_social_step() {
-            // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+            // 钉住 locale：断言依赖中文模板文案（默认语言为英文，guard 随测试作用域恢复）
             let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
             let repo = make_repo_with_password("alice").await;
             let executor = make_executor(repo, None);
@@ -4278,7 +4277,7 @@ mod tests {
         // 测试: t017_pause_after_step_challenge_for_sso_step
         // --------------------------------------------------------------------
 
-        /// R-011: pause_after_step — 验证 step_challenge 对 SsoServer 的输出格式。
+        /// pause_after_step — 验证 step_challenge 对 SsoServer 的输出格式。
         /// Login 成功后暂停，下一步为 SsoServer("keycloak") → challenge 应含 "请完成 SSO 登录: keycloak"。
         #[tokio::test]
         async fn t017_pause_after_step_challenge_for_sso_step() {
@@ -4327,7 +4326,7 @@ mod tests {
         // 测试: t017_sso_login_missing_client_id_uses_zero
         // --------------------------------------------------------------------
 
-        /// R-011: SsoServer 步骤 — ctx.extras 中无 client_id → 默认 0 → 仍可成功。
+        /// SsoServer 步骤 — ctx.extras 中无 client_id → 默认 0 → 仍可成功。
         /// 覆盖 execute_sso 中 client_id 缺失时 unwrap_or(0) 的默认分支。
         #[tokio::test]
         async fn t017_sso_login_missing_client_id_uses_zero() {
@@ -4360,7 +4359,7 @@ mod tests {
         // 测试: t017_sso_login_invalid_client_id_uses_zero
         // --------------------------------------------------------------------
 
-        /// R-011: SsoServer 步骤 — ctx.extras["client_id"] 非数字 → parse 失败 → 默认 0 → 仍可成功。
+        /// SsoServer 步骤 — ctx.extras["client_id"] 非数字 → parse 失败 → 默认 0 → 仍可成功。
         /// 覆盖 execute_sso 中 client_id 解析失败时 unwrap_or(0) 的默认分支。
         #[tokio::test]
         async fn t017_sso_login_invalid_client_id_uses_zero() {
@@ -4395,7 +4394,7 @@ mod tests {
         // 测试: t017_social_login_without_state_succeeds
         // --------------------------------------------------------------------
 
-        /// R-010: SocialProvider 步骤 — ctx.extras 中无 state → 默认空串 → 仍可成功。
+        /// SocialProvider 步骤 — ctx.extras 中无 state → 默认空串 → 仍可成功。
         /// 覆盖 execute_social 中 state 缺失时 unwrap_or_default() 的默认分支。
         #[tokio::test]
         async fn t017_social_login_without_state_succeeds() {
@@ -4428,7 +4427,7 @@ mod tests {
         // 测试: t017_sso_step_without_resolver_returns_failed
         // --------------------------------------------------------------------
 
-        /// R-011: SsoServer 步骤 — execute_with_builder 无 sso_resolver → Failed。
+        /// SsoServer 步骤 — execute_with_builder 无 sso_resolver → Failed。
         /// 覆盖 execute_with_builder 路径中 SsoServer 步骤的占位失败信息。
         #[tokio::test]
         async fn t017_sso_step_without_resolver_returns_failed() {

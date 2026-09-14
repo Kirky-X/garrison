@@ -8,7 +8,7 @@
 //! ## 设计
 //!
 //! - `client_secret` 使用 Argon2id 哈希存储，不明文
-//! - `pkce_required` 始终为 `true`（R-oauth2-006 强制 PKCE）
+//! - `pkce_required` 始终为 `true`（强制 PKCE）
 //! - `OAuth2ClientStore` 基于 `GarrisonDao`（key-value 存储），客户端配置序列化为 JSON
 //! - `DaoKeyPrefix::OAuth2Client` 提供 key 前缀（`oauth2:client:`）
 
@@ -77,7 +77,7 @@ impl std::str::FromStr for GrantType {
 /// 管理 OAuth2 客户端的元数据与凭证，对应 RFC 6749 §2 客户端凭证。
 ///
 /// `client_secret` 使用 Argon2id 哈希存储，不明文保存。
-/// `pkce_required` 始终为 `true`（R-oauth2-006 强制 PKCE）。
+/// `pkce_required` 始终为 `true`（强制 PKCE）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuth2Client {
     /// 客户端 ID（唯一标识）。
@@ -90,7 +90,7 @@ pub struct OAuth2Client {
     pub grant_types: Vec<GrantType>,
     /// 允许的 scope 列表。
     pub scopes: Vec<String>,
-    /// 是否强制 PKCE（始终为 `true`，R-oauth2-006）。
+    /// 是否强制 PKCE（始终为 `true`）。
     pub pkce_required: bool,
 }
 
@@ -123,7 +123,7 @@ impl OAuth2Client {
         }
         // redirect_uri 白名单后续按精确匹配被信任，入库前做基本合法性校验：
         // 拒绝空串、超长（> 2048）与含空白/控制字符的条目（绝对 URI 必含 scheme 分隔 `:`），
-        // 防止畸形 URI 静默进入白名单（R-oauth2-002 纵深防御）。
+        // 防止畸形 URI 静默进入白名单（纵深防御）。
         const REDIRECT_URI_MAX_LEN: usize = 2048;
         for uri in &redirect_uris {
             if uri.is_empty()
@@ -161,7 +161,7 @@ impl OAuth2Client {
 
     /// 校验 redirect_uri 是否在白名单中。
     ///
-    /// 精确匹配（不支持通配符），防止 open redirect 攻击（R-oauth2-002）。
+    /// 精确匹配（不支持通配符），防止 open redirect 攻击。
     pub fn is_redirect_uri_allowed(&self, redirect_uri: &str) -> bool {
         self.redirect_uris.iter().any(|uri| uri == redirect_uri)
     }
@@ -472,7 +472,7 @@ mod tests {
         assert!(matches!(err, GarrisonError::InvalidParam(_)));
     }
 
-    /// redirect_uri 白名单条目入库前须通过基本合法性校验（R-oauth2-002 纵深防御）。
+    /// redirect_uri 白名单条目入库前须通过基本合法性校验（纵深防御）。
     #[test]
     fn new_client_rejects_invalid_redirect_uris() {
         // 空 URI

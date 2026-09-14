@@ -148,14 +148,14 @@ pub mod validation;
 ///
 /// ```sql
 /// CREATE TABLE social_bindings (
-///     id               INTEGER PRIMARY KEY AUTOINCREMENT,
-///     tenant_id        INTEGER NOT NULL DEFAULT 0,
-///     login_id         TEXT    NOT NULL,
-///     provider         TEXT    NOT NULL,
-///     provider_user_id TEXT    NOT NULL,
-///     union_id         TEXT,
-///     created_at       INTEGER NOT NULL,
-///     UNIQUE(tenant_id, provider, provider_user_id)
+/// id INTEGER PRIMARY KEY AUTOINCREMENT,
+/// tenant_id INTEGER NOT NULL DEFAULT 0,
+/// login_id TEXT NOT NULL,
+/// provider TEXT NOT NULL,
+/// provider_user_id TEXT NOT NULL,
+/// union_id TEXT,
+/// created_at INTEGER NOT NULL,
+/// UNIQUE(tenant_id, provider, provider_user_id)
 /// );
 /// ```
 ///
@@ -168,8 +168,7 @@ pub struct SocialBindingService {
 
 /// `SocialBindingService` 实现模块（任意 db 后端 feature）。
 ///
-/// 从 `mod.rs` 迁移以符合规则 25（mod.rs 接口隔离）：
-/// impl 块不允许留在 `mod.rs`。
+/// mod.rs 接口隔离：impl 块不允许留在 `mod.rs`。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub(crate) mod service;
 
@@ -180,12 +179,12 @@ pub(crate) mod service;
 pub mod registry;
 
 // ============================================================================
-// re-export：社交登录错误码常量（H5 架构修复：消除跨 crate 模块路径耦合）
+// re-export：社交登录错误码常量（架构修复：消除跨 crate 模块路径耦合）
 // ============================================================================
 //
 // 外部 crate（如 sinnan）通过 `garrison::protocol::social::ERR_SOCIAL_PROVIDER_*`
 // 直接引用常量，无需深入 `registry` 子模块路径。
-// 这符合规则10 接口隔离：mod.rs 暴露公共 API，隐藏内部模块结构。
+// 这符合接口隔离：mod.rs 暴露公共 API，隐藏内部模块结构。
 
 /// 社交登录 provider 未注册错误码（re-export 自 `registry` 模块）。
 ///
@@ -234,14 +233,14 @@ pub trait SocialLoginProvider: Send + Sync {
     /// # 实现者契约（必须遵守）
     ///
     /// - **`provider_user_id` 非空**：实现者必须在 `provider_user_id` 为空串
-    ///   （响应缺失该字段或值为空）时返回明确的 `Err`（如
-    ///   `GarrisonError::Network`），**不得**以空字符串作为
-    ///   `provider_user_id` 返回 `Ok`——空串会绕过绑定幂等性约束并最终引发
-    ///   handler 500。推荐做法：提取字段时用
-    ///   `.filter(|s| !s.is_empty())` 后再 `ok_or_else` 转换为错误
-    ///   （参考 `wechat::WechatProvider::exchange_token`）。
+    /// （响应缺失该字段或值为空）时返回明确的 `Err`（如
+    /// `GarrisonError::Network`），**不得**以空字符串作为
+    /// `provider_user_id` 返回 `Ok`——空串会绕过绑定幂等性约束并最终引发
+    /// handler 500。推荐做法：提取字段时用
+    /// `.filter(|s| !s.is_empty())` 后再 `ok_or_else` 转换为错误
+    /// （参考 `wechat::WechatProvider::exchange_token`）。
     /// - **`raw` 不得含敏感凭据**：返回前剥离 `access_token` / `session_key`
-    ///   等凭据字段（参考 `wechat::strip_sensitive_fields`）。
+    /// 等凭据字段（参考 `wechat::strip_sensitive_fields`）。
     ///
     /// # 参数
     /// - `code`: 授权码（第三方平台回调时附在 query 参数，一次性消费）

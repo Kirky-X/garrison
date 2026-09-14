@@ -4,7 +4,7 @@
 //! SystemClock / MockClock 实现：可注入时钟抽象。
 //!
 //! `Clock` trait 与 `SystemClock` / `MockClock` 结构体定义位于 `super::mod`，
-//! 本文件仅承载 impl 块（mod.rs 接口隔离，Rule 25）。
+//! 本文件仅承载 impl 块（mod.rs 接口隔离）。
 use super::{Clock, MockClock, SystemClock};
 use chrono::{DateTime, Utc};
 use parking_lot::RwLock;

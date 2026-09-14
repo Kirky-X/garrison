@@ -29,7 +29,7 @@ pub struct IntrospectRequest {
 
 /// /oauth2/introspect 响应（RFC 7662 §2.2）。
 ///
-/// v0.7.1 补齐 RFC 7662 §2.3 全部字段：username / iat / nbf / aud / iss / jti。
+/// 覆盖 RFC 7662 §2.3 全部字段：username / iat / nbf / aud / iss / jti。
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct IntrospectResponse {
     /// token 是否活跃（有效且未过期）。
@@ -123,9 +123,9 @@ impl IntrospectHandler {
         }
 
         // 2. 按 token_type_hint 选择查找顺序（RFC 7662 §2.1：hint 仅用于优化
-        //    查找方向，查不到时 MAY 扩展搜索另一种类型）
-        //    refresh token 存储于 `oauth2:rtoken:` 前缀 / rotation SQLite 表，
-        //    必须经 get_refresh_token_record 查找，而非恒查 access 记录。
+        // 查找方向，查不到时 MAY 扩展搜索另一种类型）
+        // refresh token 存储于 `oauth2:rtoken:` 前缀 / rotation SQLite 表，
+        // 必须经 get_refresh_token_record 查找，而非恒查 access 记录。
         let record = match req.token_type_hint.as_deref() {
             Some("refresh_token") => {
                 match self
@@ -158,7 +158,7 @@ impl IntrospectHandler {
         };
 
         // 3. 过期判定：DAO TTL 理论上已剔除过期记录，但 rotation 路径的
-        //    expires_at 不经 TTL 控制，且防御时钟偏差——过期记录一律 inactive。
+        // expires_at 不经 TTL 控制，且防御时钟偏差——过期记录一律 inactive。
         match record {
             Some(record) if record.expires_at > Utc::now() => {
                 Ok(Self::response_from_record(record))

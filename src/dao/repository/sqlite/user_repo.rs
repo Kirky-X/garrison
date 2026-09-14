@@ -119,7 +119,7 @@ impl UserRepository for DbnexusUserRepository {
 
     /// 分页查询租户下的用户列表（按 `id` 稳定排序）。
     ///
-    /// # ⚠️ 安全说明（Issue 67，已修复）
+    /// # ⚠️ 安全说明
     ///
     /// 返回 [`UserListRow`]（不含 `password_hash` 的投影）：SELECT 明确排除
     /// `password_hash` 列，从类型上杜绝凭证数据经分页/浏览接口被序列化到

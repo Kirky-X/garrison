@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! listener 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! listener 模块测试（从 mod.rs 迁移）。
 
 use super::mock::{reset_counters, EVENT_CALLS};
 use super::*;
@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 // GarrisonEvent 枚举测试
 // ========================================================================
 
-/// Login 事件携带 login_id、token 与 device（spec Scenario）。
+/// Login 事件携带 login_id、token 与 device。
 #[test]
 #[serial]
 fn login_event_carries_login_id_token_device() {
@@ -37,7 +37,7 @@ fn login_event_carries_login_id_token_device() {
     }
 }
 
-/// Logout 事件携带 login_id 与 token（spec Scenario）。
+/// Logout 事件携带 login_id 与 token。
 #[test]
 #[serial]
 fn logout_event_carries_login_id_and_token() {
@@ -57,7 +57,7 @@ fn logout_event_carries_login_id_and_token() {
     }
 }
 
-/// Kickout 事件携带踢出原因（spec Scenario）。
+/// Kickout 事件携带踢出原因。
 #[test]
 #[serial]
 fn kickout_event_carries_reason() {
@@ -82,7 +82,7 @@ fn kickout_event_carries_reason() {
     }
 }
 
-/// PermissionCheck 事件携带被校验权限（spec Scenario，v0.5.0 重命名）。
+/// PermissionCheck 事件携带被校验权限。
 #[test]
 #[serial]
 fn permission_check_event_carries_permission() {
@@ -104,7 +104,7 @@ fn permission_check_event_carries_permission() {
     }
 }
 
-/// RoleCheck 事件携带被校验角色（spec Scenario，v0.5.0 重命名）。
+/// RoleCheck 事件携带被校验角色。
 #[test]
 #[serial]
 fn role_check_event_carries_role() {
@@ -122,7 +122,7 @@ fn role_check_event_carries_role() {
     }
 }
 
-/// TokenExpired 事件携带过期 token（spec Scenario）。
+/// TokenExpired 事件携带过期 token。
 #[test]
 #[serial]
 fn token_expired_event_carries_token() {
@@ -138,7 +138,7 @@ fn token_expired_event_carries_token() {
     }
 }
 
-/// GarrisonEvent 派生 Debug 与 Clone（spec Requirement）。
+/// GarrisonEvent 派生 Debug 与 Clone。
 #[test]
 #[serial]
 fn event_derives_debug_and_clone() {
@@ -160,20 +160,20 @@ fn event_derives_debug_and_clone() {
 }
 
 // ========================================================================
-// 14 变体（spec R-audit-log-005）
+// 14 变体
 // ========================================================================
 
-/// 验证 `GarrisonEvent` 含 spec R-audit-log-005 要求的 14 个变体。
+/// 验证 `GarrisonEvent` 含全部 14 个变体。
 ///
 /// spec 要求变体：`Login`/`Logout`/`Kickout`/`LoginFailure`/`RevokeToken`/
 /// `PermissionCheck`/`RoleCheck`/`TokenRefresh`/`TokenRotate`/`SocialLogin`/
 /// `TenantSwitch`/`DeviceBlock`/`DeviceUnblock`/`ConfigReload`。
 ///
-/// Rule 7 冲突处理（kueiku Decision Matrix 分析结论：方案 C）：
+/// 设计取舍：
 /// - 现有 `TokenRevoke`/`PermissionDenied`/`RoleDenied`/`ApiKeyRotate` 语义与 spec 重复
-///   但名称不同 → 重命名对齐 spec
+/// 但名称不同 → 重命名对齐 spec
 /// - 现有独有变体（`TokenExpired`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/`TempCredentialConsumed`）保留
-///   （功能完整：暴力破解检测/会话超时/防火墙阻断等关键安全事件不能丢失）
+/// （功能完整：暴力破解检测/会话超时/防火墙阻断等关键安全事件不能丢失）
 /// - 最终变体数 19（spec 14 + 现有独有 5）
 #[test]
 #[serial]
@@ -298,7 +298,7 @@ fn garrison_event_includes_14_variants() {
 // GarrisonListener trait 测试
 // ========================================================================
 
-/// 默认 on_event 返回 Ok(())（spec Scenario：监听器需实现 on_event 方法）。
+/// 默认 on_event 返回 Ok(())。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn default_on_event_returns_ok() {
@@ -319,7 +319,7 @@ async fn default_on_event_returns_ok() {
 // GarrisonListenerManager 测试
 // ========================================================================
 
-/// manager 收集所有已注册监听器（spec Scenario）。
+/// manager 收集所有已注册监听器。
 #[test]
 #[serial]
 fn manager_collects_registered_listeners() {
@@ -328,7 +328,7 @@ fn manager_collects_registered_listeners() {
     assert!(manager.count() >= 2);
 }
 
-/// broadcast 调用所有监听器（spec Scenario）。
+/// broadcast 调用所有监听器。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn broadcast_invokes_all_listeners() {
@@ -345,7 +345,7 @@ async fn broadcast_invokes_all_listeners() {
     assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
 }
 
-/// 单个监听器失败不中断广播（spec Scenario）。
+/// 单个监听器失败不中断广播。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn broadcast_listener_failure_does_not_interrupt() {

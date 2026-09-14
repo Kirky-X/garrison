@@ -769,7 +769,7 @@ fn hex_encode_known_bytes() {
 }
 
 // ========================================================================
-// vuln-0008: nc 单调性校验测试（RFC 7616 §3.4.6 重放防护）
+// nc 单调性校验测试（RFC 7616 §3.4.6 重放防护）
 // ========================================================================
 
 /// `validate_nc` 首次使用 nonce 时接受任意 nc（with DAO）。
@@ -1011,17 +1011,17 @@ async fn validate_nc_isolates_nonces_with_dao() {
 }
 
 // ========================================================================
-// vuln-0008 三维度审查修复验证测试
+// 三维度审查修复验证测试
 // ========================================================================
 
-/// `validate_nc` 在 current_thread runtime 下 fail-closed（vuln-0012 修复验证）。
+/// `validate_nc` 在 current_thread runtime 下 fail-closed。
 ///
 /// 场景：注入 DAO，但在 current_thread tokio runtime 下调用 validate()。
 /// validate_nc 检测到 current_thread runtime 后应 fail-closed（不调用 block_in_place，
 /// 否则会 panic "Cannot block the current thread from within a runtime"），
 /// 返回 false 拒绝请求，避免允许重放攻击。
 ///
-/// vuln-0012 修复：原 fail-open 允许重放，违背 RFC 7616 §3.4.6。
+/// 原 fail-open 实现允许重放，违背 RFC 7616 §3.4.6。
 /// 注意：使用 `#[tokio::test]`（不带 `flavor = "multi_thread"`）创建 current_thread runtime。
 #[tokio::test]
 async fn validate_nc_current_thread_runtime_fail_closed() {
@@ -1060,7 +1060,7 @@ async fn validate_nc_current_thread_runtime_fail_closed() {
 
 /// 始终返回 DAO 错误的 mock DAO。
 ///
-/// 用于触发 `validate_nc` 的 fail-closed 路径（vuln-0012 修复：DAO 错误时拒绝请求）。
+/// 用于触发 `validate_nc` 的 fail-closed 路径（DAO 错误时拒绝请求）。
 struct FailingDao;
 
 #[async_trait::async_trait]
@@ -1104,12 +1104,12 @@ impl crate::dao::GarrisonDao for FailingDao {
     crate::atomic_test_fallback!();
 }
 
-/// `validate_nc` 在 DAO 错误时 fail-closed（vuln-0012 修复验证）。
+/// `validate_nc` 在 DAO 错误时 fail-closed。
 ///
 /// 场景：注入始终返回错误的 FailingDao，validate_nc 内部 compare_and_update_if_greater
 /// 调用 DAO 失败后应 fail-closed（返回 false），拒绝请求防止重放攻击。
 ///
-/// vuln-0012 修复：原 fail-open 允许重放（接受请求），违背 RFC 7616 §3.4.6。
+/// 原 fail-open 实现允许重放（接受请求），违背 RFC 7616 §3.4.6。
 /// nonce TTL（300s）不足以防重放（窗口内仍可重放），必须 fail-closed。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_nc_dao_error_fail_closed() {
@@ -1173,13 +1173,13 @@ async fn validate_nc_dao_error_fail_closed() {
     );
 }
 
-/// `validate_nc` 在无 tokio runtime 时 fail-closed（vuln-0012 修复验证，LOW-sec 补充）。
+/// `validate_nc` 在无 tokio runtime 时 fail-closed。
 ///
 /// 场景：注入 DAO，但 `validate()` 在非 async 上下文中调用（无 tokio runtime）。
 /// `Handle::try_current()` 返回 `Err`，validate_nc 应 fail-closed（返回 false），
 /// 拒绝请求防止重放攻击，而不是 fail-open 允许重放。
 ///
-/// vuln-0012 修复：原 fail-open 允许重放，违背 RFC 7616 §3.4.6。
+/// 原 fail-open 实现允许重放，违背 RFC 7616 §3.4.6。
 /// 注意：使用普通 `#[test]`（不引入 tokio runtime），与 `#[tokio::test]` 区分。
 #[test]
 fn validate_nc_no_runtime_fail_closed() {
@@ -1216,7 +1216,7 @@ fn validate_nc_no_runtime_fail_closed() {
     );
 }
 
-/// `validate_nc` 拒绝非 hex 格式的 nc（LOW-2 修复验证）。
+/// `validate_nc` 拒绝非 hex 格式的 nc（修复验证）。
 ///
 /// 场景：nc="gggggggg"（非 hex 字符），`u64::from_str_radix(_, 16)` 解析失败，
 /// validate_nc 返回 false（拒绝畸形请求，不是 fail-open）。
@@ -1246,7 +1246,7 @@ async fn validate_nc_malformed_hex_rejected() {
 }
 
 // ========================================================================
-// CRITICAL-5: Digest Auth URI 校验（RFC 7616 §3.4.6）
+// Digest Auth URI 校验（RFC 7616 §3.4.6）
 // ========================================================================
 
 /// 客户端 uri 与实际请求 URI 不匹配时应被拒绝（防跨 URI 重放攻击）。

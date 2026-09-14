@@ -77,7 +77,7 @@ pub trait PermissionChecker: Send + Sync {
     /// 校验过程本身出错（如 DAO 故障、参数无效）返回 `Err(GarrisonError)`；
     /// "未持有权限"不是错误，返回 `Ok(Decision { allowed: false, .. })`。
     async fn authorize(&self, request: &AuthRequest) -> GarrisonResult<Decision> {
-        // D5：decision-trace feature 启用时自动生成 UUID v7 作为 trace_id
+        // decision-trace feature 启用时自动生成 UUID v7 作为 trace_id
         // （时间有序，便于跨服务追踪与日志关联）；不启用时为 None，避免性能开销。
         #[cfg(feature = "core-advanced")]
         let trace_id = Some(uuid::Uuid::now_v7().to_string());
@@ -141,25 +141,25 @@ pub trait PermissionChecker: Send + Sync {
     ///
     /// 内部调用 `has_permission`，遇到错误时该权限按 fail-closed 视为不满足。
     ///
-    /// # 错误处理说明（Issue 48 / issue 2415/2671/2669/3090）
+    /// # 错误处理说明
     ///
     /// 返回类型为 `bool` 而非 `GarrisonResult<bool>`（trait 公开 API，变更会破坏
     /// 所有实现方与调用方），底层 `has_permission` 的错误（如 DAO 不可达、超时）
     /// 无法通过返回值表达。语义与可观测性契约：
     ///
     /// - **fail-closed 的可用性代价（安全敏感）**：底层存储故障会被降级为
-    ///   「不满足」——攻击者若能诱发临时 DAO 故障，可借此拒绝合法用户的授权判定。
+    /// 「不满足」——攻击者若能诱发临时 DAO 故障，可借此拒绝合法用户的授权判定。
     /// - **故障不再静默**：默认实现（`PermissionCheckerDefault`）在错误路径逐条
-    ///   输出 `tracing::warn!`（含 login_id / permission / 错误详情），可对接告警。
+    /// 输出 `tracing::warn!`（含 login_id / permission / 错误详情），可对接告警。
     /// - **需要区分「无权限」与「故障」时**：请使用 [`authorize()`](Self::authorize)
-    ///   （返回 `GarrisonResult<Decision>`，错误显性化，不降级）。
+    /// （返回 `GarrisonResult<Decision>`，错误显性化，不降级）。
     async fn has_any_permission(&self, login_id: &str, perms: &[&str]) -> bool;
 
     /// 批量校验权限：全部满足才返回 true。
     ///
     /// 内部调用 `has_permission`，遇到错误时该权限按 fail-closed 视为不满足。
     ///
-    /// # 错误处理说明（Issue 48 / issue 2415/2671/3090）
+    /// # 错误处理说明
     ///
     /// 同 [`has_any_permission`](Self::has_any_permission)：返回 `bool`，底层错误
     /// fail-closed 降级并输出 `warn` 日志；需要错误通道时使用 `authorize()`。
@@ -176,7 +176,7 @@ pub struct PermissionCheckerDefault {
     interface: Arc<dyn GarrisonInterface>,
 }
 
-/// `PermissionCheckerDefault` 实现块（从 mod.rs 迁移，遵循规则 25 mod.rs 接口隔离）。
+/// `PermissionCheckerDefault` 实现块（从 mod.rs 迁移，遵循mod.rs 接口隔离约定）。
 pub mod default;
 
 #[cfg(test)]

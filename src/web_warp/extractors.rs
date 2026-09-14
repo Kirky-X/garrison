@@ -99,8 +99,8 @@ pub async fn garrison_recover(err: warp::Rejection) -> Result<Response, warp::Re
 /// 在 handler 链中使用：
 /// ```ignore
 /// let routes = warp::path("api")
-///     .and(check_login(config))
-///     .map(|| "authenticated");
+/// .and(check_login(config))
+/// .map(|| "authenticated");
 /// ```
 pub fn check_login(
     config: Arc<GarrisonConfig>,

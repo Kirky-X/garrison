@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-/// 计算 context 成分的缓存 key 分量（issue 6474/6478/6480/6482 修复）。
+/// 计算 context 成分的缓存 key 分量。
 ///
 /// `context_json` 曾被排除在缓存 key 之外（设计），导致同一
 /// (principal, action, resource) 三元组下不同 context 共享缓存条目，
@@ -45,8 +45,8 @@ fn context_key_component(context_json: Option<&str>) -> String {
 ///
 /// # 设计权衡
 ///
-/// `context_json` 以 SHA-256 前 16 字节摘要参与缓存 key（issue 6474/6478/6480/6482），
-/// 不同 context 不再共享缓存条目。实体属性状态仍**不**参与 key（issue 6473/6481/6483）：
+/// `context_json` 以 SHA-256 前 16 字节摘要参与缓存 key，
+/// 不同 context 不再共享缓存条目。实体属性状态仍**不**参与 key：
 /// - 实体属性数据量大且无稳定指纹，纳入 key 的成本过高
 /// - 实体变更时调用方需调用 [`AbacEngine::invalidate_entities`] 清空缓存（见其文档）
 /// - 策略变更（load/unload/reload_all）通过 `clear()` + 代数递增保证一致性
@@ -89,7 +89,7 @@ pub struct AbacEngine {
     authorizer: Authorizer,
     /// 策略集（RwLock 支持热加载时读写分离）。
     policies: Arc<RwLock<PolicySet>>,
-    /// 策略集代数（issue 6299 竞态修复）。
+    /// 策略集代数（用于并发竞态防护）。
     ///
     /// 每次策略集变更（load_policy / unload_policy / reload_all，均在写锁范围内）
     /// 递增。`evaluate` 在读锁范围内克隆策略快照时同时读取代数，写缓存前重读比较：
@@ -118,8 +118,8 @@ impl AbacEngine {
     /// # 参数
     /// - `schema_json`：Cedar schema JSON 字符串
     /// - `entity_loader`：实体加载器（`Arc<dyn EntityLoader>`）。
-    ///   传 `Arc::new(EmptyEntityLoader)` 保持空实体行为，传 `Arc::new(StaticEntityLoader::new(...))`
-    ///   支持基于属性的策略。
+    /// 传 `Arc::new(EmptyEntityLoader)` 保持空实体行为，传 `Arc::new(StaticEntityLoader::new(...))`
+    /// 支持基于属性的策略。
     ///
     /// # 错误
     /// - schema JSON 解析失败：`GarrisonError::InvalidParam`
@@ -148,7 +148,7 @@ impl AbacEngine {
 
     /// 清空决策缓存（实体状态变更时由调用方触发）。
     ///
-    /// # 何时调用（issue 6473/6481/6483 / 2764 / 3191 / 8320）
+    /// # 何时调用
     ///
     /// 决策缓存 key 含 (principal, action, resource, context 摘要)，但**不含实体属性状态**。
     /// 若 `EntityLoader` 返回的实体属性在运行期发生变化（如 `resource.owner` 所有权转移、
@@ -182,7 +182,7 @@ impl AbacEngine {
     /// # 缓存语义
     ///
     /// 缓存 key 为 (principal, action, resource, context 摘要) 四元组：不同
-    /// `context_json` 不会共享缓存条目（issue 6474/6478/6480/6482）。实体属性状态
+    /// `context_json` 不会共享缓存条目。实体属性状态
     /// 不参与 key——实体变更时调用方需调用 [`Self::invalidate_entities`]。
     ///
     /// # 错误
@@ -216,7 +216,7 @@ impl AbacEngine {
         }
 
         // 在读锁范围内读取策略代数并克隆策略快照：写方在写锁范围内递增代数，
-        // 因此（代数, 策略快照）对在读锁内是一致的（issue 6299）
+        // 因此（代数, 策略快照）对在读锁内是一致的
         let (policies, generation) = {
             let guard = self.policies.read().await;
             (
@@ -244,7 +244,7 @@ impl AbacEngine {
         }
 
         // 写入缓存（仅在求值成功后）
-        // issue 6299：写缓存前重读策略代数。若求值期间发生了热加载
+        // 写缓存前重读策略代数。若求值期间发生了热加载
         //（load/unload/reload_all 已清空缓存并递增代数），本决策基于旧策略快照，
         // 写入会把陈旧决策回填到新策略集的缓存中（TTL 60s 内返回过期决策）——跳过写入。
         if self.policy_generation.load(Ordering::Acquire) != generation {
@@ -284,7 +284,7 @@ impl AbacEngine {
             .add(policy)
             .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-policy-add::{}", e)))?;
         // 策略变更后清空决策缓存（新策略可能改变现有 key 的决策）；
-        // 在写锁范围内递增策略代数，使并发 evaluate 的旧快照决策跳过缓存写回（issue 6299）
+        // 在写锁范围内递增策略代数，使并发 evaluate 的旧快照决策跳过缓存写回
         self.policy_generation.fetch_add(1, Ordering::Release);
         self.cache.clear().await.map_err(|e| {
             GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
@@ -306,7 +306,7 @@ impl AbacEngine {
             .remove_static(policy_id)
             .map_err(|e| GarrisonError::InvalidParam(format!("abac-cedar-policy-delete::{}", e)))?;
         // 策略变更后清空决策缓存（移除策略可能改变现有 key 的决策）；
-        // 在写锁范围内递增策略代数（issue 6299，同 load_policy）
+        // 在写锁范围内递增策略代数（同 load_policy）
         self.policy_generation.fetch_add(1, Ordering::Release);
         self.cache.clear().await.map_err(|e| {
             GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
@@ -338,7 +338,7 @@ impl AbacEngine {
         *guard = new_set;
         // 策略集原子替换后清空决策缓存（新策略集可能改变现有 key 的决策）
         // 仅在替换成功后执行；任一策略解析失败时提前 return Err，不会到达此处。
-        // 在写锁范围内递增策略代数（issue 6299，同 load_policy）
+        // 在写锁范围内递增策略代数（同 load_policy）
         self.policy_generation.fetch_add(1, Ordering::Release);
         self.cache.clear().await.map_err(|e| {
             GarrisonError::InvalidParam(format!("abac-decision-cache-clear::{}", e))
@@ -396,10 +396,10 @@ impl AbacEngine {
     /// 共享求值 helper：构建 Request → Cedar 求值 → 诊断错误 fail-closed → Decision 映射。
     ///
     /// `evaluate` 与 `evaluate_with_temp_policy` 原本各自维护一份重复的
-    /// 构建/求值/诊断逻辑（issue 2757/2761 与 2756/2760/2762 同根因两处漂移），
+    /// 构建/求值/诊断逻辑，
     /// 抽取至此单点维护。
     ///
-    /// # Cedar 诊断错误的 fail-closed 处理（issue 2756-2762）
+    /// # Cedar 诊断错误的 fail-closed 处理
     ///
     /// Cedar `is_authorized` 在策略内部求值出错（schema 不匹配、类型错误、运行时
     /// 错误）时仍可能返回 `Allow`。原实现仅记录 warn 后照常采用 `response.decision()`，
@@ -408,7 +408,7 @@ impl AbacEngine {
     ///
     /// # 返回
     /// - `(Decision, has_eval_errors)`：`has_eval_errors` 为 true 表示诊断含错误，
-    ///   决策为 fail-closed 拒绝；调用方不得将该决策写入缓存（瞬态故障不钉死 TTL）。
+    /// 决策为 fail-closed 拒绝；调用方不得将该决策写入缓存（瞬态故障不钉死 TTL）。
     ///
     /// # 错误
     /// - EntityUid/Context/Request 解析失败：`GarrisonError::InvalidParam`
@@ -448,7 +448,7 @@ impl AbacEngine {
         let entities = self.entity_loader.load_entities().await?;
         let response = self.authorizer.is_authorized(&request, policies, &entities);
 
-        // 记录 Cedar 诊断错误（Issue 3/91: 原代码丢弃了 diagnostics errors）
+        // 记录 Cedar 诊断错误（原代码丢弃了 diagnostics errors）
         let mut has_eval_errors = false;
         for error in response.diagnostics().errors() {
             has_eval_errors = true;
@@ -462,7 +462,7 @@ impl AbacEngine {
             );
         }
 
-        // issue 2756-2762：诊断含错误时默认拒绝（fail-closed），绝不采用 Cedar 的
+        // 诊断含错误时默认拒绝（fail-closed），绝不采用 Cedar 的
         // Allow——策略求值故障（schema/类型/运行时错误）必须显性化为 Deny + 日志告警，
         // 而非静默放行。
         if has_eval_errors {
@@ -1617,7 +1617,7 @@ mod tests {
     }
 
     // ============================================================
-    // issue 6474/6477/6478/6480/6482: context 参与缓存 key
+    // context 参与缓存 key
     // ============================================================
 
     /// context 敏感 schema：access 动作带 context 属性 `level`（Long）。
@@ -1690,7 +1690,7 @@ mod tests {
         assert!(allow_again.allowed, "level=5 缓存条目应保持 Allow");
     }
 
-    /// issue 6473/6481/6483/8320：invalidate_entities 清空决策缓存。
+    /// invalidate_entities 清空决策缓存。
     #[tokio::test]
     async fn invalidate_entities_clears_decision_cache() {
         let engine = AbacEngine::new(SCHEMA_JSON, Arc::new(EmptyEntityLoader))
@@ -1721,7 +1721,7 @@ mod tests {
     }
 
     // ============================================================
-    // issue 2756-2762: Cedar 诊断错误 fail-closed
+    // Cedar 诊断错误 fail-closed
     // ============================================================
 
     /// Cedar 求值诊断错误时必须 fail-closed 拒绝（不得采用 Cedar 的 Allow）。

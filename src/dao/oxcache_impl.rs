@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! GarrisonDaoOxcache 实现（从 mod.rs 迁移，Rule 25 合规）。
+//! GarrisonDaoOxcache 实现（从 mod.rs 迁移）。
 
 use super::GarrisonDao;
 #[cfg(feature = "cache-redis")]
@@ -16,7 +16,7 @@ use std::time::Duration;
 /// 根据租户上下文返回实际存储 key。
 ///
 /// - `tenant-isolation` feature 启用且 `TENANT.try_get()` 返回 `Ok(ctx)`：
-///   返回 `format!("{}{}:{}", DaoKeyPrefix::Tenant, ctx.tenant_id, key)`
+/// 返回 `format!("{}{}:{}", DaoKeyPrefix::Tenant, ctx.tenant_id, key)`
 /// - feature 关闭或 `TENANT` 上下文不存在（`try_get` 返回 `Err`）：返回 `key.to_string()`（不变）
 ///
 /// # 设计
@@ -84,14 +84,14 @@ fn strip_prefix(prefixed: &str) -> String {
 /// - L1（内存）+ L2（redis）由 oxcache 0.3 自动管理（oxcache 0.3 支持 per-entry TTL）。
 /// - Garrison 自身不实现任何缓存逻辑，全部委托给 oxcache。
 /// - 启用 `sync_mode(true)` 后使用 `_sync` API，
-///   要求调用方在 multi_thread tokio runtime 中执行。
+/// 要求调用方在 multi_thread tokio runtime 中执行。
 ///
 /// # TTL 保留
 /// - `update` 通过 `cache.ttl_sync()` 读取剩余 TTL，用 `set_with_ttl_sync` 保留原 TTL（不重置过期时间）
 /// - `expire` 通过 `cache.expire_sync()` 原子更新 TTL（不触碰 value）
 /// - 依赖本地 oxcache 仓库（crates.io 0.3.0 未暴露 `Cache<K,V>::ttl_sync()`，本地仓库已暴露）
 ///
-/// # 性能约束（A-009 评估结论）
+/// # 性能约束
 ///
 /// `_sync` API 仅适用于 oxcache in-memory 后端：
 /// - 读操作（`get_sync`/`exists_sync`/`ttl_sync`）：无锁读，<100ns
@@ -107,7 +107,7 @@ pub struct GarrisonDaoOxcache {
     /// **字段排序依据**（Cache 局部性优化）：按访问频率降序排列，
     /// 高频字段前置以优先命中 L1 Cache Line（鲲鹏 128B / x86 64B）。
     ///
-    /// **为何用 `parking_lot::Mutex` 而非 `tokio::sync::Mutex`**（H3 修复）：
+    /// **为何用 `parking_lot::Mutex` 而非 `tokio::sync::Mutex`**：
     /// 原实现用 `tokio::sync::Mutex` + async cache API（`cache.get().await`），
     /// 跨 await 持锁序列化所有原子操作。改为 `parking_lot::Mutex` + `_sync` API
     /// （`cache.get_sync()`），锁内全同步操作（<1μs），不让出 tokio task，
@@ -203,7 +203,7 @@ impl GarrisonDaoOxcache {
     /// in-memory 后端,Redis L2 后端的网络 I/O 会阻塞 tokio worker 线程。
     ///
     /// 当 `cache-redis` feature 启用且 `redis_config` 已设置时,返回 `Err(Config)` 提示不兼容,
-    /// 防止用户误用 _sync API 导致 tokio worker 阻塞（规则12 失败必须显性化）。
+    /// 防止用户误用 _sync API 导致 tokio worker 阻塞（失败必须显性化）。
     ///
     /// # 返回
     /// - `Ok(())`: in-memory 后端,`_sync` API 可用
@@ -434,7 +434,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// oxcache `_sync` API 直接操作底层 HashMap（绕过 Moka channel 延迟），
     /// `exists_sync` + `set_with_ttl_sync` 在 Mutex 串行化下提供原子语义。
     ///
-    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
     /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
     /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
@@ -476,7 +476,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// **流程**：Mutex 内通过 `get_sync` 读取当前值，递增后用 `set_with_ttl_sync` 写回。
     /// key 不存在时初始化为 1。key 已存在时通过 `ttl_sync` 读取剩余 TTL 并保留。
     ///
-    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
     /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
     /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
@@ -493,7 +493,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
         {
             Some(v) => {
-                // Rule 12：parse 失败必须显式报错，禁止静默返回 0 导致计数器重置
+                // parse 失败必须显式报错，禁止静默返回 0 导致计数器重置
                 let cur_val: u64 = v.parse().map_err(|_| {
                     GarrisonError::Dao(format!("dao-incr-parse-u64::{}::{}", actual_key, v))
                 })?;
@@ -536,9 +536,9 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// - key 不存在或已过期：返回 0（不创建 key）
     /// - cur_val == 0：返回 0（不递减为负，不删除 key）
     /// - cur_val > 0：递减 1；new_val == 0 时 `delete_sync` 删除 key；
-    ///   new_val > 0 时用 `ttl_sync` 读取剩余 TTL 并 `set_with_ttl_sync` 保留（不重置窗口）
+    /// new_val > 0 时用 `ttl_sync` 读取剩余 TTL 并 `set_with_ttl_sync` 保留（不重置窗口）
     ///
-    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
     /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
     /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
@@ -555,7 +555,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
         {
             Some(v) => {
-                // Rule 12：parse 失败必须显式报错（与 incr 一致，禁止静默返回 0）
+                // parse 失败必须显式报错（与 incr 一致，禁止静默返回 0）
                 let cur_val: u64 = v.parse().map_err(|_| {
                     GarrisonError::Dao(format!("dao-decr-parse-u64::{}::{}", actual_key, v))
                 })?;
@@ -593,7 +593,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// - key 已存在且 new_value > current_val：用 `ttl_sync` 读取剩余 TTL 保留（不重置）
     /// - key 已存在但 new_value <= current_val：不修改，返回 false
     ///
-    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
     /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
     /// 用于 HTTP Digest nc 单调性校验（RFC 7616 §3.4.6），消除 get→compare→set TOCTOU 竞态。
@@ -616,7 +616,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
         {
             Some(v) => {
-                // M1 修复：parse 失败必须显式报错（与 incr 方法一致，Rule 12 错误显性化），
+                // parse 失败必须显式报错（与 incr 方法一致，错误显性化），
                 // 禁止 unwrap_or(0) 静默返回 0 导致 nc 计数器被错误重置
                 v.parse().map_err(|_| {
                     GarrisonError::Dao(format!(
@@ -654,7 +654,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// 在单个 `lock()` 作用域内完成 get → compare → set，消除 TOCTOU 竞态。
     /// 用于备份码消费等需要原子 CAS 语义的场景。
     ///
-    /// **H3 修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
+    /// **修复**：原实现用 `tokio::sync::Mutex` + async cache API，跨 await 持锁。
     /// 改为 `parking_lot::Mutex` + `_sync` API，锁内全同步操作（<1μs）。
     ///
     /// 跨进程限制：多进程共享 Redis L2 时仍存在 TOCTOU 竞态
@@ -925,7 +925,7 @@ mod tests {
         assert!(dao.get_timeout("ic_perm").await.unwrap().is_none());
     }
 
-    /// Rule 12：incr 现存值非 u64 时显式报错（禁止静默重置计数器）。
+    /// incr 现存值非 u64 时显式报错（禁止静默重置计数器）。
     #[tokio::test(flavor = "multi_thread")]
     async fn incr_non_numeric_value_returns_error() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -998,7 +998,7 @@ mod tests {
         );
     }
 
-    /// Rule 12：decr 现存值非 u64 时显式报错（与 incr 对称）。
+    /// decr 现存值非 u64 时显式报错（与 incr 对称）。
     #[tokio::test(flavor = "multi_thread")]
     async fn decr_non_numeric_value_returns_error() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
@@ -1092,7 +1092,7 @@ mod tests {
         );
     }
 
-    /// CAS-greater：现存值非 u64 时显式报错（M1 修复，Rule 12）。
+    /// CAS-greater：现存值非 u64 时显式报错。
     #[tokio::test(flavor = "multi_thread")]
     async fn compare_greater_non_numeric_value_returns_error() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();

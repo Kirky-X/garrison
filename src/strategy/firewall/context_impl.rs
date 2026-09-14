@@ -9,7 +9,7 @@ use crate::error::{GarrisonError, GarrisonResult};
 impl FirewallContext {
     /// 创建防火墙上下文，仅指定 IP。
     ///
-    /// # IP 校验（issue #2832/#3469/#3693）
+    /// # IP 校验
     ///
     /// 本构造器**不校验** IP 格式（保持既有签名 `Self`，不破坏调用方），
     /// 仅在 debug 构建下 `debug_assert` IP 可解析。生产代码建议改用

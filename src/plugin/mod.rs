@@ -6,7 +6,7 @@
 //! 通过 `inventory` crate 实现编译期插件注册（替代 Java SPI），
 //! 插件在编译期通过 `inventory::submit!` 注册，运行期通过 `inventory::iter!` 收集。
 //!
-//! 0.2.0 提供完整的生命周期钩子（on_login/on_logout/on_permission_check），
+//! 提供完整的生命周期钩子（on_login/on_logout/on_permission_check），
 //! 插件失败仅记录 `tracing::warn!`，不中断主流程。
 
 use crate::error::GarrisonResult;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 /// 所有钩子方法 MUST 提供默认空实现（返回 `Ok(())`），使插件方可选择性覆盖。
 /// trait 绑定 `Send + Sync`，插件可在多线程环境共享。
 ///
-/// `login_id` 为 `&str`（v0.5.2 迁移：原 i64 → String，与全局 login_id 迁移一致）。
+/// `login_id` 为 `&str`。
 pub trait GarrisonPlugin: Send + Sync {
     /// 插件名称，用于唯一标识。
     fn name(&self) -> &str;
@@ -26,7 +26,7 @@ pub trait GarrisonPlugin: Send + Sync {
     ///
     /// 默认空实现返回 `Ok(())`。
     ///
-    /// # ⚠️ 凭据警示（ocr #2345）
+    /// # ⚠️ 凭据警示
     ///
     /// `token` 为登录凭据，实现方**不得**记录其任何片段（含前缀）到日志或
     /// 审计输出；如需关联请记录 `login_id` 或 token 哈希摘要。
@@ -72,7 +72,7 @@ inventory::collect!(GarrisonPluginEntry);
 /// 插件方法返回 `Err` 时仅记录 `tracing::warn!` 日志，不中断主流程；
 /// 插件**工厂函数 panic** 同样被捕获、跳过并记录 `tracing::warn!`，不中断启动。
 ///
-/// # ⚠️ 凭据警示（ocr #2345）
+/// # ⚠️ 凭据警示
 ///
 /// 生命周期钩子的 `token` 参数是**凭据**：插件实现不得将其（含前缀）写入
 /// 日志、审计或任何输出——即使 8 字符前缀也足以帮助攻击者验证猜测/重放。

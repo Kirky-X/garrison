@@ -16,7 +16,7 @@ use crate::core::token::Token;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::session::GarrisonSession;
 
-/// 身份切换权限校验 trait（L4 修复，依据安全审计 L4）。
+/// 身份切换权限校验 trait。
 ///
 /// `switch_to` 执行前调用 [`SwitchToGuard::check`] 校验是否允许切换。
 /// 默认实现 [`DenyAllSwitchToGuard`] 拒绝所有切换（fail-closed 安全默认），
@@ -24,7 +24,7 @@ use crate::session::GarrisonSession;
 ///
 /// # 设计理由
 ///
-/// 审计 L4 指出 `switch_to` 无权限校验，普通用户可切换到管理员身份。
+/// 若无权限校验，`switch_to` 允许普通用户切换到管理员身份（垂直越权）。
 /// 采用 guard trait 模式（而非硬编码权限规则）让调用方灵活定义授权策略，
 /// 如基于角色、基于 PermissionChecker、或基于配置白名单。
 ///
@@ -37,7 +37,7 @@ use crate::session::GarrisonSession;
 /// 1. **original 权限**：调用方是否具备 `switch_to` 权限（如 `admin:switch`）
 /// 2. **target 可切换范围**：target 是否在允许切换的集合内（如同一租户、下级账号）
 /// 3. **审计日志**：每次 switch_to 记录 `original / target / timestamp / request_context`，
-///    便于事后追溯
+/// 便于事后追溯
 ///
 /// 推荐参考 `AdminOnlyGuard` 示例实现自定义 guard。
 ///
@@ -52,20 +52,20 @@ use crate::session::GarrisonSession;
 /// struct AdminOnlyGuard;
 /// #[async_trait::async_trait]
 /// impl SwitchToGuard for AdminOnlyGuard {
-///     async fn check(&self, original: &str, target: &str) -> GarrisonResult<()> {
-///         if original.starts_with("admin:") {
-///             Ok(())
-///         } else {
-///             Err(garrison::error::GarrisonError::NotPermission(
-///                 format!("{} 无权切换到 {}", original, target)
-///             ))
-///             ))
-///         }
-///         }
-///     }
+/// async fn check(&self, original: &str, target: &str) -> GarrisonResult<()> {
+/// if original.starts_with("admin:") {
+/// Ok(())
+/// } else {
+/// Err(garrison::error::GarrisonError::NotPermission(
+/// format!("{} 无权切换到 {}", original, target)
+/// ))
+/// ))
+/// }
+/// }
+/// }
 ///
 /// let auth = AuthLogicDefault::new(session, token_handler, 3600)
-///     .with_switch_to_guard(Arc::new(AdminOnlyGuard));
+/// .with_switch_to_guard(Arc::new(AdminOnlyGuard));
 /// ```
 #[async_trait]
 pub trait SwitchToGuard: Send + Sync {
@@ -77,7 +77,7 @@ pub trait SwitchToGuard: Send + Sync {
     async fn check(&self, original_login_id: &str, target_login_id: &str) -> GarrisonResult<()>;
 }
 
-/// 拒绝所有切换的默认 guard（L4 修复，fail-closed 安全默认）。
+/// 拒绝所有切换的默认 guard（fail-closed 安全默认）。
 ///
 /// 未通过 [`AuthLogicDefault::with_switch_to_guard`] 注入自定义 guard 时，
 /// 所有 `switch_to` 调用都被拒绝。强制调用方显式配置权限规则。
@@ -135,9 +135,9 @@ pub trait AuthLogic: Send + Sync {
     /// # 错误
     /// - `GarrisonError::NotLogin`: token 无效或已过期。
     /// - `GarrisonError::InvalidParam`: `target_login_id` 为空字符串。
-    /// - `GarrisonError::NotPermission`: 无权切换，或目标不可用。注意（issue 2663
-    ///   反枚举）：目标 login_id 不存在与权限不足返回**同一**模糊错误类型与稳定
-    ///   错误码（`core-auth-switch-to-denied`），外部不可通过错误差异枚举账号存在性。
+    /// - `GarrisonError::NotPermission`: 无权切换，或目标不可用。注意（
+    /// 反枚举）：目标 login_id 不存在与权限不足返回**同一**模糊错误类型与稳定
+    /// 错误码（`core-auth-switch-to-denied`），外部不可通过错误差异枚举账号存在性。
     ///
     /// # 默认实现
     /// 返回 `GarrisonError::NotImplemented`，由 `AuthLogicDefault` 覆盖。
@@ -182,21 +182,21 @@ pub struct AuthLogicDefault {
     token_handler: Arc<dyn Token>,
     /// 默认 token 有效期（秒）。
     ///
-    /// 构造器级正数校验（issue 2664）：`AuthLogicDefault::new` 拒绝非正数，
+    /// 构造器级正数校验：`AuthLogicDefault::new` 拒绝非正数，
     /// 负值回退为 3600 秒并输出 warn——否则负值会在 TTL 计算处经 `as u64`
-    /// 回绕为事实上的永久会话（issue 2408，CWE-190）。
+    /// 回绕为事实上的永久会话（CWE-190）。
     timeout: i64,
     /// 是否启用 remember_me 扩展超时。
     remember_me_enabled: bool,
     /// remember_me 扩展超时秒数（默认 7776000 = 90 天）。
     ///
-    /// 同样受构造器级正数校验（issue 2664）：`with_remember_me` 拒绝非正数，
+    /// 同样受构造器级正数校验：`with_remember_me` 拒绝非正数，
     /// 回退为 7776000 秒并输出 warn。
     remember_me_timeout: i64,
-    /// 身份切换权限校验 guard（L4 修复，默认 DenyAllSwitchToGuard fail-closed）。
+    /// 身份切换权限校验 guard（默认 DenyAllSwitchToGuard fail-closed）。
     switch_to_guard: Arc<dyn SwitchToGuard>,
     /// per-token 异步互斥锁，串行化同一 token 的 `renew_to_equivalent` 操作
-    ///（修复 CWE-362 TOCTOU 竞态，fix-refresh-race-and-test-contracts）。
+    ///（修复 CWE-362 TOCTOU 竞态）。
     ///
     /// key: token 字符串；value: `Arc<tokio::sync::Mutex<()>>`（异步锁，可跨 `.await` 持有）。
     ///
@@ -204,16 +204,16 @@ pub struct AuthLogicDefault {
     /// `token_session_locks` 一致）。相比 `parking_lot::Mutex<HashMap>`：
     /// - 并发性更好（分片锁 vs 单锁序列化）
     /// - API 更简洁（`entry().or_insert_with()` 无需外层锁包裹）
-    /// - 风格一致（rule 11 惯例优先于新颖，rule 7 暴露冲突不折中）
+    /// - 风格一致（惯例优先于新颖，规则冲突不折中）
     ///
     /// 锁粒度选择：per-token 而非 per-login_id（粒度过粗影响并发吞吐），
     /// per-token 而非全局（性能不可接受）。不同 token 的 renew 仍可并行。
     ///
     /// 内存清理：renew 流程结束时检查 `Arc::strong_count`，若 == 1（无其他等待者）
     /// 则从 DashMap 移除 entry，避免攻击者用大量不同随机 token 灌满 HashMap 导致 OOM
-    ///（CWE-770 / HIGH-1 修复）。
+    ///（CWE-770）。
     ///
-    /// # 已知限制（Issue 44）
+    /// # 已知限制
     ///
     /// `strong_count` 检查与 `remove` 之间存在 TOCTOU 窗口：若另一并发任务在检查后、
     /// 移除前获取 Arc clone，entry 将被错误移除，该任务持有的 Mutex 仍有效但 DashMap

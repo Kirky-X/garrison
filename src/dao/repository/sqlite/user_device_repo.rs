@@ -62,12 +62,12 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         }
 
         // 2+3. MAX_DEVICES 上限检查 + 插入合并为单条条件 INSERT（原子，消除
-        //      check-then-act TOCTOU）：WHERE 子查询与 INSERT 同语句执行，
-        //      SQLite（单写者）下无并发窗口；PG/MySQL 在 READ COMMITTED 下
-        //      仍存在语句级快照窗口（见 `UserDeviceRepository::register_device` 文档）。
-        //      `FROM (SELECT 1) AS _g` 为占位 derived table：MySQL 不支持无 FROM
-        //      的 SELECT...WHERE，SQLite/PG/MySQL 三方言均兼容该写法。
-        //      rows_affected == 0 表示条件未满足（计数已达上限，含并发下被抢先填满）。
+        // check-then-act TOCTOU）：WHERE 子查询与 INSERT 同语句执行，
+        // SQLite（单写者）下无并发窗口；PG/MySQL 在 READ COMMITTED 下
+        // 仍存在语句级快照窗口（见 `UserDeviceRepository::register_device` 文档）。
+        // `FROM (SELECT 1) AS _g` 为占位 derived table：MySQL 不支持无 FROM
+        // 的 SELECT...WHERE，SQLite/PG/MySQL 三方言均兼容该写法。
+        // rows_affected == 0 表示条件未满足（计数已达上限，含并发下被抢先填满）。
         let device_id = uuid::Uuid::new_v4().to_string();
         let now = chrono::Utc::now().timestamp();
         let device_name = parse_device_name(ua);
@@ -202,7 +202,7 @@ fn parse_user_device_row(row: &QueryResult) -> GarrisonResult<UserDeviceRow> {
 
 /// 从 User-Agent 字符串解析设备名（简单字符串启发式）。
 ///
-/// 完整 `ua-parser` regex 集需启用 `ua-parser-precompiled` feature（设计 A4 决策延后），
+/// 完整 `ua-parser` regex 集需启用 `ua-parser-precompiled` feature（设计决策延后），
 /// 当前用关键字匹配提取 Browser + OS 信息。
 fn parse_device_name(ua: &str) -> Option<String> {
     if ua.is_empty() {

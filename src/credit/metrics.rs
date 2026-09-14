@@ -37,15 +37,15 @@
 /// # 构造语义（new 与 register_to 不可混用）
 ///
 /// - [`Self::new`] / `Default`：绑定 **prometheus 默认 registry** 的进程级单例
-///   （`OnceLock` 缓存）。所有后续 `new()` 调用返回同一实例，**忽略调用方期望的
-///   registry**——不要在 `register_to(custom)` 之后调用 `new()` 并期望指标落在
-///   custom registry 上。
+/// （`OnceLock` 缓存）。所有后续 `new()` 调用返回同一实例，**忽略调用方期望的
+/// registry**——不要在 `register_to(custom)` 之后调用 `new()` 并期望指标落在
+/// custom registry 上。
 /// - [`Self::register_to`]：注册到指定 registry（测试隔离 / 多 registry 场景）。
-///   对同一 registry 重复调用返回 `AlreadyReg` 错误；对**不同** registry 各自
-///   独立注册互不冲突。
+/// 对同一 registry 重复调用返回 `AlreadyReg` 错误；对**不同** registry 各自
+/// 独立注册互不冲突。
 /// - 两个构造器混用的后果：先 `register_to(custom)` 后 `new()` → 默认 registry
-///   与 custom registry 各有一套同名指标（重复采集）；先 `new()` 后
-///   `register_to(default_registry)` → 后者返回 `AlreadyReg`。
+/// 与 custom registry 各有一套同名指标（重复采集）；先 `new()` 后
+/// `register_to(default_registry)` → 后者返回 `AlreadyReg`。
 ///
 /// # 使用示例
 ///

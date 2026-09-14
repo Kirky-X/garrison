@@ -12,11 +12,11 @@ use super::*;
 impl GarrisonLogicDefault {
     /// login 实际逻辑（供 `login` 方法在 metrics 包装内调用）。
     ///
-    /// 0.3.0 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
+    /// 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
     ///
-    /// # 持锁时间（性能审查 LOW-2 标注，fix-refresh-race-and-test-contracts）
+    /// # 持锁时间
     ///
-    /// HIGH-1 修复后，`create_token_session_inner` + `enforce_max_login_count_inner`
+    /// `create_token_session_inner` + `enforce_max_login_count_inner`
     /// 在同一 `with_login_lock` 临界区内执行。持锁时间估算：
     /// - `max_login_count == 0`（不限制）：3 次 DAO 调用（create_inner 的 set×2 + get×1），典型 3-10ms
     /// - `max_login_count > 0` 且未超限：4 次 DAO 调用（+ enforce 的 get_account_session），典型 5-15ms
@@ -76,7 +76,7 @@ impl GarrisonLogicDefault {
     ///
     /// 抽取自 `login_inner` 与 `login_with_token` 的公共逻辑，统一会话创建配额行为，
     /// 保证 `create` 与 `enforce_max_login_count` 在同一 `with_login_lock` 临界区内执行，
-    /// 消除 TOCTOU 竞态（HIGH-1）。`enforce_max_login_count` 失败时对新建会话做回滚。
+    /// 消除 TOCTOU 竞态。`enforce_max_login_count` 失败时对新建会话做回滚。
     ///
     /// # 参数
     /// - `login_id` / `token`：会话主体与 token
@@ -92,9 +92,9 @@ impl GarrisonLogicDefault {
         remember_me: bool,
     ) -> GarrisonResult<()> {
         // 1. 并发策略（is_concurrent=false）。注意：必须在 login 锁外执行，
-        //    因为 `check_concurrent_policy` 在 OldDevice 模式下会调用 `kickout`
-        //    （内部再次获取 per-login_id 锁），与下方 `with_login_lock` 临界区不能嵌套，
-        //    否则会重入死锁。
+        // 因为 `check_concurrent_policy` 在 OldDevice 模式下会调用 `kickout`
+        // （内部再次获取 per-login_id 锁），与下方 `with_login_lock` 临界区不能嵌套，
+        // 否则会重入死锁。
         self.check_concurrent_policy(login_id).await?;
 
         // 2. 创建 + enforce 最大登录数（同一 login 锁区内）
@@ -196,7 +196,7 @@ impl GarrisonLogicDefault {
         Ok(())
     }
 
-    /// 自动生成设备指纹（A10 强化：使用 `device_fingerprint_rich`）。
+    /// 自动生成设备指纹（强化：使用 `device_fingerprint_rich`）。
     ///
     /// `LoginParams.device` 为 None 但 `user_agent` + `ip` 有值时生成 SHA-256 指纹。
     #[cfg_attr(
@@ -231,7 +231,7 @@ impl GarrisonLogicDefault {
         params
     }
 
-    /// 设备绑定策略检测（device-binding feature，A10 强化：hard block）。
+    /// 设备绑定策略检测（device-binding feature，强化：hard block）。
     pub(super) async fn check_device_binding(
         &self,
         login_id: &str,
@@ -311,13 +311,13 @@ impl GarrisonLogicDefault {
     ///
     /// 事件广播需启用 `listener` feature 且注入 `listener_manager`，否则跳过。
     ///
-    /// # 并发安全（fix-refresh-race-and-test-contracts / / HIGH-1 修复）
+    /// # 并发安全
     ///
     /// 整个函数体在 `with_login_lock(login_id)` 保护下执行，保证 enforce 内部
     /// Account-Session read-modify-write 序列的并发安全。内部 `logout` 改为
     /// `logout_inner`（不重入 `with_login_lock`），避免死锁。
     ///
-    /// # 与 `login_inner` 的关系（HIGH-1 修复后的契约）
+    /// # 与 `login_inner` 的关系
     ///
     /// 本方法**独立获取 `with_login_lock`**，调用方**无需也不能**预先持锁——
     /// `tokio::sync::Mutex` 不可重入，已持锁的调用方再调用本方法会直接死锁。
@@ -326,7 +326,7 @@ impl GarrisonLogicDefault {
     /// `enforce_max_login_count_inner`（无锁版本，`pub(crate)` 不出现在公开文档），
     /// 而非本方法。本方法仅供独立调用场景（如外部 API 主动触发踢出、测试代码）使用。
     ///
-    /// # 持锁时间（性能审查 MEDIUM-1 标注）
+    /// # 持锁时间
     ///
     /// 持锁期间执行 1 次 `get_account_session` + 至多 4N 次 DAO 调用
     /// （N = 待踢出 token 数：`get_token_session` + `logout_inner` 内的
@@ -353,19 +353,19 @@ impl GarrisonLogicDefault {
 
     /// enforce_max_login_count 内部实现（已在 with_login_lock 内，调用方必须已持锁）。
     ///
-    /// HIGH-1 修复（fix-refresh-race-and-test-contracts）：改为 `pub(crate)` 以供
+    /// 改为 `pub(crate)` 以供
     /// `login_inner` 在已持 `with_login_lock` 的临界区内直接调用，与
     /// `create_token_session_inner` 组合成真正的原子序列，消除
     /// `create_token_session` 返回时锁释放 → plugin/listener 跨 await →
     /// `enforce_max_login_count` 重新获取锁之间的 TOCTOU 竞态窗口。
     ///
-    /// # 已知优化机会（性能审查 LOW-1 标注，暂不修复）
+    /// # 已知优化机会（暂不修复）
     ///
     /// `login_inner` 调用链中，`create_token_session_inner` 已读取并修改
     /// `AccountSession`，本方法在超限踢出分支会再次 `get_account_session`
     /// 重新读取同一份数据（1 次冗余 DAO get）。修复方案（让 `create_token_session_inner`
     /// 返回 `AccountSession` 供本方法复用）会改变签名，影响 `enforce_max_login_count`
-    /// 独立调用路径，增加代码复杂度。当前选择不修复的理由（rule 2 简洁优先）：
+    /// 独立调用路径，增加代码复杂度。当前选择不修复的理由（简洁优先）：
     /// - 冗余读取仅在 `max_login_count > 0` 且超限踢出时发生（低频场景）
     /// - 1 次 DAO get 约 1-5ms，对用户体验无感知
     /// - enforce 独立可用性（fail-safe 重新读取）比微优化更重要
@@ -470,7 +470,7 @@ impl GarrisonLogicDefault {
                 uuid::Uuid::new_v4().simple()
             )),
             "simple" => {
-                // R-sessiontokenconsistency-002：复用 `SimpleTokenStyle`（HMAC-SHA256 签名），
+                // 复用 `SimpleTokenStyle`（HMAC-SHA256 签名），
                 // 消除裸 UUID 随机 token 与 verify 路径的格式不一致（单点真相）。
                 // `secure-simple-token` 未启用时 fail-closed 返回 Config 错误，与 TokenStyleFactory 一致。
                 #[cfg(feature = "secure-simple-token")]
@@ -514,7 +514,7 @@ impl GarrisonLogicDefault {
     ///
     /// 要求启用 `protocol-jwt` feature 且 `token_style=jwt`，否则返回 `Config` 错误。
     /// JWT verify 失败时透传 `InvalidToken`/`ExpiredToken`（不查询 session）。
-    /// H-14: `enable_jwt_revocation=true` 时，verify 成功后检查 jti 黑名单。
+    /// `enable_jwt_revocation=true` 时，verify 成功后检查 jti 黑名单。
     pub(super) async fn check_login_stateless(
         &self,
         token: &str,
@@ -538,9 +538,9 @@ impl GarrisonLogicDefault {
                 ));
             }
             let handler = crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
-            // spec R-002: 无效签名返回 InvalidToken，过期返回 ExpiredToken（透传 verify 错误）
+            // 无效签名返回 InvalidToken，过期返回 ExpiredToken（透传 verify 错误）
             let claims = handler.verify(token)?;
-            // H-14: JWT 撤销黑名单检查（verify 成功后、返回 Ok 前）
+            // JWT 撤销黑名单检查（verify 成功后、返回 Ok 前）
             if self.config.enable_jwt_revocation {
                 if let Some(jti) = &claims.jti {
                     let key = format!("jwt:blacklist:{}", jti);
@@ -578,7 +578,7 @@ impl GarrisonLogicDefault {
             if self.config.token_style == "jwt" {
                 let handler =
                     crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
-                // spec R-003: JWT 签名无效直接返回错误（不查询 session）
+                // JWT 签名无效直接返回错误（不查询 session）
                 handler.verify(token)?;
             }
         }
@@ -627,11 +627,11 @@ impl GarrisonLogicDefault {
     /// 不再重复读取）：
     /// - 悬停未超时：更新 `last_active`，返回 `Ok(true)`。
     /// - 悬停超时：执行 `logout` 并广播 `SessionTimeout` 事件。
-    ///   - `throw_on_not_login=true`：返回 `Err(Session)`。
-    ///   - `throw_on_not_login=false`：返回 `Ok(false)`。
+    /// - `throw_on_not_login=true`：返回 `Err(Session)`。
+    /// - `throw_on_not_login=false`：返回 `Ok(false)`。
     /// - 快照为 `None`（无法检查悬停）：返回 `Ok(true)`（视为有效，与原逻辑一致）。
     ///
-    /// logout 失败时记录 `warn` 日志而非静默吞掉（Fix M-4）。
+    /// logout 失败时记录 `warn` 日志而非静默吞掉。
     pub(super) async fn check_and_update_hover(
         &self,
         token: &str,
@@ -717,11 +717,11 @@ impl GarrisonLogicDefault {
 }
 
 // ============================================================================
-// GarrisonLogicDefault 私有方法：JWT 撤销黑名单（H-14）
+// GarrisonLogicDefault 私有方法：JWT 撤销黑名单
 // ============================================================================
 
 impl GarrisonLogicDefault {
-    /// H-14: 将 JWT 的 `jti` 写入 DAO 黑名单。
+    /// 将 JWT 的 `jti` 写入 DAO 黑名单。
     ///
     /// 解析 token 获取 claims，若 `jti` 为 Some 且 TTL > 0，
     /// 则写入 `jwt:blacklist:{jti}` = "1"（TTL = 剩余有效期秒数）。
@@ -749,7 +749,7 @@ impl GarrisonLogicDefault {
             return; // 已过期，无需加入黑名单
         }
         let key = format!("jwt:blacklist:{}", jti);
-        // （H-14 增强）: 写失败有界重试（退避 100/300ms，共 3 次尝试）。
+        // 写失败有界重试（退避 100/300ms，共 3 次尝试）。
         // 撤销写失败若只 warn 放行，被吊销 token 在全部节点继续有效至自然过期
         // （撤销传播延迟上界 = 剩余有效期）；重试消化瞬时抖动，最终失败升级为
         // error 日志供部署侧告警监控该窗口。对外仍保持幂等成功（logout 不因
@@ -882,12 +882,12 @@ impl GarrisonLogicDefault {
         // 持有 per-login_id **续签锁**（独立于 GarrisonSession::login_locks）执行续签。
         // 不能用 login_locks：renew_to_equivalent 内部调用 logout 会再次获取 login_locks → 死锁。
         //
-        // batch-08 修复（#5269/#5653/#5966/#8331）：
+        // 已知问题修复：
         // 1. 条目泄漏——续签完成后在安全点（guard 与本地 Arc clone 均已 drop）用
-        //    remove_if(strong_count==1) 移除无等待者的条目，防止 renewal_locks 随
-        //    唯一 login_id 数量无界增长（OOM / CWE-770）；
+        // remove_if(strong_count==1) 移除无等待者的条目，防止 renewal_locks 随
+        // 唯一 login_id 数量无界增长（OOM / CWE-770）；
         // 2. 取消安全——TokioMutex guard 取消时自动释放，但条目此前永不移除；
-        //    续签流程收敛进内部 async block，所有提前返回路径都经过统一清理。
+        // 续签流程收敛进内部 async block，所有提前返回路径都经过统一清理。
         let lock = self
             .renewal_locks
             .entry(login_id.clone())

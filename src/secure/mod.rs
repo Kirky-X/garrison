@@ -7,7 +7,7 @@
 //! 提供二步验证、签名校验、HTTP Basic/Digest 认证能力。
 //!
 //! 该模块在启用任一 `secure-*` 特性时编译（见 `lib.rs` 的 `#[cfg(any(...))]`）。
-//! 0.2.0 已实现全部安全子模块。
+//! 全部安全子模块均已实现。
 
 use crate::error::{GarrisonError, GarrisonResult};
 
@@ -193,7 +193,7 @@ pub mod sanitize;
 ///
 /// 提供 `crate::secure::ct_eq::constant_time_eq` 函数，基于 `subtle::ConstantTimeEq`
 /// 实现字节级常量时间比较，防止时序侧信道。供 `audit-log` / `oauth2-server` 等需要
-/// 常量时间比较的 feature 复用，避免在各模块重复实现（规则 7 先读再写）。
+/// 常量时间比较的 feature 复用，避免在各模块重复实现。
 #[cfg(feature = "secure-ct-eq")]
 pub mod ct_eq;
 

@@ -6,11 +6,11 @@
 //! 对应 JSON 模板层，
 //! 隔离具体 JSON 库（serde_json / simd-json 等）。
 //!
-//! ## 0.2.0 变更
+//! ## 组成
 //!
-//! - `GarrisonJsonTemplate` 从 0.1.0 的占位 trait 转为具体 struct（持有 `serde_json::Value`）
-//! - `GarrisonSerializerTemplate` 重命名为 `GarrisonSerializer`，方法签名保持兼容
-//! - 新增 `GarrisonSerializerDefault` 默认实现（委托 serde_json）
+//! - `GarrisonJsonTemplate` 为具体 struct（持有 `serde_json::Value`）
+//! - `GarrisonSerializer` 为序列化 trait（方法签名稳定）
+//! - `GarrisonSerializerDefault` 默认实现（委托 serde_json）
 
 pub mod serializer;
 pub mod template;
@@ -41,7 +41,7 @@ pub struct GarrisonJsonTemplate {
 
 /// 序列化抽象 trait，提供类型化的序列化/反序列化。
 ///
-/// 对应 `SaSerializerTemplate`，0.1.0 的 `GarrisonSerializerTemplate` 重命名为此。
+/// 对应 `SaSerializerTemplate`。
 pub trait GarrisonSerializer {
     /// 将类型化对象序列化为 JSON 字符串。
     ///

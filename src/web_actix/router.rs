@@ -33,7 +33,7 @@ impl GarrisonRouter {
         self
     }
 
-    /// 设置内层 handler 超时（可选，默认不设超时，ocr #2141）。
+    /// 设置内层 handler 超时（可选，默认不设超时）。
     ///
     /// 鉴权通过后，内层 service 调用将以该时限包裹：超时返回 504 Gateway Timeout
     /// 响应，防止挂起的 handler 无限占用连接与 middleware 资源。默认 `None`
@@ -44,7 +44,7 @@ impl GarrisonRouter {
     /// ```ignore
     /// use std::time::Duration;
     /// let router = GarrisonRouter::new(config)
-    ///     .with_handler_timeout(Duration::from_secs(30));
+    /// .with_handler_timeout(Duration::from_secs(30));
     /// ```
     pub fn with_handler_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.handler_timeout = Some(timeout);
@@ -64,8 +64,8 @@ impl GarrisonRouter {
     /// use garrison::context::tenant::HeaderTenantResolver;
     ///
     /// let router = GarrisonRouter::new(config)
-    ///     .with_tenant_resolver(HeaderTenantResolver)
-    ///     .route_protected("/api/data", Annotation::CheckPermission("data:read".into()));
+    /// .with_tenant_resolver(HeaderTenantResolver)
+    /// .route_protected("/api/data", Annotation::CheckPermission("data:read".into()));
     /// ```
     pub fn with_tenant_resolver<T: TenantResolver + 'static>(mut self, resolver: T) -> Self {
         self.tenant_resolver = Some(Arc::new(resolver));
@@ -85,14 +85,14 @@ impl GarrisonRouter {
     /// 注意：actix-web 的路由注册需在 `App::route()` 中单独配置，
     /// 此方法仅记录鉴权规则，由 `into_middleware()` 生成的 middleware 执行鉴权。
     ///
-    /// # 路径校验（ocr #3509/2796）
+    /// # 路径校验
     ///
     /// - 路径必须非空且以 `/` 开头：非法路径被**拒绝注册**并记录 error 日志
-    ///   （此类路径在 middleware 匹配中永不命中，静默注册将导致路由不受保护）。
+    /// （此类路径在 middleware 匹配中永不命中，静默注册将导致路由不受保护）。
     /// - 支持参数化模式：`{id}` / `:id` 单段参数、`*` / `{*rest}` 尾部通配
-    ///   （middleware 按 axum 风格段匹配，参数化路径不再静默跳过鉴权）。
+    /// （middleware 按 axum 风格段匹配，参数化路径不再静默跳过鉴权）。
     ///
-    /// # 重复注册（ocr #2144/2795/3508）
+    /// # 重复注册
     ///
     /// 重复注册同一路径时保留 last-wins 语义（与旧行为一致），但会记录 warn 日志，
     /// 不再静默覆盖（防止误注册的弱注解悄然替换强注解而无任何信号）。

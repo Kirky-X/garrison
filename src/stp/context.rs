@@ -9,19 +9,19 @@ use std::sync::{Arc, Mutex};
 
 tokio::task_local! {
     /// 当前请求中续签后的新 Token（若有）。
-    ///
+///
     /// 由 Web 框架 middleware 在请求开始时通过 [`with_renewed_token_scope`] 设置初始值 `None`，
     /// `check_and_renew` 在续签成功时通过 [`set_renewed_token`] 写入 `Some(new_token)`，
     /// Web 框架在请求结束后通过 [`current_renewed_token`] 读取并写入响应 Header。
-    ///
+///
     /// # 生命周期
-    ///
+///
     /// ```text
     /// Request → middleware sets scope(None)
-    ///        → handler calls check_login → check_and_renew writes Some(token)
-    ///        → middleware reads current_renewed_token() → writes X-Garrison-Renewed-Token
+    /// → handler calls check_login → check_and_renew writes Some(token)
+    /// → middleware reads current_renewed_token() → writes X-Garrison-Renewed-Token
     /// Response sent
-    /// ```
+/// ```
     pub static CURRENT_RENEWED_TOKEN: Arc<Mutex<Option<String>>>;
 }
 
@@ -31,7 +31,7 @@ tokio::task_local! {
 /// ```ignore
 /// let result = with_renewed_token_scope(async { handler(req).await }).await;
 /// if let Some(new_token) = current_renewed_token() {
-///     response.headers_mut().insert("X-Garrison-Renewed-Token", new_token.parse().unwrap());
+/// response.headers_mut().insert("X-Garrison-Renewed-Token", new_token.parse().unwrap());
 /// }
 /// ```
 pub async fn with_renewed_token_scope<R>(f: impl std::future::Future<Output = R>) -> R {
@@ -224,7 +224,7 @@ pub(crate) fn invalidate_login_identity_by_login_id(login_id: &str) {
 
 tokio::task_local! {
     /// 当前请求的客户端 IP，由 Web 框架 middleware 通过 [`with_current_ip`] 设置。
-    ///
+///
     /// 供 `check_api_key` 等认证路径在校验失败时按 IP 计入暴力破解防护
     /// （[`crate::strategy::firewall::BruteForceStrategy`]）。middleware 应使用
     /// `extract_client_ip`（含 trusted_proxies 防 X-Forwarded-For 伪造）提取。

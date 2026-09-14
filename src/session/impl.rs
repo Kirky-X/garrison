@@ -187,8 +187,7 @@ impl GarrisonSession {
     ///
     /// 锁粒度为 token，不影响不同 token 的并发。使用 `tokio::sync::Mutex`（持有锁跨 await 点）。
     /// 用于 `set`/`set_device`/`touch`/`set_active_timeout`/`open_safe`/`close_safe` 等
-    /// 修改 TokenSession 的操作，避免并发 read-modify-write 导致 lost update
-    ///（CRIT-001 / FMEA #5，kueiku RPN=288）。
+    /// 修改 TokenSession 的操作，避免并发 read-modify-write 导致 lost update。
     ///
     /// 注意：`get_token_session`/`save_token_session` 本身不加锁，调用方需通过此方法
     /// 包裹 read-modify-write 序列。只读操作（如 `is_safe`）不需要锁。
@@ -292,7 +291,7 @@ impl GarrisonSession {
         .await
     }
 
-    /// `create_token_session` 的无锁内部实现（HIGH-1 修复，fix-refresh-race-and-test-contracts）。
+    /// `create_token_session` 的无锁内部实现。
     ///
     /// 调用方必须已通过 [`with_login_lock`](Self::with_login_lock) 持有 `login_id` 的锁，
     /// 才能将 `create` 与后续的 `enforce_max_login_count_inner` 组合成原子序列。
@@ -310,7 +309,7 @@ impl GarrisonSession {
     ) -> GarrisonResult<()> {
         let now = Utc::now().timestamp();
 
-        // R-sessiontokenconsistency-001：remember-me 生效时，TTL 权威来源 = remember_me_timeout，
+        // remember-me 生效时，TTL 权威来源 = remember_me_timeout，
         // 并写入 TokenSession.effective_timeout 供后续过期判定使用；否则使用全局 timeout。
         let (ttl, effective_timeout) = if remember_me == Some(true) {
             (
@@ -353,7 +352,7 @@ impl GarrisonSession {
                 last_active_at: now,
             });
 
-        // 添加 token 信息（spec scenario "Account-Session 记录多 token"）
+        // 添加 token 信息
         account.tokens.push(TokenInfo {
             token: token.to_string(),
             created_at: now,
@@ -464,7 +463,7 @@ impl GarrisonSession {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
                     GarrisonError::Session(format!("session-sim-token-deserialize::{}", e))
                 })?;
-                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + 有效 TTL < now）
+                // 检查 session 级过期（last_active_at + 有效 TTL < now）
                 // TTL 权威来源为 TokenSession.effective_timeout（remember-me 时为 remember_me_timeout），
                 // 回退到全局 timeout。避免 DB/缓存 TTL 与业务语义漂移。
                 let now = Utc::now().timestamp();
@@ -507,7 +506,7 @@ impl GarrisonSession {
                 let ts: TokenSession = serde_json::from_str(&json).map_err(|e| {
                     GarrisonError::Session(format!("session-sim-token-deserialize::{}", e))
                 })?;
-                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + 有效 TTL < now）
+                // 检查 session 级过期（last_active_at + 有效 TTL < now）
                 // TTL 权威来源为 effective_timeout，回退全局 timeout。
                 let now = Utc::now().timestamp();
                 let effective_ttl = ts
@@ -546,7 +545,7 @@ impl GarrisonSession {
                 let as_: AccountSession = serde_json::from_str(&json).map_err(|e| {
                     GarrisonError::Session(format!("session-sim-account-deserialize::{}", e))
                 })?;
-                // R-session-lifecycle-003: 检查 session 级过期（last_active_at + active_timeout < now）
+                // 检查 session 级过期（last_active_at + active_timeout < now）
                 let now = Utc::now().timestamp();
                 if as_.last_active_at + (self.active_timeout.min(i64::MAX as u64) as i64) < now {
                     // 双重检查后删除：并发 touch 可能已在检查间隙刷新 Account-Session（TOCTOU 防护）
@@ -613,7 +612,7 @@ impl GarrisonSession {
     /// [`get_token_session`](Self::get_token_session) 检查存在性与过期状态：
     /// - `Ok(None)`：token session 不存在（已注销）或已过期 → 从列表中移除
     /// - `Ok(Some(_))`：token 仍有效 → 保留
-    /// - `Err(e)`：DAO 读取错误 → 记录 `tracing::warn!` 并跳过该 token，继续遍历（HIGH-004）
+    /// - `Err(e)`：DAO 读取错误 → 记录 `tracing::warn!` 并跳过该 token，继续遍历
     ///
     /// 若某个 login_id 的 token 列表清理后变空，移除该 login_id 的整个 entry
     ///（与 [`remove_login_token`](Self::remove_login_token) 行为一致）。
@@ -621,7 +620,7 @@ impl GarrisonSession {
     /// # 返回
     /// 清理的 token 总数（仅统计成功清理的 token，DAO 失败的 token 不计入）。
     ///
-    /// # 错误处理（HIGH-004）
+    /// # 错误处理
     /// 单个 token 的 DAO 读取失败不再透传 `GarrisonError` 中断整个清理周期，
     /// 而是记录 `tracing::warn!` 日志并跳过该 token，继续处理后续 token。
     /// 这样可避免单个 DAO 故障导致整个清理周期中断，最大化清理覆盖率。
@@ -642,7 +641,7 @@ impl GarrisonSession {
             };
 
             // 逐个检查 token 的存活性（get_token_session 会处理过期清理与回调）
-            // HIGH-004: 单个 token 的 DAO 失败不再中断整个清理周期，改为 warn 日志并跳过
+            // 单个 token 的 DAO 失败不再中断整个清理周期，改为 warn 日志并跳过
             let mut expired: Vec<String> = Vec::new();
             for token in &tokens {
                 match self.get_token_session(token).await {
@@ -916,7 +915,6 @@ impl GarrisonSession {
         login_id: &str,
         token: &str,
     ) -> GarrisonResult<()> {
-        // 修复规则 7 风格冲突（fix-refresh-race-and-test-contracts / spec R-refresh-token-002）：
         // 与对称方法 `remove_token_from_account_session`（line 858-891）一致，
         // 用 `with_login_lock` 串行化对同一 login_id 的 AccountSession read-modify-write，
         // 避免与同一 login_id 的其它写操作（如 login/logout/renew）竞态。
@@ -954,7 +952,7 @@ impl GarrisonSession {
                 .set(&account_key(&login_id), &json, self.active_timeout)
                 .await?;
 
-            // H1 修复：同步内存 login_token_map（与 create_inner 行为一致）。
+            // 同步内存 login_token_map（与 create_inner 行为一致）。
             // 否则 `list_devices(target)` 通过 `get_tokens_by_login_id` 读内存索引会漏掉该 token，
             // 与 `ensure_token_in_account_session` 的语义不一致。
             self.add_login_token(&login_id, token);
@@ -964,7 +962,7 @@ impl GarrisonSession {
         .await
     }
 
-    /// 从指定 login_id 的 Account-Session 中移除 token（H1 修复）。
+    /// 从指定 login_id 的 Account-Session 中移除 token。
     ///
     /// 供 `AuthLogicDefault::switch_to` 使用：切换身份后需将 token 从
     /// 原 login_id 的 Account-Session 中移除，否则会导致：
@@ -1176,7 +1174,7 @@ impl GarrisonSession {
     /// 检查 token 是否有效（Token-Session 存在且 Account-Session 未过期）。
     ///
     /// 惰性检查 Account-Session 是否存在——若 Account-Session 已被 oxcache TTL 清理，
-    /// 即使 Token-Session 仍存在，也视为无效（spec scenario "Activity 超时"）。
+    /// 即使 Token-Session 仍存在，也视为无效（Activity 超时）。
     ///
     /// 注意：此方法只读，不更新 last_active_at。活跃续期请调用 `touch`。
     ///
@@ -1271,7 +1269,7 @@ impl GarrisonSession {
                 let json = serde_json::to_string(&ts).map_err(|e| {
                     GarrisonError::Session(format!("session-sim-token-serialize::{}", e))
                 })?;
-                // R-sessiontokenconsistency-001/013：touch 不再无条件把 TTL 压回基础 timeout。
+                // touch 不再无条件把 TTL 压回基础 timeout。
                 // 优先读取旧键剩余 TTL 回写以保持语义（remember-me 长 TTL 不被缩水）；
                 // 读不到 TTL 时（DAO 不支持 TTL 或键已无 TTL）按 effective_timeout.unwrap_or(self.timeout) 重置。
                 let ttl = match self.dao.get_with_ttl(&token_key(token)).await? {
@@ -1318,7 +1316,7 @@ impl GarrisonSession {
     /// 成功返回 `Ok(())`。
     ///
     /// # 错误
-    /// - 若 token 不存在，返回 `GarrisonError::InvalidToken`（spec scenario "续期不存在的 token"）。
+    /// - 若 token 不存在，返回 `GarrisonError::InvalidToken`。
     pub async fn renew(&self, token: &str) -> GarrisonResult<()> {
         // 检查 token 存在（Fail Loud）
         if self.get_token_session(token).await?.is_none() {
@@ -1365,7 +1363,7 @@ impl GarrisonSession {
         let ts = self.get_token_session(token).await?;
         match ts {
             Some(ts) => {
-                // 获取 per-login_id 锁，保护 Account-Session read-modify-write（R-002, R-004）
+                // 获取 per-login_id 锁，保护 Account-Session read-modify-write
                 let login_id = ts.login_id.clone();
                 self.with_login_lock(
                     &login_id,
@@ -1414,7 +1412,7 @@ impl GarrisonSession {
         // 从 Account-Session 移除该 token
         if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
             account.tokens.retain(|ti| ti.token != token);
-            // spec: 若列表为空，Account-Session 标记为空（但不删除，保留历史）
+            // 若列表为空，Account-Session 标记为空（但不删除，保留历史）
             let account_json = serde_json::to_string(&account).map_err(|e| {
                 GarrisonError::Session(format!("session-sim-account-serialize::{}", e))
             })?;
@@ -1444,7 +1442,7 @@ impl GarrisonSession {
     /// - DAO 删除失败：透传 `GarrisonError`。
     pub async fn logout_by_login_id(&self, login_id: impl Into<String>) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
-        // 获取 per-login_id 锁，保护 Account-Session 读-删序列（R-003, R-004）
+        // 获取 per-login_id 锁，保护 Account-Session 读-删序列
         self.with_login_lock(&login_id, async {
             if let Some(account) = self.get_account_session(&login_id).await? {
                 for ti in &account.tokens {
@@ -1471,14 +1469,14 @@ impl GarrisonSession {
     /// # 返回
     /// 成功返回 `Ok(())`。device 不存在或无匹配 token 时幂等返回 `Ok(())`。
     ///
-    /// # 事件广播（R-002）
+    /// # 事件广播
     /// 若注入了 `listener_manager`，每个被踢出的 token 触发一个 `GarrisonEvent::Kickout` 事件，
     /// `reason` 字段格式为 `"kicked by device: <device>"`。
     ///
     /// # 错误
     /// - DAO 读取/删除失败：透传 `GarrisonError`。
     ///
-    /// # account session 维护（R-003）
+    /// # account session 维护
     /// 踢出后 account session 的 tokens 列表移除被踢出的 token，保留其他 device 的 token。
     pub async fn kickout_by_device(
         &self,
@@ -1486,7 +1484,7 @@ impl GarrisonSession {
         device: &str,
     ) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
-        // 获取 per-login_id 锁，保护 Account-Session 读-踢序列（R-009）
+        // 获取 per-login_id 锁，保护 Account-Session 读-踢序列
         // 内部调用 logout_inner（不获取锁），避免死锁
         self.with_login_lock(&login_id, async {
             let account = match self.get_account_session(&login_id).await? {
@@ -1513,7 +1511,7 @@ impl GarrisonSession {
                 self.logout_inner(token, ts).await?;
             }
 
-            // 广播 Kickout 事件（R-002）
+            // 广播 Kickout 事件
             #[cfg(feature = "listener")]
             if let Some(mgr) = &self.listener_manager {
                 let reason = format!("kicked by device: {}", device);
@@ -1734,7 +1732,7 @@ mod tests {
         let _ = dao;
     }
 
-    /// （R-sessiontokenconsistency-001 集成）：remember-me 登录后，空闲时长超过基础 timeout
+    /// remember-me 登录后，空闲时长超过基础 timeout
     /// 但仍小于 remember_me_timeout 时，`get_token_session` 仍返回 Some 且不删除会话
     /// （即 remember-me 长 TTL 真正生效，不因 touch/读取被缩水回基础 timeout）。
     #[tokio::test]
@@ -2023,7 +2021,7 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // with_token_session_lock：per-token 锁（CRIT-001 / FMEA #5）
+    // with_token_session_lock：per-token 锁
     // ----------------------------------------------------------------
 
     /// 验证 `with_token_session_lock` 串行化同一 token 的并发操作。
@@ -2491,10 +2489,10 @@ mod tests {
     }
 
     // ----------------------------------------------------------------
-    // FMEA #5：并发 read-modify-write lost update 防护
+    // 并发 read-modify-write lost update 防护
     // ----------------------------------------------------------------
 
-    /// FMEA #5: 验证 `set` 在并发调用下不会 lost update。
+    /// 验证 `set` 在并发调用下不会 lost update。
     ///
     /// 10 个并发任务对同一 token 调用 `set` 写入不同 key，
     /// 完成后所有 10 个 key 都应存在（无 lost update）。
@@ -2530,7 +2528,7 @@ mod tests {
         }
     }
 
-    /// FMEA #5: 验证 `set_device` 与 `set` 并发调用不会互相覆盖。
+    /// 验证 `set_device` 与 `set` 并发调用不会互相覆盖。
     ///
     /// 一个任务调用 `set_device`，另一个调用 `set`，
     /// 完成后 device 和 attr 都应存在。
@@ -2557,7 +2555,7 @@ mod tests {
         assert_eq!(ts.attrs.get("attr1"), Some(&"val1".to_string()));
     }
 
-    /// FMEA #5: 验证 `touch` 在并发调用下不会损坏 session。
+    /// 验证 `touch` 在并发调用下不会损坏 session。
     ///
     /// 10 个并发任务对同一 token 调用 `touch`，
     /// 完成后 session 应仍然存在且 last_active_at 已更新。

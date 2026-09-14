@@ -18,7 +18,6 @@
 //! # 与现有模块的关系
 //!
 //! - `secure/`：保留 totp/sign/httpbasic/httpdigest/confusable 子模块（密码学原语）
-//! - `secure/password/`：v0.6.0 删除，迁移到 `account/credential/password.rs`
 //! - `stp/`：不变，authflow DSL 在 SessionLogic/MfaLogic 之上编排
 //! - `strategy/firewall/`：BruteForceStrategy 保留，UserLockoutStrategy 组合到 Firewall 执行链
 

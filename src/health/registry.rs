@@ -21,7 +21,7 @@ impl HealthRegistry {
         }
     }
 
-    /// 设置单项健康检查的超时阈值（ocr #5514/5515/5358/5362）。
+    /// 设置单项健康检查的超时阈值。
     ///
     /// 超时的检查按 `Unhealthy` 聚合，不会拖住整个 readiness 请求。
     pub fn with_check_timeout(mut self, timeout: Duration) -> Self {
@@ -40,7 +40,7 @@ impl HealthRegistry {
     /// 使用 `futures::future::join_all` 并发调度，避免单检查阻塞 readiness 探针热路径
     /// 导致 kubelet 超时和 Pod 重启。
     ///
-    /// 每项检查均有两级护栏（ocr #5514/5515/5358/5362、#6596）：
+    /// 每项检查均有两级护栏：
     /// - **超时**：单项检查超过 `check_timeout`（默认 5 秒，可用
     ///   [`Self::with_check_timeout`] 配置）按 `Unhealthy` 聚合，不会无限阻塞请求；
     /// - **panic 隔离**：单个检查 panic 被 `catch_unwind` 捕获并降级为该检查

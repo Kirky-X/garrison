@@ -145,7 +145,7 @@ fn form_percent_decode(input: &[u8]) -> String {
 }
 
 /// 将 `application/x-www-form-urlencoded` body 解析为 `serde_json::Value` 对象，
-/// 复用请求结构体的 `serde_json` 反序列化路径（RFC 6749 §3.2 表单格式，ocr #7612）。
+/// 复用请求结构体的 `serde_json` 反序列化路径（RFC 6749 §3.2 表单格式）。
 fn parse_form_body(body: &[u8]) -> Result<serde_json::Value, String> {
     let mut map = serde_json::Map::new();
     for pair in body.split(|&b| b == b'&') {
@@ -200,7 +200,7 @@ fn extract_oauth2_request<T: serde::de::DeserializeOwned>(
     }
 }
 
-/// 429 判定（ocr #2224）：token/revoke handler 的速率限制错误统一以
+/// 429 判定：token/revoke handler 的速率限制错误统一以
 /// `GarrisonError::OAuth2("rate_limited: ...")` 形态产出（见
 /// `oauth2_server::token` 的 `TokenRateLimiter` / `PasswordRateLimiter`）。
 /// 本框架的 `GarrisonError` 尚无独立的限速变体，此处按「变体 + 消息前缀」
@@ -276,7 +276,7 @@ async fn token_endpoint(
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts_i18n();
             // RFC 6585 §4 — 速率限制错误返回 429 Too Many Requests。
-            // ocr #2224：按 GarrisonError::OAuth2 变体 + "rate_limited" 消息前缀
+            // 按 GarrisonError::OAuth2 变体 + "rate_limited" 消息前缀
             // 类型化判定（不再对整个 Display 做任意子串匹配）。
             let is_rate_limited = is_rate_limited_error(&e);
             let status = if is_rate_limited {
@@ -289,7 +289,7 @@ async fn token_endpoint(
             } else {
                 error_code
             };
-            // RFC 6749 §5.1 — token 端点错误响应同样必须 no-store（ocr #2883）
+            // RFC 6749 §5.1 — token 端点错误响应同样必须 no-store
             apply_no_store(
                 (
                     status,
@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
-    // === 表单格式（RFC 6749 §3.2）+ 错误响应 no-store 测试（ocr #7612 / #2883）===
+    // === 表单格式（RFC 6749 §3.2）+ 错误响应 no-store 测试 ===
 
     /// token 端点接受 application/x-www-form-urlencoded 请求体（RFC 6749 §3.2）。
     #[tokio::test]

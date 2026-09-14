@@ -3,7 +3,7 @@
 
 //! [`JsonTestSuite`] 实现：JSON 解析与测试套件运行逻辑。
 //!
-//! 从 `mod.rs` 迁移以遵守 Rule 25（mod.rs 接口隔离）。
+//! 从 `mod.rs` 迁移以遵守 mod.rs 接口隔离。
 
 use crate::core::permission::{Authorizer, Decision, DecisionReason};
 use crate::error::{GarrisonError, GarrisonResult};
@@ -57,7 +57,7 @@ impl JsonTestSuite {
                     }
                 },
                 Err(e) => {
-                    // ocr #8250/6143：authorize 失败时没有实际决策——actual 置 None，
+                    // authorize 失败时没有实际决策——actual 置 None，
                     // 不再用合成的 deny 占位（避免授权错误与真实拒绝混淆）
                     failures.push(TestFailure {
                         case_name: case.name.clone(),
@@ -90,7 +90,7 @@ impl JsonTestSuite {
 /// `reason` 字段支持部分匹配（前缀匹配，非精确匹配）：
 /// - 无数据变体（`ExplicitAllow` / `NoMatchingPermission` 等）：精确匹配
 /// - `FirewallBlocked(expected_msg)`：`actual_msg.starts_with(expected_msg)`，
-///   允许 expected 只指定前缀（如 `"ip blocked"` 匹配 actual `"ip blocked: 1.2.3.4"`）
+/// 允许 expected 只指定前缀（如 `"ip blocked"` 匹配 actual `"ip blocked: 1.2.3.4"`）
 fn decisions_match(expected: &Decision, actual: &Decision) -> bool {
     expected.allowed == actual.allowed
         && reason_matches(&expected.reason, &actual.reason)

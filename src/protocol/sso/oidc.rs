@@ -11,7 +11,7 @@
 //! - `exchange_code`：通过 reqwest POST 到 token_endpoint 交换 id_token
 //! - `get_user_info`：通过 reqwest GET userinfo_endpoint 获取用户信息
 //! - `validate_id_token`：JWKS 验签（RS256）+ iss/aud/exp 校验（需 `protocol-jwt` feature）；
-//!   未启用 feature 时返回 `NotImplemented`
+//! 未启用 feature 时返回 `NotImplemented`
 //!
 //! 与 `protocol::oauth2::oidc::OidcHandler` 的区别：
 //! - `OidcHandler`：Garrison 作为 IdP 签发/验证 id_token
@@ -227,7 +227,7 @@ pub trait OidcProvider: Send + Sync {
     /// - `code`: 授权码。
     /// - `redirect_uri`: 回调 URL（必须与 `get_authorization_url` 一致）。
     /// - `state`: OAuth2 state 参数（必须与 `get_authorization_url`
-    ///   注册的 state 匹配，否则返回 `InvalidParam` 错误）。
+    /// 注册的 state 匹配，否则返回 `InvalidParam` 错误）。
     ///
     /// # 返回
     /// id_token 字符串（JWT 格式）。
@@ -351,7 +351,7 @@ impl DefaultOidcProvider {
     /// # 错误
     /// - `GarrisonError::Network`: `reqwest::Client` 构建失败（E1：含超时配置）。
     /// - `GarrisonError::Config`: discovery 端点 scheme 非 https/localhost
-    ///   （安全审计修复：明文 http 端点拒绝构造）。
+    /// （安全审计修复：明文 http 端点拒绝构造）。
     pub fn new(
         config: OidcDiscoveryConfig,
         client_id: &str,
@@ -385,7 +385,7 @@ impl DefaultOidcProvider {
     ///
     /// - JWKS 缓存 key：`oidc:jwks:{issuer}`，TTL 由 `JWKS_CACHE_TTL` 控制。
     /// - state 缓存 key：`oidc:state:{state}`，TTL 由 `OIDC_STATE_TTL` 或
-    ///   `with_state_ttl` 控制。
+    /// `with_state_ttl` 控制。
     ///
     /// # 参数
     ///
@@ -395,7 +395,7 @@ impl DefaultOidcProvider {
     ///
     /// ```ignore
     /// let provider = DefaultOidcProvider::new(config, "cid", "secret")
-    ///     .with_dao(Arc::new(GarrisonDaoOxcache::new().await?));
+    /// .with_dao(Arc::new(GarrisonDaoOxcache::new().await?));
     /// ```
     pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
         self.dao = Some(dao);
@@ -520,7 +520,7 @@ impl DefaultOidcProvider {
     ///
     /// 1. 解析 JWT header，提取 `kid`。
     /// 2. 从 DAO 缓存读取 JWKS（key=`oidc:jwks:{issuer}`），
-    ///    缓存 miss 或反序列化失败时调用 `fetch_jwks` 重新拉取并写入缓存。
+    /// 缓存 miss 或反序列化失败时调用 `fetch_jwks` 重新拉取并写入缓存。
     /// 3. 按 `kid` 匹配 JWKS 公钥，用 `n`/`e` 模数构造 `DecodingKey`。
     /// 4. 用 RS256 算法验签，解析为 [`IdTokenClaims`]。
     /// 5. 校验 `iss`（匹配 `config.issuer`）。
@@ -531,7 +531,7 @@ impl DefaultOidcProvider {
     ///
     /// - `GarrisonError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
     /// - `GarrisonError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
-    ///   签名验证失败 / claims 解析失败 / token 已过期 / iss 不匹配 / aud 不匹配。
+    /// 签名验证失败 / claims 解析失败 / token 已过期 / iss 不匹配 / aud 不匹配。
     /// - `GarrisonError::Internal`: JWKS 拉取失败 / DAO 读写失败 / 反序列化失败。
     #[cfg(feature = "protocol-jwt")]
     // 清洗 JWT `kid` 用于日志/错误输出：过滤控制字符并限长 128，
@@ -544,7 +544,7 @@ impl DefaultOidcProvider {
     async fn validate_id_token_impl(&self, id_token: &str) -> GarrisonResult<bool> {
         use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
 
-        /// id_token 的 aud claim 类型（H3 修复：支持 String 或 Vec<String>）。
+        /// id_token 的 aud claim 类型（支持 String 或 Vec<String>）。
         ///
         /// RFC 7519 §4.1.3 规定 aud 可以是 String 或数组形式。原实现仅接受
         /// String，导致 IdP 返回 `aud: ["client-a", "client-b"]` 时反序列化
@@ -571,7 +571,7 @@ impl DefaultOidcProvider {
         struct IdTokenClaims {
             /// 签发者标识（必须匹配 `config.issuer`）。
             iss: String,
-            /// 受众（必须包含 `client_id`，支持 String 或数组形式，见 H3）。
+            /// 受众（必须包含 `client_id`，支持 String 或数组形式）。
             aud: Aud,
         }
 
@@ -589,9 +589,9 @@ impl DefaultOidcProvider {
         })?;
 
         // 2. 从 DAO 读取 JWKS 缓存；缓存 miss 或反序列化失败（缓存损坏）时重新拉取。
-        //    single-flight 锁：缓存 miss 时获取 `jwks_fetch_lock`，防止 N 个并发请求
-        //    同时触发 `fetch_jwks` 对 IdP JWKS endpoint 形成惊群效应。持锁后二次检查
-        //    缓存（其他请求可能已填充），命中则复用，未命中才真正发起 HTTP 请求。
+        // single-flight 锁：缓存 miss 时获取 `jwks_fetch_lock`，防止 N 个并发请求
+        // 同时触发 `fetch_jwks` 对 IdP JWKS endpoint 形成惊群效应。持锁后二次检查
+        // 缓存（其他请求可能已填充），命中则复用，未命中才真正发起 HTTP 请求。
         let cache_key = self.jwks_cache_key();
         let cached = dao.get(&cache_key).await?;
         let (jwks, fresh): (JwksResponse, bool) = match cached
@@ -629,7 +629,7 @@ impl DefaultOidcProvider {
         };
 
         // 3. 按 kid 匹配 JWKS 公钥。若缓存命中但 kid 未命中（密钥轮换场景），
-        //    强制重新拉取一次 JWKS 再匹配；已 freshly-fetched 则直接报错。
+        // 强制重新拉取一次 JWKS 再匹配；已 freshly-fetched 则直接报错。
         let jwk = match jwks.keys.iter().find(|k| k.kid == kid).cloned() {
             Some(jwk) => jwk,
             None if !fresh => {
@@ -677,7 +677,7 @@ impl DefaultOidcProvider {
             .map_err(|e| GarrisonError::InvalidToken(format!("sso-oidc-rsa-build::{}", e)))?;
         let mut validation = Validation::new(Algorithm::RS256);
         validation.validate_exp = true;
-        validation.validate_nbf = true; // T38：对齐 keycloak 版，启用 nbf 生效时间校验
+        validation.validate_nbf = true; // 对齐 keycloak 版，启用 nbf 生效时间校验
         validation.leeway = 0;
         // jsonwebtoken 10 默认 validate_aud=true，但未设置 expected audience 会触发
         // InvalidAudience。关闭库内置 aud 校验，由我们手动校验 client_id 以提供精确错误信息。
@@ -701,7 +701,7 @@ impl DefaultOidcProvider {
             )));
         }
 
-        // 6. 校验 aud（必须包含 client_id，支持 String 或数组形式，见 H3）
+        // 6. 校验 aud（必须包含 client_id，支持 String 或数组形式）
         if !token_data.claims.aud.contains(&self.client_id) {
             return Err(GarrisonError::InvalidToken(format!(
                 "sso-oidc-id-token-invalid::{}::{:?}",
@@ -890,7 +890,7 @@ mod tests {
     // 数据结构测试
     // ========================================================================
 
-    /// OidcDiscoveryConfig 序列化/反序列化往返（spec R-003）。
+    /// OidcDiscoveryConfig 序列化/反序列化往返。
     #[test]
     fn oidc_discovery_config_serde_roundtrip() {
         let config = OidcDiscoveryConfig {
@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(deserialized.jwks_uri, config.jwks_uri);
     }
 
-    /// OidcUserInfo 序列化/反序列化往返（spec R-003）。
+    /// OidcUserInfo 序列化/反序列化往返。
     #[test]
     fn oidc_user_info_serde_roundtrip() {
         let user_info = OidcUserInfo {
@@ -956,7 +956,7 @@ mod tests {
         );
     }
 
-    /// OidcDiscoveryConfig 实现 Clone + Debug（spec R-003 验收标准）。
+    /// OidcDiscoveryConfig 实现 Clone + Debug（验收标准）。
     #[test]
     fn oidc_discovery_config_implements_clone_debug() {
         let config = make_test_config();
@@ -966,7 +966,7 @@ mod tests {
         assert!(debug_str.contains("OidcDiscoveryConfig"));
     }
 
-    /// OidcUserInfo 实现 Clone + Debug（spec R-003 验收标准）。
+    /// OidcUserInfo 实现 Clone + Debug（验收标准）。
     #[test]
     fn oidc_user_info_implements_clone_debug() {
         let user_info = OidcUserInfo {
@@ -997,7 +997,7 @@ mod tests {
         }
     }
 
-    /// DefaultOidcProvider::new 返回实例（spec R-004 验收标准）。
+    /// DefaultOidcProvider::new 返回实例（验收标准）。
     #[test]
     fn default_oidc_provider_new_returns_instance() {
         let config = make_test_config();
@@ -1039,7 +1039,7 @@ mod tests {
         );
     }
 
-    /// OidcProvider trait 编译验证：DefaultOidcProvider 实现 OidcProvider trait（spec R-004）。
+    /// OidcProvider trait 编译验证：DefaultOidcProvider 实现 OidcProvider trait。
     #[test]
     fn default_oidc_provider_implements_oidc_provider() {
         fn assert_oidc_provider<T: OidcProvider>(_provider: &T) {}
@@ -1052,7 +1052,7 @@ mod tests {
     // get_authorization_url 测试
     // ========================================================================
 
-    /// get_authorization_url 构造正确 URL（spec R-004）。
+    /// get_authorization_url 构造正确 URL。
     #[tokio::test]
     async fn get_authorization_url_constructs_valid_url() {
         let config = make_test_config();
@@ -1108,7 +1108,7 @@ mod tests {
     // validate_id_token 测试
     // ========================================================================
 
-    /// validate_id_token 返回 NotImplemented（spec R-004: JWT 验证需 protocol-jwt feature）。
+    /// validate_id_token 返回 NotImplemented（JWT 验证需 protocol-jwt feature）。
     ///
     /// 此测试仅在未启用 `protocol-jwt` feature 时运行。
     /// 启用 `protocol-jwt` 时 `validate_id_token` 执行 JWKS 验签，由下面的
@@ -1130,7 +1130,7 @@ mod tests {
     // exchange_code / get_user_info 测试（使用 wiremock mock server）
     // ========================================================================
 
-    /// exchange_code 成功返回 id_token（spec R-004）。
+    /// exchange_code 成功返回 id_token。
     ///
     /// 启用 `protocol-jwt` 时 `exchange_code` 返回前会调用
     /// `validate_id_token`，需要 mock JWKS endpoint + 真实 RSA 签发的 JWT。
@@ -1182,7 +1182,7 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        //  先注册 state，再交换授权码
+        // 先注册 state，再交换授权码
         provider
             .get_authorization_url(
                 "https://sp.example.com/callback",
@@ -1202,7 +1202,7 @@ mod tests {
         assert_eq!(returned_id_token, id_token);
     }
 
-    /// exchange_code 端点返回错误状态时返回 Internal 错误（spec R-004）。
+    /// exchange_code 端点返回错误状态时返回 Internal 错误。
     #[tokio::test]
     async fn exchange_code_error_status_returns_error() {
         use wiremock::matchers::{method, path};
@@ -1226,7 +1226,7 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        //  先注册 state
+        // 先注册 state
         provider
             .get_authorization_url(
                 "https://sp.example.com/callback",
@@ -1245,7 +1245,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// exchange_code 响应缺少 id_token 时返回错误（spec R-004）。
+    /// exchange_code 响应缺少 id_token 时返回错误。
     #[tokio::test]
     async fn exchange_code_missing_id_token_returns_error() {
         use wiremock::matchers::{method, path};
@@ -1273,7 +1273,7 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        //  先注册 state
+        // 先注册 state
         provider
             .get_authorization_url(
                 "https://sp.example.com/callback",
@@ -1292,7 +1292,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    /// get_user_info 成功返回用户信息（spec R-004）。
+    /// get_user_info 成功返回用户信息。
     #[tokio::test]
     async fn get_user_info_success_returns_user_info() {
         use wiremock::matchers::{header, method, path};
@@ -1331,7 +1331,7 @@ mod tests {
         assert_eq!(user_info.picture, "https://example.com/avatar.png");
     }
 
-    /// get_user_info 端点返回错误状态时返回 Internal 错误（spec R-004）。
+    /// get_user_info 端点返回错误状态时返回 Internal 错误。
     #[tokio::test]
     async fn get_user_info_error_status_returns_error() {
         use wiremock::matchers::{method, path};
@@ -1466,7 +1466,7 @@ mod tests {
         encode(&header, &claims, encoding_key).expect("签发 JWT 应成功")
     }
 
-    /// 测试辅助：用 RSA 私钥签发 JWT，aud 接受任意 JSON Value（H3 测试用）。
+    /// 测试辅助：用 RSA 私钥签发 JWT，aud 接受任意 JSON Value（测试用）。
     ///
     /// 用于测试 aud 为数组形式（`["client-a", "client-b"]`）的 id_token。
     /// 其他参数与 [`sign_test_jwt`] 一致。
@@ -1560,7 +1560,7 @@ mod tests {
     /// 用 key_signer 私钥签发 JWT，但 JWKS 返回 key_other 公钥 → 验签失败。
     /// 覆盖 `validate_id_token_impl` 中 `decode` 失败分支。
     #[cfg(feature = "protocol-jwt")]
-    /// T39: sanitize_kid 过滤控制字符并限长 128。
+    /// sanitize_kid 过滤控制字符并限长 128。
     #[test]
     fn sanitize_kid_filters_control_chars_and_limits_len() {
         assert_eq!(DefaultOidcProvider::sanitize_kid("abc123"), "abc123");
@@ -1717,13 +1717,13 @@ mod tests {
         }
     }
 
-    /// 测试 4b（H3）：validate_id_token 接受 aud 为数组形式（含 client_id）的 token。
+    /// 测试 4b：validate_id_token 接受 aud 为数组形式（含 client_id）的 token。
     ///
     /// RFC 7519 §4.1.3 规定 aud 可以是 String 或数组形式。
     /// IdP（如 Keycloak/Auth0）实际签发的 token 中 aud 常为数组
     /// （如 `["client-id", "account"]`）。原实现 IdTokenClaims.aud: String
     /// 反序列化数组失败 → 所有 OIDC 登录失败。
-    /// H3 修复后用 Aud enum（untagged）兼容两种形式。
+    /// 修复后用 Aud enum（untagged）兼容两种形式。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn validate_id_token_accepts_aud_array_containing_client_id() {
@@ -1752,10 +1752,10 @@ mod tests {
         assert!(result.unwrap());
     }
 
-    /// 测试 4c（H3）：validate_id_token 拒绝 aud 为数组但不含 client_id 的 token。
+    /// 测试 4c：validate_id_token 拒绝 aud 为数组但不含 client_id 的 token。
     ///
     /// aud=`["other-client", "account"]`（数组不含 client_id "client-id"），
-    /// H3 修复后 contains 返回 false，校验失败返回 InvalidToken。
+    /// 修复后 contains 返回 false，校验失败返回 InvalidToken。
     #[cfg(feature = "protocol-jwt")]
     #[tokio::test]
     async fn validate_id_token_rejects_aud_array_without_client_id() {
@@ -1847,7 +1847,7 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "secret")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        //  先注册 state
+        // 先注册 state
         provider
             .get_authorization_url(
                 "https://sp.example.com/callback",
@@ -1880,10 +1880,10 @@ mod tests {
     }
 
     // ========================================================================
-    //  OIDC state 参数验证测试
+    // OIDC state 参数验证测试
     // ========================================================================
 
-    ///  exchange_code 拒绝未注册的 state（CSRF 防护）。
+    /// exchange_code 拒绝未注册的 state（CSRF 防护）。
     ///
     /// 攻击场景：攻击者直接调用 exchange_code，未经过 get_authorization_url 注册 state。
     /// 期望：返回 InvalidParam 错误。
@@ -1929,7 +1929,7 @@ mod tests {
         }
     }
 
-    ///  exchange_code 拒绝不匹配的 state。
+    /// exchange_code 拒绝不匹配的 state。
     ///
     /// 攻击场景：注册了 state "abc"，但传入 state "xyz"。
     /// 期望：返回 InvalidParam 错误。
@@ -1977,7 +1977,7 @@ mod tests {
         }
     }
 
-    ///  state 是 one-time use，重用应被拒绝。
+    /// state 是 one-time use，重用应被拒绝。
     ///
     /// 攻击场景：攻击者截获合法的 state，尝试重放。
     /// 期望：第一次成功，第二次失败（state 已被消费）。
@@ -2048,7 +2048,7 @@ mod tests {
         }
     }
 
-    ///  state 过期后应被拒绝。
+    /// state 过期后应被拒绝。
     ///
     /// 使用极短 TTL（1 秒，受 GarrisonDao::set 的 ttl_seconds: u64 精度限制），
     /// 注册后等待过期，再调用 exchange_code 应失败。
@@ -2106,7 +2106,7 @@ mod tests {
         }
     }
 
-    ///  DAO 模式下连续注册多个 state 均成功（容量由 oxcache 自管理）。
+    /// DAO 模式下连续注册多个 state 均成功（容量由 oxcache 自管理）。
     ///
     /// Provider 层不负责容量限制；state 写入 DAO 后由 TTL 自动过期。
     /// 期望：注册多个 state 不报错，且每个 state 均可写入 DAO。
@@ -2141,7 +2141,7 @@ mod tests {
         }
     }
 
-    ///  get_authorization_url 将 state 注册到 DAO。
+    /// get_authorization_url 将 state 注册到 DAO。
     ///
     /// state 写入 DAO（key 为 `oidc:state:{state}`，TTL 由 oxcache 管理）。
     /// 期望：注册后 DAO 中可查到对应 key；同一 state 重复注册不报错（DAO 覆盖写入）。

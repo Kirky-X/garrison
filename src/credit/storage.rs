@@ -137,7 +137,7 @@ impl CreditMeterStorage {
     /// 获取当前周期元数据。
     ///
     /// 返回 `None` 表示 meta key 不存在（尚未消费或已重置）。
-    /// 脏数据（parse 失败）返回 `Err`（fail-fast，与 limiteron quota M-3 修复一致）。
+    /// 脏数据（parse 失败）返回 `Err`（fail-fast，与 limiteron quota 同类修复一致）。
     pub async fn get_meta(&self, tenant_id: i64) -> CreditResult<Option<CreditMeta>> {
         let key = credit_meta_key(tenant_id);
         let val = self

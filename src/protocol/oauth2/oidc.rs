@@ -27,11 +27,11 @@ use subtle::ConstantTimeEq;
 ///
 /// RFC 7519 §4.1.3 规定 `aud` 可以是 String 或数组形式。原实现仅接受 String，
 /// 导致 IdP 返回 `aud: ["client-a", "client-b"]` 时反序列化失败，所有 OIDC
-/// 登录失败（vuln-0006 修复：与 `sso/oidc.rs` H3 修复同步）。
+/// 登录失败（与 `sso/oidc.rs` 同步修复）。
 ///
 /// `#[serde(untagged)]` 让 serde 根据JSON 值类型自动选择变体：
 /// - JSON 字符串 → `OidcAudience::Single(String)`
-/// - JSON 数组   → `OidcAudience::Multi(Vec<String>)`
+/// - JSON 数组 → `OidcAudience::Multi(Vec<String>)`
 ///
 /// 序列化时：`Single` 输出 JSON 字符串，`Multi` 输出数组（两种形式均为 RFC 7519 允许）。
 ///
@@ -72,7 +72,7 @@ pub struct OidcClaims {
     pub iss: String,
     /// 主体标识（subject），与 login_id 字符串一致。
     pub sub: String,
-    /// 受众（audience），通常为 client_id。支持 String 或数组形式（vuln-0006 修复）。
+    /// 受众（audience），通常为 client_id。支持 String 或数组形式。
     pub aud: OidcAudience,
     /// 签发时间（Unix 秒）。
     pub iat: i64,
@@ -149,7 +149,7 @@ impl OidcHandler {
     /// 校验算法是否为 HMAC 系列（HS256/HS384/HS512）。
     ///
     /// 非对称算法需通过 `EncodingKey::from_rsa_pem` 等接口加载密钥，
-    /// 当前 `OidcHandler` 仅持有 `secret: String`，不支持非对称密钥（M4 修复）。
+    /// 当前 `OidcHandler` 仅持有 `secret: String`，不支持非对称密钥。
     fn require_hmac_algorithm(&self) -> GarrisonResult<()> {
         if matches!(
             self.algorithm,
@@ -168,7 +168,7 @@ impl OidcHandler {
     ///
     /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
     /// 非对称算法（RS*/ES*/PS*）会返回 `GarrisonError::Config`，因为
-    /// `EncodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持待 0.5.0+。
+    /// `EncodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持暂未提供。
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
@@ -194,7 +194,7 @@ impl OidcHandler {
                 timeout
             )));
         }
-        // M4 修复：非对称算法无法用 from_secret 加载密钥，提前校验
+        // 非对称算法无法用 from_secret 加载密钥，提前校验
         self.require_hmac_algorithm()?;
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -220,7 +220,7 @@ impl OidcHandler {
     ///
     /// **算法限制**：当前仅支持 HMAC 系列算法（HS256/HS384/HS512）。
     /// 非对称算法（RS*/ES*/PS*）会返回 `GarrisonError::Config`，因为
-    /// `DecodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持待 0.5.0+。
+    /// `DecodingKey::from_secret` 仅接受对称密钥。JWKS + 非对称算法支持暂未提供。
     ///
     /// # 参数
     /// - `id_token`: JWT 格式的 id_token。
@@ -237,7 +237,7 @@ impl OidcHandler {
         id_token: &str,
         expected_nonce: &str,
     ) -> GarrisonResult<OidcClaims> {
-        // M4 修复：提前校验算法，避免 from_secret 在非对称算法下产生模糊错误
+        // 提前校验算法，避免 from_secret 在非对称算法下产生模糊错误
         self.require_hmac_algorithm()?;
         let key = DecodingKey::from_secret(self.secret.as_bytes());
         let mut validation = Validation::new(self.algorithm);
@@ -265,7 +265,7 @@ impl OidcHandler {
                 "oidc-iss-mismatch::".to_string(),
             ));
         }
-        // vuln-0006 修复：aud 支持String 或数组形式（RFC 7519 §4.1.3）。
+        // aud 支持String 或数组形式（RFC 7519 §4.1.3）。
         // 校验 `aud` 是否包含本客户端的 `client_id`，与 `sso/oidc.rs` 行为对齐。
         // L6 修复：错误消息不含 claims.aud 实际值（虽 aud 通常公开，但 fail-closed 不泄露任何 token claim）
         if !claims.aud.contains(&self.audience) {
@@ -289,10 +289,10 @@ impl OidcHandler {
     /// # 正确性约束
     ///
     /// - `OidcHandler` 仅支持 HMAC 对称密钥，**没有 JWKS 端点**，因此
-    ///   不输出 `jwks_uri`（宣告死链会误导客户端按 spec 去 GET 该端点而失败）。
+    /// 不输出 `jwks_uri`（宣告死链会误导客户端按 spec 去 GET 该端点而失败）。
     /// - `id_token_signing_alg_values_supported` 只输出实际可用的 HMAC 算法；
-    ///   非 HMAC 算法（sign/verify 会返回 Config 错误）输出空数组，
-    ///   绝不输出 `"unknown"` 这类客户端无法使用的伪算法。
+    /// 非 HMAC 算法（sign/verify 会返回 Config 错误）输出空数组，
+    /// 绝不输出 `"unknown"` 这类客户端无法使用的伪算法。
     pub fn discovery_metadata(&self) -> serde_json::Value {
         // 只宣告实际可用的 HMAC 算法；非 HMAC 算法（sign/verify 时返回 Config
         // 错误）输出空数组，绝不输出 "unknown" 伪算法误导客户端。
@@ -386,7 +386,7 @@ mod tests {
     // sign_id_token / verify_id_token 测试
     // ========================================================================
 
-    /// sign_id_token 返回三段 JWT（spec Scenario: 签发 id_token 成功）。
+    /// sign_id_token 返回三段 JWT（签发 id_token 成功）。
     #[test]
     fn sign_id_token_returns_three_segment_jwt() {
         let handler = make_handler();
@@ -397,7 +397,7 @@ mod tests {
         assert_eq!(parts.len(), 3, "id_token 应由三段组成");
     }
 
-    /// sign_id_token + verify_id_token 往返（spec Scenario: 签发 id_token 成功）。
+    /// sign_id_token + verify_id_token 往返（签发 id_token 成功）。
     #[test]
     fn sign_and_verify_id_token_roundtrip() {
         let handler = make_handler();
@@ -407,7 +407,7 @@ mod tests {
         let claims = handler.verify_id_token(&token, "nonce-abc").unwrap();
         assert_eq!(claims.iss, "https://auth.example.com");
         assert_eq!(claims.sub, "1001");
-        // vuln-0006: aud 类型改为 OidcAudience，签发时为 Single 形式
+        // aud 类型改为 OidcAudience，签发时为 Single 形式
         assert_eq!(
             claims.aud,
             OidcAudience::Single("test-client-id".to_string())
@@ -418,7 +418,7 @@ mod tests {
         assert!(claims.exp > claims.iat);
     }
 
-    /// nonce 不匹配返回 OAuth2 错误（spec Scenario: nonce 校验）。
+    /// nonce 不匹配返回 OAuth2 错误（nonce 校验）。
     #[test]
     fn verify_id_token_nonce_mismatch_returns_oauth2_error() {
         let handler = make_handler();
@@ -433,7 +433,7 @@ mod tests {
         }
     }
 
-    /// 签名算法 HS256 验证（spec Scenario: 签发 id_token 成功 — HS256）。
+    /// 签名算法 HS256 验证（签发 id_token 成功 — HS256）。
     #[test]
     fn sign_id_token_uses_hs256_by_default() {
         let handler = make_handler();
@@ -476,7 +476,7 @@ mod tests {
         }
     }
 
-    /// M4 回归测试：非对称算法在 sign_id_token 时返回 Config 错误。
+    /// 回归测试：非对称算法在 sign_id_token 时返回 Config 错误。
     #[test]
     fn sign_id_token_rejects_asymmetric_algorithm() {
         let handler = make_handler().with_algorithm(Algorithm::RS256);
@@ -492,7 +492,7 @@ mod tests {
         }
     }
 
-    /// M4 回归测试：非对称算法在 verify_id_token 时返回 Config 错误。
+    /// 回归测试：非对称算法在 verify_id_token 时返回 Config 错误。
     #[test]
     fn verify_id_token_rejects_asymmetric_algorithm() {
         // 即使 token 是用 HS256 签发的，verifier 配置为 RS256 也应提前返回 Config 错误
@@ -529,7 +529,7 @@ mod tests {
     // discovery_metadata 测试
     // ========================================================================
 
-    /// discovery_metadata 字段完整（spec Scenario: discovery 元数据完整）。
+    /// discovery_metadata 字段完整（discovery 元数据完整）。
     #[test]
     fn discovery_metadata_contains_all_required_fields() {
         let handler = make_handler();
@@ -567,7 +567,7 @@ mod tests {
             .contains(&serde_json::json!("HS256")));
     }
 
-    /// discovery_metadata issuer 与 handler 配置一致（spec Scenario）。
+    /// discovery_metadata issuer 与 handler 配置一致。
     #[test]
     fn discovery_metadata_issuer_matches_handler() {
         let handler = OidcHandler::new("https://my-provider.com", "client-1", "secret").unwrap();
@@ -683,7 +683,7 @@ mod tests {
     }
 
     // ========================================================================
-    // vuln-0006: OIDC aud 数组形式测试（RFC 7519 §4.1.3）
+    // OIDC aud 数组形式测试（RFC 7519 §4.1.3）
     // ========================================================================
 
     /// 手动签发一个 aud 为数组形式的 id_token（模拟 IdP 返回多受众 token）。
@@ -716,7 +716,7 @@ mod tests {
         encode(&header, &claims, &key).expect("签发 multi-aud token 失败")
     }
 
-    /// 数组形式 aud 包含 client_id 时校验通过（vuln-0006 核心修复验证）。
+    /// 数组形式 aud 包含 client_id 时校验通过（核心修复验证）。
     ///
     /// 场景：IdP 返回 `aud: ["client-a", "client-b"]`，本客户端 `client_id = "client-b"`，
     /// 原实现因 `aud: String` 反序列化失败导致所有 OIDC 登录失败；
@@ -749,7 +749,7 @@ mod tests {
         assert!(!claims.aud.contains("client-d"));
     }
 
-    /// 数组形式 aud 不包含 client_id 时校验失败（vuln-0006 修复后行为正确）。
+    /// 数组形式 aud 不包含 client_id 时校验失败（修复后行为正确）。
     ///
     /// 场景：IdP 返回 `aud: ["client-a", "client-b"]`，本客户端 `client_id = "client-x"`，
     /// 修复后能正确反序列化，但 `contains` 判定不通过，返回 InvalidToken 错误

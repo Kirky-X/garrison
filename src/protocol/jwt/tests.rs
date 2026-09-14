@@ -10,7 +10,7 @@ use crate::error::GarrisonError;
 // GarrisonJwtClaims 测试
 // ============================================================================
 
-/// GarrisonJwtClaims 完整字段序列化（spec Scenario）。
+/// GarrisonJwtClaims 完整字段序列化）。
 #[test]
 fn claims_serializes_full_fields() {
     let claims = GarrisonJwtClaims {
@@ -32,7 +32,7 @@ fn claims_serializes_full_fields() {
     assert!(json.contains("\"nbf\":1700000000"));
 }
 
-/// GarrisonJwtClaims device 字段为 None 时序列化为 null（spec Scenario）。
+/// GarrisonJwtClaims device 字段为 None 时序列化为 null）。
 #[test]
 fn claims_device_none_serializes_as_null() {
     let claims = GarrisonJwtClaims {
@@ -111,7 +111,7 @@ fn claims_deserializes() {
 // JwtHandler 构造测试
 // ============================================================================
 
-/// new 默认采用 HS256 算法（spec Scenario）。
+/// new 默认采用 HS256 算法）。
 #[test]
 fn new_defaults_to_hs256() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -120,7 +120,7 @@ fn new_defaults_to_hs256() {
     assert!(handler.device.is_none());
 }
 
-/// with_algorithm 切换为 HS512（spec Scenario）。
+/// with_algorithm 切换为 HS512）。
 #[test]
 fn with_algorithm_switches_to_hs512() {
     let handler =
@@ -139,7 +139,7 @@ fn with_device_sets_device() {
 // sign 测试
 // ============================================================================
 
-/// sign 返回三段 Base64URL（spec Scenario）。
+/// sign 返回三段 Base64URL）。
 #[test]
 fn sign_returns_three_segment_jwt() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -151,7 +151,7 @@ fn sign_returns_three_segment_jwt() {
     assert!(!parts[2].is_empty());
 }
 
-/// sign 空密钥返回 Config 错误（spec Scenario）。
+/// sign 空密钥返回 Config 错误）。
 #[test]
 fn sign_rejects_empty_secret() {
     let handler = JwtHandler::new("");
@@ -163,7 +163,7 @@ fn sign_rejects_empty_secret() {
     }
 }
 
-/// sign 负数 timeout 返回 Config 错误（spec Scenario）。
+/// sign 负数 timeout 返回 Config 错误）。
 #[test]
 fn sign_rejects_negative_timeout() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -175,7 +175,7 @@ fn sign_rejects_negative_timeout() {
     }
 }
 
-/// sign 带 device 写入 payload（spec Scenario）。
+/// sign 带 device 写入 payload）。
 #[test]
 fn sign_with_device_includes_device_in_claims() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef").with_device("ios-app");
@@ -189,7 +189,7 @@ fn sign_with_device_includes_device_in_claims() {
 // verify 测试
 // ============================================================================
 
-/// verify 有效 token 返回 claims（spec Scenario）。
+/// verify 有效 token 返回 claims）。
 #[test]
 fn verify_valid_token_returns_claims() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -200,7 +200,7 @@ fn verify_valid_token_returns_claims() {
     assert!(claims.exp > claims.iat);
 }
 
-/// verify 篡改 payload 返回错误（spec Scenario）。
+/// verify 篡改 payload 返回错误）。
 #[test]
 fn verify_tampered_payload_fails() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -212,7 +212,7 @@ fn verify_tampered_payload_fails() {
     assert!(result.is_err());
 }
 
-/// verify 错误密钥返回错误（spec Scenario）。
+/// verify 错误密钥返回错误）。
 #[test]
 fn verify_wrong_secret_fails() {
     let signer = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -222,7 +222,7 @@ fn verify_wrong_secret_fails() {
     assert!(result.is_err());
 }
 
-/// verify 已过期 token 返回 ExpiredToken（spec Scenario）。
+/// verify 已过期 token 返回 ExpiredToken）。
 #[test]
 fn verify_expired_token_returns_expired_error() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
@@ -238,7 +238,7 @@ fn verify_expired_token_returns_expired_error() {
     }
 }
 
-/// verify 算法不匹配返回错误（spec Scenario）。
+/// verify 算法不匹配返回错误）。
 #[test]
 fn verify_algorithm_mismatch_fails() {
     let signer =
@@ -388,10 +388,10 @@ fn sign_accepts_login_id_numeric() {
 }
 
 // ============================================================================
-// H-13: JWT 密钥最小长度校验
+// JWT 密钥最小长度校验
 // ============================================================================
 
-/// H-13: `sign` 拒绝 < 32 字节密钥，返回 Config 错误。
+/// `sign` 拒绝 < 32 字节密钥，返回 Config 错误。
 #[test]
 fn sign_rejects_short_secret() {
     let handler = JwtHandler::new("short-key"); // 9 bytes < 32
@@ -409,7 +409,7 @@ fn sign_rejects_short_secret() {
     }
 }
 
-/// H-13: `verify` 拒绝 < 32 字节密钥，返回 Config 错误。
+/// `verify` 拒绝 < 32 字节密钥，返回 Config 错误。
 #[test]
 fn verify_rejects_short_secret() {
     let handler = JwtHandler::new("short-key"); // 9 bytes < 32
@@ -427,7 +427,7 @@ fn verify_rejects_short_secret() {
     }
 }
 
-/// H-13: 恰好 32 字节密钥应正常工作（边界值）。
+/// 恰好 32 字节密钥应正常工作（边界值）。
 #[test]
 fn sign_accepts_exactly_32_byte_secret() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef"); // exactly 32 bytes

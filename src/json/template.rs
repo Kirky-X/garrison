@@ -27,12 +27,12 @@ impl GarrisonJsonTemplate {
     /// # 参数
     /// - `params`: 占位符键值对。未在 `params` 中提供的 `${key}` 保留原样。
     ///
-    /// # 替换语义（ocr #6595）
+    /// # 替换语义
     ///
     /// 单遍扫描：占位符仅从**模板原文**中识别并替换一次，替换值本身即使包含
     /// `${key}` 也不会被二次替换；遍历顺序与 `params` 无关，输出确定。
     ///
-    /// # 性能（ocr #5510/6051）
+    /// # 性能
     ///
     /// 渲染借用内部 `Value`（`&self`），按需构建新树：无占位符的字符串节点
     /// 原样克隆，不再整树深拷贝 + 逐节点二次 clone。
@@ -83,8 +83,8 @@ fn render_value(value: &serde_json::Value, params: &HashMap<String, String>) -> 
 
 /// 单遍扫描替换 `s` 中的 `${key}` 占位符。
 ///
-/// - 仅识别模板原文中的占位符，替换值不会被再次扫描（杜绝二次替换，ocr #6595）；
-/// - 单次遍历 O(n)（哈希查表，与参数数量 k 无关，ocr #5510）；
+/// - 仅识别模板原文中的占位符，替换值不会被再次扫描（杜绝二次替换）；
+/// - 单次遍历 O(n)（哈希查表，与参数数量 k 无关）；
 /// - 未在 `params` 中的 `${key}` 原样保留；无闭合 `}` 的 `${` 同样原样保留。
 fn substitute(s: &str, params: &HashMap<String, String>) -> String {
     let mut out = String::with_capacity(s.len());
@@ -121,7 +121,7 @@ fn substitute(s: &str, params: &HashMap<String, String>) -> String {
 mod tests {
     use super::*;
 
-    /// 替换值中包含其他占位符时不得二次替换（ocr #6595）。
+    /// 替换值中包含其他占位符时不得二次替换。
     #[test]
     fn substitute_does_not_rescan_replacement_values() {
         let mut params = HashMap::new();

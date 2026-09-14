@@ -161,11 +161,11 @@ const FW_ACCT_KEY_PREFIX: &str = "fw:acct:";
 /// # 设计
 ///
 /// - **统一计数器抽象**：通过 `GarrisonDaoDistributedLimiter`（limiteron 适配器）实现原子计数 + TTL，
-///   不再手写 `Mutex<HashMap>` + 时间窗口算法（违规 8 修复：禁止手写限流实现）
+///   不再手写 `Mutex<HashMap>` + 时间窗口算法（禁止手写限流实现）
 /// - **内存模式**（`new()`）：内部创建 `MockDao` 作为 limiteron 后端，
 ///   进程内原子计数（开发/CI 场景，与原内存模式语义一致）
 /// - **分布式模式**（`with_dao(dao)`）：用注入的 `GarrisonDao`（oxcache/redis）作为 limiteron 后端，
-///   实现跨实例计数（生产场景，满足 ADD §7.6 分布式存储要求）
+///   实现跨实例计数（生产场景，满足分布式存储要求）
 /// - **TTL 自动重置**：窗口过期由 `MockDao` / oxcache 的 TTL 语义保证
 ///   （首次 `incr` 后过期会重新初始化），无需手动时间窗口判断
 ///
@@ -227,7 +227,7 @@ impl GarrisonFirewallCheckHookDefault {
     ///
     /// 启用后 `record_failure` / 各 `check_*` 方法将走 DAO 路径（oxcache/redis），
     /// 内部 `limiter` 与 `dao` 字段均替换为注入的 DAO，确保计数器与 KV 检查共享同一后端。
-    /// 满足 ADD §7.6 分布式存储要求。
+    /// 满足分布式存储要求。
     pub fn with_dao(mut self, dao: Arc<dyn GarrisonDao>) -> Self {
         self.limiter = GarrisonDaoDistributedLimiter::new(dao.clone());
         self.dao = dao;
@@ -359,7 +359,7 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
     /// 通过 `limiteron::get_count` 查询 `fw:acct:{login_id}` 计数器，
     /// ≥ `BRUTE_FORCE_THRESHOLD` 则阻断（Fail Loud：limiteron 错误向上传播）。
     ///
-    /// v0.4.2 扩展：阻断时若注入了 `listener_manager`，广播 `GarrisonEvent::AccountLocked`。
+    /// 阻断时若注入了 `listener_manager`，广播 `GarrisonEvent::AccountLocked`。
     async fn check_brute_force(&self, ctx: &LoginContext) -> GarrisonResult<()> {
         let key = format!("{}{}", FW_ACCT_KEY_PREFIX, ctx.login_id);
         let count = self
@@ -410,7 +410,7 @@ impl GarrisonFirewallCheckHook for GarrisonFirewallCheckHookDefault {
     /// 通过 `dao.get("{Token}:blacklist:{login_id}")` 检查 token 黑名单是否存在，
     /// 存在则阻断（Fail Loud：DAO 错误向上传播）。
     ///
-    /// # 黑名单粒度语义（issue #6152：账号级锁定，显式声明）
+    /// # 黑名单粒度语义（账号级锁定，显式声明）
     ///
     /// 黑名单 key 为 `token:blacklist:{login_id}`（**账号级**，由业务方在检测到
     /// token 泄露/复用后写入，本 crate 内无写入方），而非 `...:{login_id}:{token}`
@@ -646,7 +646,7 @@ mod tests {
     }
 
     // ========================================================================
-    // DAO 模式测试（分布式计数器，修复 #5）
+    // DAO 模式测试（分布式计数器）
     // ========================================================================
 
     use crate::dao::tests::MockDao;
@@ -662,9 +662,9 @@ mod tests {
 
     /// with_dao 注入 DAO 后进入分布式模式。
     ///
-    /// 对应修复 #5：计数器基于 DAO（oxcache/redis）而非内存 Mutex。
+    /// 计数器基于 DAO（oxcache/redis）而非内存 Mutex。
     ///
-    /// v0.7.2 语义变化：内存模式与 DAO 模式统一使用 `GarrisonDaoDistributedLimiter`，
+    /// 内存模式与 DAO 模式统一使用 `GarrisonDaoDistributedLimiter`，
     /// `with_dao` 仅替换后端 DAO（从 `MockDao` 切换为注入的 DAO），
     /// `ip_failure_count` / `account_failure_count` 始终从当前后端读取。
     #[tokio::test]
@@ -687,7 +687,7 @@ mod tests {
 
     /// DAO 模式下 record_failure 递增 DAO 计数。
     ///
-    /// 对应修复 #5：fw:ip:{ip} / fw:acct:{login_id} 计数器持久化到 DAO。
+    /// fw:ip:{ip} / fw:acct:{login_id} 计数器持久化到 DAO。
     #[tokio::test]
     async fn record_failure_dao_mode_increments_counter() {
         let (hook, dao) = make_dao_hook();
@@ -706,7 +706,7 @@ mod tests {
 
     /// DAO 模式下登录频率超阈值（≥10）阻断。
     ///
-    /// 对应修复 #5：check_login_frequency 走 DAO 路径。
+    /// check_login_frequency 走 DAO 路径。
     #[tokio::test]
     async fn check_login_frequency_dao_mode_blocks_at_threshold() {
         let (hook, _dao) = make_dao_hook();
@@ -722,7 +722,7 @@ mod tests {
 
     /// DAO 模式下暴力破解超阈值（≥5）阻断。
     ///
-    /// 对应修复 #5：check_brute_force 走 DAO 路径。
+    /// check_brute_force 走 DAO 路径。
     #[tokio::test]
     async fn check_brute_force_dao_mode_blocks_at_threshold() {
         let (hook, _dao) = make_dao_hook();
@@ -737,7 +737,7 @@ mod tests {
 
     /// DAO 模式下 token 黑名单存在则阻断。
     ///
-    /// 对应修复 #4：check_token_reuse 实现（DAO 模式）。
+    /// check_token_reuse 实现（DAO 模式）。
     #[tokio::test]
     async fn check_token_reuse_dao_mode_blocks_blacklisted() {
         let (hook, dao) = make_dao_hook();
@@ -753,7 +753,7 @@ mod tests {
 
     /// DAO 模式下无黑名单时 check_token_reuse 通过。
     ///
-    /// 对应修复 #4：check_token_reuse 实现（无黑名单数据时 pass）。
+    /// check_token_reuse 实现（无黑名单数据时 pass）。
     #[tokio::test]
     async fn check_token_reuse_passes_without_blacklist() {
         let (hook, _dao) = make_dao_hook();
@@ -766,7 +766,7 @@ mod tests {
 
     /// DAO 模式下异地登录（与上次 geo 不符）阻断。
     ///
-    /// 对应修复 #4：check_geo_anomaly 实现（DAO 模式）。
+    /// check_geo_anomaly 实现（DAO 模式）。
     #[tokio::test]
     async fn check_geo_anomaly_dao_mode_blocks_different_geo() {
         let (hook, dao) = make_dao_hook();
@@ -781,7 +781,7 @@ mod tests {
 
     /// DAO 模式下无 geo 记录时 check_geo_anomaly 通过（首次登录）。
     ///
-    /// 对应修复 #4：check_geo_anomaly 实现（无 geo 数据时 pass）。
+    /// check_geo_anomaly 实现（无 geo 数据时 pass）。
     #[tokio::test]
     async fn check_geo_anomaly_passes_without_geo_data() {
         let (hook, _dao) = make_dao_hook();
@@ -794,7 +794,7 @@ mod tests {
 
     /// DAO 模式下未知设备指纹阻断。
     ///
-    /// 对应修复 #4：check_device_anomaly 实现（DAO 模式）。
+    /// check_device_anomaly 实现（DAO 模式）。
     #[tokio::test]
     async fn check_device_anomaly_dao_mode_blocks_unknown_device() {
         let (hook, dao) = make_dao_hook();
@@ -811,7 +811,7 @@ mod tests {
 
     /// DAO 模式下无设备记录时 check_device_anomaly 通过（首次登录）。
     ///
-    /// 对应修复 #4：check_device_anomaly 实现（无设备数据时 pass）。
+    /// check_device_anomaly 实现（无设备数据时 pass）。
     #[tokio::test]
     async fn check_device_anomaly_passes_without_device_data() {
         let (hook, _dao) = make_dao_hook();
@@ -843,7 +843,7 @@ mod tests {
 
     /// 内存模式 IP 失败窗口重置：第二次失败在窗口外，count 重置为 1。
     ///
-    /// v0.7.2 语义：窗口过期由 `MockDao` 的 TTL 语义保证（key 过期后 `incr` 重新初始化）。
+    /// 窗口过期由 `MockDao` 的 TTL 语义保证（key 过期后 `incr` 重新初始化）。
     /// 此测试通过 `hook.dao.delete(key)` 模拟 TTL 过期（等价于 key 已过期被自动清理），
     /// 避免真实等待 `LOGIN_FREQUENCY_WINDOW`（1 小时）。
     #[tokio::test]
@@ -867,7 +867,7 @@ mod tests {
 
     /// 内存模式账号失败窗口重置：第二次失败在窗口外，count 重置为 1。
     ///
-    /// v0.7.2 语义：窗口过期由 `MockDao` 的 TTL 语义保证。
+    /// 窗口过期由 `MockDao` 的 TTL 语义保证。
     /// 此测试通过 `hook.dao.delete(key)` 模拟 TTL 过期。
     #[tokio::test]
     async fn record_failure_resets_account_count_when_window_expired() {
@@ -890,7 +890,7 @@ mod tests {
 
     /// DAO 模式下脏计数器数据导致 `check_brute_force` 返回 Err（Fail Loud）。
     ///
-    /// v0.7.2 语义：limiteron `get_count` 在 parse 失败时返回 `Err`（fail-fast），
+    /// limiteron `get_count` 在 parse 失败时返回 `Err`（fail-fast），
     /// `check_brute_force` 将其映射为 `GarrisonError::Dao` 向上传播，
     /// 不再静默用 0（避免脏数据导致阈值检测失效）。
     #[tokio::test]

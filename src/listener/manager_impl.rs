@@ -12,7 +12,7 @@ impl GarrisonListenerManager {
         let listeners: Vec<Arc<dyn GarrisonListener>> = inventory::iter::<GarrisonListenerEntry>()
             .map(|entry| (entry.factory)())
             .collect();
-        // ocr #5348：`type_name::<Arc<dyn GarrisonListener>>()` 对所有条目恒为同一字符串，
+        // `type_name::<Arc<dyn GarrisonListener>>()` 对所有条目恒为同一字符串，
         // 无任何 per-listener 信息，原逐条循环属死代码；改为输出监听器数量。
         tracing::info!(
             "listener loaded: {} listener(s) registered",
@@ -41,13 +41,13 @@ impl GarrisonListenerManager {
     /// 异步遍历所有监听器的 `on_event` 方法：
     /// - 单个监听器返回 `Err` 仅记录 `tracing::warn!`，不中断广播，最终返回 `Ok(())`；
     /// - 单个监听器 **panic** 同样被 `catch_unwind` 捕获并降级为 `tracing::warn!`
-    ///   （ocr #2620：panic 不得传播出 `broadcast`，违背监听器隔离承诺），
-    ///   后续监听器继续收到事件。
+    /// （panic 不得传播出 `broadcast`，违背监听器隔离承诺），
+    /// 后续监听器继续收到事件。
     ///
     /// panic 捕获在当前 task 内完成（非 spawn），`task_local` 上下文（如 `TENANT`）
     /// 对监听器仍然可见。
     ///
-    /// v0.5.0 改为 async：`on_event` 改为 async 后，broadcast 需 `.await`。
+    /// `on_event` 为 async，broadcast 需 `.await`。
     pub async fn broadcast(&self, event: &GarrisonEvent) {
         use futures::FutureExt;
         use std::panic::AssertUnwindSafe;

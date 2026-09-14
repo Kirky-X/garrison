@@ -11,14 +11,14 @@
 //! ## 设计决策
 //!
 //! - `ScopeHandler` trait 的 `validate(scope, login_id)` 方法接受 login_id 参数。
-//!   但 OAuth2 客户端流程在 token 请求时通常尚未解析出 login_id（password 流需先认证、
-//!   client_credentials 流无用户、refresh_token 流需先解码 refresh_token）。
-//!   约定：客户端在 token 请求前调用 `validate_scope(scope)` 时传入 `login_id = 0`，
-//!   handler 实现可按需通过其他上下文（如 username / client_id）查询真实 login_id。
-//!   这是 spec 与 OAuth2 客户端实际语义之间的妥协（Rule 7 已暴露冲突）。
+//! 但 OAuth2 客户端流程在 token 请求时通常尚未解析出 login_id（password 流需先认证、
+//! client_credentials 流无用户、refresh_token 流需先解码 refresh_token）。
+//! 约定：客户端在 token 请求前调用 `validate_scope(scope)` 时传入 `login_id = 0`，
+//! handler 实现可按需通过其他上下文（如 username / client_id）查询真实 login_id。
+//! 这是 spec 与 OAuth2 客户端实际语义之间的妥协。
 //! - `ScopeRegistry` 用 `parking_lot::RwLock` 保护 `HashMap<String, Arc<dyn ScopeHandler>>`，
-//!   与 `GarrisonPluginManager` / `GarrisonListenerManager` 的 `Vec<Arc<dyn T>>` 模式一致（Arc 而非 Box，
-//!   因为 handler 可能被多处共享；RwLock 因为支持运行时 register/unregister）。
+//! 与 `GarrisonPluginManager` / `GarrisonListenerManager` 的 `Vec<Arc<dyn T>>` 模式一致（Arc 而非 Box，
+//! 因为 handler 可能被多处共享；RwLock 因为支持运行时 register/unregister）。
 
 use crate::error::{GarrisonError, GarrisonResult};
 use parking_lot::RwLock;
@@ -158,7 +158,7 @@ mod tests {
     // ScopeRegistry 基础测试
     // ========================================================================
 
-    /// 注册并查询 scope handler 返回 Ok(true)（spec Scenario: 注册并查询）。
+    /// 注册并查询 scope handler 返回 Ok(true)（注册并查询）。
     #[test]
     fn register_and_validate_returns_handler_result() {
         let registry = ScopeRegistry::new();
@@ -176,7 +176,7 @@ mod tests {
         assert!(!result);
     }
 
-    /// 未注册的 scope 返回 OAuth2 错误（spec Scenario: 未注册的 scope）。
+    /// 未注册的 scope 返回 OAuth2 错误（未注册的 scope）。
     #[test]
     fn validate_unregistered_scope_returns_oauth2_error() {
         let registry = ScopeRegistry::new();
@@ -190,7 +190,7 @@ mod tests {
         }
     }
 
-    /// handler 实现返回错误时向上传播（spec Scenario: 错误传播，Fail Loud）。
+    /// handler 实现返回错误时向上传播（错误传播，Fail Loud）。
     #[test]
     fn handler_error_propagates() {
         let registry = ScopeRegistry::new();
@@ -205,7 +205,7 @@ mod tests {
         }
     }
 
-    /// 并发注册线程安全（spec Scenario: 并发注册线程安全）。
+    /// 并发注册线程安全（并发注册线程安全）。
     #[test]
     fn concurrent_register_is_thread_safe() {
         let registry = Arc::new(ScopeRegistry::new());

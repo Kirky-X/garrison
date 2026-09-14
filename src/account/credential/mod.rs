@@ -2,7 +2,7 @@
 //! See LICENSE for full license text.
 
 //! 凭证模型 SPI 子模块（吸收 keycloak CredentialModel SPI）。
-//! 提供统一凭证抽象，支持 password / TOTP / WebAuthn（v0.7+）等多种凭证类型。
+//! 提供统一凭证抽象，支持 password / TOTP / WebAuthn等多种凭证类型。
 //! 详见 spec `credential-model`。
 //!
 //! # 核心类型
@@ -13,10 +13,10 @@
 //!
 //! # 设计决策
 //!
-//! - D1: `Credential::verify(&self, input: &str)` 接收 `&str` 而非泛型（对象安全）
-//! - D5: `PasswordHasher` 从 `secure/password/` 破坏性迁移到本模块的 `password` 子模块
+//! - `Credential::verify(&self, input: &str)` 接收 `&str` 而非泛型（对象安全）
+//! - `PasswordHasher` 位于本模块的 `password` 子模块
 
-/// 密码哈希子模块（v0.6.0 从 secure/password/ 迁移）。
+/// 密码哈希子模块。
 ///
 /// 提供 `PasswordHasher` trait + `Argon2Hasher` / `BcryptHasher` + `PasswordVerifier`。
 #[cfg(feature = "account-credential")]
@@ -71,7 +71,7 @@ pub type CredentialType = &'static str;
 ///
 /// # 对象安全
 ///
-/// `verify` 接收 `&str` 而非泛型（决策 D1），保证 trait 对象安全，
+/// `verify` 接收 `&str` 而非泛型，保证 trait 对象安全，
 /// 可作 `Box<dyn Credential>` / `Arc<dyn Credential>` 使用。
 ///
 /// # 示例
@@ -123,7 +123,7 @@ pub trait Credential: Send + Sync {
 /// | `created_at` | `i64` | 创建时间（Unix 时间戳） |
 /// | `enabled` | `bool` | 是否启用 |
 /// | `priority` | `i32` | 优先级（多凭证时排序，小值优先） |
-/// # 安全注意（secret_data 默认不清零 — Issue 2467/2737/3521）
+/// # 安全注意（secret_data 默认不清零）
 ///
 /// `CredentialModel.secret_data` 存储密码哈希 / TOTP secret / WebAuthn 公钥等敏感
 /// 材料。`Zeroize` / `ZeroizeOnDrop` 仅在启用 **`credential-zeroize`** feature 时
@@ -164,7 +164,7 @@ pub struct CredentialModel {
 /// 5 方法 CRUD：`create` / `find_by_user` / `find_by_user_and_type` / `update` / `delete`。
 /// 由 `DaoCredentialRepository`基于 `GarrisonDao` 实现，也可由业务方自定义实现。
 ///
-/// # IDOR 防护（vuln-0004 修复）
+/// # IDOR 防护
 ///
 /// `find_by_user` / `update` / `delete` 强制要求 `caller_login_id` 参数，由实现层验证
 /// `caller_login_id` 与目标凭证的 `user_id` 一致，否则返回 `GarrisonError::NotPermission`
@@ -274,14 +274,14 @@ pub trait CredentialRepository: Send + Sync {
 /// # 已知限制
 ///
 /// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `GarrisonDao::keys()`，
-///   `keys()` 的错误会原样向上传播（保持失败可见，不静默吞掉）。
-///   `GarrisonDaoOxcache` 默认**未启用** `dao-key-index` feature 时不实现 `keys()`
-///   （返回 `NotImplemented`，详见 A-010）——生产环境需启用 `dao-key-index`，
-///   或使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
+/// `keys()` 的错误会原样向上传播（保持失败可见，不静默吞掉）。
+/// `GarrisonDaoOxcache` 默认**未启用** `dao-key-index` feature 时不实现 `keys()`
+/// （返回 `NotImplemented`）——生产环境需启用 `dao-key-index`，
+/// 或使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
 /// - `delete(caller_login_id, credential_id)` 通过扫描 `cred:*:{credential_id}` 定位
-///   完整 key（`credential_id` 为 UUID v4 全局唯一，理论上仅匹配一个 key），
-///   再反序列化校验 `user_id == caller_login_id` 后删除。
-///   异常多键场景下逐 key 处理：先删除的 key 不回滚（详见 repository_impl 模块文档）。
+/// 完整 key（`credential_id` 为 UUID v4 全局唯一，理论上仅匹配一个 key），
+/// 再反序列化校验 `user_id == caller_login_id` 后删除。
+/// 异常多键场景下逐 key 处理：先删除的 key 不回滚（详见 repository_impl 模块文档）。
 pub struct DaoCredentialRepository {
     dao: Arc<dyn GarrisonDao>,
 }

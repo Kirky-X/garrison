@@ -7,7 +7,7 @@
 //! 提供 `MockCredentialRepository`（基于 `std::sync::Mutex<HashMap>` 模拟 `CredentialRepository`），
 //! 供 `account::credential::tests` 凭证 CRUD 契约测试复用。
 //!
-//! # IDOR 防护（vuln-0004 修复）
+//! # IDOR 防护
 //!
 //! Mock 实现同步加入 `caller_login_id` 校验，与 `DaoCredentialRepository` 行为一致，
 //! 便于在 trait 契约测试中验证所有权拒绝路径。
@@ -43,7 +43,7 @@ impl CredentialRepository for MockCredentialRepository {
         caller_login_id: &str,
         user_id: &str,
     ) -> GarrisonResult<Vec<CredentialModel>> {
-        // IDOR 防护：caller 必须是自己（vuln-0004）
+        // IDOR 防护：caller 必须是自己
         if caller_login_id != user_id {
             return Err(GarrisonError::NotPermission(format!(
                 "credential-query-forbidden::{}::{}",

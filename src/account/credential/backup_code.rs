@@ -236,9 +236,9 @@ impl BackupCodeCredential {
                     .compare_and_swap(&key, Some(&old_json), &updated_json, 0)
                     .await?
                 {
-                    // 4. 同步内存快照（Issue 4695/6292/6458）：消费成功后更新本实例
-                    //    的 model.secret_data，使同一实例的 verify() 不再对已消费码
-                    //    返回 true。
+                    // 4. 同步内存快照：消费成功后更新本实例
+                    // 的 model.secret_data，使同一实例的 verify() 不再对已消费码
+                    // 返回 true。
                     self.model.secret_data = new_secret;
                     tracing::info!(
                         user_id = %self.model.user_id,
@@ -276,12 +276,12 @@ impl Credential for BackupCodeCredential {
     }
 
     async fn verify(&self, input: &str) -> GarrisonResult<bool> {
-        // 内存快照语义（Issue 6292/6458）：本方法只比对实例内存中的
+        // 内存快照语义：本方法只比对实例内存中的
         // `self.model.secret_data` 快照，不查 DAO。
         // - 本实例内：`verify_and_consume` 成功后会同步更新该快照，
-        //   已消费的码 verify 返回 false；
+        // 已消费的码 verify 返回 false；
         // - 跨实例/并发消费：本方法不可见（无 DAO 参数），
-        //   权威校验请使用 [`BackupCodeCredential::verify_and_consume`]。
+        // 权威校验请使用 [`BackupCodeCredential::verify_and_consume`]。
         let data = BackupCodeSecretData::from_json(&self.model.secret_data)?;
         let input_hash = sha256_hex(&normalize(input));
         // 常量时间比较（CWE-208）：不使用 contains/== 短路比较
@@ -479,7 +479,7 @@ mod tests {
         assert!(consume_result, "verify 不应消费备份码");
     }
 
-    /// Issue 4695/6292/6458: 同一实例消费后，`verify()` 对已消费码应返回 false
+    /// 同一实例消费后，`verify()` 对已消费码应返回 false
     /// （内存快照与 DAO 同步），对未消费码仍返回 true。
     #[tokio::test]
     async fn verify_sees_consumption_by_same_instance() {
@@ -566,7 +566,7 @@ mod tests {
         assert!(!result, "全部消费后应返回 false");
     }
 
-    /// CRITICAL-9: 并发双花防护 — CAS 原子消费保证同一备份码并发仅一次成功。
+    /// 并发双花防护 — CAS 原子消费保证同一备份码并发仅一次成功。
     ///
     /// 验证 `verify_and_consume` 使用 `compare_and_swap` 原子操作，
     /// 两个并发调用同一备份码时仅一个成功（另一个 CAS 冲突后重试，发现码已消费）。

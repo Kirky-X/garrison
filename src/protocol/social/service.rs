@@ -3,8 +3,7 @@
 
 //! `SocialBindingService` 实现模块（任意 db 后端 feature）。
 //!
-//! 从 `mod.rs` 迁移以符合规则 25（mod.rs 接口隔离）：
-//! impl 块不允许留在 `mod.rs`。
+//! mod.rs 接口隔离：impl 块不允许留在 `mod.rs`。
 //!
 //! 提供 `find_or_create` 语义：首次社交登录时自动创建绑定关系并生成新 `login_id`，
 //! 后续登录返回已有 `login_id`（幂等）。
@@ -65,8 +64,8 @@ impl SocialBindingService {
     /// 1. 按 `(tenant_id, provider, provider_user_id)` 查询 `social_bindings` 表
     /// 2. 命中 → 返回已有 `login_id`（幂等）
     /// 3. 未命中 → 用单条 INSERT 插入新绑定，`login_id` 用 UUID 生成
-    ///    4. INSERT 成功 → 返回新建的 `login_id`
-    ///    5. INSERT 失败（UNIQUE 约束冲突，并发场景下另一事务已插入）→ SELECT 返回已有 `login_id`
+    /// 4. INSERT 成功 → 返回新建的 `login_id`
+    /// 5. INSERT 失败（UNIQUE 约束冲突，并发场景下另一事务已插入）→ SELECT 返回已有 `login_id`
     ///
     /// # login_id 生成策略
     ///

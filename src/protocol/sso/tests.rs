@@ -17,7 +17,7 @@ fn make_client() -> SsoClient {
 // SsoClient 构造测试
 // ========================================================================
 
-/// 构造 SsoClient，持有 dao（spec Scenario）。
+/// 构造 SsoClient，持有 dao）。
 #[test]
 fn new_creates_client_with_dao() {
     let _client = make_client();
@@ -43,7 +43,7 @@ async fn issue_ticket_returns_signed_format() {
     assert!(!sig.is_empty(), "签名部分不应为空");
 }
 
-/// 票据随机性：连续签发返回不同票据（spec Scenario）。
+/// 票据随机性：连续签发返回不同票据）。
 #[tokio::test]
 async fn issue_ticket_generates_unique_tickets() {
     let client = make_client();
@@ -52,7 +52,7 @@ async fn issue_ticket_generates_unique_tickets() {
     assert_ne!(t1, t2);
 }
 
-/// 相同 login_id 多 client 签发独立票据（spec Scenario）。
+/// 相同 login_id 多 client 签发独立票据）。
 #[tokio::test]
 async fn issue_ticket_same_login_different_clients() {
     let client = make_client();
@@ -61,7 +61,7 @@ async fn issue_ticket_same_login_different_clients() {
     assert_ne!(t1, t2);
 }
 
-/// key 前缀正确（spec Scenario）。
+/// key 前缀正确）。
 #[tokio::test]
 async fn issue_ticket_uses_correct_key_prefix() {
     let dao = Arc::new(MockDao::new());
@@ -79,7 +79,7 @@ async fn issue_ticket_uses_correct_key_prefix() {
 // validate_ticket 测试
 // ========================================================================
 
-/// 成功校验返回 login_id（spec Scenario）。
+/// 成功校验返回 login_id）。
 #[tokio::test]
 async fn validate_ticket_success_returns_login_id() {
     let client = make_client();
@@ -88,7 +88,7 @@ async fn validate_ticket_success_returns_login_id() {
     assert_eq!(login_id, "1001");
 }
 
-/// 校验成功后票据被删除（一次性使用，spec Scenario）。
+/// 校验成功后票据被删除（一次性使用）。
 #[tokio::test]
 async fn validate_ticket_deletes_after_success() {
     let client = make_client();
@@ -103,7 +103,7 @@ async fn validate_ticket_deletes_after_success() {
     );
 }
 
-/// client_id 不匹配返回 InvalidToken 错误（spec Scenario，M5）。
+/// client_id 不匹配返回 InvalidToken 错误。
 #[tokio::test]
 async fn validate_ticket_client_id_mismatch_returns_error() {
     let client = make_client();
@@ -116,7 +116,7 @@ async fn validate_ticket_client_id_mismatch_returns_error() {
     }
 }
 
-/// 票据不存在返回错误（spec Scenario）。
+/// 票据不存在返回错误）。
 #[tokio::test]
 async fn validate_ticket_nonexistent_returns_error() {
     let client = make_client();
@@ -128,7 +128,7 @@ async fn validate_ticket_nonexistent_returns_error() {
     }
 }
 
-/// 一次性使用：第二次校验失败（spec Scenario）。
+/// 一次性使用：第二次校验失败）。
 #[tokio::test]
 async fn validate_ticket_one_time_use_second_fails() {
     let client = make_client();
@@ -147,7 +147,7 @@ async fn validate_ticket_one_time_use_second_fails() {
 // destroy_ticket 测试
 // ========================================================================
 
-/// 销毁存在的票据（spec Scenario）。
+/// 销毁存在的票据）。
 #[tokio::test]
 async fn destroy_ticket_existing() {
     let client = make_client();
@@ -163,7 +163,7 @@ async fn destroy_ticket_existing() {
     );
 }
 
-/// 销毁不存在的票据返回 Ok（幂等，spec Scenario）。
+/// 销毁不存在的票据返回 Ok（幂等）。
 #[tokio::test]
 async fn destroy_ticket_nonexistent_returns_ok() {
     let client = make_client();
@@ -203,10 +203,9 @@ async fn issue_ticket_accepts_login_id_numeric() {
 // TOCTOU 修复测试
 // ========================================================================
 
-/// R-002: 并发消费同一 ticket 仅一个成功（TOCTOU 修复核心验证）。
+/// 并发消费同一 ticket 仅一个成功（TOCTOU 修复核心验证）。
 ///
 /// 10 个并发任务同时 validate_ticket，仅一个返回 Ok，其他返回 InvalidToken。
-/// R-002 验收标准。
 #[tokio::test(flavor = "multi_thread")]
 async fn validate_ticket_concurrent_only_one_succeeds() {
     let client = Arc::new(make_client());
@@ -239,10 +238,10 @@ async fn validate_ticket_concurrent_only_one_succeeds() {
 }
 
 // ========================================================================
-// M5 新增：ticket HMAC 签名测试（依据安全审计 M5）
+// ticket HMAC 签名测试
 // ========================================================================
 
-/// M5: 伪造的 ticket（无签名部分）应被拒绝。
+/// 伪造的 ticket（无签名部分）应被拒绝。
 #[tokio::test]
 async fn validate_ticket_rejects_unsigned_ticket() {
     let client = make_client();
@@ -256,7 +255,7 @@ async fn validate_ticket_rejects_unsigned_ticket() {
     );
 }
 
-/// M5: 签名被篡改的 ticket 应被拒绝。
+/// 签名被篡改的 ticket 应被拒绝。
 #[tokio::test]
 async fn validate_ticket_rejects_tampered_signature() {
     let client = make_client();
@@ -271,7 +270,7 @@ async fn validate_ticket_rejects_tampered_signature() {
     );
 }
 
-/// M5: 使用不同 secret 签发的 ticket 应被另一个 client 拒绝。
+/// 使用不同 secret 签发的 ticket 应被另一个 client 拒绝。
 #[tokio::test]
 async fn validate_ticket_rejects_different_secret() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

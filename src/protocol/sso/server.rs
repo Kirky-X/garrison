@@ -53,10 +53,9 @@ pub trait SsoServer: Send + Sync {
     /// - `Ok(login_id)`: 校验成功（经 `CenterIdConverter::to_login_id` 转换回原始 login_id）。
     /// - `Err(GarrisonError::InvalidToken)`: 票据不存在、已过期或 client_id 不匹配。
     ///
-    /// # 原子性保证（）
+    /// # 原子性保证
     ///
     /// 与 `SsoClient::validate_ticket` 相同，使用 `GarrisonDao::get_and_delete` 原子操作。
-    /// R-002。
     async fn validate_ticket(&self, ticket: &str, client_id: i64) -> GarrisonResult<String>;
 
     /// 销毁 SSO ticket（幂等，即使票据不存在也返回 `Ok(())`）。
@@ -155,7 +154,7 @@ pub struct DefaultSsoServer {
     channel: Option<Arc<dyn SsoChannel>>,
     /// 中心 ID 转换器。
     converter: Arc<dyn CenterIdConverter>,
-    /// HMAC 签名密钥（M5 修复：所有 ticket 必须签名，与 SsoClient 格式一致）。
+    /// HMAC 签名密钥（所有 ticket 必须签名，与 SsoClient 格式一致）。
     secret: String,
 }
 
@@ -215,7 +214,7 @@ impl SsoServer for DefaultSsoServer {
         let center_id = self.converter.to_center_id(login_id);
         // 拼接两个 UUID v4 simple（各 32 hex = 64 字符），与 SsoClient 格式一致
         let random_part = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-        // M5 修复：对 ticket 签名，防止 DAO 攻破后伪造
+        // 对 ticket 签名，防止 DAO 攻破后伪造
         let sig = sign_ticket(&self.secret, &random_part)?;
         let ticket = format!("{}.{}", random_part, sig);
         let data = SsoTicketData {
@@ -230,7 +229,7 @@ impl SsoServer for DefaultSsoServer {
     }
 
     async fn validate_ticket(&self, ticket: &str, client_id: i64) -> GarrisonResult<String> {
-        // M5 修复：先验签，防止 DAO 攻破后伪造 ticket
+        // 先验签，防止 DAO 攻破后伪造 ticket
         let _random_part = verify_ticket_signature(&self.secret, ticket)?;
 
         let key = format!("garrison:sso:ticket:{}", ticket);
@@ -320,7 +319,7 @@ mod tests {
     // 构造测试
     // ========================================================================
 
-    /// 构造 DefaultSsoServer，持有 dao（spec Scenario）。
+    /// 构造 DefaultSsoServer，持有 dao）。
     #[test]
     fn new_creates_server_with_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -346,7 +345,7 @@ mod tests {
     // CenterIdConverter 测试
     // ========================================================================
 
-    /// IdentityCenterIdConverter 默认实现往返一致（spec Scenario）。
+    /// IdentityCenterIdConverter 默认实现往返一致）。
     #[test]
     fn identity_converter_roundtrip() {
         let converter = IdentityCenterIdConverter;
@@ -357,7 +356,7 @@ mod tests {
         assert_eq!(center_id, "1001");
     }
 
-    /// 自定义 CenterIdConverter 实现（login_id 加前缀 c- 作为 center_id）（spec Scenario）。
+    /// 自定义 CenterIdConverter 实现（login_id 加前缀 c- 作为 center_id）。
     #[test]
     fn custom_converter_roundtrip() {
         struct OffsetConverter;
@@ -383,7 +382,7 @@ mod tests {
     // NoopSsoChannel 测试
     // ========================================================================
 
-    /// NoopSsoChannel::push 返回 Ok 且不实际推送（spec Scenario）。
+    /// NoopSsoChannel::push 返回 Ok 且不实际推送）。
     #[tokio::test]
     async fn noop_channel_push_returns_ok() {
         let channel = NoopSsoChannel;
@@ -433,7 +432,7 @@ mod tests {
         assert!(parts[0].chars().all(|c| c.is_ascii_hexdigit()));
     }
 
-    /// validate_ticket 一次性使用：第二次校验失败（spec Scenario）。
+    /// validate_ticket 一次性使用：第二次校验失败）。
     #[tokio::test]
     async fn validate_ticket_one_time_use_second_fails() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -449,7 +448,7 @@ mod tests {
         );
     }
 
-    /// validate_ticket client_id 不匹配返回 InvalidToken 错误（M5 修复）。
+    /// validate_ticket client_id 不匹配返回 InvalidToken 错误。
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -482,7 +481,7 @@ mod tests {
     // destroy_ticket 测试
     // ========================================================================
 
-    /// destroy_ticket 幂等：销毁不存在的票据返回 Ok（spec Scenario）。
+    /// destroy_ticket 幂等：销毁不存在的票据返回 Ok）。
     #[tokio::test]
     async fn destroy_ticket_idempotent() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -652,7 +651,7 @@ mod tests {
     }
 
     // ========================================================================
-    // SsoServer 与 SsoClient 通过共享 GarrisonDao 间接通信（spec Scenario）
+    // SsoServer 与 SsoClient 通过共享 GarrisonDao 间接通信
     // ========================================================================
 
     /// SsoServer 签发的 ticket 可被 SsoClient 校验（共享 DAO，spec Scenario）。

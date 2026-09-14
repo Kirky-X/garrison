@@ -2,7 +2,7 @@
 //! See LICENSE for full license text.
 
 //! MfaLogic trait — 二级认证（MFA）与账号禁用校验契约。
-//! 从 v0.5.2 起，从 `GarrisonLogic` 上帝 trait 拆分；本 trait 承接 MFA 校验与
+//! 本 trait 承接 MFA 校验与
 //! 账号禁用检查 2 个方法。super-trait 为 [`SessionLogic`]
 //! （MFA 检查依赖当前登录状态）。
 
@@ -19,9 +19,9 @@ use async_trait::async_trait;
 /// # 默认实现
 ///
 /// - [`check_safe`](Self::check_safe)：默认调用 `is_safe("default")`，未通过时返回
-///   `Err(NotSafe("SAFE_EXPIRED"))`；未覆写 `is_safe` 时返回 `Ok(())`（视为已通过）。
+/// `Err(NotSafe("SAFE_EXPIRED"))`；未覆写 `is_safe` 时返回 `Ok(())`（视为已通过）。
 /// - [`check_disable`](Self::check_disable)：默认返回 `Ok(())`（未实现禁用账号库）。
-///   业务方覆写以查询当前 login_id 是否在禁用列表中。
+/// 业务方覆写以查询当前 login_id 是否在禁用列表中。
 #[async_trait]
 pub trait MfaLogic: SessionLogic {
     /// 检查二级认证（MFA）状态。
@@ -46,13 +46,13 @@ pub trait MfaLogic: SessionLogic {
 
     /// 检查账号是否被禁用。
     ///
-    /// trait 默认实现返回 `Ok(())`（不查询禁用账号库）；`GarrisonLogicDefault` 自 v0.6.5 起覆写：
+    /// trait 默认实现返回 `Ok(())`（不查询禁用账号库）；`GarrisonLogicDefault` 覆写：
     /// 从当前 token 取 login_id 并查询封禁状态，被封禁则返回
     /// `DisableService` 错误。未登录时返回 `Ok(())`。
     ///
     /// # 返回
     /// - `Ok(())`: 账号未禁用 / 未登录。
-    /// - `Err(GarrisonError::DisableService)`: 账号已封禁（0.6.1 起推荐使用专用异常）。
+    /// - `Err(GarrisonError::DisableService)`: 账号已封禁（推荐使用专用异常）。
     async fn check_disable(&self) -> GarrisonResult<()> {
         Ok(())
     }
@@ -117,10 +117,10 @@ pub trait MfaLogic: SessionLogic {
     ///
     /// ```ignore
     /// async fn check_disable(&self) -> GarrisonResult<()> {
-    ///     if account_is_banned().await {
-    ///         return Err(Self::disable_service("default", None));
-    ///     }
-    ///     Ok(())
+    /// if account_is_banned().await {
+    /// return Err(Self::disable_service("default", None));
+    /// }
+    /// Ok(())
     /// }
     /// ```
     ///
@@ -143,10 +143,10 @@ pub trait MfaLogic: SessionLogic {
     ///
     /// ```ignore
     /// async fn check_safe(&self) -> GarrisonResult<()> {
-    ///     if !mfa_completed().await {
-    ///         return Err(Self::not_safe("MFA_TOTP_REQUIRED"));
-    ///     }
-    ///     Ok(())
+    /// if !mfa_completed().await {
+    /// return Err(Self::not_safe("MFA_TOTP_REQUIRED"));
+    /// }
+    /// Ok(())
     /// }
     /// ```
     ///
@@ -181,9 +181,9 @@ impl MfaLogic for GarrisonLogicDefault {
     /// # 行为
     /// - 无 `safe-auth` feature：`is_safe` 使用 trait default（`Ok(true)`）→ 返回 `Ok(())`
     /// - 有 `safe-auth` feature：`is_safe` 使用 inherent method（检查 `safe_services`）
-    ///   - `Ok(true)` → 返回 `Ok(())`
-    ///   - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
-    ///   - `Err(e)` → 透传错误
+    /// - `Ok(true)` → 返回 `Ok(())`
+    /// - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
+    /// - `Err(e)` → 透传错误
     async fn check_safe(&self) -> GarrisonResult<()> {
         if !self.is_safe("default").await? {
             return Err(Self::not_safe("SAFE_EXPIRED"));
@@ -198,7 +198,7 @@ impl MfaLogic for GarrisonLogicDefault {
     /// 2. token 对应的 TokenSession 不存在 → 返回 `Ok(())`
     /// 3. 调用 `DisableRepository::is_disable(login_id, "default")`，未封禁 → `Ok(())`
     /// 4. 已封禁 → 返回 `Err(Self::disable_service("default", until))`，
-    ///    `until` 来自 `get_disable_time`（None=永久封禁，Some=定时解封）
+    /// `until` 来自 `get_disable_time`（None=永久封禁，Some=定时解封）
     ///
     /// # 错误
     /// - `GarrisonError::DisableService`: 账号已封禁。
@@ -325,7 +325,7 @@ mod tests {
 
     /// 验证 `disable_service` 构造正确的 `GarrisonError::DisableService` 变体。
     ///
-    /// 覆盖 spec R-error-005：service 字段正确传递，until=None 表示永久封禁。
+    /// service 字段正确传递，until=None 表示永久封禁。
     #[test]
     fn disable_service_constructs_correct_error() {
         let err = MockMfa::disable_service("default", None);
@@ -357,7 +357,7 @@ mod tests {
 
     /// 验证 `not_safe` 构造正确的 `GarrisonError::NotSafe` 变体。
     ///
-    /// 覆盖 spec R-error-005：reason 字段正确传递。
+    /// reason 字段正确传递。
     #[test]
     fn not_safe_constructs_correct_error() {
         let err = MockMfa::not_safe("MFA_TOTP_REQUIRED");

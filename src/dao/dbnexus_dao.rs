@@ -11,8 +11,8 @@
 //!
 //! ```text
 //! GarrisonDaoDbnexus
-//! ├── kv: Arc<dyn GarrisonDao>  → 委托所有 KV 方法（get/set/incr/...）
-//! └── pool: DbPool              → 实现 SQL 方法（role_hierarchy/social_bindings）
+//! ├── kv: Arc<dyn GarrisonDao> → 委托所有 KV 方法（get/set/incr/...）
+//! └── pool: DbPool → 实现 SQL 方法（role_hierarchy/social_bindings）
 //! ```
 //!
 //! # Feature gate
@@ -373,7 +373,7 @@ impl GarrisonDao for GarrisonDaoDbnexus {
 // 覆盖两条主线：
 // 1. KV 方法委托正确性（以 `InMemoryDao` 为委托，断言转发与错误透传）；
 // 2. role_hierarchy / social_bindings 的 SQL 读写（sqlite 内存池 + 项目
-//    migrations/sqlite/core 迁移建表，与 tests/common/mod.rs `setup_db` 语义一致）。
+// migrations/sqlite/core 迁移建表，与 tests/common/mod.rs `setup_db` 语义一致）。
 
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {

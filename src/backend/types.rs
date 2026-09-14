@@ -8,7 +8,7 @@
 //!
 //! # 设计原则
 //!
-//! - **复用优先**（Rule 8）：LoginParams / TokenInfo / TokenSession 已存在于 garrison，
+//! - **复用优先**：LoginParams / TokenInfo / TokenSession 已存在于 garrison，
 //!   通过类型别名或 re-export 复用，不创建重复定义
 //! - **序列化兼容**：所有 HTTP 请求/响应结构体派生 `Serialize` + `Deserialize`，
 //!   确保 BackendRemote 与 Auth Server 之间的 JSON 通信兼容
@@ -16,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
-// 现有类型 re-export（避免重复定义 — Rule 8）
+// 现有类型 re-export（避免重复定义）
 // ============================================================================
 
 /// 登录请求参数（re-export 自 stp 模块）。
@@ -173,7 +173,7 @@ impl<T> ApiResponse<T> {
     ///
     /// 用于 BackendRemote 解析 HTTP 响应。
     ///
-    /// # 一致性检查（ocr #6290）
+    /// # 一致性检查
     ///
     /// `error_code` 存在时**一律视为错误**（错误优先于数据）：畸形/恶意响应
     /// 可能同时携带 `data` 与 `error_code`，此时以错误语义为准，防止
@@ -239,7 +239,7 @@ mod tests {
         assert_eq!(msg, "backend-unknown-error::");
     }
 
-    /// ocr #6290：data 与 error_code 并存时错误优先，不得静默返回成功。
+    /// data 与 error_code 并存时错误优先，不得静默返回成功。
     #[test]
     fn into_result_error_takes_precedence_over_data() {
         let resp: ApiResponse<i32> = ApiResponse {

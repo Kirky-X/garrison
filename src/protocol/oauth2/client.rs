@@ -155,13 +155,13 @@ impl OAuth2Client {
     /// # 参数
     /// - `client_id`: 客户端 ID，不可为空。
     /// - `client_secret`: 客户端密钥。
-    /// - `redirect_uri`: 回调地址，必须为 https 或 localhost/127.0.0.1（spec P2.3）。
+    /// - `redirect_uri`: 回调地址，必须为 https 或 localhost/127.0.0.1。
     /// - `auth_url`: 授权端点 URL。
     /// - `token_url`: 令牌端点 URL。
     ///
     /// # 错误
     /// - `GarrisonError::Config`: client_id 为空。
-    /// - `GarrisonError::InvalidParam`: redirect_uri 非 https 且非 localhost/127.0.0.1（spec P2.3）。
+    /// - `GarrisonError::InvalidParam`: redirect_uri 非 https 且非 localhost/127.0.0.1。
     /// - `GarrisonError::Network`: reqwest::Client 构建失败。
     pub fn new(
         client_id: impl Into<String>,
@@ -195,7 +195,7 @@ impl OAuth2Client {
         })
     }
 
-    /// 校验 redirect_uri scheme（spec P2.3）。
+    /// 校验 redirect_uri scheme。
     ///
     /// 仅允许以下两种：
     /// - `https://` 任意 host
@@ -220,7 +220,7 @@ impl OAuth2Client {
     ///
     /// # 错误
     /// - `GarrisonError::InvalidParam`: redirect_uri 无 `://`、scheme 非 https/http、
-    ///   或 http 但 host 非 localhost/127.0.0.1。
+    /// 或 http 但 host 非 localhost/127.0.0.1。
     fn validate_redirect_uri(redirect_uri: &str) -> GarrisonResult<()> {
         let Some(scheme_end) = redirect_uri.find("://") else {
             return Err(GarrisonError::InvalidParam(format!(
@@ -355,7 +355,7 @@ impl OAuth2Client {
     /// ```
     /// # use garrison::protocol::oauth2::OAuth2Client;
     /// let challenge = OAuth2Client::generate_pkce_challenge(
-    ///     "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+    /// "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
     /// ).unwrap();
     /// assert_eq!(challenge, "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM");
     /// ```
@@ -561,7 +561,7 @@ impl OAuth2Client {
 
         let status = resp.status();
         if !status.is_success() {
-            // H1 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
+            // 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
             // （响应体可能被恶意服务器回显请求参数，导致 client_secret / code_verifier 泄露）
             return Err(GarrisonError::OAuth2(format!(
                 "token endpoint returned {} for {}",
@@ -617,9 +617,9 @@ impl OAuth2Client {
 
         let status = resp.status();
         if !status.is_success() {
-            // H1 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
+            // 安全加固：错误消息只记录 HTTP status + url，不包含响应体或请求参数
             // （与 post_token_request 同类修复：响应体可能被恶意服务器回显请求参数，
-            //   导致 client_secret 泄露到日志/上层调用方）
+            // 导致 client_secret 泄露到日志/上层调用方）
             return Err(GarrisonError::OAuth2(format!(
                 "introspect endpoint returned {} for {}",
                 status.as_u16(),
@@ -639,8 +639,8 @@ impl OAuth2Client {
     ///
     /// - 若 [`with_introspect_url`](Self::with_introspect_url) 已设置 → 使用该 URL。
     /// - 否则若 `token_url` 以 `/token` 结尾 → 仅替换**末尾**这段为 `/introspect`
-    ///   （不能全局 `replace`：路径中段出现 `/token` 时会把所有出现处都替换，
-    ///   产生畸形端点，如 `/v2/oauth2/token/rotate/token` → `/v2/oauth2/introspect/rotate/introspect`）。
+    /// （不能全局 `replace`：路径中段出现 `/token` 时会把所有出现处都替换，
+    /// 产生畸形端点，如 `/v2/oauth2/token/rotate/token` → `/v2/oauth2/introspect/rotate/introspect`）。
     /// - 否则在 `token_url` 末尾追加 `/introspect`。
     fn introspect_url(&self) -> String {
         if let Some(url) = &self.introspect_url {

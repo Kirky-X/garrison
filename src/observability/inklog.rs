@@ -49,15 +49,15 @@ pub async fn init_inklog_logging() -> Result<::inklog::LoggerManager, ::inklog::
 
 /// 使用 inklog 初始化 tracing subscriber，失败时降级到 tracing-subscriber 默认配置。
 ///
-/// spec R-dep-003 降级机制：inklog 初始化失败时回退到内联 `tracing_subscriber::fmt().json()`
+/// 降级机制：inklog 初始化失败时回退到内联 `tracing_subscriber::fmt().json()`
 /// 配置，确保日志不丢失。调用方可通过 [`InklogInit::is_degraded`] 判断是否降级。
 ///
 /// # 行为
 /// 1. 尝试 inklog::LoggerManager::builder().level().console().build()
 /// 2. 成功 → 返回 `InklogInit { guard: Some(mgr), degraded: false }`
 /// 3. 失败 → 降级路径（当 `metrics-prometheus` 或 `tracing-log` 启用时用 tracing-subscriber
-///    JSON；无 observability feature 时用 `eprintln!` 警告）；再 tracing::warn! 记录降级原因，
-///    返回 `InklogInit { guard: None, degraded: true }`
+/// JSON；无 observability feature 时用 `eprintln!` 警告）；再 tracing::warn! 记录降级原因，
+/// 返回 `InklogInit { guard: None, degraded: true }`
 #[cfg(feature = "audit-inklog")]
 pub async fn init_inklog_logging_with_fallback() -> InklogInit {
     match init_inklog_logging().await {
@@ -79,7 +79,7 @@ pub async fn init_inklog_logging_with_fallback() -> InklogInit {
                     .with_span_list(false)
                     .try_init();
                 if let Err(init_err) = result {
-                    // ocr #6921：如实区分「已初始化」（可安全跳过）与其他初始化失败
+                    // 如实区分「已初始化」（可安全跳过）与其他初始化失败
                     // （降级路径实际不可用，必须以 warn 暴露，不得静默吞掉）
                     let msg = init_err.to_string();
                     if msg.contains("already") {

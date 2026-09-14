@@ -18,7 +18,7 @@
 //! ```ignore
 //! use garrison::secure::sanitize::sanitize_input;
 //!
-//! let cleaned = sanitize_input("  hello\0world  ", 100).unwrap();
+//! let cleaned = sanitize_input(" hello\0world ", 100).unwrap();
 //! assert_eq!(cleaned, "helloworld");
 //! ```
 
@@ -31,7 +31,7 @@ use crate::error::{GarrisonError, GarrisonResult};
 ///
 /// 覆盖范围：
 /// - Cf（Format）：U+00AD, U+0600-0605, U+061C, U+06DD, U+070F, U+180E,
-///   U+200B-200F, U+202A-202E, U+2060-206F, U+FEFF, U+FFF9-FFFB
+/// U+200B-200F, U+202A-202E, U+2060-206F, U+FEFF, U+FFF9-FFFB
 /// - Zl（Line Separator）：U+2028
 /// - Zp（Paragraph Separator）：U+2029
 fn is_unicode_format_or_separator(c: char) -> bool {
@@ -89,7 +89,7 @@ fn is_unicode_format_or_separator(c: char) -> bool {
 /// assert_eq!(sanitize_input("a\x01b\x02c", 100).unwrap(), "abc");
 ///
 /// // trim 前后空白
-/// assert_eq!(sanitize_input("  hello  ", 100).unwrap(), "hello");
+/// assert_eq!(sanitize_input(" hello ", 100).unwrap(), "hello");
 ///
 /// // 长度超限返回错误
 /// assert!(sanitize_input("hello world", 5).is_err());

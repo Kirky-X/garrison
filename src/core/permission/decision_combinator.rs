@@ -207,7 +207,7 @@ mod tests {
         );
     }
 
-    /// CRITICAL-11: Deny 在前、Forbid 在后时仍返回 Forbid（Forbid 始终最高优先级）。
+    /// Deny 在前、Forbid 在后时仍返回 Forbid（Forbid 始终最高优先级）。
     ///
     /// 验证移除 `is_forbid()` 的 `safe-defaults` feature-gate 后，
     /// 无论 Forbid 在列表中的位置如何，combine 始终优先返回 Forbid。

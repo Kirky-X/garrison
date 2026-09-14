@@ -3,7 +3,7 @@
 
 //! gRPC 标准健康检查服务。
 //!
-//! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
+//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
 //! 提供 `health_service()` 返回 `HealthServer<impl Health>`，
 //! 供 kubelet / 服务网格探针调用。
 
@@ -32,9 +32,9 @@
 ///
 /// let health = health_service().await;
 /// Server::builder()
-///     .add_service(health)
-///     .serve(addr)
-///     .await?;
+/// .add_service(health)
+/// .serve(addr)
+/// .await?;
 /// ```
 ///
 /// [health/v1]: https://github.com/grpc/grpc/blob/master/doc/health-checking.md

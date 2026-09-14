@@ -6,7 +6,7 @@
 //! 对应 协议层插件集合，
 //! 提供 OAuth2、SSO、JWT、签名、API Key、临时凭证等协议支持。
 //!
-//! 各子模块通过独立特性门控，按需编译。0.2.0 已实现全部协议子模块。
+//! 各子模块通过独立特性门控，按需编译。
 
 // ====================================================================
 // 协议子模块（特性门控）
@@ -44,7 +44,7 @@ pub mod invitation;
 ///
 /// 核心类型（`SocialLoginProvider` trait / `SocialUserInfo` / `SocialLoginService` 注册中心 /
 /// `provider_names` 常量 / `validation` 校验 / `urlencoding` 工具）无 feature 门控，始终编译
-/// （架构 MED-002 修复：扩展点契约类型始终可用，外部 crate 无需启用 social-wechat/social-alipay
+/// （架构修复：扩展点契约类型始终可用，外部 crate 无需启用 social-wechat/social-alipay
 /// 即可注册自定义 provider）。
 ///
 /// 内置 provider 实现（`wechat` / `alipay` 子模块）仍需对应 feature：
@@ -76,15 +76,15 @@ pub mod social;
 ///
 /// // 带参数
 /// let err = GarrisonError::Network(loc!(
-///     "wechat-token-request-failed",
-///     format!("wechat token request failed: {}", e),
-///     ("detail", &e.to_string())
+/// "wechat-token-request-failed",
+/// format!("wechat token request failed: {}", e),
+/// ("detail", &e.to_string())
 /// ));
 ///
 /// // 不带参数
 /// let err = GarrisonError::Network(loc!(
-///     "wechat-response-missing-openid",
-///     "wechat response missing openid field".to_string()
+/// "wechat-response-missing-openid",
+/// "wechat response missing openid field".to_string()
 /// ));
 /// ```
 pub use crate::loc;

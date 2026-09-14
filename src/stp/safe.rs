@@ -36,7 +36,7 @@ impl GarrisonLogicDefault {
     ///
     /// # 并发安全
     /// 使用 per-token 锁保护 read-modify-write 序列，避免并发 `open_safe` 调用
-    /// 导致 lost update（CRIT-001）。
+    /// 导致 lost update。
     ///
     /// # 错误
     /// - `GarrisonError::Session`: 未设置 current_token（未登录）。
@@ -138,7 +138,7 @@ impl GarrisonLogicDefault {
     ///
     /// # 并发安全
     /// 使用 per-token 锁保护 read-modify-write 序列，避免并发 `close_safe` 调用
-    /// 导致 lost update（CRIT-001）。
+    /// 导致 lost update。
     ///
     /// # 参数
     /// - `service`: 服务名称。
@@ -971,11 +971,11 @@ mod tests {
     }
 
     // --------------------------------------------------------------------
-    // CRIT-001: open_safe/close_safe 并发竞态测试
+    // open_safe/close_safe 并发竞态测试
     // --------------------------------------------------------------------
 
     /// SlowDao wrapper：在 `get` token session key 后插入延迟，
-    /// 放大 TokenSession read-modify-write 窗口，使 CRIT-001 竞态可靠复现。
+    /// 放大 TokenSession read-modify-write 窗口，使并发竞态可靠复现。
     ///
     /// 无锁时：两个并发 `open_safe` 都会在对方的 `save_token_session` 之前读到
     /// 旧的 TokenSession，导致 lost update（最终 safe_services 只剩 1 个 service 而非 2 个）。
@@ -1062,7 +1062,7 @@ mod tests {
             .await
     }
 
-    /// CRIT-001 修复验证：两个并发 `open_safe` 不同 service，safe_services 应包含两个 service。
+    /// 修复验证：两个并发 `open_safe` 不同 service，safe_services 应包含两个 service。
     ///
     /// 修复前（无 per-token 锁）：两个并发 open_safe 的 read-modify-write 交错，
     /// 后写入的 TokenSession 覆盖先写入的，导致丢失一个 service（lost update）。
@@ -1100,7 +1100,7 @@ mod tests {
         );
     }
 
-    /// CRIT-001 修复验证：两个并发 `close_safe` 不同 service，safe_services 应清空。
+    /// 修复验证：两个并发 `close_safe` 不同 service，safe_services 应清空。
     ///
     /// 修复前（无 per-token 锁）：两个并发 close_safe 的 read-modify-write 交错，
     /// 后写入的 TokenSession 覆盖先写入的，导致已关闭的 service 被恢复（lost update）。

@@ -9,9 +9,9 @@
 //! # 行为
 //!
 //! - **OPTIONS 预检请求**：无论 Origin 是否匹配均短路返回 204 No Content；
-//!   Origin 匹配时注入 CORS 预检响应头，Origin 不匹配/缺失/空时返回 204 无 CORS 头。
+//! Origin 匹配时注入 CORS 预检响应头，Origin 不匹配/缺失/空时返回 204 无 CORS 头。
 //! - **实际请求**（非 OPTIONS）：Origin 匹配时注入 CORS 响应头后继续到下一 handler；
-//!   Origin 不匹配时透传。
+//! Origin 不匹配时透传。
 //! - **无 Origin header**：视为非 CORS 请求，直接透传。
 //!
 //! # 配置
@@ -87,7 +87,7 @@ impl CorsConfig {
     /// # 校验规则
     ///
     /// - 若 `allow_credentials == true` 且 `allowed_origins` 包含 `"*"`，返回 `Err`：
-    ///   CORS 规范禁止 credentials 与通配符 origin 同时使用。
+    /// CORS 规范禁止 credentials 与通配符 origin 同时使用。
     ///
     /// # 错误
     ///
@@ -148,20 +148,20 @@ fn join_headers(items: &[String]) -> HeaderValue {
 ///
 /// 1. 无论 Origin 是否匹配均短路返回 204 No Content。
 /// 2. Origin 匹配时注入预检响应头：
-///    - `Access-Control-Allow-Origin`
-///    - `Access-Control-Allow-Methods`
-///    - `Access-Control-Allow-Headers`
-///    - `Access-Control-Allow-Credentials`（仅当 `allow_credentials == true`）
-///    - `Access-Control-Max-Age`
+/// - `Access-Control-Allow-Origin`
+/// - `Access-Control-Allow-Methods`
+/// - `Access-Control-Allow-Headers`
+/// - `Access-Control-Allow-Credentials`（仅当 `allow_credentials == true`）
+/// - `Access-Control-Max-Age`
 /// 3. Origin 缺失/空/不匹配时返回 204 无 CORS 头。
 ///
 /// ## 实际请求（非 OPTIONS）
 ///
 /// 1. 提取 `Origin` header，若无则透传
 /// 2. Origin 匹配时注入响应头后继续到下一 handler：
-///    - `Access-Control-Allow-Origin`
-///    - `Access-Control-Expose-Headers`（仅当 `exposed_headers` 非空）
-///    - `Access-Control-Allow-Credentials`（仅当 `allow_credentials == true`）
+/// - `Access-Control-Allow-Origin`
+/// - `Access-Control-Expose-Headers`（仅当 `exposed_headers` 非空）
+/// - `Access-Control-Allow-Credentials`（仅当 `allow_credentials == true`）
 /// 3. Origin 不匹配时透传
 ///
 /// # 使用
@@ -172,15 +172,15 @@ fn join_headers(items: &[String]) -> HeaderValue {
 /// use axum::Router;
 ///
 /// let config = CorsConfig {
-///     allowed_origins: vec!["https://example.com".to_string()],
-///     ..Default::default()
+/// allowed_origins: vec!["https://example.com".to_string()],
+/// ..Default::default()
 /// };
 /// let app = Router::new()
-///     .route("/api", axum::routing::get(|| async { "ok" }))
-///     .layer(axum::middleware::from_fn_with_state(
-///         Arc::new(config),
-///         garrison_cors_middleware,
-///     ));
+/// .route("/api", axum::routing::get(|| async { "ok" }))
+/// .layer(axum::middleware::from_fn_with_state(
+/// Arc::new(config),
+/// garrison_cors_middleware,
+/// ));
 /// ```
 pub async fn garrison_cors_middleware(
     State(config): State<std::sync::Arc<CorsConfig>>,
@@ -202,7 +202,7 @@ pub async fn garrison_cors_middleware(
             let allow_origin = allow_origin_value(origin, &config.allowed_origins);
             let mut headers = axum::http::HeaderMap::new();
             // Vary: Origin —— 响应内容随 Origin 变化，缓存层必须按 Origin 区分
-            // （RFC 6454 §7.6，预检分支，ocr #2805/#3490）
+            // （RFC 6454 §7.6，预检分支）
             headers.insert(
                 HeaderName::from_static("vary"),
                 HeaderValue::from_static("Origin"),
@@ -255,7 +255,7 @@ pub async fn garrison_cors_middleware(
     let mut resp = next.run(req).await;
     let headers = resp.headers_mut();
     // Vary: Origin —— 响应内容随 Origin 变化，缓存层必须按 Origin 区分，
-    // 否则 origin A 的缓存响应可能被错发给 origin B（RFC 6454 §7.6，ocr #2805/#3490）
+    // 否则 origin A 的缓存响应可能被错发给 origin B（RFC 6454 §7.6）
     headers.insert(
         HeaderName::from_static("vary"),
         HeaderValue::from_static("Origin"),
@@ -713,7 +713,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Vary: Origin（ocr #2805/#3490）
+    // Vary: Origin
     // ========================================================================
 
     /// 实际请求（注入 ACAO）必须带 Vary: Origin，防止缓存跨 Origin 串用。

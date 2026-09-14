@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! account/authflow 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! account/authflow 模块测试。
 
 use super::*;
 
-/// 验证 AuthStep::Login 构造与字段访问（R-auth-flow-dsl-001）。
+/// 验证 AuthStep::Login 构造与字段访问。
 #[test]
 fn auth_step_login_construction() {
     let step = AuthStep::Login {
@@ -19,7 +19,7 @@ fn auth_step_login_construction() {
     }
 }
 
-/// 验证 AuthStep::Conditional 构造含 Box<AuthStep>（R-auth-flow-dsl-001）。
+/// 验证 AuthStep::Conditional 构造含 Box<AuthStep>。
 #[test]
 fn auth_step_conditional_construction() {
     let step = AuthStep::Conditional {
@@ -46,7 +46,7 @@ fn auth_step_conditional_construction() {
     }
 }
 
-/// 验证 AuthStep match 穷尽匹配（7 变体，R-auth-flow-dsl-001）。
+/// 验证 AuthStep match 穷尽匹配（7 变体）。
 #[test]
 fn auth_step_exhaustive_match() {
     let steps = vec![
@@ -90,7 +90,7 @@ fn auth_step_exhaustive_match() {
     assert_eq!(steps.len(), 7);
 }
 
-/// 验证 AuthCondition 4 个变体构造（R-auth-flow-dsl-002）。
+/// 验证 AuthCondition 4 个变体构造。
 #[test]
 fn auth_condition_variants() {
     let conditions = vec![
@@ -120,7 +120,7 @@ fn auth_condition_variants() {
     assert!(has_cred && is_locked && ip_whitelist && custom);
 }
 
-/// 验证 AuthenticationFlow 构造与字段访问（R-auth-flow-dsl-003）。
+/// 验证 AuthenticationFlow 构造与字段访问。
 #[test]
 fn authentication_flow_construction() {
     let flow = AuthenticationFlow {
@@ -135,7 +135,7 @@ fn authentication_flow_construction() {
     assert!(!flow.allow_skip);
 }
 
-/// 验证 AuthContext 构造与字段访问（R-auth-flow-dsl-004）。
+/// 验证 AuthContext 构造与字段访问。
 #[test]
 fn auth_context_construction() {
     let ctx = AuthContext {
@@ -154,7 +154,7 @@ fn auth_context_construction() {
     assert!(ctx.extras.is_empty());
 }
 
-/// 验证 AuthResult 4 个变体 match 匹配（R-auth-flow-dsl-005）。
+/// 验证 AuthResult 4 个变体 match 匹配。
 #[test]
 fn auth_result_variants_match() {
     let results = vec![
@@ -217,7 +217,7 @@ fn auth_result_variants_match() {
 
 /// 验证 AuthenticationFlow 默认 allow_skip=false 的惯例。
 ///
-/// Issue 752: `AuthenticationFlow` 无 `Default` 实现（仅 derive Debug/Clone），
+/// `AuthenticationFlow` 无 `Default` 实现（仅 derive Debug/Clone），
 /// struct 字面量构造必须显式给出 `allow_skip`——"默认值"的实际来源是
 /// [`FlowBuilder`]（`allow_skip` 字段初始为 false，仅显式调用 `.allow_skip()`
 /// 才置 true）。本测试验证真实默认链路：FlowBuilder 构造（未调用 .allow_skip()）
@@ -236,7 +236,7 @@ fn authentication_flow_allow_skip_default_false() {
     assert!(skipped.allow_skip, "显式调用 .allow_skip() 后应为 true");
 }
 
-/// Issue 2460/2728/3147: AuthContext 手动 Debug 对 input 脱敏。
+/// AuthContext 手动 Debug 对 input 脱敏。
 #[test]
 fn auth_context_debug_redacts_input() {
     let ctx = AuthContext {
@@ -260,7 +260,7 @@ fn auth_context_debug_redacts_input() {
     assert_eq!(ctx.input, "super-secret-password");
 }
 
-/// Issue 2727/3146/3199: AuthResult::Success 手动 Debug 对 token 掩码。
+/// AuthResult::Success 手动 Debug 对 token 掩码。
 #[test]
 fn auth_result_success_debug_masks_token() {
     let result = AuthResult::Success {

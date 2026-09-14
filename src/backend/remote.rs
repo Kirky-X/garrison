@@ -10,20 +10,20 @@
 //! - **reqwest::Client**：支持 TLS/mTLS 配置，连接池复用
 //! - **统一 API 包装**：`ApiResponse<T>` 包装所有响应，成功时 `data` 有值，失败时 `error_code` + `message`
 //! - **X-API-Key 头**：每个请求携带 API Key 用于服务间认证
-//! - **base_url 校验**（ocr #2709/2710/6679）：构造期校验 scheme 必须为 `http://` 或
-//!   `https://`（`http://` 会以明文传输 X-API-Key，记录 `tracing::warn`）；
-//!   URL 拼接做斜杠规范化（base 尾斜杠与 path 头斜杠去重）
-//! - **错误映射**（ocr #6286/6289/8194）：网络错误 → `GarrisonError::Network`；
-//!   API 错误按 `error_code` 映射——已知业务码透传为对应类型错误
-//!   （`NOT_LOGIN`/`INVALID_TOKEN`/`TOKEN_REVOKED`/`EXPIRED_TOKEN` → NotLogin/InvalidToken/…，
-//!   `NOT_PERMISSION` → NotPermission，`NOT_ROLE` → NotRole，
-//!   `NOT_SAFE` → NotSafe，`DISABLE_SERVICE` → DisableService），
-//!   未知码 → `Network`（消息带 `backend-api-error::CODE::MESSAGE` 前缀约定，
-//!   与 `circuit-open::` 前缀模式一致）；服务端 `message` 全程保留
-//! - **embedded 语义对齐**（ocr #6289）：`check_safe` 将 `NOT_SAFE` 业务错误映射为
-//!   `Ok(false)`，`check_disable` 将 `DISABLE_SERVICE` 映射为 `Ok(true)`，
-//!   与 `BackendEmbedded` 的 bool 适配语义一致（远程 `DISABLE_SERVICE` 的解封时间
-//!   无法从响应恢复，`until` 置 `None`）
+//! - **base_url 校验**：构造期校验 scheme 必须为 `http://` 或
+//! `https://`（`http://` 会以明文传输 X-API-Key，记录 `tracing::warn`）；
+//! URL 拼接做斜杠规范化（base 尾斜杠与 path 头斜杠去重）
+//! - **错误映射**：网络错误 → `GarrisonError::Network`；
+//! API 错误按 `error_code` 映射——已知业务码透传为对应类型错误
+//! （`NOT_LOGIN`/`INVALID_TOKEN`/`TOKEN_REVOKED`/`EXPIRED_TOKEN` → NotLogin/InvalidToken/…，
+//! `NOT_PERMISSION` → NotPermission，`NOT_ROLE` → NotRole，
+//! `NOT_SAFE` → NotSafe，`DISABLE_SERVICE` → DisableService），
+//! 未知码 → `Network`（消息带 `backend-api-error::CODE::MESSAGE` 前缀约定，
+//! 与 `circuit-open::` 前缀模式一致）；服务端 `message` 全程保留
+//! - **embedded 语义对齐**：`check_safe` 将 `NOT_SAFE` 业务错误映射为
+//! `Ok(false)`，`check_disable` 将 `DISABLE_SERVICE` 映射为 `Ok(true)`，
+//! 与 `BackendEmbedded` 的 bool 适配语义一致（远程 `DISABLE_SERVICE` 的解封时间
+//! 无法从响应恢复，`until` 置 `None`）
 
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -76,7 +76,7 @@ impl BackendRemote {
     ///
     /// # 错误
     /// - `base_url` scheme 非 `http://`/`https://`：返回 `GarrisonError::InvalidParam`
-    ///   （ocr #2709：拒绝 `ftp://` 等任意 scheme；`http://` 允许但记录明文传输警告）
+    /// （拒绝 `ftp://` 等任意 scheme；`http://` 允许但记录明文传输警告）
     pub fn new(
         base_url: impl Into<String>,
         api_key: impl Into<String>,
@@ -116,7 +116,7 @@ impl BackendRemote {
         Req: serde::Serialize,
         T: serde::de::DeserializeOwned,
     {
-        // 斜杠规范化（ocr #6679）：base 尾斜杠 + path 头斜杠去重，避免裸拼接产生 `//`
+        // 斜杠规范化：base 尾斜杠 + path 头斜杠去重，避免裸拼接产生 `//`
         let url = build_url(&self.base_url, path);
         // 若启用熔断器，通过熔断器包裹 HTTP 调用
         if let Some(ref cb) = self.circuit_breaker {
@@ -200,11 +200,11 @@ impl BackendRemote {
     }
 }
 
-/// 校验并规范化 base_url（ocr #2709/2710/6679）。
+/// 校验并规范化 base_url。
 ///
 /// - scheme 必须为 `http://` 或 `https://`（大小写不敏感），否则返回
-///   `GarrisonError::InvalidParam`——`BackendRemote` 每个请求都携带
-///   `X-API-Key`，任意 scheme 会放大凭据泄露面；
+/// `GarrisonError::InvalidParam`——`BackendRemote` 每个请求都携带
+/// `X-API-Key`，任意 scheme 会放大凭据泄露面；
 /// - `http://` 允许（内网/测试场景）但记录明文传输 `tracing::warn`；
 /// - 返回去除尾斜杠后的 base_url（斜杠规范化在拼接时配合 [`build_url`]）。
 fn validate_base_url(base_url: &str) -> GarrisonResult<String> {
@@ -226,7 +226,7 @@ fn validate_base_url(base_url: &str) -> GarrisonResult<String> {
     )))
 }
 
-/// 拼接 base_url 与 path，斜杠规范化（ocr #6679）。
+/// 拼接 base_url 与 path，斜杠规范化。
 ///
 /// base 尾部斜杠与 path 头部斜杠去重，保证恰好一个 `/` 分隔：
 /// `("https://h:8443", "/api/x")` 与 `("https://h:8443/", "api/x")` 等价。
@@ -238,13 +238,13 @@ fn build_url(base_url: &str, path: &str) -> String {
     )
 }
 
-/// 将远程 API 错误码映射为 `GarrisonError`（ocr #6286/6289/8194）。
+/// 将远程 API 错误码映射为 `GarrisonError`。
 ///
 /// - 已知业务码透传为对应类型错误（与 `error.rs::parts_and_msg_key` 的错误码约定一致），
-///   调用方可按类型匹配（如 `check_safe` 匹配 `NotSafe`）；
+/// 调用方可按类型匹配（如 `check_safe` 匹配 `NotSafe`）；
 /// - 未知码 → `GarrisonError::Network`，消息带 `backend-api-error::CODE::MESSAGE`
-///   前缀约定（与 `circuit-open::` 前缀模式一致）；
-/// - 服务端 `message` 在所有路径保留（ocr #8194：不再丢弃）。
+/// 前缀约定（与 `circuit-open::` 前缀模式一致）；
+/// - 服务端 `message` 在所有路径保留（不再丢弃）。
 /// - 限制：`DISABLE_SERVICE` 的解封时间戳远程响应不可恢复，`until` 置 `None`。
 fn api_error(code: &str, message: &str) -> GarrisonError {
     let mapped = match code {
@@ -312,7 +312,7 @@ impl AuthBackend for BackendRemote {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
-        // ocr #6289：与 BackendEmbedded 语义对齐——API 返回 NOT_SAFE 业务错误
+        // 与 BackendEmbedded 语义对齐——API 返回 NOT_SAFE 业务错误
         // 表示「未完成二次认证」→ Ok(false)，其余错误向上抛
         match self.post_and_extract("/api/v1/auth/check-safe", &req).await {
             Ok(safe) => Ok(safe),
@@ -325,7 +325,7 @@ impl AuthBackend for BackendRemote {
         let req = CheckLoginRequest {
             token: token.to_string(),
         };
-        // ocr #6289：与 BackendEmbedded 语义对齐——API 返回 DISABLE_SERVICE 业务错误
+        // 与 BackendEmbedded 语义对齐——API 返回 DISABLE_SERVICE 业务错误
         // 表示「账号被封禁」→ Ok(true)，其余错误向上抛
         // （解封时间戳无法从远程响应恢复，DisableService.until 置 None）
         match self
@@ -395,9 +395,9 @@ impl AuthBackend for BackendRemote {
 /// use std::time::Duration;
 ///
 /// let remote = BackendRemoteBuilder::new("https://auth:8443", "api-key")
-///     .with_timeout(Duration::from_secs(10))
-///     .with_client_cert(cert_pem, key_pem)
-///     .build()?;
+/// .with_timeout(Duration::from_secs(10))
+/// .with_client_cert(cert_pem, key_pem)
+/// .build()?;
 /// ```
 pub struct BackendRemoteBuilder {
     base_url: String,
@@ -455,7 +455,7 @@ impl BackendRemoteBuilder {
     ///
     /// # 错误
     /// - `base_url` scheme 非 `http://`/`https://`：返回 `GarrisonError::InvalidParam`
-    ///   （ocr #2710：与 [`BackendRemote::new`] 相同的 scheme 校验）
+    /// （与 [`BackendRemote::new`] 相同的 scheme 校验）
     pub fn build(self) -> GarrisonResult<BackendRemote> {
         let base_url = validate_base_url(&self.base_url)?;
         let mut builder = reqwest::Client::builder().timeout(self.timeout);
@@ -888,7 +888,7 @@ mod tests {
     }
 
     // ========================================================================
-    // base_url scheme 校验与 URL 规范化测试（ocr #2709/2710/6679）
+    // base_url scheme 校验与 URL 规范化测试
     // ========================================================================
 
     #[tokio::test]
@@ -930,7 +930,7 @@ mod tests {
     }
 
     // ========================================================================
-    // error_code → 类型化错误映射测试（ocr #6286/6289/8194）
+    // error_code → 类型化错误映射测试
     // ========================================================================
 
     #[tokio::test]
@@ -983,7 +983,7 @@ mod tests {
         let result = remote.check_login("token").await;
         match result {
             Err(GarrisonError::ExpiredToken(msg)) => {
-                // ocr #8194：服务端 message 必须保留
+                // 服务端 message 必须保留
                 assert!(
                     msg.contains("token 已过期"),
                     "message 应保留，实际: {}",

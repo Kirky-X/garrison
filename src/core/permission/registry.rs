@@ -17,11 +17,11 @@
 //! ```ignore
 //! // 编译期声明权限
 //! inventory::submit! {
-//!     PermissionRegistration {
-//!         name: "user:read",
-//!         required_roles: "admin,user",
-//!         description: "读取用户信息",
-//!     }
+//! PermissionRegistration {
+//! name: "user:read",
+//! required_roles: "admin,user",
+//! description: "读取用户信息",
+//! }
 //! }
 //!
 //! // 启动时收集所有声明
@@ -104,8 +104,7 @@ impl PermissionRegistry {
     /// 注册前调用 `check_confusable`（`secure-confusable` feature 启用时经
     /// `crate::secure::confusable` 模块实现） 检测
     /// permission name 中的 Unicode 同形异义字。发现可疑字符时通过 `tracing::warn` 上报
-    /// 。**不阻止注册**——仅警告，符合"失败显性化但非阻塞"原则
-    /// （Rule 12）。
+    /// 。**不阻止注册**——仅警告，符合"失败显性化但非阻塞"原则。
     pub fn register(&self, spec: PermissionSpec) -> GarrisonResult<()> {
         if spec.name.is_empty() {
             return Err(GarrisonError::InvalidParam(
@@ -258,7 +257,7 @@ mod tests {
         assert_eq!(roles, vec!["admin".to_string(), "editor".to_string()]);
     }
 
-    /// validate 未注册的权限返回 InvalidParam 错误（spec R-permission-registry-001）。
+    /// validate 未注册的权限返回 InvalidParam 错误。
     #[test]
     fn validate_returns_error_for_unregistered_permission() {
         let registry = PermissionRegistry::new();

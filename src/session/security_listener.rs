@@ -37,7 +37,7 @@ const IP_RECORD_TTL: u64 = 86400;
 /// let listener = SessionSecurityListener::new(dao);
 /// listener.record_login_ip("T1", "1001", "192.168.1.100").await?;
 /// if let Some(warning) = listener.check_ip_change("T1", "192.168.2.50").await? {
-///     // IP 跨网段变更，潜在劫持风险
+/// // IP 跨网段变更，潜在劫持风险
 /// }
 /// ```
 pub struct SessionSecurityListener {
@@ -313,7 +313,7 @@ mod tests {
             .await
             .unwrap();
 
-        // spec: DAO key 为 session:ip:{token}，value 为 ip 字符串
+        // DAO key 为 session:ip:{token}，value 为 ip 字符串
         let stored = dao.get("session:ip:T1").await.unwrap();
         assert_eq!(
             stored,

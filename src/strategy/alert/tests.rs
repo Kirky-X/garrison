@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! strategy/alert 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! strategy/alert 模块测试（从 mod.rs 迁移）。
 
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -256,7 +256,7 @@ async fn broadcast_alert_listener_failure_does_not_interrupt() {
     );
 }
 
-/// listener panic 行为覆盖（issue #1931/#3685 修复：补测试断言）。
+/// listener panic 行为覆盖（补测试断言）。
 ///
 /// 当前 `broadcast_alert` 实现（manager_impl.rs）**无 catch_unwind/panic 恢复**：
 /// listener 的 `on_alert` panic 会传播出 `broadcast_alert` 并中止广播循环，

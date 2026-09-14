@@ -10,21 +10,21 @@
 //! # 算法（Fixed Window Counter，委托 limiteron）
 //!
 //! 1. 单 IP 桶：`atomic_check_and_incr("ddos:ip:{ip}", threshold=per_ip_rps, ttl=1s)`
-//!    —— 1 秒窗口内允许 per_ip_rps 次单 IP 请求
+//! —— 1 秒窗口内允许 per_ip_rps 次单 IP 请求
 //! 2. 全局桶：`atomic_check_and_incr("ddos:global", threshold=burst, ttl=1s)`
-//!    —— 1 秒窗口内允许 burst 次全局请求
+//! —— 1 秒窗口内允许 burst 次全局请求
 //! 3. **单 IP 桶先检查，全局桶后检查**：被单 IP 拦截的攻击流量不消耗全局额度，
-//!    全局突发余量留给正常用户（语义取舍见下方"计数顺序"）
+//! 全局突发余量留给正常用户（语义取舍见下方"计数顺序"）
 //! 4. 窗口 TTL 到期后计数器自动重置（DAO 后端的 TTL 机制保证）
 //!
-//! # 计数顺序（issue #6968）
+//! # 计数顺序
 //!
 //! 旧实现先 incr 全局桶再查单 IP 桶：被单 IP 拦截的请求已不可逆消耗全局额度，
 //! 实际全局限额比 `burst` 更严格（每次 per-IP 拦截都挤占全局窗口），攻击者可
 //! 借此提前打满全局桶。改为先查单 IP 后 incr 全局后：
 //! - 单 IP 拦截 → 全局桶未被触碰（攻击流量不挤占正常用户额度）；
 //! - 全局拦截 → 该 IP 桶已 +1，但该请求本就被拒绝，仅影响攻击者自身的
-//!   per-IP 计数（惩罚方向正确），无需回滚。
+//! per-IP 计数（惩罚方向正确），无需回滚。
 //! 相比"先全局后回滚"方案，此顺序无需分布式 decr 补偿（避免补偿失败造成
 //! 计数漂移），语义上对正常用户更公平。
 //!
@@ -48,7 +48,7 @@ use std::time::Duration;
 
 /// DDoS 防护配置。
 ///
-/// 所有阈值显式配置（Rule 5 确定性逻辑），不交给模型判断。
+/// 所有阈值显式配置（确定性逻辑），不交给模型判断。
 ///
 /// # 字段语义（Fixed Window Counter）
 ///
@@ -112,7 +112,7 @@ impl GarrisonFirewallStrategy for DDoSStrategy {
         const WINDOW_TTL: Duration = Duration::from_secs(1);
 
         // 1. 单 IP 桶检查（threshold=per_ip_rps，1 秒窗口）。
-        // 先查单 IP：被 per-IP 拦截的攻击流量不消耗全局额度（issue #6968 修复）
+        // 先查单 IP：被 per-IP 拦截的攻击流量不消耗全局额度
         let ip_key = format!("ddos:ip:{}", ctx.ip);
         let ip_ok = self
             .limiter
@@ -284,11 +284,11 @@ mod tests {
         }
     }
 
-    /// 验证错误传播：limiteron 错误映射为 GarrisonError::Dao（issue #834 修复：补断言）。
+    /// 验证错误传播：limiteron 错误映射为 GarrisonError::Dao。
     ///
     /// 通过注入脏数据（`ddos:global` 的 count 是非数字字符串）触发 DAO incr 解析失败：
     /// per-IP 桶先检查通过（key 不存在 → incr=1 <= per_ip_rps），随后全局桶
-    /// `incr` 解析脏数据报错（InMemoryDao Rule 12 显性报错），经
+    /// `incr` 解析脏数据报错（InMemoryDao 显性报错），经
     /// `atomic_check_and_incr` → limiteron 错误 → `strategy-ddos-global` 前缀的
     /// `GarrisonError::Dao` 向上传播（Fail Loud）。
     #[tokio::test]
@@ -309,14 +309,14 @@ mod tests {
         );
     }
 
-    /// 验证计数顺序（issue #6968 修复）：单 IP 拦截不消耗全局额度。
+    /// 验证计数顺序：单 IP 拦截不消耗全局额度。
     ///
     /// burst=3，per_ip_rps=2。攻击 IP 被单 IP 桶拦截的请求不应 incr 全局桶，
     /// 正常用户（其他 IP）仍能使用完整全局额度：
     /// - 旧实现（先全局后单 IP）：攻击者第 3 次被单 IP 拦截前已把全局 incr 到 3，
-    ///   正常用户第 1 次就会因全局 4 > 3 被误拦；
+    /// 正常用户第 1 次就会因全局 4 > 3 被误拦；
     /// - 新实现（先单 IP 后全局）：攻击者第 3 次在单 IP 桶即被拦截，全局保持 2，
-    ///   正常用户第 1 次通过（全局 3），第 2 次才因全局额度耗尽被拦。
+    /// 正常用户第 1 次通过（全局 3），第 2 次才因全局额度耗尽被拦。
     #[tokio::test]
     async fn per_ip_block_does_not_consume_global_quota() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());

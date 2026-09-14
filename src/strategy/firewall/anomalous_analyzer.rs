@@ -12,9 +12,9 @@
 //! 1. `record_login` 将每次登录记录写入 DAO（key: `anomalous:login:{login_id}:{timestamp}`，TTL 24h）
 //! 2. `analyze_once` 扫描时间窗口内（1h）所有登录记录，按 login_id 分组
 //! 3. 检测 3 种异常：
-//!    - `burst_login`：单个 login_id 登录次数 > `burst_threshold`（默认 5）
-//!    - `geo_jump`：单个 login_id 不同 geo > 2（None 不计入）
-//!    - `device_mutation`：单个 login_id 不同 device > 3（None 不计入）
+//! - `burst_login`：单个 login_id 登录次数 > `burst_threshold`（默认 5）
+//! - `geo_jump`：单个 login_id 不同 geo > 2（None 不计入）
+//! - `device_mutation`：单个 login_id 不同 device > 3（None 不计入）
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -49,7 +49,7 @@ pub enum LoginResult {
     Failed,
 }
 
-/// 异常登录记录（spec R-001）。
+/// 异常登录记录。
 ///
 /// 每次登录（成功/失败）均写入 DAO，供定时分析引擎扫描。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +68,7 @@ pub struct AnomalousLoginRecord {
     pub result: LoginResult,
 }
 
-/// 异常登录分析器配置（spec R-007）。
+/// 异常登录分析器配置。
 #[derive(Debug, Clone)]
 pub struct AnomalousAnalyzerConfig {
     /// 定时扫描间隔（秒，默认 3600）。
@@ -90,7 +90,7 @@ impl Default for AnomalousAnalyzerConfig {
 }
 
 impl AnomalousAnalyzerConfig {
-    /// 校验配置合法性（spec R-007）。
+    /// 校验配置合法性。
     ///
     /// # 错误
     /// - `interval_secs` 为 0
@@ -116,7 +116,7 @@ impl AnomalousAnalyzerConfig {
     }
 }
 
-/// 异常登录检测事件（spec R-006）。
+/// 异常登录检测事件。
 ///
 /// 在定时分析引擎检测到异常模式时生成，可转换为 `GarrisonEvent` 广播。
 #[derive(Debug, Clone)]
@@ -180,12 +180,12 @@ impl AnomalousLoginAnalyzer {
         }
     }
 
-    /// 记录一次登录事件（spec R-001）。
+    /// 记录一次登录事件。
     ///
     /// 将登录记录序列化为 JSON 存入 DAO，
     /// key 格式 `anomalous:login:{login_id}:{nanos}`，TTL 24h。
     ///
-    /// # 纳秒精度（HIGH-002 修复）
+    /// # 纳秒精度
     /// key 使用纳秒精度时间戳（而非 record.timestamp 的秒级），
     /// 避免同一秒内同一 login_id 的多次登录互相覆盖。
     /// `record.timestamp` 仍为秒级（用于时间窗口过滤），key 的纳秒仅用于唯一性。
@@ -193,7 +193,7 @@ impl AnomalousLoginAnalyzer {
     /// # 错误
     /// - `login_id` 为空 → `InvalidParam`
     /// - `login_id` 包含 `:` → `InvalidParam`（破坏 key 解析）
-    /// - `login_id` 长度超过 128 字节 → `InvalidParam`（防超长 key DoS，issue #2828）
+    /// - `login_id` 长度超过 128 字节 → `InvalidParam`（防超长 key DoS）
     /// - 序列化失败 → `Internal`
     pub async fn record_login(&self, record: &AnomalousLoginRecord) -> GarrisonResult<()> {
         if record.login_id.is_empty() {
@@ -219,7 +219,7 @@ impl AnomalousLoginAnalyzer {
         self.dao.set(&key, &value, RECORD_TTL_SECS).await
     }
 
-    /// 生成存储 key（纳秒精度避免同秒覆盖，HIGH-002 修复）。
+    /// 生成存储 key（纳秒精度避免同秒覆盖）。
     ///
     /// key 格式：`anomalous:login:{login_id}:{nanos}`
     /// `nanos` 取自 `SystemTime::now()` 的纳秒时间戳，保证同秒内多次调用产生不同 key。
@@ -249,7 +249,7 @@ impl AnomalousLoginAnalyzer {
         Self::analyze_once(&self.dao, &self.config, now).await
     }
 
-    /// 核心分析逻辑（spec R-003 / R-004 / R-005）。
+    /// 核心分析逻辑。
     ///
     /// 关联函数，接收固定 `now` 参数便于测试。
     ///
@@ -260,7 +260,7 @@ impl AnomalousLoginAnalyzer {
     /// 4. 按 login_id 分组
     /// 5. 检测 3 种异常：burst / geo_jump / device_mutation
     ///
-    /// # 性能监控（HIGH-001）
+    /// # 性能监控
     /// 记录扫描总耗时，超过 1s 时 `tracing::warn!`（Redis 后端 N+1 查询需优化为批量 mget）。
     /// oxcache 内存后端 get_sync <100ns，10000 次 get ~1ms，无需优化。
     async fn analyze_once(
@@ -273,7 +273,7 @@ impl AnomalousLoginAnalyzer {
         let keys = dao.keys("anomalous:login:*").await?;
         let keys: Vec<String> = keys.into_iter().take(config.max_scan).collect();
 
-        // 已知性能问题（issue #5635/#5984/#6105，HIGH-001）：keys 后逐 key dao.get
+        // 已知性能问题：keys 后逐 key dao.get
         // 构成 N+1 查询，Redis 后端在 keys 数接近 max_scan（默认 10000）时产生
         // 等量网络往返。保持原因：`GarrisonDao` trait 无 mget/get_many 批量接口
         // （扩 trait 属 breaking change，不在本修复范围），缓解措施为
@@ -306,7 +306,7 @@ impl AnomalousLoginAnalyzer {
         let mut events = Vec::new();
 
         for (login_id, records) in grouped {
-            // burst_login: 登录次数 > burst_threshold（spec R-003）
+            // burst_login: 登录次数 > burst_threshold
             if records.len() > config.burst_threshold as usize {
                 events.push(AnomalousLoginDetected {
                     login_id: login_id.clone(),
@@ -319,7 +319,7 @@ impl AnomalousLoginAnalyzer {
                 });
             }
 
-            // geo_jump: 不同 geo > 2（None 不计入，spec R-004）
+            // geo_jump: 不同 geo > 2（None 不计入）
             let distinct_geo: HashSet<&str> =
                 records.iter().filter_map(|r| r.geo.as_deref()).collect();
             if distinct_geo.len() > 2 {
@@ -334,7 +334,7 @@ impl AnomalousLoginAnalyzer {
                 });
             }
 
-            // device_mutation: 不同 device > 3（None 不计入，spec R-005）
+            // device_mutation: 不同 device > 3（None 不计入）
             let distinct_device: HashSet<&str> =
                 records.iter().filter_map(|r| r.device.as_deref()).collect();
             if distinct_device.len() > 3 {
@@ -350,7 +350,7 @@ impl AnomalousLoginAnalyzer {
             }
         }
 
-        // HIGH-001: 扫描时间监控（Redis 后端 N+1 查询需优化为批量 mget）
+        // 扫描时间监控（Redis 后端 N+1 查询需优化为批量 mget）
         let scan_elapsed = scan_start.elapsed();
         if scan_elapsed > SCAN_SLOW_THRESHOLD {
             tracing::warn!(
@@ -369,7 +369,7 @@ impl AnomalousLoginAnalyzer {
         Ok(events)
     }
 
-    /// 启动定时分析任务（spec R-002）。
+    /// 启动定时分析任务。
     ///
     /// 消费 `self`，spawn 一个 tokio 任务：
     /// - 按 `interval_secs` 间隔定期执行 `analyze_once`
@@ -607,7 +607,7 @@ mod tests {
         };
         analyzer.record_login(&record).await.unwrap();
 
-        // record_login 用纳秒精度 key（HIGH-002），用 keys() 查找
+        // record_login 用纳秒精度 key，用 keys() 查找
         let keys = dao.keys("anomalous:login:1001:*").await.unwrap();
         assert_eq!(keys.len(), 1, "record_login 后应有 1 个 key");
         let stored = dao.get(&keys[0]).await.unwrap();
@@ -660,7 +660,7 @@ mod tests {
         );
     }
 
-    /// 超长 login_id 返回 InvalidParam（issue #2828 修复：防超长 key DoS）。
+    /// 超长 login_id 返回 InvalidParam（防超长 key DoS）。
     #[tokio::test]
     async fn record_login_overlong_login_id_errors() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -693,7 +693,7 @@ mod tests {
         );
     }
 
-    /// HIGH-002: 同秒内多次 record_login 不覆盖。
+    /// 同秒内多次 record_login 不覆盖。
     /// 同一 login_id 同一秒内调用 record_login 3 次，
     /// keys() 应返回 3 个不同的 key（纳秒精度避免覆盖）。
     #[tokio::test]

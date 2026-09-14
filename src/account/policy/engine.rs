@@ -4,7 +4,7 @@
 //! [`PasswordPolicyEngine`] 实现。
 //!
 //! 引擎按 [`ErrorMode`] 执行规则校验，支持 `FirstError`（短路）/ `AllErrors`（收集）两种模式。
-//! 实现自父模块迁移（规则 25：mod.rs 接口隔离）。
+//! 实现自父模块迁移（mod.rs 接口隔离）。
 
 #[cfg(feature = "metrics-prometheus")]
 use std::sync::Arc;
@@ -45,8 +45,8 @@ impl PasswordPolicyEngine {
     /// # 返回
     /// - `Ok(())`: 所有规则通过（或空规则集）
     /// - `Err(Vec<PolicyError>)`: 规则失败
-    ///   - `FirstError` 模式：`Vec` 含 1 个元素（首条失败规则）
-    ///   - `AllErrors` 模式：`Vec` 含所有失败规则的错误
+    /// - `FirstError` 模式：`Vec` 含 1 个元素（首条失败规则）
+    /// - `AllErrors` 模式：`Vec` 含所有失败规则的错误
     pub fn validate(&self, ctx: &PolicyContext, password: &str) -> Result<(), Vec<PolicyError>> {
         let mut errors = Vec::new();
         for rule in &self.rules {

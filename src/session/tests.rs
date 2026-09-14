@@ -1,7 +1,7 @@
 ﻿//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! session 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! session 模块测试（从 mod.rs 迁移）。
 
 use super::mock::MockExpiryListener;
 use super::*;
@@ -47,13 +47,13 @@ async fn dao_key_format_matches_spec() {
     let (dao, session) = make_session(3600, 86400);
     session.create("1001", "T1").await.unwrap();
 
-    // spec: GarrisonDao::get("account:session:1001") 返回 Account-Session 数据
+    // GarrisonDao::get("account:session:1001") 返回 Account-Session 数据
     let account_json = dao.get("account:session:1001").await.unwrap();
     assert!(account_json.is_some());
     let account: AccountSession = serde_json::from_str(&account_json.unwrap()).unwrap();
     assert_eq!(account.login_id, "1001");
 
-    // spec: GarrisonDao::get("token:session:T1") 返回 Token-Session 数据
+    // GarrisonDao::get("token:session:T1") 返回 Token-Session 数据
     let token_json = dao.get("token:session:T1").await.unwrap();
     assert!(token_json.is_some());
     let ts: TokenSession = serde_json::from_str(&token_json.unwrap()).unwrap();
@@ -102,7 +102,7 @@ async fn account_session_keeps_history_when_empty() {
     session.create("1001", "T1").await.unwrap();
     session.logout("T1").await.unwrap();
 
-    // spec: 若列表为空，Account-Session 标记为空（但不删除，保留历史）
+    // 若列表为空，Account-Session 标记为空（但不删除，保留历史）
     let as_ = session.get_account_session("1001").await.unwrap();
     assert!(as_.is_some(), "Account-Session 应保留（保留历史）");
     assert!(as_.unwrap().tokens.is_empty());
@@ -204,12 +204,10 @@ async fn touch_updates_last_active_and_renews_ttl() {
 }
 
 /// 验证 renew 重置过期时间（token 短 TTL + renew 后仍有效）。
-///
-/// spec scenario "主动续期重置过期时间"。
 #[tokio::test]
 async fn renew_resets_ttl() {
     // token TTL=5 秒，sleep 总计 3 秒，留 2 秒 margin 避免高负载下 sleep
-    // 精度问题（参考 567e123：原 TTL=3 margin=1 在 CI 高负载时 flaky）
+    // 精度问题（原 TTL=3 margin=1 在 CI 高负载时 flaky）
     let (_dao, session) = make_session(5, 86400);
     session.create("1001", "T1").await.unwrap();
 
@@ -227,8 +225,6 @@ async fn renew_resets_ttl() {
 }
 
 /// 验证 renew 不存在的 token 抛 InvalidToken。
-///
-/// spec scenario "续期不存在的 token"。
 #[tokio::test]
 async fn renew_nonexistent_token_errors() {
     let (_dao, session) = make_session(3600, 86400);
@@ -608,7 +604,7 @@ async fn is_valid_returns_true_when_no_temp_credential_linked() {
     let (_dao, session) = make_session(3600, 86400);
     session.create("1001", "T1").await.unwrap();
 
-    // 未关联临时凭证，token 应有效（0.1.0 既有行为不变）
+    // 未关联临时凭证，token 应有效
     let valid = session.is_valid("T1").await.unwrap();
     assert!(valid, "未关联临时凭证时 token 有效性应遵循 0.1.0 既有行为");
 }
@@ -649,8 +645,6 @@ async fn logout_by_login_id_accepts_login_id_numeric() {
 // ------------------------------------------------------------------------
 
 /// 验证 set_device 设置 TokenSession.device 字段。
-///
-/// 对应 spec session-kickout-device R-001 前置条件。
 #[tokio::test]
 async fn set_device_updates_token_session_device() {
     let (_dao, session) = make_session(3600, 86400);
@@ -673,8 +667,6 @@ async fn set_device_nonexistent_token_errors() {
 }
 
 /// 验证 kickout_by_device 踢出匹配设备的 token。
-///
-/// 对应 spec session-kickout-device R-001 验收标准。
 #[tokio::test]
 async fn kickout_by_device_removes_matching_tokens() {
     let (_dao, session) = make_session(3600, 86400);
@@ -701,7 +693,7 @@ async fn kickout_by_device_removes_matching_tokens() {
 
 /// 验证 kickout_by_device 不影响其他设备。
 ///
-/// 对应 spec session-kickout-device R-001 验收标准"不影响该 login_id 在其他 device 上的 session"。
+/// 验收标准“不影响该 login_id 在其他 device 上的 session”。
 #[tokio::test]
 async fn kickout_by_device_preserves_other_devices() {
     let (_dao, session) = make_session(3600, 86400);
@@ -721,7 +713,7 @@ async fn kickout_by_device_preserves_other_devices() {
 
 /// 验证 kickout_by_device device 不存在时幂等返回 Ok。
 ///
-/// 对应 spec session-kickout-device R-001 验收标准"device 不存在时返回 Ok(())"。
+/// 验收标准“device 不存在时返回 Ok(())”。
 #[tokio::test]
 async fn kickout_by_device_nonexistent_device_is_noop() {
     let (_dao, session) = make_session(3600, 86400);
@@ -739,7 +731,7 @@ async fn kickout_by_device_nonexistent_device_is_noop() {
 
 /// 验证 kickout_by_device account session 不存在时幂等返回 Ok。
 ///
-/// 对应 spec session-kickout-device R-003 验收标准"account session 不存在时返回 Ok(())"。
+/// 验收标准“account session 不存在时返回 Ok(())”。
 #[tokio::test]
 async fn kickout_by_device_no_account_session_is_noop() {
     let (_dao, session) = make_session(3600, 86400);
@@ -748,8 +740,6 @@ async fn kickout_by_device_no_account_session_is_noop() {
 }
 
 /// 验证 kickout_by_device 同步更新 account session tokens 列表。
-///
-/// 对应 spec session-kickout-device R-003 验收标准。
 #[tokio::test]
 async fn kickout_by_device_updates_account_session_tokens() {
     let (_dao, session) = make_session(3600, 86400);
@@ -788,7 +778,7 @@ async fn kickout_by_device_accepts_login_id_numeric() {
 
 /// 验证 kickout_by_device 注入 listener_manager 后广播 Kickout 事件。
 ///
-/// 对应 spec session-kickout-device R-002 验收标准。
+/// 
 /// 通过 `GarrisonListenerManager::register`（运行时注册 API）注入计数监听器，
 /// 真实断言 Kickout 事件被派发（而非仅验证不 panic）。
 #[cfg(feature = "listener")]
@@ -831,7 +821,7 @@ async fn kickout_by_device_broadcasts_kickout_events() {
     assert!(result.is_ok());
     // T1 应被踢出
     assert!(session.get_token_session("T1").await.unwrap().is_none());
-    // R-002：被踢出的 1 个 token 应广播 1 次 Kickout 事件
+    // 被踢出的 1 个 token 应广播 1 次 Kickout 事件
     assert_eq!(
         counter.count.load(Ordering::SeqCst),
         1,
@@ -938,7 +928,7 @@ async fn expire_account_session_in_dao(dao: &Arc<MockDao>, login_id: &str, activ
     dao.set(&key, &new_json, 3600).await.unwrap();
 }
 
-/// R-002: add_expiry_listener 注册监听器，listener 列表长度增加。
+/// add_expiry_listener 注册监听器，listener 列表长度增加。
 #[tokio::test]
 async fn add_expiry_listener_registers_listener() {
     let (_dao, mut session) = make_session(3600, 86400);
@@ -948,7 +938,7 @@ async fn add_expiry_listener_registers_listener() {
     assert_eq!(session.expiry_listeners.len(), 1);
 }
 
-/// R-003: get_token_session 发现 token session 过期时触发回调。
+/// get_token_session 发现 token session 过期时触发回调。
 #[tokio::test]
 async fn get_token_session_triggers_callback_on_expiry() {
     let (dao, mut session) = make_session(3600, 86400);
@@ -967,7 +957,7 @@ async fn get_token_session_triggers_callback_on_expiry() {
     assert_eq!(recorded[0].1, "T1");
 }
 
-/// R-003: get_token_session 对未过期 session 不触发回调。
+/// get_token_session 对未过期 session 不触发回调。
 #[tokio::test]
 async fn get_token_session_no_callback_for_active_session() {
     let (_dao, mut session) = make_session(3600, 86400);
@@ -985,7 +975,7 @@ async fn get_token_session_no_callback_for_active_session() {
     );
 }
 
-/// R-003: get_token_session 触发回调后从 DAO 删除过期 session。
+/// get_token_session 触发回调后从 DAO 删除过期 session。
 #[tokio::test]
 async fn get_token_session_deletes_expired_session_after_callback() {
     let (dao, mut session) = make_session(3600, 86400);
@@ -1005,7 +995,7 @@ async fn get_token_session_deletes_expired_session_after_callback() {
     );
 }
 
-/// R-003: get_account_session 发现 account session 过期时触发回调。
+/// get_account_session 发现 account session 过期时触发回调。
 #[tokio::test]
 async fn get_account_session_triggers_callback_on_expiry() {
     let (dao, mut session) = make_session(3600, 3600);
@@ -1027,7 +1017,7 @@ async fn get_account_session_triggers_callback_on_expiry() {
     );
 }
 
-/// R-003: get_account_session 对未过期 session 不触发回调。
+/// get_account_session 对未过期 session 不触发回调。
 #[tokio::test]
 async fn get_account_session_no_callback_for_active_session() {
     let (_dao, mut session) = make_session(3600, 86400);
@@ -1045,7 +1035,7 @@ async fn get_account_session_no_callback_for_active_session() {
     );
 }
 
-/// R-003: 多个 listener 按注册顺序（FIFO）依次调用。
+/// 多个 listener 按注册顺序（FIFO）依次调用。
 #[tokio::test]
 async fn multiple_listeners_called_in_fifo_order() {
     let (dao, mut session) = make_session(3600, 86400);
@@ -1063,7 +1053,7 @@ async fn multiple_listeners_called_in_fifo_order() {
     assert_eq!(calls2.lock().unwrap().len(), 1);
 }
 
-/// R-003: listener 失败时记录 warn 但继续执行后续 listener。
+/// listener 失败时记录 warn 但继续执行后续 listener。
 #[tokio::test]
 async fn failing_listener_does_not_interrupt_subsequent_listeners() {
     let (dao, mut session) = make_session(3600, 86400);
@@ -1085,7 +1075,7 @@ async fn failing_listener_does_not_interrupt_subsequent_listeners() {
     );
 }
 
-/// R-003: 无 listener 注册时 get_token_session 仍正常处理过期 session。
+/// 无 listener 注册时 get_token_session 仍正常处理过期 session。
 #[tokio::test]
 async fn expired_session_with_no_listeners_still_deleted() {
     let (dao, session) = make_session(3600, 86400);
@@ -1103,11 +1093,11 @@ async fn expired_session_with_no_listeners_still_deleted() {
 }
 
 // ------------------------------------------------------------------------
-// 并发竞态测试（R-001~R-004 修复验证）
+// 并发竞态测试
 // ------------------------------------------------------------------------
 
 /// SlowDao wrapper：在 `get` account session key 后插入延迟，
-/// 放大 Account-Session read-modify-write 窗口，使 R-001 竞态可靠复现。
+/// 放大 Account-Session read-modify-write 窗口，使竞态可靠复现。
 ///
 /// 无锁时：两个并发 `create` 都会在对方的 `set(account)` 之前读到空的 account session，
 /// 导致 lost update（最终 tokens 列表只有 1 个 token 而非 2 个）。
@@ -1140,7 +1130,7 @@ impl GarrisonDao for SlowDao {
     }
 }
 
-/// R-001 修复验证：两个并发 `create` 同一 login_id，Account-Session 的 token 列表应包含两个 token。
+/// 两个并发 `create` 同一 login_id，Account-Session 的 token 列表应包含两个 token。
 ///
 /// 修复前（无 per-login_id 锁）：两个并发 create 的 read-modify-write 交错，
 /// 后写入的 account session 覆盖先写入的，导致丢失一个 token（lost update）。
@@ -1184,10 +1174,10 @@ async fn concurrent_login_same_user_creates_consistent_session() {
 }
 
 // ------------------------------------------------------------------------
-// 会话悬停超时测试（spec R-hover-001 ~ R-hover-004）
+// 会话悬停超时测试
 // ------------------------------------------------------------------------
 
-/// R-hover-001: `session_hover_timeout == -1` 时 `check_hover_timeout` 始终返回 true。
+/// `session_hover_timeout == -1` 时 `check_hover_timeout` 始终返回 true。
 #[test]
 fn check_hover_timeout_disabled_when_negative() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1198,7 +1188,7 @@ fn check_hover_timeout_disabled_when_negative() {
     );
 }
 
-/// R-hover-001: `session_hover_timeout == 0` 时也视为不启用，返回 true。
+/// `session_hover_timeout == 0` 时也视为不启用，返回 true。
 #[test]
 fn check_hover_timeout_disabled_when_zero() {
     let (_dao, session) = make_session(3600, 86400);
@@ -1230,7 +1220,7 @@ fn check_hover_timeout_returns_true_when_active() {
     );
 }
 
-/// R-hover-003: 悬停超时后返回 false（踢出）。
+/// 悬停超时后返回 false（踢出）。
 ///
 /// 设置 last_active_time 为 5 秒前，hover_timeout=1 秒，应返回 false。
 #[test]
@@ -1495,13 +1485,13 @@ async fn cleanup_expired_tokens_returns_correct_count() {
 }
 
 // ----------------------------------------------------------------
-// HIGH-004: 单 token DAO 失败不中断清理周期
+// 单 token DAO 失败不中断清理周期
 // ----------------------------------------------------------------
 
 /// 测试用 DAO wrapper，在 get 特定 key 时返回错误。
 ///
 /// 用于测试 `cleanup_expired_tokens` 单 token DAO 读取失败时
-/// 不中断整个清理周期（HIGH-004）。
+/// 不中断整个清理周期。
 struct FailingGetDao {
     inner: Arc<MockDao>,
     fail_get_key: String,
@@ -1562,7 +1552,7 @@ impl GarrisonDao for FailingUpdateDao {
     }
 }
 
-/// HIGH-004: 单 token DAO 读取失败不中断整个清理周期，改为 warn 日志并跳过该 token。
+/// 单 token DAO 读取失败不中断整个清理周期，改为 warn 日志并跳过该 token。
 ///
 /// 场景：3 个 token（T1 有效 / T2 DAO get 失败 / T3 已注销），
 /// 验证 T2 的 DAO 失败不中断遍历，T3 仍被清理，T1/T2 保留在 map 中。

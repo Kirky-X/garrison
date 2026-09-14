@@ -6,15 +6,15 @@
 //! 对应 actix-web 适配器，
 //! 提供 GarrisonRouter + FromRequest extractor + GarrisonMiddleware 完整集成。
 //!
-//! ## 模块拆分（Rule 25 接口隔离）
+//! ## 模块拆分（接口隔离）
 //!
 //! - `mod.rs`：pub struct 声明（GarrisonRouter/GarrisonMiddleware/GarrisonMiddlewareService/
-//!   RouteRule/CheckLogin/CheckRole/CheckPermission）+ pub mod 声明 + pub use re-export
+//! RouteRule/CheckLogin/CheckRole/CheckPermission）+ pub mod 声明 + pub use re-export
 //! - `error.rs`：`HeaderLookup for HeaderMap` + `ResponseError for GarrisonError` 实现
 //! - `router.rs`：`GarrisonRouter` 方法 + `Default` 实现
 //! - `middleware.rs`：`Transform` + `Service` trait 实现（GarrisonMiddleware/GarrisonMiddlewareService）
 //! - `extractor.rs`：`FromRequest` extractor 实现（GarrisonPrincipal/CheckLogin/CheckRole/
-//!   CheckPermission/TenantContext）
+//! CheckPermission/TenantContext）
 //! - `mock.rs`：测试 mock（MockDao + MockInterface）
 //! - `tests.rs`：集成测试
 //!
@@ -33,15 +33,15 @@
 //! use actix_web::{App, HttpServer, web};
 //!
 //! async fn protected_handler(_auth: CheckLogin) -> &'static str {
-//!     "authenticated"
+//! "authenticated"
 //! }
 //!
 //! let router = GarrisonRouter::new(std::sync::Arc::new(GarrisonConfig::default_config()))
-//!     .route_protected("/api/user", Annotation::CheckLogin);
+//! .route_protected("/api/user", Annotation::CheckLogin);
 //!
 //! App::new()
-//!     .route("/api/user", web::get().to(protected_handler))
-//!     .wrap(router.into_middleware());
+//! .route("/api/user", web::get().to(protected_handler))
+//! .wrap(router.into_middleware());
 //! ```
 
 use crate::annotation::Annotation;
@@ -83,7 +83,7 @@ pub struct GarrisonRouter {
     /// 租户解析器（None = 不启用租户提取）。
     tenant_resolver: Option<Arc<dyn TenantResolver>>,
     /// 鉴权通过后内层 handler 的可选超时（None = 不设超时，默认；
-    /// 经 `with_handler_timeout` 配置，防挂起 handler 无限占用连接，ocr #2141）。
+    /// 经 `with_handler_timeout` 配置，防挂起 handler 无限占用连接）。
     handler_timeout: Option<std::time::Duration>,
 }
 
@@ -102,7 +102,7 @@ pub struct GarrisonMiddleware {
     interceptor: Arc<dyn GarrisonInterceptor>,
     config: Arc<GarrisonConfig>,
     tenant_resolver: Option<Arc<dyn TenantResolver>>,
-    /// 内层 handler 可选超时（None = 不设超时，默认，ocr #2141）。
+    /// 内层 handler 可选超时（None = 不设超时，默认）。
     pub(crate) handler_timeout: Option<std::time::Duration>,
 }
 
@@ -118,7 +118,7 @@ pub struct GarrisonMiddlewareService<S> {
     pub config: Arc<GarrisonConfig>,
     /// 租户解析器（None 时不启用租户提取）。
     pub tenant_resolver: Option<Arc<dyn TenantResolver>>,
-    /// 内层 handler 可选超时（None = 不设超时，默认，ocr #2141）。
+    /// 内层 handler 可选超时（None = 不设超时，默认）。
     pub handler_timeout: Option<std::time::Duration>,
 }
 
@@ -136,15 +136,15 @@ pub struct CheckLogin;
 
 /// CheckRole extractor：验证用户持有指定角色。
 ///
-/// 角色名通过 `web::Data<RequiredRole>` 服务端配置（CRITICAL-12 修复）。
+/// 角色名通过 `web::Data<RequiredRole>` 服务端配置。
 pub struct CheckRole(pub String);
 
 /// CheckPermission extractor：验证用户持有指定权限。
 ///
-/// 权限名通过 `web::Data<RequiredPermission>` 服务端配置（CRITICAL-12 修复）。
+/// 权限名通过 `web::Data<RequiredPermission>` 服务端配置。
 pub struct CheckPermission(pub String);
 
-/// CheckRole 服务端配置：路由注册时声明所需角色（CRITICAL-12 修复）。
+/// CheckRole 服务端配置：路由注册时声明所需角色。
 ///
 /// 通过 `web::Data::new(RequiredRole("admin".into()))` 注入 `App`，
 /// `CheckRole` extractor 从此配置读取角色名，禁止客户端控制。
@@ -154,12 +154,12 @@ pub struct CheckPermission(pub String);
 /// ```ignore
 /// use garrison::web_actix::RequiredRole;
 /// App::new()
-///     .app_data(web::Data::new(RequiredRole("admin".to_string())))
-///     .route("/admin", web::get().to(admin_handler))
+/// .app_data(web::Data::new(RequiredRole("admin".to_string())))
+/// .route("/admin", web::get().to(admin_handler))
 /// ```
 pub struct RequiredRole(pub String);
 
-/// CheckPermission 服务端配置：路由注册时声明所需权限（CRITICAL-12 修复）。
+/// CheckPermission 服务端配置：路由注册时声明所需权限。
 ///
 /// 通过 `web::Data::new(RequiredPermission("user:read".into()))` 注入 `App`，
 /// `CheckPermission` extractor 从此配置读取权限名，禁止客户端控制。
@@ -169,8 +169,8 @@ pub struct RequiredRole(pub String);
 /// ```ignore
 /// use garrison::web_actix::RequiredPermission;
 /// App::new()
-///     .app_data(web::Data::new(RequiredPermission("user:read".to_string())))
-///     .route("/data", web::get().to(data_handler))
+/// .app_data(web::Data::new(RequiredPermission("user:read".to_string())))
+/// .route("/data", web::get().to(data_handler))
 /// ```
 pub struct RequiredPermission(pub String);
 

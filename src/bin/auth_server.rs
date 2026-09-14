@@ -14,8 +14,8 @@
 //! - `GARRISON_RATE_LIMIT`：外网每 IP 限速（默认 100，必须 > 0，为 0 时拒绝启动）
 //! - `GARRISON_INTERNAL_API_KEY`：内网 API Key（必须配置，无默认值，fail-closed）
 //! - `GARRISON_EXTERNAL_LOGIN_ENABLED`：是否启用外网登录端点（默认 **false**）。
-//!   框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），
-//!   业务方注入凭证校验后才应设为 `true`；默认关闭时 `POST /api/v1/auth/login` 返回 404
+//! 框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），
+//! 业务方注入凭证校验后才应设为 `true`；默认关闭时 `POST /api/v1/auth/login` 返回 404
 //! - `GARRISON_WORKER_THREADS`：Tokio worker 线程数（默认 = CPU 核数）
 //! - `GARRISON_MAX_BLOCKING_THREADS`：Tokio blocking 线程上限（默认 512）
 //!
@@ -57,7 +57,7 @@ impl GarrisonInterface for SimpleInterface {
     }
 }
 
-/// 初始化全局 GarrisonManager 单例（ocr #6285/6450/6651）。
+/// 初始化全局 GarrisonManager 单例。
 ///
 /// `BackendEmbedded` 委托全局 `GarrisonManager` 单例（零字段结构，不自初始化），
 /// 未初始化时所有认证操作返回 `manager-not-init` 错误——因此启动流程必须
@@ -115,7 +115,7 @@ async fn async_main() -> GarrisonResult<()> {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(100);
-    // ocr #3130/3134：拒绝 0 值——rate_limit=0 会让限速器拒绝所有请求（全部 429）。
+    // 拒绝 0 值——rate_limit=0 会让限速器拒绝所有请求（全部 429）。
     // 负值在 u32 解析阶段即失败并回退默认值，无需额外校验。
     if rate_limit == 0 {
         eprintln!(
@@ -147,7 +147,7 @@ async fn async_main() -> GarrisonResult<()> {
         );
     }
 
-    // H-2: 初始化 tracing subscriber，避免所有 tracing::info!/error! 静默丢弃
+    // 初始化 tracing subscriber，避免所有 tracing::info!/error! 静默丢弃
     #[cfg(feature = "audit-inklog")]
     let _logger = garrison::observability::init_inklog_logging_with_fallback().await;
 
@@ -180,7 +180,7 @@ async fn async_main() -> GarrisonResult<()> {
     }
 
     // 创建 BackendEmbedded 作为后端。
-    // ocr #6285/6450/6651：BackendEmbedded 委托全局 GarrisonManager 单例，
+    // BackendEmbedded 委托全局 GarrisonManager 单例，
     // 必须先经 GarrisonManager::builder().build().await 初始化，
     // 否则启动后所有认证操作都会报 manager-not-init 错误。
     if let Err(e) = setup_garrison_manager().await {

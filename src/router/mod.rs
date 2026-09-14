@@ -60,7 +60,7 @@ pub trait GarrisonInterceptor: Send + Sync {
 /// - `CheckApiKey { namespace }` → `GarrisonUtil::check_api_key(namespace)`（0.6.1 API Key 校验）
 ///
 /// **NotImplemented（3 个）**：依赖 HTTP 请求上下文（Authorization header / method / body），
-/// 而 `pre_handle` 签名仅有 `path + annotation`，无法获取。Fail Loud（Rule 12）返回
+/// 而 `pre_handle` 签名仅有 `path + annotation`，无法获取。Fail Loud返回
 /// `GarrisonError::NotImplemented`，引导用户改用 axum extractor 或 secure 模块直接调用：
 /// - `CheckBasicAuth` → 使用 `secure::httpbasic::HttpBasicAuth` 或 axum extractor
 /// - `CheckDigestAuth` → 使用 `secure::httpdigest::HttpDigestAuth` 或 axum extractor

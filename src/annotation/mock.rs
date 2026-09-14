@@ -152,7 +152,7 @@ impl GarrisonInterface for MockInterface {
 mod mock_dao_coverage_tests {
     use super::*;
 
-    /// ocr #408：fallback / 默认方法调用的结果不再 `let _` 丢弃——
+    /// fallback / 默认方法调用的结果不再 `let _` 丢弃——
     /// 组合回退路径逐一断言返回值；MockDao 未重写的默认方法断言
     /// fail-closed 的 `NotImplemented` 语义。
     #[tokio::test]

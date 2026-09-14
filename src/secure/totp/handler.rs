@@ -49,7 +49,7 @@ impl TotpHandler {
     /// # 返回
     /// - `Ok(String)`: 指定位数的数字字符串。
     /// - `Err(GarrisonError::InvalidParam)`: `now` 为负值（裸 `as u64` 会静默回绕
-    ///   为巨大计数器，产生错误时间窗口的验证码，故显式拒绝）。
+    /// 为巨大计数器，产生错误时间窗口的验证码，故显式拒绝）。
     pub fn generate(&self, now: i64) -> GarrisonResult<String> {
         let now = Self::check_now(now)?;
         Ok(self.totp.generate(now).to_string())
@@ -86,7 +86,7 @@ impl TotpHandler {
     ///
     /// 新实现使用 [`GarrisonDao::incr`] 的原子性消除 TOCTOU 竞态：
     /// - `incr` 在后端（`GarrisonDaoOxcache` 用 `parking_lot::Mutex`，`MockDao` 用
-    ///   `parking_lot::Mutex`，Redis 后端用 `INCR` 命令）保证进程内原子
+    /// `parking_lot::Mutex`，Redis 后端用 `INCR` 命令）保证进程内原子
     /// - 首次调用返回 1（key 不存在 → 初始化为 "1"），后续调用返回 2+（递增）
     /// - `incr` 返回 1 时视为首次使用，返回 >1 时视为重放
     ///
@@ -95,7 +95,7 @@ impl TotpHandler {
     /// - oxcache 后端的容量与淘汰策略由调用方通过 `GarrisonDaoOxcache::new()` 配置
     /// - 不再需要 `DashMap` / `once_cell` / `Arc<TokioMutex>` 等进程内状态
     ///
-    /// # FMEA #7 TOCTOU 防护保留
+    /// # TOCTOU 防护保留
     ///
     /// 原锁的目的是防止两个并发请求同时通过 `get → set` 序列（TOCTOU）。
     /// `incr` 将 get + set 合并为单次原子操作，从语义上消除 TOCTOU 窗口：
@@ -126,7 +126,7 @@ impl TotpHandler {
         }
         let replay_key = format!("totp:used:{}:{}", login_id, code);
 
-        // E3 + FMEA #7：用 DAO 的原子 incr 替代 per-login_id 锁 + get-then-set。
+        // 用 DAO 的原子 incr 替代 per-login_id 锁 + get-then-set。
         // incr 在后端用 Mutex/INCR 保证原子性：首次返回 1，重放返回 >1。
         // TTL = step * 3，覆盖 skew=1 的 3 个时间窗口（前 + 当前 + 后）；
         // step * 3 用 checked_mul 防止超大 step 溢出回绕出错误的短 TTL。

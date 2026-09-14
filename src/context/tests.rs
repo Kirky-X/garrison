@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! context 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! context 模块测试（从 mod.rs 迁移）。
 
 use super::mock::MockResponse;
 use super::*;

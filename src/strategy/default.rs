@@ -3,7 +3,7 @@
 
 //! `GarrisonPermissionStrategyDefault` 的实现块。
 //!
-//! 从 `mod.rs` 迁移而出（规则 25：mod.rs 接口隔离）。
+//! 从 `mod.rs` 迁移而出（mod.rs 接口隔离）。
 //! 本模块持有构造器、builder 方法、`GarrisonPermissionStrategy` trait 实现，
 //! 以及 `broadcast_firewall_block` 事件广播 helper。
 
@@ -49,8 +49,8 @@ impl GarrisonPermissionStrategyDefault {
     /// - `interface`: 权限/角色数据回调（业务方实现）。
     ///
     /// # 返回
-    /// 新建的 `GarrisonPermissionStrategyDefault` 实例（0.2.0 扩展字段均为 None/空，
-    /// 行为与 0.1.0 完全一致）。
+    /// 新建的 `GarrisonPermissionStrategyDefault` 实例（扩展字段均为 None/空，
+    /// 行为与基础构造一致）。
     pub fn new(interface: Arc<dyn GarrisonInterface>) -> Self {
         Self {
             interface,
@@ -101,7 +101,7 @@ impl GarrisonPermissionStrategyDefault {
         self
     }
 
-    /// 设置默认 `login_type`（多账号体系，batch-08 接线 `_with_type` 回调）。
+    /// 设置默认 `login_type`（多账号体系，接线 `_with_type` 回调）。
     ///
     /// 注入后 `get_permission_list` / `get_role_list`（及其上的
     /// `check_permission` / `check_role` 等校验）经
@@ -144,7 +144,7 @@ impl GarrisonPermissionStrategyDefault {
     ///
     /// 注入后 `check_permission` 在**权限判定前**调用一次
     /// `GarrisonPluginManager::on_permission_check`（缓存命中路径亦如此，
-    /// 无后置调用——与实现一致，issue #6145 修正文档），
+    /// 无后置调用——与实现一致），
     /// 插件返回 Err 仅 `tracing::warn!` 不中断主流程。
     pub fn with_plugin_manager(mut self, pm: Arc<GarrisonPluginManager>) -> Self {
         self.plugin_manager = Some(pm);
@@ -222,7 +222,7 @@ impl GarrisonPermissionStrategyDefault {
             .await
     }
 
-    /// 写入权限缓存结果（带请求级租户覆盖，batch-08）。
+    /// 写入权限缓存结果（带请求级租户覆盖）。
     ///
     /// `tenant_override` 为 `Some(t)` 时缓存键使用该租户（优先于 builder 配置），
     /// 供 `check_permission_in_tenant` 回退路径隔离不同租户的判定结果。
@@ -263,7 +263,7 @@ impl GarrisonPermissionStrategyDefault {
             .await
     }
 
-    /// 读取缓存的权限校验结果（带请求级租户覆盖，batch-08）。
+    /// 读取缓存的权限校验结果（带请求级租户覆盖）。
     pub async fn get_cached_permission_with(
         &self,
         tenant_override: Option<i64>,
@@ -333,7 +333,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
     }
 
     async fn get_permission_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
-        // batch-08 接线（issue #3442/#3444）：改调 `_with_type` 变体传入策略配置的
+        // 接线：改调 `_with_type` 变体传入策略配置的
         // login_type（默认 "default"）。接口默认实现委托非 typed 方法，
         // 现有实现者行为不变；覆写了 `_with_type` 的多账号数据源自此生效。
         self.interface
@@ -342,7 +342,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
     }
 
     async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
-        // batch-08 接线（issue #3443/#3444）：同 get_permission_list，传入 login_type。
+        // 接线：同 get_permission_list，传入 login_type。
         self.interface
             .get_role_list_with_type(login_id, &self.login_type)
             .await
@@ -419,7 +419,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
     /// 注入 `firewall_hook` 后按序调用 5 个 hook，任一 Err 阻断登录。
     /// 未注入时为 no-op（纯权限校验场景）。
     ///
-    /// v0.4.2 扩展：任一 hook 返回 Err 时，若注入了 `listener_manager`，
+    /// 任一 hook 返回 Err 时，若注入了 `listener_manager`，
     /// 广播 `GarrisonEvent::FirewallBlock` 事件。
     #[cfg(any(
         feature = "sms-rate-limit",
@@ -466,7 +466,7 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
 }
 
 impl GarrisonPermissionStrategyDefault {
-    /// `check_permission` 的共享实现（batch-08：缓存键租户维度可由请求级租户覆盖）。
+    /// `check_permission` 的共享实现（缓存键租户维度可由请求级租户覆盖）。
     ///
     /// `cache_tenant` 为 `Some(t)` 时权限缓存键使用该租户（`check_permission_in_tenant`
     /// 传入的请求级租户），否则回退 builder 配置的 `self.tenant_id`。
@@ -476,7 +476,7 @@ impl GarrisonPermissionStrategyDefault {
         login_id: &str,
         permission: &str,
     ) -> GarrisonResult<bool> {
-        // spec scenario "权限为空字符串"：空字符串抛 InvalidParam
+        // 权限为空字符串时抛 InvalidParam
         if permission.is_empty() {
             return Err(GarrisonError::InvalidParam(
                 "strategy-perm-empty::".to_string(),
@@ -528,7 +528,7 @@ impl GarrisonPermissionStrategyDefault {
     ///
     /// 仅在注入 `listener_manager` 且启用 `listener` feature 时广播，否则为 no-op。
     ///
-    /// v0.5.0 改为 async：broadcast 改为 async 后此 helper 也需 async。
+    /// broadcast 为 async，此 helper 也需 async。
     #[cfg(any(
         feature = "sms-rate-limit",
         feature = "firewall-ratelimit",

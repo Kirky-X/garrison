@@ -550,7 +550,7 @@ async fn check_permission_filter_passes_with_valid_permission() {
 // GarrisonRejection → 三框架统一 JSON（garrison_recover）
 // ========================================================================
 
-/// ACC-WARP-RECOVER-001（正常+异常）：真实 `warp::serve` 挂 `.recover(garrison_recover)` 后，
+/// 真实 `warp::serve` 挂 `.recover(garrison_recover)`（正常+异常场景）后，
 /// 未登录请求返回 401 + 统一 `error_code`/`message` JSON（与 axum/actix 一致），
 /// 有效 token 放行 200。
 ///

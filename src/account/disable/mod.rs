@@ -11,7 +11,7 @@
 //!
 //! 将实现 `DefaultDisableRepository`，持有 `Arc<dyn GarrisonDao>` 委托实现。
 //!
-//! # 过期语义（统一约定，Issue 6468/6660/6661）
+//! # 过期语义（统一约定）
 //!
 //! 封禁存在两套过期：DAO key 的存储 TTL（`disable` 的 `duration_secs`，写入时取
 //! `max(duration_secs, until 剩余秒数)` 兜底）与条目 `until` 的逻辑过期。
