@@ -777,6 +777,8 @@ mod tests {
     /// 验证 AxumRequest::header() 在 header name 非法时返回 Context 错误。
     #[test]
     fn axum_request_header_invalid_name_errors() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let req = make_request("/", "GET", &[]);
         let axum_req = AxumRequest::new(&req);
         // header name 不能包含空格
@@ -811,6 +813,8 @@ mod tests {
     /// 验证 AxumResponse::set_status() 在状态码非法（> 999）时返回 Context 错误。
     #[test]
     fn axum_response_set_status_invalid_code_errors() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = AxumResponse::new();
         // StatusCode::from_u16 仅接受 0..=999
         let result = resp.set_status(1000);
@@ -823,6 +827,8 @@ mod tests {
     /// 验证 AxumResponse::set_header() 在 header value 非法时返回 Context 错误。
     #[test]
     fn axum_response_set_header_invalid_value_errors() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = AxumResponse::new();
         // header value 不能包含控制字符（如 '\0'）
         let result = resp.set_header("X-Test", "bad\0value");
@@ -889,6 +895,8 @@ mod tests {
     /// 验证 AxumContext::request() 返回的 wrapper 在 header name 非法时返回 Context 错误。
     #[test]
     fn axum_context_wrapper_header_invalid_name_errors() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let req = make_request("/", "GET", &[]);
         let ctx = AxumContext::new(&req);
         let request = ctx.request().unwrap();

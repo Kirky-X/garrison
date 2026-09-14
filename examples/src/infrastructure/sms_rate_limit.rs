@@ -62,7 +62,7 @@ pub async fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     println!("[4] 安全约束:");
     println!("    • 手机号不能包含 ':'（防止 key 注入）");
-    println!("    • 验证码使用 OsRng 密码学安全随机数生成器");
+    println!("    • 验证码使用密码学安全随机数生成器（ChaCha12 CSPRNG）");
     println!("    • 所有计数器通过 DistributedLimiter 原子递增");
     println!("    • SmsSender trait 由业务方实现（Garrison 不内置短信发送）");
     println!();

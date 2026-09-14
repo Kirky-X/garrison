@@ -75,6 +75,8 @@ fn decode_invalid_base64_errors() {
 /// 解码后缺失冒号分隔符失败（spec Scenario）。
 #[test]
 fn decode_missing_colon_errors() {
+    // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+    let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
     // "usernocolon" 的 Base64
     let result = HttpBasicAuth::decode("dXNlcm5hbWVub2NvbG9u");
     assert!(result.is_err());

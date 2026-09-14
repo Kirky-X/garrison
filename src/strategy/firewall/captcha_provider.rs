@@ -8,7 +8,7 @@
 //!
 //! # 算法
 //!
-//! 1. 随机生成两个 1-20 的整数 `a` 和 `b`（用 `rand::rngs::OsRng`，与项目其他模块一致）。
+//! 1. 随机生成两个 1-20 的整数 `a` 和 `b`（用 `rand::rng()`，ChaCha12 CSPRNG）。
 //! 2. 随机选择运算符 `+` 或 `-`；若选 `-` 但 `a < b`（结果为负），回退到 `+` 确保结果非负。
 //! 3. 生成 `challenge_id = UUID v4`，计算答案，存入 DAO（TTL = `self.ttl`）。
 //! 4. 返回 `(challenge_id, "a op b = ?")`。
@@ -33,8 +33,7 @@
 use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
-use rand::rngs::OsRng;
-use rand::Rng;
+use rand::RngExt;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -99,11 +98,11 @@ impl MathCaptchaProvider {
     ///
     /// 题目格式为 `"a op b = ?"`（如 `"3 + 5 = ?"`），答案存入 DAO 供 [`verify`](Self::verify) 比对。
     pub async fn generate(&self) -> GarrisonResult<(String, String)> {
-        let mut rng = OsRng;
-        let a: i32 = rng.gen_range(1..=20);
-        let b: i32 = rng.gen_range(1..=20);
+        let mut rng = rand::rng();
+        let a: i32 = rng.random_range(1..=20);
+        let b: i32 = rng.random_range(1..=20);
         // 随机选 + 或 -；选 - 但 a < b 时回退到 + 确保结果非负
-        let (op, answer) = if rng.gen_bool(0.5) || a < b {
+        let (op, answer) = if rng.random_bool(0.5) || a < b {
             ('+', a + b)
         } else {
             ('-', a - b)

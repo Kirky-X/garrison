@@ -24,7 +24,6 @@ use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use chrono::{DateTime, Duration, Utc};
 use limiteron::limiters::DistributedLimiter;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
@@ -1188,7 +1187,8 @@ impl TokenHandler {
 /// 生成 token（32 字节随机数 → BASE64URL 编码）。
 fn generate_token() -> String {
     let mut bytes = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut bytes);
+    // 直接读 OS CSPRNG（getrandom::fill），与 src/oauth2_server/authorize.rs 授权码路径同一安全立场
+    getrandom::fill(&mut bytes).expect("OS CSPRNG 不可用");
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

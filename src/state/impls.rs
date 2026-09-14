@@ -57,7 +57,7 @@ impl TokenState {
     ///
     /// // 非法转换
     /// let err = TokenState::Expired.transition_to(TokenState::Active).unwrap_err();
-    /// assert!(err.to_string().contains("非法状态转换"));
+    /// assert!(format!("{:?}", err).contains("InvalidStateTransition"));
     /// ```
     pub fn transition_to(self, target: TokenState) -> GarrisonResult<TokenState> {
         if self.can_transition_to(target) {
@@ -141,7 +141,7 @@ impl UserStatus {
     ///
     /// // 非法转换
     /// let err = UserStatus::Deleted.transition_to(UserStatus::Active).unwrap_err();
-    /// assert!(err.to_string().contains("非法状态转换"));
+    /// assert!(format!("{:?}", err).contains("InvalidStateTransition"));
     /// ```
     pub fn transition_to(self, target: UserStatus) -> GarrisonResult<UserStatus> {
         if self.can_transition_to(target) {

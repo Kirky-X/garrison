@@ -159,10 +159,13 @@ mod tests {
             GarrisonJsonTemplate::new(r#"{"o":{"s":"${x}"},"arr":["${x}",1,null],"n":5}"#).unwrap();
         let mut params = HashMap::new();
         params.insert("x".to_string(), "v".to_string());
-        // JSON 键序为实现细节（serde_json 默认按字母序排序输出），不保证插入序。
-        assert_eq!(
-            template.render(&params).unwrap(),
-            r#"{"arr":["v",1,null],"n":5,"o":{"s":"v"}}"#
-        );
+        // JSON 键序为实现细节：生产构建（BTreeMap）按字母序、测试构建（toml
+        // dev-dep 的 preserve_order feature 统一后为 IndexMap）按插入序。
+        // 断言按 Value 语义比较，不锁键序。
+        let rendered: serde_json::Value =
+            serde_json::from_str(&template.render(&params).unwrap()).unwrap();
+        let expected: serde_json::Value =
+            serde_json::from_str(r#"{"o":{"s":"v"},"arr":["v",1,null],"n":5}"#).unwrap();
+        assert_eq!(rendered, expected);
     }
 }

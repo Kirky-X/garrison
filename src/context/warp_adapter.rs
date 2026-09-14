@@ -420,6 +420,8 @@ mod tests {
     /// 验证 header() 在 header name 非法时返回 Context 错误。
     #[test]
     fn warp_request_header_invalid_name_errors() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let req = make_warp_request("/", "GET", &[]);
         let result = req.header("invalid header");
         assert!(result.is_err());
@@ -575,6 +577,8 @@ mod tests {
     /// 验证 set_status 在状态码非法（> 999）时返回 Context 错误。
     #[test]
     fn warp_response_set_status_invalid_code_errors() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = WarpResponse::new();
         let result = resp.set_status(1000);
         assert!(result.is_err());
@@ -586,6 +590,8 @@ mod tests {
     /// 验证 set_header 在 header value 非法时返回 Context 错误。
     #[test]
     fn warp_response_set_header_invalid_value_errors() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let mut resp = WarpResponse::new();
         let result = resp.set_header("X-Test", "bad\0value");
         assert!(result.is_err());

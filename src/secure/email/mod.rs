@@ -21,7 +21,7 @@
 //!
 //! - 所有 key 中的邮箱地址经过 `normalize_email()` 规范化（trim + 小写化）
 //! - email 不能包含 ':'（防止 key 注入）
-//! - 验证码使用 `rand::rngs::OsRng` 密码学安全随机数生成器
+//! - 验证码使用 `rand::rng()`（ThreadRng，ChaCha12 CSPRNG）密码学安全随机数
 //! - 所有计数器通过 `GarrisonDao::incr` 原子递增
 
 use crate::dao::GarrisonDao;

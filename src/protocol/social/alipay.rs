@@ -444,17 +444,17 @@ impl Drop for AlipayProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::rngs::OsRng;
     use rsa::pkcs1::EncodeRsaPrivateKey;
     use wiremock::matchers::{body_string_contains, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// 生成测试用 RSA 私钥并返回 PKCS#1 PEM 字符串。
     ///
-    /// 用 `OsRng` 生成 2048 位 RSA 密钥（与 keycloak_oidc_integration 测试模式一致），
-    /// 转为 PKCS#1 PEM 字符串供 `AlipayProvider::new` 使用。
+    /// 用 `rsa::rand_core::OsRng` 生成 2048 位 RSA 密钥（与 keycloak_oidc_integration 测试模式
+    /// 一致；rsa 0.9 基于 rand_core 0.6，rand 0.10 的 RNG trait 不兼容），转为 PKCS#1 PEM
+    /// 字符串供 `AlipayProvider::new` 使用。
     fn generate_test_rsa_pem() -> String {
-        let mut rng = OsRng;
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = rsa::RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         private_key
             .to_pkcs1_pem(rsa::pkcs1::LineEnding::LF)

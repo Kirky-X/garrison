@@ -285,8 +285,8 @@ mod tests {
         assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("limiteron 计数读取解析失败"),
-            "错误消息应包含翻译后的解析失败提示，实际: {}",
+            err_msg.contains("get count parse failed"),
+            "错误消息应包含解析失败标识（嵌套错误不经过翻译链，断言取 locale 无关片段），实际: {}",
             err_msg
         );
     }

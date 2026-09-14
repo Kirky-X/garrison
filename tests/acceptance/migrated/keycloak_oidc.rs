@@ -26,7 +26,6 @@ mod keycloak_e2e {
     use garrison::dao::GarrisonDaoOxcache;
     use garrison::{KeycloakConfig, KeycloakProvider};
     use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-    use rand::rngs::OsRng;
     use rsa::pkcs1::EncodeRsaPrivateKey;
     use rsa::traits::PublicKeyParts;
     use rsa::RsaPrivateKey;
@@ -65,7 +64,7 @@ mod keycloak_e2e {
     async fn keycloak_oidc_rp_full_flow_e2e() {
         let server = MockServer::start().await;
 
-        let mut rng = OsRng;
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = rsa::RsaPublicKey::from(&private_key);
 

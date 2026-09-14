@@ -319,9 +319,30 @@ impl GarrisonAuthServer {
         };
 
         // 请求体大小限制（最外层，确保所有 body extractor 受控）
-        router.layer(axum::extract::DefaultBodyLimit::max(
+        let router = router.layer(axum::extract::DefaultBodyLimit::max(
             self.config.external_body_limit,
-        ))
+        ));
+
+        // server-health-check：K8s 探针 merge 在最外层——axum merge 不继承 layer，
+        // 探针绕过 path_filter/rate_limit/audit 全部中间件（与 sdforge
+        // build_with_config "探针挂载在认证层之后" 同一语义）
+        #[cfg(feature = "server-health-check")]
+        let router = router.merge(Self::health_probe_router());
+
+        router
+    }
+
+    /// K8s 探针路由（server-health-check feature）。
+    ///
+    /// 复用 sdforge::health 处理器：`/healthz` 进程存活即恒 200（liveness），
+    /// `/readyz` 依据已注册 readiness check 返回 200/503（默认无注册检查即 ready；
+    /// 业务方经 `sdforge::health::register_readiness_check_fn` 注册下游依赖检查）。
+    #[cfg(feature = "server-health-check")]
+    fn health_probe_router() -> Router {
+        use axum::routing::get;
+        Router::new()
+            .route("/healthz", get(sdforge::health::healthz_handler))
+            .route("/readyz", get(sdforge::health::readyz_handler))
     }
 
     /// 构建内网路由（sdforge + path-filter + api_key_auth + rate_limit + audit_log + tenant_resolution）。
@@ -395,9 +416,16 @@ impl GarrisonAuthServer {
         };
 
         // 请求体大小限制（最外层，确保所有 body extractor 受控）
-        router.layer(axum::extract::DefaultBodyLimit::max(
+        let router = router.layer(axum::extract::DefaultBodyLimit::max(
             self.config.internal_body_limit,
-        ))
+        ));
+
+        // server-health-check：探针同样 merge 在内网路由最外层（绕过 api_key_auth，
+        // K8s 探针不持有 API Key）
+        #[cfg(feature = "server-health-check")]
+        let router = router.merge(Self::health_probe_router());
+
+        router
     }
 
     /// 同时启动外网和内网两个 axum 服务器。

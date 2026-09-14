@@ -7,8 +7,7 @@
 //! 存储与匹配统一使用规范化后的无连字符大写形态。
 
 use crate::error::{GarrisonError, GarrisonResult};
-use rand::rngs::OsRng;
-use rand::Rng;
+use rand::RngExt;
 
 /// 码字符集：31 个去歧义大写字母数字（36 个字母数字排除 `0/O`、`1/I/L` 共 5 个歧义字符）。
 pub const CHARSET: &str = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
@@ -18,11 +17,12 @@ const CODE_LEN: usize = 8;
 
 /// 生成形如 `XXXX-XXXX` 的随机邀请码（字符取自去歧义字符集）。
 ///
-/// 使用 `OsRng`（操作系统 CSPRNG）：邀请码是凭证性质，随机源必须不可预测。
+/// 使用 `rand::rng()`（ThreadRng，ChaCha12 CSPRNG，OS 熵播种）：邀请码是凭证性质，
+/// 随机源必须不可预测。
 pub fn generate() -> String {
-    let mut rng = OsRng;
+    let mut rng = rand::rng();
     let bytes: Vec<u8> = (0..CODE_LEN)
-        .map(|_| CHARSET.as_bytes()[rng.gen_range(0..CHARSET.len())])
+        .map(|_| CHARSET.as_bytes()[rng.random_range(0..CHARSET.len())])
         .collect();
     let body = String::from_utf8(bytes).expect("字符集为纯 ASCII");
     format!("{}-{}", &body[..4], &body[4..])

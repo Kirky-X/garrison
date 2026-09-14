@@ -23,8 +23,6 @@ use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
-use rand::rngs::OsRng;
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -128,7 +126,7 @@ impl BackupCodeCredential {
 
     /// 生成 10 个一次性备份码。
     ///
-    /// 每个备份码：8 字节随机数（`OsRng`）→ Base32 编码 → 格式化为 `XXXX-XXXX-XXXX`。
+    /// 每个备份码：8 字节随机数（直接读 OS CSPRNG）→ Base32 编码 → 格式化为 `XXXX-XXXX-XXXX`。
     /// 备份码的 SHA-256 哈希存入 `secret_data`，明文仅此一次返回。
     ///
     /// # 参数
@@ -142,7 +140,7 @@ impl BackupCodeCredential {
         let mut hashes = Vec::with_capacity(CODE_COUNT);
         for _ in 0..CODE_COUNT {
             let mut bytes = [0u8; CODE_BYTES];
-            OsRng.fill_bytes(&mut bytes);
+            getrandom::fill(&mut bytes).expect("OS CSPRNG 不可用");
             let encoded = base32::encode(base32::Alphabet::Rfc4648 { padding: false }, &bytes);
             let formatted = format_code(&encoded);
             let normalized = normalize(&formatted);

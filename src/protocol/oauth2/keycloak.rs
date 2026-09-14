@@ -845,7 +845,6 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
         use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-        use rand::rngs::OsRng;
         use rsa::pkcs1::EncodeRsaPrivateKey;
         use rsa::traits::PublicKeyParts;
         use rsa::{RsaPrivateKey, RsaPublicKey};
@@ -854,7 +853,8 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         // 1. 生成 RSA 2048 测试密钥对
-        let mut rng = OsRng;
+        // rsa 0.9 基于 rand_core 0.6，rand 0.10 的 RNG trait 不兼容，用 rsa::rand_core::OsRng
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = RsaPublicKey::from(&private_key);
 
@@ -1023,7 +1023,6 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
         use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-        use rand::rngs::OsRng;
         use rsa::pkcs1::EncodeRsaPrivateKey;
         use rsa::traits::PublicKeyParts;
         use rsa::{RsaPrivateKey, RsaPublicKey};
@@ -1032,7 +1031,7 @@ mod tests {
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         // 1. 生成 RSA 密钥对 + 签发过期 JWT
-        let mut rng = OsRng;
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = RsaPublicKey::from(&private_key);
 
@@ -1138,7 +1137,6 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
         use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-        use rand::rngs::OsRng;
         use rsa::pkcs1::EncodeRsaPrivateKey;
         use rsa::traits::PublicKeyParts;
         use rsa::{RsaPrivateKey, RsaPublicKey};
@@ -1146,7 +1144,7 @@ mod tests {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        let mut rng = OsRng;
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = RsaPublicKey::from(&private_key);
 
@@ -1243,7 +1241,6 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
         use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-        use rand::rngs::OsRng;
         use rsa::pkcs1::EncodeRsaPrivateKey;
         use rsa::traits::PublicKeyParts;
         use rsa::{RsaPrivateKey, RsaPublicKey};
@@ -1251,7 +1248,7 @@ mod tests {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        let mut rng = OsRng;
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = RsaPublicKey::from(&private_key);
 
@@ -1349,7 +1346,6 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
         use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-        use rand::rngs::OsRng;
         use rsa::pkcs1::EncodeRsaPrivateKey;
         use rsa::traits::PublicKeyParts;
         use rsa::{RsaPrivateKey, RsaPublicKey};
@@ -1357,7 +1353,7 @@ mod tests {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
-        let mut rng = OsRng;
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = RsaPublicKey::from(&private_key);
 
@@ -1530,7 +1526,10 @@ mod tests {
         match result.err() {
             Some(crate::error::GarrisonError::InvalidParam(msg)) => {
                 assert!(
-                    msg.contains("43") || msg.contains("长度"),
+                    msg.contains("43")
+                        || msg.contains("长度")
+                        || msg.contains("length")
+                        || msg.contains("pkce-length-invalid"),
                     "错误消息应说明长度约束，实际: {}",
                     msg
                 );

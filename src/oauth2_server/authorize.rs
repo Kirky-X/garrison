@@ -23,7 +23,6 @@ use crate::oauth2_server::client::OAuth2ClientStore;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use percent_encoding::{utf8_percent_encode, AsciiSet};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -403,11 +402,11 @@ impl AuthorizeHandler {
 /// 生成授权码（32 字节随机数 → BASE64URL 编码）。
 fn generate_authorization_code() -> String {
     let mut bytes = [0u8; 32];
-    // OsRng 每次直接读 OS CSPRNG（系统调用），无用户态 DRBG 缓冲，
+    // getrandom::fill 每次直接读 OS CSPRNG（系统调用），无用户态 DRBG 缓冲，
     // 相比 thread_rng 性能略低（~100-300ns vs ~10-30ns/调用），但消除 reseed 状态机攻击面。
     // 授权码生成非高频路径（每次用户授权一次），安全优先于性能。
-    // 与项目其余模块（src/web/csrf.rs / src/account/credential/password.rs 等）规范一致。
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    // 与项目其余模块（src/web/csrf.rs / src/account/credential/backup_code.rs 等）规范一致。
+    getrandom::fill(&mut bytes).expect("OS CSPRNG 不可用");
     URL_SAFE_NO_PAD.encode(bytes)
 }
 

@@ -114,7 +114,7 @@ impl Default for CsrfConfig {
 
 /// 生成 CSRF token。
 ///
-/// 使用 `rand::rngs::OsRng` 生成 32 个随机字节，编码为 URL-safe Base64（无填充）。
+/// 直接读 OS CSPRNG（`getrandom::fill`）生成 32 个随机字节，编码为 URL-safe Base64（无填充）。
 /// 结果长度约为 43 个字符。
 ///
 /// # 返回
@@ -123,11 +123,10 @@ impl Default for CsrfConfig {
 pub fn generate_csrf_token() -> GarrisonResult<String> {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     use base64::Engine;
-    use rand::rngs::OsRng;
-    use rand::RngCore;
 
     let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
+    // 直接读 OS CSPRNG（getrandom::fill），无用户态 DRBG 缓冲——与 oauth2 授权码路径同一安全立场
+    getrandom::fill(&mut bytes).expect("OS CSPRNG 不可用");
     Ok(URL_SAFE_NO_PAD.encode(bytes))
 }
 

@@ -538,9 +538,9 @@ dependencies = [
 
 [[package]]
 name = "async-compression"
-version = "0.4.46"
+version = "0.4.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f10dafd0c8d2e51ae9a748805777613ed0bbe17bf586b76c8311f45c020a32f"
+checksum = "ef217a77a86a6e3dab9a5b3c81dc445b603fe743a90c1cb10a2f2144628d8cfa"
 dependencies = [
  "compression-codecs",
  "compression-core",
@@ -1291,9 +1291,9 @@ dependencies = [
 
 [[package]]
 name = "compression-codecs"
-version = "0.4.41"
+version = "0.4.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58a6d0db8759036a783bc7c3f7a07f8cef3bf9470eb1db3bc86e8bcd1c5d0fe8"
+checksum = "257c7085cbb71be72d8fb97edff08b03d86d5d9f2222b9cc34a6bec87093bc10"
 dependencies = [
  "compression-core",
  "flate2",
@@ -2592,6 +2592,7 @@ dependencies = [
  "fluent",
  "futures",
  "garrison-macros",
+ "getrandom 0.4.3",
  "hkdf 0.13.0",
  "hmac 0.13.0",
  "http 1.5.0",
@@ -2623,7 +2624,7 @@ dependencies = [
  "percent-encoding",
  "prometheus",
  "quick-xml",
- "rand 0.8.8",
+ "rand 0.10.2",
  "rcgen",
  "redis",
  "regex",
@@ -2650,6 +2651,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "trait-kit",
+ "trybuild",
  "unic-langid",
  "unicode-normalization",
  "unicode-security",
@@ -2675,7 +2677,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serial_test",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "tempfile",
  "tokio",
  "tonic",
@@ -3687,6 +3689,7 @@ dependencies = [
  "rand 0.10.2",
  "rayon",
  "regex",
+ "rustls",
  "serde",
  "serde_json",
  "sha2 0.11.0",
@@ -4179,12 +4182,16 @@ dependencies = [
 [[package]]
 name = "limiteron"
 version = "0.3.0-rc.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc73be0cd6c8f66d28fe6897b5412a3c03827ffe9a7550de37b66e6690c85d1b"
 dependencies = [
  "ahash",
  "async-trait",
  "chrono",
  "dashmap",
  "futures",
+ "hex",
+ "hmac 0.13.0",
  "http 1.5.0",
  "ipnet",
  "log",
@@ -4192,11 +4199,13 @@ dependencies = [
  "oxcache",
  "parking_lot",
  "prometheus",
+ "reqwest",
  "scopeguard",
  "secrecy",
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "sha2 0.11.0",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
@@ -4879,6 +4888,7 @@ dependencies = [
  "serde_json",
  "serde_stacker",
  "tokio",
+ "tracing",
  "uuid",
  "writeable",
  "zstd 0.13.3",
@@ -5932,9 +5942,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.44"
+version = "0.23.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6725596c3f2c3a0aef021139e145d4eafe314a6623e4680ca83852b2c67ab2ba"
+checksum = "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634"
 dependencies = [
  "aws-lc-rs",
  "log",
@@ -7077,7 +7087,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

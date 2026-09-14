@@ -1352,8 +1352,8 @@ mod tests {
         assert!(result.is_err(), "慢任务应超时返回 Err");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("异常分析器关闭超时"),
-            "错误信息应包含翻译后的关闭超时提示，实际: {}",
+            err_msg.contains("anomalous analyzer shutdown timeout"),
+            "错误信息应包含关闭超时标识（嵌套错误不经过翻译链，断言取 locale 无关片段），实际: {}",
             err_msg
         );
     }

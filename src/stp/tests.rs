@@ -3961,6 +3961,8 @@ async fn enforce_max_login_count_overflow_logout_mode_logout() {
 /// 并广播 `Kickout` 事件（reason 为 "超过最大登录数限制"）。
 #[tokio::test]
 async fn enforce_max_login_count_overflow_logout_mode_kickout() {
+    // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+    let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
     let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
     Arc::make_mut(&mut logic.config).max_login_count = 2;
     Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Kickout;
@@ -4041,6 +4043,8 @@ async fn enforce_max_login_count_overflow_logout_mode_kickout() {
 /// 并广播 `RevokeToken` 事件。
 #[tokio::test]
 async fn enforce_max_login_count_overflow_logout_mode_replaced() {
+    // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+    let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
     let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
     Arc::make_mut(&mut logic.config).max_login_count = 2;
     Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Replaced;

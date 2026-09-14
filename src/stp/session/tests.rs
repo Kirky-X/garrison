@@ -2048,6 +2048,8 @@ mod suite {
             /// 覆盖 lines 300-315：logout_by_login_id → broadcast Kickout。
             #[tokio::test]
             async fn kickout_broadcasts_kickout_event() {
+                // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+                let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
                 let (logic, recorder) = make_logic_with_listener(false);
                 logic
                     .login("kickout-user-001", &LoginParams::default())
@@ -2175,6 +2177,8 @@ mod suite {
             /// 覆盖 lines 686-694（Kickout 模式分支）。
             #[tokio::test]
             async fn enforce_max_login_count_evicts_oldest_with_kickout_mode() {
+                // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+                let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
                 let (mut logic, recorder) = make_logic_with_listener(false);
                 Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Kickout;
                 let t1 = logic

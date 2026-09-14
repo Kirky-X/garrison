@@ -1403,12 +1403,12 @@ mod tests {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
         use jsonwebtoken::EncodingKey;
-        use rand::rngs::OsRng;
         use rsa::pkcs1::EncodeRsaPrivateKey;
         use rsa::traits::PublicKeyParts;
         use rsa::{RsaPrivateKey, RsaPublicKey};
 
-        let mut rng = OsRng;
+        // rsa 0.9 基于 rand_core 0.6，rand 0.10 的 RNG trait 不兼容，用 rsa::rand_core::OsRng
+        let mut rng = rsa::rand_core::OsRng;
         let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
         let public_key = RsaPublicKey::from(&private_key);
         let n_b64 = URL_SAFE_NO_PAD.encode(public_key.n().to_bytes_be());

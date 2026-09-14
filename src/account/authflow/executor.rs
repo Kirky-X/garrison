@@ -1456,6 +1456,8 @@ mod tests {
     /// R-009: Login 步骤 — 密码校验失败 → AuthResult::Failed。
     #[tokio::test]
     async fn password_login_failure() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
         let builder = MockCredentialBuilder {
@@ -1573,6 +1575,8 @@ mod tests {
     /// R-009: Conditional 步骤 — 条件为真执行 if_step（Login verify=false → Failed）。
     #[tokio::test]
     async fn conditional_true() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password_and_totp("alice").await;
         let executor = make_executor(repo, None);
         let builder = MockCredentialBuilder {
@@ -1813,6 +1817,8 @@ mod tests {
     /// R-009: Login 步骤前检查锁定 — 用户被锁定 → Failed。
     #[tokio::test]
     async fn lockout_blocks_login() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
             crate::account::lockout::UserLockoutConfig {
@@ -1894,6 +1900,8 @@ mod tests {
     /// R-009: Login 步骤 — 凭证存储为空 → Failed（"未找到 X 类型的凭证"）。
     #[tokio::test]
     async fn login_credential_not_found_returns_failed() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         let executor = make_executor(repo, None);
         let builder = MockCredentialBuilder {
@@ -2019,6 +2027,8 @@ mod tests {
     /// R-009: Mfa(Some) 步骤 — 凭证存储中无对应类型 → Failed（"未找到 X 类型的凭证"）。
     #[tokio::test]
     async fn mfa_credential_not_found_returns_failed() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         // repo 只有 password 凭证，没有 totp 凭证
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
@@ -2055,6 +2065,8 @@ mod tests {
     /// R-009: SubFlow 步骤 — registry 中无对应 flow_name → Failed（"未找到子流程: X"）。
     #[tokio::test]
     async fn subflow_unknown_flow_returns_failed() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         // 空 registry（from_inventory 默认无注册流程）
         let executor = make_executor_with_registry(repo, Arc::new(FlowRegistry::from_inventory()));
@@ -2091,6 +2103,8 @@ mod tests {
     /// 构造自引用流程（flow 引用自身），递归至 depth=10 时被截断。
     #[tokio::test]
     async fn subflow_max_depth_exceeded_returns_failed() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo: Arc<dyn CredentialRepository> = Arc::new(MockCredentialRepository::default());
         let mut registry = FlowRegistry::from_inventory();
         // 自引用流程：唯一步骤是 SubFlow("loop")，将递归自身
@@ -2237,6 +2251,8 @@ mod tests {
     /// 验证 else_step 不为 None 时分支被实际执行（而非跳过）。
     #[tokio::test]
     async fn conditional_with_else_step_executed_when_false() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
         let builder = MockCredentialBuilder {
@@ -2668,6 +2684,8 @@ mod tests {
     /// 在 Login 成功后暂停，下一步为 Login → challenge 应含 "请输入"。
     #[tokio::test]
     async fn pause_after_step_challenge_for_login_step() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password_and_totp("alice").await;
         let executor = make_executor(repo, None);
         let builder = MockCredentialBuilder {
@@ -2798,6 +2816,8 @@ mod tests {
     /// 验证：max_failure_factor=1 时，1 次失败 login 后第 2 次 login 被 lockout.check 拦截。
     #[tokio::test]
     async fn login_with_lockout_failure_triggers_lockout() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let lockout = Arc::new(UserLockoutStrategy::new(
             crate::account::lockout::UserLockoutConfig {
@@ -2864,6 +2884,8 @@ mod tests {
     /// 使子流程 Login 成功后返回 Pending。验证 v0.6.0 不支持嵌套 Pending 传播。
     #[tokio::test]
     async fn subflow_pending_propagates_as_failed() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let mut registry = FlowRegistry::from_inventory();
         let child = FlowBuilder::new("child-with-pause")
@@ -3082,6 +3104,8 @@ mod tests {
     /// Login 成功后暂停，下一步为 Mfa(Some("totp")) → challenge 应含 "请输入 totp 验证码"。
     #[tokio::test]
     async fn pause_after_step_challenge_for_mfa_some_step() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
         let builder = MockCredentialBuilder {
@@ -3169,6 +3193,8 @@ mod tests {
     /// R-009: pause_after_step — 验证 step_challenge 对 RequiredAction 的输出格式。
     #[tokio::test]
     async fn pause_after_step_challenge_for_required_action_step() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
         let builder = MockCredentialBuilder {
@@ -3220,6 +3246,8 @@ mod tests {
     /// R-009: pause_after_step — 验证 step_challenge 对 Conditional 的输出格式。
     #[tokio::test]
     async fn pause_after_step_challenge_for_conditional_step() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let executor = make_executor(repo, None);
         let builder = MockCredentialBuilder {
@@ -3270,6 +3298,8 @@ mod tests {
     /// R-009: pause_after_step — 验证 step_challenge 对 SubFlow 的输出格式。
     #[tokio::test]
     async fn pause_after_step_challenge_for_subflow_step() {
+        // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+        let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
         let repo = make_repo_with_password("alice").await;
         let mut registry = FlowRegistry::from_inventory();
         let child = FlowBuilder::new("child-flow").login("password").build();
@@ -4034,6 +4064,8 @@ mod tests {
         /// R-011: SsoServer 步骤 — validate_ticket 失败 → Failed。
         #[tokio::test]
         async fn t017_sso_login_invalid_ticket_returns_failed() {
+            // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+            let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
             let server = Arc::new(MockSsoServer::new_failing());
             let server_ref = server.clone() as Arc<dyn SsoServer>;
             let mut sso_resolver = MockSsoServerResolver::new();
@@ -4076,6 +4108,8 @@ mod tests {
         /// R-011: SsoServer 步骤 — ctx.input 为空 → ChallengeRequired。
         #[tokio::test]
         async fn t017_sso_login_empty_input_challenge_required() {
+            // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+            let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
             let sso_resolver = MockSsoServerResolver::new();
             let social_resolver = MockSocialProviderResolver::new();
             let executor = make_t017_executor();
@@ -4196,6 +4230,8 @@ mod tests {
         /// Login 成功后暂停，下一步为 SocialProvider("wechat") → challenge 应含 "请完成 wechat 社交登录"。
         #[tokio::test]
         async fn t017_pause_after_step_challenge_for_social_step() {
+            // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
+            let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
             let repo = make_repo_with_password("alice").await;
             let executor = make_executor(repo, None);
             let builder = MockCredentialBuilder {

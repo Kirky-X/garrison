@@ -355,8 +355,8 @@ mod tests {
         );
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("limiteron 配额计数解析失败"),
-            "错误消息应包含翻译后的配额计数解析失败提示，实际: {}",
+            err_msg.contains("quota count parse failed"),
+            "错误消息应包含解析失败标识（嵌套错误不经过翻译链，断言取 locale 无关片段），实际: {}",
             err_msg
         );
     }
@@ -388,8 +388,8 @@ mod tests {
         );
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("limiteron 配额上限解析失败"),
-            "错误消息应包含翻译后的配额上限解析失败提示，实际: {}",
+            err_msg.contains("quota limit parse failed"),
+            "错误消息应包含解析失败标识（嵌套错误不经过翻译链，断言取 locale 无关片段），实际: {}",
             err_msg
         );
     }
@@ -511,8 +511,8 @@ mod tests {
         assert!(result.is_err(), "meta 段数不对应返回错误");
         let err_msg = format!("{}", result.unwrap_err());
         assert!(
-            err_msg.contains("limiteron 配额元数据格式错误"),
-            "错误消息应包含翻译后的配额元数据格式错误提示，实际: {}",
+            err_msg.contains("quota meta format error"),
+            "错误消息应包含格式错误标识（嵌套错误不经过翻译链，断言取 locale 无关片段），实际: {}",
             err_msg
         );
     }

@@ -24,6 +24,14 @@ use std::sync::Arc;
 #[cfg(feature = "audit-log")]
 pub mod audit;
 
+/// 审计事件防篡改 HMAC 链子模块。
+///
+/// 启用 `audit-log` feature 时编译，提供 `AuditEventChain`（吸收自 inklog
+/// `ArchiveChain`）：随机盐链首 + HMAC-SHA256 链式签名，任一事件被篡改/
+/// 删除/重排/伪造即校验失败，用于审计取证场景的完整性保证。
+#[cfg(feature = "audit-log")]
+pub mod audit_chain;
+
 /// 请求上下文。
 ///
 /// 携带与 HTTP 请求相关的客户端信息，由事件广播方注入到 `GarrisonEvent` 的

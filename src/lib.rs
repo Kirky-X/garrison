@@ -584,6 +584,11 @@ pub use listener::audit::AuditQuery;
 #[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
 pub use listener::audit::AuditLogListener;
 
+/// 审计事件防篡改 HMAC 链（吸收自 inklog `ArchiveChain`；随机盐链首，
+/// 任一事件篡改/删除/重排/伪造即校验失败）。
+#[cfg(feature = "audit-log")]
+pub use listener::audit_chain::{AuditChainEntry, AuditEventChain};
+
 // ============================================================================
 // 社交登录
 // ============================================================================

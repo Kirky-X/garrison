@@ -167,6 +167,24 @@ jobs:
         run: cargo test --no-default-features --features "default" --lib --locked
       - name: Test (full)
         run: cargo test --features "full" --lib --locked
+      # === 盲区补齐（2026-09-14 审计）===
+      # 以下 feature 面此前不在任何 job 的「运行」维度：问题潜伏数月才被发现
+      # （i18n 断言漂移 39 例、keycloak OsRng E0432、macros trybuild 自 8 月损坏、
+      # doctest 从未运行导致 state/impls.rs 2 例失败）。仅在 Linux/MSRV 腿执行一次。
+      - name: Test (audit-log)
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.85'
+        run: cargo test --features "audit-log" --lib --locked
+      - name: Doctests (full + audit-log)
+        # doctest 此前从未纳入 CI（doc job 只构建文档不做 test --doc）
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.85'
+        run: cargo test --features "full,audit-log" --doc --locked
+      - name: Test (annotation-macros UI)
+        # trybuild 子项目会把当前激活 feature 透传，必须在 annotation-macros 面运行
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.85'
+        run: cargo test -p garrison --features annotation-macros --test macros_ui --locked
+      - name: Test (keycloak-oidc)
+        if: matrix.os == 'ubuntu-latest' && matrix.rust == '1.85'
+        run: cargo test --features keycloak-oidc --lib --locked
 
   # === 测试编译门禁（feature 组合下的测试代码防漂移） ===
   # 背景（2026-09 实录）：check 不编译 #[cfg(test)] 代码，test 只覆盖 default/full

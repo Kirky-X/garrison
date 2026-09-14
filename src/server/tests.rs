@@ -1446,3 +1446,39 @@ async fn test_oauth2_with_tenant_resolver_routes_reachable() {
         "oauth2 + 租户中间件组合下 /oauth2/introspect 应存在"
     );
 }
+
+/// server-health-check：/healthz /readyz 探针在两个端口均绕过全部中间件。
+///
+/// - 外网路由：探针不被 `external_path_filter` 拦成 404、不被 rate_limit 限流
+/// - 内网路由：探针不要求 API Key（K8s 探针不持有 api_key_auth 凭证）
+#[cfg(feature = "server-health-check")]
+#[tokio::test]
+async fn test_health_probes_bypass_middleware() {
+    let server = make_server();
+
+    // 外网端口：liveness 恒 200，readiness 默认（无注册检查）即 ready
+    let app = server.external_router();
+    for uri in ["/healthz", "/readyz"] {
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "{uri} 外网端口应返回 200");
+    }
+
+    // 内网端口：无 X-API-Key 仍应 200（绕过 api_key_auth）
+    let app = server.internal_router();
+    for uri in ["/healthz", "/readyz"] {
+        let resp = app
+            .clone()
+            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "{uri} 内网端口应绕过 api_key_auth 返回 200"
+        );
+    }
+}

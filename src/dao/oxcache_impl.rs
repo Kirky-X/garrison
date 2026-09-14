@@ -145,8 +145,14 @@ impl GarrisonDaoOxcache {
     /// # 错误
     /// - `GarrisonError::Dao`：oxcache 初始化失败（消息含 "oxcache 初始化失败"）。
     pub async fn new() -> GarrisonResult<Self> {
-        let cache = Cache::builder()
-            .sync_mode(true)
+        let builder = Cache::builder().sync_mode(true);
+        // cache-audit：缓存操作审计事件（hit/miss/set/delete/evict/expired，键名自动脱敏）
+        // 经 TracingAuditPublisher 桥接 tracing（→ inklog / metrics-prometheus 采集链）
+        #[cfg(feature = "cache-audit")]
+        let builder = builder.audit_publisher(std::sync::Arc::new(
+            oxcache::features::TracingAuditPublisher,
+        ));
+        let cache = builder
             .build()
             .await
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-init::{}", e)))?;

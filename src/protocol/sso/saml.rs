@@ -2570,7 +2570,8 @@ mod tests {
             use rsa::signature::{SignatureEncoding, Signer};
             use rsa::RsaPrivateKey;
 
-            let mut rng = rand::rngs::OsRng;
+            // rsa 0.9 基于 rand_core 0.6，rand 0.10 的 RNG trait 不兼容，用 rsa::rand_core::OsRng
+            let mut rng = rsa::rand_core::OsRng;
             // 2048-bit RSA 测试密钥（生产建议 3072+）
             let private_key =
                 RsaPrivateKey::new(&mut rng, 2048).expect("RSA 2048 密钥生成不应失败");
@@ -2664,7 +2665,8 @@ mod tests {
             use rsa::pkcs8::EncodePublicKey;
             let (xml, _original_public_pem) = build_test_signed_assertion();
             // 生成另一个密钥对的公钥
-            let mut rng = rand::rngs::OsRng;
+            // rsa 0.9 基于 rand_core 0.6，rand 0.10 的 RNG trait 不兼容，用 rsa::rand_core::OsRng
+            let mut rng = rsa::rand_core::OsRng;
             let other_key =
                 rsa::RsaPrivateKey::new(&mut rng, 2048).expect("RSA 2048 密钥生成不应失败");
             let other_public_pem = other_key
