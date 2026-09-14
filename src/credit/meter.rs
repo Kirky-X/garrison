@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! Credit 计量引擎。
@@ -7,9 +7,7 @@
 //! 热数据走 KV 缓存（`GarrisonDao`），冷数据走 SQL（可选）。
 
 use crate::credit::config::CreditConfig;
-#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
-use crate::credit::error::CreditError;
-use crate::credit::error::{CreditConsumeResult, CreditResult, CreditUsage};
+use crate::credit::error::{CreditConsumeResult, CreditError, CreditResult, CreditUsage};
 #[cfg(feature = "metrics-prometheus")]
 use crate::credit::metrics::CreditMetrics;
 use crate::credit::storage::{CreditMeta, CreditMeterStorage};
