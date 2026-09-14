@@ -76,7 +76,6 @@ pub async fn init_dbnexus_with_pool_config(
         .map_err(|e| GarrisonError::Dao(format!("dao-dbnexus-init-pool::{}", e)))
 }
 
-
 /// Garrison schema 迁移管理器。
 ///
 /// 包装 `dbnexus::DbPool::run_migrations`，按 extensible-schema spec 分层管理：
@@ -301,7 +300,6 @@ mod tests {
             .expect("查询应成功");
         assert_eq!(rows[0]["v"].as_i64(), Some(42), "池应真实可用");
     }
-
 
     /// 验证 init_dbnexus 用无效 URL 返回错误（Fail Loud 原则）。
     #[tokio::test]

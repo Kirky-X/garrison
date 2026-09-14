@@ -10,11 +10,11 @@
 //! 仅在启用 `protocol-invitation` 特性时编译。
 
 use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::limiteron::GarrisonDaoDistributedLimiter;
 use limiteron::limiters::DistributedLimiter;
-use crate::error::{GarrisonError, GarrisonResult};
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// 尝试计数键前缀。
 const ATTEMPT_KEY_PREFIX: &str = "garrison:invitation:attempt:";
