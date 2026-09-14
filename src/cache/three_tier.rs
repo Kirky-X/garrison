@@ -8,7 +8,7 @@
 //! - **L1（oxcache 内存缓存）**：进程内缓存（oxcache 0.3，sync_mode），per-entry TTL（默认 30s），命中时不查询 L2/L3
 //! - **L2（DAO 持久化缓存）**：通过 [`GarrisonDao`] set/get，TTL 较长（默认 300s），命中时回填 L1
 //! - **L3（interface 回调）**：通过 [`GarrisonPermissionStrategy`] 的 `get_permission_list` /
-//!   `get_role_list` / `get_user_info` 获取原始数据，命中时回填 L1 + L2
+//! `get_role_list` / `get_user_info` 获取原始数据，命中时回填 L1 + L2
 //!
 //! # 缓存键
 //!
@@ -85,7 +85,41 @@ impl UserCacheService {
         l1_ttl_secs: u64,
         l2_ttl_secs: u64,
     ) -> GarrisonResult<Self> {
-        // Issue 32: 验证 TTL 参数，防止 0 值导致缓存失效或内存泄漏
+        Self::new_with_capacity(
+            dao,
+            interface,
+            l1_ttl_secs,
+            l2_ttl_secs,
+            crate::config::DEFAULT_L1_CACHE_CAPACITY,
+        )
+    }
+
+    /// 创建三层缓存服务实例（显式指定 L1 容量）。
+    ///
+    /// 生产路径应使用本构造器把 `GarrisonConfig::l1_cache_capacity` 接入
+    /// oxcache L1（历史版本该配置项静默无效，L1 恒为库默认容量）。
+    ///
+    /// # 参数
+    /// - `dao`: L2 持久化缓存后端（`Arc<dyn GarrisonDao>`）。
+    /// - `interface`: L3 数据源（`Arc<dyn GarrisonPermissionStrategy>`）。
+    /// - `l1_ttl_secs`: L1 内存缓存 TTL（秒，必须 > 0）。若为 0，L1 条目将立即过期，缓存形同虚设。
+    /// - `l2_ttl_secs`: L2 DAO 缓存 TTL（秒，必须 > 0）。若为 0，L2 写入将使用永久 TTL，可能导致内存泄漏。
+    /// - `l1_capacity`: L1 内存缓存最大条目数（必须 > 0）。
+    ///
+    /// # 返回
+    /// 已初始化的 `UserCacheService` 实例。
+    ///
+    /// # 错误
+    /// - `GarrisonError::Config`：`l1_ttl_secs`、`l2_ttl_secs` 或 `l1_capacity` 为 0。
+    /// - `GarrisonError::Internal`：oxcache L1 初始化失败。
+    pub fn new_with_capacity(
+        dao: Arc<dyn GarrisonDao>,
+        interface: Arc<dyn GarrisonPermissionStrategy>,
+        l1_ttl_secs: u64,
+        l2_ttl_secs: u64,
+        l1_capacity: u64,
+    ) -> GarrisonResult<Self> {
+        // 验证 TTL 参数，防止 0 值导致缓存失效或内存泄漏
         if l1_ttl_secs == 0 {
             return Err(GarrisonError::Config(
                 "cache-l1-ttl-must-positive".to_string(),
@@ -96,8 +130,18 @@ impl UserCacheService {
                 "cache-l2-ttl-must-positive".to_string(),
             ));
         }
-        // oxcache 0.3 Cache::new() 使用默认 capacity（10000）
-        let l1 = Cache::new();
+        if l1_capacity == 0 {
+            return Err(GarrisonError::Config(
+                "cache-l1-capacity-must-positive".to_string(),
+            ));
+        }
+        // L1 雪崩防护由 oxcache builder 的 ttl_jitter 在写入时自动应用（±10%），
+        // garrison 侧不再手写 L1 TTL 抖动；L2 DAO 写入仍走 [`Self::l2_ttl_with_jitter`]。
+        let l1 = Cache::builder()
+            .capacity(l1_capacity)
+            .ttl_jitter(0.1)
+            .build_sync()
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-init::{}", e)))?;
         Ok(Self {
             l1,
             dao,
@@ -127,7 +171,7 @@ impl UserCacheService {
     /// 清理逻辑：先 drop guard 再 drop lock（Arc clone），使 strong_count 减到 1
     ///（只剩 DashMap 中的 entry），再 `remove_if` 移除；防止高基数 key 长期运行导致 OOM。
     ///
-    /// # 已知限制（Issue 33）
+    /// # 已知限制
     ///
     /// `drop(lock)` 与 `remove_if` 之间存在微小窗口：若另一并发任务在此期间调用
     /// `singleflight_lock(key)` 获取 Arc clone，`strong_count` 将变为 2，`remove_if`
@@ -148,18 +192,17 @@ impl UserCacheService {
         result
     }
 
-    /// TTL 随机抖动（±10%），防止缓存雪崩。
+    /// L2 DAO 写入 TTL 随机抖动（±10%），防止缓存雪崩。
     ///
-    /// 大量 key 使用相同基础 TTL 时会同时过期，引发 stampede（即使有 singleflight，
-    /// 集中回源仍会增加 L3 压力）。通过 `std::hash` 的随机种子为每次调用引入
-    /// ±10% 的确定性抖动，使过期时间分散。
+    /// L1 的抖动已由 oxcache `CacheBuilder::ttl_jitter` 在写入时自动应用；
+    /// 本 helper 仅服务 L2（`GarrisonDao::set` 的 TTL 由调用方给定，DAO 层无抖动）。
     ///
     /// # 参数
     /// - `base_secs`: 基础 TTL 秒数（必须 > 0）。
     ///
     /// # 返回
     /// 抖动后的 TTL 秒数，范围 `[base * 0.9, base * 1.1]`，最小为 1。
-    fn ttl_with_jitter(&self, base_secs: u64) -> u64 {
+    fn l2_ttl_with_jitter(&self, base_secs: u64) -> u64 {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
         let mut hasher = DefaultHasher::new();
@@ -231,11 +274,7 @@ impl UserCacheService {
             if let Some(cached) = self.dao.get(&key).await? {
                 // Backfill L1
                 self.l1
-                    .set_with_ttl(
-                        &key,
-                        &cached,
-                        Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
-                    )
+                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                     .await
                     .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
                 let perms: Vec<String> = serde_json::from_str(&cached)
@@ -252,12 +291,12 @@ impl UserCacheService {
                 .set_with_ttl(
                     &key,
                     &serialized,
-                    Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
+                    Some(Duration::from_secs(self.l1_ttl_secs)),
                 )
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
             self.dao
-                .set(&key, &serialized, self.ttl_with_jitter(self.l2_ttl_secs))
+                .set(&key, &serialized, self.l2_ttl_with_jitter(self.l2_ttl_secs))
                 .await?;
 
             Ok(perms)
@@ -314,11 +353,7 @@ impl UserCacheService {
             if let Some(cached) = self.dao.get(&key).await? {
                 // Backfill L1
                 self.l1
-                    .set_with_ttl(
-                        &key,
-                        &cached,
-                        Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
-                    )
+                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                     .await
                     .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
                 let roles: Vec<String> = serde_json::from_str(&cached)
@@ -335,12 +370,12 @@ impl UserCacheService {
                 .set_with_ttl(
                     &key,
                     &serialized,
-                    Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
+                    Some(Duration::from_secs(self.l1_ttl_secs)),
                 )
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
             self.dao
-                .set(&key, &serialized, self.ttl_with_jitter(self.l2_ttl_secs))
+                .set(&key, &serialized, self.l2_ttl_with_jitter(self.l2_ttl_secs))
                 .await?;
 
             Ok(roles)
@@ -396,11 +431,7 @@ impl UserCacheService {
             if let Some(cached) = self.dao.get(&key).await? {
                 // Backfill L1
                 self.l1
-                    .set_with_ttl(
-                        &key,
-                        &cached,
-                        Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
-                    )
+                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
                     .await
                     .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
                 return Ok(Some(cached));
@@ -411,15 +442,11 @@ impl UserCacheService {
             if let Some(ref info) = user_info {
                 // Backfill L1 + L2 (only when Some, None is not cached)
                 self.l1
-                    .set_with_ttl(
-                        &key,
-                        info,
-                        Some(Duration::from_secs(self.ttl_with_jitter(self.l1_ttl_secs))),
-                    )
+                    .set_with_ttl(&key, info, Some(Duration::from_secs(self.l1_ttl_secs)))
                     .await
                     .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
                 self.dao
-                    .set(&key, info, self.ttl_with_jitter(self.l2_ttl_secs))
+                    .set(&key, info, self.l2_ttl_with_jitter(self.l2_ttl_secs))
                     .await?;
             }
             Ok(user_info)
@@ -440,13 +467,13 @@ impl UserCacheService {
     /// 逐 key 执行：**先删 L2 再删 L1**，避免窗口期内 L1 miss → L2 hit（旧数据）
     /// → 回填 L1（旧数据）。三类缓存键相互独立、依次处理。
     ///
-    /// # 与 singleflight 的互斥（ocr #6448）
+    /// # 与 singleflight 的互斥
     ///
     /// 每个 key 的删除在该 key 的 singleflight 写锁内执行：invalidate 会等待
     /// 在途加载（持锁回填 L1/L2）完成后再删除，阻止「加载早于 invalidate 启动、
     /// 却在 invalidate 之后回填旧数据」的竞态。
     ///
-    /// # 部分失败语义（ocr #6284/6649/6683/6865，取代原 Issue 34 的顺序 `?` 行为）
+    /// # 部分失败语义
     ///
     /// 全部 6 次 delete（3 key × L2/L1）**都会尝试执行**，不因中途失败跳过
     /// 后续删除（旧实现 L2 中途失败即返回，导致 L1 旧数据残留至 TTL 过期）。
@@ -464,7 +491,7 @@ impl UserCacheService {
         let mut deleted = 0usize;
         for key in &keys {
             // 与该 key 的 singleflight 加载互斥：等在途加载回填完成后再删，
-            // 防止在途加载在 invalidate 之后把旧数据回填 L1/L2（ocr #6448）
+            // 防止在途加载在 invalidate 之后把旧数据回填 L1/L2
             let lock = self.singleflight_lock(key);
             let _guard = lock.write().await;
             // 先失效 L2 再失效 L1（顺序语义见方法文档）
@@ -854,7 +881,7 @@ mod tests {
     // 12 个单元测试
     // ------------------------------------------------------------------------
 
-    /// T1: L1 命中时不查询 L2/L3。
+    /// L1 命中时不查询 L2/L3。
     #[tokio::test]
     async fn l1_hit_does_not_query_l2_l3() {
         let (dao, interface, service) = make_default_service();
@@ -873,7 +900,7 @@ mod tests {
         assert_eq!(dao.get_count(), 1, "L1 命中不应查询 L2");
     }
 
-    /// T2: L1 未命中 L2 命中时回填 L1。
+    /// L1 未命中 L2 命中时回填 L1。
     #[tokio::test]
     async fn l1_miss_l2_hit_backfills_l1() {
         let (dao, interface, service) = make_default_service();
@@ -895,7 +922,7 @@ mod tests {
         assert_eq!(interface.perm_count(), 0, "不应查询 L3");
     }
 
-    /// T3: L1+L2 未命中走 L3 回填 L1+L2。
+    /// L1+L2 未命中走 L3 回填 L1+L2。
     #[tokio::test]
     async fn l1_l2_miss_calls_l3_backfills_both() {
         let (dao, interface, service) = make_default_service();
@@ -917,7 +944,7 @@ mod tests {
         assert_eq!(interface.perm_count(), 1, "L1 回填后不应再查询 L3");
     }
 
-    /// T4: invalidate 失效 L1。
+    /// invalidate 失效 L1。
     #[tokio::test]
     async fn invalidate_clears_l1() {
         let (_dao, interface, service) = make_default_service();
@@ -935,7 +962,7 @@ mod tests {
         assert_eq!(interface.perm_count(), 2, "invalidate 后应重新查询 L3");
     }
 
-    /// T5: invalidate 失效 L2。
+    /// invalidate 失效 L2。
     #[tokio::test]
     async fn invalidate_clears_l2() {
         let (dao, interface, service) = make_default_service();
@@ -966,7 +993,7 @@ mod tests {
         );
     }
 
-    /// T6: get_permissions 缓存键格式 `perm:cache:{login_id}`。
+    /// get_permissions 缓存键格式 `perm:cache:{login_id}`。
     #[tokio::test]
     async fn get_permissions_uses_correct_key() {
         let (dao, interface, service) = make_default_service();
@@ -991,7 +1018,7 @@ mod tests {
         );
     }
 
-    /// T7: get_roles 缓存键格式 `role:cache:{login_id}`。
+    /// get_roles 缓存键格式 `role:cache:{login_id}`。
     #[tokio::test]
     async fn get_roles_uses_correct_key() {
         let (dao, interface, service) = make_default_service();
@@ -1014,7 +1041,7 @@ mod tests {
         );
     }
 
-    /// T8: get_user 缓存键格式 `user:cache:{login_id}`。
+    /// get_user 缓存键格式 `user:cache:{login_id}`。
     #[tokio::test]
     async fn get_user_uses_correct_key() {
         let (dao, interface, service) = make_default_service();
@@ -1037,7 +1064,7 @@ mod tests {
         );
     }
 
-    /// T9: 用户不存在时返回 Ok(None) 且不缓存。
+    /// 用户不存在时返回 Ok(None) 且不缓存。
     #[tokio::test]
     async fn get_user_returns_none_when_not_found() {
         let (dao, interface, service) = make_default_service();
@@ -1063,7 +1090,7 @@ mod tests {
         );
     }
 
-    /// T10: TTL 过期后 L1 失效（用短 TTL 测试）。
+    /// TTL 过期后 L1 失效（用短 TTL 测试）。
     #[tokio::test]
     async fn ttl_expires_l1() {
         // 使用 1 秒 L1 TTL
@@ -1083,7 +1110,7 @@ mod tests {
         assert_eq!(interface.perm_count(), 1, "L1 过期后 L2 命中，不应查询 L3");
     }
 
-    /// T11: 不存在的 key 失效不报错（幂等）。
+    /// 不存在的 key 失效不报错（幂等）。
     #[tokio::test]
     async fn invalidate_nonexistent_key_is_idempotent() {
         let (_dao, _interface, service) = make_default_service();
@@ -1093,7 +1120,7 @@ mod tests {
         assert!(result.is_ok(), "invalidate 不存在的 key 应幂等返回 Ok(())");
     }
 
-    /// T12: 并发回填不冲突。
+    /// 并发回填不冲突。
     #[tokio::test(flavor = "multi_thread")]
     async fn concurrent_backfill_no_conflict() {
         let dao = Arc::new(CountingMockDao::new());
@@ -1292,7 +1319,7 @@ mod tests {
     // singleflight per-key RwLock 防击穿测试
     // ------------------------------------------------------------------------
 
-    /// T13: singleflight 防击穿 — 并发 10 次同一 key 请求只触发 1 次 L3 加载。
+    /// singleflight 防击穿 — 并发 10 次同一 key 请求只触发 1 次 L3 加载。
     ///
     /// 验证 UserCacheService 的 per-key RwLock singleflight 机制：
     /// 10 个并发任务同时请求同一 login_id 的权限列表时，
@@ -1336,7 +1363,7 @@ mod tests {
         );
     }
 
-    /// T14: singleflight 不同 key 不互相阻塞。
+    /// singleflight 不同 key 不互相阻塞。
     ///
     /// 验证 per-key 锁不会阻塞不同 key 的并发请求：
     /// 同时请求 10 个不同 login_id，每个 key 应独立加载，perm_count 应为 10。
@@ -1385,7 +1412,7 @@ mod tests {
         );
     }
 
-    /// T15: singleflight 角色列表也防击穿（get_roles 复用同一机制）。
+    /// singleflight 角色列表也防击穿（get_roles 复用同一机制）。
     #[tokio::test(flavor = "multi_thread")]
     async fn singleflight_protects_get_roles() {
         let dao = Arc::new(CountingMockDao::new());
@@ -1420,7 +1447,7 @@ mod tests {
         );
     }
 
-    /// T16: singleflight 用户信息也防击穿（get_user 复用同一机制）。
+    /// singleflight 用户信息也防击穿（get_user 复用同一机制）。
     #[tokio::test(flavor = "multi_thread")]
     async fn singleflight_protects_get_user() {
         let dao = Arc::new(CountingMockDao::new());
@@ -1459,7 +1486,7 @@ mod tests {
     // 补充测试：覆盖 get_roles/get_user 的 L1 hit / L2 hit 回填 / L3 回填路径
     // ------------------------------------------------------------------------
 
-    /// T17: get_roles L1 命中时不查询 L2/L3。
+    /// get_roles L1 命中时不查询 L2/L3。
     #[tokio::test]
     async fn get_roles_l1_hit_does_not_query_l2_l3() {
         let (dao, interface, service) = make_default_service();
@@ -1478,7 +1505,7 @@ mod tests {
         assert_eq!(dao.get_count(), 1, "L1 命中不应查询 L2");
     }
 
-    /// T18: get_roles L1 未命中 L2 命中时回填 L1。
+    /// get_roles L1 未命中 L2 命中时回填 L1。
     #[tokio::test]
     async fn get_roles_l1_miss_l2_hit_backfills_l1() {
         let (dao, interface, service) = make_default_service();
@@ -1500,7 +1527,7 @@ mod tests {
         assert_eq!(interface.role_count(), 0, "不应查询 L3");
     }
 
-    /// T19: get_user L1 命中时不查询 L2/L3。
+    /// get_user L1 命中时不查询 L2/L3。
     #[tokio::test]
     async fn get_user_l1_hit_does_not_query_l2_l3() {
         let (dao, interface, service) = make_default_service();
@@ -1519,7 +1546,7 @@ mod tests {
         assert_eq!(dao.get_count(), 1, "L1 命中不应查询 L2");
     }
 
-    /// T20: get_user L1 未命中 L2 命中时回填 L1。
+    /// get_user L1 未命中 L2 命中时回填 L1。
     #[tokio::test]
     async fn get_user_l1_miss_l2_hit_backfills_l1() {
         let (dao, interface, service) = make_default_service();
@@ -1540,7 +1567,7 @@ mod tests {
         assert_eq!(interface.user_count(), 0, "不应查询 L3");
     }
 
-    /// T21: get_user L3 返回 Some 时回填 L1+L2。
+    /// get_user L3 返回 Some 时回填 L1+L2。
     #[tokio::test]
     async fn get_user_l3_some_backfills_l1_and_l2() {
         let (dao, interface, service) = make_default_service();
@@ -1566,7 +1593,7 @@ mod tests {
     // 补充测试：错误处理路径
     // ------------------------------------------------------------------------
 
-    /// T22: L2 权限缓存反序列化失败返回 Internal 错误。
+    /// L2 权限缓存反序列化失败返回 Internal 错误。
     ///
     /// 向 L2 注入非法 JSON 字符串，验证 get_permissions 返回
     /// `GarrisonError::Internal` 且错误消息包含 "L2 权限缓存反序列化失败"。
@@ -1592,7 +1619,7 @@ mod tests {
         }
     }
 
-    /// T23: L3 interface 失败时透传错误（权限/角色/用户三类）。
+    /// L3 interface 失败时透传错误（权限/角色/用户三类）。
     #[tokio::test]
     async fn l3_failure_propagates_error() {
         let (_dao, interface, service) = make_default_service();
@@ -1646,7 +1673,7 @@ mod tests {
         }
     }
 
-    /// T24: L2 DAO get/set 失败时透传错误。
+    /// L2 DAO get/set 失败时透传错误。
     #[tokio::test]
     async fn l2_dao_failure_propagates_error() {
         // 场景 1：注入 DAO get 错误
@@ -1689,7 +1716,7 @@ mod tests {
         }
     }
 
-    /// T25: invalidate 时 L2 delete 失败透传错误。
+    /// invalidate 时 L2 delete 失败透传错误。
     #[tokio::test]
     async fn invalidate_l2_delete_failure_propagates_error() {
         let (dao, _interface, service) = make_default_service();
@@ -1718,7 +1745,7 @@ mod tests {
         );
     }
 
-    /// ocr #6284/6649/6683/6865：invalidate 部分失败聚合——中途失败不再跳过
+    /// invalidate 部分失败聚合——中途失败不再跳过
     /// 后续删除，全部 3 次 L2 delete 都会被尝试（+3 次 L1 delete），返回首个错误。
     #[tokio::test]
     async fn invalidate_attempts_all_deletes_on_partial_failure() {
@@ -1748,7 +1775,7 @@ mod tests {
     // 补充测试：getter 方法
     // ------------------------------------------------------------------------
 
-    /// T26: l1_ttl_secs / l2_ttl_secs getter 返回构造时传入的值。
+    /// l1_ttl_secs / l2_ttl_secs getter 返回构造时传入的值。
     #[test]
     fn ttl_getters_return_configured_values() {
         let (_dao, _interface, service) = make_service(60, 600);
@@ -1760,7 +1787,7 @@ mod tests {
     // 补充测试：L1 缓存反序列化失败路径（覆盖 line 141-143 / 220-222）
     // ------------------------------------------------------------------------
 
-    /// T27: L1 权限缓存反序列化失败返回 Internal 错误。
+    /// L1 权限缓存反序列化失败返回 Internal 错误。
     ///
     /// 直接向 L1 oxcache 注入损坏的 JSON 字符串，
     /// 验证 get_permissions 返回 GarrisonError::Internal 且消息包含
@@ -1793,7 +1820,7 @@ mod tests {
         }
     }
 
-    /// T28: L1 角色缓存反序列化失败返回 Internal 错误。
+    /// L1 角色缓存反序列化失败返回 Internal 错误。
     #[tokio::test]
     async fn l1_corrupt_role_cache_returns_internal_error() {
         let (_dao, _interface, service) = make_default_service();
@@ -1821,7 +1848,7 @@ mod tests {
         }
     }
 
-    /// T29: L2 角色缓存反序列化失败返回 Internal 错误。
+    /// L2 角色缓存反序列化失败返回 Internal 错误。
     ///
     /// 向 L2 注入损坏 JSON，验证 get_roles 返回 GarrisonError::Internal
     /// 且消息包含 "L2 角色缓存反序列化失败"。
@@ -1850,7 +1877,7 @@ mod tests {
     // 补充测试：invalidate 对角色和用户缓存的 L1 失效验证
     // ------------------------------------------------------------------------
 
-    /// T30: invalidate 后 get_roles 重新查询 L3（L1+L2 失效验证）。
+    /// invalidate 后 get_roles 重新查询 L3（L1+L2 失效验证）。
     #[tokio::test]
     async fn invalidate_clears_l1_for_roles() {
         let (_dao, interface, service) = make_default_service();
@@ -1868,7 +1895,7 @@ mod tests {
         assert_eq!(interface.role_count(), 2, "invalidate 后应重新查询 L3");
     }
 
-    /// T31: invalidate 后 get_user 重新查询 L3（L1+L2 失效验证）。
+    /// invalidate 后 get_user 重新查询 L3（L1+L2 失效验证）。
     #[tokio::test]
     async fn invalidate_clears_l1_for_user() {
         let (_dao, interface, service) = make_default_service();
@@ -1890,7 +1917,7 @@ mod tests {
     // 补充测试：L3 回填验证 + 空列表 + TTL 过期（角色/用户）
     // ------------------------------------------------------------------------
 
-    /// T32: get_roles L3 命中后回填 L1+L2。
+    /// get_roles L3 命中后回填 L1+L2。
     #[tokio::test]
     async fn get_roles_l3_backfills_l1_and_l2() {
         let (dao, interface, service) = make_default_service();
@@ -1912,7 +1939,7 @@ mod tests {
         assert_eq!(interface.role_count(), 1, "L1 回填后不应再查询 L3");
     }
 
-    /// T33: get_permissions 返回空列表时正确缓存。
+    /// get_permissions 返回空列表时正确缓存。
     #[tokio::test]
     async fn get_permissions_returns_empty_vec() {
         let (dao, interface, service) = make_default_service();
@@ -1925,7 +1952,7 @@ mod tests {
         assert_eq!(dao.set_count(), 1, "空列表也应回填 L2");
     }
 
-    /// T34: get_roles 返回空列表时正确缓存。
+    /// get_roles 返回空列表时正确缓存。
     #[tokio::test]
     async fn get_roles_returns_empty_vec() {
         let (dao, interface, service) = make_default_service();
@@ -1936,7 +1963,7 @@ mod tests {
         assert_eq!(dao.set_count(), 1, "空列表也应回填 L2");
     }
 
-    /// T35: TTL 过期后 get_roles 走 L2 回填 L1。
+    /// TTL 过期后 get_roles 走 L2 回填 L1。
     #[tokio::test]
     async fn ttl_expires_l1_for_roles() {
         let (_dao, interface, service) = make_service(1, 300);
@@ -1955,7 +1982,7 @@ mod tests {
         assert_eq!(interface.role_count(), 1, "L1 过期后 L2 命中，不应查询 L3");
     }
 
-    /// T36: TTL 过期后 get_user 走 L2 回填 L1。
+    /// TTL 过期后 get_user 走 L2 回填 L1。
     #[tokio::test]
     async fn ttl_expires_l1_for_user() {
         let (_dao, interface, service) = make_service(1, 300);
@@ -1978,7 +2005,7 @@ mod tests {
     // 补充测试：L2 DAO 失败路径（get_roles / get_user）
     // ------------------------------------------------------------------------
 
-    /// T37: L2 DAO get 失败时 get_roles 透传错误。
+    /// L2 DAO get 失败时 get_roles 透传错误。
     ///
     /// L1 miss → L2 get 失败 → 透传 GarrisonError::Dao。
     #[tokio::test]
@@ -2001,7 +2028,7 @@ mod tests {
         }
     }
 
-    /// T38: L2 DAO get 失败时 get_user 透传错误。
+    /// L2 DAO get 失败时 get_user 透传错误。
     #[tokio::test]
     async fn l2_dao_get_failure_propagates_error_for_get_user() {
         let (dao, _interface, service) = make_default_service();
@@ -2022,7 +2049,7 @@ mod tests {
         }
     }
 
-    /// T39: L2 DAO set 失败时 get_roles 透传错误（L3 回填 L2 失败）。
+    /// L2 DAO set 失败时 get_roles 透传错误（L3 回填 L2 失败）。
     ///
     /// L1 miss → L2 miss → L3 查询成功 → 回填 L1 成功 → 回填 L2 set 失败 → 透传错误。
     #[tokio::test]
@@ -2046,7 +2073,7 @@ mod tests {
         }
     }
 
-    /// T40: L2 DAO set 失败时 get_user(Some) 透传错误（L3 回填 L2 失败）。
+    /// L2 DAO set 失败时 get_user(Some) 透传错误（L3 回填 L2 失败）。
     #[tokio::test]
     async fn l2_dao_set_failure_propagates_error_for_get_user_some() {
         let (dao, interface, service) = make_default_service();
@@ -2068,7 +2095,7 @@ mod tests {
         }
     }
 
-    /// T41: L2 DAO set 失败时 get_user(None) 不触发 set（None 不缓存）。
+    /// L2 DAO set 失败时 get_user(None) 不触发 set（None 不缓存）。
     ///
     /// L3 返回 None → 不回填 L1+L2 → DAO set 不被调用 → 返回 Ok(None)。
     #[tokio::test]
@@ -2091,7 +2118,7 @@ mod tests {
     // 补充测试：invalidate 部分失败（第二个 delete 失败）
     // ------------------------------------------------------------------------
 
-    /// T42: invalidate 在 L2 delete role_key 失败时透传错误。
+    /// invalidate 在 L2 delete role_key 失败时透传错误。
     ///
     /// invalidate 按 perm → role → user 顺序删除 L2，
     /// 注入 role delete 失败（通过 fail_delete 在第一次成功后开启）。
@@ -2130,7 +2157,7 @@ mod tests {
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
 
-        // 验证第一个 delete（perm_key）已执行；ocr #6284/6649/6683/6865：
+        // 验证第一个 delete（perm_key）已执行；
         // 部分失败语义已改为聚合——后续 delete 不再中断，全部 3 次 L2 delete
         // 都会被尝试，返回首个错误
         assert_eq!(
@@ -2140,7 +2167,7 @@ mod tests {
         );
     }
 
-    /// T43: invalidate 在所有 L2 delete 成功后 L1 delete 也执行。
+    /// invalidate 在所有 L2 delete 成功后 L1 delete 也执行。
     ///
     /// 验证 invalidate 的完整流程：L2 delete 3 次 + L1 delete 3 次 = 6 次操作。
     #[tokio::test]
@@ -2196,7 +2223,7 @@ mod tests {
     // 补充测试：get_user 边缘条件
     // ------------------------------------------------------------------------
 
-    /// T44: get_user L3 返回 Some("") 时缓存空字符串。
+    /// get_user L3 返回 Some("") 时缓存空字符串。
     ///
     /// 空字符串是 Some 值，应被缓存到 L1+L2（与 None 不同）。
     #[tokio::test]
@@ -2222,7 +2249,7 @@ mod tests {
         assert_eq!(interface.user_count(), 1, "L1 命中不应查询 L3");
     }
 
-    /// T45: get_user L2 命中时返回 L2 中的原始字符串（无反序列化）。
+    /// get_user L2 命中时返回 L2 中的原始字符串（无反序列化）。
     ///
     /// get_user 不做 JSON 反序列化，直接返回缓存字符串，
     /// 因此 L2 中的任意字符串（包括非法 JSON）都应被原样返回。
@@ -2246,7 +2273,7 @@ mod tests {
     // 补充测试：special characters in login_id
     // ------------------------------------------------------------------------
 
-    /// T46: get_permissions 处理包含特殊字符的 login_id。
+    /// get_permissions 处理包含特殊字符的 login_id。
     ///
     /// 验证 login_id 包含 URL 安全字符（点、下划线）时缓存键正确构建。
     /// （id 不得含 `:`——dao_keys::build_key 的冒号歧义防护，debug 构建会 panic。）
@@ -2272,7 +2299,7 @@ mod tests {
         assert_eq!(interface.perm_count(), 1, "L1 命中不应查询 L3");
     }
 
-    /// T47: invalidate 处理包含特殊字符的 login_id。
+    /// invalidate 处理包含特殊字符的 login_id。
     #[tokio::test]
     async fn invalidate_handles_special_chars_in_login_id() {
         let (dao, interface, service) = make_default_service();
@@ -2301,7 +2328,7 @@ mod tests {
     // 补充测试：singleflight_lock 方法验证
     // ------------------------------------------------------------------------
 
-    /// T48: singleflight_lock 对同一 key 返回同一锁实例。
+    /// singleflight_lock 对同一 key 返回同一锁实例。
     ///
     /// 验证 singleflight_lock 内部使用 DashMap entry API：
     /// 同一 key 多次调用返回 Arc::clone 的同一 RwLock。
@@ -2326,7 +2353,7 @@ mod tests {
         );
     }
 
-    /// T51: singleflight 加载完成后清理无等待者的 lock entry（CWE-770 防御）。
+    /// singleflight 加载完成后清理无等待者的 lock entry（CWE-770 防御）。
     ///
     /// 验证 get_permissions 触发 singleflight 加载后，`singleflight_locks` 中
     /// 对应 key 的 entry 被清理（无残留），防止高基数 key 长期运行导致 OOM。
@@ -2348,7 +2375,7 @@ mod tests {
         );
     }
 
-    /// T52: 并发加载同一 key 后 singleflight_locks 仍清理（多等待者场景）。
+    /// 并发加载同一 key 后 singleflight_locks 仍清理（多等待者场景）。
     ///
     /// 验证并发场景下，所有等待者释放 lock 后 entry 被清理。
     #[tokio::test]
@@ -2375,7 +2402,7 @@ mod tests {
     // 补充测试：UserCacheService::new 边缘条件
     // ------------------------------------------------------------------------
 
-    /// T50: UserCacheService::new 接受不同 TTL 值并正确存储。
+    /// UserCacheService::new 接受不同 TTL 值并正确存储。
     #[tokio::test]
     async fn new_stores_ttl_values_correctly() {
         let dao = Arc::new(CountingMockDao::new());
@@ -2396,7 +2423,7 @@ mod tests {
     // 补充测试：L3 返回空 Vec 的回填验证（get_user 对应 None）
     // ------------------------------------------------------------------------
 
-    /// T55: get_permissions L3 返回空 Vec 时仍回填 L1+L2（与 None 语义不同）。
+    /// get_permissions L3 返回空 Vec 时仍回填 L1+L2（与 None 语义不同）。
     #[tokio::test]
     async fn get_permissions_l3_empty_vec_backfills_both_layers() {
         let (dao, interface, service) = make_default_service();
@@ -2416,7 +2443,7 @@ mod tests {
         assert_eq!(interface.perm_count(), 1, "L1 回填后不应再查询 L3");
     }
 
-    /// T56: get_roles L3 返回空 Vec 时仍回填 L1+L2。
+    /// get_roles L3 返回空 Vec 时仍回填 L1+L2。
     #[tokio::test]
     async fn get_roles_l3_empty_vec_backfills_both_layers() {
         let (dao, interface, service) = make_default_service();
@@ -2437,7 +2464,7 @@ mod tests {
     // 补充测试：并发 invalidate + get 验证
     // ------------------------------------------------------------------------
 
-    /// T53: invalidate 后立即 get_permissions 返回新数据（无缓存残留）。
+    /// invalidate 后立即 get_permissions 返回新数据（无缓存残留）。
     ///
     /// 验证 invalidate 的原子性：L2+L1 全部清除后，下次 get 必走 L3。
     #[tokio::test]
@@ -2469,9 +2496,9 @@ mod tests {
         );
     }
 
-    /// T54: get_user L2 命中后再次调用走 L1（回填验证）。
+    /// get_user L2 命中后再次调用走 L1（回填验证）。
     ///
-    /// 与 T20 类似，但验证 L2 中的值被回填到 L1 后，
+    /// 与上方 get_user_l1_miss_l2_hit_backfills_l1 测试类似，但验证 L2 中的值被回填到 L1 后，
     /// 后续 get_user 不再查询 L2（get_count 不增加）。
     #[tokio::test]
     async fn get_user_l2_hit_backfills_l1_no_repeat_l2_query() {

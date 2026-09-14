@@ -102,7 +102,7 @@ impl Default for GarrisonManagerBuilder {
     }
 }
 
-/// `build()` 全局串行锁（ocr #6334/#7774）。
+/// `build()` 全局串行锁。
 ///
 /// `build()` 对 `GARRISON_MANAGER` 单例的更新由多个独立锁保护的字段组成
 /// （logic / strategy 两次 `ArcSwapOption::store` + cleanup/anomalous handle 写入），
@@ -199,7 +199,7 @@ impl GarrisonManagerBuilder {
     ///
     /// task handle 归 `GARRISON_MANAGER` 单例，`GarrisonUtil` 静态 API 可用。
     ///
-    /// # 并发安全（ocr #6334/#7774）
+    /// # 并发安全
     ///
     /// 单例写入段（logic / strategy / task handle）由进程级 `BUILD_LOCK` 串行化：
     /// 并发调用 `build()` 时按获取锁顺序依次完成各自的"写入 + 换 task"，后一次
@@ -374,10 +374,11 @@ impl GarrisonManagerBuilder {
         #[cfg(feature = "three-tier-cache")]
         let user_cache_service = match self.user_cache_service {
             Some(ucs) => ucs,
-            None => Arc::new(crate::cache::UserCacheService::new(
+            None => Arc::new(crate::cache::UserCacheService::new_with_capacity(
                 dao.clone(),
                 firewall.clone(),
                 config.l1_cache_ttl_secs,
+                config.l1_cache_capacity,
                 config.l2_cache_ttl_secs,
             )?),
         };
@@ -503,7 +504,7 @@ impl GarrisonManagerBuilder {
             crate::cache::UserCacheService,
         >,
     ) -> Arc<GarrisonLogicDefault> {
-        // H-8: 自动注册 SessionHijackDetector（feature 启用时）
+        // 自动注册 SessionHijackDetector（feature 启用时）
         #[cfg(feature = "session-hijack-detection")]
         let hijack_mode = config.session_hijack_mode;
 
@@ -520,7 +521,7 @@ impl GarrisonManagerBuilder {
         {
             builder = builder.with_user_cache_service(user_cache_service);
         }
-        // H-8: 自动注册会话劫持检测器（复用 session + config 中的 mode）
+        // 自动注册会话劫持检测器（复用 session + config 中的 mode）
         #[cfg(feature = "session-hijack-detection")]
         {
             builder = builder.with_anomaly_detector(Arc::new(

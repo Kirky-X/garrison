@@ -30,8 +30,8 @@ static POSTGRES_MIGRATIONS: include_dir::Dir<'_> = include_dir::include_dir!("mi
 ///
 /// # 参数
 /// - `url`: 数据库连接 URL。
-///   - SQLite 内存：`sqlite::memory:`
-///   - SQLite 文件：`sqlite:///path/to/db.sqlite`
+/// - SQLite 内存：`sqlite::memory:`
+/// - SQLite 文件：`sqlite:///path/to/db.sqlite`
 ///
 /// # 示例
 /// ```ignore
@@ -43,6 +43,39 @@ pub async fn init_dbnexus(url: &str) -> GarrisonResult<DbPool> {
         .await
         .map_err(|e| GarrisonError::Dao(format!("dao-dbnexus-init::{}", e)))
 }
+/// 初始化 dbnexus 连接池（显式连接池参数）。
+///
+/// 走 dbnexus [`DbPoolBuilder`] 通路，透传 [`PoolConfig`]（最大/最小连接数、
+/// 空闲超时、获取超时），替代 `DbPool::new` 的库默认值（max=20/min=5）。
+/// 需要 failover/副本等完整配置的部署可直接使用 dbnexus `DbPool::builder`
+/// + `FailoverConfig`；本函数覆盖最常见的池参数调优场景。
+///
+/// # 示例
+/// ```ignore
+/// use garrison::dao::init_dbnexus_with_pool_config;
+/// use dbnexus::PoolConfig;
+///
+/// let pool = init_dbnexus_with_pool_config(
+/// "postgres://localhost/app",
+/// PoolConfig { max_connections: 50, ..Default::default() },
+/// ).await?;
+/// ```
+pub async fn init_dbnexus_with_pool_config(
+    url: &str,
+    pool_config: dbnexus::PoolConfig,
+) -> GarrisonResult<DbPool> {
+    let db_config = dbnexus::DbConfig {
+        url: url.to_string(),
+        pool_config,
+        ..Default::default()
+    };
+    dbnexus::DbPoolBuilder::new()
+        .config(db_config)
+        .build()
+        .await
+        .map_err(|e| GarrisonError::Dao(format!("dao-dbnexus-init-pool::{}", e)))
+}
+
 
 /// Garrison schema 迁移管理器。
 ///
@@ -238,6 +271,37 @@ mod tests {
             pool.err()
         );
     }
+    /// 验证 init_dbnexus_with_pool_config 走 DbPoolBuilder 通路创建池成功，
+    /// 且可执行查询（连接池真实可用）。
+    #[tokio::test]
+    async fn init_dbnexus_with_pool_config_sqlite_memory() {
+        use dbnexus::PoolConfig;
+        let pool = init_dbnexus_with_pool_config(
+            "sqlite::memory:",
+            PoolConfig {
+                max_connections: 2,
+                min_connections: 1,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("init_dbnexus_with_pool_config 应成功");
+        let session = pool.get_session("admin").await.expect("应能获取会话");
+        session
+            .execute_raw_ddl("CREATE TABLE test_pool_cfg (v INTEGER)")
+            .await
+            .expect("CREATE TABLE 应成功");
+        session
+            .execute_raw("INSERT INTO test_pool_cfg (v) VALUES (42)")
+            .await
+            .expect("INSERT 应成功");
+        let rows = session
+            .query_rows("SELECT v FROM test_pool_cfg")
+            .await
+            .expect("查询应成功");
+        assert_eq!(rows[0]["v"].as_i64(), Some(42), "池应真实可用");
+    }
+
 
     /// 验证 init_dbnexus 用无效 URL 返回错误（Fail Loud 原则）。
     #[tokio::test]
@@ -489,8 +553,8 @@ mod tests {
     /// Scenario: migrate_core 创建 8 张核心表 + app_user_ext。
     /// WHEN GarrisonMigration::migrate_core() 执行 001_init.sql
     /// THEN sqlite_master 中应包含 10 张表：
-    ///   app_user / app_role / app_permission / app_user_role / app_role_permission
-    ///   / app_auth_method / app_session / app_login_log / app_user_ext / app_user_device
+    /// app_user / app_role / app_permission / app_user_role / app_role_permission
+    /// / app_auth_method / app_session / app_login_log / app_user_ext / app_user_device
     #[tokio::test]
     async fn migrate_core_creates_all_core_tables() {
         let pool = init_dbnexus("sqlite::memory:").await.unwrap();
@@ -638,7 +702,7 @@ mod tests {
 /// 独立于 `tests` 模块（`#[cfg(all(test, feature = "db-sqlite"))]`），
 /// 因为 embedded-migrations 由 `db-postgres` 透传启用，
 /// 验证标准 `cargo test --features db-postgres` 不一定启用 `db-sqlite`。
-/// 两个模块各自独立门控，避免 feature cfg 冲突（规则 4：不混合两种模式）。
+/// 两个模块各自独立门控，避免 feature cfg 冲突（不混合两种模式）。
 #[cfg(all(test, feature = "embedded-migrations"))]
 mod embedded_migrations_tests {
     use super::*;
