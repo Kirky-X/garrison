@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Strategy 注册表集成测试（v0.4.2 新增，依据 spec strategy-registry R-001 ~ R-004）。
+//! Strategy 注册表集成测试。
 //!
 //! 验证外部用户视角下：
 //! 1. 6 个策略 trait（`LoginHandler` / `LogoutHandler` / `PermissionHandler` /
-//!    `TokenGenerator` / `SessionCreator` / `FirewallStrategy`）可被业务方实现
+//! `TokenGenerator` / `SessionCreator` / `FirewallStrategy`）可被业务方实现
 //! 2. `Strategy::new(logic)` 构造后 6 个 getter 返回默认实现
 //! 3. `register_*` / `getter` / `remove_*` 三组方法可运行时替换/查询/恢复
 //! 4. 替换一个策略不影响其他策略（独立可插拔）

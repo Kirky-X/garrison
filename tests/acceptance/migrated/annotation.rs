@@ -9,8 +9,8 @@
 //!
 //! - `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
 //! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//!   本文件 `MockInterface` 替身保留）。
+//! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
+//! 本文件 `MockInterface` 替身保留）。
 
 use async_trait::async_trait;
 use axum::body::Body;

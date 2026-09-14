@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 密码登录端到端集成测试（v0.4.2 新增，依据 spec secure-password + auth-password-login）。
+//! 密码登录端到端集成测试。
 //!
 //! 验证 `Argon2Hasher` / `BcryptHasher` / `PasswordVerifier` + `GarrisonLogicDefault::login_with_password`
 //! 的完整链路：
@@ -71,7 +71,7 @@ fn reset_listener_counters() {
 
 /// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password (1001)。
 ///
-/// v0.4.2 安全审计 A-014: 实现层 reason 统一为 "invalid_credentials"，
+/// 实现层 reason 统一为 "invalid_credentials"，
 /// listener 无法仅凭 reason 区分两类失败，需借助 login_id（测试场景固定）。
 struct PasswordLoginListener;
 

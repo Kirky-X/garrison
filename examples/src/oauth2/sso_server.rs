@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! SSO Server 独立抽象示例（依据 spec protocol-sso-server，0.4.0 新增）。
+//! SSO Server 独立抽象示例。
 //!
 //! 演示 `DefaultSsoServer` + `CenterIdConverter` + `SsoChannel`：
 //! 1. 创建 `DefaultSsoServer::new(dao)` + `with_ticket_ttl` + `with_converter`
@@ -201,10 +201,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // ----------------------------------------------------------------
     // 4. SsoServer 与 SsoClient 通过共享 DAO 间接通信
     //
-    //    注意：此场景使用 identity converter 的 server（不带 OffsetConverter）。
-    //    因为 SsoClient 不持有 CenterIdConverter，无法将 center_id 转回 login_id，
-    //    所以 cross-communication 场景下 server 端也不做 ID 偏移，保证往返一致。
-    //    （参考 src/protocol/sso/server.rs 的 server_and_client_communicate_via_shared_dao 测试）
+    // 注意：此场景使用 identity converter 的 server（不带 OffsetConverter）。
+    // 因为 SsoClient 不持有 CenterIdConverter，无法将 center_id 转回 login_id，
+    // 所以 cross-communication 场景下 server 端也不做 ID 偏移，保证往返一致。
+    // （参考 src/protocol/sso/server.rs 的 server_and_client_communicate_via_shared_dao 测试）
     // ----------------------------------------------------------------
     println!("\n[共享 DAO] SsoServer 签发的 ticket 由 SsoClient 校验:");
     let identity_server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key")?;

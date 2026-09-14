@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
+use axum::response::IntoResponse;
 
 use garrison::{
     check_abac, check_access_token, check_api_key, check_client_token, check_disable, check_login,
     check_mfa, check_permission, check_role, check_temp_token,
 };
-use axum::response::IntoResponse;
 
 #[check_login]
 fn sync_login_handler() -> &'static str {
@@ -48,7 +48,11 @@ fn sync_api_key_ns_handler() -> &'static str {
 }
 
 // 命名参数形式（含 resource）
-#[check_permission(permission = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]
+#[check_permission(
+    permission = "order:read",
+    resource = "Resource::\"order\"",
+    abac = "resource.user_id == principal.id"
+)]
 fn sync_named_abac_handler() -> &'static str {
     "ok"
 }
@@ -68,7 +72,11 @@ fn sync_disable_handler() -> &'static str {
     "ok"
 }
 
-#[check_abac(action = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]
+#[check_abac(
+    action = "order:read",
+    resource = "Resource::\"order\"",
+    abac = "resource.user_id == principal.id"
+)]
 fn sync_abac_handler() -> &'static str {
     "ok"
 }

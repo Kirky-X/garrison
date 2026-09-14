@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Token Introspection (RFC 7662) 示例（v0.4.2 新增，依据 spec token-introspection）。
+//! Token Introspection (RFC 7662) 示例。
 //!
 //! 演示 `OAuth2Client::introspect_token` 查询 token 状态：
 //! - `with_introspect_url`：显式设置 introspection 端点

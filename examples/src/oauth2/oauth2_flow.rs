@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! OAuth2 Authorization Code 流程示例（依据 spec protocol-oauth2）。
+//! OAuth2 Authorization Code 流程示例。
 //!
 //! 运行方式：
 //! ```sh

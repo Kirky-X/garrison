@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! TOTP 二次验证（2FA）示例：演示 `TotpHandler` 生成 / 校验动态验证码（依据 spec secure-totp）。
+//! TOTP 二次验证（2FA）示例：演示 `TotpHandler` 生成 / 校验动态验证码。
 //!
 //! 运行方式：
 //! ```sh
@@ -26,7 +26,7 @@ pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison TOTP 二次验证示例 ===\n");
 
     // 1. 用户密钥（20 字节，RFC 6238 推荐长度）
-    //    生产环境每个用户应有独立密钥，存于安全位置（加密存储）
+    // 生产环境每个用户应有独立密钥，存于安全位置（加密存储）
     let secret = b"12345678901234567890".to_vec();
 
     // 2. 创建 TotpHandler（30 秒步长，6 位验证码，±1 时间窗口偏差）
@@ -36,7 +36,7 @@ pub fn run() -> GarrisonResult<()> {
     let now: i64 = 1700000000;
 
     // 4. 生成当前验证码（用户从 Authenticator App 看到的数字）
-    //    v0.9.0: generate 校验 now 合法性，返回 GarrisonResult<String>
+    // generate 校验 now 合法性，返回 GarrisonResult<String>
     let code = handler.generate(now)?;
     println!("[生成] 当前时间的 TOTP 验证码：{}", code);
     assert_eq!(code.len(), 6, "6 位验证码");

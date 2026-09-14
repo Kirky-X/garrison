@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 过程宏注解示例（v0.4.2 新增，依据 spec annotation-macros）。
+//! 过程宏注解示例。
 //!
 //! 演示 `#[check_login]` / `#[check_permission]` / `#[check_role]` 三个属性宏的用法。
 //!
@@ -16,7 +16,7 @@
 //! - `#[check_role("admin")]` → 校验角色，无角色返回 403
 //!
 //! **限制**：
-//! - 仅支持 async fn（同步 fn 计划 v0.5.0+ 支持）
+//! - 仅支持 async fn
 //! - 原 fn 返回类型需实现 `axum::response::IntoResponse`
 //! - 依赖 `GarrisonManager` 全局单例（需先 `GarrisonManager::builder()`）
 //! - task_local token 上下文由 `with_current_token` 或 axum middleware 设置
@@ -244,8 +244,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    用户 1001 角色: [admin]\n");
 
     // 2. 用户 1001 登录获取 token
-    //    登录与后续 handler 校验在 TENANT(42) scope 内执行：tenant-isolation
-    //    feature 启用时 check_permission/check_role 强制要求租户上下文（fail-closed）。
+    // 登录与后续 handler 校验在 TENANT(42) scope 内执行：tenant-isolation
+    // feature 启用时 check_permission/check_role 强制要求租户上下文（fail-closed）。
     let tenant_ctx = TenantContext {
         tenant_id: 42,
         resolved_from: TenantSource::Header,

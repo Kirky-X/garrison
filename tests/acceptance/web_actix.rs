@@ -1,25 +1,24 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! actix-web 域验收（ACC-ACTX-NNN，spec acceptance-matrix R-acceptance-matrix-001，补盲）。
+//! actix-web 域验收（补盲）。
 //!
 //! 与 `web_smoke`（spawn_actix 冒烟、CheckLogin 基线）区分，本域覆盖：
-//! - 001 `GarrisonRouter::into_middleware()` middleware 矩阵：无 token 401 /
-//!   有效 token 200 / 权限不足 403（`test::init_service` + `TestRequest` 直连）；
-//! - 002-005 per-handler extractor 矩阵：`GarrisonPrincipal`（login_id 解析）/
-//!   `CheckLogin` / `CheckRole` / `CheckPermission` 通过与拒绝（401/403）；
-//! - 006 `TenantContext` extractor 服务链（`tenant-isolation` 门控，X-Tenant-Id 解析 +
-//!   fail-closed 拒绝路径）；
-//! - 007 `TenantContext` extractor 值语义（`FromRequest` 直连：tenant_id /
-//!   `TenantSource::Header` / 非数字拒绝）；
-//! - 008 三框架一致性：`GarrisonError` 经 actix `ResponseError` 的状态码 +
-//!   error_code/message body，与 `response_parts()` / `to_json_body()` 对齐
-//!   （NotLogin / NotPermission / Internal 三例）。
+//! `GarrisonRouter::into_middleware()` middleware 矩阵：无 token 401 /
+//! 有效 token 200 / 权限不足 403（`test::init_service` + `TestRequest` 直连）；
+//! - per-handler extractor 矩阵：`GarrisonPrincipal`（login_id 解析）/
+//! `CheckLogin` / `CheckRole` / `CheckPermission` 通过与拒绝（401/403）；
+//! `TenantContext` extractor 服务链（`tenant-isolation` 门控，X-Tenant-Id 解析 +
+//! fail-closed 拒绝路径）；
+//! `TenantContext` extractor 值语义（`FromRequest` 直连：tenant_id /
+//! `TenantSource::Header` / 非数字拒绝）；
+//! 三框架一致性：`GarrisonError` 经 actix `ResponseError` 的状态码 +
+//! error_code/message body，与 `response_parts()` / `to_json_body()` 对齐
+//! （NotLogin / NotPermission / Internal 三例）。
 //!
 //! 错误断言统一锚定 `GarrisonError::response_parts()` / `to_json_body()`
 //! （src/error.rs，三框架一致性基准）。
 //!
-//! 场景编号约定：`ACC-<域>-NNN（正常|异常）`，本域 `actx`。
 //! 涉及 `GarrisonManager` 全局单例的用例一律 `#[serial]`；008 纯 trait 断言
 //! 不触碰单例，可并行。
 
@@ -86,10 +85,10 @@ async fn assert_actix_error_aligned<B>(
 }
 
 // ============================================================================
-// ACC-ACTX-001：GarrisonRouter::into_middleware() 矩阵
+// GarrisonRouter::into_middleware() 矩阵
 // ============================================================================
 
-/// ACC-ACTX-001（正常+异常）：middleware 矩阵（`GarrisonRouter::into_middleware()` +
+/// （正常+异常）：middleware 矩阵（`GarrisonRouter::into_middleware()` +
 /// `with_header_tenant()` 生产路径）——
 /// （a）无 token 访问 CheckLogin 路径 → 401（body 与 `NotLogin` 基准对齐）；
 /// （b）有效 token → 200；持有 `admin:read` 权限访问 `CheckPermission` 路径 → 200；
@@ -181,7 +180,7 @@ async fn acc_actx_001_middleware_into_middleware_matrix() {
 }
 
 // ============================================================================
-// ACC-ACTX-002..005：extractor 矩阵
+// extractor 矩阵
 // ============================================================================
 
 /// `GarrisonPrincipal` extractor 的 handler：回显当前登录主体。
@@ -204,7 +203,7 @@ async fn actx_check_permission_handler(_auth: CheckPermission) -> &'static str {
     "ok"
 }
 
-/// ACC-ACTX-002（正常+异常）：`GarrisonPrincipal` extractor——
+/// （正常+异常）：`GarrisonPrincipal` extractor——
 /// 从 `Authorization: Bearer` header 解析登录主体并回显 `login_id`（200）；
 /// 无 token 时 extractor 拒绝，经 `ResponseError` 映射为 401（与基准对齐）。
 #[tokio::test]
@@ -246,7 +245,7 @@ async fn acc_actx_002_extractor_garrison_principal_pass_and_401() {
     assert_actix_error_aligned(resp, &GarrisonError::NotLogin("web-not-login".to_string())).await;
 }
 
-/// ACC-ACTX-003（正常+异常）：`CheckLogin` extractor——有效 token 放行 200；
+/// （正常+异常）：`CheckLogin` extractor——有效 token 放行 200；
 /// 无 token 拒绝 401（与基准对齐）。
 #[tokio::test]
 #[serial]
@@ -281,8 +280,8 @@ async fn acc_actx_003_extractor_check_login_pass_and_401() {
     assert_actix_error_aligned(resp, &GarrisonError::NotLogin("web-not-login".to_string())).await;
 }
 
-/// ACC-ACTX-004（正常+异常）：`CheckRole` extractor（角色经 `web::Data<RequiredRole>`
-/// 服务端配置，CRITICAL-12）——持有 `admin` 角色放行 200；无角色拒绝 403
+/// （正常+异常）：`CheckRole` extractor（角色经 `web::Data<RequiredRole>`
+/// 服务端配置）——持有 `admin` 角色放行 200；无角色拒绝 403
 /// （body 与 `NotRole` 基准对齐）。
 #[tokio::test]
 #[serial]
@@ -327,8 +326,8 @@ async fn acc_actx_004_extractor_check_role_pass_and_403() {
     assert_actix_error_aligned(resp, &GarrisonError::NotRole("web-not-role".to_string())).await;
 }
 
-/// ACC-ACTX-005（正常+异常）：`CheckPermission` extractor（权限经
-/// `web::Data<RequiredPermission>` 服务端配置，CRITICAL-12）——持有 `user:read`
+/// （正常+异常）：`CheckPermission` extractor（权限经
+/// `web::Data<RequiredPermission>` 服务端配置）——持有 `user:read`
 /// 放行 200；无权限拒绝 403（body 与 `NotPermission` 基准对齐）。
 #[tokio::test]
 #[serial]
@@ -378,7 +377,7 @@ async fn acc_actx_005_extractor_check_permission_pass_and_403() {
 }
 
 // ============================================================================
-// ACC-ACTX-006..007：TenantContext extractor（tenant-isolation 门控）
+// TenantContext extractor（tenant-isolation 门控）
 // ============================================================================
 
 /// `TenantContext` extractor 的 handler：回显租户解析结果。
@@ -387,7 +386,7 @@ async fn actx_tenant_handler(ctx: garrison::context::tenant::TenantContext) -> S
     format!("tenant_id={}", ctx.tenant_id)
 }
 
-/// ACC-ACTX-006（正常+异常）：`TenantContext` extractor（`tenant-isolation`）——
+/// （正常+异常）：`TenantContext` extractor（`tenant-isolation`）——
 /// `X-Tenant-Id: 42` 经服务链解析出 `tenant_id=42`（200）；缺失 header 时
 /// extractor 显性拒绝（fail-closed，不默认 0），经 `ResponseError` 映射为
 /// 500 CONFIG_ERROR。
@@ -431,10 +430,10 @@ async fn acc_actx_006_extractor_tenant_context_pass_and_reject() {
     assert_eq!(body["error_code"], "CONFIG_ERROR", "应返回 CONFIG_ERROR");
 }
 
-/// ACC-ACTX-007（正常+异常）：`TenantContext` extractor 值语义（`tenant-isolation`）——
+/// （正常+异常）：`TenantContext` extractor 值语义（`tenant-isolation`）——
 /// 直接经 `FromRequest` 验证：`X-Tenant-Id: 42` → `tenant_id=42` +
 /// `resolved_from=TenantSource::Header`；非数字 header 显性拒绝（不默认 0、
-/// 不吞错，Rule 12 失败显性化）。
+/// 不吞错，失败显性化）。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test]
 #[serial]
@@ -478,10 +477,10 @@ async fn acc_actx_007_tenant_context_from_request_value() {
 }
 
 // ============================================================================
-// ACC-ACTX-008：三框架一致性（ResponseError vs response_parts/to_json_body）
+// 三框架一致性（ResponseError vs response_parts/to_json_body）
 // ============================================================================
 
-/// ACC-ACTX-008（正常）：`GarrisonError` 经 actix `ResponseError` 的状态码 +
+/// （正常）：`GarrisonError` 经 actix `ResponseError` 的状态码 +
 /// error_code/message body 与 `response_parts()` / `to_json_body()` 对齐——
 /// `NotLogin`(401/NOT_LOGIN)、`NotPermission`(403/NOT_PERMISSION)、
 /// `Internal`(500/INTERNAL_ERROR) 三例（三框架一致性基准，纯 trait 断言不触碰单例）。

@@ -1,28 +1,28 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! oauth2 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! oauth2 域验收。
 //! `OAuth2Client` 客户端侧四种授权流程（authorization_code+PKCE / client_credentials /
 //! password / refresh_token）+ Token Introspection，以及授权码重放 / 错误 client_secret /
 //! 错误 redirect_uri / PKCE verifier 不匹配 / 无效 refresh token / scope 越权
-//! 等异常路径，「正常 + 异常」成对覆盖，场景编号 `ACC-OAUTH2-NNN`。
+//! 等异常路径，「正常 + 异常」成对覆盖。
 //!
 //! 全部场景经 wiremock 0.6（dev-deps）mock 授权服务器响应，每测试自建 MockServer
 //! + `#[serial]` 串行守卫；本域为纯协议客户端，不依赖 `GarrisonTestHarness`
-//!   （与 tests/protocol/oauth2_*.rs 同构；oauth2_server 服务端端点见 server.rs
-//!   ACC-SRV-013..018 与 tests/e2e/oauth2_flow.rs，本文件不重复）。
+//! （与 tests/protocol/oauth2_*.rs 同构；oauth2_server 服务端端点见 server.rs
+//! 与 tests/e2e/oauth2_flow.rs，本文件不重复）。
 //!
-//! ACC-OAUTH2-013..015 吸收 tests/protocol/oauth2_integration.rs（授权 URL
-//!   redirect_uri 参数、空 client_id 构造拒绝）与 oauth2_edge_cases.rs（scope
+//! 吸收 tests/protocol/oauth2_integration.rs（授权 URL
+//! redirect_uri 参数、空 client_id 构造拒绝）与 oauth2_edge_cases.rs（scope
 //! 空串 vs None 请求体差异、expires_in=0）。
 //!
 //! # API 偏差记录
 //!
 //! - `OAuth2Client` 不提供 revoke 方法（RFC 7009 撤销属授权服务器职责，客户端库
-//!   无此 API）。ACC-OAUTH2-006 以「撤销后 introspection 返回 active=false」的
-//!   客户端可观测语义覆盖撤销路径。
-//! - 授权码重放检测同样是授权服务器的职责（客户端无状态），ACC-OAUTH2-007 经
-//!   wiremock 模拟服务端拒绝重放（首次 200 / 二次 400）。
+//! 无此 API）。 以「撤销后 introspection 返回 active=false」的
+//! 客户端可观测语义覆盖撤销路径。
+//! - 授权码重放检测同样是授权服务器的职责（客户端无状态）， 经
+//! wiremock 模拟服务端拒绝重放（首次 200 / 二次 400）。
 
 #![cfg(feature = "protocol-oauth2")]
 
@@ -88,10 +88,10 @@ fn assert_oauth2_err(
 }
 
 // ============================================================================
-// ACC-OAUTH2-001..005：四种授权流程 + introspection（正常）
+// 四种授权流程 + introspection（正常）
 // ============================================================================
 
-/// ACC-OAUTH2-001（正常）：authorization_code + PKCE 全流程——授权 URL 参数齐全、
+/// （正常）：authorization_code + PKCE 全流程——授权 URL 参数齐全、
 /// code_challenge 符合 RFC 7636 测试向量、token 交换成功且请求体确含 code_verifier。
 #[tokio::test]
 #[serial]
@@ -159,7 +159,7 @@ async fn acc_oauth2_001_authorization_code_with_pkce_full_flow() {
     assert!(body.contains("code=auth-code-1"), "交换请求体应携带授权码");
 }
 
-/// ACC-OAUTH2-002（正常）：client_credentials 流程——请求体含 grant_type + scope，
+/// （正常）：client_credentials 流程——请求体含 grant_type + scope，
 /// 响应解析正确且不含 refresh_token。
 #[tokio::test]
 #[serial]
@@ -204,7 +204,7 @@ async fn acc_oauth2_002_client_credentials_flow() {
     );
 }
 
-/// ACC-OAUTH2-003（正常+异常）：password grant——正确凭证换 token（含 refresh_token）；
+/// （正常+异常）：password grant——正确凭证换 token（含 refresh_token）；
 /// 空 username 客户端预校验拒绝（InvalidParam，不发 HTTP）。
 #[tokio::test]
 #[serial]
@@ -246,7 +246,7 @@ async fn acc_oauth2_003_password_grant_flow() {
     );
 }
 
-/// ACC-OAUTH2-004（正常+异常）：refresh_token 换新 access_token；空 refresh_token
+/// （正常+异常）：refresh_token 换新 access_token；空 refresh_token
 /// 客户端预校验拒绝（InvalidParam）。
 #[tokio::test]
 #[serial]
@@ -286,7 +286,7 @@ async fn acc_oauth2_004_refresh_token_flow() {
     }
 }
 
-/// ACC-OAUTH2-005（正常）：introspect（RFC 7662）——active=true 的完整 claims 正确解析，
+/// （正常）：introspect（RFC 7662）——active=true 的完整 claims 正确解析，
 /// 查询请求 POST 至 introspection 端点并携带 token。
 #[tokio::test]
 #[serial]
@@ -326,10 +326,10 @@ async fn acc_oauth2_005_introspect_active_token() {
 }
 
 // ============================================================================
-// ACC-OAUTH2-006：撤销后的 introspection（异常侧，客户端可观测语义）
+// 撤销后的 introspection（异常侧，客户端可观测语义）
 // ============================================================================
 
-/// ACC-OAUTH2-006（异常）：token 被撤销后 introspection 返回 active=false——
+/// （异常）：token 被撤销后 introspection 返回 active=false——
 /// 经 wiremock 模拟授权服务器撤销后的状态变化（首次 active=true → 撤销 → false），
 /// 验证客户端正确解析撤销结果。
 /// 注：OAuth2Client 无 revoke API（RFC 7009 属授权服务器职责），见文件头偏差记录。
@@ -376,10 +376,10 @@ async fn acc_oauth2_006_revoked_token_introspects_inactive() {
 }
 
 // ============================================================================
-// ACC-OAUTH2-007..012：异常路径
+// 异常路径
 // ============================================================================
 
-/// ACC-OAUTH2-007（异常）：授权码重放被拒——首次交换 200 成功，同一 code 二次
+/// （异常）：授权码重放被拒——首次交换 200 成功，同一 code 二次
 /// 交换被授权服务器拒绝（400），客户端返回 OAuth2 错误。
 #[tokio::test]
 #[serial]
@@ -425,7 +425,7 @@ async fn acc_oauth2_007_authorization_code_replay_rejected() {
     }
 }
 
-/// ACC-OAUTH2-008（异常）：错误 client_secret——请求体携带错误密钥，授权服务器
+/// （异常）：错误 client_secret——请求体携带错误密钥，授权服务器
 /// 拒绝（400），客户端返回 OAuth2 错误；断言实际传输的正是错误密钥。
 #[tokio::test]
 #[serial]
@@ -464,7 +464,7 @@ async fn acc_oauth2_008_wrong_client_secret_rejected() {
     );
 }
 
-/// ACC-OAUTH2-009（异常）：错误 redirect_uri——构造期拒绝非 https/localhost 回调
+/// （异常）：错误 redirect_uri——构造期拒绝非 https/localhost 回调
 /// （spec P2.3 客户端侧校验）；授权服务器对未知回调返回 400 时客户端报 OAuth2 错误，
 /// 且请求体携带的是配置的回调地址。
 #[tokio::test]
@@ -527,7 +527,7 @@ async fn acc_oauth2_009_wrong_redirect_uri_rejected() {
     );
 }
 
-/// ACC-OAUTH2-010（异常）：PKCE verifier 不匹配——客户端预校验非法 verifier
+/// （异常）：PKCE verifier 不匹配——客户端预校验非法 verifier
 /// （InvalidParam，不发 HTTP）；state 不匹配（CSRF 防护，不发 HTTP）；授权服务器
 /// 端 verifier 与 challenge 不一致返回 400 invalid_grant。
 #[tokio::test]
@@ -589,7 +589,7 @@ async fn acc_oauth2_010_pkce_verifier_mismatch_rejected() {
     assert_oauth2_err(&result, "400");
 }
 
-/// ACC-OAUTH2-011（异常）：无效 refresh_token——授权服务器返回 400 invalid_grant，
+/// （异常）：无效 refresh_token——授权服务器返回 400 invalid_grant，
 /// 客户端返回 OAuth2 错误；请求体确实携带该 refresh_token。
 #[tokio::test]
 #[serial]
@@ -621,7 +621,7 @@ async fn acc_oauth2_011_invalid_refresh_token_rejected() {
     );
 }
 
-/// ACC-OAUTH2-012（异常）：scope 越权——client 注入 ScopeRegistry（oauth2-scope-handler）
+/// （异常）：scope 越权——client 注入 ScopeRegistry（oauth2-scope-handler）
 /// 后，请求未授权 scope 在发送 HTTP 前被拦截（OAuth2 错误，零网络请求）；
 /// 授权 scope 正常放行。经 wiremock + received_requests 证明拦截发生在客户端侧。
 #[cfg(feature = "oauth2-scope-handler")]
@@ -695,11 +695,11 @@ async fn acc_oauth2_012_scope_privilege_escalation_blocked_client_side() {
 }
 
 // ============================================================================
-// ACC-OAUTH2-013..015：构造校验与边界（迁自 tests/protocol/oauth2_*.rs）
+// 构造校验与边界（迁自 tests/protocol/oauth2_*.rs）
 // ============================================================================
 
-/// ACC-OAUTH2-013（正常+异常）：授权 URL 构造——`redirect_uri` 以 URL 编码
-/// 查询参数出现（其余必填参数已由 ACC-OAUTH2-001 覆盖）；空 client_id 构造期
+/// （正常+异常）：授权 URL 构造——`redirect_uri` 以 URL 编码
+/// 查询参数出现（其余必填参数已由 覆盖）；空 client_id 构造期
 /// 拒绝（`Config("oauth2-client-id-empty")`，src/protocol/oauth2/client.rs:178）。
 /// 迁自 tests/protocol/oauth2_integration.rs::get_auth_url_with_pkce_includes_required_params
 /// 与 new_rejects_empty_client_id（2 例合并）
@@ -738,7 +738,7 @@ async fn acc_oauth2_013_auth_url_redirect_uri_and_empty_client_id_rejected() {
     }
 }
 
-/// ACC-OAUTH2-014（正常）：`scope=Some("")` 与 `scope=None` 产生不同的请求体
+/// （正常）：`scope=Some("")` 与 `scope=None` 产生不同的请求体
 /// ——空串携带 `scope=` 参数、None 不携带；两个互斥 mock 分别命中并返回不同
 /// token，证明行为差异真实发生在请求体层面（而非客户端内部状态）。
 /// 迁自 tests/protocol/oauth2_edge_cases.rs::scope_empty_string_vs_none_behavior_differs
@@ -796,7 +796,7 @@ async fn acc_oauth2_014_empty_scope_vs_none_body_differs() {
     );
 }
 
-/// ACC-OAUTH2-015（异常）：`expires_in=0` 解析为 `Some(0)`——协议层只解析
+/// （异常）：`expires_in=0` 解析为 `Some(0)`——协议层只解析
 /// 不判定过期（判定权在业务方），业务方应据 `expires_in <= 0` 视为立即过期。
 /// 迁自 tests/protocol/oauth2_edge_cases.rs::expires_in_zero_means_immediate_expiry
 #[tokio::test]
@@ -832,10 +832,10 @@ async fn acc_oauth2_015_expires_in_zero_parsed_as_immediate_expiry() {
 }
 
 // ============================================================================
-// ACC-OAUTH2-016：Keycloak OIDC RP 完整流程（`keycloak-oidc` 门控）
+// Keycloak OIDC RP 完整流程（`keycloak-oidc` 门控）
 // ============================================================================
 
-/// ACC-OAUTH2-016（正常）：Keycloak OIDC RP 完整授权码流程端到端——
+/// （正常）：Keycloak OIDC RP 完整授权码流程端到端——
 /// wiremock 模拟 Keycloak 的 discovery / JWKS / token 端点，验证
 /// `discover` → `exchange_code` → `verify_id_token`（RSA 签名的 id_token 含
 /// sub / preferred_username / email / realm_access.roles / resource_access /

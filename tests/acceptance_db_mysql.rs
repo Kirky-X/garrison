@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! MySQL 真实服务专用验收 target（ACC-ENV-007..008，testcontainers）。
+//! MySQL 真实服务专用验收 target（testcontainers）。
 //!
 //! # 为什么独立成 target
 //! `full` 聚合含 `db-sqlite`（embedded），dbnexus 禁止与 server-side 驱动
@@ -13,7 +13,7 @@
 //! 运行（scripts/e2e_matrix.sh S3 自动执行）：
 //! ```bash
 //! cargo test --test acceptance_db_mysql \
-//!   --no-default-features --features db-mysql -- --test-threads=1
+//! --no-default-features --features db-mysql -- --test-threads=1
 //! ```
 
 #[cfg(feature = "db-mysql")]

@@ -1,8 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 存储域验收（spec `dao-atomicity` R-dao-atomicity-002 / `acceptance-matrix`
-//! R-acceptance-matrix-002 DAO 原子性并发补盲）。
+//! 存储域验收（DAO 原子性并发补盲）。
 //!
 //! 验证 `GarrisonDao` 六个原子必需方法（编译期契约）在真实多线程并发下
 //! 的正确性：`set_if_absent` 仅一次成功、`get_and_delete` 恰一次消费、
@@ -54,7 +53,7 @@ async fn make_backend(name: &str) -> Arc<dyn GarrisonDao> {
     }
 }
 
-/// ACC-STORAGE-001（异常/竞争）：100 task 并发 `set_if_absent` 同一 key，
+/// （异常/竞争）：100 task 并发 `set_if_absent` 同一 key，
 /// 恰好 1 个调用成功写入，其余全部返回 `Ok(false)`；最终值为首个写入值。
 async fn concurrency_set_if_absent_exactly_one_winner(backend: &str) {
     let dao = make_backend(backend).await;
@@ -84,7 +83,7 @@ async fn concurrency_set_if_absent_exactly_one_winner(backend: &str) {
     );
 }
 
-/// ACC-STORAGE-002（异常/竞争）：100 task 并发 `get_and_delete` 同一 key，
+/// （异常/竞争）：100 task 并发 `get_and_delete` 同一 key，
 /// 恰好 1 个调用取到值，其余返回 `None`（SSO ticket 一次性消费语义）。
 async fn concurrency_get_and_delete_exactly_one_consumer(backend: &str) {
     let dao = make_backend(backend).await;
@@ -118,7 +117,7 @@ async fn concurrency_get_and_delete_exactly_one_consumer(backend: &str) {
     assert!(dao.get("ticket:one-shot").await.unwrap().is_none());
 }
 
-/// ACC-STORAGE-003（正常+竞争）：100 task 并发 `incr` 同一计数器（初值 0），
+/// （正常+竞争）：100 task 并发 `incr` 同一计数器（初值 0），
 /// 最终值必须等于串行期望 100（无丢失更新）；TTL 窗口不被并发重置。
 async fn concurrency_incr_matches_serial_expectation(backend: &str) {
     let dao = make_backend(backend).await;
@@ -146,19 +145,19 @@ async fn concurrency_incr_matches_serial_expectation(backend: &str) {
 // InMemoryDao 后端
 // ------------------------------------------------------------------------
 
-/// ACC-STORAGE-001a：InMemoryDao 并发 set_if_absent 仅一个赢家。
+/// a：InMemoryDao 并发 set_if_absent 仅一个赢家。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_001a_in_memory_set_if_absent_one_winner() {
     concurrency_set_if_absent_exactly_one_winner("in-memory").await;
 }
 
-/// ACC-STORAGE-002a：InMemoryDao 并发 get_and_delete 恰一个消费者。
+/// a：InMemoryDao 并发 get_and_delete 恰一个消费者。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_002a_in_memory_get_and_delete_one_consumer() {
     concurrency_get_and_delete_exactly_one_consumer("in-memory").await;
 }
 
-/// ACC-STORAGE-003a：InMemoryDao 并发 incr 等于串行期望。
+/// a：InMemoryDao 并发 incr 等于串行期望。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_003a_in_memory_incr_serial_expectation() {
     concurrency_incr_matches_serial_expectation("in-memory").await;
@@ -168,19 +167,19 @@ async fn acc_storage_003a_in_memory_incr_serial_expectation() {
 // GarrisonDaoOxcache 后端
 // ------------------------------------------------------------------------
 
-/// ACC-STORAGE-001b：oxcache 并发 set_if_absent 仅一个赢家。
+/// b：oxcache 并发 set_if_absent 仅一个赢家。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_001b_oxcache_set_if_absent_one_winner() {
     concurrency_set_if_absent_exactly_one_winner("oxcache").await;
 }
 
-/// ACC-STORAGE-002b：oxcache 并发 get_and_delete 恰一个消费者。
+/// b：oxcache 并发 get_and_delete 恰一个消费者。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_002b_oxcache_get_and_delete_one_consumer() {
     concurrency_get_and_delete_exactly_one_consumer("oxcache").await;
 }
 
-/// ACC-STORAGE-003b：oxcache 并发 incr 等于串行期望。
+/// b：oxcache 并发 incr 等于串行期望。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_003b_oxcache_incr_serial_expectation() {
     concurrency_incr_matches_serial_expectation("oxcache").await;
@@ -190,7 +189,7 @@ async fn acc_storage_003b_oxcache_incr_serial_expectation() {
 // 三后端 CRUD 一致性 / TTL 过期 / 租户键隔离 / DAO 错误注入
 // ============================================================================
 
-/// ACC-STORAGE-004（正常）：三后端 CRUD 语义一致 —— set/get/update/expire/delete
+/// （正常）：三后端 CRUD 语义一致 —— set/get/update/expire/delete
 /// 自洽，且 `update` 保留 TTL、`expire` 可重置 TTL（不丢值）。
 async fn crud_consistency(backend: &str) {
     let dao = make_backend(backend).await;
@@ -222,7 +221,7 @@ async fn crud_consistency(backend: &str) {
     assert!(dao.get(key).await.unwrap().is_none(), "delete 后应读为空");
 }
 
-/// ACC-STORAGE-005（异常/边界）：TTL 过期 —— `ttl=1s` 的 key 在窗口内可读、
+/// （异常/边界）：TTL 过期 —— `ttl=1s` 的 key 在窗口内可读、
 /// 越过窗口后读为空（证明 TTL 真实生效，而非写入即删或永不过期）。
 async fn ttl_expiry_reads_empty_after_window(backend: &str) {
     let dao = make_backend(backend).await;
@@ -242,7 +241,7 @@ async fn ttl_expiry_reads_empty_after_window(backend: &str) {
     );
 }
 
-/// ACC-STORAGE-006（异常）：租户键隔离 —— 同名 key 在 tenant 42 与 tenant 1 下
+/// （异常）：租户键隔离 —— 同名 key 在 tenant 42 与 tenant 1 下
 /// 互不串扰（DAO 层自动附加 `tenant:{tid}:` 前缀）。
 #[cfg(feature = "tenant-isolation")]
 async fn tenant_key_isolation(backend: &str) {
@@ -332,9 +331,9 @@ fn default_firewall() -> Arc<dyn GarrisonPermissionStrategy> {
     )))
 }
 
-/// ACC-STORAGE-007（异常）：DAO 错误注入时上层返回 `GarrisonError` 而非 panic 或吞错
+/// （异常）：DAO 错误注入时上层返回 `GarrisonError` 而非 panic 或吞错
 /// ——`login` 经故障 DAO 必须返回 `Err(GarrisonError::Dao)`，既不得 `Ok(token)`，
-/// 也不得 panic（规则 12：fail loud）。不经全局单例，无需 `#[serial]`。
+/// 也不得 panic（fail loud）。不经全局单例，无需 `#[serial]`。
 #[tokio::test]
 async fn acc_storage_007_dao_failure_surfaces_as_error() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(FailingDao);
@@ -360,7 +359,7 @@ async fn acc_storage_007_dao_failure_surfaces_as_error() {
     }
 }
 
-/// ACC-STORAGE-008（异常）：故障 DAO 的**全部入口**均返回 Err，无任一入口被吞为 Ok
+/// （异常）：故障 DAO 的**全部入口**均返回 Err，无任一入口被吞为 Ok
 /// ——CRUD 五法 + 六原子法共 11 个入口逐一断言。
 #[tokio::test]
 async fn acc_storage_008_dao_failure_no_entry_swallowed() {
@@ -390,22 +389,22 @@ async fn acc_storage_008_dao_failure_no_entry_swallowed() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-STORAGE-004：三后端 CRUD 一致性
+// 三后端 CRUD 一致性
 // ------------------------------------------------------------------------
 
-/// ACC-STORAGE-004a：InMemoryDao CRUD 一致。
+/// a：InMemoryDao CRUD 一致。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_004a_in_memory_crud_consistency() {
     crud_consistency("in-memory").await;
 }
 
-/// ACC-STORAGE-004b：oxcache CRUD 一致。
+/// b：oxcache CRUD 一致。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_004b_oxcache_crud_consistency() {
     crud_consistency("oxcache").await;
 }
 
-/// ACC-STORAGE-004c：GarrisonDaoDbnexus（sqlite 池 + oxcache KV 委托）CRUD 一致。
+/// c：GarrisonDaoDbnexus（sqlite 池 + oxcache KV 委托）CRUD 一致。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_004c_dbnexus_crud_consistency() {
@@ -413,22 +412,22 @@ async fn acc_storage_004c_dbnexus_crud_consistency() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-STORAGE-005：TTL 过期
+// TTL 过期
 // ------------------------------------------------------------------------
 
-/// ACC-STORAGE-005a：InMemoryDao TTL 过期后读为空。
+/// a：InMemoryDao TTL 过期后读为空。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_005a_in_memory_ttl_expired_reads_empty() {
     ttl_expiry_reads_empty_after_window("in-memory").await;
 }
 
-/// ACC-STORAGE-005b：oxcache TTL 过期后读为空。
+/// b：oxcache TTL 过期后读为空。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_005b_oxcache_ttl_expired_reads_empty() {
     ttl_expiry_reads_empty_after_window("oxcache").await;
 }
 
-/// ACC-STORAGE-005c：GarrisonDaoDbnexus TTL 过期后读为空。
+/// c：GarrisonDaoDbnexus TTL 过期后读为空。
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_005c_dbnexus_ttl_expired_reads_empty() {
@@ -436,7 +435,7 @@ async fn acc_storage_005c_dbnexus_ttl_expired_reads_empty() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-STORAGE-006：租户键隔离
+// 租户键隔离
 //
 // **实测差异（重要）**：`tenant:{tid}:` 前缀由各 `GarrisonDao` 实现自行附加，
 // 并非 trait 层统一行为。当前仅 `GarrisonDaoOxcache`（及委托它的
@@ -445,14 +444,14 @@ async fn acc_storage_005c_dbnexus_ttl_expired_reads_empty() {
 // 差异已记录待 converge 阶段判定（是否按缺陷修复，或明确其为测试专用后端）。
 // ------------------------------------------------------------------------
 
-/// ACC-STORAGE-006b：oxcache 租户键隔离。
+/// b：oxcache 租户键隔离。
 #[cfg(feature = "tenant-isolation")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_storage_006b_oxcache_tenant_key_isolation() {
     tenant_key_isolation("oxcache").await;
 }
 
-/// ACC-STORAGE-006c：GarrisonDaoDbnexus 租户键隔离。
+/// c：GarrisonDaoDbnexus 租户键隔离。
 #[cfg(all(
     feature = "tenant-isolation",
     any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql")

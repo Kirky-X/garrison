@@ -1,8 +1,8 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! concurrency 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
-//! `multi_thread` runtime 真实竞争场景，编号 `ACC-CONC-NNN`：
+//! concurrency 域验收。
+//! `multi_thread` runtime 真实竞争场景，编号 ：
 //! 50 并发登录同账号 / 并发 renew（session.renew 与 auto_renewal 竞争）/
 //! 并发 refresh 同一 refresh token（轮换重用检测）/ kickout 与 login 竞态。
 //!
@@ -49,10 +49,10 @@ fn test_config() -> Arc<garrison::config::GarrisonConfig> {
 }
 
 // ------------------------------------------------------------------------
-// ACC-CONC-001：50 task 并发 login 同账号
+// 50 task 并发 login 同账号
 // ------------------------------------------------------------------------
 
-/// ACC-CONC-001（正常）：50 个并发 task 登录同一账号——全部成功、签发 50 个
+/// （正常）：50 个并发 task 登录同一账号——全部成功、签发 50 个
 /// 互不相同的 token、按 token 反查全部一致、`max_login_count=100` 足够大时
 /// 不误伤（50 < 100，无任何 token 被顶替）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -110,10 +110,10 @@ async fn acc_conc_001_concurrent_login_same_account_all_valid() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-CONC-002..003：并发 renew（session.renew / auto_renewal 竞争）
+// 并发 renew（session.renew / auto_renewal 竞争）
 // ------------------------------------------------------------------------
 
-/// ACC-CONC-002（正常）：20 个并发 `GarrisonSession::renew` 同一 token——
+/// （正常）：20 个并发 `GarrisonSession::renew` 同一 token——
 /// 全部成功（renew 即 touch：重置 TTL + 更新活跃时间），token 保持有效，
 /// 无 token 泄漏/重复（Account-Session 中仍只有 1 个 token，反查一致）。
 ///
@@ -159,7 +159,7 @@ async fn acc_conc_002_concurrent_session_renew_no_token_duplication() {
     assert_eq!(ts.login_id, "1001", "renew 后反查主体应一致");
 }
 
-/// ACC-CONC-003（异常侧）：auto_renewal 并发竞争——10 个并发 `check_login`
+/// （异常侧）：auto_renewal 并发竞争——10 个并发 `check_login`
 /// 触发同一 token 的自动续签，per-login_id 续签锁 + 锁内二次 TTL 检查保证
 /// **恰一次**续签（其余并发调用被吸收，无 token 泄漏/重复）：
 /// - 恰 1 个 task 产出续签新 token，且与旧 token 不同；
@@ -248,20 +248,20 @@ async fn acc_conc_003_concurrent_auto_renewal_exactly_once() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-CONC-004：kickout 与 login 竞态
+// kickout 与 login 竞态
 // ------------------------------------------------------------------------
 
-/// ACC-CONC-004（异常侧）：kickout 与并发 login 竞态——终态一致。
+/// （异常侧）：kickout 与并发 login 竞态——终态一致。
 ///
 /// `GarrisonSession` 对同一 login_id 的 login 写入与 kickout 删除均在
 /// per-login_id 锁（`with_login_lock`）临界区内串行化，故序关系可确定：
 /// - 顺序锚点：kickout 之前签发的 token 全部失效（「kickout 前的 token 全失效」）；
 /// - 顺序锚点：kickout 完成之后签发的 token 有效（「kickout 后登录的 token 有效」）；
 /// - 竞态阶段：`JoinSet` 同时发起 kickout 与 20 个 login，断言确定性不变量：
-///   - kickout 成功，无 task 失败；
-///   - 观察到 kickout 已完成（AtomicBool）才返回的登录 token 必然有效；
-///   - 终态一致：每个登录 token 要么有效（反查一致 + check_login=true）要么
-///     已失效（反查 None + check_login 不为 Ok(true)），无中间态、无跨账号泄漏。
+/// - kickout 成功，无 task 失败；
+/// - 观察到 kickout 已完成（AtomicBool）才返回的登录 token 必然有效；
+/// - 终态一致：每个登录 token 要么有效（反查一致 + check_login=true）要么
+/// 已失效（反查 None + check_login 不为 Ok(true)），无中间态、无跨账号泄漏。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[serial]
 async fn acc_conc_004_kickout_login_race_final_state_consistent() {
@@ -374,7 +374,7 @@ async fn acc_conc_004_kickout_login_race_final_state_consistent() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-CONC-005：并发 refresh 同一 refresh token（轮换重用检测）
+// 并发 refresh 同一 refresh token（轮换重用检测）
 // ------------------------------------------------------------------------
 
 // 以下三个表直查辅助（INSERT / 查 revoked 列），镜像
@@ -434,7 +434,7 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
-/// ACC-CONC-005（异常侧）：8 个并发 task 对同一 refresh token 调用
+/// （异常侧）：8 个并发 task 对同一 refresh token 调用
 /// `RefreshTokenRotation::rotate`——恰一次成功（轮换出新的 access+refresh
 /// 对），其余调用全部被重用/已消费识别（`TokenRevoked` 或
 /// `InvalidToken("refresh token not found or already consumed")`），整条链
@@ -537,7 +537,7 @@ async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
 
 /// 单连接 SQLite 内存池（`max_connections=min_connections=1`）。
 ///
-/// 见 ACC-CONC-005 的池装配说明：dbnexus 多连接 `sqlite::memory:` 池的每个
+/// 见 的池装配说明：dbnexus 多连接 `sqlite::memory:` 池的每个
 /// 连接持有独立内存库，并发会话会看到空库；单连接池保证迁移/写入/轮换的
 /// 读-改-写序列串行可见。
 async fn setup_single_connection_db() -> dbnexus::DbPool {
@@ -564,10 +564,10 @@ async fn setup_single_connection_db() -> dbnexus::DbPool {
 }
 
 // ------------------------------------------------------------------------
-// ACC-CONC-006：并发 renew 同一 token（移植）
+// 并发 renew 同一 token（移植）
 // ------------------------------------------------------------------------
 
-/// ACC-CONC-006（异常侧）：3 个并发 task 对同一 token 调用
+/// （异常侧）：3 个并发 task 对同一 token 调用
 /// `BackendEmbedded::renew_to_equivalent`（`/api/v1/auth/refresh` 端点的下游，
 /// 见 src/server/sdforge_routes.rs `auth_refresh`）——恰一次成功，其余被
 /// 轮换失效拒绝（`NotLogin`/`InvalidToken`，per-token 异步锁串行化消除

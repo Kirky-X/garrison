@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! JWT 三模式示例（v0.4.2 新增，依据 spec protocol-jwt + design Decision 10）。
+//! JWT 三模式示例。
 //!
 //! 演示 `JwtMode` 三种模式的配置切换：
 //! - `Stateless`：仅 JWT verify，不查询 oxcache session（高可用场景）

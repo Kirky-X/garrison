@@ -8,7 +8,7 @@
 
 #![allow(dead_code)]
 
-/// 统一测试基建（`GarrisonTestHarness`），见 change `acceptance-overhaul` spec `test-harness`。
+/// 统一测试基建（`GarrisonTestHarness`）。
 pub mod harness;
 
 use dbnexus::DbPool;

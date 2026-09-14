@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! JWT 三模式集成测试（v0.4.2 新增，依据 spec protocol-jwt-modes）。
+//! JWT 三模式集成测试。
 //!
 //! 验证 `JwtHandler`（HS256/HS512 + refresh）+ `GarrisonLogicDefault` 三模式
 //! （Stateless / Mixin / Simple）的端到端行为：
@@ -352,7 +352,7 @@ async fn simple_mode_fails_without_session() {
 }
 
 // ============================================================================
-// 5. JwtMode::default() == Mixin（spec R-001）
+// 5. JwtMode::default() == Mixin
 // ============================================================================
 
 /// JwtMode::default() 返回 Mixin（推荐模式为默认）。

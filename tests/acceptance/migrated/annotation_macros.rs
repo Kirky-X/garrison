@@ -3,7 +3,7 @@
 
 //! 过程宏注解集成测试：`#[check_login]` / `#[check_permission]` / `#[check_role]`。
 //!
-//! 验证 spec annotation-macros R-002 ~ R-004：
+//! 验证：
 //! - 宏标注的 async fn 编译通过
 //! - 已登录/已授权请求正常执行 fn body
 //! - 未登录请求返回 401（不执行 fn body）
@@ -66,31 +66,31 @@ async fn role_and_handler() -> &'static str {
     "role_and_ok"
 }
 
-/// access_token 类型校验 handler（0.5.0 新增，依据 spec annotation-macros P2）。
+/// access_token 类型校验 handler。
 #[check_access_token]
 async fn access_token_handler() -> &'static str {
     "access_token_ok"
 }
 
-/// client_token 类型校验 handler（0.5.0 新增，依据 spec annotation-macros P2）。
+/// client_token 类型校验 handler。
 #[check_client_token]
 async fn client_token_handler() -> &'static str {
     "client_token_ok"
 }
 
-/// temp_token 类型校验 handler（0.5.0 新增，依据 spec annotation-macros P2）。
+/// temp_token 类型校验 handler。
 #[check_temp_token]
 async fn temp_token_handler() -> &'static str {
     "temp_token_ok"
 }
 
-/// MFA 二级认证校验 handler（v0.7.x 新增，依据 spec annotation-macros R-anno-004）。
+/// MFA 二级认证校验 handler。
 #[check_mfa]
 async fn mfa_handler() -> &'static str {
     "mfa_ok"
 }
 
-/// ABAC 策略校验 handler（v0.7.x 新增，依据 spec annotation-macros R-anno-005）。
+/// ABAC 策略校验 handler。
 /// 纯 ABAC 校验，不依赖 RBAC 权限表。
 /// resource 显式注入。
 #[check_abac(
@@ -573,7 +573,7 @@ async fn handler_works_with_axum_router() {
 }
 
 // ============================================================================
-// #[check_mfa] 测试（依据 spec annotation-macros R-anno-004）
+// #[check_mfa] 测试
 // ============================================================================
 
 /// `#[check_mfa]` 已登录 + 已开启二级认证 → 200 + body。
@@ -613,7 +613,7 @@ async fn check_mfa_without_token_forwards_error() {
 }
 
 // ============================================================================
-// #[check_abac] 测试（依据 spec annotation-macros R-anno-005）
+// #[check_abac] 测试
 // ============================================================================
 
 /// `#[check_abac]` ABAC 引擎未初始化时 fail-closed 返回 500。

@@ -1,9 +1,9 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! v0.5.0 综合演示：多租户隔离 + 审计日志 + 决策溯源 + Keycloak OIDC RP + 微信社交登录。
+//! 综合演示：多租户隔离 + 审计日志 + 决策溯源 + Keycloak OIDC RP + 微信社交登录。
 //!
-//! 演示 Garrison v0.5.0 的核心生产能力：
+//! 演示 garrison 的核心生产能力：
 //! 1. 多租户上下文（TENANT task_local + prefixed_key）
 //! 2. 审计日志（AuditLogListener 写入 SQLite）
 //! 3. 决策溯源（PermissionChecker + DecisionReason）
@@ -263,7 +263,7 @@ fn demo_wechat_config() -> DemoResult<()> {
     Ok(())
 }
 
-/// 运行 v0.5.0 综合演示。
+/// 运行 综合演示。
 ///
 /// 仅做顺序编排：init → audit listener → logic → tenant demo → audit query →
 /// keycloak config → wechat config → 总结。每步打印步骤标题。

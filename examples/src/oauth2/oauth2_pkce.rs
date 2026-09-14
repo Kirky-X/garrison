@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! OAuth 2.1 PKCE 示例（v0.4.2 新增，依据 spec oauth-2-1-upgrade R-oauth-2-1-001）。
+//! OAuth 2.1 PKCE 示例。
 //!
 //! 演示 `OAuth2Client` 的 PKCE 流程：
 //! - `generate_pkce_challenge`：从 code_verifier 计算 code_challenge（S256）

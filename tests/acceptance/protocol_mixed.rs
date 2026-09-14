@@ -1,21 +1,21 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! protocol 混合域验收（spec `acceptance-matrix` R-acceptance-matrix-002）。
+//! protocol 混合域验收。
 //! sso / sign / apikey / temp 四个协议处理器「正常 + 异常」成对
-//! 覆盖，场景编号 `ACC-MIXED-NNN`。
+//! 覆盖。
 //!
 //! 全部场景直构处理器 + 产品 `InMemoryDao`（参考 tests/protocol/{sso,sign,apikey,temp}
 //! 的已知良好装配），不触碰 `GarrisonManager` 全局单例，故不加 `#[serial]`；
 //! 一次性消费竞争场景统一使用 `multi_thread` flavor（与 tests/acceptance/storage.rs
 //! 的并发惯例一致）。
 //!
-//! ACC-MIXED-017..022 吸收 tests/protocol/{sso_integration,sso_edge_cases,
+//! 吸收 tests/protocol/{sso_integration,sso_edge_cases,
 //! sign_edge_cases,apikey_edge_cases,temp_edge_cases}.rs 的未覆盖用例
 //!（ticket 销毁/多 client/无效格式、sign 空/非法签名、apikey 命名空间隔离、
 //! temp scope 越权）。
 //!
-//! 去重说明：单元层过期 apikey 用例由 ACC-MIXED-012 覆盖（过期 key 被拒语义
+//! 去重说明：单元层过期 apikey 用例由 覆盖（过期 key 被拒语义
 //! 等价；单元层 mock DAO 返回 `ExpiredToken`、产品 `InMemoryDao` 返回
 //! `InvalidToken("apikey-not-found")`，API 偏差见文件头记录，两者均拒绝过期 key）。
 //!
@@ -68,10 +68,10 @@ fn now_ts() -> i64 {
 }
 
 // ------------------------------------------------------------------------
-// ACC-MIXED-001..004：sso（ticket 签发 / 一次性消费 / 并发竞争 / 过期）
+// sso（ticket 签发 / 一次性消费 / 并发竞争 / 过期）
 // ------------------------------------------------------------------------
 
-/// ACC-MIXED-001（正常）：`SsoClient` ticket 签发 → 校验 roundtrip——ticket 为
+/// （正常）：`SsoClient` ticket 签发 → 校验 roundtrip——ticket 为
 /// `{64_hex_random}.{hmac_b64}` 签名格式（M5），校验返回签入时的 login_id。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_001_sso_ticket_issue_and_validate() {
@@ -101,7 +101,7 @@ async fn acc_mixed_001_sso_ticket_issue_and_validate() {
     assert_eq!(login_id, "1001".to_string(), "校验应返回签入主体");
 }
 
-/// ACC-MIXED-002（异常）：`get_and_delete` 一次性消费语义——同一 ticket 首次
+/// （异常）：`get_and_delete` 一次性消费语义——同一 ticket 首次
 /// 校验成功，二次使用被拒绝（`InvalidToken`），且错误 client_id 不消费 ticket、
 /// 正确 client_id 仍可成功（非破坏性拒绝）。
 #[tokio::test(flavor = "multi_thread")]
@@ -142,7 +142,7 @@ async fn acc_mixed_002_sso_ticket_one_time_use_rejects_replay() {
     );
 }
 
-/// ACC-MIXED-003（异常/竞争）：100 task 并发校验同一 ticket（同 client_id），
+/// （异常/竞争）：100 task 并发校验同一 ticket（同 client_id），
 /// 恰好 1 个成功、其余全部 `InvalidToken`——`get_and_delete` 原子消费无 TOCTOU。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_mixed_003_sso_concurrent_consume_exactly_once() {
@@ -176,7 +176,7 @@ async fn acc_mixed_003_sso_concurrent_consume_exactly_once() {
     );
 }
 
-/// ACC-MIXED-004（异常）：ticket 过期——`with_ticket_ttl(1)` 签发后等待超过
+/// （异常）：ticket 过期——`with_ticket_ttl(1)` 签发后等待超过
 /// TTL，校验被拒（`InvalidToken`，ticket 已从 DAO 过期清理）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_004_sso_ticket_expired_rejected() {
@@ -201,10 +201,10 @@ async fn acc_mixed_004_sso_ticket_expired_rejected() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-MIXED-005..007：sign（签名验证 / 时间窗口 / nonce 重放）
+// sign（签名验证 / 时间窗口 / nonce 重放）
 // ------------------------------------------------------------------------
 
-/// ACC-MIXED-005（正常+异常）：`SignHandler` 签名验证通过——sign/validate
+/// （正常+异常）：`SignHandler` 签名验证通过——sign/validate
 /// roundtrip 返回 Ok；异常侧：请求体被篡改（同一 nonce 不同 body）签名不匹配
 /// 被拒（`InvalidToken`）。
 #[tokio::test(flavor = "multi_thread")]
@@ -248,7 +248,7 @@ async fn acc_mixed_005_sign_validate_passes_and_mismatch_rejected() {
     );
 }
 
-/// ACC-MIXED-006（异常）：时间窗口外拒绝——默认 300s 窗口下，过去/未来 400s
+/// （异常）：时间窗口外拒绝——默认 300s 窗口下，过去/未来 400s
 /// 的时间戳均返回 `ExpiredToken`；`with_timestamp_window(10)` 收窄后 60s 漂移
 /// 同样被拒。
 #[tokio::test(flavor = "multi_thread")]
@@ -302,7 +302,7 @@ async fn acc_mixed_006_sign_timestamp_outside_window_rejected() {
     );
 }
 
-/// ACC-MIXED-007（异常）：nonce 重放拒绝——同一 nonce 首次校验成功（incr=1），
+/// （异常）：nonce 重放拒绝——同一 nonce 首次校验成功（incr=1），
 /// 窗口内二次使用同一 nonce 被拒（`InvalidToken` nonce 已消费）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_007_sign_nonce_replay_rejected() {
@@ -332,10 +332,10 @@ async fn acc_mixed_007_sign_nonce_replay_rejected() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-MIXED-008..012：apikey（生成 / 吊销 / 轮换 / 无效格式 / 过期）
+// apikey（生成 / 吊销 / 轮换 / 无效格式 / 过期）
 // ------------------------------------------------------------------------
 
-/// ACC-MIXED-008（正常）：`ApiKeyHandler` 生成 → 校验 roundtrip——key 为
+/// （正常）：`ApiKeyHandler` 生成 → 校验 roundtrip——key 为
 /// `{32_hex}.{32_hex}` 双段格式，`verify` 返回完整 `ApiKeyInfo`
 /// （login_id / scopes / namespace / revoked=false）。
 #[tokio::test(flavor = "multi_thread")]
@@ -364,7 +364,7 @@ async fn acc_mixed_008_apikey_generate_and_verify() {
     assert!(!info.revoked, "新生成 key 不应 revoked");
 }
 
-/// ACC-MIXED-009（异常）：吊销后失效——`revoke` 后 `verify` 返回
+/// （异常）：吊销后失效——`revoke` 后 `verify` 返回
 /// `InvalidToken`（apikey-revoked）；吊销不存在的 key 显性返回
 /// `InvalidToken("apikey-not-found")`（lookup 先行 fail-loud，非静默成功）。
 #[tokio::test(flavor = "multi_thread")]
@@ -383,7 +383,7 @@ async fn acc_mixed_009_apikey_revoked_invalidates() {
         "吊销后 verify 应被拒，实际: {revoked:?}"
     );
 
-    // 吊销不存在的 key：显性失败（Fail Loud，规则 12）
+    // 吊销不存在的 key：显性失败（Fail Loud，）
     let ghost = handler
         .revoke(&format!("{}.{}", "0".repeat(32), "0".repeat(32)))
         .await;
@@ -393,7 +393,7 @@ async fn acc_mixed_009_apikey_revoked_invalidates() {
     );
 }
 
-/// ACC-MIXED-010（异常）：轮换后旧 key 失效——`rotate` 产出新 key（可校验、
+/// （异常）：轮换后旧 key 失效——`rotate` 产出新 key（可校验、
 /// login_id/scope 保留），旧 key 已被吊销无法再校验。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_010_apikey_rotation_invalidates_old_key() {
@@ -417,7 +417,7 @@ async fn acc_mixed_010_apikey_rotation_invalidates_old_key() {
     );
 }
 
-/// ACC-MIXED-011（异常）：无效格式拒绝——短字符串 / 非 hex 长串 / 空串
+/// （异常）：无效格式拒绝——短字符串 / 非 hex 长串 / 空串
 /// 校验均返回 `InvalidToken`（DAO 查找不命中，fail-closed）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_011_apikey_invalid_format_rejected() {
@@ -439,7 +439,7 @@ async fn acc_mixed_011_apikey_invalid_format_rejected() {
     }
 }
 
-/// ACC-MIXED-012（异常）：过期失效——`timeout=1` 生成后等待超过 TTL，
+/// （异常）：过期失效——`timeout=1` 生成后等待超过 TTL，
 /// `verify` 被拒。产品 `InMemoryDao` 在 get 时清理过期键，返回
 /// `InvalidToken("apikey-not-found")`（见文件头 API 偏差记录）。
 #[tokio::test(flavor = "multi_thread")]
@@ -461,10 +461,10 @@ async fn acc_mixed_012_apikey_expired_rejected() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-MIXED-013..016：temp（issue/consume 一次性 / 过期 / 吊销 / 并发竞争）
+// temp（issue/consume 一次性 / 过期 / 吊销 / 并发竞争）
 // ------------------------------------------------------------------------
 
-/// ACC-MIXED-013（正常+异常）：`TempCredentialHandler` issue → get → consume——
+/// （正常+异常）：`TempCredentialHandler` issue → get → consume——
 /// 首次 `consume` 原子返回凭证值（一次性），二次 `consume` / `get` 均返回 None。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_013_temp_credential_issue_and_one_time_consume() {
@@ -503,7 +503,7 @@ async fn acc_mixed_013_temp_credential_issue_and_one_time_consume() {
     );
 }
 
-/// ACC-MIXED-014（异常）：过期失效——`ttl=1` 签发后等待超过 TTL，`get` /
+/// （异常）：过期失效——`ttl=1` 签发后等待超过 TTL，`get` /
 /// `consume` 均返回 None。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_014_temp_credential_expired_reads_empty() {
@@ -532,7 +532,7 @@ async fn acc_mixed_014_temp_credential_expired_reads_empty() {
     );
 }
 
-/// ACC-MIXED-015（异常）：吊销——`revoke` 后 get/consume 均不可读，重复
+/// （异常）：吊销——`revoke` 后 get/consume 均不可读，重复
 /// revoke 幂等返回 Ok。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_015_temp_credential_revoked() {
@@ -562,7 +562,7 @@ async fn acc_mixed_015_temp_credential_revoked() {
         .expect("吊销不存在 key 应幂等 Ok");
 }
 
-/// ACC-MIXED-016（异常/竞争）：100 task 并发 `consume` 同一临时凭证，恰好
+/// （异常/竞争）：100 task 并发 `consume` 同一临时凭证，恰好
 /// 1 个取到值、其余全部 None——`get_and_delete` 原子消费防 double-spend。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn acc_mixed_016_temp_concurrent_consume_exactly_once() {
@@ -593,10 +593,10 @@ async fn acc_mixed_016_temp_concurrent_consume_exactly_once() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-MIXED-017..022：sso 销毁/多 client、sign 参数、apikey 隔离、temp scope
+// sso 销毁/多 client、sign 参数、apikey 隔离、temp scope
 // ------------------------------------------------------------------------
 
-/// ACC-MIXED-017（正常+异常）：`destroy_ticket` 销毁后跨子系统不可校验
+/// （正常+异常）：`destroy_ticket` 销毁后跨子系统不可校验
 /// （另一共享 DAO 的 client 校验失败）；销毁不存在的 ticket 幂等返回 Ok。
 /// 迁自 tests/protocol/sso_integration.rs::destroy_ticket_affects_subsystem_b、
 /// destroy_nonexistent_ticket_is_idempotent（2 例合并）
@@ -623,7 +623,7 @@ async fn acc_mixed_017_sso_destroy_ticket_and_idempotent() {
         .expect("销毁不存在 ticket 应幂等 Ok");
 }
 
-/// ACC-MIXED-018（正常）：多 client_id / login_id 独立签发互不影响——
+/// （正常）：多 client_id / login_id 独立签发互不影响——
 /// 同一签发方为不同 client_id / 不同 login_id 签发 ticket 互不相同，
 /// 各自在对应 client_id 下校验成功。
 /// 迁自 tests/protocol/sso_integration.rs::multiple_clients_issue_independent_tickets
@@ -655,7 +655,7 @@ async fn acc_mixed_018_sso_multiple_clients_independent_tickets() {
     );
 }
 
-/// ACC-MIXED-019（异常）：无效格式 ticket 被拒绝——短字符串 / 非 hex 字符串
+/// （异常）：无效格式 ticket 被拒绝——短字符串 / 非 hex 字符串
 /// 校验均返回 `InvalidToken`（DAO 查找不命中，fail-closed）。
 /// 迁自 tests/protocol/sso_edge_cases.rs::ticket_invalid_format_returns_error
 #[tokio::test(flavor = "multi_thread")]
@@ -678,11 +678,11 @@ async fn acc_mixed_019_sso_invalid_ticket_format_rejected() {
     }
 }
 
-/// ACC-MIXED-020（异常）：缺失/非法签名参数拒绝——空 signature（Base64 解码
+/// （异常）：缺失/非法签名参数拒绝——空 signature（Base64 解码
 /// 失败）与无效 Base64 signature 均返回 `InvalidToken`；body 篡改（sign-mismatch）
-/// 已由 ACC-MIXED-005 覆盖（见去重清单，不重复移植）。
+/// 已由 覆盖（见去重清单，不重复移植）。
 /// 迁自 tests/protocol/sign_edge_cases.rs::missing_required_params_returns_error
-///（空/非法签名两例；签名不匹配例与 ACC-MIXED-005 语义等价）
+///（空/非法签名两例；签名不匹配例与 语义等价）
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_020_sign_empty_or_invalid_signature_rejected() {
     let handler = SignHandler::new(
@@ -719,7 +719,7 @@ async fn acc_mixed_020_sign_empty_or_invalid_signature_rejected() {
     );
 }
 
-/// ACC-MIXED-021（正常+异常）：API Key 命名空间隔离——key 经 `login_id`
+/// （正常+异常）：API Key 命名空间隔离——key 经 `login_id`
 /// 绑定业务命名空间，verify 返回各自的 login_id；跨命名空间（login_id 不匹配
 /// 另一 namespace）访问可被业务方据此阻断。
 /// 迁自 tests/protocol/apikey_edge_cases.rs::namespace_isolation_blocks_cross_namespace_access
@@ -754,7 +754,7 @@ async fn acc_mixed_021_apikey_namespace_isolation() {
     );
 }
 
-/// ACC-MIXED-022（异常）：临时凭证 scope 越权拒绝——凭证 value 携带业务 scope
+/// （异常）：临时凭证 scope 越权拒绝——凭证 value 携带业务 scope
 ///（JSON），业务方读取后校验：scope="read" 的凭证不允许 "write" 操作，
 /// 允许 "read" 操作（应用层 scope 检查语义；协议层无 scope 字段，
 /// 同 tests/protocol/temp_edge_cases.rs::scope_exceeded_access_denied 的模拟方式）。
@@ -789,7 +789,7 @@ async fn acc_mixed_022_temp_credential_scope_privilege_rejected() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-MIXED-023：check_api_key 端点语义
+// check_api_key 端点语义
 // ------------------------------------------------------------------------
 
 /// 空授权 `GarrisonInterface` 替身（与 session.rs 的 `NoopInterface` 同构，
@@ -806,7 +806,7 @@ impl GarrisonInterface for NoopInterface {
     }
 }
 
-/// ACC-MIXED-023（异常+正常）：`GarrisonLogicDefault::check_api_key`（auth-server
+/// （异常+正常）：`GarrisonLogicDefault::check_api_key`（auth-server
 /// `/api/v1/auth/check-api-key` 端点的下游，见 src/stp/default_impl.rs）——
 /// 未知 key / 空 key 均拒绝 `InvalidToken`（fail-closed），有效 key 放行 Ok。
 ///

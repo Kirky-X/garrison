@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! OAuth2 Scope Handler 示例（依据 spec oauth2-scope-handler，0.4.0 新增）。
+//! OAuth2 Scope Handler 示例。
 //!
 //! 演示 `ScopeHandler` trait + `ScopeRegistry` + `OAuth2Client::with_scope_registry`：
 //! 1. 自定义实现 `ScopeHandler` trait（`AdminScopeHandler`）

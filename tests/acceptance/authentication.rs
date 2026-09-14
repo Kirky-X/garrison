@@ -1,11 +1,11 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! authentication 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! authentication 域验收。
 //! 登录 / 登出 / 切换 / 续期 / 顶替 / 踢出 / 过期 / 封禁 / 锁定，
-//! 「正常 + 异常」成对覆盖，场景编号 `ACC-AUTH-NNN`。
+//! 「正常 + 异常」成对覆盖。
 //!
-//! 会话级场景（001-009）经 `GarrisonTestHarness`（全局单例）+ `#[serial]`；
+//! 会话级场景经 `GarrisonTestHarness`（全局单例）+ `#[serial]`；
 //! 密码场景（010）使用独立 `GarrisonLogicDefault` 实例 + 真实 SQLite 迁移
 //! （镜像 integration/login_password.rs 的已知良好装配）；封禁（011）经
 //! `DefaultDisableRepository`；锁定（012）经 `UserLockoutStrategy`。
@@ -38,10 +38,10 @@ fn test_config() -> Arc<garrison::config::GarrisonConfig> {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-001..003：登录 / 登出 / 账号切换（正常）
+// 登录 / 登出 / 账号切换（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-AUTH-001（正常）：登录成功签发非空 token，按 token 反查 login_id，
+/// （正常）：登录成功签发非空 token，按 token 反查 login_id，
 /// 且当前作用域内 check_login = true。
 #[tokio::test]
 #[serial]
@@ -71,7 +71,7 @@ async fn acc_auth_001_login_success_issued_token() {
     .await;
 }
 
-/// ACC-AUTH-002（正常→异常）：logout 后 token 立即失效（check_login 不再为
+/// （正常→异常）：logout 后 token 立即失效（check_login 不再为
 /// Ok(true)，按 token 反查为 None），重复 logout 不 panic（幂等）。
 #[tokio::test]
 #[serial]
@@ -98,7 +98,7 @@ async fn acc_auth_002_logout_invalidates_token() {
     );
 }
 
-/// ACC-AUTH-003（正常）：切换账号——嵌套 `with_current_token` 作用域语义：
+/// （正常）：切换账号——嵌套 `with_current_token` 作用域语义：
 /// 外层 A → 内层 B → 回到外层仍为 A（token 上下文不串号）。
 #[tokio::test]
 #[serial]
@@ -132,10 +132,10 @@ async fn acc_auth_003_switch_account_context() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-004..005：滑动续期 / 踢出（正常 + 异常）
+// 滑动续期 / 踢出（正常 + 异常）
 // ------------------------------------------------------------------------
 
-/// ACC-AUTH-004（正常+异常）：自动续期——`auto_renewal_threshold=80`（剩余
+/// （正常+异常）：自动续期——`auto_renewal_threshold=80`（剩余
 /// TTL 低于 80% 触发续签轮换）：`timeout=2s` 下活动 1.2s 后 check_login 触发
 /// 续签，作用域内可读到新 token；旧 token 轮换后失效（异常侧）。
 #[tokio::test]
@@ -184,7 +184,7 @@ async fn acc_auth_004_auto_renewal_rotates_token_below_threshold() {
     assert_token_invalid!(old_check, "旧 token 续签轮换后应失效");
 }
 
-/// ACC-AUTH-005（异常）：kickout 后该账号全部 token 失效，check_login 不为 Ok(true)。
+/// （异常）：kickout 后该账号全部 token 失效，check_login 不为 Ok(true)。
 #[tokio::test]
 #[serial]
 async fn acc_auth_005_kickout_invalidates_all_tokens() {
@@ -205,10 +205,10 @@ async fn acc_auth_005_kickout_invalidates_all_tokens() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-006..008：顶替 / 过期 / 吊销（异常）
+// 顶替 / 过期 / 吊销（异常）
 // ------------------------------------------------------------------------
 
-/// ACC-AUTH-006（异常）：并发登录溢出顶替——`max_login_count=2`（溢出策略
+/// （异常）：并发登录溢出顶替——`max_login_count=2`（溢出策略
 /// Logout）：第 3 次登录后最早的 token 被顶失效，最新 token 有效。
 #[tokio::test]
 #[serial]
@@ -241,7 +241,7 @@ async fn acc_auth_006_login_overflow_logs_out_oldest_token() {
     assert!(logged(t3).await, "最新 t3 应有效");
 }
 
-/// ACC-AUTH-007（异常）：绝对过期——`timeout=1s` 后 token 过期被拒绝。
+/// （异常）：绝对过期——`timeout=1s` 后 token 过期被拒绝。
 #[tokio::test]
 #[serial]
 async fn acc_auth_007_expired_token_rejected() {
@@ -266,7 +266,7 @@ async fn acc_auth_007_expired_token_rejected() {
     assert!(!logged, "超过 timeout 的 token 应过期被拒");
 }
 
-/// ACC-AUTH-008（异常）：token 粒度吊销——`revoke_token` 与 `kickout_by_token`
+/// （异常）：token 粒度吊销——`revoke_token` 与 `kickout_by_token`
 /// 仅失效目标 token，不影响同账号其他会话。
 #[tokio::test]
 #[serial]
@@ -294,10 +294,10 @@ async fn acc_auth_008_token_scoped_revocation() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-009：任务隔离（异常侧：上下文不跨 task 泄漏）
+// 任务隔离（异常侧：上下文不跨 task 泄漏）
 // ------------------------------------------------------------------------
 
-/// ACC-AUTH-009（异常）：task_local 上下文不跨 task 泄漏——子任务切换主体
+/// （异常）：task_local 上下文不跨 task 泄漏——子任务切换主体
 /// 不影响父任务；未设置 token 的任务读取上下文显性报错（fail-loud）。
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[serial]
@@ -336,10 +336,10 @@ async fn acc_auth_009_token_context_not_leaked_across_tasks() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-010..012：密码登录（防枚举）/ 封禁 / 锁定（异常）
+// 密码登录（防枚举）/ 封禁 / 锁定（异常）
 // ------------------------------------------------------------------------
 
-/// ACC-AUTH-010（异常）：错误密码与用户不存在返回**完全相同**的统一错误
+/// （异常）：错误密码与用户不存在返回**完全相同**的统一错误
 /// `InvalidParam("stp-invalid-password")`——不泄露账号是否存在（防枚举）。
 #[cfg(all(
     feature = "account-credential",
@@ -443,7 +443,7 @@ async fn acc_auth_010_wrong_password_and_unknown_user_indistinguishable() {
     );
 }
 
-/// ACC-AUTH-011（异常）：账号封禁——`DisableRepository.disable` 后已登录
+/// （异常）：账号封禁——`DisableRepository.disable` 后已登录
 /// 会话 `check_disable` 拒绝（DisableService 语义）；解封后恢复放行。
 #[tokio::test]
 #[serial]
@@ -491,7 +491,7 @@ async fn acc_auth_011_disable_rejects_then_untie_restores() {
     .await;
 }
 
-/// ACC-AUTH-012（异常）：登录失败锁定——连续失败达阈值后 `check` 拒绝，
+/// （异常）：登录失败锁定——连续失败达阈值后 `check` 拒绝，
 /// `unlock` 后恢复（`account-lockout` feature）。
 #[cfg(feature = "account-lockout")]
 #[tokio::test]
@@ -531,10 +531,10 @@ async fn acc_auth_012_lockout_blocks_after_repeated_failures() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-013..016：e2e 移植场景
+// e2e 移植场景
 // ------------------------------------------------------------------------
 
-/// ACC-AUTH-017（异常）：switch-to 默认安全拒绝——未注入自定义
+/// （异常）：switch-to 默认安全拒绝——未注入自定义
 /// `SwitchToGuard` 时默认 `DenyAllSwitchToGuard` fail-closed 拒绝所有身份切换
 /// （`NotPermission`），且被拒切换无副作用（token 仍绑定原主体并保持有效）。
 ///
@@ -575,7 +575,7 @@ async fn acc_auth_017_switch_to_default_deny_all_guard_rejects() {
     );
 }
 
-/// ACC-AUTH-018（正常）：refresh 链 50 次——连续 `renew_to_equivalent` 50 次
+/// （正常）：refresh 链 50 次——连续 `renew_to_equivalent` 50 次
 /// 每次产出新 token（新旧互异）、链路不中断，最终 token 有效且首 token 已失效。
 ///
 /// 对应 e2e 原用例经 HTTP `/api/v1/auth/refresh` 断言 status 200 + 新 token；
@@ -619,12 +619,12 @@ async fn acc_auth_018_refresh_chain_50_times_keeps_valid() {
     assert_token_invalid!(first_check, "refresh 链后首个 token 应已失效");
 }
 
-/// ACC-AUTH-019（异常）：**BW-AC-010** 连续登录失败封禁——5 次失败触发锁定
+/// （异常）： 连续登录失败封禁——5 次失败触发锁定
 /// （Linear 策略 base=1800s → 锁定时长 ≈ 30 分钟），LockoutState 字段正确
 /// （failure_count=5、locked_until>0、锁定时长落在 ±60s 窗口），且可构造
 /// `DisableService` 错误（until=Some(now+30min)，HTTP status=403）。
 ///
-/// 对应 FRD §8.1 **BW-AC-010**（登录失败锁定账户）验收标准，断言语义原样保留。
+/// 对应（登录失败锁定账户）验收标准，断言语义原样保留。
 #[tokio::test]
 #[serial]
 #[cfg(feature = "account-lockout")]
@@ -701,7 +701,7 @@ async fn acc_auth_019_bw_ac_010_login_failure_locks_account() {
     assert_eq!(status, 403, "DisableService 的 HTTP status 应为 403");
 }
 
-/// ACC-AUTH-016（正常）：安全默认值——新登录 token 未经二级认证
+/// （正常）：安全默认值——新登录 token 未经二级认证
 /// `check_safe=false`、未被封禁 `check_disable=false`；未知 token 同样两项
 /// 均为 false（不误报封禁/认证状态）。
 ///
@@ -748,12 +748,12 @@ async fn acc_auth_016_safe_disable_defaults_false() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-AUTH-020..022：密码凭据域
-// （ACC-AUTH-010 已覆盖的「防枚举统一错误」语义在 021 中标注去重）
+// 密码凭据域
+// （ 已覆盖的「防枚举统一错误」语义在 021 中标注去重）
 // ------------------------------------------------------------------------
 
 /// 测试用 listener：根据 login_id 区分 user_not_found (9999) 与 wrong_password
-/// (1001)。v0.4.2 安全审计 A-014：实现层 reason 统一为 "invalid_credentials"，
+/// (1001)。实现层 reason 统一为 "invalid_credentials"，
 /// listener 无法仅凭 reason 区分两类失败，需借助 login_id（测试场景固定）。
 #[cfg(all(feature = "account-credential", feature = "listener"))]
 struct PasswordLoginListener;
@@ -805,7 +805,7 @@ fn reset_listener_counters() {
     LOGIN_FAILURE_WRONG_PASSWORD.store(0, Ordering::SeqCst);
 }
 
-/// ACC-AUTH-020（正常+异常）：`Argon2Hasher` / `BcryptHasher` hash → verify
+/// （正常+异常）：`Argon2Hasher` / `BcryptHasher` hash → verify
 /// roundtrip——相同密码匹配、不同密码不匹配、跨算法不互认、`PasswordVerifier`
 /// 自动识别算法（原 argon2/bcrypt/cross_algorithm/password_verifier 四测试合并）。
 #[cfg(all(
@@ -881,7 +881,7 @@ async fn acc_auth_020_password_hashers_roundtrip_and_auto_detect() {
 }
 
 /// 构造注入 Argon2Hasher + DbnexusUserRepository + ListenerManager 的
-/// `GarrisonLogicDefault`（镜像 ACC-AUTH-010 的 SQLite 装配与旧 login_password.rs）。
+/// `GarrisonLogicDefault`（镜像 的 SQLite 装配与旧 login_password.rs）。
 #[cfg(all(
     feature = "account-credential",
     feature = "db-sqlite",
@@ -972,10 +972,10 @@ fn test_password_config() -> garrison::config::GarrisonConfig {
     config
 }
 
-/// ACC-AUTH-021（正常+异常）：`login_with_password` 端到端——用户存在 + 密码匹配
-/// 签发非空 token（成功语义去重至 ACC-AUTH-010 的正确密码锚点）；用户不存在 /
-/// 密码错误统一返回 `InvalidParam("stp-invalid-password")`（防枚举，去重至
-/// ACC-AUTH-010）且 listener 广播 `LoginFailure` 事件各 1 次（本场景增量覆盖：
+/// （正常+异常）：`login_with_password` 端到端——用户存在 + 密码匹配
+/// 签发非空 token（成功语义以正确密码能通过登录的锚点为准）；用户不存在 /
+/// 密码错误统一返回 `InvalidParam("stp-invalid-password")`（防枚举），
+/// 且 listener 广播 `LoginFailure` 事件各 1 次（本场景增量覆盖：
 /// 原 login_password.rs 的 user_not_found / wrong_password 事件计数断言）。
 #[cfg(all(
     feature = "account-credential",
@@ -1032,7 +1032,7 @@ async fn acc_auth_021_password_login_success_and_failure_listener_events() {
     );
 }
 
-/// ACC-AUTH-022（异常）：`login_with_password` 装配缺失 fail-fast——未配置 hasher
+/// （异常）：`login_with_password` 装配缺失 fail-fast——未配置 hasher
 /// 返回 `Config("stp-password-hasher-not-configured")`；未配置 user_repository 返回
 /// `Config("user repository not configured")`（显性报错，不静默降级）。
 #[cfg(all(

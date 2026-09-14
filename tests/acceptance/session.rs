@@ -1,9 +1,9 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! session 域验收（spec `acceptance-matrix` R-acceptance-matrix-002）。
+//! session 域验收。
 //! 双模会话读写 / TTL 续期 / 过期监听 / IP 安全监听 / 设备绑定 MFA /
-//! 匿名会话边界 / 过期读取为空，「正常 + 异常」成对覆盖，场景编号 `ACC-SESS-NNN`。
+//! 匿名会话边界 / 过期读取为空，「正常 + 异常」成对覆盖。
 //!
 //! 全部场景基于独立 `GarrisonSession` / `GarrisonLogicDefault` 实例构造，
 //! 不触碰 `GarrisonManager` 全局单例，故不加 `#[serial]`；并发场景统一使用
@@ -37,7 +37,7 @@ impl GarrisonInterface for NoopInterface {
 }
 
 // ============================================================================
-// 辅助：TTL 盲读 DAO（ACC-SESS-003 续期语义观察）
+// 辅助：TTL 盲读 DAO（ 续期语义观察）
 // ============================================================================
 
 /// 对 `get_with_ttl` 隐藏剩余 TTL 的 DAO 包装。
@@ -80,7 +80,7 @@ impl GarrisonDao for TtlBlindDao {
 }
 
 // ============================================================================
-// 辅助：过期监听器替身（ACC-SESS-004）
+// 辅助：过期监听器替身
 // ============================================================================
 
 /// 会话过期监听器替身：记录回调次数与最近一次 (login_id, token)。
@@ -122,10 +122,10 @@ impl SessionExpiryListener for RecordingExpiryListener {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SESS-001..003：双模会话读写 / 登录链路写入 / TTL 续期（正常）
+// 双模会话读写 / 登录链路写入 / TTL 续期（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-SESS-001（正常）：Account/Token 双模会话读写——`create` 双写两套会话，
+/// （正常）：Account/Token 双模会话读写——`create` 双写两套会话，
 /// 可读回 `login_id` / 自定义属性；`logout` 后 Token-Session 删除、Account-Session
 /// 保留历史（token 列表为空）。
 #[tokio::test(flavor = "multi_thread")]
@@ -186,7 +186,7 @@ async fn acc_sess_001_dual_mode_session_read_write() {
     );
 }
 
-/// ACC-SESS-002（正常）：经登录链路写入双模会话——`GarrisonLogicDefault::login`
+/// （正常）：经登录链路写入双模会话——`GarrisonLogicDefault::login`
 /// 签发 token 后，`GarrisonSession::get_token_session` 可反查主体，
 /// Account-Session 同步记录。
 #[tokio::test(flavor = "multi_thread")]
@@ -229,7 +229,7 @@ async fn acc_sess_002_login_writes_dual_mode_sessions() {
     );
 }
 
-/// ACC-SESS-003（正常+异常）：TTL 续期——`renew` 将剩余 TTL 重置为完整 timeout
+/// （正常+异常）：TTL 续期——`renew` 将剩余 TTL 重置为完整 timeout
 ///（`get_token_timeout` 观察：续期后剩余 TTL 明显大于续期前），续期后跨过原超时
 /// 点仍有效；异常侧：续期不存在的 token 返回 `InvalidToken`。
 #[tokio::test(flavor = "multi_thread")]
@@ -291,10 +291,10 @@ async fn acc_sess_003_renew_resets_ttl() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SESS-004：过期监听器（正常）
+// 过期监听器（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-SESS-004（正常）：`SessionExpiryListener` 触发——Token-Session 过期被
+/// （正常）：`SessionExpiryListener` 触发——Token-Session 过期被
 /// `get_token_session` 发现时回调（携带 login_id/token），并从 DAO 清理；
 /// 活跃会话不触发回调。
 #[cfg(feature = "listener")]
@@ -341,10 +341,10 @@ async fn acc_sess_004_expiry_listener_fires_on_expired_session() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SESS-005..008：IP 安全监听 / 设备绑定 MFA / 匿名边界 / 过期（异常）
+// IP 安全监听 / 设备绑定 MFA / 匿名边界 / 过期（异常）
 // ------------------------------------------------------------------------
 
-/// ACC-SESS-005（异常）：IP 变更触发 `SessionSecurityListener`——跨 /24 网段
+/// （异常）：IP 变更触发 `SessionSecurityListener`——跨 /24 网段
 /// 返回告警（含初始 IP 与当前 IP），同网段 / 无记录不告警。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_005_ip_change_triggers_security_listener() {
@@ -396,7 +396,7 @@ async fn acc_sess_005_ip_change_triggers_security_listener() {
     );
 }
 
-/// ACC-SESS-006（异常）：设备绑定 strict 模式——新设备登录要求 MFA
+/// （异常）：设备绑定 strict 模式——新设备登录要求 MFA
 ///（hard block：`NotPermission("secondary auth required")`），且不创建孤儿会话；
 /// 历史已绑定设备免 MFA 放行。
 #[cfg(feature = "device-binding")]
@@ -461,7 +461,7 @@ async fn acc_sess_006_device_binding_strict_requires_mfa_on_new_device() {
     );
 }
 
-/// ACC-SESS-007（异常）：匿名会话边界——匿名 Session 独立 key 空间
+/// （异常）：匿名会话边界——匿名 Session 独立 key 空间
 ///（`token:session:anon:*`），与同字符串登录 Session 共存互不干扰；
 /// `logout` 只销毁匿名空间，登录会话保留。
 #[cfg(feature = "session-extra")]
@@ -507,7 +507,7 @@ async fn acc_sess_007_anon_session_boundary_isolation() {
     );
 }
 
-/// ACC-SESS-008（异常）：过期后读取为空——`timeout=1s` + sleep 超过超时后，
+/// （异常）：过期后读取为空——`timeout=1s` + sleep 超过超时后，
 /// `get_token_session` 返回 None、`is_valid=false`、剩余 TTL 无。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_008_expired_token_reads_empty() {
@@ -537,10 +537,10 @@ async fn acc_sess_008_expired_token_reads_empty() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SESS-009..011：e2e 移植场景
+// e2e 移植场景
 // ------------------------------------------------------------------------
 
-/// ACC-SESS-019（正常）：登录元数据写入 Token-Session——携带 device/ip/user_agent
+/// （正常）：登录元数据写入 Token-Session——携带 device/ip/user_agent
 /// 登录后，`TokenSession` 对应字段完整写入（get-session 语义）；created_at /
 /// last_active_at 为正（get-token-info 语义）；按 token 反查 login_id 一致。
 ///
@@ -608,11 +608,11 @@ async fn acc_sess_019_login_metadata_written_to_token_session() {
     );
 }
 
-/// ACC-SESS-017（异常）：**BW-AC-003** 超设备上限踢出最早会话（语义偏差记录：
-/// 代码库无自动 device-limit 踢出（推迟 v0.7.0），以 `kickout_by_device` 手动
+/// （异常）： 超设备上限踢出最早会话（语义偏差记录：
+/// 代码库无自动 device-limit 踢出，以 `kickout_by_device` 手动
 /// 设备级踢出验证同语义）——被踢设备 token 失效、另一设备 token 仍有效。
 ///
-/// 对应 FRD §8.1 **BW-AC-003**（并发登录踢出最早会话）验收标准，断言语义原样保留。
+/// 对应（并发登录踢出最早会话）验收标准，断言语义原样保留。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_017_bw_ac_003_kickout_by_device_isolates_device() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
@@ -669,16 +669,16 @@ async fn acc_sess_017_bw_ac_003_kickout_by_device_isolates_device() {
     );
 }
 
-/// ACC-SESS-018（正常）：**BW-AC-001** OIDC 登录创建新账号并返回有效 Token——
+/// （正常）： OIDC 登录创建新账号并返回有效 Token——
 /// 登录链路（所有登录方式共享）双写 Account-Session 与 Token-Session，DAO key
-/// 格式对齐 E-001（`account:session:` / `token:session:` 前缀）。
+/// key 格式：`account:session:` / `token:session:` 前缀）。
 ///
-/// # 规则 7 冲突（原版注释保留）
+/// # 冲突说明（原版注释保留）
 /// OIDC 登录流程需网络调用 Keycloak/OIDC provider，集成测试不依赖外部服务；
 /// 本测试验证 OIDC 登录的核心产出——会话创建（`account:session:{login_id}` +
 /// `token:session:{token}`），该逻辑由所有登录方式共享的登录链路实现。
 ///
-/// 对应 FRD §8.1 **BW-AC-001**（OIDC 登录创建账户与 token）验收标准，断言语义原样保留。
+/// 对应（OIDC 登录创建账户与 token）验收标准，断言语义原样保留。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
@@ -702,7 +702,7 @@ async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
         .expect("登录应成功");
     assert!(!token.is_empty(), "登录应返回非空 token");
 
-    // Then: Account-Session 存在（E-001 key 格式）
+    // Then: Account-Session 存在
     let account_key = format!("account:session:{}", "oidc-user-001");
     assert!(
         account_key.starts_with("account:session:"),
@@ -716,7 +716,7 @@ async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
         "Account-Session 应存在 (key={account_key})"
     );
 
-    // Then: Token-Session 存在（E-001 key 格式）
+    // Then: Token-Session 存在
     let token_key = format!("token:session:{}", token);
     assert!(
         token_key.starts_with("token:session:"),
@@ -729,7 +729,7 @@ async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SESS-010..016：Plugin / Listener 扩展点（`listener` 门控）
+// Plugin / Listener 扩展点（`listener` 门控）
 // ------------------------------------------------------------------------
 //
 // 计数器与 inventory 注册为测试二进制全局状态，全部用例 `#[serial]`；
@@ -826,8 +826,8 @@ fn reset_plugin_listener_counters() {
     LISTENER_PERM_CHECK_EVENTS.store(0, Ordering::SeqCst);
 }
 
-/// ACC-SESS-010（正常）：`GarrisonPluginManager` 收集 inventory 注册的插件
-///（编译期注册 → 运行期收集，spec plugin-system Scenario）。
+/// （正常）：`GarrisonPluginManager` 收集 inventory 注册的插件
+///（编译期注册 → 运行期收集）。
 #[cfg(feature = "listener")]
 #[test]
 #[serial]
@@ -839,7 +839,7 @@ fn acc_sess_010_plugin_manager_collects_registered_plugins() {
     );
 }
 
-/// ACC-SESS-011（正常+异常）：plugin 三大钩子被调用且可累计——
+/// （正常+异常）：plugin 三大钩子被调用且可累计——
 /// `on_login` / `on_logout` / `on_permission_check` 各触发 ≥1 次，5 次 `on_login`
 /// 累计 ≥5（无状态可重入；原 plugin_on_*_invoked + plugin_multiple_calls 合并）。
 #[cfg(feature = "listener")]
@@ -875,8 +875,8 @@ async fn acc_sess_011_plugin_hooks_invoked_and_accumulate() {
     );
 }
 
-/// ACC-SESS-012（正常）：`GarrisonListenerManager` 收集 inventory 注册的 listener
-///（spec listener-system Scenario）。
+/// （正常）：`GarrisonListenerManager` 收集 inventory 注册的 listener
+///。
 #[cfg(feature = "listener")]
 #[test]
 #[serial]
@@ -888,7 +888,7 @@ fn acc_sess_012_listener_manager_collects_registered_listeners() {
     );
 }
 
-/// ACC-SESS-013（正常）：`broadcast` 将 Login / Logout / PermissionCheck 事件
+/// （正常）：`broadcast` 将 Login / Logout / PermissionCheck 事件
 /// 分发到 listener 且可累计——三种事件各 ≥1 次，3 次 Login 广播 ≥3
 ///（原 listener_receives_*_event + listener_multiple_broadcasts 合并）。
 #[cfg(feature = "listener")]
@@ -955,7 +955,7 @@ async fn acc_sess_013_listener_receives_events_and_accumulates() {
     );
 }
 
-/// ACC-SESS-014（正常）：完整生命周期 plugin + listener 协同——login →
+/// （正常）：完整生命周期 plugin + listener 协同——login →
 /// permission_check → logout 各钩子与各事件全部触发；PermissionCheck 事件只进
 /// listener 不经过 plugin 钩子之外的通道（原 full_lifecycle 与
 /// permission_check_event_only_goes_to_listener 合并）。
@@ -1027,8 +1027,8 @@ async fn acc_sess_014_full_lifecycle_plugin_and_listener_cooperate() {
     );
 }
 
-/// ACC-SESS-015（正常）：auto-wire——`GarrisonManager` 构建后 `login_simple` 自动
-/// 触发 plugin `on_login` 钩子并广播 Login 事件到 listener（0.2.1 起 builder
+/// （正常）：auto-wire——`GarrisonManager` 构建后 `login_simple` 自动
+/// 触发 plugin `on_login` 钩子并广播 Login 事件到 listener（builder
 /// 自动注入两组管理器；原 auto_wire_login_triggers_plugin_on_login +
 /// auto_wire_login_broadcasts_listener_login_event 合并）。
 #[cfg(feature = "listener")]
@@ -1061,7 +1061,7 @@ async fn acc_sess_015_auto_wire_login_triggers_plugin_and_listener() {
     );
 }
 
-/// ACC-SESS-016（正常）：auto-wire logout——`with_current_token` 内
+/// （正常）：auto-wire logout——`with_current_token` 内
 /// `GarrisonUtil::logout` 自动触发 plugin `on_logout` 钩子 + listener Logout 事件
 ///（原 auto_wire_logout_triggers_hooks）。
 #[cfg(feature = "listener")]
@@ -1100,11 +1100,11 @@ async fn acc_sess_016_auto_wire_logout_triggers_hooks() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SESS-020：多租户隔离 + 审计日志 + 决策溯源端到端
+// 多租户隔离 + 审计日志 + 决策溯源端到端
 //（`audit-log` 门控）
 // ------------------------------------------------------------------------
 
-/// ACC-SESS-016（正常）：租户 42 用户 1001 的权限校验全链路——
+/// （正常）：租户 42 用户 1001 的权限校验全链路——
 /// `check_permission` → `authorize` → `Decision`（ExplicitAllow）→ 广播
 /// `PermissionCheck` → `AuditLogListener` 写入 `audit_logs` 表
 ///（tenant_id=42 / event_type=permission_check / login_id=1001）。

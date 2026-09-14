@@ -1,14 +1,13 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! Web 三框架冒烟验收（ACC-WEB-SMOKE-NNN，spec test-harness R-test-harness-002）。
+//! Web 三框架冒烟验收。
 //!
 //! 每框架用 `common::harness` 的同构辅助函数启动最小受保护服务器
 //! （`spawn_axum` / `spawn_actix` / `spawn_warp`），验证 CheckLogin 语义：
 //! 未登录 401 + 统一 `error_code`/`message` JSON；有效 token 200。
 //! `GarrisonManager` 为进程级全局单例，全部用例以 `#[serial]` 串行。
 //!
-//! 场景编号约定：`ACC-<域>-NNN（正常|异常）`，本域为 `web-smoke`。
 
 use crate::common::harness::{web_test_config, GarrisonTestHarness, SpawnedServer};
 use garrison::stp::GarrisonUtil;
@@ -51,7 +50,7 @@ async fn assert_protected_semantics(server: &SpawnedServer, token: &str) {
     assert_eq!(resp.status(), 200, "有效 token 访问受保护路由应放行 200");
 }
 
-/// ACC-WEB-SMOKE-001（正常+异常）：axum 冒烟 —— 未登录 401 + 统一错误 JSON、
+/// （正常+异常）：axum 冒烟 —— 未登录 401 + 统一错误 JSON、
 /// 有效 token 200（经 `GarrisonRouter` middleware）。
 #[cfg(feature = "web-axum")]
 #[tokio::test]
@@ -71,7 +70,7 @@ async fn acc_smoke_axum_001() {
     server.shutdown().await;
 }
 
-/// ACC-WEB-SMOKE-002（正常+异常）：actix-web 冒烟 —— 未登录 401 + 统一错误 JSON、
+/// （正常+异常）：actix-web 冒烟 —— 未登录 401 + 统一错误 JSON、
 /// 有效 token 200（经 `GarrisonRouter::into_middleware()`，actix 运行时跑在专属线程）。
 #[cfg(feature = "web-actix")]
 #[tokio::test]
@@ -91,7 +90,7 @@ async fn acc_smoke_actix_001() {
     server.shutdown().await;
 }
 
-/// ACC-WEB-SMOKE-003（正常+异常）：warp 冒烟 —— 未登录 401 + 统一错误 JSON、
+/// （正常+异常）：warp 冒烟 —— 未登录 401 + 统一错误 JSON、
 /// 有效 token 200（经 `check_login` filter + `.recover(garrison_recover)`）。
 #[cfg(feature = "web-warp")]
 #[tokio::test]

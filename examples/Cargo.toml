@@ -107,7 +107,7 @@ protocol-sso-server = ["garrison/protocol-sso-server"]
 alone-cache = ["garrison/alone-cache"]
 parameter-query = ["garrison/parameter-query"]
 
-# 0.4.0 新增框架集成 / 可观测性 / 缓存特性
+# 新增框架集成 / 可观测性 / 缓存特性
 web-actix = ["garrison/web-actix", "dep:actix-web"]
 web-warp = ["garrison/web-warp", "dep:warp"]
 grpc = ["garrison/grpc", "dep:tonic"]
@@ -115,17 +115,17 @@ metrics-prometheus = ["garrison/metrics-prometheus", "dep:tracing-subscriber"]
 otlp = ["garrison/otlp", "dep:tracing-subscriber"]
 cache-redis = ["garrison/cache-redis", "dep:oxcache", "oxcache/redis"]
 
-# 0.4.2 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]）
+# 新增：过程宏注解（#[check_login]/#[check_permission]/#[check_role]）
 annotation-macros = ["garrison/annotation-macros"]
 
-# 0.5.0 新增：多租户隔离 / 审计日志 / 决策溯源 / Keycloak OIDC RP / 微信社交登录
+# 新增：多租户隔离 / 审计日志 / 决策溯源 / Keycloak OIDC RP / 微信社交登录
 tenant-isolation = ["garrison/tenant-isolation"]
 audit-log = ["garrison/audit-log"]
 core-advanced = ["garrison/core-advanced"]
 keycloak-oidc = ["garrison/keycloak-oidc"]
 social-wechat = ["garrison/social-wechat"]
 
-# v0.7.0 新增特性转发
+# 新增特性转发
 abac = ["garrison/abac"]
 backend-embedded = ["garrison/backend-embedded"]
 backend-remote = ["garrison/backend-remote"]
@@ -135,7 +135,7 @@ secure-xss = ["garrison/secure-xss"]
 secure-sanitize = ["garrison/secure-sanitize"]
 secure-confusable = ["garrison/secure-confusable"]
 
-# v0.8.0 新增特性转发（防火墙 / OAuth2 Server / Web 安全）
+# 新增特性转发（防火墙 / OAuth2 Server / Web 安全）
 firewall-bruteforce = ["garrison/firewall-bruteforce"]
 firewall-ratelimit = ["garrison/firewall-ratelimit"]
 firewall-ddos = ["garrison/firewall-ddos"]
@@ -313,7 +313,7 @@ required-features = ["cache-redis"]
 path = "src/bin/cache_redis.rs"
 
 # ====================================================================
-# 0.4.2 新增示例（gap closure）
+# 新增示例（gap closure）
 # ====================================================================
 
 [[bin]]
@@ -352,7 +352,7 @@ required-features = ["annotation-macros", "cache-memory", "web-axum"]
 path = "src/bin/macro_annotations.rs"
 
 # ====================================================================
-# 0.5.0 新增示例
+# 新增示例
 # ====================================================================
 
 [[bin]]
@@ -365,7 +365,7 @@ required-features = [
 path = "src/bin/v0_5_0_demo.rs"
 
 # ====================================================================
-# v0.7.0 新增示例
+# 新增示例
 # ====================================================================
 
 [[bin]]
@@ -404,7 +404,7 @@ required-features = ["email-verification"]
 path = "src/bin/email_verification.rs"
 
 # ====================================================================
-# v0.8.0 新增示例（防火墙防护 / OAuth2 Server / Web 安全 / 状态机 / 健康检查）
+# 新增示例（防火墙防护 / OAuth2 Server / Web 安全 / 状态机 / 健康检查）
 # ====================================================================
 
 [[bin]]

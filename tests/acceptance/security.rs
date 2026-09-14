@@ -1,15 +1,15 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 安全域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! 安全域验收。
 //! TOTP 时间窗口 / HTTP Basic / HTTP Digest（含 nc 重放防护）/ 密码策略规则矩阵 /
 //! HIBP 泄露密码检查 / 敏感数据脱敏 / XSS 过滤 / 输入消毒 / 常量时间比较，
-//! 「正常 + 异常」成对覆盖，场景编号 `ACC-SEC-NNN`。
+//! 「正常 + 异常」成对覆盖。
 //!
 //! 各场景按 feature 门控（均在 `full` 内）；HIBP wiremock 场景因 `full` 未含
-//! `policy-hibp`（任务说明与 Cargo.toml 不符，以 Cargo.toml 为准）以 feature 互补
-//! 方式组织：`full` 下运行 feature 关闭的显性 Err 断言（ACC-SEC-013），
-//! `--features full,policy-hibp` 下运行 wiremock 三场景（ACC-SEC-014..016）。
+//! `policy-hibp`以 feature 互补
+//! 方式组织：`full` 下运行 feature 关闭的显性 Err 断言，
+//! `--features full,policy-hibp` 下运行 wiremock 三场景。
 //!
 //! server 层依赖 resilience.rs 的
 //! `start_test_server`（MockAuthBackend，无全局状态）与 `start_garrison_server`
@@ -18,13 +18,13 @@
 //! # API / 行为偏差记录
 //!
 //! - HIBP 端点 **可注入**：`NistComplianceRule::check_hibp_with_base(password, base_url)`
-//!   接受自定义 base URL（rules.rs），wiremock 可完整覆盖；默认 `check_hibp` 硬编码
-//!   `https://api.pwnedpasswords.com/range`。
+//! 接受自定义 base URL（rules.rs），wiremock 可完整覆盖；默认 `check_hibp` 硬编码
+//! `https://api.pwnedpasswords.com/range`。
 //! - HIBP 网络错误为 **fail-open**（`HibpVerdict.service_available=false` 显性标记 +
-//!   warn 日志，proposal 澄清 C-2 的设计决策），并非任务描述的 fail-closed；
-//!   ACC-SEC-016 断言实现语义并在报告中说明。
+//! warn 日志，proposal 澄清 C-2 的设计决策），并非任务描述的 fail-closed；
+//! 断言实现语义并在报告中说明。
 //! - 密码策略集无强制字符集/复杂度规则（NIST SP 800-63B 不推荐），「字符集不满足」
-//!   经 `RegexRule` 自定义约束表达（ACC-SEC-011）。
+//! 经 `RegexRule` 自定义约束表达。
 
 use crate::resilience::{start_garrison_server, start_test_server, tenant_client};
 use garrison::backend::types::LoginParams;
@@ -36,7 +36,7 @@ use std::sync::Arc;
 // TOTP（secure-totp）：时间窗口 / 错误密钥 / 重放
 // ============================================================================
 
-/// ACC-SEC-001（正常）：TOTP ±1 时间窗口通过——当前窗口与相邻前后窗口的验证码
+/// （正常）：TOTP ±1 时间窗口通过——当前窗口与相邻前后窗口的验证码
 /// 均被接受（skew=1，RFC 6238 §5.2）。
 #[cfg(feature = "secure-totp")]
 #[tokio::test]
@@ -71,7 +71,7 @@ async fn acc_sec_001_totp_adjacent_windows_pass() {
     );
 }
 
-/// ACC-SEC-002（异常）：TOTP ±2 窗口外拒绝——前/后两个时间窗口的验证码在
+/// （异常）：TOTP ±2 窗口外拒绝——前/后两个时间窗口的验证码在
 /// skew=1 下必须被拒绝。
 #[cfg(feature = "secure-totp")]
 #[tokio::test]
@@ -97,7 +97,7 @@ async fn acc_sec_002_totp_beyond_two_windows_rejected() {
     );
 }
 
-/// ACC-SEC-003（异常）：TOTP 错误密钥拒绝——用**不同密钥**生成的验证码对目标
+/// （异常）：TOTP 错误密钥拒绝——用**不同密钥**生成的验证码对目标
 /// 处理器必须校验失败（密钥绑定）；非法 Base32 密钥材料解码失败（显性 Err）。
 #[cfg(feature = "secure-totp")]
 #[tokio::test]
@@ -130,7 +130,7 @@ async fn acc_sec_003_totp_wrong_key_rejected() {
     );
 }
 
-/// ACC-SEC-004（异常）：TOTP 重放防护——`validate_and_consume` 同一验证码首次
+/// （异常）：TOTP 重放防护——`validate_and_consume` 同一验证码首次
 /// 通过（原子 incr=1），TTL 内二次使用被拒（incr>1，经 InMemoryDao）。
 #[cfg(feature = "secure-totp")]
 #[tokio::test]
@@ -163,7 +163,7 @@ async fn acc_sec_004_totp_replay_rejected_via_consume() {
 // HTTP Basic / HTTP Digest（protocol-httpbasic / protocol-httpdigest）
 // ============================================================================
 
-/// ACC-SEC-005（正常）：HTTP Basic——正确凭证编解码往返（RFC 7617），
+/// （正常）：HTTP Basic——正确凭证编解码往返（RFC 7617），
 /// `Authorization` header 解析与 scheme 大小写不敏感。
 #[cfg(feature = "protocol-httpbasic")]
 #[tokio::test]
@@ -189,7 +189,7 @@ async fn acc_sec_005_httpbasic_correct_credentials_roundtrip() {
     );
 }
 
-/// ACC-SEC-006（异常）：HTTP Basic——错误/畸形凭证拒绝：非 Base64、缺失冒号、
+/// （异常）：HTTP Basic——错误/畸形凭证拒绝：非 Base64、缺失冒号、
 /// 非 Basic scheme、缺失凭证段均返回显性 Err；错误密码经解码比对不相等。
 #[cfg(feature = "protocol-httpbasic")]
 #[tokio::test]
@@ -230,7 +230,7 @@ async fn acc_sec_006_httpbasic_wrong_or_malformed_rejected() {
     );
 }
 
-/// ACC-SEC-007（正常）：HTTP Digest——正确凭证（qop=auth，MD5）完成质询→响应
+/// （正常）：HTTP Digest——正确凭证（qop=auth，MD5）完成质询→响应
 /// 全链路校验（nonce 由 challenge 签发，RFC 7616 §3.4）。
 #[cfg(feature = "protocol-httpdigest")]
 #[tokio::test]
@@ -261,7 +261,7 @@ async fn acc_sec_007_httpdigest_correct_credentials_validated() {
     );
 }
 
-/// ACC-SEC-008（异常）：HTTP Digest——错误密码计算出的 response 校验失败
+/// （异常）：HTTP Digest——错误密码计算出的 response 校验失败
 /// （服务端用正确 HA1 校验）。
 #[cfg(feature = "protocol-httpdigest")]
 #[tokio::test]
@@ -291,7 +291,7 @@ async fn acc_sec_008_httpdigest_wrong_password_rejected() {
     );
 }
 
-/// ACC-SEC-009（异常）：HTTP Digest 重放防护——注入 DAO 后（RFC 7616 §3.4.6）：
+/// （异常）：HTTP Digest 重放防护——注入 DAO 后（RFC 7616 §3.4.6）：
 /// 同 header 原样重放拒绝、nc 回退拒绝、nc 单调递增放行、不同 nonce 计数独立。
 #[cfg(feature = "protocol-httpdigest")]
 #[tokio::test(flavor = "multi_thread")]
@@ -395,7 +395,7 @@ async fn acc_sec_009_httpdigest_replay_protected_via_nc() {
 // 密码策略规则矩阵（account-policy）
 // ============================================================================
 
-/// ACC-SEC-010（异常）：长度规则——长度不足拒绝（含边界 == min 通过，
+/// （异常）：长度规则——长度不足拒绝（含边界 == min 通过，
 /// min-1 拒绝），错误携带 rule_name="length"。
 #[cfg(feature = "account-policy")]
 #[tokio::test]
@@ -434,7 +434,7 @@ async fn acc_sec_010_policy_length_rule_rejects_short() {
     );
 }
 
-/// ACC-SEC-011（异常）：字符集约束——策略集无强制复杂度规则（NIST SP 800-63B
+/// （异常）：字符集约束——策略集无强制复杂度规则（NIST SP 800-63B
 /// 不推荐），字符集类约束经 `RegexRule` 自定义表达：禁止空格 / 必须含数字。
 #[cfg(feature = "account-policy")]
 #[tokio::test]
@@ -477,7 +477,7 @@ async fn acc_sec_011_policy_charset_regex_rule_rejects() {
     );
 }
 
-/// ACC-SEC-012（异常）：常见弱密码拒绝——常见密码列表 / 黑名单 / 字典规则，
+/// （异常）：常见弱密码拒绝——常见密码列表 / 黑名单 / 字典规则，
 /// 精确匹配非子串。
 #[cfg(feature = "account-policy")]
 #[tokio::test]
@@ -532,7 +532,7 @@ async fn acc_sec_012_policy_common_weak_password_rejected() {
 // HIBP 泄露密码检查（policy-hibp）
 // ============================================================================
 
-/// ACC-SEC-013（异常）：feature 关闭时 `check_hibp` 返回显性 Err（fail-closed，
+/// （异常）：feature 关闭时 `check_hibp` 返回显性 Err（fail-closed，
 /// 不静默通过）——`--features full`（未含 policy-hibp）下的实际运行路径。
 #[cfg(not(feature = "policy-hibp"))]
 #[tokio::test]
@@ -553,7 +553,7 @@ async fn acc_sec_013_hibp_disabled_returns_explicit_error() {
     );
 }
 
-/// ACC-SEC-014（异常）：HIBP 泄露密码拒绝——mock range 响应含匹配 SHA-1 后缀，
+/// （异常）：HIBP 泄露密码拒绝——mock range 响应含匹配 SHA-1 后缀，
 /// verdict.pwned=true 且泄漏次数正确（k-anonymity：仅上传前缀 5 hex）。
 /// 注：需 `--features full,policy-hibp` 运行（full 未含 policy-hibp，见文件头）。
 #[cfg(feature = "policy-hibp")]
@@ -606,7 +606,7 @@ async fn acc_sec_014_hibp_leaked_password_pwned() {
     );
 }
 
-/// ACC-SEC-015（正常）：HIBP 正常密码通过——mock range 响应不含匹配后缀 →
+/// （正常）：HIBP 正常密码通过——mock range 响应不含匹配后缀 →
 /// pwned=false，服务可用。
 #[cfg(feature = "policy-hibp")]
 #[tokio::test]
@@ -641,7 +641,7 @@ async fn acc_sec_015_hibp_clean_password_passes() {
     );
 }
 
-/// ACC-SEC-016（异常）：HIBP 网络错误——行为偏差记录：实现为 **fail-open**
+/// （异常）：HIBP 网络错误——行为偏差记录：实现为 **fail-open**
 /// （`service_available=false` 显性标记 + warn 日志，proposal 澄清 C-2），
 /// 非任务描述的 fail-closed；断言实现语义的显性不可用标记。
 #[cfg(feature = "policy-hibp")]
@@ -671,7 +671,7 @@ async fn acc_sec_016_hibp_network_error_reported_unavailable() {
 // 敏感数据脱敏（secure-masking）
 // ============================================================================
 
-/// ACC-SEC-017（正常）：真实脱敏——手机号 138****1234 / 邮箱 a***@example.com /
+/// （正常）：真实脱敏——手机号 138****1234 / 邮箱 a***@example.com /
 /// 嵌套 JSON 递归脱敏且非敏感字段保留。
 #[cfg(feature = "secure-masking")]
 #[tokio::test]
@@ -721,7 +721,7 @@ async fn acc_sec_017_masking_phone_email_redacted() {
 // XSS 过滤（secure-xss）
 // ============================================================================
 
-/// ACC-SEC-018（正常）：XSS 过滤——EscapeAll 全量转义 script；Whitelist 保留
+/// （正常）：XSS 过滤——EscapeAll 全量转义 script；Whitelist 保留
 /// 白名单标签、转义其余标签并剥离 on* 事件处理器。
 #[cfg(feature = "secure-xss")]
 #[tokio::test]
@@ -768,7 +768,7 @@ async fn acc_sec_018_xss_escape_and_whitelist_filter() {
 // 通用输入消毒（secure-sanitize）
 // ============================================================================
 
-/// ACC-SEC-019（正常+异常）：输入消毒——null 字节/控制字符/零宽字符移除、
+/// （正常+异常）：输入消毒——null 字节/控制字符/零宽字符移除、
 /// trim 空白；超长输入显性 Err（InvalidParam）。
 #[cfg(feature = "secure-sanitize")]
 #[tokio::test]
@@ -804,7 +804,7 @@ async fn acc_sec_019_sanitize_strips_attack_chars_and_limits_length() {
 // 常量时间比较（secure-ct-eq）
 // ============================================================================
 
-/// ACC-SEC-020（正常+异常）：常量时间比较语义——相等 true / 内容不同 false /
+/// （正常+异常）：常量时间比较语义——相等 true / 内容不同 false /
 /// 长度不同 false / 空串相等 true（CWE-208 防时序侧信道原语）。
 #[cfg(feature = "secure-ct-eq")]
 #[tokio::test]
@@ -932,7 +932,7 @@ fn leaks_sql_keyword(body_text: &str) -> bool {
     SQL_ERROR_KEYWORDS.iter().any(|kw| lower.contains(kw))
 }
 
-/// ACC-SEC-021（异常）：伪造 token 认证绕过——10 种伪造 token 对
+/// （异常）：伪造 token 认证绕过——10 种伪造 token 对
 /// `/api/v1/auth/check-login` 全部拒绝（无 500、无真实绕过），且响应体不泄漏
 /// SQL 错误关键字。
 ///
@@ -980,7 +980,7 @@ async fn acc_sec_021_forged_tokens_authentication_bypass_rejected() {
     }
 }
 
-/// ACC-SEC-022（异常）：SQL 注入 login_id 端点——8 条 payload 全部不导致 500、
+/// （异常）：SQL 注入 login_id 端点——8 条 payload 全部不导致 500、
 /// 不泄漏 SQL 错误信息。登录成功属 MockAuthBackend 行为偏差（不校验 login_id
 /// 有效性，非真实绕过；生产环境需校验 login_id 有效性——记录不 panic）。
 ///
@@ -1030,7 +1030,7 @@ async fn acc_sec_022_sql_injection_login_id_no_crash_no_leak() {
     }
 }
 
-/// ACC-SEC-023（异常）：XSS login_id 不反射——10 条 XSS payload 作为 login_id，
+/// （异常）：XSS login_id 不反射——10 条 XSS payload 作为 login_id，
 /// 响应不反射 payload 原文（sub-string check，防反射型 XSS）、Content-Type 为
 /// `application/json`（非 HTML，防存储型 XSS 渲染）、无 500。
 ///
@@ -1099,11 +1099,11 @@ async fn acc_sec_023_xss_login_id_not_reflected() {
     }
 }
 
-/// ACC-SEC-024（正常+异常）：CSRF API 模式——无 Origin/Referer 头的 login 请求
+/// （正常+异常）：CSRF API 模式——无 Origin/Referer 头的 login 请求
 /// 正常放行（200，Bearer/API-Key 认证天然免疫 CSRF）；`Origin: https://evil.com`
 /// 请求不返回 500（接受 4xx 拒绝或 200 行为不变，均非真实攻击面）。
 ///
-/// 安全 LOW-3 记录：API 模式无 Cookie，SameSite 场景需浏览器测试套件。
+/// 已知限制：API 模式无 Cookie，SameSite 场景需浏览器测试套件。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_sec_024_csrf_api_mode_origin_behavior() {
     let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
@@ -1154,14 +1154,14 @@ async fn acc_sec_024_csrf_api_mode_origin_behavior() {
     );
 }
 
-/// ACC-SEC-025（异常）：跨租户 token 隔离验收（FINDING-025 实证记录）。
+/// （异常）：跨租户 token 隔离验收（FINDING-025 实证记录）。
 ///
 /// # 实测契约（findings 记录，非弱化）
 ///
 /// **会话存储（token:session）不按租户作用域**——`tenant_isolation.enabled` 当前
 /// 无运行时消费点（仅配置解析），跨租户 check-login 返回 `data=true`（原 pentest
 /// 断言从未被 CI 执行，属未验证声明；验收首次真实验证后按实际契约记录）。
-/// 隔离的既有强制点：DAO 前缀层（ACC-STORAGE-006）与 check-permission 层
+/// 隔离的既有强制点：DAO 前缀层与 check-permission 层
 /// （本场景下方硬断言）。会话级强制列为后续 change（随 DAO 键作用域设计）。
 /// 本场景以哨兵断言记录现状：若未来实施会话级隔离，哨兵将显性失败并要求
 /// 移除本记录（防静默「修复」后测试假绿）。
@@ -1172,7 +1172,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
         let mut c = GarrisonConfig::default_config();
         c.throw_on_not_login = false;
         // 多租户隔离为 Opt-in（默认 enabled=false）：启用后
-        // 会话/权限按 X-Tenant-Id 解析的租户作用域隔离（FMEA 配置项语义）。
+        // 会话/权限按 X-Tenant-Id 解析的租户作用域隔离。
         c.tenant_isolation = garrison::config::TenantIsolationConfig {
             enabled: true,
             resolver: garrison::config::TenantResolverKind::Header,
@@ -1223,11 +1223,11 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
     let body: serde_json::Value = resp.json().await.expect("check-login 响应非 JSON");
 
     // 实证发现（FINDING-025）：会话存储（token:session）**不按租户作用域**——
-    //  当前无运行时消费点（仅配置解析），auth-server 的
+    // 当前无运行时消费点（仅配置解析），auth-server 的
     // check-login 跨租户返回 data=true。e2e pentest 原断言「跨租户 check-login 拒绝」
     // 从未被 CI 执行验证（e2e target 被 required-features 排除），属未验证声明。
     // 本场景按**实际契约**记录：会话层共享为现状；租户隔离的既有强制点在
-    // DAO 前缀层（ACC-STORAGE-006）与审计/决策溯源层（migrated::tenant_isolation
+    // DAO 前缀层与审计/决策溯源层（migrated::tenant_isolation
     // E2E）。跨租户会话级强制列为后续 change（随 DAO 键作用域设计）。
     assert!(
         !is_denied(&body, status),
@@ -1255,7 +1255,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
     );
 }
 
-/// ACC-SEC-026（异常）：普通用户越权访问 `admin:*`——无权限主体 check-permission
+/// （异常）：普通用户越权访问 `admin:*`——无权限主体 check-permission
 /// `admin:*` 被拒（`NOT_PERMISSION`，最小权限原则）。
 ///
 /// 对应 e2e 原用例：断言三选一（403 / allowed=false / error_code 存在）；本场景
@@ -1303,7 +1303,7 @@ async fn acc_sec_026_normal_user_admin_privilege_denied() {
     );
 }
 
-/// ACC-SEC-027（异常）：暴力破解同一 login_id——100 次连续登录尝试必须触发
+/// （异常）：暴力破解同一 login_id——100 次连续登录尝试必须触发
 /// 至少 1 次 429 限流（低阈值 server），且无 500 错误。
 ///
 /// 对应 e2e 原用例经 env `GARRISON_RATE_LIMIT=10` 控制子进程限流阈值；本场景
@@ -1345,7 +1345,7 @@ async fn acc_sec_027_brute_force_same_login_100_attempts_429() {
     );
 }
 
-/// ACC-SEC-028（异常）：字典攻击——100 个不同 login_id 登录请求无 500 错误
+/// （异常）：字典攻击——100 个不同 login_id 登录请求无 500 错误
 ///（服务器稳定）。登录成功属 MockAuthBackend 行为偏差（不校验 login_id，
 /// 非真实绕过；记录不 panic）。
 ///
@@ -1380,7 +1380,7 @@ async fn acc_sec_028_dictionary_100_logins_no_crash() {
     );
 }
 
-/// ACC-SEC-029（异常）：会话劫持防护——`is_concurrent=false` 下同账号新设备
+/// （异常）：会话劫持防护——`is_concurrent=false` 下同账号新设备
 /// 登录踢出旧设备全部会话（`ReplacedLoginExitMode::OldDevice` 默认行为）：
 /// deviceA token 失效、deviceB token 有效。
 ///
@@ -1461,11 +1461,11 @@ async fn acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device()
     assert_eq!(body["data"], true, "token2 (deviceB) 应仍然有效");
 }
 
-/// ACC-SEC-030（异常）：未知/匿名 token 越权访问受保护资源——不存在 token 的
+/// （异常）：未知/匿名 token 越权访问受保护资源——不存在 token 的
 /// `check_permission("admin:*")` 拒绝（`NotPermission`，未登录视为无任何权限）。
 ///
 /// 原 e2e 用例的 `#[cfg(feature = "anonymous-session")]` 门控已失效——
-/// `anonymous-session` 自 v0.9.0 合并入 `session-extra`（Cargo.toml:375），
+/// `anonymous-session` 已合并入 `session-extra`，
 /// 改用 `session-extra` 门控（`full` 已聚合）；server 未暴露匿名 token HTTP
 /// 端点（原用例已预判），等价断言「未知 token 越权被拒」在逻辑层直接验证。
 #[cfg(feature = "session-extra")]

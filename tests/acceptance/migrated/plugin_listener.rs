@@ -12,20 +12,19 @@
 //!
 //! ## auto-wire 集成（0.2.1 修复）
 //!
-//! 0.2.1 起 `GarrisonManager::builder()` 自动注入 `GarrisonPluginManager` / `GarrisonListenerManager`
+//! `GarrisonManager::builder()` 自动注入 `GarrisonPluginManager` / `GarrisonListenerManager`
 //! 到 `GarrisonLogicDefault`，`GarrisonUtil::login` 会自动触发 `on_login` 钩子与 `Login` 事件。
 //! 本文件包含两组测试：
 //! 1. 扩展点本身行为（直接调用 plugin/listener 方法）
 //! 2. auto-wire 端到端（通过 `GarrisonManager::builder()` + `GarrisonUtil::login` 验证自动触发）
 //!
-//! 依据 spec plugin-system + listener-system。
 //!
 //! # production-mock-purge
 //!
 //! - auto-wire 辅助 DAO `MockDao` 已替换为产品 `InMemoryDao`（src/dao/in_memory.rs）。
 //! - NEEDS CLARIFICATION: 无产品 GarrisonInterface 实现，待库层补实现后真实化
-//!   （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
-//!   本文件三个 auto-wire 组内的 `EmptyInterface` 替身保留）。
+//! （框架设计为业务方实现 `GarrisonInterface` 回调，库层未提供默认实现，
+//! 本文件三个 auto-wire 组内的 `EmptyInterface` 替身保留）。
 
 use async_trait::async_trait;
 use garrison::error::GarrisonResult;
@@ -124,7 +123,7 @@ fn reset_counters() {
 // Plugin 集成测试
 // ============================================================================
 
-/// GarrisonPluginManager 收集 inventory 注册的插件（spec Scenario）。
+/// GarrisonPluginManager 收集 inventory 注册的插件。
 #[test]
 fn plugin_manager_collects_registered_plugins() {
     let manager = GarrisonPluginManager::new();
@@ -134,7 +133,7 @@ fn plugin_manager_collects_registered_plugins() {
     );
 }
 
-/// on_login 钩子被调用（spec Scenario）。
+/// on_login 钩子被调用。
 #[test]
 #[serial_test::serial]
 fn plugin_on_login_invoked() {
@@ -147,7 +146,7 @@ fn plugin_on_login_invoked() {
     );
 }
 
-/// on_logout 钩子被调用（spec Scenario）。
+/// on_logout 钩子被调用。
 #[test]
 #[serial_test::serial]
 fn plugin_on_logout_invoked() {
@@ -160,7 +159,7 @@ fn plugin_on_logout_invoked() {
     );
 }
 
-/// on_permission_check 钩子被调用（spec Scenario）。
+/// on_permission_check 钩子被调用。
 #[test]
 #[serial_test::serial]
 fn plugin_on_permission_check_invoked() {
@@ -173,7 +172,7 @@ fn plugin_on_permission_check_invoked() {
     );
 }
 
-/// 多次调用累计计数（验证 plugin 是无状态可重入的，spec Scenario）。
+/// 多次调用累计计数（验证 plugin 是无状态可重入的）。
 #[test]
 #[serial_test::serial]
 fn plugin_multiple_calls_accumulate() {
@@ -192,7 +191,7 @@ fn plugin_multiple_calls_accumulate() {
 // Listener 集成测试
 // ============================================================================
 
-/// GarrisonListenerManager 收集 inventory 注册的 listener（spec Scenario）。
+/// GarrisonListenerManager 收集 inventory 注册的 listener。
 #[test]
 fn listener_manager_collects_registered_listeners() {
     let manager = GarrisonListenerManager::new();
@@ -202,7 +201,7 @@ fn listener_manager_collects_registered_listeners() {
     );
 }
 
-/// Login 事件广播到 listener（spec Scenario）。
+/// Login 事件广播到 listener。
 #[tokio::test]
 #[serial_test::serial]
 async fn listener_receives_login_event() {
@@ -222,7 +221,7 @@ async fn listener_receives_login_event() {
     );
 }
 
-/// Logout 事件广播到 listener（spec Scenario）。
+/// Logout 事件广播到 listener。
 #[tokio::test]
 #[serial_test::serial]
 async fn listener_receives_logout_event() {
@@ -241,7 +240,7 @@ async fn listener_receives_logout_event() {
     );
 }
 
-/// PermissionCheck 事件广播到 listener（spec Scenario）。
+/// PermissionCheck 事件广播到 listener。
 #[tokio::test]
 #[serial_test::serial]
 async fn listener_receives_permission_check_event() {
@@ -260,7 +259,7 @@ async fn listener_receives_permission_check_event() {
     );
 }
 
-/// 多次广播累计计数（spec Scenario）。
+/// 多次广播累计计数。
 #[tokio::test]
 #[serial_test::serial]
 async fn listener_multiple_broadcasts_accumulate() {
@@ -343,7 +342,7 @@ async fn full_lifecycle_plugin_and_listener_cooperate() {
     );
 }
 
-/// PermissionCheck 事件不被 plugin 触发，仅由 listener 接收（spec Scenario）。
+/// PermissionCheck 事件不被 plugin 触发，仅由 listener 接收。
 #[tokio::test]
 #[serial_test::serial]
 async fn permission_check_event_only_goes_to_listener() {
@@ -366,7 +365,7 @@ async fn permission_check_event_only_goes_to_listener() {
 }
 
 // ============================================================================
-// auto-wire 集成测试（0.2.1 新增）
+// auto-wire 集成测试
 // 验证 GarrisonManager::builder() 自动注入 plugin/listener 后，
 // GarrisonUtil::login 会自动触发 on_login 钩子与 Login 事件。
 // ============================================================================

@@ -132,8 +132,8 @@ pub async fn run() -> GarrisonResult<()> {
 /// - `EXAMPLE_INTERNAL_API_KEY`（必填）：内网 API Key，缺失时 fail-closed 退出码 1
 /// - `GARRISON_RATE_LIMIT`（默认 100）：每 IP 限速阈值（req/s）
 /// - `GARRISON_EXTERNAL_LOGIN_ENABLED`（默认 true）：是否启用外网登录端点。
-///   示例默认开启以便演示/e2e 完整链路；框架 login 不校验凭证，
-///   生产部署应保持默认关闭（`AuthServerConfig` 默认 false）或先注入凭证校验
+/// 示例默认开启以便演示/e2e 完整链路；框架 login 不校验凭证，
+/// 生产部署应保持默认关闭（`AuthServerConfig` 默认 false）或先注入凭证校验
 ///
 /// 调用 `setup_garrison_manager()` 初始化全局单例后，构造 `GarrisonAuthServer`
 /// 并 `server.listen().await` 阻塞监听双端口。

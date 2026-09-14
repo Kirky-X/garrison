@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! PostgreSQL 真实服务专用验收 target（ACC-ENV-005..006）。
+//! PostgreSQL 真实服务专用验收 target。
 //!
 //! # 为什么独立成 target
 //! dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与 server-side
@@ -15,7 +15,7 @@
 //! 运行（scripts/e2e_matrix.sh S3 自动执行）：
 //! ```bash
 //! cargo test --test acceptance_db_postgres \
-//!   --no-default-features --features db-postgres -- --test-threads=1
+//! --no-default-features --features db-postgres -- --test-threads=1
 //! ```
 //!
 //! 地址覆盖：`GARRISON_TEST_POSTGRES_ADDR` / `GARRISON_TEST_POSTGRES_URL`

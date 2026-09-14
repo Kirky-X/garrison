@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 统一集成测试基建（specmark change `acceptance-overhaul` / spec `test-harness`）。
+//! 统一集成测试基建。
 //!
 //! [`GarrisonTestHarness`] 一次 `init()` 完成 `GarrisonManager` 全局单例装配：
 //! 默认 `InMemoryDao` + 可编程 [`MockInterface`]，可选注入 [`MockClock`]、
@@ -410,7 +410,7 @@ impl Harness {
 }
 
 // ============================================================================
-// 三框架同构测试服务器（spec test-harness R-test-harness-002）
+// 三框架同构测试服务器
 // ============================================================================
 
 /// Web 服务器共用测试配置：`throw_on_not_login = false`。

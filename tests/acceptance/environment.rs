@@ -1,21 +1,21 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! environment 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! environment 域验收。
 //!
-//! 真实外部服务门控验收，场景编号 `ACC-ENV-NNN`：
-//! - ACC-ENV-001：`redis_available()` 探测辅助（`GARRISON_TEST_REDIS=1` 强制
-//!   可用，否则 TCP 探活 127.0.0.1:6379）；
-//! - ACC-ENV-002：redis 可达 → `GarrisonDaoOxcache::with_redis_config`
-//!   基本读写 / TTL / 重命名；
-//! - ACC-ENV-003：redis 可达 → `with_redis_config` 下原子六方法按 src 实际
-//!   行为 fail-closed（显性 `Config` 错误，M4 防护）；
-//! - ACC-ENV-004：基础 DAO 原子六方法成功路径（内存后端，不依赖外部服务）；
-//! - ACC-ENV-005..006（`db-postgres`）：`pg_available()` 探活 127.0.0.1:5432，
-//!   可达 → init_dbnexus postgres 连接 + 迁移 10 表 + user_repository CRUD
-//!   （吸收 tests/repository/postgres_integration.rs 的 `#[ignore]` 用例语义）；
-//! - ACC-ENV-007..008（`db-mysql`）：testcontainers MySQL 语义——docker 探活
-//!   失败即跳过（吸收 tests/db_mysql_testcontainers.rs 的 1-2 个代表性场景）。
+//! 真实外部服务门控验收：
+//! - `redis_available()` 探测辅助（`GARRISON_TEST_REDIS=1` 强制
+//! 可用，否则 TCP 探活 127.0.0.1:6379）；
+//! - redis 可达 → `GarrisonDaoOxcache::with_redis_config`
+//! 基本读写 / TTL / 重命名；
+//! - redis 可达 → `with_redis_config` 下原子六方法按 src 实际
+//! 行为 fail-closed（显性 `Config` 错误防护）；
+//! - 基础 DAO 原子六方法成功路径（内存后端，不依赖外部服务）；
+//! - `db-postgres`：`pg_available()` 探活 127.0.0.1:5432，
+//! 可达 → init_dbnexus postgres 连接 + 迁移 10 表 + user_repository CRUD
+//! （吸收 tests/repository/postgres_integration.rs 的 `#[ignore]` 用例语义）；
+//! - `db-mysql`：testcontainers MySQL 语义——docker 探活
+//! 失败即跳过（吸收 tests/db_mysql_testcontainers.rs 的 1-2 个代表性场景）。
 //!
 //! 门控约定：外部服务不可达时 `eprintln!("[SKIP] …")` 并 `return`——测试
 //! 通过但不运行，保证无外部服务环境（CI / 本机）全绿。
@@ -103,10 +103,10 @@ impl Drop for EnvGuard {
 }
 
 // ------------------------------------------------------------------------
-// ACC-ENV-001：redis 探测辅助（正常）
+// redis 探测辅助（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-ENV-001（正常）：`redis_available()` 探测语义——
+/// （正常）：`redis_available()` 探测语义——
 /// `GARRISON_TEST_REDIS=1` 强制可用；未设置时与 TCP 探活结果一致
 ///（不自欺：探测结果就是环境事实）。
 #[tokio::test]
@@ -136,10 +136,10 @@ async fn acc_env_001_redis_probe_helper_semantics() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-ENV-002..003：redis 可达 → GarrisonDaoOxcache（with_redis_config）
+// redis 可达 → GarrisonDaoOxcache（with_redis_config）
 // ------------------------------------------------------------------------
 
-/// ACC-ENV-002（正常）：redis 可达 → `GarrisonDaoOxcache` 经 `with_redis_config`
+/// （正常）：redis 可达 → `GarrisonDaoOxcache` 经 `with_redis_config`
 /// 基本读写 / TTL：set/get、get_with_ttl（value+TTL 一次取回）、update 保留
 /// 剩余 TTL、expire 缩短、set_permanent 永久键、rename 原子重命名、
 /// delete 删除。
@@ -235,16 +235,16 @@ async fn acc_env_002_redis_dao_basic_io_with_ttl() {
     assert_eq!(dao.get(moved_key).await.unwrap(), None, "delete 后应不存在");
 }
 
-/// ACC-ENV-003（异常）：redis 可达 → `with_redis_config` 下原子六方法的
-/// **实际行为**：`check_redis_compat`（M4 防护）令 5 个 `_sync` 原子方法
+/// （异常）：redis 可达 → `with_redis_config` 下原子六方法的
+/// **实际行为**：`check_redis_compat` 防护令 5 个 `_sync` 原子方法
 /// （set_if_absent/get_and_delete/incr/decr/compare_and_update_if_greater）
 /// 返回显性 `GarrisonError::Config`（消息含 `dao-oxcache-sync-api-incompatible-with-redis`）
-/// ——失败显性化而非静默错误结果（规则 12）；`rename` 不在防护名单内仍可用。
+/// ——失败显性化而非静默错误结果；`rename` 不在防护名单内仍可用。
 ///
 /// # API 偏差记录
 /// `with_redis_config` 当前仅存储配置、未实际连接 Redis L2（src/dao/oxcache_impl.rs
-/// 文档行为）；任务预期「原子六方法成功路径」无法在 redis 配置态成立，验收吸收
-/// 实际契约并留此记录（成功路径见 ACC-ENV-004，无 redis 配置态）。
+/// 文档行为）；「原子六方法成功路径」无法在 redis 配置态成立，验收吸收
+/// 实际契约并留此记录（成功路径见下方内存后端用例）。
 #[cfg(feature = "cache-redis")]
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_env_003_redis_dao_atomic_six_fail_closed_under_config() {
@@ -299,10 +299,10 @@ async fn acc_env_003_redis_dao_atomic_six_fail_closed_under_config() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-ENV-004：基础 DAO 原子六方法（正常，内存后端，无外部服务依赖）
+// 基础 DAO 原子六方法（正常，内存后端，无外部服务依赖）
 // ------------------------------------------------------------------------
 
-/// ACC-ENV-004（正常）：`GarrisonDaoOxcache`（未配置 redis）原子六方法
+/// （正常）：`GarrisonDaoOxcache`（未配置 redis）原子六方法
 /// 成功路径：set_if_absent（SETNX 语义）、incr/decr（TTL 保留、
 /// 归零删 key）、get_and_delete（原子消费）、compare_and_update_if_greater
 /// （单调 CAS）、rename（保留 TTL）。不依赖外部服务，无门控。
@@ -414,12 +414,12 @@ async fn acc_env_004_dao_atomic_six_success_path() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-ENV-005..006：postgres 门控（feature = "db-postgres"）
+// postgres 门控（feature = "db-postgres"）
 // ------------------------------------------------------------------------
 //
 // 吸收 tests/repository/postgres_integration.rs 的 `#[ignore]` 用例语义
 //（postgres_connects_to_database / postgres_migrate_creates_all_core_tables /
-//  postgres_user_repository_crud），改为运行时探活门控：不可达即 [SKIP]。
+// postgres_user_repository_crud），改为运行时探活门控：不可达即 [SKIP]。
 
 /// postgres 连接 URL：`GARRISON_TEST_POSTGRES_URL` 可覆盖
 ///（默认与 tests/repository/postgres_integration.rs 默认一致）。
@@ -467,7 +467,7 @@ async fn reset_postgres_database(pool: &dbnexus::DbPool) {
     .expect("CREATE SCHEMA public 应成功");
 }
 
-/// ACC-ENV-005（正常）：`pg_available()` 探活 127.0.0.1:5432——
+/// （正常）：`pg_available()` 探活 127.0.0.1:5432——
 /// 可达时 `init_dbnexus` postgres 连接 + `migrate_core` 创建 10 张
 /// `app_%` 核心表（吸收 postgres_migrate_creates_all_core_tables 语义）；
 /// 不可达时 [SKIP] 打印并 return。
@@ -540,7 +540,7 @@ async fn acc_env_005_postgres_connect_and_migrate_core_tables() {
     assert_eq!(expected.len(), 10, "应有 10 张 app_ 前缀核心表");
 }
 
-/// ACC-ENV-006（正常）：postgres 可达 → `DbnexusPostgresUserRepository`
+/// （正常）：postgres 可达 → `DbnexusPostgresUserRepository`
 /// CRUD（create → find_by_id → update → list → delete 幂等，
 /// 吸收 postgres_user_repository_crud 语义）。
 #[cfg(feature = "db-postgres")]
@@ -619,7 +619,7 @@ async fn acc_env_006_postgres_user_repository_crud() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-ENV-007..008：MySQL testcontainers 门控（feature = "db-mysql"）
+// MySQL testcontainers 门控（feature = "db-mysql"）
 // ------------------------------------------------------------------------
 //
 // 吸收 tests/db_mysql_testcontainers.rs 的代表性语义（连接 + 迁移 +
@@ -683,7 +683,7 @@ async fn retry_init_mysql_pool(url: &str) -> dbnexus::DbPool {
     panic!("MySQL 连接池初始化失败（重试 30 次）：{:?}", last_err);
 }
 
-/// ACC-ENV-007（正常）：docker 可用 → testcontainers 启动 MySQL 8.0 容器、
+/// （正常）：docker 可用 → testcontainers 启动 MySQL 8.0 容器、
 /// `init_dbnexus` 连接（后端确认为 MySql）、`migrate_core` 迁移；
 /// docker 不可用时 [SKIP] 打印并 return。
 #[cfg(feature = "db-mysql")]
@@ -725,7 +725,7 @@ async fn acc_env_007_mysql_testcontainers_connect_and_migrate() {
     );
 }
 
-/// ACC-ENV-008（正常）：docker 可用 → MySQL 上 `DbnexusMysqlUserRepository`
+/// （正常）：docker 可用 → MySQL 上 `DbnexusMysqlUserRepository`
 /// CRUD（create → find_by_username → update → delete，
 /// 吸收 mysql_user_repository_crud 语义）。
 #[cfg(feature = "db-mysql")]

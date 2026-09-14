@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! ParameterQuery 参数化查询示例（依据 spec parameter-query，0.4.0 新增）。
+//! ParameterQuery 参数化查询示例。
 //!
 //! 演示 `ParameterQueryBuilder` 链式 API：
 //! 1. 初始化 `GarrisonManager`（参考 permission_check.rs 的初始化模式）

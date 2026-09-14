@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! 密码登录示例（v0.4.2 新增，依据 spec secure-password + auth-password-login）。
+//! 密码登录示例。
 //!
 //! 演示 `Argon2Hasher` 哈希/校验 + `GarrisonLogicDefault::login_with_password` 端到端流程。
 //!
@@ -54,7 +54,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison 密码登录示例 ===\n");
 
     // 1. 初始化 SQLite + oxcache
-    //    examples 为独立 workspace member，CWD 为 examples/，需指向工作区根的 migrations/
+    // examples 为独立 workspace member，CWD 为 examples/，需指向工作区根的 migrations/
     let pool = init_dbnexus("sqlite::memory:").await?;
     let migration =
         GarrisonMigration::with_base_dir(pool.clone(), PathBuf::from("../migrations/sqlite"));
@@ -66,8 +66,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let user_repo: Arc<DbnexusUserRepository> = Arc::new(DbnexusUserRepository::new(pool.clone()));
 
     // 3. 预创建用户：login_id=1001，username="1001"
-    //    login_with_password(login_id, password) 内部调用
-    //    find_by_username(0, &login_id.to_string())，故 username 必须等于 login_id 的字符串形式
+    // login_with_password(login_id, password) 内部调用
+    // find_by_username(0, &login_id.to_string())，故 username 必须等于 login_id 的字符串形式
     let password_plain = "my-secret-password";
     let password_hash = hasher.hash(password_plain)?;
     println!("[1] Argon2 哈希生成");

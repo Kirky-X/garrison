@@ -3,16 +3,16 @@
 
 //! Garrison 过程宏 crate，提供鉴权注解属性宏。
 //!
-//! 依据 spec `annotation-macros`，提供 10 个 `#[proc_macro_attribute]`：
+//! 提供 10 个 `#[proc_macro_attribute]`：
 //!
 //! - [`macro@check_login`]：登录校验，未登录返回 401
 //! - [`macro@check_permission`]：权限校验（AND 语义），无权限返回 403
 //! - [`macro@check_role`]：角色校验（AND 语义），无角色返回 403
-//! - [`macro@check_access_token`] / [`macro@check_client_token`] / [`macro@check_temp_token`]：token 类型校验（0.5.0 P2）
-//! - [`macro@check_api_key`]：API Key 校验（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）
-//! - [`macro@check_mfa`]：MFA 二级认证校验（v0.7.x 新增，依据 spec annotation-macros R-anno-004）
-//! - [`macro@check_abac`]：ABAC 策略校验（v0.7.x 新增，依据 spec annotation-macros R-anno-005）
-//! - [`macro@check_disable`]：账号禁用状态校验（v0.7.3 新增，依据 spec annotation-macros R-anno-006）
+//! - [`macro@check_access_token`] / [`macro@check_client_token`] / [`macro@check_temp_token`]：token 类型校验
+//! - [`macro@check_api_key`]：API Key 校验
+//! - [`macro@check_mfa`]：MFA 二级认证校验
+//! - [`macro@check_abac`]：ABAC 策略校验
+//! - [`macro@check_disable`]：账号禁用状态校验
 //!
 //! # 覆盖矩阵
 //!
@@ -28,9 +28,9 @@
 //! | JWT | — | — | 协议层 JwtHandler sign/verify，非注解校验型 |
 //! | 微服务网关鉴权 | — | `#[check_sign]`? | SignHandler HMAC-SHA256 签名校验 |
 //! | API 接口鉴权 | `#[check_api_key]` | — | 支持 namespace 参数 |
-//! | TOTP 动态验证码 | `#[check_mfa]` | — | v0.7.x 新增，封装 check_safe 二级认证校验 |
-//! | ABAC 策略校验 | `#[check_abac]` | — | v0.7.x 新增，纯 ABAC 校验（无 RBAC 前置） |
-//! | 账号禁用状态 | `#[check_disable]` | — | v0.7.3 新增，封装 check_disable 禁用账号校验 |
+//! | TOTP 动态验证码 | `#[check_mfa]` | — | 封装 check_safe 二级认证校验 |
+//! | ABAC 策略校验 | `#[check_abac]` | — | 纯 ABAC 校验（无 RBAC 前置） |
+//! | 账号禁用状态 | `#[check_disable]` | — | 封装 check_disable 禁用账号校验 |
 //! | Basic 认证 | — | — | 协议层 Extractor（secure::httpbasic） |
 //! | Digest 认证 | — | — | 协议层 Extractor（secure::httpdigest） |
 //! | 路由拦截鉴权 | — | — | Web 框架适配（GarrisonRouter + middleware），非校验型 |
@@ -59,10 +59,10 @@
 //! async fn __garrison_inner_handler() -> &'static str { "ok" }
 //!
 //! async fn handler() -> axum::response::Response {
-//!     // check_login().await ...
-//!     ::axum::response::IntoResponse::into_response(
-//!         __garrison_inner_handler().await
-//!     )
+//! // check_login().await ...
+//! ::axum::response::IntoResponse::into_response(
+//! __garrison_inner_handler().await
+//! )
 //! }
 //!
 //! // 输入（sync fn）
@@ -73,10 +73,10 @@
 //! fn __garrison_inner_sync_handler() -> &'static str { "ok" }
 //!
 //! fn sync_handler() -> axum::response::Response {
-//!     // check_login_sync() ...
-//!     ::axum::response::IntoResponse::into_response(
-//!         __garrison_inner_sync_handler()
-//!     )
+//! // check_login_sync() ...
+//! ::axum::response::IntoResponse::into_response(
+//! __garrison_inner_sync_handler()
+//! )
 //! }
 //! ```
 
@@ -112,12 +112,12 @@ use syn::{
 ///
 /// #[check_login]
 /// async fn handler() -> impl IntoResponse {
-///     "hello"
+/// "hello"
 /// }
 ///
 /// #[check_login]
 /// fn sync_handler() -> impl IntoResponse {
-///     "hello"
+/// "hello"
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -137,7 +137,7 @@ pub fn check_login(_attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// 支持多个权限参数 `#[check_permission("a", "b")]`（AND 语义：必须持有全部权限）。
 ///
-/// ## 2. 命名参数（v0.7.0 新增，RBAC + ABAC）
+/// ## 2. 命名参数（RBAC + ABAC）
 ///
 /// `#[check_permission(permission = "order:read", resource = "Resource::\"order\"", abac = "resource.user_id == principal.id")]`
 ///
@@ -254,7 +254,7 @@ pub fn check_role(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_with_args("check_role", &roles, item_fn)
 }
 
-/// access_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
+/// access_token 类型校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
 /// `GarrisonUtil::check_access_token()`（async）或 `check_access_token_sync()`（sync）调用。未登录请求返回 401。
@@ -279,7 +279,7 @@ pub fn check_access_token(_attr: TokenStream, item: TokenStream) -> TokenStream 
     expand_check_no_args("check_access_token", item_fn)
 }
 
-/// client_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
+/// client_token 类型校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
 /// `GarrisonUtil::check_client_token()`（async）或 `check_client_token_sync()`（sync）调用。未登录请求返回 401。
@@ -289,7 +289,7 @@ pub fn check_client_token(_attr: TokenStream, item: TokenStream) -> TokenStream 
     expand_check_no_args("check_client_token", item_fn)
 }
 
-/// temp_token 类型校验属性宏（0.5.0 新增，依据 spec annotation-macros P2）。
+/// temp_token 类型校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
 /// `GarrisonUtil::check_temp_token()`（async）或 `check_temp_token_sync()`（sync）调用。未登录请求返回 401。
@@ -299,7 +299,7 @@ pub fn check_temp_token(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_no_args("check_temp_token", item_fn)
 }
 
-/// API Key 校验属性宏（0.6.1 新增，依据 spec annotation-check-api-key R-anno-003）。
+/// API Key 校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
 /// `GarrisonUtil::check_api_key(namespace)`（async）或 `check_api_key_sync(namespace)`（sync）调用。校验失败返回 401/403。
@@ -341,7 +341,7 @@ pub fn check_api_key(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_api_key(&ns, item_fn)
 }
 
-/// MFA 二级认证校验属性宏（v0.7.x 新增，依据 spec annotation-macros R-anno-004）。
+/// MFA 二级认证校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
 /// `GarrisonUtil::check_safe()`（async）或 `check_safe_sync()`（sync）调用。未通过二级认证返回 403。
@@ -370,7 +370,7 @@ pub fn check_mfa(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_no_args("check_safe", item_fn)
 }
 
-/// 账号禁用状态校验属性宏（v0.7.3 新增，依据 spec annotation-macros R-anno-006）。
+/// 账号禁用状态校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
 /// `GarrisonUtil::check_disable()`（async）或 `check_disable_sync()`（sync）调用。
@@ -403,7 +403,7 @@ pub fn check_disable(_attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_no_args("check_disable", item_fn)
 }
 
-/// ABAC 策略校验属性宏（v0.7.x 新增，依据 spec annotation-macros R-anno-005）。
+/// ABAC 策略校验属性宏。
 ///
 /// 标注在 async fn 或 sync fn 上，编译期生成 wrapper 在 fn body 前插入
 /// `garrison::abac::check_abac_with_policy(action, resource, abac_expr)` 调用。ABAC 策略拒绝返回 403。
@@ -455,7 +455,7 @@ pub fn check_abac(attr: TokenStream, item: TokenStream) -> TokenStream {
 }
 
 // ============================================================================
-// forge 兼容变体（v0.8.2 新增）
+// forge 兼容变体
 // ============================================================================
 //
 // 与 sdforge `#[forge]` 宏共存的变体。不生成 wrapper 函数，直接在原函数体开头
@@ -478,7 +478,7 @@ pub fn check_abac(attr: TokenStream, item: TokenStream) -> TokenStream {
 // #[check_permission_forge("admin")]
 // #[forge(name = "handler", path = "/admin/data", method = "GET")]
 // async fn handler() -> Result<Json<Data>, ErrorResponse> {
-//     // body
+// // body
 // }
 // ```
 
@@ -500,7 +500,7 @@ pub fn check_abac(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// #[check_login_forge]
 /// #[forge(name = "handler", path = "/data", method = "GET")]
 /// async fn handler() -> Result<Json<Data>, ErrorResponse> {
-///     // body
+/// // body
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -530,7 +530,7 @@ pub fn check_login_forge(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// #[check_permission_forge("admin")]
 /// #[forge(name = "handler", path = "/admin/data", method = "GET")]
 /// async fn handler() -> Result<Json<Data>, ErrorResponse> {
-///     // body
+/// // body
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -568,7 +568,7 @@ pub fn check_permission_forge(attr: TokenStream, item: TokenStream) -> TokenStre
 /// #[check_role_forge("admin")]
 /// #[forge(name = "handler", path = "/admin/data", method = "GET")]
 /// async fn handler() -> Result<Json<Data>, ErrorResponse> {
-///     // body
+/// // body
 /// }
 /// ```
 #[proc_macro_attribute]
@@ -628,13 +628,13 @@ impl Parse for CheckApiKeyAttr {
     }
 }
 
-/// 解析 `#[check_permission]` 命名参数形式（v0.7.0 新增）。
+/// 解析 `#[check_permission]` 命名参数形式。
 ///
 /// 支持形式：`#[check_permission(permission = "x", resource = "r", abac = "expr")]`
 ///
 /// - `permission`（必填）：权限标识
 /// - `resource`（可选）：Cedar resource EntityUid 字符串（如 `Resource::"default"`）。
-///   未提供时使用默认值 `Resource::"default"`（向后兼容）。
+/// 未提供时使用默认值 `Resource::"default"`（向后兼容）。
 /// - `abac`（可选）：Cedar 条件表达式
 ///
 /// 位置参数形式（`#[check_permission("x")]`）不走此解析器，
@@ -683,13 +683,13 @@ impl Parse for CheckPermissionAttr {
     }
 }
 
-/// 解析 `#[check_abac]` 命名参数形式（v0.7.x 新增）。
+/// 解析 `#[check_abac]` 命名参数形式。
 ///
 /// 支持形式：`#[check_abac(action = "x", resource = "r", abac = "expr")]`
 ///
 /// - `action`（必填）：Cedar action 标识
 /// - `resource`（可选）：Cedar resource EntityUid 字符串（如 `Resource::"default"`）。
-///   未提供时使用默认值 `Resource::"default"`（向后兼容）。
+/// 未提供时使用默认值 `Resource::"default"`（向后兼容）。
 /// - `abac`（必填）：Cedar 条件表达式
 ///
 /// `action` 和 `abac` 均为必填，缺失任一返回编译错误。
@@ -786,7 +786,7 @@ fn detect_asyncness(item_fn: &ItemFn) -> Asyncness {
 /// - `Ok(true)`：已登录，继续执行 fn body
 /// - `Ok(false)`：未登录（`throw_on_not_login=false`），返回 401
 /// - `Err(e)`：错误（如 Manager 未初始化，或 `throw_on_not_login=true` 时未登录），
-///   返回错误对应的 Response（NotLogin → 401，其他 → 500/etc.）
+/// 返回错误对应的 Response（NotLogin → 401，其他 → 500/etc.）
 fn expand_check_login(item_fn: ItemFn) -> TokenStream {
     let asyncness = detect_asyncness(&item_fn);
     let checks = match asyncness {
@@ -1068,16 +1068,16 @@ fn expand_wrapper(
     };
 
     let expanded = quote! {
-        // inner：保留原 sig（仅重命名）+ 原 body + 原 attrs（如 #[cfg]/#[doc]）
-        #(#attrs)*
-        #vis #inner_sig #block
+    // inner：保留原 sig（仅重命名）+ 原 body + 原 attrs（如 #[cfg]/#[doc]）
+           #(#attrs)*
+           #vis #inner_sig #block
 
-        // wrapper：原名称 + Response 返回类型，body 前插入检查代码
-        #vis #wrapper_sig {
-            #checks
-            ::axum::response::IntoResponse::into_response(#inner_call)
-        }
-    };
+    // wrapper：原名称 + Response 返回类型，body 前插入检查代码
+           #vis #wrapper_sig {
+               #checks
+               ::axum::response::IntoResponse::into_response(#inner_call)
+           }
+       };
     expanded.into()
 }
 
@@ -1150,14 +1150,14 @@ fn expand_check_with_args_forge(
 /// 展开后函数体结构：
 /// ```ignore
 /// async fn handler(...) -> Result<T, E: From<GarrisonError>> {
-///     // #checks
-///     if let Err(e) = GarrisonUtil::check_permission(...).await {
-///         return Err(e.into());
-///     }
-///     // #block（原函数体作为内层块，其值作为函数返回值）
-///     {
-///         // original body
-///     }
+/// // #checks
+/// if let Err(e) = GarrisonUtil::check_permission(...).await {
+/// return Err(e.into());
+/// }
+/// // #block（原函数体作为内层块，其值作为函数返回值）
+/// {
+/// // original body
+/// }
 /// }
 /// ```
 ///

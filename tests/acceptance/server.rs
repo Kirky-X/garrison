@@ -1,17 +1,16 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! server 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! server 域验收。
 //!
-//! 场景编号 `ACC-SRV-NNN`：
-//! - ACC-SRV-001..012：`GarrisonAuthServer` 外网/内网端点验收（12 个场景）；
-//! - ACC-SRV-013..018：oauth2_server 端点级验收（`#[cfg(feature = "oauth2-server")]`）：
-//!   authorize 重定向 / token 4 种 grant / revoke / introspect（RFC 6749/7009/7662），
-//!   装配参考 `src/oauth2_server/*` 与 `tests/e2e/oauth2_flow.rs`；
-//! - ACC-SRV-019..022：auth_server 二进制 smoke（`#[cfg(feature = "auth-server")]`）：
-//!   以子进程方式验证 `src/bin/auth_server.rs` 的 env 装配 + listen() 真实启动
-//!   与 fail-closed 契约（缺失 / 空串 `GARRISON_INTERNAL_API_KEY` → exit(1)，
-//!   端口被占用 → bind 失败 → 非零退出码）。
+//! - `GarrisonAuthServer` 外网/内网端点验收（12 个场景）；
+//! - oauth2_server 端点级验收（`#[cfg(feature = "oauth2-server")]`）：
+//! authorize 重定向 / token 4 种 grant / revoke / introspect（RFC 6749/7009/7662），
+//! 装配参考 `src/oauth2_server/*` 与 `tests/e2e/oauth2_flow.rs`；
+//! - auth_server 二进制 smoke（`#[cfg(feature = "auth-server")]`）：
+//! 以子进程方式验证 `src/bin/auth_server.rs` 的 env 装配 + listen() 真实启动
+//! 与 fail-closed 契约（缺失 / 空串 `GARRISON_INTERNAL_API_KEY` → exit(1)，
+//! 端口被占用 → bind 失败 → 非零退出码）。
 //!
 //! 全局装配同 `tests/auth_server_integration.rs`：随机端口 + `MockAuthBackend`
 //!（in-memory token 表，测试替身）经 HTTP 访问真实端点。本域不触碰
@@ -269,10 +268,10 @@ async fn http_check_login(
 }
 
 // ------------------------------------------------------------------------
-// ACC-SRV-001..006：外网 login/logout/refresh + 内网校验（正常）
+// 外网 login/logout/refresh + 内网校验（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-SRV-001（正常）：外网 login 签发 `token-<login_id>-` 前缀 token，
+/// （正常）：外网 login 签发 `token-<login_id>-` 前缀 token，
 /// 内网 check-login 经 `X-API-Key` 校验返回 `data=true`。
 /// 迁自 tests/auth_server_integration.rs::test_external_login_and_check
 #[tokio::test]
@@ -294,7 +293,7 @@ async fn acc_srv_001_external_login_and_internal_check() {
     );
 }
 
-/// ACC-SRV-002（正常）：内网 health 端点返回 `{"data": "ok"}`。
+/// （正常）：内网 health 端点返回 `{"data": "ok"}`。
 /// 迁自 tests/auth_server_integration.rs::test_internal_health_endpoint
 #[tokio::test]
 #[serial]
@@ -313,7 +312,7 @@ async fn acc_srv_002_internal_health_endpoint() {
     assert_eq!(body["data"], "ok");
 }
 
-/// ACC-SRV-003（正常）：外网 logout 使 token 失效——同一 token 的
+/// （正常）：外网 logout 使 token 失效——同一 token 的
 /// 内网 check-login 返回 `data=false`。
 /// 迁自 tests/auth_server_integration.rs::test_external_logout_invalidates_token
 #[tokio::test]
@@ -339,7 +338,7 @@ async fn acc_srv_003_external_logout_invalidates_token() {
     );
 }
 
-/// ACC-SRV-004（正常）：外网 refresh 轮换出新 token（新旧不同）。
+/// （正常）：外网 refresh 轮换出新 token（新旧不同）。
 /// 迁自 tests/auth_server_integration.rs::test_external_refresh_returns_new_token
 #[tokio::test]
 #[serial]
@@ -361,7 +360,7 @@ async fn acc_srv_004_external_refresh_returns_new_token() {
     assert_ne!(old_token, new_token, "refresh 应签发新 token");
 }
 
-/// ACC-SRV-005（正常）：内网 get-token-info 返回 token 元数据
+/// （正常）：内网 get-token-info 返回 token 元数据
 ///（`data.token` 一致、`created_at=1000` 与 mock 契约一致）。
 /// 迁自 tests/auth_server_integration.rs::test_internal_get_token_info
 #[tokio::test]
@@ -385,7 +384,7 @@ async fn acc_srv_005_internal_get_token_info() {
     assert_eq!(body["data"]["created_at"], 1000);
 }
 
-/// ACC-SRV-006（正常）：内网 get-session 返回会话主体
+/// （正常）：内网 get-session 返回会话主体
 ///（`data.login_id` 与登录主体一致）。
 /// 迁自 tests/auth_server_integration.rs::test_internal_get_session
 #[tokio::test]
@@ -409,10 +408,10 @@ async fn acc_srv_006_internal_get_session() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SRV-007..009：内网 X-API-Key 互斥 / 踢出 / 切换（正常 + 异常）
+// 内网 X-API-Key 互斥 / 踢出 / 切换（正常 + 异常）
 // ------------------------------------------------------------------------
 
-/// ACC-SRV-007（异常）：内网端点缺少 / 错误的 `X-API-Key` 一律 401。
+/// （异常）：内网端点缺少 / 错误的 `X-API-Key` 一律 401。
 /// 迁自 tests/auth_server_integration.rs::test_internal_rejects_missing_api_key
 /// 与 tests/auth_server_integration.rs::test_internal_rejects_wrong_api_key
 #[tokio::test]
@@ -439,7 +438,7 @@ async fn acc_srv_007_internal_rejects_missing_and_wrong_api_key() {
     assert_eq!(resp.status(), 401, "错误 X-API-Key 应返回 401");
 }
 
-/// ACC-SRV-008（正常+异常）：内网 kickout 后同账号全部 token 失效
+/// （正常+异常）：内网 kickout 后同账号全部 token 失效
 ///（check-login 均为 `data=false`）。
 /// 迁自 tests/auth_server_integration.rs::test_internal_kickout
 #[tokio::test]
@@ -470,7 +469,7 @@ async fn acc_srv_008_internal_kickout_invalidates_all_tokens() {
     }
 }
 
-/// ACC-SRV-009（正常）：内网 switch-to 切换会话主体——get-session 反查
+/// （正常）：内网 switch-to 切换会话主体——get-session 反查
 /// `login_id` 变为目标主体。
 /// 迁自 tests/auth_server_integration.rs::test_internal_switch_to
 #[tokio::test]
@@ -506,10 +505,10 @@ async fn acc_srv_009_internal_switch_to_changes_session_subject() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SRV-010..012：限速 / 中间件错误码映射 / 内外网路径互斥（异常）
+// 限速 / 中间件错误码映射 / 内外网路径互斥（异常）
 // ------------------------------------------------------------------------
 
-/// ACC-SRV-010（异常）：外网限速——`rate_limit=2` 时第 3 个并发登录请求返回 429。
+/// （异常）：外网限速——`rate_limit=2` 时第 3 个并发登录请求返回 429。
 /// 迁自 tests/auth_server_integration.rs::test_external_rate_limit_returns_429
 #[tokio::test]
 #[serial]
@@ -543,7 +542,7 @@ async fn acc_srv_010_external_rate_limit_returns_429() {
     assert_eq!(resp.status(), 429, "超限速应返回 429");
 }
 
-/// ACC-SRV-011（异常）：内网 check-permission 对无效 token 返回中间件
+/// （异常）：内网 check-permission 对无效 token 返回中间件
 /// 错误码映射 `error_code=INVALID_TOKEN`（业务错误以 200 + error_code 表达）。
 /// 迁自 tests/auth_server_integration.rs::test_internal_check_permission_with_invalid_token
 #[tokio::test]
@@ -567,7 +566,7 @@ async fn acc_srv_011_internal_check_permission_invalid_token_error_code() {
     assert_eq!(body["error_code"], "INVALID_TOKEN");
 }
 
-/// ACC-SRV-012（异常）：内外网路径互斥——外网端口拒绝内网路径（404）；
+/// （异常）：内外网路径互斥——外网端口拒绝内网路径（404）；
 /// 内网端口拒绝外网路径 login：带 API Key 时由 path-filter 拒绝（404），
 /// 缺 API Key 时由更外层的 api_key_auth 中间件先拒绝（401）。
 /// 迁自 tests/auth_server_integration.rs 的 router path-filter 语义
@@ -617,7 +616,7 @@ async fn acc_srv_012_external_internal_paths_mutually_exclusive() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SRV-013..018：oauth2_server 端点级验收（#[cfg(feature = "oauth2-server")]）
+// oauth2_server 端点级验收（#[cfg(feature = "oauth2-server")]）
 // ------------------------------------------------------------------------
 //
 // 装配参考 `src/oauth2_server/*` 单元测试 + `tests/e2e/oauth2_flow.rs`：
@@ -731,7 +730,7 @@ fn extract_auth_code(location: &str) -> String {
         .to_string()
 }
 
-/// ACC-SRV-013（正常+异常）：authorize 端点重定向——已登录（Bearer token）
+/// （正常+异常）：authorize 端点重定向——已登录（Bearer token）
 /// 重定向到 redirect_uri 携带 code+state；未登录重定向到登录页（return_to 保留参数）。
 #[cfg(feature = "oauth2-server")]
 #[tokio::test]
@@ -786,7 +785,7 @@ async fn acc_srv_013_authorize_redirect_logged_in_and_anonymous() {
     assert!(!code.is_empty(), "授权码不应为空");
 }
 
-/// ACC-SRV-014（正常+异常）：token 端点 authorization_code grant——
+/// （正常+异常）：token 端点 authorization_code grant——
 /// PKCE 校验 + 签发 access/refresh token；code 一次性（重放 → 400 invalid_grant）；
 /// 成功响应含 RFC 6749 §5.1 no-store 缓存头。
 #[cfg(feature = "oauth2-server")]
@@ -892,7 +891,7 @@ async fn acc_srv_014_token_authorization_code_grant_pkce() {
     assert_eq!(resp.status(), 400, "无效 code 应返回 400");
 }
 
-/// ACC-SRV-015（正常）：token 端点 client_credentials grant——签发
+/// （正常）：token 端点 client_credentials grant——签发
 /// access_token（无 refresh_token），scope 校验通过。
 #[cfg(feature = "oauth2-server")]
 #[tokio::test]
@@ -952,7 +951,7 @@ async fn acc_srv_015_token_client_credentials_grant() {
     }
 }
 
-/// ACC-SRV-016（正常+异常）：token 端点 password grant——正确凭证签发
+/// （正常+异常）：token 端点 password grant——正确凭证签发
 /// token（含 refresh_token + scope）；错误凭证返回 invalid_grant。
 #[cfg(feature = "oauth2-server")]
 #[tokio::test]
@@ -1054,7 +1053,7 @@ async fn acc_srv_016_token_password_grant() {
     assert_eq!(resp.status(), 400, "错误密码应返回 400");
 }
 
-/// ACC-SRV-017（正常+异常）：token 端点 refresh_token grant——轮换出新
+/// （正常+异常）：token 端点 refresh_token grant——轮换出新
 /// access/refresh token；旧 refresh_token 重放返回 invalid_grant（DAO 轮换路径
 /// 删除旧记录后的隐式 reuse detection）。
 #[cfg(feature = "oauth2-server")]
@@ -1139,7 +1138,7 @@ async fn acc_srv_017_token_refresh_token_grant_rotates() {
     assert_eq!(resp.status(), 400, "旧 refresh_token 重放应返回 400");
 }
 
-/// ACC-SRV-018（正常+异常）：revoke + introspect——revoke 返回 204 且
+/// （正常+异常）：revoke + introspect——revoke 返回 204 且
 /// token 立即失活（introspect active=false）；未知 token introspect 返回
 /// active=false 且状态码 200；客户端凭证错误被拒。
 #[cfg(feature = "oauth2-server")]
@@ -1237,7 +1236,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-SRV-019..021：auth_server 二进制 smoke（#[cfg(feature = "auth-server")]）
+// auth_server 二进制 smoke（#[cfg(feature = "auth-server")]）
 // ------------------------------------------------------------------------
 //
 // `src/bin/auth_server.rs` 是自含二进制：从环境变量装配
@@ -1248,13 +1247,13 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
 //
 // 实现说明：
 // - 经 `CARGO_BIN_EXE_auth_server` 定位二进制（bin 的 required-features =
-//   auth-server ⊂ 本 target 的 full，测试构建时必然已编译）；
+// auth-server ⊂ 本 target 的 full，测试构建时必然已编译）；
 // - tokio 的 `process` feature 在依赖图中未启用（不为此新增依赖），故用
-//   `std::process::Command` 同步子进程 + 异步 reqwest 轮询的组合，
-//   退出等待以 `try_wait()` 轮询模拟 `tokio::process` 语义；
+// `std::process::Command` 同步子进程 + 异步 reqwest 轮询的组合，
+// 退出等待以 `try_wait()` 轮询模拟 `tokio::process` 语义；
 // - env 经 Command 注入（默认继承父进程其余环境），不触碰测试进程自身
-//   环境变量，无需 set_var 串行保护；注入的 API Key 均为测试占位串，
-//   禁止写入真实凭据。
+// 环境变量，无需 set_var 串行保护；注入的 API Key 均为测试占位串，
+// 禁止写入真实凭据。
 
 /// 探测一个空闲本地端口（绑定 `127.0.0.1:0` 读取端口后立即释放）。
 #[cfg(feature = "auth-server")]
@@ -1301,13 +1300,13 @@ async fn wait_for_exit(child: &mut std::process::Child) -> std::process::ExitSta
     .expect("auth_server 子进程应在 30s 内退出")
 }
 
-/// ACC-SRV-019（正常）：auth_server 二进制正常启动 smoke——注入双端口与
+/// （正常）：auth_server 二进制正常启动 smoke——注入双端口与
 /// API Key（测试占位串）环境变量后：
 /// 1. 外网端口 `/api/v1/auth/health` 可达：拿到任意 HTTP 响应即证明
-///    「进程存活且可响应 HTTP」（health 是内网专属端点，外网经 path-filter
-///    返回 404，语义同 ACC-SRV-012，故此处不断言 200）；
+/// 「进程存活且可响应 HTTP」（health 是内网专属端点，外网经 path-filter
+/// 返回 404，语义同 ，故此处不断言 200）；
 /// 2. 内网端口 `/api/v1/auth/health`（带 x-api-key）返回 200 + `{"data":"ok"}`：
-///    health 不依赖 GarrisonManager，端到端验证 env 装配 + 路由构建 + 中间件。
+/// health 不依赖 GarrisonManager，端到端验证 env 装配 + 路由构建 + 中间件。
 #[cfg(feature = "auth-server")]
 #[tokio::test]
 #[serial]
@@ -1371,7 +1370,7 @@ async fn acc_srv_019_auth_server_bin_startup_smoke() {
     let _ = child.wait();
 }
 
-/// ACC-SRV-020（异常）：fail-closed——缺失 `GARRISON_INTERNAL_API_KEY`
+/// （异常）：fail-closed——缺失 `GARRISON_INTERNAL_API_KEY`
 /// （显式从 env 移除，防父环境已有）时，进程以退出码 1 拒绝启动。
 #[cfg(feature = "auth-server")]
 #[tokio::test]
@@ -1399,7 +1398,7 @@ async fn acc_srv_020_auth_server_exits_without_api_key() {
     let _ = child.wait();
 }
 
-/// ACC-SRV-021（异常）：fail-closed——`GARRISON_INTERNAL_API_KEY` 为空串时，
+/// （异常）：fail-closed——`GARRISON_INTERNAL_API_KEY` 为空串时，
 /// 进程以退出码 1 拒绝启动。
 #[cfg(feature = "auth-server")]
 #[tokio::test]
@@ -1427,19 +1426,19 @@ async fn acc_srv_021_auth_server_exits_with_empty_api_key() {
     let _ = child.wait();
 }
 
-/// ACC-SRV-022（异常）：端口冲突 fail-fast——外网端口被测试进程占住
+/// （异常）：端口冲突 fail-fast——外网端口被测试进程占住
 ///（listener 全程保持监听，杜绝"绑定后 drop 再被子进程抢到"的竞态）时，
 /// auth_server 子进程 `listen()` 的 `TcpListener::bind` 返回 `Err`
 ///（`server-external-bind::...`）→ `main()` 返回 `Err` → 以非零退出码终止。
 ///
-/// 与 ACC-SRV-020/021 的 env fail-closed 不同，本场景验证的是
+/// 与 /021 的 env fail-closed 不同，本场景验证的是
 /// `GarrisonAuthServer::listen` 的 bind 失败传播契约（bin 层 `if let Err` → 返回 Err）。
 #[cfg(feature = "auth-server")]
 #[tokio::test]
 #[serial]
 async fn acc_srv_022_auth_server_bin_port_conflict_exits_nonzero() {
     // 1. 占住一个端口并【保持监听不 drop】：std::net::TcpListener 绑定后即进入
-    //    LISTEN 状态，子进程对同端口（含 0.0.0.0 通配）的任何 bind 均 EADDRINUSE
+    // LISTEN 状态，子进程对同端口（含 0.0.0.0 通配）的任何 bind 均 EADDRINUSE
     let occupier = std::net::TcpListener::bind("127.0.0.1:0").expect("绑定 127.0.0.1:0 应成功");
     let external_port = occupier.local_addr().expect("读取本地端口应成功").port();
     // 内网端口用空闲端口，保证失败源唯一（外网 bind 冲突）
@@ -1447,7 +1446,7 @@ async fn acc_srv_022_auth_server_bin_port_conflict_exits_nonzero() {
     let external_port = external_port.to_string();
 
     // 2. 启动子进程并注入被占端口；API Key 为明显测试占位串（非真实凭据），
-    //    确保 env 校验通过、失败仅来自端口冲突
+    // 确保 env 校验通过、失败仅来自端口冲突
     let mut child = spawn_auth_server_process(
         &[
             ("GARRISON_EXTERNAL_PORT", external_port.as_str()),

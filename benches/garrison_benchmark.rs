@@ -2,14 +2,14 @@
 //! See LICENSE for full license text.
 
 //! Garrison Benchmark Suite
-//! 依据 spec benchmark-framework（E-006），覆盖 4 个基准场景：
+//! 覆盖 4 个基准场景：
 //!
-//! | Bench | FRD 来源 | 目标 P99 |
-//! |-------|---------|---------|
-//! | `login_flow` | §7.1 BLK-001 | ≤ 500ms（5000 TPS） |
-//! | `token_verify_stateless` | §7.1 + ADD §8.1 | ≤ 5ms（20000 TPS） |
-//! | `permission_check` | §7.1 BLK-005 | ≤ 5ms（20000 TPS） |
-//! | `oxcache_backend_switch` | §8.2 压测-007 | 切换开销 = 0 |
+//! | Bench | 目标 |
+//! |-------|------|
+//! | `login_flow` | ≤ 500ms（5000 TPS） |
+//! | `token_verify_stateless` | ≤ 5ms（20000 TPS） |
+//! | `permission_check` | ≤ 5ms（20000 TPS） |
+//! | `oxcache_backend_switch` | 切换开销 = 0 |
 //!
 //! ## 运行方式
 //!
@@ -210,12 +210,12 @@ fn make_logic() -> GarrisonLogicDefault {
 }
 
 // ============================================================================
-// Bench 1: login_flow（FRD §7.1 BLK-001，目标 P99 ≤ 500ms）
+// Bench 1: login_flow（目标 P99 ≤ 500ms）
 // ============================================================================
 
 /// 基准测试登录流程。
 ///
-/// 依据 FRD §7.1 BLK-001：5000 TPS 并发登录，P99 ≤ 500ms。
+/// 5000 TPS 并发登录，P99 ≤ 500ms。
 ///
 /// 流程：`GarrisonLogicDefault::login("bench-user", &LoginParams::default())` 完整调用
 /// （生成 token + 创建 Token-Session + 创建 Account-Session）。
@@ -236,12 +236,12 @@ fn bench_login_flow(c: &mut Criterion) {
 }
 
 // ============================================================================
-// Bench 2: token_verify_stateless（FRD §7.1 + ADD §8.1，目标 P99 ≤ 5ms）
+// Bench 2: token_verify_stateless（目标 P99 ≤ 5ms）
 // ============================================================================
 
 /// 基准测试 JWT Stateless 模式 token 验证。
 ///
-/// 依据 FRD §7.1 + ADD §8.1：P99 ≤ 5ms（20000 TPS）。
+/// P99 ≤ 5ms（20000 TPS）。
 ///
 /// - 启用 `protocol-jwt` feature 时：实际 JWT 签发 + 验签（本地 JWKS 缓存命中场景）
 /// - 未启用时：模拟 stateless 验证（JWT 结构解析，不验证签名）
@@ -296,12 +296,12 @@ fn bench_token_verify_stateless(c: &mut Criterion) {
 }
 
 // ============================================================================
-// Bench 3: permission_check（FRD §7.1 BLK-005，目标 P99 ≤ 5ms）
+// Bench 3: permission_check（目标 P99 ≤ 5ms）
 // ============================================================================
 
 /// 基准测试权限检查。
 ///
-/// 依据 FRD §7.1 BLK-005：20000 TPS，P99 ≤ 5ms。
+/// 20000 TPS，P99 ≤ 5ms。
 ///
 /// 流程：登录获取 token → 在 task_local 上下文中调用 `has_permission("bench:read")`。
 /// 使用 mock firewall 返回 true（模拟 oxcache 缓存命中场景）。
@@ -342,21 +342,21 @@ fn bench_permission_check(c: &mut Criterion) {
 }
 
 // ============================================================================
-// Bench 4: oxcache_backend_switch（FRD §8.2 压测-007，目标切换开销 = 0）
+// Bench 4: oxcache_backend_switch（目标切换开销 = 0）
 // ============================================================================
 
 /// 基准测试缓存后端切换。
 ///
-/// 依据 FRD §8.2 压测-007：切换 oxcache 后端后代码无修改，切换开销 = 0。
+/// 切换 oxcache 后端后代码无修改，切换开销 = 0。
 ///
-/// # 规则7 冲突说明
+/// # 命名冲突说明
 ///
-/// 1. **Caffeine 不存在**：spec R-bench-005 要求验证 "Memory → Caffeine" 切换，
-///    但 Rust 生态无 Caffeine（oxcache 内存后端），故适配为
-///    memory / redis 两后端
+/// 1. **Caffeine 不存在**：原基准要求验证 "Memory → Caffeine" 切换，
+/// 但 Rust 生态无 Caffeine（oxcache 内存后端），故适配为
+/// memory / redis 两后端
 /// 2. **无 runtime backend 字段**：spec 要求修改 `GarrisonConfig.oxcache.backend`
-///    字段验证切换，但 `GarrisonConfig` 无此字段（后端选择通过 Cargo feature
-///    编译期决定），故通过不同 `GarrisonDao` 实现验证 DAO 抽象层
+/// 字段验证切换，但 `GarrisonConfig` 无此字段（后端选择通过 Cargo feature
+/// 编译期决定），故通过不同 `GarrisonDao` 实现验证 DAO 抽象层
 ///
 /// # 验证方式
 ///
@@ -367,7 +367,7 @@ fn bench_permission_check(c: &mut Criterion) {
 /// - `redis_mock`：另一个 HashMap 实例（模拟 redis L2）
 ///
 /// 运行时 skip：设置环境变量 `GARRISON_SKIP_REDIS_BENCH=1` 可跳过 redis 相关子 bench
-/// （依据 spec R-bench-005 Constraints），便于在无 Redis 环境下快速运行 benchmark。
+/// 便于在无 Redis 环境下快速运行 benchmark。
 fn bench_oxcache_backend_switch(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
     let mut group = c.benchmark_group("oxcache_backend_switch");
@@ -392,7 +392,7 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
     // redis_mock 后端（使用另一个 MockDao 实例，模拟不同后端）
     //
     // 运行时 skip：当 `GARRISON_SKIP_REDIS_BENCH=1` 时跳过 redis 相关子 bench，
-    // 便于在无 Redis 环境下快速运行 benchmark（依据 spec R-bench-005 Constraints）。
+    // 便于在无 Redis 环境下快速运行 benchmark
     // 未来引入真实 redis bench 时，此检查将跳过所有 redis 依赖场景。
     let skip_redis = std::env::var("GARRISON_SKIP_REDIS_BENCH")
         .map(|v| v == "1")

@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! SSO 单点登录示例：演示 `SsoClient` ticket 签发 / 校验 / 销毁完整流程（依据 spec protocol-sso）。
+//! SSO 单点登录示例：演示 `SsoClient` ticket 签发 / 校验 / 销毁完整流程。
 //!
 //! 运行方式：
 //! ```sh
@@ -112,7 +112,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison SSO 单点登录示例 ===\n");
 
     // 1. 创建 SsoClient，注入 DAO（ticket TTL 默认 60 秒）
-    //    v0.9.0: new 校验 secret 非空，返回 GarrisonResult
+    // new 校验 secret 非空，返回 GarrisonResult
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let sso = SsoClient::new(dao, "test-sso-secret-key")?;
 

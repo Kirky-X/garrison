@@ -1,12 +1,12 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! rbac 域验收（spec `acceptance-matrix` R-acceptance-matrix-002）。
+//! rbac 域验收。
 //! 权限 / 角色 / 层级继承 / 组合语义 / web 注解路由 / 策略热替换 /
-//! 数据源故障，「正常 + 异常」成对覆盖，场景编号 `ACC-RBAC-NNN`。
+//! 数据源故障，「正常 + 异常」成对覆盖。
 //!
-//! 经 `GarrisonTestHarness` 全局单例的用例（001-004、007-009）标注 `#[serial]`；
-//! 层级与组合用例（005-006）直构 `GarrisonPermissionStrategyDefault`
+//! 经 `GarrisonTestHarness` 全局单例的用例标注 `#[serial]`；
+//! 层级与组合用例直构 `GarrisonPermissionStrategyDefault`
 //! （无全局状态，可并行）；008 策略注册表热替换使用 `multi_thread` flavor
 //! （与 tests/integration/strategy_registry.rs 一致）。
 //!
@@ -38,10 +38,10 @@ fn test_config() -> Arc<GarrisonConfig> {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RBAC-001..004：权限 / 角色（正常 + 异常）
+// 权限 / 角色（正常 + 异常）
 // ------------------------------------------------------------------------
 
-/// ACC-RBAC-001（正常）：权限通过——`MockInterface.allow` 注入 → `login_simple`
+/// （正常）：权限通过——`MockInterface.allow` 注入 → `login_simple`
 /// → `with_current_token` + `GarrisonUtil::check_permission` 返回 Ok、`has_permission`
 /// 返回 true、`get_permission_list` 可读回注入的权限。
 #[tokio::test]
@@ -86,7 +86,7 @@ async fn acc_rbac_001_permission_granted_passes() {
     .await;
 }
 
-/// ACC-RBAC-002（正常）：角色通过——`MockInterface.allow` 注入角色 →
+/// （正常）：角色通过——`MockInterface.allow` 注入角色 →
 /// `check_role` 返回 Ok、`has_role` 返回 true、`get_role_list` 可读回注入角色。
 #[tokio::test]
 #[serial]
@@ -127,7 +127,7 @@ async fn acc_rbac_002_role_granted_passes() {
     .await;
 }
 
-/// ACC-RBAC-003（异常）：无权限——未注入权限的主体 `check_permission` 返回
+/// （异常）：无权限——未注入权限的主体 `check_permission` 返回
 /// `Err(GarrisonError::NotPermission)`（显性拒绝），`has_permission` 降级为
 /// `Ok(false)`（布尔查询不抛异常）。
 #[tokio::test]
@@ -164,7 +164,7 @@ async fn acc_rbac_003_permission_denied_returns_not_permission() {
     .await;
 }
 
-/// ACC-RBAC-004（异常）：无角色——未注入角色的主体 `check_role` 返回
+/// （异常）：无角色——未注入角色的主体 `check_role` 返回
 /// `Err(GarrisonError::NotRole)`，`has_role` 降级为 `Ok(false)`。
 #[tokio::test]
 #[serial]
@@ -201,10 +201,10 @@ async fn acc_rbac_004_role_denied_returns_not_role() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RBAC-005..006：角色层级继承 / Or-And-Not 组合语义（直构策略）
+// 角色层级继承 / Or-And-Not 组合语义（直构策略）
 // ------------------------------------------------------------------------
 
-/// ACC-RBAC-005（正常+异常）：角色层级继承——`with_role_hierarchy` 注入
+/// （正常+异常）：角色层级继承——`with_role_hierarchy` 注入
 /// `{"admin": ["user"], "superadmin": ["admin"]}` 后，持有 `superadmin` 的主体
 /// 经传递展开可继承 `admin` 与 `user`（多层传递）；未注入层级时同数据源
 /// `check_role("user")` 为 false（注入路径确实生效）。
@@ -249,7 +249,7 @@ async fn acc_rbac_005_role_hierarchy_transitive_inheritance() {
     );
 }
 
-/// ACC-RBAC-006（正常+异常）：Or/And/Not 组合短路语义——`check_role_any` 命中
+/// （正常+异常）：Or/And/Not 组合短路语义——`check_role_any` 命中
 /// 其一即过（Or）；`check_role_all` 全部满足才过（And）；`check_role` 对未持有
 /// 角色返回 false（Not 反转：负面断言成立）。
 #[tokio::test(flavor = "multi_thread")]
@@ -323,10 +323,10 @@ async fn acc_rbac_006_combination_short_circuit_semantics() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RBAC-007：web 注解路由（正常 + 异常）
+// web 注解路由（正常 + 异常）
 // ------------------------------------------------------------------------
 
-/// ACC-RBAC-007（正常+异常）：`GarrisonRouter::route_protected` + tower
+/// （正常+异常）：`GarrisonRouter::route_protected` + tower
 /// `ServiceExt::oneshot`——`CheckPermission` / `CheckRole` 注解路由：持有方返回
 /// 200，未持有方返回 403 且响应体带结构化错误码（`NOT_PERMISSION` / `NOT_ROLE`）。
 #[cfg(feature = "web-axum")]
@@ -430,7 +430,7 @@ async fn acc_rbac_007_web_route_annotations_grant_and_deny() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RBAC-008：策略注册表热替换（异常侧：默认拒绝被替换为放行）
+// 策略注册表热替换（异常侧：默认拒绝被替换为放行）
 // ------------------------------------------------------------------------
 
 /// 放行一切权限 / 角色的自定义 `PermissionHandler`（热替换注入物）。
@@ -449,7 +449,7 @@ impl garrison::strategy::PermissionHandler for AllowAllPermissionHandler {
     }
 }
 
-/// ACC-RBAC-008（异常+正常）：策略热替换后立即生效——默认（无授权数据）下
+/// （异常+正常）：策略热替换后立即生效——默认（无授权数据）下
 /// `PermissionHandler::handle_check_permission` 拒绝（`NotPermission`）；
 /// `register_permission_handler(AllowAll)` 后同一调用立即放行；
 /// `remove_permission_handler` 后恢复默认拒绝。全程不重建 manager（运行时替换）。
@@ -511,10 +511,10 @@ async fn acc_rbac_008_strategy_hot_swap_takes_effect_immediately() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RBAC-009：interface 故障显性化（异常）
+// interface 故障显性化（异常）
 // ------------------------------------------------------------------------
 
-/// ACC-RBAC-009（异常+正常）：`MockInterface::fail_with` 注入数据源故障后，
+/// （异常+正常）：`MockInterface::fail_with` 注入数据源故障后，
 /// `check_permission` / `has_permission` 均把 `Err` 显性上抛（`GarrisonError::Dao`），
 /// 不得静默降级为 `Ok(false)`；`clear_failure` 后恢复放行。
 #[tokio::test]
@@ -573,8 +573,8 @@ async fn acc_rbac_009_interface_error_fails_loud_and_recovers() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RBAC-010..018：策略注册表域
-// （ACC-RBAC-008 已覆盖的 register/remove 生命周期与 runtime 热替换去重）
+// 策略注册表域
+// （ 已覆盖的 register/remove 生命周期与 runtime 热替换去重）
 // ------------------------------------------------------------------------
 
 /// 构造测试用 `Arc<GarrisonLogicDefault>`（直构，不经全局单例；与
@@ -620,9 +620,9 @@ async fn make_strategy_logic() -> Arc<garrison::stp::GarrisonLogicDefault> {
     ))
 }
 
-/// ACC-RBAC-010（正常）：6 个策略 trait 可被业务方外部实现并调用——
+/// （正常）：6 个策略 trait 可被业务方外部实现并调用——
 /// `LoginHandler` / `LogoutHandler` / `PermissionHandler` / `TokenGenerator` /
-/// `SessionCreator` / `FirewallStrategy`（spec R-strategy-registry-001；
+/// `SessionCreator` / `FirewallStrategy`（
 /// 原 login/logout/permission/token/session/firewall handler 六测试合并）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
@@ -732,8 +732,8 @@ async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
     }
 }
 
-/// ACC-RBAC-011（正常）：`Strategy::new(logic)` 构造后 6 个 getter 全部返回
-/// 非空 `Arc`（spec R-strategy-registry-002）。
+/// （正常）：`Strategy::new(logic)` 构造后 6 个 getter 全部返回
+/// 非空 `Arc`。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_011_strategy_new_initializes_all_six_handlers() {
     use garrison::strategy::Strategy;
@@ -748,7 +748,7 @@ async fn acc_rbac_011_strategy_new_initializes_all_six_handlers() {
     assert!(Arc::strong_count(strategy.firewall_strategy()) >= 1);
 }
 
-/// ACC-RBAC-012（正常）：默认登录策略委托 `SessionLogic::login` 生成非空 token。
+/// （正常）：默认登录策略委托 `SessionLogic::login` 生成非空 token。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_012_default_login_handler_generates_token_via_logic() {
     use garrison::strategy::Strategy;
@@ -762,7 +762,7 @@ async fn acc_rbac_012_default_login_handler_generates_token_via_logic() {
     );
 }
 
-/// ACC-RBAC-013（正常）：默认防火墙策略为 no-op（返回 Ok）。
+/// （正常）：默认防火墙策略为 no-op（返回 Ok）。
 #[cfg(any(
     feature = "sms-rate-limit",
     feature = "firewall-ratelimit",
@@ -785,8 +785,8 @@ async fn acc_rbac_013_default_firewall_strategy_is_noop() {
     assert!(result.is_ok(), "默认防火墙策略应为 no-op 返回 Ok");
 }
 
-/// ACC-RBAC-014（正常）：6 个策略均支持 register / get / remove 三组方法——
-/// 全量替换为自定义实现后全部 remove 恢复默认（不报错；spec R-strategy-registry-003
+/// （正常）：6 个策略均支持 register / get / remove 三组方法——
+/// 全量替换为自定义实现后全部 remove 恢复默认（不报错；
 /// 批量验证；原 all_six_strategies_support_register_get_remove）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_014_all_six_strategies_support_register_get_remove() {
@@ -899,8 +899,8 @@ async fn acc_rbac_014_all_six_strategies_support_register_get_remove() {
     strategy.remove_firewall_strategy();
 }
 
-/// ACC-RBAC-015（正常+异常）：替换一个策略不影响其他策略（`Arc::ptr_eq` 原样）
-/// 且旧策略被 drop 无泄漏（weak 引用失效，spec R-strategy-registry-004；
+/// （正常+异常）：替换一个策略不影响其他策略（`Arc::ptr_eq` 原样）
+/// 且旧策略被 drop 无泄漏（weak 引用失效；
 /// 原 replace_one_strategy_does_not_affect_others + replace_drops_old_handler 合并）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_015_replace_isolated_and_old_handler_dropped() {
@@ -971,7 +971,7 @@ async fn acc_rbac_015_replace_isolated_and_old_handler_dropped() {
     );
 }
 
-/// ACC-RBAC-016（正常）：`GarrisonManager::with_strategy()` 整体替换策略注册表——
+/// （正常）：`GarrisonManager::with_strategy()` 整体替换策略注册表——
 /// 替换后 `strategy()` 返回新注册表且自定义 LoginHandler 生效
 ///（原 manager_with_strategy_replaces_registry）。
 #[tokio::test(flavor = "multi_thread")]
@@ -1026,7 +1026,7 @@ async fn acc_rbac_016_manager_with_strategy_replaces_registry() {
     assert!(!util_token.is_empty(), "login 应签发非空 token");
 }
 
-/// ACC-RBAC-017（正常）：同时替换多个策略，每个策略独立工作
+/// （正常）：同时替换多个策略，每个策略独立工作
 ///（原 replace_multiple_strategies_independently）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_rbac_017_replace_multiple_strategies_independently() {
@@ -1073,7 +1073,7 @@ async fn acc_rbac_017_replace_multiple_strategies_independently() {
     assert_eq!(refreshed, "refreshed-old");
 }
 
-/// ACC-RBAC-018（正常）：`Strategy` 经 `Arc<RwLock<Strategy>>` 多线程安全共享——
+/// （正常）：`Strategy` 经 `Arc<RwLock<Strategy>>` 多线程安全共享——
 /// 4 个线程并发 read + 调用计数 handler，恰累计 4 次
 ///（原 strategy_thread_safe_via_arc_rwlock）。
 #[tokio::test(flavor = "multi_thread")]

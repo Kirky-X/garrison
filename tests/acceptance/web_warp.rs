@@ -1,18 +1,17 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! warp 域验收（ACC-WARP-NNN，spec acceptance-matrix R-acceptance-matrix-001，补盲）。
+//! warp 域验收（补盲）。
 //!
 //! 与 `web_smoke`（spawn_warp 冒烟、CheckLogin 基线）区分，本域覆盖：
-//! - 001-003 guard Filter 矩阵：`check_login` / `check_role` / `check_permission`
-//!   通过与拒绝（`warp::test::request().filter()`，拒绝统一为 `GarrisonRejection`）；
-//! - 004 `garrison_principal` value Filter：从 token 解析 `login_id`；
-//! - 005 `tenant_context` value Filter（`tenant-isolation` 门控，X-Tenant-Id 解析）；
-//! - 006 `GarrisonRejection` 一致性：`.recover(garrison_recover)` 后响应含
-//!   `error_code` / `message` JSON，状态码与 `response_parts()` 对齐、
-//!   body 与 `to_json_body()` 全等（401 / 200 / 403 三态）。
+//! - guard Filter 矩阵：`check_login` / `check_role` / `check_permission`
+//! 通过与拒绝（`warp::test::request().filter()`，拒绝统一为 `GarrisonRejection`）；
+//! `garrison_principal` value Filter：从 token 解析 `login_id`；
+//! `tenant_context` value Filter（`tenant-isolation` 门控，X-Tenant-Id 解析）；
+//! `GarrisonRejection` 一致性：`.recover(garrison_recover)` 后响应含
+//! `error_code` / `message` JSON，状态码与 `response_parts()` 对齐、
+//! body 与 `to_json_body()` 全等（401 / 200 / 403 三态）。
 //!
-//! 场景编号约定：`ACC-<域>-NNN（正常|异常）`，本域 `warp`。
 //! 涉及 `GarrisonManager` 全局单例的用例一律 `#[serial]`。
 
 #![cfg(feature = "web-warp")]
@@ -80,10 +79,10 @@ fn assert_garrison_rejection(err: warp::Rejection, ctx: &str) {
 }
 
 // ============================================================================
-// ACC-WARP-001..003：guard Filter 矩阵
+// guard Filter 矩阵
 // ============================================================================
 
-/// ACC-WARP-001（正常+异常）：`check_login` guard Filter——有效 token 通过
+/// （正常+异常）：`check_login` guard Filter——有效 token 通过
 /// （Extract=()`）；无 token 拒绝为 `GarrisonRejection`。
 #[tokio::test]
 #[serial]
@@ -114,7 +113,7 @@ async fn acc_warp_001_guard_check_login_pass_and_reject() {
     );
 }
 
-/// ACC-WARP-002（正常+异常）：`check_role("admin")` guard Filter——持有
+/// （正常+异常）：`check_role("admin")` guard Filter——持有
 /// `admin` 角色通过；无角色拒绝为 `GarrisonRejection`。
 /// `tenant-isolation` 下角色查询 fail-closed，包 `with_default_tenant`。
 #[tokio::test]
@@ -158,7 +157,7 @@ async fn acc_warp_002_guard_check_role_pass_and_reject() {
     assert_garrison_rejection(result.expect_err("无角色应被拒绝"), "check_role 无角色");
 }
 
-/// ACC-WARP-003（正常+异常）：`check_permission("user:read")` guard Filter——
+/// （正常+异常）：`check_permission("user:read")` guard Filter——
 /// 持有 `user:read` 权限通过；无权限拒绝为 `GarrisonRejection`。
 #[tokio::test]
 #[serial]
@@ -208,10 +207,10 @@ async fn acc_warp_003_guard_check_permission_pass_and_reject() {
 }
 
 // ============================================================================
-// ACC-WARP-004..005：value Filter（garrison_principal / tenant_context）
+// value Filter（garrison_principal / tenant_context）
 // ============================================================================
 
-/// ACC-WARP-004（正常+异常）：`garrison_principal` value Filter——
+/// （正常+异常）：`garrison_principal` value Filter——
 /// 从 `Authorization: Bearer` token 解析 `login_id`（Extract=`GarrisonPrincipal`）；
 /// 无 token 拒绝为 `GarrisonRejection`。
 #[tokio::test]
@@ -247,7 +246,7 @@ async fn acc_warp_004_value_garrison_principal_resolves_login_id() {
     );
 }
 
-/// ACC-WARP-005（正常+异常）：`tenant_context` value Filter（`tenant-isolation`）——
+/// （正常+异常）：`tenant_context` value Filter（`tenant-isolation`）——
 /// `X-Tenant-Id: 42` 解析出 `tenant_id=42` + `TenantSource::Header`；
 /// 缺失 header / 非数字 header 拒绝为 `GarrisonRejection`（fail-closed，
 /// 不默认 0、不吞错）。
@@ -295,10 +294,10 @@ async fn acc_warp_005_value_tenant_context_resolves_tenant_id() {
 }
 
 // ============================================================================
-// ACC-WARP-006：GarrisonRejection 一致性（recover 后三框架统一 JSON）
+// GarrisonRejection 一致性（recover 后三框架统一 JSON）
 // ============================================================================
 
-/// ACC-WARP-006（正常+异常）：`.recover(garrison_recover)` 后——
+/// （正常+异常）：`.recover(garrison_recover)` 后——
 /// （a）无 token 访问 CheckLogin 路由 → 401，body 与 `NotLogin` 基准全等；
 /// （b）有效 token → 200 放行；
 /// （c）有效 token 但无权限访问 CheckPermission 路由 → 403，body 与

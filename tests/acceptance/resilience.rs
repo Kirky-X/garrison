@@ -1,19 +1,19 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! resilience 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
-//! 异常韧性场景，编号 `ACC-RES-NNN`：
+//! resilience 域验收。
+//! 异常韧性场景，编号 ：
 //! oxcache 故障时 JWT 无状态降级 / 配置错误 fail-fast / auth-server 内网
 //! API Key 错误 401 / 限流 429 / BackendRemote 500 与超时的错误传播及
 //! 熔断打开-恢复。
 //!
-//! - ACC-RES-001 不经 GarrisonManager（独立 `GarrisonLogicDefault` 双实例：
-//!   健康 DAO 签发 + FailingDao 故障验证），无需 `#[serial]`。
-//! - ACC-RES-002/003 只构造配置与 builder，不触碰全局单例，无需 `#[serial]`。
-//! - ACC-RES-004/005 使用 `MockAuthBackend` 双端口服务器（镜像
-//!   tests/auth_server_integration.rs 的已知良好装配），无全局状态。
-//! - ACC-RES-006..008 使用 wiremock 直测 `BackendRemote`（README 熔断/
-//!   降级公共 API，见 src/backend/remote.rs）。
+//! - 不经 GarrisonManager（独立 `GarrisonLogicDefault` 双实例：
+//! 健康 DAO 签发 + FailingDao 故障验证），无需 `#[serial]`。
+//! - 只构造配置与 builder，不触碰全局单例，无需 `#[serial]`。
+//! - 使用 `MockAuthBackend` 双端口服务器（镜像
+//! tests/auth_server_integration.rs 的已知良好装配），无全局状态。
+//! - 使用 wiremock 直测 `BackendRemote`（README 熔断/
+//! 降级公共 API，见 src/backend/remote.rs）。
 
 use async_trait::async_trait;
 use garrison::backend::types::LoginParams;
@@ -58,7 +58,7 @@ macro_rules! assert_err {
 const RES_JWT_SECRET: &str = "resilience-stateless-jwt-secret-0123456789abcdef";
 
 // ------------------------------------------------------------------------
-// ACC-RES-001：oxcache 故障时 JWT 无状态降级
+// oxcache 故障时 JWT 无状态降级
 // ------------------------------------------------------------------------
 
 /// FailingDao：所有操作返回 `Err(GarrisonError::Dao)`（模拟 oxcache 故障）。
@@ -134,14 +134,14 @@ fn default_firewall() -> Arc<dyn GarrisonPermissionStrategy> {
     )))
 }
 
-/// ACC-RES-001（异常韧性）：oxcache 故障时 JWT 无状态降级——DAO 故障下
-/// 已签发 token 仍可验证（签名校验不依赖 DAO），新登录失败显性传播（规则 12）。
+/// （异常韧性）：oxcache 故障时 JWT 无状态降级——DAO 故障下
+/// 已签发 token 仍可验证（签名校验不依赖 DAO），新登录失败显性传播。
 ///
 /// 装配：同一份 `jwt_mode=Stateless` 配置 + 同一 secret 构造两个独立
 /// `GarrisonLogicDefault` 实例——健康实例（InMemoryDao）签发 JWT 作为正常
 /// 锚点，故障实例（FailingDao，模拟 oxcache 故障）验证该 token 且尝试新登录。
 ///
-/// 去重收纳 **BW-AC-008**（FRD §8.1 oxcache 故障降级）：
+/// 去重收纳 oxcache 故障降级）：
 /// 原用例断言 `login` 返回 `Err(GarrisonError::Dao)` 且错误不被吞掉；本场景
 /// 保留该语义并强化——不仅断言新登录显性失败（`GarrisonError::Dao`），还额外
 /// 断言已签发 JWT 在故障 DAO 下仍可通过无状态签名校验（降级路径成立）。
@@ -204,10 +204,10 @@ async fn acc_res_001_oxcache_failure_jwt_stateless_token_still_verifiable() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RES-002..003：配置错误 fail-fast
+// 配置错误 fail-fast
 // ------------------------------------------------------------------------
 
-/// ACC-RES-002（异常）：`GarrisonConfig::validate()` 对非法值 fail-fast——
+/// （异常）：`GarrisonConfig::validate()` 对非法值 fail-fast——
 /// 负/零 timeout、非法 token_style、空 jwt_secret、非法 jwt_algorithm、
 /// 越界 auto_renewal_threshold、is_share 与 is_concurrent 冲突、
 /// 非法 cookie_same_site、超限 session_hover_timeout 均返回 Config 错误。
@@ -292,7 +292,7 @@ fn acc_res_002_config_validate_fail_fast() {
     );
 }
 
-/// ACC-RES-003（异常）：`GarrisonManager::builder().build()` 装配路径
+/// （异常）：`GarrisonManager::builder().build()` 装配路径
 /// fail-fast——非法配置在触碰全局单例之前即返回 Config 错误（fail-closed）。
 #[tokio::test]
 async fn acc_res_003_builder_build_fail_fast() {
@@ -313,14 +313,14 @@ async fn acc_res_003_builder_build_fail_fast() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RES-004..005：auth-server 内网 API Key / 限流（镜像
+// auth-server 内网 API Key / 限流（镜像
 // tests/auth_server_integration.rs 的 MockAuthBackend 双端口装配）
 // ------------------------------------------------------------------------
 
 /// 测试用 Mock AuthBackend（in-memory token 表，镜像
 /// tests/auth_server_integration.rs 的已知良好装配，注释见该文件 NEEDS CLARIFICATION）。
 ///
-/// `pub(crate)`：供 security.rs 的 pentest 场景（ACC-SEC-021..024/027/028）复用
+/// `pub(crate)`：供 security.rs 的 pentest 场景（/027/028）复用
 pub(crate) struct MockAuthBackend {
     tokens: parking_lot::Mutex<HashMap<String, String>>,
 }
@@ -463,7 +463,7 @@ pub(crate) fn uuid_like() -> String {
 
 /// 启动双端口测试服务器（外网 + 内网），返回 (external_url, internal_url, handle)。
 ///
-/// `pub(crate)`：供 security.rs 的 pentest 场景（ACC-SEC-021..024/027/028）复用
+/// `pub(crate)`：供 security.rs 的 pentest 场景（/027/028）复用
 /// 。仅使用 `MockAuthBackend`（无全局状态），
 /// 不需要 `#[serial]`。
 pub(crate) async fn start_test_server(
@@ -508,7 +508,7 @@ pub(crate) async fn start_test_server(
     (external_url, internal_url, handle)
 }
 
-/// ACC-RES-004（异常）：auth-server 内网端口 API Key 校验 fail-closed——
+/// （异常）：auth-server 内网端口 API Key 校验 fail-closed——
 /// 缺失或错误 X-API-Key 均返回 401，正确 Key 放行（200）。
 #[tokio::test]
 async fn acc_res_004_internal_api_key_wrong_rejected_401() {
@@ -544,7 +544,7 @@ async fn acc_res_004_internal_api_key_wrong_rejected_401() {
     assert_eq!(body["data"], "ok");
 }
 
-/// ACC-RES-005（异常）：auth-server 外网限流——速率上限内放行（200），
+/// （异常）：auth-server 外网限流——速率上限内放行（200），
 /// 超限返回 429（令牌桶 per-IP）。
 #[tokio::test]
 async fn acc_res_005_auth_server_rate_limit_returns_429() {
@@ -581,10 +581,10 @@ async fn acc_res_005_auth_server_rate_limit_returns_429() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-RES-006..008：BackendRemote 错误传播 / 超时 / 熔断打开与恢复
+// BackendRemote 错误传播 / 超时 / 熔断打开与恢复
 // ------------------------------------------------------------------------
 
-/// ACC-RES-006（异常）：BackendRemote 收到上游 HTTP 500 → 错误显性传播为
+/// （异常）：BackendRemote 收到上游 HTTP 500 → 错误显性传播为
 /// `GarrisonError::Network`（含 HTTP 状态码），不吞错。
 #[tokio::test]
 async fn acc_res_006_backend_remote_500_error_propagates() {
@@ -609,7 +609,7 @@ async fn acc_res_006_backend_remote_500_error_propagates() {
     );
 }
 
-/// ACC-RES-007（异常）：BackendRemote 上游响应超时（wiremock 延迟注入）→
+/// （异常）：BackendRemote 上游响应超时（wiremock 延迟注入）→
 /// 客户端超时显性传播为 `GarrisonError::Network`（传输层错误），且耗时落在
 /// 客户端超时窗口内（wiremock 延迟 3s vs 客户端 300ms），排除立即失败与
 /// 慢速成功路径。
@@ -652,7 +652,7 @@ async fn acc_res_007_backend_remote_timeout_error_propagates() {
     );
 }
 
-/// ACC-RES-008（异常+恢复）：BackendRemote 熔断——连续失败达阈值后打开并
+/// （异常+恢复）：BackendRemote 熔断——连续失败达阈值后打开并
 /// 快速拒绝（不再发起真实 HTTP 请求），打开超时后探活成功自动恢复关闭。
 #[tokio::test]
 async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
@@ -754,7 +754,7 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
 /// 构造缺省租户上下文 HTTP 客户端（`X-Tenant-Id: 0`，`tenant-isolation` 启用时）。
 ///
 /// 提供 `default_tenant_headers` + `make_client`，
-/// 供经 `start_garrison_server` 的跨租户场景（ACC-SEC-025）使用。
+/// 供经 `start_garrison_server` 的跨租户场景使用。
 pub(crate) fn tenant_client() -> reqwest::Client {
     let mut headers = reqwest::header::HeaderMap::new();
     #[cfg(feature = "tenant-isolation")]
@@ -839,7 +839,7 @@ macro_rules! assert_is_4xx {
     };
 }
 
-/// ACC-RES-009（异常）：login/check-login 恶意或畸形 body 拒绝——空 body、
+/// （异常）：login/check-login 恶意或畸形 body 拒绝——空 body、
 /// 非 JSON 字符串、空 JSON 对象、缺失 login_id、login_id 类型错误均 4xx；
 /// null 字节 login_id 因 serde_json 可接受返回 200+token（记录实际行为）；
 /// check-login 缺失必填 token 字段 4xx（+ 合并移植）。
@@ -898,7 +898,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
     assert_is_4xx!(resp.status(), "login_id 类型错误应返回 4xx");
 
     // 6. login_id 含 null 字节 → 4xx 或 200+token（serde_json 可接受 null 字节；
-    //    200 时业务层正常处理，token 非空）
+    // 200 时业务层正常处理，token 非空）
     let null_byte_body = "{\"login_id\": \"a\\u0000b\", \"params\": {}}";
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
@@ -933,7 +933,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
     assert_is_4xx!(resp.status(), "check-login 缺 token 字段应返回 4xx");
 }
 
-/// ACC-RES-010（正常+异常）：login_id 长度边界——空串与超长 65536/70000 返回
+/// （正常+异常）：login_id 长度边界——空串与超长 65536/70000 返回
 /// 4xx 或 200（不返回 5xx）；常规长度 1/255/256 必须 200 + 非空 token
 /// （+ 合并移植）。
 #[tokio::test]
@@ -1013,7 +1013,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
     }
 }
 
-/// ACC-RES-011（异常+正常）：path_filter 双向隔离 + 审计/健康链路不阻断——
+/// （异常+正常）：path_filter 双向隔离 + 审计/健康链路不阻断——
 /// 外网访问内网路径 check-login 404、内网访问外网路径 login 404（路由不可
 /// 越界）；审计日志中间件下 login → check-login 全链路正常（200 + data=true）、
 /// health 端点 200 + data=ok（路径过滤 + 中间件场景合并移植）。
@@ -1110,7 +1110,7 @@ async fn acc_res_011_path_filter_isolation_and_audit_health_flow() {
     assert_eq!(body["data"], "ok", "health 端点应返回 ok");
 }
 
-/// ACC-RES-012（正常）：metrics 端点——Prometheus 格式，200 + `garrison_` 前缀
+/// （正常）：metrics 端点——Prometheus 格式，200 + `garrison_` 前缀
 /// 指标或空 body（无指标注册时不 panic；`metrics-prometheus` feature 门控）。
 /// 来源：tests/e2e/middleware.rs::test_e2e_metrics_endpoint_with_prometheus。
 #[cfg(feature = "metrics-prometheus")]

@@ -1,23 +1,23 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! repository 域验收（spec `acceptance-matrix` R-acceptance-matrix-001）。
+//! repository 域验收。
 //!
-//! 场景编号 `ACC-REPO-NNN`，`#[cfg(feature = "db-sqlite")]` 门控：
-//! - ACC-REPO-001..010：10 张核心表 CRUD（User/Role/Permission/UserRole/
-//!   RolePermission/AuthMethod/Session/LoginLog/UserExt/UserDevice），
-//!   吸收原 repository 测试树的全部场景；
-//! - ACC-REPO-011：迁移幂等（`migrate_core` 二次执行不报错、不重复建表）；
-//! - ACC-REPO-012：级联删除（用户删除后 user_role/auth_method/session/user_ext
-//!   级联清除、login_log SET NULL——以实际外键行为为准，sqlx-sqlite 默认
-//!   `PRAGMA foreign_keys=ON`，migrations/sqlite/core/001_init.sql 定义级联）；
-//! - ACC-REPO-013..022：缺表错误路径（吸收 `tests/repository/error_paths.rs`
-//!   42 例核心语义，按表分组合并同构用例，每表至少 1 个缺表断言：
-//!   未迁移库上操作返回 `GarrisonError::Dao` 而非 panic）。
-//! - ACC-REPO-023..030：dbnexus 层语义与未吸收用例（迁移产物精确断言 /
-//!   多租户隔离 / RBAC 全链 / 设备多量隔离 / 空 update 短路 / 唯一约束 /
-//!   CHECK 约束 / 事务回滚，吸收 `tests/repository/dbnexus_integration.rs`
-//!   与 `tests/repository/integration.rs` / `error_paths.rs` 未覆盖用例）。
+//! `#[cfg(feature = "db-sqlite")]` 门控：
+//! 张核心表 CRUD（User/Role/Permission/UserRole/
+//! RolePermission/AuthMethod/Session/LoginLog/UserExt/UserDevice），
+//! 吸收原 repository 测试树的全部场景；
+//! - 迁移幂等（`migrate_core` 二次执行不报错、不重复建表）；
+//! - 级联删除（用户删除后 user_role/auth_method/session/user_ext
+//! 级联清除、login_log SET NULL——以实际外键行为为准，sqlx-sqlite 默认
+//! `PRAGMA foreign_keys=ON`，migrations/sqlite/core/001_init.sql 定义级联）；
+//! - 缺表错误路径（吸收 `tests/repository/error_paths.rs`
+//! 42 例核心语义，按表分组合并同构用例，每表至少 1 个缺表断言：
+//! 未迁移库上操作返回 `GarrisonError::Dao` 而非 panic）。
+//! - dbnexus 层语义与未吸收用例（迁移产物精确断言 /
+//! 多租户隔离 / RBAC 全链 / 设备多量隔离 / 空 update 短路 / 唯一约束 /
+//! CHECK 约束 / 事务回滚，吸收 `tests/repository/dbnexus_integration.rs`
+//! 与 `tests/repository/integration.rs` / `error_paths.rs` 未覆盖用例）。
 //!
 //! 每个场景独立 `sqlite::memory:` 连接池（in-memory 互不污染），无全局单例，
 //! 不需要 `#[serial]`；与 `tests/repository/*.rs` 装配一致。
@@ -131,10 +131,10 @@ async fn query_all_strings(session: &dbnexus::Session, sql: &str) -> Vec<String>
 }
 
 // ------------------------------------------------------------------------
-// ACC-REPO-001..010：10 表 CRUD（正常）
+// 10 表 CRUD（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-REPO-001（正常）：User CRUD——create → find_by_id → find_by_username →
+/// （正常）：User CRUD——create → find_by_id → find_by_username →
 /// update → list → delete（幂等）。
 /// 迁自 tests/repository/integration.rs::user_repository_full_crud
 #[tokio::test(flavor = "multi_thread")]
@@ -192,7 +192,7 @@ async fn acc_repo_001_user_repository_full_crud() {
     );
 }
 
-/// ACC-REPO-002（正常）：Role CRUD——create → find_by_id → find_by_code →
+/// （正常）：Role CRUD——create → find_by_id → find_by_code →
 /// update → delete。
 /// 迁自 tests/repository/integration.rs::role_repository_full_crud
 #[tokio::test(flavor = "multi_thread")]
@@ -238,7 +238,7 @@ async fn acc_repo_002_role_repository_full_crud() {
     assert!(repo.find_by_id(TENANT_A, &role_id).await.unwrap().is_none());
 }
 
-/// ACC-REPO-003（正常）：Permission CRUD——create → find_by_id → find_by_code →
+/// （正常）：Permission CRUD——create → find_by_id → find_by_code →
 /// update → delete（Permission 无 tenant_id 维度）。
 /// 迁自 tests/repository/integration.rs::permission_repository_full_crud
 #[tokio::test(flavor = "multi_thread")]
@@ -274,7 +274,7 @@ async fn acc_repo_003_permission_repository_full_crud() {
     assert!(repo.find_by_id(&perm_id).await.unwrap().is_none());
 }
 
-/// ACC-REPO-004（正常）：UserRole 关联——assign → find_by_user_id →
+/// （正常）：UserRole 关联——assign → find_by_user_id →
 /// find_by_role_id → revoke（幂等）。
 /// 迁自 tests/repository/integration.rs::user_role_repository_assign_find_revoke
 #[tokio::test(flavor = "multi_thread")]
@@ -346,7 +346,7 @@ async fn acc_repo_004_user_role_assign_find_revoke() {
     );
 }
 
-/// ACC-REPO-005（正常）：RolePermission 关联——assign → find_by_role_id →
+/// （正常）：RolePermission 关联——assign → find_by_role_id →
 /// find_by_permission_id → revoke（幂等）。
 /// 迁自 tests/repository/integration.rs::role_permission_repository_assign_find_revoke
 #[tokio::test(flavor = "multi_thread")]
@@ -403,7 +403,7 @@ async fn acc_repo_005_role_permission_assign_find_revoke() {
     );
 }
 
-/// ACC-REPO-006（正常）：AuthMethod CRUD——create → find_by_user_id →
+/// （正常）：AuthMethod CRUD——create → find_by_user_id →
 /// find_by_id → delete（幂等）。
 /// 迁自 tests/repository/integration.rs::auth_method_repository_create_find_delete
 #[tokio::test(flavor = "multi_thread")]
@@ -456,7 +456,7 @@ async fn acc_repo_006_auth_method_create_find_delete() {
     );
 }
 
-/// ACC-REPO-007（正常）：Session CRUD——create → find_by_session_id →
+/// （正常）：Session CRUD——create → find_by_session_id →
 /// find_by_user_id → update_last_active → delete（幂等）。
 /// 迁自 tests/repository/integration.rs::session_repository_create_find_update_delete
 #[tokio::test(flavor = "multi_thread")]
@@ -523,7 +523,7 @@ async fn acc_repo_007_session_create_find_update_delete() {
     );
 }
 
-/// ACC-REPO-008（正常）：LoginLog CRUD——create → find_by_id → find_by_user_id。
+/// （正常）：LoginLog CRUD——create → find_by_id → find_by_user_id。
 /// 迁自 tests/repository/integration.rs::login_log_repository_create_find
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_repo_008_login_log_create_find() {
@@ -569,9 +569,9 @@ async fn acc_repo_008_login_log_create_find() {
     assert!(!by_user.is_empty(), "find_by_user_id 应返回日志");
 }
 
-/// ACC-REPO-009（正常）：UserExt upsert——插入 / 同 key 更新 / 多字段查询。
+/// （正常）：UserExt upsert——插入 / 同 key 更新 / 多字段查询。
 /// 迁自 tests/repository/integration.rs::user_ext_repository_upsert_find
-/// BW-AC-013（FRD §8.1）：`app_user_ext` 扩展字段（如 email）存取不影响核心登录鉴权。
+/// `app_user_ext` 扩展字段（如 email）存取不影响核心登录鉴权。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_repo_009_user_ext_upsert_find() {
     let pool = setup_db().await;
@@ -643,7 +643,7 @@ async fn acc_repo_009_user_ext_upsert_find() {
     assert_eq!(all.len(), 2, "应有 2 个扩展字段（email + phone）");
 }
 
-/// ACC-REPO-010（正常）：UserDevice——register（幂等）/ list / block /
+/// （正常）：UserDevice——register（幂等）/ list / block /
 /// unblock / count / MAX_DEVICES 拒绝。
 /// 迁自 tests/repository/integration.rs::register_device_creates_new_device、
 /// register_device_idempotent_on_duplicate、block_device_sets_is_blocked、
@@ -718,10 +718,10 @@ async fn acc_repo_010_user_device_register_list_block_unblock_count() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-REPO-011..012：迁移幂等 / 级联删除（正常）
+// 迁移幂等 / 级联删除（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-REPO-011（正常）：迁移幂等——`migrate_core` 二次执行不报错，
+/// （正常）：迁移幂等——`migrate_core` 二次执行不报错，
 /// 且 `app_%` 表数量不重复增长（迁移历史已记录，无重建）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_repo_011_migrate_core_idempotent() {
@@ -783,7 +783,7 @@ async fn count_app_tables(pool: &dbnexus::DbPool) -> usize {
     rows.len()
 }
 
-/// ACC-REPO-012（正常）：级联删除——删除用户后 `user_role` / `auth_method` /
+/// （正常）：级联删除——删除用户后 `user_role` / `auth_method` /
 /// `session` / `user_ext` 关联级联清除；`login_log` 外键为 SET NULL
 ///（记录保留、user_id 置空）。以实际外键行为为准：
 /// migrations/sqlite/core/001_init.sql 定义各表 ON DELETE 动作，
@@ -940,14 +940,14 @@ async fn acc_repo_012_user_delete_cascades_relations() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-REPO-013..022：缺表错误路径（异常）
+// 缺表错误路径（异常）
 // ------------------------------------------------------------------------
 //
 // 吸收 tests/repository/error_paths.rs 42 例的核心语义：未迁移库上调用
 // repository 方法返回 `GarrisonError::Dao`（含方法/表名前缀）而非 panic。
 // 按表分组合并同构用例，每表至少 1 个缺表断言（任务约束允许合并）。
 
-/// ACC-REPO-013（异常）：UserRepository 缺表——create/find_by_id/
+/// （异常）：UserRepository 缺表——create/find_by_id/
 /// find_by_username/update/delete/list 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::user_repo_*（6 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -990,7 +990,7 @@ async fn acc_repo_013_user_repo_table_missing() {
     assert_dao_error(repo.list(TENANT_A, 0, 100).await, "app-user-list");
 }
 
-/// ACC-REPO-014（异常）：RoleRepository 缺表——create/find_by_id/
+/// （异常）：RoleRepository 缺表——create/find_by_id/
 /// find_by_code/update/delete/list 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::role_repo_*（6 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -1027,7 +1027,7 @@ async fn acc_repo_014_role_repo_table_missing() {
     assert_dao_error(repo.list(TENANT_A, 0, 100).await, "app-role-list");
 }
 
-/// ACC-REPO-015（异常）：PermissionRepository 缺表——create/find_by_id/
+/// （异常）：PermissionRepository 缺表——create/find_by_id/
 /// find_by_code/update/delete/list 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::perm_repo_*（6 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -1057,7 +1057,7 @@ async fn acc_repo_015_permission_repo_table_missing() {
     assert_dao_error(repo.list(0, 100).await, "app-permission-list");
 }
 
-/// ACC-REPO-016（异常）：UserRoleRepository 缺表——assign/find_by_user_id/
+/// （异常）：UserRoleRepository 缺表——assign/find_by_user_id/
 /// find_by_role_id/revoke 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::user_role_repo_*（4 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -1082,7 +1082,7 @@ async fn acc_repo_016_user_role_repo_table_missing() {
     );
 }
 
-/// ACC-REPO-017（异常）：RolePermissionRepository 缺表——assign/find_by_role_id/
+/// （异常）：RolePermissionRepository 缺表——assign/find_by_role_id/
 /// find_by_permission_id/revoke 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::role_perm_repo_*（4 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -1107,7 +1107,7 @@ async fn acc_repo_017_role_permission_repo_table_missing() {
     );
 }
 
-/// ACC-REPO-018（异常）：AuthMethodRepository 缺表——create/find_by_user_id/
+/// （异常）：AuthMethodRepository 缺表——create/find_by_user_id/
 /// find_by_id/delete 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::auth_method_repo_*（4 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -1138,7 +1138,7 @@ async fn acc_repo_018_auth_method_repo_table_missing() {
     assert_dao_error(repo.delete(TENANT_A, "m-1").await, "app-auth-method-delete");
 }
 
-/// ACC-REPO-019（异常）：SessionRepository 缺表——create/find_by_session_id/
+/// （异常）：SessionRepository 缺表——create/find_by_session_id/
 /// find_by_user_id/update_last_active/delete 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::session_repo_*（5 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -1175,7 +1175,7 @@ async fn acc_repo_019_session_repo_table_missing() {
     assert_dao_error(repo.delete(TENANT_A, "s-1").await, "app-session-delete");
 }
 
-/// ACC-REPO-020（异常）：LoginLogRepository 缺表——create/find_by_id/
+/// （异常）：LoginLogRepository 缺表——create/find_by_id/
 /// find_by_user_id 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::login_log_repo_*（3 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -1207,7 +1207,7 @@ async fn acc_repo_020_login_log_repo_table_missing() {
     );
 }
 
-/// ACC-REPO-021（异常）：UserExtRepository 缺表——upsert/find_by_user_and_key/
+/// （异常）：UserExtRepository 缺表——upsert/find_by_user_and_key/
 /// find_by_user_id 全部返回 Dao 错误而非 panic。
 /// 迁自 tests/repository/error_paths.rs::user_ext_repo_*（3 例合并）
 #[tokio::test(flavor = "multi_thread")]
@@ -1229,7 +1229,7 @@ async fn acc_repo_021_user_ext_repo_table_missing() {
     );
 }
 
-/// ACC-REPO-022（异常）：UserDeviceRepository 缺表——register_device /
+/// （异常）：UserDeviceRepository 缺表——register_device /
 /// list_user_devices / count_user_devices / block_device 全部返回 Dao 错误
 /// 而非 panic（errors 消息含 `app-user-device` 前缀）。
 /// 语义同 tests/repository/error_paths.rs（该文件未含 device 表，此处补齐）
@@ -1254,10 +1254,10 @@ async fn acc_repo_022_user_device_repo_table_missing() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-REPO-023..030：dbnexus 层语义与未吸收用例
+// dbnexus 层语义与未吸收用例
 // ------------------------------------------------------------------------
 
-/// ACC-REPO-023（正常）：迁移产物精确断言——`migrate_core` 后 sqlite_master
+/// （正常）：迁移产物精确断言——`migrate_core` 后 sqlite_master
 /// 恰含 10 张 `app_%` 核心表（全名单）且索引 ≥ 15 个
 ///（`idx_app_%` / `uk_app_%` 前缀）。
 /// 迁自 tests/repository/dbnexus_integration.rs::integration_migrate_creates_all_tables
@@ -1301,7 +1301,7 @@ async fn acc_repo_023_migrate_creates_all_ten_core_tables() {
     );
 }
 
-/// ACC-REPO-024（正常）：多租户隔离——跨租户 `find_by_id` 互不可见、list 按
+/// （正常）：多租户隔离——跨租户 `find_by_id` 互不可见、list 按
 /// 租户过滤、同名 username 可在不同租户共存（DB 级唯一为 (tenant_id, username)）、
 /// UserRole 关联按租户隔离（A 的角色列表不含 B 的角色）。
 /// 迁自 tests/repository/integration.rs::user_repository_tenant_isolation、
@@ -1460,7 +1460,7 @@ async fn acc_repo_024_multi_tenant_isolation() {
     );
 }
 
-/// ACC-REPO-025（正常）：RBAC 全链——user → role → permission 链式查询
+/// （正常）：RBAC 全链——user → role → permission 链式查询
 /// 返回用户全部权限编码（精确集合相等，排序后比对）。
 /// 迁自 tests/repository/integration.rs::rbac_full_chain_user_to_permissions 与
 /// tests/repository/dbnexus_integration.rs::integration_rbac_full_flow（2 例合并）
@@ -1547,7 +1547,7 @@ async fn acc_repo_025_rbac_full_chain_user_to_permissions() {
     );
 }
 
-/// ACC-REPO-026（正常+异常）：UserDevice 多设备与租户隔离——多 UA 注册 3 设备
+/// （正常+异常）：UserDevice 多设备与租户隔离——多 UA 注册 3 设备
 /// 全量列表返回、count 初始 0 后随注册增长、跨租户设备互不可见（list/count
 /// 均隔离）。
 /// 迁自 tests/repository/integration.rs::list_user_devices_returns_all、
@@ -1622,7 +1622,7 @@ async fn acc_repo_026_user_device_multi_and_tenant_isolation() {
     assert_eq!(count_b, 1);
 }
 
-/// ACC-REPO-027（正常）：空字段 `update` 返回 Ok 且不触达 DB（`sets.is_empty()`
+/// （正常）：空字段 `update` 返回 Ok 且不触达 DB（`sets.is_empty()`
 /// 短路分支）——在**未迁移**库上同样 Ok（不因缺表失败），覆盖
 /// error_paths 42 例中唯一非缺表断言分支。
 /// 迁自 tests/repository/error_paths.rs::user_repo_update_empty_fields_returns_ok
@@ -1637,9 +1637,9 @@ async fn acc_repo_027_empty_update_fields_returns_ok() {
     );
 }
 
-/// ACC-REPO-028（异常）：`app_user_ext` 唯一约束——重复 `(user_id, field_key)`
+/// （异常）：`app_user_ext` 唯一约束——重复 `(user_id, field_key)`
 /// 插入被数据库唯一索引拒绝（显性 Err 而非静默覆盖）；KV 读写语义已由
-/// ACC-REPO-009 覆盖（此处仅移植唯一约束部分）。
+/// 覆盖（此处仅移植唯一约束部分）。
 /// 迁自 tests/repository/dbnexus_integration.rs::integration_user_ext_kv_crud
 ///（唯一约束断言部分）
 #[tokio::test(flavor = "multi_thread")]
@@ -1675,7 +1675,7 @@ async fn acc_repo_028_user_ext_unique_constraint_rejects_duplicate() {
     );
 }
 
-/// ACC-REPO-029（异常+正常）：CHECK 约束——`app_user.status` 非法值被拒、
+/// （异常+正常）：CHECK 约束——`app_user.status` 非法值被拒、
 /// 5 个合法值（pending/active/suspended/inactive/deleted）通过；
 /// `app_auth_method.method_type` 非法值被拒、4 个合法值通过。
 /// 迁自 tests/repository/dbnexus_integration.rs::integration_check_constraint_status
@@ -1735,7 +1735,7 @@ async fn acc_repo_029_check_constraints_reject_invalid_values() {
     assert!(invalid.is_err(), "非法 method_type 应被 CHECK 约束拒绝");
 }
 
-/// ACC-REPO-030（正常）：业务级事务回滚——begin → 跨表 INSERT
+/// （正常）：业务级事务回滚——begin → 跨表 INSERT
 ///（user/role/user_role）→ rollback 后全部不可见（原子性）。
 /// 迁自 tests/repository/dbnexus_integration.rs::integration_multi_table_transaction_rollback
 #[tokio::test(flavor = "multi_thread")]

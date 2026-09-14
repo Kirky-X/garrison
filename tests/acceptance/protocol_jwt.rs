@@ -1,19 +1,18 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! protocol-jwt 域验收（spec `acceptance-matrix` R-acceptance-matrix-002）。
+//! protocol-jwt 域验收。
 //! JWT 签发/校验/轮换「正常 + 异常」成对覆盖：
 //! HS256/HS512 roundtrip、mixin 模式（token_style=jwt + JwtMode::Mixin）、
 //! refresh token 轮换链（parent hash 保留）、过期/篡改/算法不匹配/
 //! 重用检测链吊销/错误密钥拒绝。
 //!
-//! ACC-JWT-010..014 吸收 tests/protocol/jwt_integration.rs（全生命周期
+//! 吸收 tests/protocol/jwt_integration.rs（全生命周期
 //! login/verify/refresh/logout）与 jwt_edge_cases.rs（alg:none 注入、
 //! 空 claims、iat 时钟偏差、过期 refresh）。
 //!
-//! 场景编号约定：`ACC-JWT-NNN（正常|异常）`。
 //!
-//! 经 `GarrisonManager` 全局单例的用例（ACC-JWT-003）标注 `#[serial]`，
+//! 经 `GarrisonManager` 全局单例的用例标注 `#[serial]`，
 //! 其余用例直接构造 `JwtHandler` / `RefreshTokenRotation`（独立 SQLite
 //! 内存库），无全局状态，可并行。
 
@@ -53,10 +52,10 @@ fn handlers_with_shared_secret() -> (JwtHandler, JwtHandler) {
 }
 
 // ------------------------------------------------------------------------
-// ACC-JWT-001..002：HS256 / HS512 roundtrip（正常）
+// HS256 / HS512 roundtrip（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-JWT-001（正常）：HS256 签发 → 校验 roundtrip，claims 字段一致
+/// （正常）：HS256 签发 → 校验 roundtrip，claims 字段一致
 /// （login_id / sub / jti 唯一），伪造 token 在正常路径的对比锚点（verify 只
 /// 接受合法 JWT 三段式）。
 #[tokio::test(flavor = "multi_thread")]
@@ -75,7 +74,7 @@ async fn acc_jwt_001_hs256_sign_verify_roundtrip() {
     assert!(claims.jti.is_some(), "v0.6.3 起 sign 应自动生成 jti");
 }
 
-/// ACC-JWT-002（正常）：HS512 签发 → 校验 roundtrip，token 头声明的算法
+/// （正常）：HS512 签发 → 校验 roundtrip，token 头声明的算法
 /// 必须是 HS512（`with_algorithm` 生效）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_jwt_002_hs512_sign_verify_roundtrip() {
@@ -102,10 +101,10 @@ async fn acc_jwt_002_hs512_sign_verify_roundtrip() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-JWT-003：mixin 模式（正常 + 异常）
+// mixin 模式（正常 + 异常）
 // ------------------------------------------------------------------------
 
-/// ACC-JWT-003（正常+异常）：token_style=jwt + JwtMode::Mixin（默认）——
+/// （正常+异常）：token_style=jwt + JwtMode::Mixin（默认）——
 /// 经全局管理器 login 签发 JWT，verify_token 反查主体、check_login 通过；
 /// 异常侧：仅 JWT 无 session 的 token 被二级 session 校验拒绝（Mixin 语义）。
 #[tokio::test]
@@ -160,10 +159,10 @@ async fn acc_jwt_003_mixin_mode_jwt_with_session_required() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-JWT-004：refresh 轮换链（正常）
+// refresh 轮换链（正常）
 // ------------------------------------------------------------------------
 
-/// ACC-JWT-004（正常）：RefreshTokenRotation 轮换链——issue 首 token →
+/// （正常）：RefreshTokenRotation 轮换链——issue 首 token →
 /// 两次 rotate 生成新 token，每代 record 保留 parent_token_hash 指向旧 hash，
 /// 旧代标记 revoked（hash chain 形成）；轮换不破坏新 token 可用性。
 #[tokio::test(flavor = "multi_thread")]
@@ -245,10 +244,10 @@ async fn acc_jwt_004_refresh_rotation_chain_keeps_parent_hash() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-JWT-005..009：异常路径
+// 异常路径
 // ------------------------------------------------------------------------
 
-/// ACC-JWT-005（异常）：过期 token 被拒绝——timeout=0 签发（exp=iat），
+/// （异常）：过期 token 被拒绝——timeout=0 签发（exp=iat），
 /// 跨越至少一个秒边界后 verify 必须返回 ExpiredToken。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_jwt_005_expired_token_rejected() {
@@ -267,7 +266,7 @@ async fn acc_jwt_005_expired_token_rejected() {
     }
 }
 
-/// ACC-JWT-006（异常）：签名篡改——payload 改一个字节（sub 1001→1000）后
+/// （异常）：签名篡改——payload 改一个字节（sub 1001→1000）后
 /// 签名失效，verify 必须拒绝（签名覆盖 header+payload，任何改动即失效）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_jwt_006_tampered_payload_rejected() {
@@ -294,7 +293,7 @@ async fn acc_jwt_006_tampered_payload_rejected() {
     }
 }
 
-/// ACC-JWT-007（异常）：算法不匹配拒绝——(a) HS512 签名的 token 用 HS256
+/// （异常）：算法不匹配拒绝——(a) HS512 签名的 token 用 HS256
 /// 验证器校验失败；(b) 手动构造声明 HS256 但实际为 HS512 签名的 token 用
 /// HS512 验证器校验失败（声明的 alg 与验证器不匹配必须拒绝）。
 #[tokio::test(flavor = "multi_thread")]
@@ -331,7 +330,7 @@ async fn acc_jwt_007_algorithm_mismatch_rejected() {
     assert_verify_rejected(&result, "声明 HS256 的 token 不得被 HS512 验证器接受");
 }
 
-/// ACC-JWT-008（异常）：refresh token 重用检测——已轮换的旧 refresh token
+/// （异常）：refresh token 重用检测——已轮换的旧 refresh token
 /// 再次使用触发 detect_reuse，返回 TokenRevoked 并吊销整条链（rt1 + rt2）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_jwt_008_old_refresh_token_reuse_revokes_chain() {
@@ -402,7 +401,7 @@ async fn acc_jwt_008_old_refresh_token_reuse_revokes_chain() {
     );
 }
 
-/// ACC-JWT-009（异常）：错误密钥/缺失 kid 拒绝——验证器只信任自己的密钥：
+/// （异常）：错误密钥/缺失 kid 拒绝——验证器只信任自己的密钥：
 /// (a) 未知密钥签发的 token（含 kid 声明）被拒；(b) 无 kid 的错误密钥 token
 /// 被拒；(c) kid 仅是头部声明，正确密钥 + 任意 kid 仍可通过（kid 不构成信任）。
 #[tokio::test(flavor = "multi_thread")]
@@ -457,7 +456,7 @@ async fn acc_jwt_009_wrong_key_with_or_without_kid_rejected() {
 }
 
 // ------------------------------------------------------------------------
-// ACC-JWT-010..014：JWT 生命周期与边界场景（迁自 tests/protocol/jwt_*.rs）
+// JWT 生命周期与边界场景（迁自 tests/protocol/jwt_*.rs）
 // ------------------------------------------------------------------------
 
 /// token_style=jwt 的全局配置（生命周期场景共用；与
@@ -474,7 +473,7 @@ fn jwt_manager_config() -> std::sync::Arc<garrison::config::GarrisonConfig> {
     std::sync::Arc::new(c)
 }
 
-/// ACC-JWT-010（正常）：JWT 完整生命周期——login 签发 → verify_token 反查主体 →
+/// （正常）：JWT 完整生命周期——login 签发 → verify_token 反查主体 →
 /// refresh_token 轮换（新 token 主体一致、可校验）→ check_login true →
 /// logout 销毁会话 → check_login false。经全局管理器（`#[serial]`）。
 /// 迁自 tests/protocol/jwt_integration.rs::jwt_end_to_end_login_verify_refresh_logout
@@ -503,7 +502,7 @@ async fn acc_jwt_010_full_lifecycle_login_verify_refresh_logout() {
     );
 
     // 3. refresh_token 轮换：新 token 主体一致（同一秒内 iat/exp 相同，
-    //    token 可能相同，此处仅验证主体一致与可校验，同原用例注记）
+    // token 可能相同，此处仅验证主体一致与可校验，同原用例注记）
     let new_token = GarrisonUtil::refresh_token(&token)
         .await
         .expect("refresh_token 应成功");
@@ -538,7 +537,7 @@ async fn acc_jwt_010_full_lifecycle_login_verify_refresh_logout() {
     assert!(!logged_in_after, "logout 后 check_login 应为 false");
 }
 
-/// ACC-JWT-011（异常）：verify_token 拒绝无效 JWT / 空串；refresh_token 拒绝
+/// （异常）：verify_token 拒绝无效 JWT / 空串；refresh_token 拒绝
 /// 无效 token（均返回 Err，不 panic 不静默放行）。
 /// 迁自 tests/protocol/jwt_integration.rs::verify_token_rejects_invalid_jwt、
 /// verify_token_rejects_empty_string、refresh_token_rejects_invalid_token（3 例合并）
@@ -565,7 +564,7 @@ async fn acc_jwt_011_verify_and_refresh_reject_invalid_tokens() {
     );
 }
 
-/// ACC-JWT-012（异常）：手工构造的畸形 JWT 必须被拒绝——
+/// （异常）：手工构造的畸形 JWT 必须被拒绝——
 /// (a) `alg:none` 注入（header 声明 none、签名段为空，绕过签名校验的经典攻击）；
 /// (b) 空 claims `{}`（缺必填字段，反序列化失败）。
 /// 迁自 tests/protocol/jwt_edge_cases.rs::none_algorithm_injection_rejected、
@@ -603,7 +602,7 @@ async fn acc_jwt_012_none_algorithm_and_empty_claims_rejected() {
     }
 }
 
-/// ACC-JWT-013（正常）：iat 稍在未来容忍时钟偏差——`Validation` 仅校验 exp
+/// （正常）：iat 稍在未来容忍时钟偏差——`Validation` 仅校验 exp
 /// 不校验 iat，签发方时钟快几秒时 token 仍可用，且 iat 值原样保留。
 /// 迁自 tests/protocol/jwt_edge_cases.rs::iat_future_time_tolerates_clock_skew
 #[tokio::test(flavor = "multi_thread")]
@@ -641,7 +640,7 @@ async fn acc_jwt_013_future_iat_tolerates_clock_skew() {
     assert_eq!(verified.iat, now + 60, "iat 应保留未来时间值");
 }
 
-/// ACC-JWT-014（异常）：已过期 JWT 的 refresh 返回 `ExpiredToken`——refresh
+/// （异常）：已过期 JWT 的 refresh 返回 `ExpiredToken`——refresh
 /// 内部先 verify，过期的 token 在校验阶段即被拒绝。
 /// 迁自 tests/protocol/jwt_edge_cases.rs::refresh_expired_token_returns_error
 #[tokio::test(flavor = "multi_thread")]
@@ -661,12 +660,12 @@ async fn acc_jwt_014_refresh_expired_token_returns_expired() {
 }
 
 // ============================================================================
-// ACC-JWT-015..019：JWT 三模式矩阵
-// （HS256/HS512 roundtrip、跨算法、Mixin 语义去重至 ACC-JWT-001/002/003/007，
-// refresh 轮换/无效拒绝去重至 ACC-JWT-010/011）
+// JWT 三模式矩阵
+// （HS256/HS512 roundtrip、跨算法、Mixin 语义去重至 /002/003/007，
+// refresh 轮换/无效拒绝去重至 /011）
 // ============================================================================
 
-/// ACC-JWT-015（正常）：`with_device` 设置设备标识后 claims.device 为 Some
+/// （正常）：`with_device` 设置设备标识后 claims.device 为 Some
 ///（原 with_device_sets_claims_device）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_jwt_015_with_device_sets_claims_device() {
@@ -676,7 +675,7 @@ async fn acc_jwt_015_with_device_sets_claims_device() {
     assert_eq!(claims.device.as_deref(), Some("web-browser"));
 }
 
-/// ACC-JWT-016（异常）：`sign` 参数校验 fail-fast——空 secret 返回含 "secret"
+/// （异常）：`sign` 参数校验 fail-fast——空 secret 返回含 "secret"
 /// 的 Config 错误；负数 timeout 返回含 "timeout" 的 Config 错误
 ///（原 sign_rejects_empty_secret + sign_rejects_negative_timeout 合并）。
 #[tokio::test(flavor = "multi_thread")]
@@ -755,10 +754,10 @@ async fn make_logic_with_jwt_mode(
     )
 }
 
-/// ACC-JWT-017（正常+异常）：`JwtMode::Stateless`——仅 JWT verify 不查 session：
+/// （正常+异常）：`JwtMode::Stateless`——仅 JWT verify 不查 session：
 /// 用 `JwtHandler` 直接签发的 token（无 session）通过 `check_login`；无效 JWT 被拒
 ///（原 stateless_mode_passes_with_jwt_only + stateless_mode_rejects_invalid_jwt）。
-/// 注：与 ACC-RES-001（DAO 故障下无状态降级）互补——本场景断言「无 session 也
+/// 注：与 （DAO 故障下无状态降级）互补——本场景断言「无 session 也
 /// 可验证」的 Stateless 核心语义。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_jwt_017_stateless_mode_requires_jwt_only() {
@@ -785,7 +784,7 @@ async fn acc_jwt_017_stateless_mode_requires_jwt_only() {
     assert!(result.is_err(), "Stateless 模式无效 JWT 应被拒绝");
 }
 
-/// ACC-JWT-018（正常+异常）：`JwtMode::Simple`——仅 session 校验，不验证 JWT
+/// （正常+异常）：`JwtMode::Simple`——仅 session 校验，不验证 JWT
 /// 签名（token_style=uuid）：login 创建 session 后通过；无 session 的任意 token
 /// 失败（原 simple_mode_passes_with_session_only + simple_mode_fails_without_session）。
 #[tokio::test(flavor = "multi_thread")]
@@ -839,7 +838,7 @@ async fn acc_jwt_018_simple_mode_session_only() {
     assert!(result.is_err(), "Simple 模式无 session 应失败");
 }
 
-/// ACC-JWT-019（正常）：`JwtMode::default() == Mixin`（spec R-001 推荐默认）且
+/// （正常）：`JwtMode::default() == Mixin`（推荐默认）且
 /// `JwtMode` 为 Copy（赋值后原值仍可用；原 jwt_mode_default_is_mixin +
 /// jwt_mode_is_copy 合并）。
 #[test]

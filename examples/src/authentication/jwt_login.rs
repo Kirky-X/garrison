@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! JWT 登录示例：演示 `JwtHandler` 签发 / 校验 / 刷新完整流程（依据 spec protocol-jwt）。
+//! JWT 登录示例：演示 `JwtHandler` 签发 / 校验 / 刷新完整流程。
 //!
 //! 运行方式：
 //! ```sh
@@ -10,7 +10,7 @@
 //!
 //! 本示例不依赖 `GarrisonManager` 全局单例，仅展示 `JwtHandler` 的独立用法。
 //! 若需将 JWT 接入 Garrison 会话体系，使用 `GarrisonUtil::login_by_token(token)` 将
-//! 外部签发的 JWT 关联到 Garrison 会话（详见 spec core-auth-api）。
+//! 外部签发的 JWT 关联到 Garrison 会话。
 
 use garrison::protocol::jwt::JwtHandler;
 

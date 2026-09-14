@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! AloneCache 多 Redis 实例隔离示例（依据 spec alone-cache，0.4.0 新增）。
+//! AloneCache 多 Redis 实例隔离示例。
 //!
 //! 演示 `AloneCache` 装饰器 + `AloneCacheManager`：
 //! 1. 创建 `InMemoryDao`（参考 sso_flow.rs 的实现模式）

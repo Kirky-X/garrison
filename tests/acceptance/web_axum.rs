@@ -1,25 +1,24 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! axum 域深度验收矩阵（ACC-WAX-NNN，spec acceptance-matrix R-acceptance-matrix-001）。
+//! axum 域深度验收矩阵。
 //!
 //! 在 `web_smoke` 的 CheckLogin 冒烟基线（spawn_axum 全链路）之上做深度矩阵：
-//! - 001-002 中间件 token 来源矩阵：Authorization header / Cookie（`garrison_token`）/
-//!   header 优先于 cookie（oneshot 直连 `GarrisonRouter`）；
-//! - 003-005 per-handler extractor 矩阵：`CheckLogin` / `CheckPermission` / `CheckRole`
-//!   通过与 401/403（`PermissionName` / `RoleName` 类型化 marker）；
-//! - 006-008 注解宏 `#[check_login]` / `#[check_permission]` / `#[check_role]`
-//!   包装 handler 的编译与运行（`annotation-macros` 门控）；
-//! - 009-012 Web 安全件：WAF（`firewall-waf`，原 `web-waf` 已废弃合并）、CORS、
-//!   CSRF、安全响应头——正常放行 + 异常拦截。
+//! - 中间件 token 来源矩阵：Authorization header / Cookie（`garrison_token`）/
+//! header 优先于 cookie（oneshot 直连 `GarrisonRouter`）；
+//! - per-handler extractor 矩阵：`CheckLogin` / `CheckPermission` / `CheckRole`
+//! 通过与 401/403（`PermissionName` / `RoleName` 类型化 marker）；
+//! - 注解宏 `#[check_login]` / `#[check_permission]` / `#[check_role]`
+//! 包装 handler 的编译与运行（`annotation-macros` 门控）；
+//! - Web 安全件：WAF（`firewall-waf`，原 `web-waf` 已废弃合并）、CORS、
+//! CSRF、安全响应头——正常放行 + 异常拦截。
 //!
 //! 错误断言统一锚定 `GarrisonError::response_parts()` / `to_json_body()`
 //! （src/error.rs，三框架一致性基准）：状态码对齐 `response_parts().0`，
 //! 响应体 JSON 与 `to_json_body()` 全等。
 //!
-//! 场景编号约定：`ACC-<域>-NNN（正常|异常）`，本域 `wax`，自 001 起独立计数。
 //! 涉及 `GarrisonManager` 全局单例的用例一律 `#[serial]`（common/harness 约束）；
-//! 纯中间件用例（009-012）不触碰单例，可并行。
+//! 纯中间件用例不触碰单例，可并行。
 
 #![cfg(feature = "web-axum")]
 
@@ -103,10 +102,10 @@ async fn assert_error_aligned(resp: Response, err: &GarrisonError) {
 }
 
 // ============================================================================
-// ACC-WAX-001..002：middleware token 来源矩阵（GarrisonRouter + oneshot）
+// middleware token 来源矩阵（GarrisonRouter + oneshot）
 // ============================================================================
 
-/// ACC-WAX-001（正常+异常）：middleware 从 `Authorization: Bearer` header 提取 token——
+/// （正常+异常）：middleware 从 `Authorization: Bearer` header 提取 token——
 /// 有效 token 放行 200；无 token 返回 401，且响应体与 `NotLogin` 基准全等
 /// （与 `web_smoke` 的 spawn 冒烟场景区分：此处为 oneshot 直连 + body 级断言）。
 #[tokio::test]
@@ -145,7 +144,7 @@ async fn acc_wax_001_middleware_bearer_header_pass_and_reject() {
     .await;
 }
 
-/// ACC-WAX-002（正常+异常）：middleware token 来源矩阵——
+/// （正常+异常）：middleware token 来源矩阵——
 /// （a）token 仅经 `Cookie: garrison_token=<token>` 携带 → 200；
 /// （b）cookie 内为伪造 token → 401（与基准对齐）；
 /// （c）header 与 cookie 并存时 header 优先：header 有效 + cookie 伪造 → 200
@@ -211,10 +210,10 @@ async fn acc_wax_002_middleware_cookie_source_and_header_priority() {
 }
 
 // ============================================================================
-// ACC-WAX-003..005：extractor 矩阵（per-handler 鉴权）
+// extractor 矩阵（per-handler 鉴权）
 // ============================================================================
 
-/// ACC-WAX-003（正常+异常）：`CheckLogin` extractor——有效 token 放行 200 且
+/// （正常+异常）：`CheckLogin` extractor——有效 token 放行 200 且
 /// handler body 原样返回；无 token 拒绝 401（NOT_LOGIN，与基准对齐）。
 #[tokio::test]
 #[serial]
@@ -258,7 +257,7 @@ impl PermissionName for UserRead {
     const NAME: &'static str = "user:read";
 }
 
-/// ACC-WAX-004（正常+异常）：`CheckPermission<UserRead>` extractor——
+/// （正常+异常）：`CheckPermission<UserRead>` extractor——
 /// 持有 `user:read` 权限放行 200；未持有权限拒绝 403（NOT_PERMISSION，与基准对齐）。
 /// `tenant-isolation` 启用时权限查询 fail-closed，故包 `with_default_tenant`。
 #[tokio::test]
@@ -315,7 +314,7 @@ impl RoleName for AdminRole {
     const NAME: &'static str = "admin";
 }
 
-/// ACC-WAX-005（正常+异常）：`CheckRole<AdminRole>` extractor——
+/// （正常+异常）：`CheckRole<AdminRole>` extractor——
 /// 持有 `admin` 角色放行 200；未持有角色拒绝 403（NOT_ROLE，与基准对齐）。
 #[tokio::test]
 #[serial]
@@ -366,7 +365,7 @@ async fn acc_wax_005_extractor_check_role_pass_and_403() {
 }
 
 // ============================================================================
-// ACC-WAX-006..008：注解宏包装 handler（annotation-macros 门控）
+// 注解宏包装 handler（annotation-macros 门控）
 // ============================================================================
 
 /// `#[check_login]` 包装的 handler：编译期验证宏展开，运行期返回纯文本。
@@ -404,28 +403,28 @@ async fn wax_role_and_handler() -> &'static str {
     "wax_role_and_ok"
 }
 
-/// `#[check_access_token]` 类型校验 handler（spec annotation-macros P2）。
+/// `#[check_access_token]` 类型校验 handler。
 #[cfg(feature = "annotation-macros")]
 #[check_access_token]
 async fn wax_access_token_handler() -> &'static str {
     "wax_access_token_ok"
 }
 
-/// `#[check_client_token]` 类型校验 handler（spec annotation-macros P2）。
+/// `#[check_client_token]` 类型校验 handler。
 #[cfg(feature = "annotation-macros")]
 #[check_client_token]
 async fn wax_client_token_handler() -> &'static str {
     "wax_client_token_ok"
 }
 
-/// `#[check_temp_token]` 类型校验 handler（spec annotation-macros P2）。
+/// `#[check_temp_token]` 类型校验 handler。
 #[cfg(feature = "annotation-macros")]
 #[check_temp_token]
 async fn wax_temp_token_handler() -> &'static str {
     "wax_temp_token_ok"
 }
 
-/// `#[check_mfa]` 二级认证校验 handler（spec annotation-macros R-anno-004）。
+/// `#[check_mfa]` 二级认证校验 handler。
 #[cfg(feature = "annotation-macros")]
 #[check_mfa]
 async fn wax_mfa_handler() -> &'static str {
@@ -464,7 +463,7 @@ fn strict_test_config() -> Arc<garrison::config::GarrisonConfig> {
     Arc::new(config)
 }
 
-/// ACC-WAX-006（正常+异常）：`#[check_login]` 宏包装 handler 编译并运行——
+/// （正常+异常）：`#[check_login]` 宏包装 handler 编译并运行——
 /// 有效 token 放行 200 + 原 body；伪造 token 拒绝 401（loose 模式下宏把
 /// `Ok(false)` 转为 `NotLogin` → 401，与 integration/annotation_macros.rs 语义一致）。
 #[cfg(feature = "annotation-macros")]
@@ -505,7 +504,7 @@ async fn acc_wax_006_macro_check_login_compile_and_run() {
     assert_eq!(body["error_code"], "NOT_LOGIN", "应返回 NOT_LOGIN 错误码");
 }
 
-/// ACC-WAX-007（正常+异常）：`#[check_permission("user:read")]` 宏包装 handler——
+/// （正常+异常）：`#[check_permission("user:read")]` 宏包装 handler——
 /// 持有权限放行 200 + 原 body；无权限主体拒绝 403 + NOT_PERMISSION。
 #[cfg(feature = "annotation-macros")]
 #[tokio::test]
@@ -548,7 +547,7 @@ async fn acc_wax_007_macro_check_permission_compile_and_run() {
     );
 }
 
-/// ACC-WAX-008（正常+异常）：`#[check_role("admin")]` 宏包装 handler——
+/// （正常+异常）：`#[check_role("admin")]` 宏包装 handler——
 /// 持有角色放行 200 + 原 body；无角色主体拒绝 403 + NOT_ROLE。
 #[cfg(feature = "annotation-macros")]
 #[tokio::test]
@@ -589,10 +588,10 @@ async fn acc_wax_008_macro_check_role_compile_and_run() {
 }
 
 // ============================================================================
-// ACC-WAX-009..012：Web 安全件（WAF / CORS / CSRF / 安全响应头）
+// Web 安全件（WAF / CORS / CSRF / 安全响应头）
 // ============================================================================
 
-/// ACC-WAX-009（正常+异常）：WAF 中间件（`firewall-waf`，`waf_middleware`）——
+/// （正常+异常）：WAF 中间件（`firewall-waf`，`waf_middleware`）——
 /// 干净路径放行 200；命中 `BlackPathHook` 黑名单的路径拦截 403，错误 JSON 含
 /// `error=firewall_blocked` / `hook=black_path` / `reason`。
 ///
@@ -636,7 +635,7 @@ async fn acc_wax_009_waf_block_and_allow() {
     );
 }
 
-/// ACC-WAX-010（正常+异常）：CORS 中间件（`web-cors`，`garrison_cors_middleware`）
+/// （正常+异常）：CORS 中间件（`web-cors`，`garrison_cors_middleware`）
 /// ——（a）OPTIONS 预检：匹配 Origin → 204 + `Access-Control-Allow-Origin`；
 /// （b）预检不匹配 Origin → 204 且不带 CORS 头（异常拦截语义：跨域不获授权头）；
 /// （c）实际请求：匹配 Origin 回显 `Access-Control-Allow-Origin`。
@@ -700,7 +699,7 @@ async fn acc_wax_010_cors_preflight_and_actual_request() {
     );
 }
 
-/// ACC-WAX-011（正常+异常）：CSRF 防护（`web-csrf`，`garrison_csrf_middleware`，
+/// （正常+异常）：CSRF 防护（`web-csrf`，`garrison_csrf_middleware`，
 /// Double-Submit Cookie）——（a）token 原语：生成/常量时间校验自洽、伪造拒绝；
 /// （b）安全方法 GET 懒生成 `garrison_csrf_token` cookie；
 /// （c）受保护 POST 同源 + cookie/header token 匹配 → 放行 200；
@@ -794,7 +793,7 @@ async fn acc_wax_011_csrf_double_submit_protection() {
     );
 }
 
-/// ACC-WAX-012（正常+异常）：安全响应头中间件（`web-security-headers`，
+/// （正常+异常）：安全响应头中间件（`web-security-headers`，
 /// `security_headers_middleware`）——正常响应注入 `X-Content-Type-Options: nosniff`、
 /// `X-Frame-Options: DENY`、`Cache-Control: no-store`、`Pragma: no-cache`；
 /// 错误响应（404）同样携带安全头（异常路径不放空）。
@@ -851,10 +850,10 @@ async fn acc_wax_012_security_headers_on_success_and_error() {
 }
 
 // ============================================================================
-// ACC-WAX-013..014：Ignore 匿名访问 / 无效 token 拒绝
+// Ignore 匿名访问 / 无效 token 拒绝
 // ============================================================================
 
-/// ACC-WAX-013（正常）：`Ignore` 注解与 `Ignore` extractor 均允许匿名访问——
+/// （正常）：`Ignore` 注解与 `Ignore` extractor 均允许匿名访问——
 /// （a）`Annotation::Ignore` 经 `GarrisonRouter::route_protected` 放行无 token 请求 200；
 /// （b）`Ignore` extractor 挂载于普通 Router 放行匿名请求 200（原
 /// `ignore_allows_anonymous_access` / `public_without_token_returns_200`）。
@@ -897,7 +896,7 @@ async fn acc_wax_013_ignore_annotation_and_extractor_allow_anonymous() {
     assert_eq!(axum_body(resp).await, "pub ok");
 }
 
-/// ACC-WAX-014（异常）：无效 token 被拒绝 401——（a）middleware（GarrisonRouter
+/// （异常）：无效 token 被拒绝 401——（a）middleware（GarrisonRouter
 /// Bearer）与（b）extractor（`CheckLogin`）两路径均返回 401 + 与 `NotLogin` 基准
 /// 全等的错误体；（c）响应体不泄漏内部细节（codebase-hardening：不出现
 /// `GarrisonManager`）。原 `check_login_with_invalid_token_returns_401` /
@@ -952,11 +951,11 @@ async fn acc_wax_014_invalid_token_rejected_by_middleware_and_extractor() {
 }
 
 // ============================================================================
-// ACC-WAX-015..021：注解宏 loose/strict 模式与类型化变体
+// 注解宏 loose/strict 模式与类型化变体
 // （001/006-008 已覆盖的合格路径去重）
 // ============================================================================
 
-/// ACC-WAX-015（异常）：`#[check_login]` strict 模式错误转发——`throw_on_not_login
+/// （异常）：`#[check_login]` strict 模式错误转发——`throw_on_not_login
 /// = true` 时未登录为 `Err(Session("未登录"))` → 500（框架既有行为，宏正确转发
 /// 不吞错不篡改），且 fn body 不执行（响应体不含 handler 输出）。
 #[cfg(feature = "annotation-macros")]
@@ -986,7 +985,7 @@ async fn acc_wax_015_macro_check_login_strict_forwards_error() {
     );
 }
 
-/// ACC-WAX-016（正常+异常）：`#[check_permission]` 多参数 AND 语义——
+/// （正常+异常）：`#[check_permission]` 多参数 AND 语义——
 /// 同时持有 `user:read` + `user:write` 放行 200 + 原 body；仅持部分权限拒绝 403
 /// + NOT_PERMISSION（原 `check_permission_and_all/partial_returns_*`）。
 #[cfg(feature = "annotation-macros")]
@@ -1030,7 +1029,7 @@ async fn acc_wax_016_macro_check_permission_and_semantics() {
     );
 }
 
-/// ACC-WAX-017（正常+异常）：`#[check_role]` 多角色 AND 语义——
+/// （正常+异常）：`#[check_role]` 多角色 AND 语义——
 /// 同时持有 `admin` + `superadmin` 放行 200 + 原 body；仅持部分角色拒绝 403
 /// + NOT_ROLE（原 `check_role_and_all/partial_returns_*`）。
 #[cfg(feature = "annotation-macros")]
@@ -1071,7 +1070,7 @@ async fn acc_wax_017_macro_check_role_and_semantics() {
     assert_eq!(body["error_code"], "NOT_ROLE", "AND 缺角色应返回 NOT_ROLE");
 }
 
-/// ACC-WAX-018（正常+异常）：`#[check_access_token]` 宏展开为包装器（loose 配置）——
+/// （正常+异常）：`#[check_access_token]` 宏展开为包装器（loose 配置）——
 /// 伪造 token 拒绝 401（宏把 `Ok(false)` 转为 NotLogin → 401）；有效 token 放行
 /// 200 + 原 body。单次 harness（loose）内覆盖原两条测试
 ///（`check_access_token_expands_to_wrapper` / `_with_valid_token_returns_200`）。
@@ -1106,7 +1105,7 @@ async fn acc_wax_018_macro_check_access_token_loose_and_valid() {
     assert_eq!(axum_body(resp).await, "wax_access_token_ok");
 }
 
-/// ACC-WAX-019（正常+异常）：`#[check_client_token]` 宏展开为包装器（loose 配置）——
+/// （正常+异常）：`#[check_client_token]` 宏展开为包装器（loose 配置）——
 /// 伪造 token 拒绝 401；有效 token 放行 200 + 原 body（原
 /// `check_client_token_expands_to_wrapper` / `_with_valid_token_returns_200`）。
 #[cfg(feature = "annotation-macros")]
@@ -1140,7 +1139,7 @@ async fn acc_wax_019_macro_check_client_token_loose_and_valid() {
     assert_eq!(axum_body(resp).await, "wax_client_token_ok");
 }
 
-/// ACC-WAX-020（正常+异常）：`#[check_temp_token]` 宏展开为包装器（loose 配置）——
+/// （正常+异常）：`#[check_temp_token]` 宏展开为包装器（loose 配置）——
 /// 伪造 token 拒绝 401；有效 token 放行 200 + 原 body（原
 /// `check_temp_token_expands_to_wrapper` / `_with_valid_token_returns_200`）。
 #[cfg(feature = "annotation-macros")]
@@ -1174,7 +1173,7 @@ async fn acc_wax_020_macro_check_temp_token_loose_and_valid() {
     assert_eq!(axum_body(resp).await, "wax_temp_token_ok");
 }
 
-/// ACC-WAX-021（正常）：宏包装 handler 可挂载进 axum `Router`——经
+/// （正常）：宏包装 handler 可挂载进 axum `Router`——经
 /// `with_current_token` 包裹 `oneshot` 调用，`#[check_login]` /
 /// `#[check_permission]` / `#[check_role]` 三路由均放行 200
 ///（强化：原 `handler_works_with_axum_router` 仅断言 /login）。
@@ -1252,10 +1251,10 @@ async fn acc_wax_021_macro_handlers_mount_into_axum_router() {
 }
 
 // ============================================================================
-// ACC-WAX-022..023：`#[check_mfa]`（正常 + 异常，R-anno-004）
+// `#[check_mfa]`（正常 + 异常）
 // ============================================================================
 
-/// ACC-WAX-022（正常）：`#[check_mfa]` 已登录 + 已开启二级认证 → 200 + 原 body。
+/// （正常）：`#[check_mfa]` 已登录 + 已开启二级认证 → 200 + 原 body。
 /// `check_safe` 依赖 `TokenSession.safe_services`，仅 `login_simple` 不足以通过，
 /// 需先调用 `GarrisonLogicDefault::open_safe("default", ...)` 开启二级认证标记
 ///（仅 `security-extra` 启用时需要；无该 feature 时 `is_safe` 默认 `Ok(true)`）。
@@ -1286,7 +1285,7 @@ async fn acc_wax_022_macro_check_mfa_with_valid_token() {
     assert_eq!(axum_body(response).await, "wax_mfa_ok");
 }
 
-/// ACC-WAX-023（异常）：`#[check_mfa]` 未登录 → `check_safe` 依赖 session 失败，
+/// （异常）：`#[check_mfa]` 未登录 → `check_safe` 依赖 session 失败，
 /// 响应不是 200（框架拒绝 MFA 校验，仅 `security-extra` 下有效——无该 feature
 /// 时 `is_safe` 默认 `Ok(true)` 为 no-op 不拦截）。
 #[cfg(all(feature = "annotation-macros", feature = "security-extra"))]
@@ -1311,11 +1310,10 @@ async fn acc_wax_023_macro_check_mfa_without_token_forwards_error() {
 }
 
 // ============================================================================
-// ACC-WAX-024..025：`#[check_abac]`（无引擎 fail-closed / 引擎 Allow+Deny，
-// R-anno-005）
+// `#[check_abac]`（无引擎 fail-closed / 引擎 Allow+Deny）
 // ============================================================================
 
-/// ACC-WAX-024（异常）：`#[check_abac]` ABAC 引擎未初始化时 fail-closed——
+/// （异常）：`#[check_abac]` ABAC 引擎未初始化时 fail-closed——
 /// 已登录（a）与未登录（b）均返回 500（`check_abac_with_policy` 返回
 /// `Err(Config)`，即使未登录也优先返回 ABAC 错误，不执行 fn body）。
 #[cfg(all(feature = "annotation-macros", feature = "abac"))]
@@ -1323,7 +1321,7 @@ async fn acc_wax_023_macro_check_mfa_without_token_forwards_error() {
 #[serial]
 async fn acc_wax_024_macro_check_abac_without_engine_fail_closed() {
     // reset_abac_for_test 需要 testing 特性（spec 约束：testing 严禁在
-    // full/production 之外的构造中启用）；与 ACC-WAX-025 之间恢复无引擎态。
+    // full/production 之外的构造中启用）；用例之间恢复无引擎态。
     #[cfg(feature = "testing")]
     {
         garrison::abac::reset_abac_for_test();
@@ -1357,7 +1355,7 @@ async fn acc_wax_024_macro_check_abac_without_engine_fail_closed() {
     );
 }
 
-/// ACC-WAX-025（正常+异常）：`#[check_abac]` 引擎已初始化——Allow 策略
+/// （正常+异常）：`#[check_abac]` 引擎已初始化——Allow 策略
 ///（`principal == principal`）放行 200 + 原 body；Deny 策略（`principal !=
 /// principal`）拒绝 403。schema / `EmptyEntityLoader` 装配
 ///（原 `check_abac_engine_initialized_allow/deny_returns_*`，同场景合并）。
