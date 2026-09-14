@@ -746,12 +746,8 @@ authflow-step-complete-subflow = Please complete sub-flow: {$arg0}
 # Config loader errors (i18n migration)
 # ============================================================================
 config-path-empty = configuration file path must not be empty
-config-path-illegal-parent = configuration file path contains illegal parent directory reference (..): {$arg0}
 config-open-failed = failed to open configuration file [{$arg0}]: {$arg1}
-config-metadata-failed = failed to read configuration file metadata [{$arg0}]: {$arg1}
-config-not-regular-file = configuration file path is not a regular file [{$arg0}]: {$arg1}
 config-too-large = configuration file too large [{$arg0}]: {$arg1} bytes, limit {$arg2} bytes
-config-read-failed = failed to read configuration file [{$arg0}]: {$arg1}
 
 # ============================================================================
 # Session event reasons / Stp hardcoded messages (i18n migration)
@@ -1048,7 +1044,6 @@ otel-provider-failed = Tracer provider setup failed: {$arg0}
 # ============================================================================
 # Gap report leftovers (config-load / dao-repo / cache / authflow / annotation)
 # ============================================================================
-config-file-size-exceeded = config file actual size exceeds limit [{$arg0}]: {$arg1} bytes
 config-rate-limit-backend-unsupported = GARRISON_RATE_LIMIT_BACKEND unsupported value '{$arg0}', only 'memory' or 'redis'
 dao-user-device-limit-exceeded = user ({$arg0}) device limit reached, max {$arg1}
 cache-l1-ttl-must-positive = UserCacheService::new: l1_ttl_secs must be > 0

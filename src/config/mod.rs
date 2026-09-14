@@ -30,7 +30,6 @@ use crate::web::cors::CorsConfig;
 use crate::web::csrf::CsrfConfig;
 use confers::types::ConfigValue;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use tokio::sync::watch;
 
 pub mod impls;
@@ -60,7 +59,7 @@ pub const DEFAULT_COOKIE_SAME_SITE: &str = "Lax";
 /// 默认 JWT 签名算法（HS256，兼容 HS512 可选）。
 pub const DEFAULT_JWT_ALGORITHM: &str = "HS256";
 
-/// JWT 签名算法白名单（ocr #3123）。
+/// JWT 签名算法白名单。
 ///
 /// `validate_core` 无论 `token_style` 是否为 `jwt`，都先按本白名单校验
 /// `jwt_algorithm`，防止非法值（如 "RS256" / 拼写错误）在非 JWT 模式下
@@ -194,7 +193,7 @@ pub enum OverflowLogoutMode {
     Replaced,
 }
 
-/// 会话劫持检测模式（H-8 修复）。
+/// 会话劫持检测模式。
 ///
 /// 控制 `check_login` 路径中 IP 对比检测到疑似劫持时的行为。
 /// 仅在 `session-hijack-detection` feature 启用时生效。
@@ -265,15 +264,15 @@ pub struct TenantIsolationConfig {
     pub resolver: TenantResolverKind,
 }
 
-/// JWT secret 类型别名（FMEA #8 修复，kueiku RPN=336）。
+/// JWT secret 类型别名。
 ///
 /// - `protocol-zeroize` feature 启用：`Zeroizing<String>`，Drop 时自动 zeroize buffer，
-///   防止进程内存 dump / swap-to-disk 泄露 jwt_secret。
+/// 防止进程内存 dump / swap-to-disk 泄露 jwt_secret。
 /// - 不启用：退化为 `String`。
 ///
 /// 调用方适配规则：
 /// - 赋值：`config.jwt_secret = "xxx".to_string().into()`（`String: From<String>` identity，
-///   `Zeroizing<String>: From<String>`）
+/// `Zeroizing<String>: From<String>`）
 /// - 读取：`config.jwt_secret.as_str()` 或 `&*config.jwt_secret`（两种类型都支持）
 #[cfg(feature = "protocol-zeroize")]
 pub type JwtSecret = zeroize::Zeroizing<String>;
@@ -319,7 +318,7 @@ pub type JwtSecret = String;
 /// assert_eq!(new_config.timeout, 3600);
 /// ```
 /// `Debug` 为手动实现（见 `impls.rs`）：非 derive——`jwt_secret` 在 `{:?}` 输出中
-/// 脱敏为 `"<redacted>"`，防止密钥经日志/调试打印明文泄露（ocr #2440/#2441）。
+/// 脱敏为 `"<redacted>"`，防止密钥经日志/调试打印明文泄露。
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GarrisonConfig {
@@ -377,7 +376,7 @@ pub struct GarrisonConfig {
     /// # 安全性
     ///
     /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`
-    /// （ocr #2440/#2441：`Zeroizing` 的 Debug 是透明的，derive(Debug) 会打印明文）。
+    /// （`Zeroizing` 的 Debug 是透明的，derive(Debug) 会打印明文）。
     pub jwt_secret: JwtSecret,
 
     /// 签名校验时间窗口秒数（默认 300 秒）。
@@ -500,7 +499,7 @@ pub struct GarrisonConfig {
     /// - `Replaced`：顶替最旧会话（触发 Replaced 事件）
     pub overflow_logout_mode: OverflowLogoutMode,
 
-    /// 会话劫持检测模式（H-8 修复）。默认 `AlertOnly`。
+    /// 会话劫持检测模式。默认 `AlertOnly`。
     ///
     /// 仅在 `session-hijack-detection` feature 启用时生效。
     /// - `AlertOnly`：检测到疑似劫持时仅广播告警事件
@@ -508,7 +507,7 @@ pub struct GarrisonConfig {
     #[cfg(feature = "session-hijack-detection")]
     pub session_hijack_mode: SessionHijackMode,
 
-    /// 是否启用 JWT 撤销黑名单（H-14 修复）。默认 `false`。
+    /// 是否启用 JWT 撤销黑名单。默认 `false`。
     ///
     /// 启用后，`logout` / `kickout` 时将 JWT 的 `jti` 写入 DAO 黑名单（TTL = 剩余有效期），
     /// `check_login_stateless` 在 JWT verify 成功后检查黑名单，已撤销的 JWT 返回 `TokenRevoked`。
@@ -662,9 +661,7 @@ pub struct GarrisonConfig {
 }
 
 mod helpers;
-pub(crate) use helpers::{collect_env_vars, default_jwt_secret};
-
-mod source;
+pub(crate) use helpers::default_jwt_secret;
 
 #[cfg(test)]
 mod tests;

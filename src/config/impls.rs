@@ -3,16 +3,13 @@
 
 //! `GarrisonConfig` 与 `TenantIsolationConfig` 的实现块。
 //!
-//! 本文件从 `mod.rs` 迁移而来，遵循 mod-crate-hardening（规则 25）：
+//! 本文件从 `mod.rs` 迁移而来（mod/crate 接口隔离）：
 //! `mod.rs` 仅保留 trait 定义、pub struct/enum、pub type alias、pub use、mod 声明。
 
-use super::source::TomlContentSource;
 use super::*;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::loc;
 use confers::config::ConfigBuilder;
-use std::io::Read;
-use std::path::Path;
 
 impl Default for TenantIsolationConfig {
     fn default() -> Self {
@@ -23,7 +20,7 @@ impl Default for TenantIsolationConfig {
     }
 }
 
-// 手动 Debug 实现（非 derive，ocr #2440/#2441）：
+// 手动 Debug 实现（非 derive）：
 // GarrisonConfig 含 `jwt_secret`（`Zeroizing<String>` 的 Debug 是透明的），
 // derive(Debug) 会把密钥明文打印进日志。此处借 derived Serialize 输出完整字段映射
 // （新增字段自动纳入，不会漏），并将 `jwt_secret` 覆写为 `"<redacted>"`。
@@ -56,7 +53,7 @@ impl GarrisonConfig {
     /// - timeout = 2592000（30 天）
     /// - throw_on_not_login = true
     ///
-    /// # 校验语义（ocr #2440 系列 / 安全默认）
+    /// # 校验语义（安全默认）
     ///
     /// 本方法**不调用 `validate()`**：返回的是未经校验的原始默认值，
     /// 允许调用方在运行前逐字段改写（如测试把 `timeout` 置为非法值后再断言
@@ -184,16 +181,22 @@ impl GarrisonConfig {
     ///
     /// 但不对绝对路径做白名单限制，调用方需自行确保路径可信。
     pub fn load(toml_path: Option<&str>) -> GarrisonResult<Self> {
-        #[cfg_attr(not(feature = "rate-limit-redis"), allow(unused_mut))]
-        let mut env_values = collect_env_vars(ENV_PREFIX);
-
-        // `GARRISON_RATE_LIMIT_BACKEND=redis` 会被 confers 通用收集（key "rate_limit_backend"
-        // 匹配顶层字段），但 "redis" 无法反序列化为 `Redis { redis_url }`（缺子字段），
-        // 会导致 build 失败。故从 confers memory source 中移除，由下方显式逻辑处理。
-        #[cfg(feature = "rate-limit-redis")]
-        {
-            env_values.remove("rate_limit_backend");
-        }
+        // 环境变量注入（自研库吸收）：confers EnvSource 替代手写
+        // collect_env_vars / infer_config_value。
+        // separator("__") 与原手写映射一致——仅双下划线折叠为嵌套路径，
+        // 单下划线保留，兼容 ConfigBuilder 的扁平 key 模型。
+        //
+        // excluded_keys：raw 字符串无法反序列化为目标字段的变量（CORS 逗号
+        // 列表 → Vec<String>、Redis 后端 → 枚举变体），由 build() 之后的显式
+        // 覆盖逻辑处理（优先级最高）。exclude_keys 为追加语义，可多次调用。
+        let env_source = {
+            let s = confers::config::EnvSource::with_prefix(ENV_PREFIX).separator("__");
+            #[cfg(feature = "rate-limit-redis")]
+            let s = s.exclude_keys(["rate_limit_backend"]);
+            #[cfg(feature = "web-cors")]
+            let s = s.exclude_keys(["cors_allowed_origins"]);
+            s
+        };
 
         let mut builder = ConfigBuilder::<Self>::new()
             .default("token_name", ConfigValue::string(DEFAULT_TOKEN_NAME))
@@ -331,115 +334,35 @@ impl GarrisonConfig {
         }
 
         if let Some(path) = toml_path {
-            // 修复 Windows CI 失败：confers 0.4.1 的 FileSource 在 check_path_components()
-            // 无条件拒绝 Component::Prefix（Windows 驱动器号 C:），allow_absolute_paths()
-            // 仅放行 RootDir，无法放行带驱动器号的 Windows 绝对路径。改用 std::fs::read_to_string
-            // 读取文件内容，通过自定义 TomlContentSource 注入，绕过路径验证。
-            // 使用 confers 公共 API（parse_content + Source trait），跨平台一致行为。
-            //
-            // 安全防护（安全审查 HIGH-1/MEDIUM-1/MEDIUM-2 + 性能审查 MEDIUM-1）：
-            // 1. 空路径拒绝：避免 metadata 返回 ENOENT 时消息不明确
-            // 2. 路径遍历检测：拒绝 `..`（Component::ParentDir），防 `../../etc/passwd`。
-            //    不检查 `%2e`：fs API 不解码 URL，`%2e%2e` 是字面字符串，不会触发路径遍历。
-            // 3. File::open + file.metadata()：复用 fd，消除 TOCTOU 和符号链接攻击窗口
-            // 4. is_file() 检查：拒绝字符设备（/dev/zero）、FIFO、目录等特殊文件，防 DoS
-            // 5. 文件大小限制：10MB 上限，防 DoS（read_to_string 超大文件耗尽内存）
-            // 6. take(MAX+1) 限制：I/O 层强制读取字节数，双重保险
-            // 7. 错误消息仅含 file_name()：避免泄露服务器文件系统结构
+            // 文件加载改用 confers FileSource（自研库吸收，删除手写安全加载与
+            // Windows 路径 workaround `TomlContentSource`——confers 0.6.0-rc.4 已
+            // 放行 Windows 盘符前缀，workaround 的前置条件消失）。安全防护由
+            // LoaderConfig 承载：
+            // - 路径遍历拒绝（`..`）+ canonicalize/symlink 解析
+            // - is_file 特殊文件拒绝（/dev/zero、FIFO → read_to_string DoS）
+            // - max_size 10MB + take(max+1) I/O 层双保险（TOCTOU 超大文件）
+            // - redact_error_paths：错误只含 file_name，不泄露服务端文件系统结构
+            // 空路径仍在此前置拒绝（避免下游 canonicalize 的含糊错误）。
+            const MAX_CONFIG_FILE_SIZE: usize = 10 * 1024 * 1024; // 10MB
             if path.is_empty() {
                 return Err(GarrisonError::Config(loc!("config-path-empty", "")));
             }
-            let path_ref = Path::new(path);
-            // Issue 35: 当 file_name() 返回 None 时（如路径为 "/" 或 "/etc/"），
-            // 回退到泛型名称 "<config>" 而非完整路径，避免泄露服务器文件系统结构。
-            let display_name = || {
-                path_ref
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("<config>")
-            };
-            if path_ref
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-            {
-                return Err(GarrisonError::Config(loc!(
-                    "config-path-illegal-parent",
-                    "",
-                    ("arg0", display_name())
-                )));
-            }
-            let file = std::fs::File::open(path_ref).map_err(|e| {
-                let err_str = e.to_string();
-                GarrisonError::Config(loc!(
-                    "config-open-failed",
-                    "",
-                    ("arg0", display_name()),
-                    ("arg1", err_str.as_str())
-                ))
-            })?;
-            let metadata = file.metadata().map_err(|e| {
-                let err_str = e.to_string();
-                GarrisonError::Config(loc!(
-                    "config-metadata-failed",
-                    "",
-                    ("arg0", display_name()),
-                    ("arg1", err_str.as_str())
-                ))
-            })?;
-            if !metadata.is_file() {
-                let file_type_str = format!("{:?}", metadata.file_type());
-                return Err(GarrisonError::Config(loc!(
-                    "config-not-regular-file",
-                    "",
-                    ("arg0", display_name()),
-                    ("arg1", file_type_str.as_str())
-                )));
-            }
-            const MAX_CONFIG_FILE_SIZE: u64 = 10 * 1024 * 1024; // 10MB
-            if metadata.len() > MAX_CONFIG_FILE_SIZE {
-                let size_str = metadata.len().to_string();
-                let limit_str = MAX_CONFIG_FILE_SIZE.to_string();
-                return Err(GarrisonError::Config(loc!(
-                    "config-too-large",
-                    "",
-                    ("arg0", display_name()),
-                    ("arg1", size_str.as_str()),
-                    ("arg2", limit_str.as_str())
-                )));
-            }
-            // take(MAX+1) 在 I/O 层强制限制读取字节数，防止 TOCTOU（metadata 后文件被替换为超大文件）
-            let mut reader = std::io::BufReader::new(file).take(MAX_CONFIG_FILE_SIZE + 1);
-            let mut content = String::with_capacity(metadata.len() as usize);
-            reader.read_to_string(&mut content).map_err(|e| {
-                let err_str = e.to_string();
-                GarrisonError::Config(loc!(
-                    "config-read-failed",
-                    "",
-                    ("arg0", display_name()),
-                    ("arg1", err_str.as_str())
-                ))
-            })?;
-            if content.len() > MAX_CONFIG_FILE_SIZE as usize {
-                return Err(GarrisonError::Config(format!(
-                    "config-file-size-exceeded::{}::{}",
-                    display_name(),
-                    content.len()
-                )));
-            }
-            builder = builder.source(Box::new(
-                TomlContentSource::new(content, Some(path_ref.to_path_buf())).with_priority(10),
-            ));
+            let file_source = confers::config::FileSource::new(path)
+                .with_priority(10)
+                .with_loader_config(
+                    confers::loader::LoaderConfig::new()
+                        .allow_absolute()
+                        .max_size(MAX_CONFIG_FILE_SIZE)
+                        .redact_error_paths(),
+                );
+            builder = builder.source(Box::new(file_source));
         }
 
-        if !env_values.is_empty() {
-            builder = builder.memory_priority(50).memory(env_values);
-        }
+        builder = builder.source(Box::new(env_source));
 
-        let config = builder
-            .build()
-            .map_err(|e| GarrisonError::Config(format!("config-confers-build-failed::{}", e)))?;
+        let config = builder.build().map_err(map_confers_build_error)?;
 
-        // ocr #6283：显式环境变量覆盖必须在 `with_watcher()` 之前完成——watch channel
+        // 显式环境变量覆盖必须在 `with_watcher()` 之前完成——watch channel
         // 的初值取自 `with_watcher()` 时的配置快照；若先建 watcher 再覆盖字段，
         // `watch()` 订阅者会先收到覆盖前的旧配置，`update()` 亦从旧值起步。
         // 覆盖完成后再统一 `with_watcher()` + `validate()`。
@@ -453,7 +376,7 @@ impl GarrisonConfig {
         )]
         let mut config = config;
 
-        // 环境变量覆盖（spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）。
+        // 环境变量覆盖。
         // confers 通用收集无法处理枚举结构变体，故 CORS/CSRF/RateLimit 的环境变量
         // 由显式逻辑覆盖，优先级最高。
         #[cfg(feature = "web-cors")]
@@ -496,7 +419,7 @@ impl GarrisonConfig {
             }
         }
 
-        // ocr #6283：watcher 在全部环境变量覆盖完成后附加，保证 watch channel 初值
+        // watcher 在全部环境变量覆盖完成后附加，保证 watch channel 初值
         // 即最终生效配置（订阅者首次 `borrow_and_update()` 拿到的不是覆盖前的旧值）。
         let config = config.with_watcher();
 
@@ -564,7 +487,7 @@ impl GarrisonConfig {
                 self.cookie_same_site
             )));
         }
-        // ocr #3123：jwt_algorithm 白名单校验移入核心校验，不再仅在 token_style=jwt
+        // jwt_algorithm 白名单校验移入核心校验，不再仅在 token_style=jwt
         // 时（经 validate_jwt_secret）检查——非 JWT 模式下非法算法（如 "RS256"）此前
         // 会静默通过，待切换 token_style 后才暴露。
         if !JWT_ALGORITHMS.contains(&self.jwt_algorithm.as_str()) {
@@ -777,7 +700,7 @@ impl GarrisonConfig {
             }
         }
         // CORS 配置合法性：credentials 与 wildcard origin 冲突校验
-        // （此前 CorsConfig::validate 仅测试调用，生产路径从不校验，ocr #3711）
+        // （此前 CorsConfig::validate 仅测试调用，生产路径从不校验）
         #[cfg(feature = "web-cors")]
         {
             crate::web::cors::CorsConfig::validate(&self.cors_config)?;
@@ -837,5 +760,35 @@ impl GarrisonConfig {
 impl Default for GarrisonConfig {
     fn default() -> Self {
         Self::default_config()
+    }
+}
+
+/// 将 confers `ConfigError` 映射为 i18n 化的 `GarrisonError::Config`。
+///
+/// 配置文件加载迁入 confers `FileSource` 后，文件 IO/大小/缺失错误从
+/// `ConfigBuilder::build()` 冒出；此映射保持原有 FTL 文案出口：
+/// - `FileNotFound` → `config-open-failed`
+/// - `SizeLimitExceeded` → `config-too-large`
+/// - 其余（解析失败、路径遍历拒绝等）→ 泛化 `config-confers-build-failed`
+///   （confers 已启用 `redact_error_paths`，错误不含服务端文件系统结构）
+fn map_confers_build_error(e: confers::ConfigError) -> GarrisonError {
+    use confers::ConfigError as CE;
+    match e {
+        CE::FileNotFound { filename, .. } => {
+            let name = filename.display().to_string();
+            GarrisonError::Config(loc!("config-open-failed", "", ("arg0", name.as_str())))
+        },
+        CE::SizeLimitExceeded { actual, limit } => {
+            let actual_str = actual.to_string();
+            let limit_str = limit.to_string();
+            GarrisonError::Config(loc!(
+                "config-too-large",
+                "",
+                ("arg0", "config"),
+                ("arg1", actual_str.as_str()),
+                ("arg2", limit_str.as_str())
+            ))
+        },
+        other => GarrisonError::Config(format!("config-confers-build-failed::{}", other)),
     }
 }

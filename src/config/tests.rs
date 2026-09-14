@@ -1,7 +1,7 @@
 //! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
-//! config 模块测试（从 mod.rs 迁移，Rule 25 合规）。
+//! config 模块测试（从 mod.rs 迁移）。
 
 // jwt_secret 的 `.into()` 是跨 feature 兼容的必要转换：protocol-zeroize 下字段
 // 类型为 Zeroizing<String>（String→Zeroizing<String>），feature 关闭时退化为
@@ -12,7 +12,7 @@ use super::*;
 use crate::error::GarrisonError;
 use serial_test::serial;
 
-/// panic 安全的环境变量守卫（ocr #1257）。
+/// panic 安全的环境变量守卫。
 ///
 /// 原环境变量测试在测试末尾手动 `remove_var`：一旦断言 panic，清理被跳过，
 /// 变量残留会污染后续（共享进程 env 的）serial 测试。守卫在 Drop（含 unwind）
@@ -39,7 +39,7 @@ impl Drop for EnvVarGuard {
     }
 }
 
-// === FMEA #8 测试（kueiku RPN=336）：jwt_secret 用 Zeroizing<String> 自动 zeroize on Drop ===
+// jwt_secret 用 Zeroizing<String> 自动 zeroize on Drop 测试
 
 /// 编译期断言：protocol-zeroize feature 下 jwt_secret 字段类型为 Zeroizing<String>，
 /// Drop 时自动 zeroize。如果有人改回 String，此测试将编译失败。
@@ -229,7 +229,7 @@ fn default_config_validates_ok() {
     assert!(config.validate().is_ok());
 }
 
-/// 验证 token_style=jwt 但 jwt_secret 为空时校验失败（A-001 安全审计修复）。
+/// 验证 token_style=jwt 但 jwt_secret 为空时校验失败。
 ///
 /// 配置校验——jwt_secret 不能为空当 token_style=jwt，
 /// 防止攻击者用公开的空字符串密钥伪造 JWT。
@@ -421,6 +421,7 @@ fn validate_remember_me_fails_when_timeout_not_greater() {
     }
 }
 
+#[serial]
 /// 验证 remember_me_enabled=false 时 remember_me_timeout 仅需 > 0。
 #[test]
 fn validate_remember_me_disabled_only_checks_positive() {
@@ -430,6 +431,7 @@ fn validate_remember_me_disabled_only_checks_positive() {
     assert!(config.validate().is_ok());
 }
 
+#[serial]
 /// 验证 remember_me_enabled=false 且 remember_me_timeout <= 0 时校验失败。
 #[test]
 fn validate_remember_me_fails_when_timeout_non_positive() {
@@ -470,10 +472,10 @@ fn env_overrides_remember_me() {
 }
 
 // ========================================================================
-// session_hover_timeout 配置测试（spec R-hover-001）
+// session_hover_timeout 配置测试
 // ========================================================================
 
-/// R-hover-001: `GarrisonConfig::default()` 的 `session_hover_timeout` 为 -1（不启用）。
+/// `GarrisonConfig::default()` 的 `session_hover_timeout` 为 -1（不启用）。
 #[test]
 fn config_default_session_hover_is_negative_one() {
     let config = GarrisonConfig::default_config();
@@ -504,17 +506,18 @@ fn config_accepts_session_hover_timeout_at_max() {
 }
 
 // ========================================================================
-// frontend_separation 配置测试（spec R-frontend-001 ~ R-frontend-003）
+// frontend_separation 配置测试
 // ========================================================================
 
-/// R-frontend-001: `GarrisonConfig::default()` 的 `frontend_separation` 为 false。
+/// `GarrisonConfig::default()` 的 `frontend_separation` 为 false。
+#[serial]
 #[test]
 fn config_default_frontend_separation_is_false() {
     let config = GarrisonConfig::default_config();
     assert!(!config.frontend_separation);
 }
 
-/// R-frontend-002: `GARRISON_FRONTEND_SEPARATION=true` 环境变量覆盖配置为 true。
+/// `GARRISON_FRONTEND_SEPARATION=true` 环境变量覆盖配置为 true。
 #[test]
 #[serial]
 fn env_overrides_frontend_separation() {
@@ -523,7 +526,8 @@ fn env_overrides_frontend_separation() {
     assert!(config.frontend_separation);
 }
 
-/// R-frontend-003: `frontend_separation=true` 时 `validate()` 不报错。
+/// `frontend_separation=true` 时 `validate()` 不报错。
+#[serial]
 #[test]
 fn validate_accepts_frontend_separation_true() {
     let mut config = GarrisonConfig::default_config();
@@ -577,6 +581,7 @@ fn no_file_returns_default() {
     assert_eq!(config.timeout, DEFAULT_TIMEOUT);
 }
 
+#[serial]
 /// 验证 toml 解析错误返回 Config 错误。
 #[test]
 fn invalid_toml_returns_config_error() {
@@ -586,6 +591,7 @@ fn invalid_toml_returns_config_error() {
     assert!(matches!(result, Err(GarrisonError::Config(_))));
 }
 
+#[serial]
 /// 验证 toml 中的非法值在 validate 阶段被拒绝。
 #[test]
 fn toml_invalid_token_style_rejected() {
@@ -720,7 +726,7 @@ fn update_rejects_negative_timeout() {
 
 /// 验证无 watcher 的实例 update() 是 no-op。
 ///
-/// ocr #5061：不再手动罗列全部字段构造 `GarrisonConfig`（新增字段即编译失败），
+/// 不再手动罗列全部字段构造 `GarrisonConfig`（新增字段即编译失败），
 /// 改为 `default_config()` 后移除 watcher（字段对本 crate 子模块可见）。
 #[test]
 fn update_without_watcher_is_noop() {
@@ -931,7 +937,7 @@ fn env_overrides_sso_ticket_ttl_seconds_invalid() {
 // tenant_isolation 配置段测试
 // ========================================================================
 
-/// R-tenant-isolation-006: `GarrisonConfig` 反序列化 JSON 含 `tenant_isolation` 段时，
+/// `GarrisonConfig` 反序列化 JSON 含 `tenant_isolation` 段时，
 /// 字段正确填充。
 ///
 /// 验证：`{"tenant_isolation": {"enabled": true, "resolver": "header"}}` 反序列化后
@@ -958,7 +964,7 @@ fn garrison_config_includes_tenant_isolation_section() {
     );
 }
 
-/// R-tenant-isolation-006: `default_config()` 的 `tenant_isolation` 默认禁用，
+/// `default_config()` 的 `tenant_isolation` 默认禁用，
 /// resolver 默认为 `Header`。
 #[cfg(feature = "tenant-isolation")]
 #[test]
@@ -975,7 +981,7 @@ fn tenant_isolation_config_defaults_to_disabled() {
     );
 }
 
-/// R-tenant-isolation-006: `TenantResolverKind` 支持全部三种变体反序列化。
+/// `TenantResolverKind` 支持全部三种变体反序列化。
 #[cfg(feature = "tenant-isolation")]
 #[test]
 fn tenant_resolver_kind_supports_all_variants() {
@@ -992,17 +998,17 @@ fn tenant_resolver_kind_supports_all_variants() {
 }
 
 // ========================================================================
-// auto_renewal_threshold 配置测试（spec R-token-001 ~ R-token-003）
+// auto_renewal_threshold 配置测试
 // ========================================================================
 
-/// R-token-001: `GarrisonConfig::default()` 的 `auto_renewal_threshold` 为 -1（不启用）。
+/// `GarrisonConfig::default()` 的 `auto_renewal_threshold` 为 -1（不启用）。
 #[test]
 fn config_default_auto_renewal_is_negative_one() {
     let config = GarrisonConfig::default_config();
     assert_eq!(config.auto_renewal_threshold, -1);
 }
 
-/// R-token-002: `auto_renewal_threshold = 101` 时 `validate()` 返回 Err。
+/// `auto_renewal_threshold = 101` 时 `validate()` 返回 Err。
 #[test]
 fn validate_rejects_threshold_above_100() {
     let mut config = GarrisonConfig::default_config();
@@ -1022,7 +1028,7 @@ fn validate_rejects_threshold_above_100() {
     }
 }
 
-/// R-token-002: `auto_renewal_threshold = -2` 时 `validate()` 返回 Err。
+/// `auto_renewal_threshold = -2` 时 `validate()` 返回 Err。
 #[test]
 fn validate_rejects_threshold_below_negative_one() {
     let mut config = GarrisonConfig::default_config();
@@ -1030,7 +1036,7 @@ fn validate_rejects_threshold_below_negative_one() {
     assert!(config.validate().is_err());
 }
 
-/// R-token-002: 边界值 -1、0、100 均通过校验。
+/// 边界值 -1、0、100 均通过校验。
 #[test]
 fn validate_accepts_threshold_boundaries() {
     for &threshold in &[-1i64, 0, 100] {
@@ -1044,7 +1050,7 @@ fn validate_accepts_threshold_boundaries() {
     }
 }
 
-/// R-token-003: `GARRISON_AUTO_RENEWAL_THRESHOLD=20` 环境变量覆盖配置为 20。
+/// `GARRISON_AUTO_RENEWAL_THRESHOLD=20` 环境变量覆盖配置为 20。
 #[test]
 #[serial]
 fn env_overrides_auto_renewal_threshold() {
@@ -1188,31 +1194,31 @@ fn anon_session_timeout_env_var_overrides() {
 }
 
 // ========================================================================
-// 并发登录控制配置测试（spec R-concurrent-001 ~ R-concurrent-004）
+// 并发登录控制配置测试
 // ========================================================================
 
-/// R-concurrent-001: `GarrisonConfig::default()` 的 `is_concurrent` 为 true。
+/// `GarrisonConfig::default()` 的 `is_concurrent` 为 true。
 #[test]
 fn config_default_is_concurrent_true() {
     let config = GarrisonConfig::default_config();
     assert!(config.is_concurrent, "默认允许并发登录");
 }
 
-/// R-concurrent-001: `GarrisonConfig::default()` 的 `is_share` 为 false。
+/// `GarrisonConfig::default()` 的 `is_share` 为 false。
 #[test]
 fn config_default_is_share_false() {
     let config = GarrisonConfig::default_config();
     assert!(!config.is_share, "默认不共享 token");
 }
 
-/// R-concurrent-001: `GarrisonConfig::default()` 的 `max_login_count` 为 0（不限制）。
+/// `GarrisonConfig::default()` 的 `max_login_count` 为 0（不限制）。
 #[test]
 fn config_default_max_login_count_zero() {
     let config = GarrisonConfig::default_config();
     assert_eq!(config.max_login_count, 0, "默认不限制登录数量");
 }
 
-/// R-concurrent-002: `is_share=true` 但 `is_concurrent=false` 时 `validate()` 返回 Err。
+/// `is_share=true` 但 `is_concurrent=false` 时 `validate()` 返回 Err。
 #[test]
 fn validate_rejects_share_without_concurrent() {
     let mut config = GarrisonConfig::default_config();
@@ -1233,7 +1239,7 @@ fn validate_rejects_share_without_concurrent() {
     }
 }
 
-/// R-concurrent-002: `is_share=true` 且 `is_concurrent=true` 时校验通过。
+/// `is_share=true` 且 `is_concurrent=true` 时校验通过。
 #[test]
 fn validate_accepts_share_with_concurrent() {
     let mut config = GarrisonConfig::default_config();
@@ -1242,7 +1248,7 @@ fn validate_accepts_share_with_concurrent() {
     assert!(config.validate().is_ok());
 }
 
-/// R-concurrent-003: `GARRISON_IS_CONCURRENT=false` 环境变量覆盖配置。
+/// `GARRISON_IS_CONCURRENT=false` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_is_concurrent() {
@@ -1251,7 +1257,7 @@ fn env_overrides_is_concurrent() {
     assert!(!config.is_concurrent);
 }
 
-/// R-concurrent-004: `GARRISON_MAX_LOGIN_COUNT=3` 环境变量覆盖配置。
+/// `GARRISON_MAX_LOGIN_COUNT=3` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_max_login_count() {
@@ -1345,7 +1351,7 @@ fn test_device_binding_mode_env_override() {
 }
 
 // ========================================================================
-// validate() redis_url 非空校验测试（3 个，spec R-redis-ratelimit-004）
+// validate() redis_url 非空校验测试（3 个）
 // ========================================================================
 
 /// 验证 `rate_limit_backend=Redis` 且 `redis_url` 为空时 `validate()` 返回 Err。
@@ -1385,10 +1391,10 @@ fn validate_memory_backend_skips_redis_url_check() {
 }
 
 // ========================================================================
-// 环境变量覆盖测试（6 个 serial，spec R-cors-001 / R-csrf-003 / R-redis-ratelimit-004）
+// 环境变量覆盖测试（6 个 serial）
 // ========================================================================
 
-/// R-cors-001: `GARRISON_CORS_ALLOWED_ORIGINS` 覆盖 CORS 允许的源列表。
+/// `GARRISON_CORS_ALLOWED_ORIGINS` 覆盖 CORS 允许的源列表。
 #[cfg(feature = "web-cors")]
 #[test]
 #[serial]
@@ -1404,7 +1410,7 @@ fn env_overrides_cors_allowed_origins() {
     );
 }
 
-/// R-cors-001: `GARRISON_CORS_ALLOWED_ORIGINS` 过滤空值（连续逗号）。
+/// `GARRISON_CORS_ALLOWED_ORIGINS` 过滤空值（连续逗号）。
 #[cfg(feature = "web-cors")]
 #[test]
 #[serial]
@@ -1421,7 +1427,7 @@ fn env_cors_origins_filters_empty_values() {
     );
 }
 
-/// R-csrf-003: `GARRISON_CSRF_ENABLED=true` 覆盖 CSRF 启用状态。
+/// `GARRISON_CSRF_ENABLED=true` 覆盖 CSRF 启用状态。
 #[cfg(feature = "web-csrf")]
 #[test]
 #[serial]
@@ -1434,7 +1440,7 @@ fn env_overrides_csrf_enabled() {
     );
 }
 
-/// R-redis-ratelimit-004: `GARRISON_RATE_LIMIT_BACKEND=redis` 覆盖限流后端为 Redis。
+/// `GARRISON_RATE_LIMIT_BACKEND=redis` 覆盖限流后端为 Redis。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 #[serial]
@@ -1452,7 +1458,7 @@ fn env_overrides_rate_limit_backend_to_redis() {
     }
 }
 
-/// R-redis-ratelimit-004: `GARRISON_RATE_LIMIT_BACKEND=memory` 覆盖限流后端为 Memory。
+/// `GARRISON_RATE_LIMIT_BACKEND=memory` 覆盖限流后端为 Memory。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 #[serial]
@@ -1466,7 +1472,7 @@ fn env_overrides_rate_limit_backend_to_memory() {
     );
 }
 
-/// R-redis-ratelimit-004: 仅设置 `GARRISON_REDIS_URL`（不设 backend）不改变 Memory 后端。
+/// 仅设置 `GARRISON_REDIS_URL`（不设 backend）不改变 Memory 后端。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 #[serial]
@@ -1483,7 +1489,7 @@ fn env_redis_url_alone_does_not_change_memory_backend() {
     );
 }
 
-/// R-redis-ratelimit-004: `GARRISON_RATE_LIMIT_BACKEND` 无效值返回 Config 错误（规则12：失败必须显性化）。
+/// `GARRISON_RATE_LIMIT_BACKEND` 无效值返回 Config 错误（失败必须显性化）。
 #[cfg(feature = "rate-limit-redis")]
 #[test]
 #[serial]
@@ -1505,10 +1511,10 @@ fn env_rate_limit_backend_invalid_value_returns_error() {
 }
 
 // ========================================================================
-// 并发登录策略枚举配置测试（spec R-001 / R-004）
+// 并发登录策略枚举配置测试
 // ========================================================================
 
-/// R-001: `GarrisonConfig::default()` 的 `replaced_login_exit_mode` 为 `OldDevice`。
+/// `GarrisonConfig::default()` 的 `replaced_login_exit_mode` 为 `OldDevice`。
 #[test]
 fn config_default_replaced_login_exit_mode_is_old_device() {
     let config = GarrisonConfig::default_config();
@@ -1519,7 +1525,7 @@ fn config_default_replaced_login_exit_mode_is_old_device() {
     );
 }
 
-/// R-004: `GarrisonConfig::default()` 的 `overflow_logout_mode` 为 `Logout`。
+/// `GarrisonConfig::default()` 的 `overflow_logout_mode` 为 `Logout`。
 #[test]
 fn config_default_overflow_logout_mode_is_logout() {
     let config = GarrisonConfig::default_config();
@@ -1530,7 +1536,7 @@ fn config_default_overflow_logout_mode_is_logout() {
     );
 }
 
-/// R-001: `ReplacedLoginExitMode` 序列化为 snake_case 字符串 "old_device"/"new_device"。
+/// `ReplacedLoginExitMode` 序列化为 snake_case 字符串 "old_device"/"new_device"。
 #[test]
 fn replaced_login_exit_mode_serde_snake_case() {
     // 序列化
@@ -1550,7 +1556,7 @@ fn replaced_login_exit_mode_serde_snake_case() {
     assert_eq!(new, ReplacedLoginExitMode::NewDevice);
 }
 
-/// R-004: `OverflowLogoutMode` 序列化为 snake_case 字符串 "logout"/"kickout"/"replaced"。
+/// `OverflowLogoutMode` 序列化为 snake_case 字符串 "logout"/"kickout"/"replaced"。
 #[test]
 fn overflow_logout_mode_serde_snake_case() {
     // 序列化
@@ -1582,7 +1588,7 @@ fn overflow_logout_mode_serde_snake_case() {
     );
 }
 
-/// R-001: `GARRISON_REPLACED_LOGIN_EXIT_MODE=new_device` 环境变量覆盖配置。
+/// `GARRISON_REPLACED_LOGIN_EXIT_MODE=new_device` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_replaced_login_exit_mode() {
@@ -1598,7 +1604,7 @@ fn env_overrides_replaced_login_exit_mode() {
     );
 }
 
-/// R-004: `GARRISON_OVERFLOW_LOGOUT_MODE=kickout` 环境变量覆盖配置。
+/// `GARRISON_OVERFLOW_LOGOUT_MODE=kickout` 环境变量覆盖配置。
 #[test]
 #[serial]
 fn env_overrides_overflow_logout_mode() {
@@ -1661,10 +1667,10 @@ fn env_overrides_audit_mask_mode() {
 }
 
 // ========================================================================
-// anomalous-detector-dual validate() 校验测试（spec R-007）
+// anomalous-detector-dual validate() 校验测试
 // ========================================================================
 
-/// R-007: `anomalous_analyzer_interval_secs < 60` 时 validate() 返回 Err。
+/// `anomalous_analyzer_interval_secs < 60` 时 validate() 返回 Err。
 #[cfg(feature = "anomalous-detector-dual")]
 #[test]
 fn validate_rejects_anomalous_interval_below_60() {
@@ -1678,7 +1684,7 @@ fn validate_rejects_anomalous_interval_below_60() {
     );
 }
 
-/// R-007: `anomalous_analyzer_interval_secs = 60` 时 validate() 通过（边界值）。
+/// `anomalous_analyzer_interval_secs = 60` 时 validate() 通过（边界值）。
 #[cfg(feature = "anomalous-detector-dual")]
 #[test]
 fn validate_accepts_anomalous_interval_at_60() {
@@ -1687,7 +1693,7 @@ fn validate_accepts_anomalous_interval_at_60() {
     assert!(config.validate().is_ok(), "interval=60 应通过 validate");
 }
 
-/// R-007: `anomalous_analyzer_burst_threshold = 0` 时 validate() 返回 Err。
+/// `anomalous_analyzer_burst_threshold = 0` 时 validate() 返回 Err。
 #[cfg(feature = "anomalous-detector-dual")]
 #[test]
 fn validate_rejects_zero_burst_threshold() {
@@ -1701,9 +1707,9 @@ fn validate_rejects_zero_burst_threshold() {
     );
 }
 
-// === 安全审查 load() 安全防护集成测试（规则 9） ===
+// === 安全审查 load() 安全防护集成测试 ===
 
-/// 验证 `load` 拒绝空路径（安全 LOW-1）。
+/// 验证 `load` 拒绝空路径。
 #[test]
 fn load_rejects_empty_path() {
     let err = GarrisonConfig::load(Some("")).unwrap_err();
@@ -1714,34 +1720,36 @@ fn load_rejects_empty_path() {
     );
 }
 
-/// 验证 `load` 拒绝包含 `..` 的路径遍历路径（安全 HIGH-1/MEDIUM-3）。
+/// 验证 `load` 拒绝包含 `..` 的路径遍历路径。
+///
+/// 文件加载迁入 confers `FileSource` 后由上游 `check_path_components`
+/// 拒绝 ParentDir（行为不变，错误文案为 confers 泛化格式）。
 #[test]
 fn load_rejects_path_traversal() {
     let err = GarrisonConfig::load(Some("../etc/passwd")).unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("illegal parent")),
-        "路径遍历 `..` 应被拒绝，实际: {:?}",
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-open-failed")),
+        "路径遍历 `..` 应被拒绝（红acted FileNotFound），实际: {:?}",
         err
     );
 }
 
-/// 验证 `load` 拒绝 URL 编码的路径遍历 `%2e%2e`（安全 MEDIUM-3）。
+/// 验证 `load` 拒绝 URL 编码的路径遍历 `%2e%2e`。
 ///
-/// 注：fs API 不解码 URL，`%2e%2e` 是字面字符串，不会触发路径遍历，
-/// 此测试验证 `load` 不会因 `%2e%2e` 字面路径而误报或漏报。
-/// 预期行为：`%2e%2e` 不存在，File::open 返回 ENOENT。
+/// 文件加载迁入 confers `FileSource` 后，上游在路径验证前置扫描 URL 编码
+/// 遍历模式（防御纵深：fs API 虽不解码 `%2e`，但下游代理/网关可能解码），
+/// `%2e%2e` 被主动拒绝而非按字面路径处理。
 #[test]
 fn load_url_encoded_traversal_returns_enoent() {
     let err = GarrisonConfig::load(Some("%2e%2e/etc/passwd")).unwrap_err();
-    // %2e%2e 是字面路径，文件不存在，应返回 Config 错误（打开失败）
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("failed to open")),
-        "%2e%2e 字面路径应返回打开失败，实际: {:?}",
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-open-failed")),
+        "%2e%2e 应被拒绝，实际: {:?}",
         err
     );
 }
 
-/// 验证 `load` 拒绝超大配置文件（安全 HIGH-1，10MB 上限）。
+/// 验证 `load` 拒绝超大配置文件（10MB 上限）。
 #[test]
 fn load_rejects_oversized_config() {
     let dir = tempfile::tempdir().expect("创建临时目录失败");
@@ -1758,7 +1766,7 @@ fn load_rejects_oversized_config() {
     );
 }
 
-/// 验证 `load` 拒绝字符设备（安全 HIGH-1，is_file 检查）。
+/// 验证 `load` 拒绝字符设备（is_file 检查）。
 #[cfg(unix)]
 #[test]
 fn load_rejects_special_file() {
@@ -1771,12 +1779,13 @@ fn load_rejects_special_file() {
     );
 }
 
-/// 验证 `load` 拒绝目录（安全 HIGH-1，is_file 检查）。
+/// 验证 `load` 拒绝目录（is_file 检查）。
 ///
-/// 跨平台行为差异（规则 31 跨平台代码）：
+/// 跨平台行为差异：
 /// - Linux/macOS：`File::open(dir)` 成功，由 `metadata.is_file()` 返回 false 触发 "不是普通文件"
 /// - Windows：`File::open(dir)` 直接返回 `ERROR_ACCESS_DENIED`，触发 "打开配置文件失败"
 ///
+#[serial]
 /// 两种路径都达到了"目录被拒绝"的安全目标，测试应同时接受。
 #[test]
 fn load_rejects_directory() {

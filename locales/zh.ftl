@@ -746,12 +746,8 @@ authflow-step-complete-subflow = 请完成子流程: {$arg0}
 # Config loader 错误（i18n 迁移）
 # ============================================================================
 config-path-empty = 配置文件路径不能为空
-config-path-illegal-parent = 配置文件路径包含非法的父目录引用（..）：{$arg0}
 config-open-failed = 打开配置文件失败 [{$arg0}]：{$arg1}
-config-metadata-failed = 读取配置文件元数据失败 [{$arg0}]：{$arg1}
-config-not-regular-file = 配置文件路径不是普通文件 [{$arg0}]：{$arg1}
 config-too-large = 配置文件过大 [{$arg0}]：{$arg1} bytes，上限 {$arg2} bytes
-config-read-failed = 读取配置文件失败 [{$arg0}]：{$arg1}
 
 # ============================================================================
 # Session 事件 reason / Stp 硬编码消息（i18n 迁移）
@@ -1047,7 +1043,6 @@ otel-provider-failed = Tracer provider 设置失败: {$arg0}
 # ============================================================================
 # 报告遗漏（config-load / dao-repo / cache / authflow / annotation）
 # ============================================================================
-config-file-size-exceeded = 配置文件实际大小超过上限 [{$arg0}]：{$arg1} bytes
 config-rate-limit-backend-unsupported = GARRISON_RATE_LIMIT_BACKEND 不支持的值 '{$arg0}'，仅支持 'memory' 或 'redis'
 dao-user-device-limit-exceeded = 用户（{$arg0}）设备数已达上限，最多 {$arg1}
 cache-l1-ttl-must-positive = UserCacheService::new: l1_ttl_secs 必须 > 0
