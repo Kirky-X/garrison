@@ -1,201 +1,90 @@
 <!-- markdownlint-disable MD041 -->
-<p align="center">
-  <img src="./docs/assets/logo.png" alt="Garrison Logo" width="360" />
-</p>
+<div align="center">
 
-<p align="center">
-  中文 | <a href="./README_EN.md">English</a>
-</p>
+<img src="docs/assets/logo.png" alt="Garrison Logo" width="200">
 
-<p align="center">
-  <b>面向 Rust 生态的一站式身份认证鉴权框架</b><br/>
-  <a href="#quick-start">🚀 快速开始</a> •
-  <a href="#features">📖 特性</a> •
-  <a href="./docs/ARCHITECTURE.md">🏗 架构</a> •
-  <a href="./docs/CHANGELOG.md">📝 更新日志</a> •
-  <a href="./docs/CONTRIBUTING.md">🤝 贡献</a>
-</p>
+[![CI Status](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml/badge.svg)](https://github.com/Kirky-X/garrison/actions/workflows/ci.yml) [![Version](https://img.shields.io/crates/v/garrison.svg)](https://crates.io/crates/garrison) [![Docs.rs](https://docs.rs/garrison/badge.svg)](https://docs.rs/garrison) [![Downloads](https://img.shields.io/crates/d/garrison.svg)](https://crates.io/crates/garrison) [![License](https://img.shields.io/crates/l/garrison.svg)](LICENSE) [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/) [![Coverage](https://img.shields.io/badge/coverage-95%25%2B-brightgreen.svg)](https://github.com/Kirky-X/garrison)
 
-<p align="center">
-  <img src="https://img.shields.io/crates/v/garrison?label=version" alt="version" />
-  <img src="https://img.shields.io/github/license/Kirky-X/garrison?label=license" alt="license" />
-  <img src="https://img.shields.io/badge/MSRV-1.85+-orange" alt="msrv" />
-  <img src="https://img.shields.io/badge/coverage-95%25%2B-brightgreen" alt="coverage" />
-  <img src="https://img.shields.io/badge/tests-3967%2B%20passed-success" alt="tests" />
-  <img src="https://img.shields.io/badge/clippy-zero%20warnings-success" alt="clippy" />
-</p>
+**中文** | [English](README_EN.md)
 
-<!-- markdownlint-restore MD041 -->
+<b>面向 Rust 生态的一站式身份认证鉴权框架</b>
+
+[✨ 功能特性](#-功能特性) • [🚀 快速开始](#-快速开始) • [📚 文档](#-文档) • [💻 示例](#-示例) • [🤝 参与贡献](#-参与贡献)
+
+</div>
 
 ---
 
-## 📑 目录
+## 📋 目录
 
-- [概述](#-概述)
-- [特性](#-特性)
-- [架构](#-架构)
-- [快速开始](#-quick-start)
-  - [前置依赖](#前置依赖)
-  - [安装](#安装)
-  - [最小示例](#最小示例)
-  - [axum 集成示例](#axum-集成示例)
-- [配置](#️-配置)
-- [特性门控](#-特性门控)
-- [API 文档](#-api-文档)
-- [贡献](#-贡献)
-- [路线图](#-路线图)
-- [许可证](#-许可证)
-- [致谢](#-致谢)
+<details open>
+<summary>📑 目录</summary>
 
----
+- [✨ 功能特性](#-功能特性)
+- [🚀 快速开始](#-快速开始)
+- [🎨 特性标志](#-特性标志)
+- [📚 文档](#-文档)
+- [💻 示例](#-示例)
+- [🏗️ 架构](#️-架构)
+- [🧪 测试](#-测试)
+- [📊 性能](#-性能)
+- [🔒 安全](#-安全)
+- [🗺️ 开发路线图](#️-开发路线图)
+- [🤝 参与贡献](#-参与贡献)
+- [📋 更新日志](#-更新日志)
+- [📄 许可证](#-许可证)
+- [🙏 致谢](#-致谢)
+- [📞 联系与支持](#-联系与支持)
+- [⭐ Star 历史](#-star-历史)
 
-## 🔭 概述
-
-**Garrison** 是一个面向 Rust 生态的身份认证鉴权框架，
-提供基于 Token 的会话管理、RBAC 权限模型、axum Web 框架集成等核心能力。
-
-框架采用**双抽象层 + 全局单例**架构：
-
-- **dbnexus** 数据库抽象层（SQLite / PostgreSQL / MySQL，由 `GarrisonDao` trait 屏蔽后端差异）
-- **oxcache** 缓存抽象层（L1 内存 + L2 redis，承载会话与 Token 存储）
-- **GarrisonManager** 全局单例，持有 `Arc<GarrisonLogicDefault>`（实现了 6 个子 trait：`GarrisonCore` / `SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic`），业务方启动时一次性注入依赖即可使用静态 API
-
-### 适用场景
-
-- **Web 应用认证**：基于 axum/actix/warp 的 Web 服务需要登录认证、权限校验
-- **微服务网关**：API 网关层统一鉴权，支持 JWT/OAuth2/API Key 多种协议
-- **企业级后台**：RBAC 权限模型 + 会话管理 + 审计日志
-- **多端 SSO**：跨子系统单点登录，ticket 模型 + 一次性消费
+</details>
 
 ---
 
-## ✨ 特性
+## ✨ 功能特性
 
-| 特性                | 说明                                                                                              |
-| ------------------- | ------------------------------------------------------------------------------------------------- |
-| ⚡ **零运行时开销** | 编译期 `inventory::submit!` 工厂注册，无反射、无动态加载                                          |
-| 🔒 **完整鉴权链**   | 登录认证 → 权限校验 → 会话管理 → 路由拦截，开箱即用                                               |
-| 📦 **多后端抽象**   | `GarrisonDao` + `oxcache` + `dbnexus`，切换存储后端零业务代码改动                                 |
-| 🔧 **可插拔扩展**   | trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务                             |
-| 🎯 **Feature 门控** | 100+ 个特性 flag，按需编译减小体积                                                                        |
-| 📊 **高可观测**     | `tracing` 日志 + `listener` 事件订阅 + `prometheus` 指标（可选）                                  |
-| 🧪 **高覆盖**       | 3967+ 个测试通过（3899 lib + 68 E2E），95%+ 行覆盖率，clippy 零警告                             |
-| 🌐 **Web 框架适配** | axum/actix/warp 三框架注解式 extractor（`CheckLogin` / `CheckRole` / `CheckPermission` + 过程宏） |
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">⚡ <b>零运行时开销</b><br><span style="color:#64748B">编译期 <code>inventory::submit!</code> 工厂注册，无反射、无动态加载</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🔒 <b>完整鉴权链</b><br><span style="color:#64748B">登录认证 → 权限校验 → 会话管理 → 路由拦截，开箱即用</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">📦 <b>多后端抽象</b><br><span style="color:#64748B"><code>GarrisonDao</code> + <code>oxcache</code> + <code>dbnexus</code>，切换存储后端零业务代码改动</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🔧 <b>可插拔扩展</b><br><span style="color:#64748B">trait + Default 实现模式，替换任意组件（DAO / 策略 / 逻辑）无需改业务</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🎯 <b>Feature 门控</b><br><span style="color:#64748B">100+ 个特性 flag，按需编译减小体积</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">📊 <b>高可观测</b><br><span style="color:#64748B"><code>tracing</code> 日志 + <code>listener</code> 事件订阅 + <code>prometheus</code> 指标（可选）</span></td>
+</tr>
+<tr>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">3967+ 个测试通过（3899 lib + 68 E2E），95%+ 行覆盖率，clippy 零警告</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web 框架适配</b><br><span style="color:#64748B">axum/actix/warp 三框架注解式 extractor + 过程宏</span></td>
+</tr>
+</table>
 
-### 特性域覆盖（0.4.0~0.6.0 协议层与生产能力补齐）
+除上述核心能力外，其余能力也均以独立特性标志提供、按需编译。
 
-| 特性域                         | 状态                       | 说明                                                                                                                                                                                                                             |
-| ------------------------------ | -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 登录认证                       | ✅ 0.1.0 完成              | 基于 Token 的会话管理                                                                                                                                                                                                            |
-| 权限认证                       | ✅ 0.1.0 完成              | RBAC 权限模型                                                                                                                                                                                                                    |
-| Session 会话                   | ✅ 0.1.0 完成              | 双模会话生命周期管理（Account + Token）                                                                                                                                                                                          |
-| 路由拦截鉴权                   | ✅ 0.1.0 完成              | axum Web 框架适配                                                                                                                                                                                                                |
-| JWT                            | ✅ 0.2.0 完成              | JSON Web Token 签发与验证（HS256/HS512 + refresh）                                                                                                                                                                               |
-| OAuth2                         | ✅ 0.2.0 完成              | 授权码 / 客户端凭证 / 密码模式 + 0.4.0 RefreshToken                                                                                                                                                                              |
-| 单点登录 (SSO)                 | ✅ 0.2.0 完成              | ticket 模型单点登录（一次性 60s TTL）                                                                                                                                                                                            |
-| 微服务网关鉴权                 | ✅ 0.2.0 完成              | API 签名 + nonce 防重放                                                                                                                                                                                                          |
-| API 接口鉴权                   | ✅ 0.2.0 完成              | API Key 生成 / 校验 / 吊销 / 轮换                                                                                                                                                                                                |
-| 临时凭证                       | ✅ 0.2.0 完成              | 短期 token + issue/get/revoke/consume                                                                                                                                                                                            |
-| TOTP 动态验证码                | ✅ 0.2.0 完成              | RFC 6238 二次验证                                                                                                                                                                                                                |
-| Basic 认证                     | ✅ 0.2.0 完成              | HTTP Basic Auth (RFC 7617)                                                                                                                                                                                                       |
-| Digest 认证                    | ✅ 0.2.0 完成              | HTTP Digest Auth (RFC 7616)                                                                                                                                                                                                      |
-| 插件化扩展                     | ✅ 0.2.0 完成              | `GarrisonPlugin` trait + inventory 注册                                                                                                                                                                                          |
-| 事件监听器                     | ✅ 0.2.0 完成 / 0.4.2 扩展 | `GarrisonListener` trait + 15 个事件变体（0.4.2 新增 9 个）                                                                                                                                                                      |
-| OIDC（OpenID Connect）         | ✅ 0.4.0 完成              | id_token 签发/验证 + discovery + 三重防重放                                                                                                                                                                                      |
-| OAuth2 Scope Handler           | ✅ 0.4.0 完成              | `ScopeHandler` trait + `ScopeRegistry` 注册表                                                                                                                                                                                    |
-| SSO Server 独立抽象            | ✅ 0.4.0 完成              | `SsoServer` trait + `CenterIdConverter` + `SsoChannel`                                                                                                                                                                           |
-| AloneCache 多实例隔离          | ✅ 0.4.0 完成              | `AloneCache` 装饰器 + `AloneCacheManager`                                                                                                                                                                                        |
-| ParameterQuery 参数化查询      | ✅ 0.4.0 完成              | `ParameterQuery` trait + Builder + async check_permission/check_role                                                                                                                                                             |
-| ~~LoginId newtype~~            | ❌ 0.5.2 删除              | ~~`LoginId` enum（Numeric/String），公开 API 接受 `impl Into<LoginId>`~~ 全栈迁移到 `String`/`&str`                                                                                                                              |
-| Repository 层                  | ✅ 0.4.2 完成              | 10 个 Repository trait + SqliteRepository（tenant_id 隔离）                                                                                                                                                                      |
-| 密码哈希                       | ✅ 0.4.2 完成              | `PasswordHasher` trait + Argon2/Bcrypt 实现 + 自动识别                                                                                                                                                                           |
-| 密码登录                       | ✅ 0.4.2 完成              | `login_with_password` 整合 Repository + PasswordHasher                                                                                                                                                                           |
-| 多账户 login_type              | ✅ 0.4.2 完成              | `get_permission_list_with_type` / `get_role_list_with_type`                                                                                                                                                                      |
-| JWT 三模式                     | ✅ 0.4.2 完成              | `JwtMode` Stateless/Mixin/Simple                                                                                                                                                                                                 |
-| API Key namespace              | ✅ 0.4.2 完成              | `garrison:apikey:<namespace>:<key>` 多租户隔离                                                                                                                                                                                   |
-| SSO TOCTOU 修复                | ✅ 0.4.2 完成              | `GarrisonDao::get_and_delete` 原子消费                                                                                                                                                                                           |
-| kickout_by_device              | ✅ 0.4.2 完成              | 按设备维度踢出会话                                                                                                                                                                                                               |
-| ActixContext 适配器            | ✅ 0.4.2 完成              | actix-web 4 4 件套（ActixContext/Request/Response/Storage）                                                                                                                                                                      |
-| WarpContext 适配器             | ✅ 0.4.2 完成              | warp 0.4 4 件套（WarpContext/Request/Response/Storage）                                                                                                                                                                          |
-| Strategy Registry              | ✅ 0.4.2 完成              | 6 个策略 trait + `Strategy` 注册表 + Manager 集成                                                                                                                                                                                |
-| 过程宏注解                     | ✅ 0.4.2 完成              | 10 个属性宏：`#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |
-| OAuth 2.1 PKCE                 | ✅ 0.4.2 完成              | RFC 7636 S256 方法，旧方法标记 deprecated                                                                                                                                                                                        |
-| Token Introspection            | ✅ 0.4.2 完成              | RFC 7662 远程 token 状态查询                                                                                                                                                                                                     |
-| 多租户隔离                     | ✅ 0.5.0 完成              | `tenant_id` 字段 + `task_local!` TenantContext + Repository 强制过滤                                                                                                                                                             |
-| 社交登录                       | ✅ 0.5.0 完成              | 微信扫码 / 支付宝 Provider + SocialBinding 表                                                                                                                                                                                    |
-| 审计日志                       | ✅ 0.5.0 完成              | `audit_logs` 表 + 14 个 listener 事件订阅 + 自动脱敏                                                                                                                                                                             |
-| RefreshToken Rotation          | ✅ 0.5.0 完成              | SHA-256 hash chain + parentTokenHash + 重用检测                                                                                                                                                                                  |
-| 安全防护套件                   | ✅ 0.5.0 完成              | 5 个 FirewallStrategy + MaxMindDb 生产后端                                                                                                                                                                                       |
-| 角色层级                       | ✅ 0.5.0 完成              | `role_hierarchy` 表 + TC 预计算 + 登录时缓存权限并集                                                                                                                                                                             |
-| 决策溯源                       | ✅ 0.5.0 完成              | `Decision{allowed, reason, errors}` + `authorize()` API                                                                                                                                                                          |
-| Keycloak OIDC RP               | ✅ 0.5.0 完成              | `KeycloakProvider` discovery + JWKS 验签                                                                                                                                                                                         |
-| PostgreSQL 后端                | ✅ 0.5.0 完成              | `db-postgres` feature + backend-agnostic SQL                                                                                                                                                                                     |
-| MySQL 后端                     | ✅ 0.5.3 完成              | `db-mysql` feature + testcontainers 集成测试                                                                                                                                                                                     |
-| 账号安全引擎                   | ✅ 0.6.0 完成              | `account/` 模块 + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL                                                                                                                           |
-| remember-me 扩展超时           | ✅ 0.6.1 完成              | `remember_me_enabled` / `remember_me_timeout` 配置 + login 参数                                                                                                                                                                  |
-| Redis 部署模式                 | ✅ 0.6.1 完成              | `RedisDeploymentMode` 枚举（Single/Sentinel/Cluster/MasterSlave）                                                                                                                                                                |
-| 身份切换 switch_to             | ✅ 0.6.1 完成              | `switch_to(login_id)` 会话身份切换                                                                                                                                                                                               |
-| Token 置换 renew_to_equivalent | ✅ 0.6.1 完成              | 等效 Token 置换（保留会话状态）                                                                                                                                                                                                  |
-| OAuth2 注解                    | ✅ 0.6.1 完成              | `Annotation::CheckAccessToken` / `CheckClientToken`                                                                                                                                                                              |
-| 路由分组 group()               | ✅ 0.6.1 完成              | `GarrisonRouter::group(prefix, annotation, f)`                                                                                                                                                                                   |
-| 会话过期回调                   | ✅ 0.6.1 完成              | `SessionExpiryListener` trait + `add_expiry_listener`                                                                                                                                                                            |
-| SAML 2.0 骨架                  | ✅ 0.6.1 完成              | `SamlProvider` trait + `DefaultSamlProvider`（quick-xml 解析）                                                                                                                                                                   |
-| OIDC RP 骨架                   | ✅ 0.6.1 完成              | `OidcProvider` trait + `DefaultOidcProvider`（discovery + token exchange）                                                                                                                                                       |
-| Redis pub/sub SsoChannel       | ✅ 0.6.1 完成              | `RedisPubSubSsoChannel`（PUBLISH/SUBSCRIBE 跨实例通信）                                                                                                                                                                          |
+### 🧩 特性域覆盖
+
+当前已交付的特性域全貌如下，逐项 flag 定义对应 `Cargo.toml` 的 `[features]`，见 [🎨 特性标志](#-特性标志)：
+
+| 分类 | 特性域 |
+|------|--------|
+| 核心引擎 | 登录认证 · RBAC 权限认证 · 双模会话（Account + Token）· 路由拦截（axum / actix / warp）· WAF / CORS / CSRF 中间件 |
+| 认证协议 | JWT（三种模式 + refresh）· OAuth2 四种模式 · OIDC（discovery + 三重防重放）· Keycloak OIDC RP · SAML 2.0 · SSO（ticket / SsoServer 抽象 / Redis pub/sub 跨实例）· API Key · 临时凭证 · API 签名防重放 · TOTP · Basic / Digest · OAuth 2.1 PKCE · Token Introspection · RefreshToken 轮换 |
+| 授权与决策 | 角色层级（TC 预计算）· OAuth2 Scope Handler · OAuth2 Server · ABAC（Cedar DSL）· 决策溯源（`Decision` + `authorize()`） |
+| 账号与凭证 | 账号安全引擎（Credential SPI + 密码策略 + 认证流 DSL）· 密码哈希（Argon2 / Bcrypt）· 邮箱验证 · 社交登录（微信 / 支付宝）· 邀请码注册 |
+| 防护与审计 | 防火墙套件（暴力破解 / 限流 / 异常 / GeoIP / DDoS）· 多租户隔离 · 审计日志 · 安全工具集（脱敏 / XSS 防护 / 常量时间比较） |
+| 存储与扩展 | SQLite / PostgreSQL / MySQL 后端 · Repository 层 · AloneCache 多实例隔离 · ParameterQuery 参数化查询 · 插件化扩展 · 事件监听器 · 过程宏注解 |
+| 微服务与生产化 | 远程后端（backend-remote）· 独立认证服务器（auth-server）· gRPC 拦截器 · 配置加密 / 热更新 · i18n 国际化 · 可观测性（tracing / Prometheus / OTLP） |
 
 ---
 
-## 🏗 架构
+## 🚀 快速开始
 
-```mermaid
-graph TD
-    User["业务代码"] --> Util["GarrisonUtil 静态 API"]
-    Util --> Manager["GarrisonManager 单例"]
-    Manager -->     Logic["GarrisonLogicDefault"]
-    Logic --> Session["GarrisonSession"]
-    Logic --> Strategy["GarrisonPermissionStrategy"]
-    Session --> Dao["GarrisonDao trait"]
-    Strategy --> Interface["GarrisonInterface 业务回调"]
-    Dao --> Oxcache["oxcache (L1 内存 + L2 redis)"]
-    Dao --> Dbnexus["dbnexus (SQLite / PostgreSQL / MySQL)"]
-    Logic --> Plugin["GarrisonPlugin (inventory)"]
-    Logic --> Listener["GarrisonListener (inventory)"]
-    Annotation["axum 注解<br/>CheckLogin / CheckRole / CheckPermission"] --> Logic
-    Router["GarrisonRouter"] --> Interceptor["GarrisonInterceptor"]
-    Interceptor --> Util
-```
+### 📦 安装
 
-核心模块说明：
-
-- `stp/`：核心 API（6 个子 trait：`GarrisonCore` / `SessionLogic` / `PermissionLogic` / `TokenLogic` / `MfaLogic` / `PasswordLogic` + `GarrisonUtil` 静态委托 + task_local 上下文）
-- `garrison-session`：双模会话管理（Account-Session + Token-Session）
-- `garrison-strategy`：权限校验策略（`GarrisonPermissionStrategy` trait）
-- `garrison-manager`：全局单例 + inventory 工厂注册
-- `garrison-annotation`：axum extractor 注解系统
-- `garrison-router`：axum Router 包装 + middleware 拦截
-- `garrison-dao`：`GarrisonDao` trait + oxcache / dbnexus 实现
-
-完整架构设计见 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md)。
-
----
-
-## 🚀 Quick Start
-
-### 前置依赖
-
-| 依赖       | 版本         | 说明                                 |
-| ---------- | ------------ | ------------------------------------ |
-| Rust       | >= 1.85      | 工具链（部分 deps 要求 edition2024） |
-| cargo      | 随 Rust 安装 | 包管理器                             |
-| libssl-dev | 系统包       | `cargo tarpaulin` 覆盖率工具需要     |
-| pkg-config | 系统包       | `cargo tarpaulin` 覆盖率工具需要     |
-
-> 注：运行时无需额外系统依赖，`oxcache` 与 `dbnexus` 均为纯 Rust 实现。
-
-### 安装
-
-在 `Cargo.toml` 中添加依赖（`development` 聚合 = 内存缓存 DAO + SQLite + axum 适配，
-可完整运行下方最小示例）：
+在 `Cargo.toml` 中添加依赖（`development` 聚合 = 内存缓存 DAO + SQLite + axum 适配）：
 
 ```toml
 [dependencies]
@@ -204,18 +93,15 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
-> 仅启用 `web-axum` 不含任何可用的会话存储 DAO（default 只有 `backend-embedded`），
-> 生产部署请按需组合 `cache-memory` / `db-sqlite` / `db-postgres` / `cache-redis` 等；
-> 预发布版本（0.9.0-rc.x）需按上例显式写完整版本号，`"0.9"` 无法匹配 prerelease。
+> 预发布版本需显式写完整版本号，`"0.9"` 无法匹配 prerelease。如需启用全部协议层与安全模块：`features = ["full"]`。
 
-如需启用全部协议层与安全模块：
+| 预设 | 安装方式 | 适用场景 |
+|------|----------|----------|
+| 开发 | `features = ["development"]` | 内存缓存 + SQLite + axum，快速验证 |
+| 生产 | `features = ["production"]` | 生产环境推荐组合 |
+| 完整 | `features = ["full"]` | 全部能力 |
 
-```toml
-[dependencies]
-garrison = { version = "0.9.0-rc.1", features = ["full"] }
-```
-
-### 最小示例
+### 💡 最小示例
 
 完整业务场景：初始化管理器 → 执行登录 → 校验登录状态 → 登出。
 
@@ -245,303 +131,314 @@ async fn main() -> GarrisonResult<()> {
 
     // 3. 初始化全局管理器
     GarrisonManager::builder()
-        .dao(dao)
-        .config(config)
-        .interface(interface)
-        .build()
-        .await?;
+        .dao(dao).config(config).interface(interface)
+        .build().await?;
 
     // 4. 在 task_local 上下文中执行登录
     let token = garrison::stp::with_current_token(
-        String::new(),
-        GarrisonUtil::login("1001", &LoginParams::default()),
-    )
-    .await?;
+        String::new(), GarrisonUtil::login("1001", &LoginParams::default()),
+    ).await?;
     println!("登录成功，token = {}", &token[..8.min(token.len())]);
 
     // 5. 校验登录状态
     garrison::stp::with_current_token(token.clone(), GarrisonUtil::check_login()).await?;
 
-    // 6. 校验权限（无权限时报错）
+    // 6. 校验权限
     garrison::stp::with_current_token(
-        token.clone(),
-        GarrisonUtil::check_permission("user:read"),
-    )
-    .await?;
+        token.clone(), GarrisonUtil::check_permission("user:read"),
+    ).await?;
 
     // 7. 登出
     garrison::stp::with_current_token(token.clone(), GarrisonUtil::logout()).await?;
-
     Ok(())
 }
 ```
 
-> 本示例已由 [examples/tests/readme_quickstart.rs](./examples/tests/readme_quickstart.rs)
-> 持续验证（随 CI 运行），可直接复制使用。
+> 本示例已由 [examples/tests/readme_quickstart.rs](./examples/tests/readme_quickstart.rs) 持续验证（随 CI 运行）。
 
-**预期输出：**
+### 🧭 核心概念
 
-```text
-登录成功，token = a1b2c3d4e5f6...
-```
-
-### axum 集成示例
-
-完整 Web 应用示例见 [examples/src/bin/axum_integration.rs](./examples/src/bin/axum_integration.rs)（253 行），包含：
-
-- `GarrisonRouter` 包装 axum Router
-- 4 个 `route_protected` 路由（带 `CheckLogin` / `CheckRole<AdminRole>` / `CheckPermission<ReadPerm>` 注解）
-- axum middleware 自动从 Authorization header 提取 token 并设置 task_local
-
-> 注意：`route_protected` 仅注册 **GET** 路由；POST 等其他方法请用
-> `GarrisonRouter::build()` 返回的中间件包装自有 Router，或注册后自行 `.route(...)` 扩展。
-
-> examples 已重组为独立 workspace member（`garrison-examples` crate），运行方式：
-> `cargo run -p garrison-examples --bin <name> --features full`。0.4.0 新增 5 个 example
-> （`oidc_handler` / `scope_handler` / `sso_server` / `alone_cache` / `parameter_query`），
-> 完整列表见 [examples/README](./examples/)。
+- **双抽象层**：`dbnexus` 数据库抽象层（SQLite / PostgreSQL / MySQL）+ `oxcache` 缓存抽象层（L1 内存 + L2 redis），由 `GarrisonDao` trait 统一屏蔽后端差异。
+- **全局单例**：`GarrisonManager` 持有 `Arc<GarrisonLogicDefault>`（实现 6 个子 trait），业务方启动时一次性注入依赖即可使用静态 API。
+- **双模会话**：Account-Session（账号级长生命周期）+ Token-Session（登录临时数据），由 `is_share` / `is_concurrent` 控制多端策略。
+- **特性门控**：全部可选能力均为独立 feature，编译产物只包含启用的部分。
 
 ---
 
-## ⚙️ 配置
+## 🎨 特性标志
 
-`GarrisonConfig` 支持三级配置源（优先级从高到低）：
+### 📋 功能矩阵
 
-1. **环境变量**：`GARRISON_TIMEOUT` / `GARRISON_ACTIVE_TIMEOUT` / `GARRISON_TOKEN_NAME` 等
-2. **toml 配置文件**：`garrison.toml`（通过 `GarrisonConfig::load(Some(path))` 加载）
-3. **代码默认值**：`GarrisonConfig::default_config()`
+下表逐项对应 `Cargo.toml` 的 `[features]` 定义，`default = ["backend-embedded"]`。
 
-核心配置项：
+| 特性 | 默认 | 引入版本 | 说明 |
+|------|:----:|:--------:|------|
+| `backend-embedded` | ✅ | 0.7.0 | 内嵌后端模式（进程内认证，委托 GarrisonManager） |
+| `backend-remote` | ❌ | 0.7.0 | 远程后端适配器（通过 HTTP 调用远程 Auth Server） |
+| `backend-kit` | ❌ | 0.7.0 | trait-kit typestate DI 构建 |
+| `auth-server` | ❌ | 0.7.0 | 独立认证服务器（sdforge 声明式路由 + TLS） |
+| `abac` | ❌ | 0.7.0 | 基于 Cedar DSL 的属性访问控制引擎 |
+| `oauth2-server` | ❌ | 0.7.0 | 完整 OAuth2 Server 4 端点 |
+| `cache-memory` | ❌ | 0.1.0 | 内存缓存后端（oxcache 内存层） |
+| `cache-redis` | ❌ | 0.1.0 | Redis 缓存后端（oxcache L2） |
+| `db-sqlite` | ❌ | 0.1.0 | SQLite 数据库后端 |
+| `db-postgres` | ❌ | 0.5.0 | PostgreSQL 后端 |
+| `db-mysql` | ❌ | 0.5.3 | MySQL 后端 |
+| `web-axum` | ❌ | 0.1.0 | axum Web 框架适配 |
+| `web-actix` | ❌ | 0.4.2 | actix-web Web 框架适配 |
+| `web-warp` | ❌ | 0.4.2 | warp Web 框架适配 |
+| `web-waf` / `web-cors` / `web-csrf` | ❌ | 0.6.4 | WAF / CORS / CSRF 中间件 |
+| `protocol-jwt` | ❌ | 0.2.0 | JWT 签发与验证（HS256/HS512 + refresh） |
+| `protocol-oauth2` | ❌ | 0.2.0 | OAuth2 四种模式 |
+| `protocol-sso` / `protocol-sso-server` | ❌ | 0.2.0 / 0.4.0 | SSO ticket / SSO Server 抽象 |
+| `protocol-sign` | ❌ | 0.2.0 | API 签名 + nonce 防重放 |
+| `protocol-apikey` | ❌ | 0.2.0 | API Key 认证 |
+| `protocol-temp` | ❌ | 0.2.0 | 临时凭证 |
+| `protocol-oidc` | ❌ | 0.4.0 | OIDC id_token 签发/验证 + discovery |
+| `protocol-httpbasic` / `protocol-httpdigest` | ❌ | 0.2.0 | HTTP Basic / Digest 认证 |
+| `protocol-saml` | ❌ | 0.5.0 | SAML 2.0 骨架 |
+| `protocol-zeroize` | ❌ | 0.4.2 | 协议层密钥零化 |
+| `secure-totp` | ❌ | 0.2.0 | TOTP 动态验证码 (RFC 6238) |
+| `secure-sign` | ❌ | 0.2.0 | HMAC-SHA256/SHA512 工具 |
+| `secure-confusable` / `secure-masking` / `secure-xss` / `secure-sanitize` | ❌ | 0.5.1~0.6.2 | 安全工具集 |
+| `secure-simple-token` / `secure-ct-eq` | ❌ | 0.7.1 / 0.8.0 | 签名 / 常量时间比较 |
+| `account-credential` / `account-policy` / `account-lockout` / `account-authflow` | ❌ | 0.6.0 | 账号安全引擎 |
+| `firewall` / `firewall-*` | ❌ | 0.5.0~0.6.4 | 安全防护套件（暴力破解/限流/异常/GeoIP/DDoS/WAF） |
+| `listener` | ❌ | 0.2.0 | 事件监听器（15 个事件变体） |
+| `tracing-log` / `metrics-prometheus` / `otlp` | ❌ | 0.1.0~0.3.0 | 可观测性 |
+| `annotation-macros` | ❌ | 0.4.2 | 10 个属性宏 |
+| `tenant-isolation` | ❌ | 0.5.0 | 多租户逻辑隔离 |
+| `social-wechat` / `social-alipay` | ❌ | 0.5.0 | 社交登录 |
+| `core-advanced` / `session-extra` | ❌ | 0.9.0 | 核心增强 / 会话增强合并 |
+| `email-verification` / `email-verification-smtp` | ❌ | 0.9.0 | 邮箱验证码 |
+| `config-*` | ❌ | 0.8.0 | 配置文件加密/校验/热更新/插值/动态/开关（confers 透传） |
+| `i18n` / `i18n-icu` | ❌ | 0.3.0 | 国际化 |
+| `full` / `production` / `development` | ❌ | — | 聚合特性 |
 
-| 字段                 | 默认值             | 说明                                                  |
-| -------------------- | ------------------ | ----------------------------------------------------- |
-| `timeout`            | `2592000`（30 天） | 会话超时秒数                                          |
-| `active_timeout`     | `-1`（不启用）     | 活跃超时秒数，-1 表示跟随 `timeout`                   |
-| `is_share`           | `false`            | 同账号多端共享会话                                    |
-| `is_concurrent`      | `true`             | 允许同账号并发登录                                    |
-| `token_name`         | `garrison_token`   | Cookie / Header 名                                    |
-| `token_style`        | `uuid`        | Token 风格（`uuid` / `random_64` / `simple` / `jwt`） |
-| `throw_on_not_login` | `true`             | 未登录时抛异常而非返回 false                          |
-
-支持通过 `tokio::sync::watch` 实现配置热更新，详见 [docs/CONFIGURATION.md](./docs/CONFIGURATION.md)。
-
----
-
-## 🎛 特性门控
-
-| 特性                          | 默认 | 引入版本 | 说明                                                                                                                                                                                                                             |
-| ----------------------------- | :--: | :------: | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `backend-embedded`            |  ✅  |  0.7.0   | 内嵌后端模式（进程内认证，委托 GarrisonManager）                                                                                                                                                                                 |
-| `backend-remote`              |  ❌  |  0.7.0   | 远程后端适配器（通过 HTTP 调用远程 Auth Server）                                                                                                                                                                                 |
-| `backend-kit`                 |  ❌  |  0.7.0   | trait-kit typestate DI 构建                                                                                                                                                                                                      |
-| `auth-server`                 |  ❌  |  0.7.0   | 独立认证服务器（含 sdforge 声明式路由 + TLS）                                                                                                                                                                                    |
-| `abac`                        |  ❌  |  0.7.0   | 基于 Cedar DSL 的属性访问控制引擎                                                                                                                                                                                                |
-| `oauth2-server`               |  ❌  |  0.7.0   | 完整 OAuth2 Server 4 端点（authorize/token/revoke/introspect）                                                                                                                                                                   |
-| `cache-memory`                |  ❌  |  0.1.0   | 内存缓存后端（oxcache 内存层）                                                                                                                                                                                                   |
-| `cache-redis`                 |  ❌  |  0.1.0   | Redis 缓存后端（oxcache L2）                                                                                                                                                                                                     |
-| `db-sqlite`                   |  ❌  |  0.1.0   | SQLite 数据库后端（dbnexus + auto-migrate）                                                                                                                                                                                      |
-| `db-postgres`                 |  ❌  |  0.5.0   | PostgreSQL 后端                                                                                                                                                                                                                  |
-| `db-mysql`                    |  ❌  |  0.5.3   | MySQL 后端                                                                                                                                                                                                                       |
-| `web-axum`                    |  ❌  |  0.1.0   | axum Web 框架适配                                                                                                                                                                                                                |
-| `web-actix`                   |  ❌  |  0.4.2   | actix-web Web 框架适配                                                                                                                                                                                                           |
-| `web-warp`                    |  ❌  |  0.4.2   | warp Web 框架适配                                                                                                                                                                                                                |
-| `web-waf`                     |  ❌  |  0.6.4   | WAF 级 Web 防火墙中间件                                                                                                                                                                                                          |
-| `web-cors`                    |  ❌  |  0.6.4   | CORS 跨域中间件                                                                                                                                                                                                                  |
-| `web-csrf`                    |  ❌  |  0.6.4   | CSRF 防护中间件                                                                                                                                                                                                                  |
-| `protocol-jwt`                |  ❌  |  0.2.0   | JWT 签发与验证（HS256/HS512 + refresh）                                                                                                                                                                                          |
-| `protocol-oauth2`             |  ❌  |  0.2.0   | OAuth2 四种模式（含 RefreshToken）                                                                                                                                                                                               |
-| `protocol-sso`                |  ❌  |  0.2.0   | SSO 单点登录 ticket                                                                                                                                                                                                              |
-| `protocol-sign`               |  ❌  |  0.2.0   | API 签名 + nonce 防重放                                                                                                                                                                                                          |
-| `protocol-apikey`             |  ❌  |  0.2.0   | API Key 认证                                                                                                                                                                                                                     |
-| `protocol-temp`               |  ❌  |  0.2.0   | 临时凭证                                                                                                                                                                                                                         |
-| `protocol-oidc`               |  ❌  |  0.4.0   | OIDC id_token 签发/验证 + discovery                                                                                                                                                                                              |
-| `protocol-zeroize`            |  ❌  |  0.4.2   | 协议层密钥零化（Drop 时清零 secret 字段）                                                                                                                                                                                        |
-| `oauth2-scope-handler`        |  ❌  |  0.4.0   | OAuth2 ScopeHandler 注册表                                                                                                                                                                                                       |
-| `protocol-sso-server`         |  ❌  |  0.4.0   | SSO Server 独立抽象 + CenterIdConverter                                                                                                                                                                                          |
-| `protocol-saml`               |  ❌  |  0.5.0   | SAML 2.0 骨架（rsa 签名验证）                                                                                                                                                                                                    |
-| `alone-cache`                 |  ❌  |  0.4.0   | AloneCache 多 Redis 实例隔离装饰器                                                                                                                                                                                               |
-| `parameter-query`             |  ❌  |  0.4.0   | ParameterQuery 参数化查询 + Builder                                                                                                                                                                                              |
-| `secure-totp`                 |  ❌  |  0.2.0   | TOTP 动态验证码 (RFC 6238)                                                                                                                                                                                                       |
-| `secure-sign`                 |  ❌  |  0.2.0   | HMAC-SHA256/SHA512 工具                                                                                                                                                                                                          |
-| `protocol-httpbasic`          |  ❌  |  0.2.0   | HTTP Basic 认证 (RFC 7617)                                                                                                                                                                                                       |
-| `protocol-httpdigest`         |  ❌  |  0.2.0   | HTTP Digest 认证 (RFC 7616)                                                                                                                                                                                                      |
-| `secure-confusable`           |  ❌  |  0.5.1   | Unicode 同形异义字检测                                                                                                                                                                                                           |
-| `secure-masking`              |  ❌  |  0.6.2   | 敏感数据脱敏（regex 真实脱敏）                                                                                                                                                                                                   |
-| `secure-xss`                  |  ❌  |  0.6.2   | XSS 防护                                                                                                                                                                                                                         |
-| `secure-sanitize`             |  ❌  |  0.6.2   | 通用输入消毒                                                                                                                                                                                                                     |
-| `secure-simple-token`         |  ❌  |  0.7.1   | SimpleTokenStyle HMAC-SHA256 签名                                                                                                                                                                                                |
-| `secure-ct-eq`                |  ❌  |  0.8.0   | 常量时间比较原语（CWE-208 防御，基于 `subtle`）                                                                                                                                                                                   |
-| `sms-rate-limit`              |  ❌  |  0.6.2   | SMS 验证码限速                                                                                                                                                                                                                   |
-| `email-verification`          |  ❌  |  0.9.0   | 邮箱验证码（发送/验证/双窗口限速/异常检测，业务方实现 `EmailSender` 或启用 `email-verification-smtp`）                                                                                                                              |
-| `email-verification-smtp`     |  ❌  |  0.9.0   | 内置 SMTP 邮件发送器（lettre，含 `SmtpEmailSender` + `SmtpConfig`）                                                                                                                                                               |
-| `account-credential`          |  ❌  |  0.6.0   | 凭证模型 SPI（Argon2/Bcrypt）                                                                                                                                                                                                    |
-| `account-credential-zeroize`  |  ❌  |  0.6.0   | 凭证模型 zeroize 扩展                                                                                                                                                                                                            |
-| `account-policy`              |  ❌  |  0.6.0   | 密码策略引擎                                                                                                                                                                                                                     |
-| `account-lockout`             |  ❌  |  0.6.0   | 用户锁定策略                                                                                                                                                                                                                     |
-| `account-authflow`            |  ❌  |  0.6.0   | AuthenticationFlow DSL                                                                                                                                                                                                           |
-| `listener`                    |  ❌  |  0.2.0   | 事件监听器（15 个事件变体，0.4.2 扩展）                                                                                                                                                                                          |
-| `tracing-log`                 |  ❌  |  0.1.0   | tracing 日志桥接                                                                                                                                                                                                                 |
-| `metrics-prometheus`          |  ❌  |  0.3.0   | Prometheus 指标                                                                                                                                                                                                                  |
-| `otlp`          |  ❌  |  0.3.0   | OpenTelemetry OTLP 分布式追踪                                                                                                                                                                                                    |
-
-> **v0.9.0 Feature 改名映射**：部分安全/协议模块在 v0.9.0 从 `secure-*` 命名空间统一迁移到 `protocol-*`（域归并到协议层）：
+> **v0.9.0 Feature 改名映射**：
 >
-> | 旧名称 (≤0.8.x)      | 新名称 (≥0.9.0)        | 说明                     |
-> | -------------------- | ---------------------- | ------------------------ |
-> | `secure-saml`        | `protocol-saml`        | SAML 2.0 签名验证        |
-> | `secure-httpbasic`   | `protocol-httpbasic`   | HTTP Basic 认证          |
-> | `secure-httpdigest`  | `protocol-httpdigest`  | HTTP Digest 认证         |
-> | `observability-otlp` | `otlp`                 | OpenTelemetry OTLP       |
+> | 旧名称 (≤0.8.x) | 新名称 (≥0.9.0) | 说明 |
+> |-----------------|-----------------|------|
+> | `secure-saml` | `protocol-saml` | SAML 2.0 签名验证 |
+> | `secure-httpbasic` | `protocol-httpbasic` | HTTP Basic 认证 |
+> | `secure-httpdigest` | `protocol-httpdigest` | HTTP Digest 认证 |
+> | `observability-otlp` | `otlp` | OpenTelemetry OTLP |
 > | `decision-trace` / `permission-registry` / `safe-defaults` | `core-advanced` | 核心增强合并 |
 > | `dynamic-active-timeout` / `login-token-map-persistence` / `anonymous-session` / `session-search` | `session-extra` | 会话增强合并 |
->
-> 升级时请将 `Cargo.toml` 中的 feature 引用按上表重命名，功能与默认行为不变。
->
-> **可观测性 no-op 契约**：`metrics-prometheus` / `otlp` / `tracing-log` 均未启用时，
-> `observability` 模块仍可导入但所有 API 为 no-op（`None` 短路 / 零开销），避免用户误以为指标或追踪已启用。
-| `audit-inklog`                |  ❌  |  0.7.0   | inklog 结构化审计日志                                                                                                                                                                                                            |
-| `grpc`                        |  ❌  |  0.3.0   | gRPC 鉴权拦截器（tonic::Interceptor）                                                                                                                                                                                            |
-| `annotation-macros`           |  ❌  |  0.4.2   | 10 个属性宏：`#[check_login]` / `#[check_permission]` / `#[check_role]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` / `#[check_api_key]` / `#[check_mfa]` / `#[check_abac]` / `#[check_disable]` |
-| `tenant-isolation`            |  ❌  |  0.5.0   | 多租户逻辑隔离                                                                                                                                                                                                                   |
-| `social-wechat`               |  ❌  |  0.5.0   | 微信扫码社交登录                                                                                                                                                                                                                 |
-| `social-alipay`               |  ❌  |  0.5.0   | 支付宝授权社交登录                                                                                                                                                                                                               |
-| `audit-log`                   |  ❌  |  0.5.0   | 审计日志持久化                                                                                                                                                                                                                   |
-| `firewall`                    |  ❌  |  0.5.0   | 安全防护基础 trait                                                                                                                                                                                                               |
-| `firewall-bruteforce`         |  ❌  |  0.5.0   | 暴力破解防护策略                                                                                                                                                                                                                 |
-| `firewall-ratelimit`          |  ❌  |  0.5.0   | 限流策略                                                                                                                                                                                                                         |
-| `rate-limit-redis`            |  ❌  |  0.6.4   | Redis 限流后端                                                                                                                                                                                                                   |
-| `firewall-anomalous`          |  ❌  |  0.5.0   | 异常登录检测                                                                                                                                                                                                                     |
-| `firewall-geoip`              |  ❌  |  0.5.0   | GeoIP 策略                                                                                                                                                                                                                       |
-| `firewall-ddos`               |  ❌  |  0.5.0   | DDoS 防护策略                                                                                                                                                                                                                    |
-| `firewall-waf`                |  ❌  |  0.6.4   | WAF 级防火墙                                                                                                                                                                                                                     |
-| `firewall-maxminddb`          |  ❌  |  0.5.3   | MaxMindDb 生产后端                                                                                                                                                                                                               |
-| `anomalous-detector-dual`     |  ❌  |  0.6.2   | 异常登录双引擎检测                                                                                                                                                                                                               |
-| `keycloak-oidc`               |  ❌  |  0.5.0   | Keycloak OIDC RP 集成                                                                                                                                                                                                            |
-| `core-advanced`               |  ❌  |  0.9.0   | 核心增强（决策溯源 / 权限注册表 / forbid 优先语义合并）          |
-| `authorize-api`               |  ❌  |  0.5.1   | 请求对象式授权 API                                                                                                                                                                                                               |
-| `manager-explicit`            |  ❌  |  0.5.1   | 显式 Manager API                                                                                                                                                                                                                 |
-| `security-alert`              |  ❌  |  0.6.5   | 安全告警系统                                                                                                                                                                                                                     |
-| `device-binding`              |  ❌  |  0.6.5   | 设备绑定                                                                                                                                                                                                                         |
-| `safe-auth`                   |  ❌  |  0.6.5   | 二级认证瞬态标记                                                                                                                                                                                                                 |
-| `session-extra`               |  ❌  |  0.9.0   | 会话增强（动态活跃超时 / login_token_map 持久化 / 匿名 Session / 会话搜索合并）          |
-| `three-tier-cache`            |  ❌  |  0.6.7   | 三层缓存架构                                                                                                                                                                                                                     |
-| `tls`                         |  ❌  |  0.7.0   | HTTPS/TLS 终止（axum-server rustls）                                                                                                                                                                                             |
-| `miette`                      |  ❌  |  0.5.1   | miette 富错误                                                                                                                                                                                                                    |
-| `i18n`                        |  ❌  |  0.3.0   | 国际化基础层（fluent-rs）                                                                                                                                                                                                        |
-| `i18n-icu`                    |  ❌  |  0.3.0   | ICU4X 增强层（复数 + 日期 + 数字本地化）                                                                                                                                                                                         |
-| `config-encryption`           |  ❌  |  0.8.0   | 配置文件加密（confers 透传）                                                                                                                                                                                                         |
-| `config-validation`           |  ❌  |  0.8.0   | 配置文件校验（confers 透传）                                                                                                                                                                                                         |
-| `config-hot-reload`           |  ❌  |  0.8.0   | 配置文件热更新（confers 透传）                                                                                                                                                                                                       |
-| `config-interpolation`        |  ❌  |  0.8.0   | 配置变量插值（confers 透传）                                                                                                                                                                                                         |
-| `config-dynamic`              |  ❌  |  0.8.0   | 动态配置源（confers 透传）                                                                                                                                                                                                           |
-| `config-toggle`       |  ❌  |  0.8.0   | 配置驱动特性开关（confers 透传）                                                                                                                                                                                                     |
-| `embedded-migrations`         |  ❌  |  0.7.0   | 嵌入式迁移 SQL（编译时 include_dir，供 crates.io 消费者使用）                                                                                                                                                                       |
-| `server-health-check`         |  ❌  |  0.7.0   | 服务器健康检查端点（sdforge 透传）                                                                                                                                                                                                   |
-| `server-graceful-shutdown`    |  ❌  |  0.7.0   | 服务器优雅停机（sdforge 透传）                                                                                                                                                                                                       |
-| `credit-metering`             |  ❌  |  0.7.0   | Credit 计量（多租户配额消费统计 / 告警 / 重置）                                                                                                                                                                                       |
-| `api-docs`                    |  ❌  |  0.7.0   | OpenAPI 文档生成（sdforge 透传）                                                                                                                                                                                                     |
-| `policy-hibp`                 |  ❌  |  0.8.1   | HIBP 泄露密码检查（k-anonymity，仅上传 SHA-1 前 5 位 range 查询，默认关）                                                                                                                                                            |
-| `full`                        |  ❌  |    —     | 聚合所有特性                                                                                                                                                                                                                     |
-| `production`                  |  ❌  |    —     | 生产环境推荐组合                                                                                                                                                                                                                 |
-| `development`                 |  ❌  |    —     | 开发环境组合                                                                                                                                                                                                                     |
 
 ---
 
-## 📚 API 文档
+## 📚 文档
 
-- **在线文档**：[https://docs.rs/garrison](https://docs.rs/garrison)
-
-### 迁移说明（0.8.x）
-
-- `MockDao` 已正名 `InMemoryDao`（`src/dao/in_memory.rs`；`src/dao/mod.rs` 保留 `#[deprecated]` 别名过渡，下版本移除）。依赖旧名的下游请迁移。
-- authflow 新增 `ip_whitelist`（CIDR 白名单，`IpNetwork::contains`）与 `custom_evaluators`（自定义条件评估 trait `CustomConditionEvaluator`，满足后可短路放行）。
-- `policy-hibp` 关闭时 `check_hibp` 返回显性 `Err(HibpDisabled)`（不再静默通过）。
-- **本地生成**：`cargo doc --no-deps --features full --open`
-- **示例代码**（独立 workspace member，`cargo run -p garrison-examples --bin <name> --features full`）：
-  - [examples/src/bin/basic_login.rs](./examples/src/bin/basic_login.rs)：完整业务场景（167 行）
-  - [examples/src/bin/axum_integration.rs](./examples/src/bin/axum_integration.rs)：完整 Web 应用（253 行）
-  - [examples/src/bin/oidc_handler.rs](./examples/src/bin/oidc_handler.rs)：OIDC id_token 签发/验证（0.4.0 新增）
-  - [examples/src/bin/scope_handler.rs](./examples/src/bin/scope_handler.rs)：ScopeHandler 注册表（0.4.0 新增）
-  - [examples/src/bin/sso_server.rs](./examples/src/bin/sso_server.rs)：SSO Server 独立抽象（0.4.0 新增）
-  - [examples/src/bin/alone_cache.rs](./examples/src/bin/alone_cache.rs)：AloneCache 多实例隔离（0.4.0 新增）
-  - [examples/src/bin/parameter_query.rs](./examples/src/bin/parameter_query.rs)：ParameterQuery 参数化查询（0.4.0 新增）
-  - 完整列表见 [examples/src/lib.rs](./examples/src/lib.rs) 模块声明
+| 文档 | 说明 |
+|------|------|
+| [🏗️ 架构文档](docs/ARCHITECTURE.md) | 设计原则、模块划分与数据流 |
+| [⚙️ 配置指南](docs/CONFIGURATION.md) | 三级配置源、完整配置项与热更新 |
+| [🤝 贡献指南](docs/CONTRIBUTING.md) | 如何参与项目开发 |
+| [📋 更新日志](docs/CHANGELOG.md) | 每个版本的变更记录 |
+| [🛠️ 开发规范](docs/DEVELOPMENT.md) | TDD 工作流、代码规范与调试技巧 |
+| [🚀 部署指南](docs/DEPLOYMENT.md) | 生产部署注意事项 |
+| [🔒 安全文档](docs/SECURITY.md) | 安全策略、漏洞报告流程 |
+| [🗺️ 路线图](docs/ROADMAP.md) | 版本演进规划 |
+| [❓ FAQ](docs/FAQ.md) | 常见问题解答 |
+| [🔧 问题排查](docs/TROUBLESHOOTING.md) | 常见问题与解决方案 |
+| [🧪 E2E 测试](docs/E2E_TESTING.md) | 特性组合测试套件 |
+| [📦 在线 API 文档](https://docs.rs/garrison) | docs.rs 自动生成的最新文档 |
+| [📦 crates.io](https://crates.io/crates/garrison) | 发布页面 |
 
 ---
 
-## 🤝 贡献
+## 💻 示例
 
-欢迎所有形式的贡献！请先阅读 [贡献指南](./docs/CONTRIBUTING.md)。
+全部示例位于 [`examples/`](examples/) 目录，作为独立 workspace member（`garrison-examples` crate）。
 
-### 提交 Issue
+| 示例 | 文件 | 描述 |
+|------|------|------|
+| basic_login | `examples/src/bin/basic_login.rs` | 完整业务场景（167 行） |
+| axum_integration | `examples/src/bin/axum_integration.rs` | 完整 Web 应用（253 行） |
+| oidc_handler | `examples/src/bin/oidc_handler.rs` | OIDC id_token 签发/验证 |
+| scope_handler | `examples/src/bin/scope_handler.rs` | ScopeHandler 注册表 |
+| sso_server | `examples/src/bin/sso_server.rs` | SSO Server 独立抽象 |
+| alone_cache | `examples/src/bin/alone_cache.rs` | AloneCache 多实例隔离 |
+| parameter_query | `examples/src/bin/parameter_query.rs` | ParameterQuery 参数化查询 |
 
-- 使用 [Issue 模板](https://github.com/Kirky-X/garrison/issues/new/choose)（Bug Report / Feature Request）
-- 描述问题时请提供复现步骤与 Rust 版本
+```bash
+# 运行单个示例
+cargo run -p garrison-examples --bin basic_login --features full
 
-### 提交 PR
+# 验证全部示例可编译
+cargo build -p garrison-examples --features full
+```
 
-1. Fork 本仓库
-2. 创建特性分支：`git checkout -b feat/your-feature`
-3. 遵循 [Conventional Commits](https://conventionalcommits.org/zh-hans/) 规范提交
-4. 确保 `cargo test --features full` + `cargo clippy -- -D warnings` 通过
-5. 创建 Pull Request
+---
 
-### 开发规范
+## 🏗️ 架构
 
-- **TDD 工作流**：先写接口 → 写测试 → 实现 → 测试通过 → commit
-- **clippy**：零警告（`-D warnings`）
-- **文档**：所有 public API 必须有 `///` 文档注释
-- **测试串行化**：修改全局 `GarrisonManager` 单例的测试需标注 `#[serial_test::serial]`
+Garrison 采用**双抽象层 + 全局单例**架构：`src/` 下的公开模块（`stp`、`session`、`strategy`、`manager`、`annotation`、`router`、`dao`）做转发动机，真正实现由 `GarrisonDao` trait 屏蔽存储后端差异（`dbnexus` SQLite / PostgreSQL / MySQL + `oxcache` L1 内存 / L2 redis）。可选能力（`protocol-*`、`secure-*`、`firewall-*`、`account-*`、`web-*` 等）按 feature 独立门控。核心数据通路为：业务代码 → `GarrisonUtil` 静态 API → `GarrisonManager` 单例 → `GarrisonLogicDefault`（6 个子 trait）→ `GarrisonDao` / `GarrisonPermissionStrategy` → 存储后端。
 
-### 测试
+```mermaid
+graph TD
+    User["业务代码"] --> Util["GarrisonUtil 静态 API"]
+    Util --> Manager["GarrisonManager 单例"]
+    Manager --> Logic["GarrisonLogicDefault"]
+    Logic --> Session["GarrisonSession"]
+    Logic --> Strategy["GarrisonPermissionStrategy"]
+    Session --> Dao["GarrisonDao trait"]
+    Strategy --> Interface["GarrisonInterface 业务回调"]
+    Dao --> Oxcache["oxcache (L1 内存 + L2 redis)"]
+    Dao --> Dbnexus["dbnexus (SQLite / PostgreSQL / MySQL)"]
+    Logic --> Plugin["GarrisonPlugin (inventory)"]
+    Logic --> Listener["GarrisonListener (inventory)"]
+    Annotation["axum 注解<br/>CheckLogin / CheckRole / CheckPermission"] --> Logic
+    Router["GarrisonRouter"] --> Interceptor["GarrisonInterceptor"]
+    Interceptor --> Util
+```
 
-Garrison 提供三层测试体系：单元测试（3899+ 个 lib）+ E2E 测试（68+ 个，含 API 矩阵 / 性能基线 / 渗透测试）+ doc-tests。
+> 完整的模块划分与数据流说明见 [🏗️ 架构文档](docs/ARCHITECTURE.md)。
+
+---
+
+## 🧪 测试
+
+### 🎯 测试策略
+
+| 层级 | 位置 | 说明 |
+|------|------|------|
+| 单元测试 | `src/` 内联 `#[cfg(test)]` 模块 | 覆盖各特性门控下的核心逻辑 |
+| 集成测试 | `examples/tests/` | 68+ 个示例级集成测试 |
+| 端到端测试 | `tests/acceptance/` | API 矩阵 / 性能基线 / 渗透测试 |
+| 基准测试 | `benches/` | Criterion 基准 |
+| 文档测试 | 公开 API rustdoc 示例 | 随 `cargo test` 执行 |
+
+### ▶️ 运行命令
 
 ```bash
 # 单元测试 + 集成测试
 cargo test --features full
 
-# E2E 测试（含 API 矩阵 + 渗透测试，不含 #[ignore] 性能测试）
+# E2E 测试（含 API 矩阵 + 渗透测试）
 cargo test --test e2e --features "full testing" -- --nocapture
 
-# 性能基线测试（#[ignore] 默认不跑，需显式触发）
+# 性能基线测试
 cargo test --test e2e --features "full testing" -- --ignored perf_ --test-threads=1 --nocapture
 
-# 一键执行 E2E + 性能 + 渗透 + 生成综合报告
+# 一键执行 E2E + 性能 + 渗透 + 综合报告
 bash scripts/e2e_run.sh
 ```
 
-E2E 测试覆盖 API 接口矩阵（happy/errors/boundary/authz_boundary）、性能基线（P99<200ms/1000RPS）、渗透测试（7 类攻击 × N payload），所有 HTTP 交互通过 `RecordingClient` 抓包到 `logs/e2e_http.jsonl`，最终由 `scripts/e2e_analyze.py` 聚合生成 `logs/e2e_final_report.md`。详细说明详见 [E2E / 性能 / 渗透测试](./docs/DEVELOPMENT.md#e2e--性能--渗透测试)。
+### 📊 测试规模
+
+| 类别 | 数量 |
+|------|------|
+| 单元测试（`src/` 内联） | 3899+ |
+| E2E 测试（`tests/`） | 68+ |
+| 行覆盖率 | 95%+ |
 
 ---
 
-## 🗺 路线图
+## 📊 性能
 
-- [x] **v0.1.0**（2026-06-30）核心基础设施：登录认证 + 权限校验 + 双模会话 + axum 集成
-- [x] **v0.2.0**（2026-07-01）协议与安全层：JWT / OAuth2 / SSO / Sign / API Key / TOTP / Basic / Digest + 插件系统 + 事件监听器
-- [x] **v0.2.1**（2026-07-01）auto-wire 修复 + 协议层边界测试 + examples 工程化重组
-- [x] **v0.3.0** 生态完善与可观测：OpenTelemetry OTLP + gRPC 拦截器 + i18n + metrics-prometheus
-- [x] **v0.4.0**（2026-07-02）0.2.0 协议层遗留 gap 补齐：OIDC / ScopeHandler / SsoServer / AloneCache / ParameterQuery（gap #4 注解系统延后至 0.5.0+）
-- [x] **v0.4.2**（2026-07-05）gap closure：dao 扩展 / strategy-registry / jwt-modes / oauth-2-1 / token-introspection / apikey-namespace / sso-toctou / password-login / 注解宏
-- [x] **v0.5.0**（2026-07-06）生产刚需版：多租户 / 社交登录 / 审计日志 / Token Rotation / 安全防护 / 角色层级 / 决策溯源 / Keycloak OIDC RP / PostgreSQL
-- [x] **v0.5.2**（2026-07-08）架构重构：GarrisonLogic trait 拆分为 6 个子 trait + LoginId 迁移到 String
-- [x] **v0.5.3**（2026-07-09）功能补全：oxcache 升级 / stp 完整拆分 / MySQL 后端 / Firewall MaxMindDb
-- [x] **v0.6.0**（2026-07-09）账号安全引擎：account/ 模块 + Credential SPI + PasswordPolicyEngine + AuthenticationFlow DSL + remember-me / Redis 部署模式 / switch_to / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel
-- [x] **v0.7.0**（2026-07-17）微服务架构 + ABAC/Cedar + OAuth2 Server：backend-remote / Auth Server / ABAC 引擎 / OAuth2 Server 4 端点 + 架构加固 + 依赖优化
-- [x] **v0.7.1**（2026-07-21）安全修复 + 架构加固：21 项安全修复（secure-simple-token、SimpleTokenStyle 防伪造、OIDC aud 数组兼容、switch_to 账户会话清理、session corrupt-json 健壮性等）
-- [x] **v0.7.2**（2026-07-21）跨平台修复 + 安全加固：Windows confers 路径校验修复 + gitleaks 集成 + GarrisonConfig::load 7 项安全防护
-- [x] **v0.7.3**（2026-07-22）宏拓展 + 版本同步：新增 `#[check_disable]` 宏 + garrison-macros 版本同步至 0.7.3 + 新增 `dao_session!` 内部 macro_rules! 宏消除 DAO 层样板代码（53 处调用点，节省 ~350 行） + 文档一致性修复
-- [x] **v0.8.0**（2026-07-24）安全加固 + 发布前审查修复：API Key 安全退化修复（CWE-916 哈希存储 / CWE-307 IP 限速 / IDOR 多租户 / legacy fail-closed）+ jwt_secret 弱密钥拒绝 + 常量时间比较公共原语（secure-ct-eq）+ CSPRNG 统一 OsRng + singleflight 锁清理（CWE-770）+ SQL 占位符状态机 + 发布前审查修复（lost-revoke TOCTOU、ct_eq 统一、update_last_used 对称、sha256_hex 优化、rotate 并发文档化等）
-- [x] **v0.8.1**（2026-07-25）文档一致性修复 + 依赖版本同步：全面对齐文档与代码之间的版本号（oxcache 0.4 / dbnexus 0.5 / confers 0.5 / trait-kit 0.4）、API 示例参数类型（`i64` → `&str`）、Repository trait 数量（9 → 10）、CHANGELOG 链接路径等
-- [ ] **v1.0.0** 稳定版：API 冻结 + 性能基准 + 生产案例
+> E2E 测试套件包含性能基线（P99 < 200ms / 1000RPS），所有 HTTP 交互通过 `RecordingClient` 抓包到 `logs/e2e_http.jsonl`，由 `scripts/e2e_analyze.py` 聚合生成报告。
+
+性能设计要点：`GarrisonManager` 全局单例基于 `arc_swap::ArcSwapOption` 无锁读取；`oxcache` L1 内存层 per-entry TTL 精细化过期；三层缓存 TTL 随机抖动防缓存雪崩；全部可选能力特性门控以控制编译时间与二进制体积。
+
+---
+
+## 🔒 安全
+
+### 🛡️ 安全设计
+
+Garrison 的安全设计围绕身份认证全生命周期防护展开：Argon2id / Bcrypt 密码哈希 + 慢哈希移出 async executor、Token 常量时间比较（`secure-ct-eq`，CWE-208 防御）、API Key 安全存储（CWE-916 修复）、IP 维度限速（CWE-307）、多租户 IDOR 防护、JWT 黑名单写失败重试 + 告警、外网登录端点 fail-closed、事件载荷 token 统一掩码（CWE-532）。逐项机制的代码级细节见 [🏗️ 架构文档](docs/ARCHITECTURE.md)，安全配置最佳实践与漏洞处理流程见 [🔒 安全文档](docs/SECURITY.md)。
+
+### ⛓️ 供应链与门禁
+
+- `cargo deny check`：漏洞、许可证、禁用依赖校验（`deny.toml`）。
+- `cargo audit`：RustSec 安全公告扫描。
+- pre-commit 私钥扫描（gitleaks）。
+
+### 🚨 报告安全漏洞
+
+请勿通过公开 issue 报告安全漏洞。请使用 GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/advisories/new) 私密披露通道或发送邮件至 <Kirky-X@outlook.com>。项目承诺 48 小时内确认、7 天内给出初步评估。完整政策见 [SECURITY.md](docs/SECURITY.md)。
+
+---
+
+## 🗺️ 开发路线图
+
+<table style="width:100%; border-collapse: collapse">
+<tr><th style="text-align:center">状态</th><th style="text-align:left">方向</th><th style="text-align:left">条目</th></tr>
+<tr><td align="center">✅</td><td>核心引擎</td><td>登录认证 + 权限校验 + 双模会话 + axum/actix/warp 适配</td></tr>
+<tr><td align="center">✅</td><td>协议层</td><td>JWT / OAuth2 / SSO / OIDC / SAML 2.0 / API Key / TOTP / Basic / Digest / Sign</td></tr>
+<tr><td align="center">✅</td><td>安全与防护</td><td>账号安全引擎 / 安全防护套件 / 防火墙 / 多租户 / 审计日志</td></tr>
+<tr><td align="center">✅</td><td>微服务架构</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
+<tr><td align="center">✅</td><td>可观测性</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
+<tr><td align="center">📋</td><td>v1.0.0 稳定版</td><td>API 冻结 + 性能基准 + 生产案例</td></tr>
+</table>
 
 完整规划见 [docs/ROADMAP.md](./docs/ROADMAP.md)。
 
 ---
 
+## 🤝 参与贡献
+
+详细的贡献流程与代码规范请参阅 [🤝 贡献指南](docs/CONTRIBUTING.md)。
+
+### 🛠️ 开发环境
+
+| 项 | 要求 |
+|----|------|
+| 工具链 | Rust 1.85+（`rust-toolchain.toml` 锁定） |
+| 格式与 Lint | `cargo fmt --all -- --check`、`cargo clippy --all-targets --all-features -- -D warnings` |
+| 提交信息 | Conventional Commits（`feat`、`fix`、`docs` 等） |
+
+### 💖 贡献方式
+
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td width="33%" align="center" style="padding: 16px">
+
+### 🐛 报告 Bug
+
+发现问题？<br>
+<a href="https://github.com/Kirky-X/garrison/issues/new">创建 Issue</a>
+
+</td>
+<td width="33%" align="center" style="padding: 16px">
+
+### 💡 功能建议
+
+有好想法？<br>
+<a href="https://github.com/Kirky-X/garrison/discussions">开始讨论</a>
+
+</td>
+<td width="33%" align="center" style="padding: 16px">
+
+### 🔧 提交 PR
+
+想贡献代码？<br>
+<a href="https://github.com/Kirky-X/garrison/pulls">Fork 并提交 PR</a>
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📋 更新日志
+
+完整版本历史见 [📋 更新日志](docs/CHANGELOG.md)（遵循 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) 格式，语义化版本）。
+
+| 版本 | 日期 | 要点 |
+|------|------|------|
+| 0.9.0-rc.2 | 2026-08-26 | fail-closed 安全加固（check_api_key / check_abac）；自研库 rc.4 升级 |
+| 0.9.0-rc.1 | 2026-08-25 | 验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层 |
+| 0.8.1 | 2026-07-25 | 文档一致性修复 + 依赖版本同步 |
+| 0.8.0 | 2026-07-24 | 安全加固 + 发布前审查修复（CWE-916 / CWE-307 / IDOR / ct-eq 等） |
+
+---
+
 ## 📄 许可证
 
-本项目基于 [Apache-2.0](./LICENSE) 许可证开源。
+本项目基于 [Apache-2.0](LICENSE) 许可证开源。
 
 为何选择 Apache-2.0 而非 MIT：Apache-2.0 包含专利授权条款，更适合企业级框架使用。
 
@@ -549,14 +446,56 @@ E2E 测试覆盖 API 接口矩阵（happy/errors/boundary/authz_boundary）、�
 
 ## 🙏 致谢
 
+### 🌟 核心依赖
+
+Garrison 站在以下优秀开源项目的肩膀上：
+
+| 依赖 | 用途 |
+|------|------|
+| [axum](https://github.com/tokio-rs/axum) | tokio 团队出品的 Rust Web 框架 |
+| [oxcache](https://github.com/Kirky-X/oxcache) | Rust 多级缓存库（L1 内存 + L2 redis） |
+| [dbnexus](https://github.com/Kirky-X/dbnexus) | Rust 数据库抽象层（SQLite / PostgreSQL / MySQL） |
+| [inventory](https://github.com/dtolnay/inventory) | David Tolnay 的编译期插件注册库 |
+| [confers](https://github.com/Kirky-X/confers) | Rust 配置管理库（零样板代码） |
+| [sdforge](https://github.com/Kirky-X/sdforge) | 声明式 Web 框架 |
+| [trait-kit](https://github.com/Kirky-X/trait-kit) | trait 工具集 |
+
+### 💝 特别感谢
+
 - [Sa-Token](https://github.com/dromara/sa-token)：Java 生态的认证鉴权框架，为本项目早期领域建模提供参考
-- [axum](https://github.com/tokio-rs/axum)：tokio 团队出品的 Rust Web 框架
-- [oxcache](https://github.com/Kirky-X/oxcache)：Rust 多级缓存库（L1 内存 + L2 redis）
-- [dbnexus](https://github.com/Kirky-X/dbnexus)：Rust 数据库抽象层（SQLite / PostgreSQL / MySQL）
-- [inventory](https://github.com/dtolnay/inventory)：David Tolnay 的编译期插件注册库
+- 感谢 Rust 社区与所有 [贡献者](https://github.com/Kirky-X/garrison/graphs/contributors)
 
 ---
 
-<p align="center">
-  Built with ❤️ by <a href="https://github.com/Kirky-X">Kirky.X</a>
-</p>
+## 📞 联系与支持
+
+<table style="width:100%; max-width: 600px">
+<tr>
+<td align="center" width="33%">
+<a href="https://github.com/Kirky-X/garrison/issues"><b style="color:#991B1B">Issues</b></a><br>
+<span style="color:#64748B">报告问题和 Bug</span>
+</td>
+<td align="center" width="33%">
+<a href="https://github.com/Kirky-X/garrison/discussions"><b style="color:#1E40AF">讨论区</b></a><br>
+<span style="color:#64748B">提问和分享想法</span>
+</td>
+<td align="center" width="33%">
+<a href="https://github.com/Kirky-X/garrison"><b style="color:#1E293B">GitHub</b></a><br>
+<span style="color:#64748B">查看源代码</span>
+</td>
+</tr>
+</table>
+
+---
+
+## ⭐ Star 历史
+
+[![Star History Chart](https://api.star-history.com/svg?repos=Kirky-X/garrison&type=Date)](https://star-history.com/#Kirky-X/garrison&Date)
+
+如果这个项目对您有帮助，请考虑给它一个 ⭐️！
+
+<b>由 Kirky.X 构建</b>
+
+---
+
+<sub>© 2026 Kirky.X. 保留所有权利。</sub>
