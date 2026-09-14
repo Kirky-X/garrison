@@ -1,4 +1,4 @@
-# Garrison 架构设计文档
+# 🏗️ Garrison 架构设计文档
 
 > Garrison 是面向 Rust 生态的身份认证鉴权框架。
 >
@@ -8,11 +8,24 @@
 > - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
 > - 缓存：oxcache 0.5（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
-> 配置相关字段说明详见 [configuration.md](./CONFIGURATION.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。
+> 配置相关字段说明详见 [⚙️ 配置指南](./CONFIGURATION.md)；开发规范详见 [🛠️ 开发规范](./DEVELOPMENT.md)。
+
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [架构概览](#-架构概览)
+- [模块划分](#-模块划分)
+- [关键 trait 关系图](#-关键-trait-关系图)
+- [数据流：请求处理链路](#-数据流请求处理链路)
+- [设计决策](#-设计决策)
+
+</details>
 
 ---
 
-## 一、架构概览
+## 🎯 架构概览
 
 Garrison 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 
@@ -41,7 +54,7 @@ Garrison 同时维护两种会话维度：
 
 ---
 
-## 二、模块划分
+## 🧩 模块划分
 
 Garrison 分为四层模块，由 feature flag 控制编译裁剪：
 
@@ -200,7 +213,7 @@ graph TB
 
 ---
 
-## 三、关键 trait 关系图
+## 🔗 关键 trait 关系图
 
 Garrison 的核心抽象通过 trait 解耦，业务方实现 trait 即可接入：
 
@@ -257,7 +270,7 @@ graph LR
 
 ---
 
-## 四、数据流：请求处理链路
+## 🔄 数据流：请求处理链路
 
 以 axum 集成为例，一个受保护请求的完整处理链路：
 
@@ -309,7 +322,7 @@ sequenceDiagram
 
 ---
 
-## 五、设计决策
+## 💡 设计决策
 
 ### 1. 为什么用 inventory 编译期注册？
 
@@ -410,11 +423,13 @@ impl GarrisonPermissionStrategy for MyStrategy {
 
 ---
 
-## 七、参考
+## 📚 相关文档
 
-- 配置字段说明：[configuration.md](./CONFIGURATION.md)
-- 开发规范与 TDD 工作流：[development.md](./DEVELOPMENT.md)
-- 版本演进规划：[roadmap.md](./ROADMAP.md)
-- 部署指南：[deployment.md](./DEPLOYMENT.md)
+| 文档 | 说明 |
+|------|------|
+| [⚙️ 配置指南](./CONFIGURATION.md) | 完整配置项参考 |
+| [🛠️ 开发规范](./DEVELOPMENT.md) | TDD 工作流与代码规范 |
+| [🗺️ 路线图](./ROADMAP.md) | 版本演进规划 |
+| [🚀 部署指南](./DEPLOYMENT.md) | 生产部署注意事项 |
 - 早期领域建模参考
 - specmark specs：`specmark/specs/*`

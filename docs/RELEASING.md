@@ -1,8 +1,23 @@
-# Release 工作流
+# 📦 Release 工作流
 
 本文档描述 Garrison 项目的发布流程，遵循规则 18/19/21 + project_memory 安全/质量门禁要求。
 
-## 发布流程图
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [发布流程图](#-发布流程图)
+- [版本规范](#-版本规范)
+- [发布前检查清单](#-发布前检查清单)
+- [本地预检查](#-本地预检查)
+- [发布步骤](#-发布步骤)
+
+</details>
+
+---
+
+## 🔄 发布流程图
 
 ```mermaid
 flowchart TD
@@ -22,7 +37,7 @@ flowchart TD
 
 > **注意**：tag 由开发者本地推送触发，CI 不创建 tag。`workflow_dispatch` 输入的 `version` 通过环境变量传递（防 shell 注入）。
 
-## 版本规范
+## 📏 版本规范
 
 - **Git tag 格式**：`v{Major}.{Minor}.{Patch}`（如 `v0.7.1`），符合 semver
 - **Cargo.toml `[package].version` 字段**：`{Major}.{Minor}.{Patch}`（如 `0.7.1`）
@@ -30,7 +45,7 @@ flowchart TD
 - **规则 29 例外**：Cargo.toml 的 `[dependencies]` 版本用 `x.x` 格式（无 patch 段），但 `[package].version` 仍用 `x.x.x`（与 crates.io / git tag 一致）
 - **Workspace 成员**：`bump-version` 子命令只更新主包 `Cargo.toml`。如需同步 `garrison-macros` / `examples` 版本，需手动修改对应 `Cargo.toml`
 
-## 发布前检查清单
+## ✅ 发布前检查清单
 
 发布前必须完成以下检查（任何一项失败都阻断发布）：
 
@@ -45,7 +60,7 @@ flowchart TD
 | 依赖审计 | `cargo deny check` | 0 failures | 规则 18 |
 | 版本一致性 | `scripts/release.sh check-version` | Cargo.toml == CHANGELOG，tag 不存在 | 规则 21 |
 
-## 本地预检查
+## 🔍 本地预检查
 
 在打 tag 前运行本地预检查脚本：
 
@@ -60,7 +75,7 @@ flowchart TD
 ./scripts/release.sh gen-changelog v0.7.0..HEAD 0.7.1
 ```
 
-## 发布步骤
+## 🚀 发布步骤
 
 ### 1. 更新版本号
 

@@ -1,27 +1,45 @@
-# Garrison 贡献指南
+# 🤝 Garrison 贡献指南
+
+<img src="assets/logo.png" alt="Garrison Logo" width="150">
 
 首先，感谢你对 Garrison 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
 Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：4374+ 个测试通过 + doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
-> 相关文档：[开发规范](./DEVELOPMENT.md) | [架构设计](./ARCHITECTURE.md) | [配置指南](./CONFIGURATION.md)
+> 相关文档：[🛠️ 开发规范](./DEVELOPMENT.md) | [🏗️ 架构设计](./ARCHITECTURE.md) | [⚙️ 配置指南](./CONFIGURATION.md)
+
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [欢迎](#-欢迎)
+- [开发环境搭建](#-开发环境搭建)
+- [前置系统依赖](#-前置系统依赖)
+- [代码规范](#-代码规范)
+- [TDD 工作流](#-tdd-工作流)
+- [提交规范](#-提交规范)
+- [PR 流程](#-pr-流程)
+- [测试覆盖率要求](#-测试覆盖率要求)
+- [联系方式](#-联系方式)
+
+</details>
 
 ---
 
-## 目录
+## 👋 欢迎
 
-- [开发环境搭建](#开发环境搭建)
-- [前置系统依赖](#前置系统依赖)
-- [代码规范](#代码规范)
-- [TDD 工作流](#tdd-工作流)
-- [提交规范](#提交规范)
-- [PR 流程](#pr-流程)
-- [测试覆盖率要求](#测试覆盖率要求)
-- [联系方式](#联系方式)
+欢迎参与 **Garrison** 的建设！
+
+**贡献方式：**
+
+| 代码 | 文档 | 测试 | 社区 |
+|:-----|:-----|:-----|:-----|
+| 修复缺陷、添加特性 | 改进文档与指南 | 编写测试、发现问题 | 帮助与支持他人 |
 
 ---
 
-## 开发环境搭建
+## 🧰 开发环境搭建
 
 ### 1. Fork 与 Clone 仓库
 
@@ -76,7 +94,7 @@ cargo test --features full
 
 ---
 
-## 前置系统依赖
+## 📦 前置系统依赖
 
 部分开发工具链依赖系统级库，请在构建前安装：
 
@@ -90,7 +108,7 @@ cargo test --features full
 
 ---
 
-## 代码规范
+## 📏 代码规范
 
 Garrison 遵循严格的代码质量标准，所有提交必须通过以下检查。
 
@@ -150,7 +168,7 @@ mod tests {
 
 ---
 
-## TDD 工作流
+## 🔄 TDD 工作流
 
 项目采用测试驱动开发，标准流程为：
 
@@ -166,7 +184,7 @@ mod tests {
 
 ---
 
-## 提交规范
+## 📝 提交规范
 
 Garrison 采用 [Conventional Commits](https://www.conventionalcommits.org/zh-hans/v1.0.0/) 规范，提交信息格式：
 
@@ -222,7 +240,7 @@ chore(deps): 升级 oxcache 到 0.3 启用 per-entry TTL
 
 ---
 
-## PR 流程
+## 🔧 PR 流程
 
 ### 1. 创建特性分支
 
@@ -282,7 +300,7 @@ cargo doc --no-deps --features full
 
 ---
 
-## 测试覆盖率要求
+## 📊 测试覆盖率要求
 
 Garrison 要求测试覆盖率 **≥ 95%**（当前 95%+）。新增代码不得使总覆盖率下降。
 
@@ -306,7 +324,7 @@ cargo tarpaulin --features "default,db-sqlite" --lib --out Lcov
 
 ---
 
-## 联系方式
+## 📞 联系方式
 
 - **GitHub Issues**：[https://github.com/Kirky-X/garrison/issues](https://github.com/Kirky-X/garrison/issues) — 用于 bug 报告与功能请求。
 - **GitHub Discussions**：[https://github.com/Kirky-X/garrison/discussions](https://github.com/Kirky-X/garrison/discussions) — 用于设计讨论、使用疑问与想法交流。

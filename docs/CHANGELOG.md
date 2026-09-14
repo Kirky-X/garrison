@@ -1,9 +1,22 @@
-# Changelog
+# 📋 更新日志
 
 本文件记录 Garrison 项目的所有显著变更。
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
+
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [Unreleased](#unreleased)
+- [0.9.0-rc.2](#090-rc.2---2026-08-26)
+- [0.9.0-rc.1](#090-rc.1---2026-08-25)
+
+</details>
+
+---
 
 ## [Unreleased]
 
@@ -20,6 +33,12 @@
 - **`PasswordCredential::new` 哈希器参数 `Box<dyn PasswordHasher>` → `Arc<dyn PasswordHasher>`**：支持 verify 内部 `spawn_blocking`（T007）。
 - **`server-graceful-shutdown` feature 语义落地**：原为空壳（反向依赖 `auth-server`），现改为真实门控；`auth-server` 聚合默认包含。
 - **release profile `panic = "unwind"`（原 `abort`）**：恢复 `catch_unwind` 任务隔离语义（listener 广播 / SSO channel），单 listener panic 不再终止整个认证节点。
+- **移除 `firewall-quota` feature 与 `GarrisonDaoQuotaStorage` 适配器**：全仓零调用（SMS 实际限速走 `GarrisonDaoDistributedLimiter` 双窗口计数），连同 `limiteron/quota-control` 透传一并移除；需要配额控制能力的下游直接使用 limiteron `QuotaController`。
+- **RateLimit 滑动窗口存储格式变更（逗号串 → Redis Sorted Set）**：Lua 脚本改用 limiteron `oxcache_lua::SLIDING_WINDOW_SCRIPT`（ZSET 版，每条目 O(1) 内存）。升级后存量 `rl:*` key 与 ZSET 命令不兼容（WRONGTYPE），会在 `window_seconds + 1s` 内自然过期，过渡窗口内命中旧 key 的请求 fail-close 报错（不误放行）。
+- **`pub mod limiteron` 改为无条件编译**：`GarrisonDaoDistributedLimiter` 是 invitation 防爆破计数在任意 feature 面下的公共基座（limiteron 本身即非 optional 依赖）；ban/circuit/fallback 子模块仍保留各自 feature 门控，公开 API 面相应扩大。
+- **GeoIP 后端迁移至 limiteron GeoMatcher**：`geo::maxminddb` 手写 mmdb 直读后端（无查询缓存）删除，新 `geo::matcher` 委托 limiteron `GeoMatcher`（内置 LRU 查询缓存 + 批量查询 + 库外 IP 负缓存）。类型改名 `GeoMatcherLookup` / `GeoMatcherCountryLookup`，构造 `open` 变 async、`from_bytes` 移除（生产零调用）；garrison `maxminddb` crate 依赖移除，`firewall-maxminddb` feature 名保持不变。
+- **配置文件加载迁移至 confers `FileSource`**：删除手写安全加载块与 `TomlContentSource`（Windows 路径 workaround，confers 0.6.0-rc.4 已放行盘符前缀）。安全防护由 `LoaderConfig` 承载：路径遍历/symlink 校验、is_file 特殊文件拒绝、max_size 10MB + take(max+1) 双保险、`redact_error_paths` 错误路径脱敏。配置文件 IO 错误文案经 `map_confers_build_error` 保持 i18n 出口；孤立 FTL key（config-metadata-failed 等 5 个）删除。
+- **环境变量注入迁移至 confers `EnvSource`**（`separator("__")` 保持扁平 key 兼容）；新增 `GARRISON_CORS_ALLOWED_ORIGINS` 经显式覆盖逻辑生效（此前 raw 逗号串进通用收集会导致 build 失败）；`EnvSource::exclude_keys` / `LoaderConfig::redact_error_paths` 为 confers 0.6.0-rc.5 新 API，发布前经根 Cargo.toml `[patch.crates-io]` 桥接本地 base 仓库（rc.5 发布后拆除）。
 
 ### Performance
 
@@ -31,12 +50,15 @@
 
 - **`max_login_count` 闸门改读 DAO（T009）**：原读进程本地 `login_token_map`，多节点共享存储部署下闸门被短路形同虚设；现以 DAO AccountSession 为权威数据源。
 - **DbHealthCheck 真实探测（T010）**：新增 `DbHealthCheck::with_pool(pool)`，readiness 执行真实 SQL 往返（`get_session` + `SELECT 1`）；未注入连接池时返回 `Degraded`（原探测内存 KV DAO，Postgres 宕机 readiness 仍 Healthy，K8s 摘流失效）。
+- **`l1_cache_capacity` 配置静默无效（自研库吸收）**：`GarrisonConfig::l1_cache_capacity` 有默认值有校验但从未接入 L1（恒为库默认 10000）；新增 `UserCacheService::new_with_capacity` 构造器并在 `GarrisonManagerBuilder` 装配路径传入。
+- **listener ∧ ¬credit-metering 组合面编译失败**：`audit.rs` 事件 match 的 `CreditConsumed`/`CreditAlert` 臂缺 `#[cfg(feature = "credit-metering")]` 门控（枚举变体有门控），`audit-log` 等不含 credit-metering 的面必然编译失败；按 `AnomalousLoginDetected` 臂既有模式补门控。
 
 ### Added
 
 - **优雅停机（T011）**：`server-graceful-shutdown` feature 下 SIGTERM/SIGINT 触发后停止接收新连接并 drain 在途请求（非 TLS 经 `with_graceful_shutdown`；TLS 经 `axum_server::Handle`，30s 上限）；`auth-server` 聚合默认包含，tokio 新增 `signal` feature。
 - **prelude 增补（T014）**：`LoginParams`、`GarrisonDaoOxcache`（cache-* feature）、`Annotation`、`with_current_token`、`current_token`——README 快速开始代码 `use garrison::prelude::*` 即可编译。
 - **README 快速开始回归测试（T018）**：新增 `examples/src/web/readme_quickstart.rs` + `examples/tests/readme_quickstart.rs`（与 README「最小示例」逐字对应），防止文档示例与 API 漂移；lib.rs 顶部示例改为可编译可运行 doctest（T017）。
+- **`init_dbnexus_with_pool_config(url, PoolConfig)`**：走 dbnexus `DbPoolBuilder` 通路透传连接池参数（max/min connections、超时），替代 `DbPool::new` 的库默认值；需要 failover/副本的部署可直接用 dbnexus builder + `FailoverConfig`。
 
 ### Changed
 
@@ -45,7 +67,7 @@
 
 ### Performance
 
-- **三层缓存 TTL 随机抖动（缓存雪崩防护）**：`UserCacheService` 新增 `ttl_with_jitter()` 方法，为 L1/L2 缓存写入引入 ±10% 随机抖动，防止大量 key 同时过期引发 stampede。所有 9 个缓存写入点（6 个 L1 `set_with_ttl` + 3 个 L2 `dao.set`）已使用抖动 TTL，getter 方法保持返回原始配置值。
+- **三层缓存 TTL 随机抖动（缓存雪崩防护）**：L1 的 ±10% 抖动由 oxcache `CacheBuilder::ttl_jitter` 在写入时自动应用；L2 DAO 写入经 `UserCacheService::l2_ttl_with_jitter` 引入同等抖动（DAO 层无内建抖动），防止大量 key 同时过期引发 stampede。getter 方法保持返回原始配置值。
 
 ### Changed
 

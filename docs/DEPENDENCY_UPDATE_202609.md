@@ -1,9 +1,23 @@
-# 依赖升级与自研库特性吸收方案（2026-09）
+# 📦 依赖升级与自研库特性吸收方案（2026-09）
 
 依据 `cargo outdated` 全量更新；自研库取最新 rc，第三方仅稳定版，全部经
 crates.io（开发期缺陷修复使用 `[patch.crates-io]` 本地源码，见下文）。
 
-## 一、版本更新
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [版本更新](#-版本更新)
+- [破坏性变更与适配](#-破坏性变更与适配)
+- [开发期本地 patch](#-开发期本地-patch)
+- [新特性吸收方案](#-新特性吸收方案)
+
+</details>
+
+---
+
+## 📊 版本更新
 
 ### 自研库（rc 允许）
 
@@ -24,7 +38,7 @@ crates.io（开发期缺陷修复使用 `[patch.crates-io]` 本地源码，见�
 | maxminddb | 0.30 → 0.32 | 跨 minor 兼容；firewall-maxminddb 全特性面编译通过 |
 | uuid / toml / reqwest 等 | lockfile 内更新至最新兼容版 | `cargo update` 全量刷新（actix-web 3.13.5、hyper 1.11.1 等 100+ 传递依赖） |
 
-## 二、破坏性变更与适配
+## ⚠️ 破坏性变更与适配
 
 | 变更 | 适配 |
 | --- | --- |
@@ -32,7 +46,7 @@ crates.io（开发期缺陷修复使用 `[patch.crates-io]` 本地源码，见�
 | limiteron rc.4 `event-system` 未启用 `webhook` 时编译失败（发送块未门控 + 存根签名不匹配） | **修复上游源码**（limiteron 仓库 commit `801c96e`，发送路径按 feature 门控），garrison 经本地 patch 使用，见下文 |
 | generic-array 0.14.9 弃用 `GenericArray::as_slice` | `src/protocol/sso/saml.rs` 常量时间比较改经 Deref：`ct_ne(&computed)` |
 
-## 三、开发期本地 patch
+## 🔧 开发期本地 patch
 
 ```toml
 [patch.crates-io]
@@ -44,7 +58,7 @@ limiteron = { path = "../limiteron" }
   crates.io 来源，garrison 版本 req 升至 rc.5。
 - 约束：patch 仅限开发期；发布 garrison 前必须移除（crates.io 发布禁止 patch）。
 
-## 四、新特性吸收方案（kueiku：ICE 粗筛 18 项 → RICE 精排 Top10）
+## 💡 新特性吸收方案（kueiku：ICE 粗筛 18 项 → RICE 精排 Top10）
 
 ### 本次已落地（零代码 feature 转发）
 

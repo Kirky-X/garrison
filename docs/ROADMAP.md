@@ -1,4 +1,4 @@
-# Garrison 项目路线图
+# 🗺️ Garrison 项目路线图
 
 本文件描述 Garrison（Rust 认证授权框架）的版本演进规划与设计原则。
 
@@ -6,11 +6,21 @@
 > License：Apache-2.0
 > 作者：Kirky-X <Kirky-X@outlook.com>
 > 变更管理：通过 specmark 工作流进行 proposal → design → tasks → archive
-> 架构设计详见 [architecture.md](./ARCHITECTURE.md)；开发规范详见 [development.md](./DEVELOPMENT.md)。
+> 架构设计详见 [🏗️ 架构文档](./ARCHITECTURE.md)；开发规范详见 [🛠️ 开发规范](./DEVELOPMENT.md)。
+
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [版本总览](#-版本总览)
+- [详细版本规划](#-详细版本规划)
+
+</details>
 
 ---
 
-## 版本总览
+## 📊 版本总览
 
 | 版本 | 状态 | 计划完成 | 主要内容 |
 |------|------|---------|---------|
@@ -43,7 +53,7 @@
 
 ---
 
-## 详细版本规划
+## 📝 详细版本规划
 
 ### v0.1.0 核心基础设施（已完成）
 

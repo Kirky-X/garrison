@@ -1,4 +1,4 @@
-# Garrison E2E 特性组合测试套件
+# 🧪 Garrison E2E 特性组合测试套件
 
 > 一键命令：`bash scripts/e2e_matrix.sh`
 > 报告输出：`logs/e2e_matrix_report.md`（各阶段日志在 `logs/e2e_matrix/`）
@@ -7,9 +7,21 @@
 与 `.github/workflows/ci.yml`（PR 门禁）、`feature-matrix.yml`（每周全量兜底）
 构成三层质量防线。
 
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [特性依赖分析](#-特性依赖分析)
+- [测试矩阵设计](#-测试矩阵设计)
+- [使用指南](#-使用指南)
+- [已知问题与处置记录](#-已知问题与处置记录)
+
+</details>
+
 ---
 
-## 1. 特性依赖分析
+## 🔍 特性依赖分析
 
 ### 1.1 规模概览
 
@@ -116,7 +128,7 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 
 ---
 
-## 2. 测试矩阵设计
+## 🧩 测试矩阵设计
 
 ### 2.1 三维覆盖（对应用户场景维度）
 
@@ -195,7 +207,7 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 
 ---
 
-## 3. 使用指南
+## 📖 使用指南
 
 ```bash
 # 日常全量（推荐）：compose 自举 + 静态门禁 + 全部测试 + 快速矩阵 + 基准 + HTTP E2E
@@ -230,7 +242,7 @@ docker compose -f docker-compose.e2e.yml down -v --remove-orphans   # 手动清�
 | `feature-matrix.yml` | 每周一 03:00 UTC | each-feature 全量 + 定向两两 + examples |
 | **`e2e_matrix.sh`（本套件）** | 手动/本地/发布前 | 上述全部的本地等价物 + **真服务验收**（compose 含健康检查与确定性清理）+ **性能基线** + **HTTP E2E 渗透** |
 
-## 4. 已知问题与处置记录
+## 📝 已知问题与处置记录
 
 - **工具链**：兄弟生态 crate（confers/dbnexus/oxcache/sdforge/limiteron/inklog/
   trait-kit rc.2）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable

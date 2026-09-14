@@ -1,14 +1,27 @@
-# Garrison 配置指南
+# ⚙️ Garrison 配置指南
 
 > Garrison 配置由 `GarrisonConfig` 统一管理，支持三级配置源合并与 `tokio::sync::watch` 热更新能力。
 >
 > - 适用版本：0.9.0-rc.1（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
 > - 配置类型：`GarrisonConfig`，实现 `serde::Serialize / Deserialize`
-> 架构设计详见 [architecture.md](./ARCHITECTURE.md)；部署配置详见 [deployment.md](./DEPLOYMENT.md)。
+> 架构设计详见 [🏗️ 架构文档](./ARCHITECTURE.md)；部署配置详见 [🚀 部署指南](./DEPLOYMENT.md)。
+
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [配置源优先级](#-配置源优先级)
+- [完整配置项表](#-完整配置项表)
+- [配置文件示例](#-配置文件示例)
+- [热更新机制](#-热更新机制)
+- [配置校验规则](#-配置校验规则)
+
+</details>
 
 ---
 
-## 一、配置源优先级
+## 🎯 配置源优先级
 
 Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）：
 
@@ -26,7 +39,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 
 ---
 
-## 二、完整配置项表
+## 📋 完整配置项表
 
 ### 2.1 核心配置（0.1.0）
 
@@ -83,7 +96,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 
 ---
 
-## 三、配置文件示例
+## 📝 配置文件示例
 
 ### 3.1 `garrison.toml`
 
@@ -189,7 +202,7 @@ RUST_LOG=garrison=info
 
 ---
 
-## 四、热更新机制
+## 🔄 热更新机制
 
 Garrison 通过 `tokio::sync::watch` 通道广播配置变更，订阅方收到通知后响应：
 
@@ -239,7 +252,7 @@ assert_eq!(new_config.timeout, 3600);
 
 ---
 
-## 五、配置校验规则
+## ✅ 配置校验规则
 
 `GarrisonConfig::validate()` 会执行字段校验，非法值抛出 `GarrisonError::Config`：
 
@@ -336,9 +349,10 @@ GARRISON_REDIS_URL=redis://127.0.0.1:6379/0
 
 ---
 
-## 七、参考
+## 📚 相关文档
 
-- 架构设计：[architecture.md](./ARCHITECTURE.md)
-- 部署配置：[deployment.md](./DEPLOYMENT.md)
-- 开发规范：[development.md](./DEVELOPMENT.md)
-- 配置规范：`specmark/specs/config-system/spec.md`
+| 文档 | 说明 |
+|------|------|
+| [🏗️ 架构文档](./ARCHITECTURE.md) | 设计原则与模块划分 |
+| [🚀 部署指南](./DEPLOYMENT.md) | 生产部署注意事项 |
+| [🛠️ 开发规范](./DEVELOPMENT.md) | TDD 工作流与代码规范 |

@@ -1,4 +1,4 @@
-# 常见问题排查
+# 🔧 常见问题排查
 
 本文件汇总 Garrison 项目开发与部署中常见的问题、原因与解决方案，以 Q&A 格式组织。
 
@@ -6,11 +6,22 @@
 - License：Apache-2.0
 - MSRV：Rust 1.85+
 
-> 开发环境搭建详见 [development.md](./DEVELOPMENT.md)；部署问题详见 [deployment.md](./DEPLOYMENT.md)。
+> 开发环境搭建详见 [🛠️ 开发规范](./DEVELOPMENT.md)；部署问题详见 [🚀 部署指南](./DEPLOYMENT.md)。
+
+## 📋 目录
+
+<details open>
+<summary>📑 目录（点击展开）</summary>
+
+- [编译问题](#-编译问题)
+- [运行时问题](#-运行时问题)
+- [测试问题](#-测试问题)
+
+</details>
 
 ---
 
-## 1. 编译问题
+## 📦 编译问题
 
 ### Q1.1 编译时报错 `failed to load source for dependency oxcache`
 
@@ -133,7 +144,7 @@ cargo clippy --features full --lib --tests -- -D warnings
 
 ---
 
-## 2. 运行时问题
+## ⚠️ 运行时问题
 
 ### Q2.1 调用 Garrison API 时 panic：`GarrisonManager not initialized`
 
@@ -242,7 +253,7 @@ let app = GarrisonRouter::new(Arc::new(config))
 
 ---
 
-## 3. 测试问题
+## 🧪 测试问题
 
 ### Q3.1 单独运行测试通过，全量运行时失败（serial_test 冲突）
 
