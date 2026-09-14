@@ -3,7 +3,7 @@ name = "garrison"
 version = "0.9.0-rc.1"
 edition = "2021"
 rust-version = "1.85"  # MSRV: 部分 deps（如 inventory 0.3）要求 edition2024 → Rust 1.85+
-authors = ["Kirky.X"]
+authors = ["Kirky-X <Kirky-X@outlook.com>"]
 license = "Apache-2.0"
 description = "Garrison - 面向 Rust 生态的一站式身份认证鉴权框架"
 homepage = "https://github.com/Kirky-X/garrison"
@@ -21,7 +21,7 @@ resolver = "2"
 version = "0.9.0-rc.1"
 edition = "2021"
 rust-version = "1.85"
-authors = ["Kirky.X"]
+authors = ["Kirky-X <Kirky-X@outlook.com>"]
 license = "Apache-2.0"
 homepage = "https://github.com/Kirky-X/garrison"
 repository = "https://github.com/Kirky-X/garrison"
@@ -41,8 +41,8 @@ axum = { version = "0.8", default-features = false, features = ["json"] }
 actix-web = { version = "4.0", default-features = false }
 warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
-oxcache = { version = "0.5.0-rc.2", default-features = false }
-dbnexus = { version = "0.6.0-rc.2", default-features = false }
+oxcache = { version = "0.5.0-rc.4", default-features = false }
+dbnexus = { version = "0.6.0-rc.4", default-features = false }
 md5 = { version = "0.8" }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "env-filter"] }
 rand = { version = "0.8" }
@@ -65,7 +65,7 @@ path = "src/lib.rs"
 # === Required dependencies ===
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-confers = { version = "0.6.0-rc.2" }
+confers = { version = "0.6.0-rc.4" }
 tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 inventory = "0.3"
 thiserror = "2.0"
@@ -98,7 +98,7 @@ bcrypt = { version = "0.19", optional = true }
 rand = { optional = true, workspace = true }
 zeroize = { version = "1", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1", optional = true, default-features = false }
-oxcache = { version = "0.5.0-rc.2", default-features = false }
+oxcache = { version = "0.5.0-rc.4", default-features = false }
 # dbnexus 0.4+ 在 src/lib.rs#L51 设置 compile_error!，强制至少启用一个数据库驱动 feature
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
@@ -122,7 +122,7 @@ garrison-macros = { optional = true, workspace = true }
 # rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
 rsa = { version = "0.9", optional = true, default-features = false, features = ["sha2", "pem"] }
 unicode-security = { version = "0.1", optional = true, default-features = false }
-maxminddb = { version = "0.30", optional = true, default-features = false }
+maxminddb = { version = "0.32", optional = true, default-features = false }
 # IP 白名单 CIDR 解析（account-authflow 的 IpWhitelisted 条件真实求值）
 ipnetwork = { version = "0.21", optional = true, default-features = false }
 # HIBP k-anonymity 前缀哈希（policy-hibp 使用；sha2 0.11 不再包含 Sha1）
@@ -133,15 +133,15 @@ redis = { version = "1.7", optional = true, default-features = false, features =
 futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true }
-inklog = { version = "0.3.0-rc.2", default-features = false }
-limiteron = { version = "0.3.0-rc.2", default-features = false, features = ["distributed"] }
+inklog = { version = "0.3.0-rc.4", default-features = false }
+limiteron = { version = "0.3.0-rc.4", default-features = false, features = ["distributed"] }
 # sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
 # 始终可用（`server_impl.rs` 无条件调用 `sdforge::http::build()`）。
 # 但 `#[forge]` 宏生成的 `inventory::submit!` 被 `#[cfg(feature = "http")]` 保护，
 # 此 cfg 在 **garrison 上下文** 求值——garrison 必须暴露同名 `http` feature 才能让
 # 路由注册代码编译进来。详见 `[features]` 段的 `http` 桥接 feature。
-sdforge = { version = "0.5.0-rc.2", default-features = false, features = ["http"] }
-trait-kit = { version = "0.5.0-rc.2", default-features = false, features = ["async"] }
+sdforge = { version = "0.5.0-rc.4", default-features = false, features = ["http"] }
+trait-kit = { version = "0.5.0-rc.5", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.11", optional = true, default-features = false }
 icu_plurals = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
 icu_datetime = { version = "2.2", optional = true, default-features = false, features = ["compiled_data"] }
@@ -231,6 +231,10 @@ cache-memory = ["oxcache/memory", "oxcache/serialization", "oxcache/metrics", "o
 cache-redis = ["cache-memory", "oxcache/redis", "oxcache/lua", "dep:redis", "oxcache/compression"]
 cache-lock = ["cache-redis", "oxcache/lock"]
 cache-batch = ["cache-memory", "oxcache/batch"]
+# 跨实例缓存一致性：oxcache 键空间通知失效（多实例部署下 L1 自动同步，RICE 吸收方案 #1）
+cache-invalidation = ["cache-redis", "oxcache/invalidation"]
+# 封禁记录跨实例同步：limiteron 经 oxcache Pub/Sub 广播封禁变更（RICE 吸收方案 #2）
+ban-sync = ["limiteron/ban-sync", "cache-invalidation"]
 
 # === 数据库后端（通过 dbnexus 0.4） ===
 # [INTERNAL] dbnexus 禁止 embedded 与 server-side 混用。
@@ -512,7 +516,7 @@ full = [
     "credit-metering",
     "server-health-check", "server-graceful-shutdown",
     "config-full",
-    "db-retry", "cache-lock",
+    "db-retry", "cache-lock", "cache-invalidation", "ban-sync",
     "api-docs",
     # 自研库特性吸收
     "config-yaml", "config-audit", "config-consul", "config-etcd", "config-distributed",
@@ -608,8 +612,16 @@ harness = false
 # 将 unexpected_cfgs 保持为 warn 级别（而非 allow）以便发现真正的意外 cfg。
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "cache-batch", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-quota", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
+    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-batch", "cache-invalidation", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-quota", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
 ] }
 
 # === 本地 base 项目 patch（与 sinnan workspace 对齐）===
 # garrison 作为 sinnan 的 path 依赖时，sinnan workspace 的 patch 会传播；
+#
+# === 开发期本地源码 patch（自研库缺陷修复，上游发版后移除）===
+# limiteron 0.3.0-rc.4 的 event-system 在未启用 webhook 时编译失败
+# （webhook 发送块未门控 + 存根签名不匹配，E0061/E0425）。
+# 已在 ~/projects/limiteron 修复（commit 801c96e，发送路径按 feature 门控）；
+# 上游发布 rc.5 后删除 [patch.crates-io]，恢复纯 crates.io 来源。
+[patch.crates-io]
+limiteron = { path = "../limiteron" }

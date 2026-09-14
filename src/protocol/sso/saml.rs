@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! SAML 2.0 协议支持骨架。
@@ -1455,7 +1455,7 @@ fn validate_reference_binding(
         .decode(binding.digest_value_b64.trim())
         .map_err(|_| "digest-value-base64-decode")?;
 
-    if expected.len() != computed.len() || expected.as_slice().ct_ne(computed.as_slice()).into() {
+    if expected.len() != computed.len() || expected.as_slice().ct_ne(&computed).into() {
         return Err("digest-value-mismatch");
     }
     Ok(())

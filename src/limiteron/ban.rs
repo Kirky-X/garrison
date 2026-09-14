@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! `BanStorage` 适配器，用 `GarrisonDao` KV 存储封禁记录。
@@ -41,6 +41,7 @@ fn target_to_key_fragment(target: &BanTarget) -> String {
         BanTarget::UserId(uid) => format!("user:{}", uid),
         BanTarget::Mac(mac) => format!("mac:{}", mac),
         BanTarget::Geo { country_code } => format!("geo:{}", country_code),
+        BanTarget::Cidr(cidr) => format!("cidr:{}", cidr),
     }
 }
 
