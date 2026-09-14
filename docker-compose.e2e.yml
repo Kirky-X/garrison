@@ -10,8 +10,8 @@
 #      GARRISON_TEST_*_ADDR / GARRISON_TEST_*_URL 环境变量注入测试进程；
 #   3. MySQL 8.0 供 db-mysql 手动验证与后续测试扩展（验收矩阵的 MySQL
 #      自动化路径走 testcontainers，见 ACC-ENV-007/008）；
-#   4. Keycloak 仅自动化套件不需要（协议层经 wiremock 模拟，production-mock-purge
-#      T024 裁定豁免），置于 `keycloak` profile 供 OIDC RP 手动联调。
+#   4. Keycloak 仅自动化套件不需要（协议层经 wiremock 模拟，
+#      置于 `keycloak` profile 供 OIDC RP 手动联调。
 #
 # 用法：
 #   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e up -d --wait

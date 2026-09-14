@@ -19,7 +19,7 @@
 
 ### 1.2 功能域与依赖结构
 
-```
+```text
 核心（always on）: core / stp / annotation / router / dao / strategy /
                    session / config / context / json / exception / manager / plugin
 
@@ -137,7 +137,7 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 - **MySQL**（compose :13306 供手动验证；自动化经 testcontainers 动态拉起，
   ACC-ENV-007..008）：docker 探活门控，不可达自动 [SKIP]。
 - **Keycloak**：自动化路径经 wiremock 模拟 discovery/JWKS/token（production-mock-purge
-  T024 用户裁定豁免；compose `--profile keycloak` 提供真例供手动 OIDC 联调）。
+  用户裁定豁免；compose `--profile keycloak` 提供真例供手动 OIDC 联调）。
 
 > **db 专用验收 target**：dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与
 > server-side（postgres/mysql）驱动共存，而 `full` 聚合含 `db-sqlite`——因此
@@ -235,7 +235,7 @@ docker compose -f docker-compose.e2e.yml down -v --remove-orphans   # 手动清�
 - **工具链**：兄弟生态 crate（confers/dbnexus/oxcache/sdforge/limiteron/inklog/
   trait-kit rc.2）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable
   （`RUSTUP_DIST_SERVER=https://static.rust-lang.org rustup update stable`）。
-- **e2e target 残留**：Phase 4 迁移（T040/T042/T043）删除了 examples 的 `--test e2e`
+- **e2e target 残留**：Phase 4 迁移删除了 examples 的 `--test e2e`
   target，但 `scripts/e2e_run.sh` 仍引用之——已重写指向现行 `tests/acceptance`
   （pentest→security 域、perf→concurrency 域 `#[ignore]` 用例），并保留
   auth_server_serve 进程级黑盒冒烟 + health 探活。
@@ -258,7 +258,7 @@ docker compose -f docker-compose.e2e.yml down -v --remove-orphans   # 手动清�
   注入（`RemoteContext::connect_env` 路径）。
 - **perf_login 基线重校准（2026-09-11）**：原测试用单一账号 `perf_user` 以
   并发 100 压测，撞上登录路径的 per-login_id 互斥锁
-  （`SessionStore::with_login_lock`，T015 TOCTOU 修复，**设计如此**——保护
+  （`SessionStore::with_login_lock`，TOCTOU 修复，**设计如此**——保护
   同账号 Account-Session 读改写原子性），单账号并发必然串行化（实测
   P99 ~700ms）。已改为 100 账号轮转（`LoadRunner::with_body_fn`），度量
   多用户真实流量下的系统吞吐；同账号并发正确性由 concurrency 域竞争测试

@@ -5,7 +5,7 @@
 -- 对应 spec: extensible-schema
 -- 数据库: PostgreSQL（TEXT 存储 UUID/JSON/enum，BIGINT 0/1 存储 boolean，TEXT 存时间戳）
 -- 幂等性: 所有 CREATE TABLE/INDEX 使用 IF NOT EXISTS
--- 偏离说明: 依据 tasks.md T111，design.md 无完整 PostgresRepository 设计（L376-377 + L431-432），
+-- 偏离说明: design.md 无完整 PostgresRepository 设计（L376-377 + L431-432），
 --   本实现参考 SqliteRepository 模式，schema 类型映射 SQLite→Postgres：
 --   INTEGER→BIGINT, AUTOINCREMENT→BIGSERIAL, TEXT→TEXT（保持，兼容 sqlite/mod.rs 的 try_get::<String>）
 --

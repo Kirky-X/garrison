@@ -1,5 +1,5 @@
 -- Migration: 为 3 张核心表添加逻辑删除字段
--- 对应 spec: fix-codebase-review-violations (T009)
+-- 对应 spec: fix-codebase-review-violations
 -- 数据库: SQLite 3.35+
 -- 幂等性: SQLite 不支持 IF NOT EXISTS for ADD COLUMN，但重复添加会报错；
 --         使用条件判断不适用 SQLite，依赖迁移框架保证只执行一次。

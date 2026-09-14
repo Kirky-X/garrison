@@ -1,4 +1,4 @@
-# Garrison 异常消息中文翻译（默认语言）
+# Garrison 异常消息中文翻译
 # 依据 spec exception-i18n 与 PRD 0.3.0 异常消息国际化
 #
 # 结构化错误 detail 约定（见 src/i18n.rs::parse_keyed_detail）：
@@ -49,7 +49,7 @@ token-revoked = Token 已吊销: {$detail}
 firewall-blocked = 防火墙拦截: {$detail}
 
 # ============================================================================
-# 社交登录异常消息（0.6.0 新增，依据 T021）
+# 社交登录异常消息（0.6.0 新增）
 # ============================================================================
 
 # --- 微信扫码登录（wechat）---
@@ -60,6 +60,7 @@ wechat-response-missing-openid = 微信响应缺少 openid 字段
 wechat-userinfo-request-failed = 微信用户信息请求失败: {$detail}
 wechat-userinfo-response-parse-failed = 微信用户信息响应解析失败: {$detail}
 wechat-userinfo-response-missing-openid = 微信用户信息响应缺少 openid 字段
+wechat-redirect-uri-must-be-https = 微信 redirect_uri 必须为 https URL
 
 # --- 微信小程序（wechat mini-app）---
 wechat-mini-app-get-authorization-url-not-supported = WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）
@@ -77,6 +78,7 @@ alipay-response-missing-user-id = 支付宝响应缺少 user_id 字段
 alipay-user-info-request-failed = 支付宝用户信息请求失败: {$detail}
 alipay-user-info-response-parse-failed = 支付宝用户信息响应解析失败: {$detail}
 alipay-response-missing-user-info-share-response = 支付宝响应缺少 alipay_user_info_share_response 字段
+alipay-http-client-build-failed = 支付宝 HTTP 客户端构建失败: {$detail}
 
 # --- Keycloak OIDC RP（keycloak）---
 keycloak-http-client-build-failed = 构建 HTTP 客户端失败: {$detail}
@@ -1266,3 +1268,53 @@ invitation-ttl-invalid = 邀请码 TTL 值无效
 invitation-max-uses-invalid = 邀请码 max_uses 值无效
 invitation-count-invalid = 邀请码批量数量无效
 invitation-serialize-failed = 邀请码序列化失败：{$arg0}
+# ============================================================================
+# OAuth2 token 端点错误（0.9.0 i18n 收口：错误码前缀保留 RFC 用语）
+# ============================================================================
+
+oauth2-rate-limited-client = rate_limited: 客户端请求过于频繁，请稍后再试
+oauth2-client-id-missing = invalid_client: client_id 缺失（既未在 Authorization 头也未在 body 中提供）
+oauth2-client-not-exist = invalid_client: client_id {$client_id} 不存在
+oauth2-client-secret-mismatch = invalid_client: client_secret 不匹配
+oauth2-grant-not-allowed-auth-code = unauthorized_client: 客户端未授权 authorization_code grant type
+oauth2-code-param-missing = invalid_request: code 参数缺失
+oauth2-code-verifier-missing = invalid_request: code_verifier 参数缺失（PKCE 强制）
+oauth2-redirect-uri-param-missing = invalid_request: redirect_uri 参数缺失
+oauth2-code-invalid-or-expired = invalid_grant: 授权码无效或已过期
+oauth2-code-client-mismatch = invalid_grant: 授权码与 client_id 不匹配
+oauth2-redirect-uri-mismatch = invalid_grant: redirect_uri 与授权时不一致
+oauth2-pkce-verify-failed = invalid_grant: PKCE code_verifier 校验失败
+oauth2-grant-not-allowed-refresh-token = unauthorized_client: 客户端未授权 refresh_token grant type
+oauth2-refresh-token-param-missing = invalid_request: refresh_token 参数缺失
+oauth2-refresh-token-invalid-or-expired = invalid_grant: refresh_token 无效或已过期
+oauth2-rotated-token-validate-failed = rotate 后新 refresh_token validate 失败
+oauth2-refresh-token-client-mismatch = invalid_grant: refresh_token 与 client_id 不匹配
+oauth2-grant-not-allowed-client-credentials = unauthorized_client: 客户端未授权 client_credentials grant type
+oauth2-grant-not-allowed-password = unauthorized_client: 客户端未授权 password grant type
+oauth2-password-verifier-not-configured = unauthorized_grant_type: password grant type 未配置 PasswordVerifier
+oauth2-username-param-missing = invalid_request: username 参数缺失
+oauth2-password-param-missing = invalid_request: password 参数缺失
+oauth2-rate-limited-user = rate_limited: 用户请求过于频繁，请稍后再试
+oauth2-account-temp-locked = rate_limited: 账户已被临时锁定，请稍后再试
+oauth2-invalid-credentials = invalid_grant: 用户名或密码错误
+
+# ============================================================================
+# ABAC 校验错误（0.9.0 i18n 收口）
+# ============================================================================
+
+abac-expr-too-long = abac_expr 长度超过 {$max} 字符（DoS 防御）
+abac-expr-illegal-chars = abac_expr 含非法字符 `{"{"};{"}"}`（疑似策略注入）
+abac-expr-policy-forbidden = abac_expr 不允许声明 permit/forbid 策略
+abac-expr-must-reference-entity = abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）
+abac-engine-not-initialized = AbacEngine 未初始化，ABAC 校验失败（fail-closed）
+
+# ============================================================================
+# Backend / 宏 / 社交注册表 / SDForge（0.9.0 i18n 收口）
+# ============================================================================
+
+backend-remote-base-url-invalid-scheme = base_url 协议非法：{$arg0}（必须为 http:// 或 https://）
+check-login-returned-false = 未登录（check_login 返回 false）
+social-provider-name-invalid = 非法的社交登录 provider 名称：{$provider}
+social-provider-not-registered = 社交登录 provider 未注册：{$provider}
+caller-login-id-mismatch = caller_login_id 与 session.login_id 不匹配
+metrics-encode-failed = Prometheus 指标编码失败

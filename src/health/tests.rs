@@ -270,7 +270,7 @@ async fn db_health_check_degraded_without_pool() {
     assert_eq!(
         status,
         HealthStatus::Degraded,
-        "未注入连接池时 DbHealthCheck 应返回 Degraded（T010，不误报 Healthy）"
+        "未注入连接池时 DbHealthCheck 应返回 Degraded（不误报 Healthy）"
     );
 
     GarrisonManager::reset_for_test();

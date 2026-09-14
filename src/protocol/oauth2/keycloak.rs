@@ -536,7 +536,7 @@ impl KeycloakProvider {
         };
 
         // 3. 按 kid 匹配 JWKS 公钥。若缓存命中但 kid 未命中（密钥轮换场景），
-        //    强制重新拉取一次 JWKS 再匹配（T37）；已 freshly-fetched 则直接报错。
+        //    强制重新拉取一次 JWKS 再匹配；已 freshly-fetched 则直接报错。
         let jwk = match jwks.keys.iter().find(|k| k.kid == kid).cloned() {
             Some(jwk) => jwk,
             None if !fresh => {

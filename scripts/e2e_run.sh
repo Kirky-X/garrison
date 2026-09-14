@@ -2,9 +2,9 @@
 # Copyright (c) 2026 Kirky.X. All rights reserved.
 # See LICENSE for full license text.
 
-# T053: Garrison E2E 测试一键执行脚本。
+# Garrison E2E 测试一键执行脚本。
 #
-# 【2026-09 重写】Phase 4 测试迁移（T040/T042/T043）后，原 tests/e2e target
+# 【2026-09 重写】Phase 4 测试迁移后，原 tests/e2e target
 # 已并入 tests/acceptance/（pentest → security.rs ACC-SEC-021..030；
 # perf → concurrency.rs 文件尾 #[ignore] 用例），本脚本同步指向现行 target。
 #

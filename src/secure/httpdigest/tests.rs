@@ -1300,10 +1300,7 @@ fn signed_nonce_roundtrip_and_self_minted_rejected() {
     // 自铸：旧格式 2 段（无签名）应被拒
     let forged = STANDARD
         .encode(format!("{}:{}", current_unix_seconds(), Uuid::new_v4().simple()).as_bytes());
-    assert!(
-        !auth.is_nonce_valid(&forged),
-        "无签名自铸 nonce 应被拒（T021）"
-    );
+    assert!(!auth.is_nonce_valid(&forged), "无签名自铸 nonce 应被拒");
 
     // 自铸：3 段但 HMAC 错误应被拒
     let ts = current_unix_seconds();
@@ -1311,7 +1308,7 @@ fn signed_nonce_roundtrip_and_self_minted_rejected() {
     let forged3 = STANDARD.encode(format!("{}:{}:deadbeef", ts, uuid).as_bytes());
     assert!(
         !auth.is_nonce_valid(&forged3),
-        "HMAC 错误的自铸 nonce 应被拒（T021）"
+        "HMAC 错误的自铸 nonce 应被拒"
     );
 }
 
@@ -1342,7 +1339,7 @@ fn validate_rejects_self_minted_nonce_with_server_key() {
     );
     assert!(
         !auth.validate(&header, method, uri, &ha1),
-        "自铸 nonce 应被拒（T021）"
+        "自铸 nonce 应被拒"
     );
 }
 
@@ -1371,7 +1368,7 @@ fn validate_succeeds_with_signed_nonce() {
     );
     assert!(
         auth.validate(&header, method, uri, &ha1),
-        "签名 nonce 应完成完整校验（T021）"
+        "签名 nonce 应完成完整校验"
     );
 }
 

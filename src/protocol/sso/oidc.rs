@@ -534,7 +534,7 @@ impl DefaultOidcProvider {
     ///   签名验证失败 / claims 解析失败 / token 已过期 / iss 不匹配 / aud 不匹配。
     /// - `GarrisonError::Internal`: JWKS 拉取失败 / DAO 读写失败 / 反序列化失败。
     #[cfg(feature = "protocol-jwt")]
-    // 清洗 JWT `kid` 用于日志/错误输出（T39）：过滤控制字符并限长 128，
+    // 清洗 JWT `kid` 用于日志/错误输出：过滤控制字符并限长 128，
     // 防止恶意 kid 注入控制字符污染日志或造成输出异常。
     fn sanitize_kid(kid: &str) -> String {
         let filtered: String = kid.chars().filter(|c| !c.is_control()).collect();
@@ -629,7 +629,7 @@ impl DefaultOidcProvider {
         };
 
         // 3. 按 kid 匹配 JWKS 公钥。若缓存命中但 kid 未命中（密钥轮换场景），
-        //    强制重新拉取一次 JWKS 再匹配（T37）；已 freshly-fetched 则直接报错。
+        //    强制重新拉取一次 JWKS 再匹配；已 freshly-fetched 则直接报错。
         let jwk = match jwks.keys.iter().find(|k| k.kid == kid).cloned() {
             Some(jwk) => jwk,
             None if !fresh => {

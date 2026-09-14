@@ -5,7 +5,7 @@
 -- 对应 spec: extensible-schema
 -- 数据库: MySQL 8.0+（VARCHAR(36) 存储 UUID，BIGINT 0/1 存储 boolean，VARCHAR(30) 存时间戳）
 -- 幂等性: CREATE TABLE 使用 IF NOT EXISTS；MySQL 不支持 CREATE INDEX IF NOT EXISTS，故省略
--- 偏离说明: 依据 tasks.md T028，参考 postgres/core/001_init.sql 转换为 MySQL 方言：
+-- 偏离说明: 参考 postgres/core/001_init.sql 转换为 MySQL 方言：
 --   TEXT PRIMARY KEY → VARCHAR(36) PRIMARY KEY（MySQL 要求索引列有长度）
 --   TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP → VARCHAR(30) NOT NULL DEFAULT (CURRENT_TIMESTAMP)
 --   CREATE [UNIQUE] INDEX IF NOT EXISTS → CREATE [UNIQUE] INDEX（MySQL 不支持 IF NOT EXISTS）

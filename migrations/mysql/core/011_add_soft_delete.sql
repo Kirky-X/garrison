@@ -1,5 +1,5 @@
 -- Migration: 为 3 张核心表添加逻辑删除字段
--- 对应 spec: fix-codebase-review-violations (T009)
+-- 对应 spec: fix-codebase-review-violations
 -- 数据库: MySQL 8.0+
 -- 字符集: utf8mb4（001_init 建表即继承 MySQL 8.0 服务器默认 utf8mb4，无需 CONVERT）
 -- 幂等性: dbnexus 迁移器按版本号一次性应用（dbnexus_migrations 历史表去重），

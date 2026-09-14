@@ -1,5 +1,5 @@
 -- Migration: 为 3 张核心表添加逻辑删除字段
--- 对应 spec: fix-codebase-review-violations (T009)
+-- 对应 spec: fix-codebase-review-violations
 -- 数据库: PostgreSQL 14+
 -- 幂等性: ALTER TABLE 使用 IF NOT EXISTS（PG 14+ 支持 ADD COLUMN IF NOT EXISTS）
 

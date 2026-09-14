@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Kirky.X. All rights reserved.
 # See LICENSE for full license text.
 
-"""T052: E2E 测试日志聚合分析器（一键报告生成）。
+"""E2E 测试日志聚合分析器（一键报告生成）。
 
 扫描 `logs/` 目录下的 `e2e_http.jsonl` / `perf.jsonl` / `pentest_report.json`，
 聚合输出 `logs/e2e_final_report.md`，含 4 节：

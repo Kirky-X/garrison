@@ -2385,7 +2385,7 @@ mod suite {
                         assert_eq!(
                             counting.get_calls.load(Ordering::SeqCst),
                             reads_after_check,
-                            "缓存命中时 get_login_id 不应触发 DAO 读取（T008）"
+                            "缓存命中时 get_login_id 不应触发 DAO 读取"
                         );
 
                         // logout 失效缓存：同请求内回退 DAO → 未登录

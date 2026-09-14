@@ -49,7 +49,7 @@ token-revoked = Token revoked: {$detail}
 firewall-blocked = Firewall blocked: {$detail}
 
 # ============================================================================
-# Social login exception messages (0.6.0, per T021)
+# Social login exception messages (0.6.0)
 # ============================================================================
 
 # --- WeChat QR code login (wechat) ---
@@ -60,6 +60,7 @@ wechat-response-missing-openid = WeChat response missing openid field
 wechat-userinfo-request-failed = WeChat userinfo request failed: {$detail}
 wechat-userinfo-response-parse-failed = WeChat userinfo response parse failed: {$detail}
 wechat-userinfo-response-missing-openid = WeChat userinfo response missing openid field
+wechat-redirect-uri-must-be-https = WeChat redirect_uri must be an https URL
 
 # --- WeChat Mini App (wechat mini-app) ---
 wechat-mini-app-get-authorization-url-not-supported = WechatMiniAppProvider does not support get_authorization_url (mini app uses wx.login() to get js_code directly)
@@ -77,6 +78,7 @@ alipay-response-missing-user-id = Alipay response missing user_id field
 alipay-user-info-request-failed = Alipay user info request failed: {$detail}
 alipay-user-info-response-parse-failed = Alipay user info response parse failed: {$detail}
 alipay-response-missing-user-info-share-response = Alipay response missing alipay_user_info_share_response field
+alipay-http-client-build-failed = Alipay HTTP client build failed: {$detail}
 
 # --- Keycloak OIDC RP (keycloak) ---
 keycloak-http-client-build-failed = Failed to build HTTP client: {$detail}
@@ -1267,3 +1269,53 @@ invitation-ttl-invalid = invalid TTL value for invitation
 invitation-max-uses-invalid = invalid max_uses value for invitation
 invitation-count-invalid = invalid batch count for invitation
 invitation-serialize-failed = invitation serialization failed: {$arg0}
+# ============================================================================
+# OAuth2 token endpoint errors (0.9.0 i18n sweep: RFC error-code prefixes kept)
+# ============================================================================
+
+oauth2-rate-limited-client = rate_limited: client requests too frequent, please retry later
+oauth2-client-id-missing = invalid_client: client_id missing (provided neither in Authorization header nor body)
+oauth2-client-not-exist = invalid_client: client_id {$client_id} does not exist
+oauth2-client-secret-mismatch = invalid_client: client_secret mismatch
+oauth2-grant-not-allowed-auth-code = unauthorized_client: authorization_code grant type not allowed for this client
+oauth2-code-param-missing = invalid_request: missing code parameter
+oauth2-code-verifier-missing = invalid_request: missing code_verifier parameter (PKCE enforced)
+oauth2-redirect-uri-param-missing = invalid_request: missing redirect_uri parameter
+oauth2-code-invalid-or-expired = invalid_grant: authorization code invalid or expired
+oauth2-code-client-mismatch = invalid_grant: authorization code does not match client_id
+oauth2-redirect-uri-mismatch = invalid_grant: redirect_uri differs from the one used at authorization time
+oauth2-pkce-verify-failed = invalid_grant: PKCE code_verifier verification failed
+oauth2-grant-not-allowed-refresh-token = unauthorized_client: refresh_token grant type not allowed for this client
+oauth2-refresh-token-param-missing = invalid_request: missing refresh_token parameter
+oauth2-refresh-token-invalid-or-expired = invalid_grant: refresh_token invalid or expired
+oauth2-rotated-token-validate-failed = validation failed for rotated refresh_token
+oauth2-refresh-token-client-mismatch = invalid_grant: refresh_token does not match client_id
+oauth2-grant-not-allowed-client-credentials = unauthorized_client: client_credentials grant type not allowed for this client
+oauth2-grant-not-allowed-password = unauthorized_client: password grant type not allowed for this client
+oauth2-password-verifier-not-configured = unauthorized_grant_type: PasswordVerifier not configured for password grant type
+oauth2-username-param-missing = invalid_request: missing username parameter
+oauth2-password-param-missing = invalid_request: missing password parameter
+oauth2-rate-limited-user = rate_limited: user requests too frequent, please retry later
+oauth2-account-temp-locked = rate_limited: account temporarily locked, please retry later
+oauth2-invalid-credentials = invalid_grant: invalid username or password
+
+# ============================================================================
+# ABAC validation errors (0.9.0 i18n sweep)
+# ============================================================================
+
+abac-expr-too-long = abac_expr exceeds {$max} characters (DoS protection)
+abac-expr-illegal-chars = abac_expr contains illegal characters `{"{"};{"}"}` (possible policy injection)
+abac-expr-policy-forbidden = abac_expr must not declare permit/forbid policies
+abac-expr-must-reference-entity = abac_expr must reference principal/resource/action (plain literals rejected)
+abac-engine-not-initialized = AbacEngine not initialized; ABAC check failed (fail-closed)
+
+# ============================================================================
+# Backend / macros / social registry / SDForge (0.9.0 i18n sweep)
+# ============================================================================
+
+backend-remote-base-url-invalid-scheme = invalid base_url scheme: {$arg0} (must be http:// or https://)
+check-login-returned-false = Not logged in (check_login returned false)
+social-provider-name-invalid = invalid social login provider name: {$provider}
+social-provider-not-registered = social login provider not registered: {$provider}
+caller-login-id-mismatch = caller_login_id does not match session.login_id
+metrics-encode-failed = Prometheus metrics encoding failed
