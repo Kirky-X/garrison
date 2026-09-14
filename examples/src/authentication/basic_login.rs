@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 基础登录示例：演示 Garrison 完整业务场景的最小可用登录流程。
@@ -171,7 +171,7 @@ pub async fn run() -> GarrisonResult<()> {
         Ok(false) => println!("[8] 登出后 check_login 返回 false（校验失败，符合预期）"),
         Ok(true) => {
             return Err(GarrisonError::Session(
-                "登出后 check_login 应返回 false 或错误".to_string(),
+                "check_login should return false or error after logout".to_string(),
             ))
         },
         Err(e) => println!(

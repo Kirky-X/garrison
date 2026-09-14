@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! ParameterQuery 参数化查询示例（依据 spec parameter-query，0.4.0 新增）。
@@ -87,7 +87,7 @@ impl GarrisonDao for InMemoryDao {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 
@@ -102,7 +102,7 @@ impl GarrisonDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 

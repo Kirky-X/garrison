@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 自定义插件示例：演示 GarrisonPlugin trait 与 GarrisonPluginManager 生命周期钩子。
@@ -72,19 +72,19 @@ impl GarrisonPlugin for FailingPlugin {
 
     fn on_login(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
         Err(garrison::error::GarrisonError::Internal(
-            "FailingPlugin on_login 故意失败".to_string(),
+            "FailingPlugin on_login intentional failure".to_string(),
         ))
     }
 
     fn on_logout(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
         Err(garrison::error::GarrisonError::Internal(
-            "FailingPlugin on_logout 故意失败".to_string(),
+            "FailingPlugin on_logout intentional failure".to_string(),
         ))
     }
 
     fn on_permission_check(&self, _login_id: &str, _permission: &str) -> GarrisonResult<()> {
         Err(garrison::error::GarrisonError::Internal(
-            "FailingPlugin on_permission_check 故意失败".to_string(),
+            "FailingPlugin on_permission_check intentional failure".to_string(),
         ))
     }
 }

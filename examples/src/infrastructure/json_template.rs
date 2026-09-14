@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! JSON 模板与序列化示例：演示 GarrisonJsonTemplate 占位符渲染 + GarrisonSerializer 类型化序列化。
@@ -76,7 +76,7 @@ pub fn run() -> GarrisonResult<()> {
     let serializer = GarrisonSerializerDefault;
     let data = LoginResponse {
         code: 0,
-        msg: "登录成功".to_string(),
+        msg: "login successful".to_string(),
         data: UserInfo {
             user_id: 1001,
             user_name: "alice".to_string(),

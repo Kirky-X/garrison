@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! API Key 多租户命名空间示例（v0.4.2 新增，依据 spec protocol-apikey-namespace）。
@@ -55,7 +55,7 @@ impl GarrisonDao for InMemoryDao {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("key not found: {}", key)))
         }
     }
 

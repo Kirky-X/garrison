@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! axum 集成示例：完整 Web 应用演示。
@@ -123,22 +123,22 @@ impl GarrisonInterface for MyInterface {
 
 /// 公开接口（`Ignore` 注解，无需登录）。
 pub async fn public_handler() -> Json<Value> {
-    Json(json!({ "msg": "public", "desc": "无需鉴权的公开接口" }))
+    Json(json!({ "msg": "public", "desc": "public endpoint, no auth required" }))
 }
 
 /// 用户信息接口（`CheckLogin` 注解，需登录）。
 pub async fn user_info_handler() -> Json<Value> {
-    Json(json!({ "user": "info", "desc": "已登录用户可访问" }))
+    Json(json!({ "user": "info", "desc": "accessible to logged-in users" }))
 }
 
 /// 管理面板接口（`CheckRole<AdminRole>` 注解，需 admin 角色）。
 pub async fn admin_dashboard_handler() -> Json<Value> {
-    Json(json!({ "admin": "dashboard", "desc": "仅 admin 角色可访问" }))
+    Json(json!({ "admin": "dashboard", "desc": "admin role only" }))
 }
 
 /// 数据查询接口（`CheckPermission<ReadPerm>` 注解，需 data:read 权限）。
 pub async fn data_query_handler() -> Json<Value> {
-    Json(json!({ "data": "query", "desc": "仅持有 data:read 权限可访问" }))
+    Json(json!({ "data": "query", "desc": "data:read permission required" }))
 }
 
 // ============================================================================
@@ -217,7 +217,7 @@ pub async fn run() -> GarrisonResult<()> {
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:3000")
         .await
-        .map_err(|e| GarrisonError::Internal(format!("绑定监听地址失败: {}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("failed to bind listener: {}", e)))?;
 
     println!("======================================================");
     println!("Garrison axum 集成示例已启动: http://127.0.0.1:3000");
@@ -252,7 +252,7 @@ pub async fn run() -> GarrisonResult<()> {
 
     axum::serve(listener, app)
         .await
-        .map_err(|e| GarrisonError::Internal(format!("服务器运行失败: {}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("server failed to run: {}", e)))?;
 
     Ok(())
 }

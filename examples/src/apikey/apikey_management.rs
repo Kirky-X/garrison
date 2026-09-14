@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! API Key 管理示例：演示 ApiKeyHandler 的生成/校验/吊销/轮换全生命周期。
@@ -54,7 +54,7 @@ impl GarrisonDao for MockDao {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("key not found: {}", key)))
         }
     }
 

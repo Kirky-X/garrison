@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 配置加载示例：演示 GarrisonConfig 的多种创建方式与热更新。
@@ -54,10 +54,10 @@ cookie_same_site = "Lax"
         .prefix("garrison_config_example")
         .suffix(".toml")
         .tempfile()
-        .map_err(|e| GarrisonError::Internal(format!("创建临时文件失败: {}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("failed to create temp file: {}", e)))?;
     temp_file
         .write_all(toml_content.as_bytes())
-        .map_err(|e| GarrisonError::Internal(format!("写入临时文件失败: {}", e)))?;
+        .map_err(|e| GarrisonError::Internal(format!("failed to write temp file: {}", e)))?;
     let config = GarrisonConfig::load(temp_file.path().to_str())?;
     println!("[2] TOML 文件加载的配置:");
     println!("    token_name = {}", config.token_name);

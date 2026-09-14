@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 异常处理示例：演示 Garrison 异常体系（NotLoginException + GarrisonException）。
@@ -27,7 +27,7 @@ pub fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 1. NotLoginException：未登录异常（对应 NotLoginException）
     // ----------------------------------------------------------------
-    let ex = NotLoginException::new("请先登录").with_login_type("account");
+    let ex = NotLoginException::new("please log in first").with_login_type("account");
     println!("[1] NotLoginException:");
     println!("    message   = {}", ex.message);
     println!("    login_type= {}", ex.login_type);
@@ -36,7 +36,7 @@ pub fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 2. GarrisonException：携带上下文的业务可恢复异常（Builder 模式）
     // ----------------------------------------------------------------
-    let biz_ex = GarrisonException::new(-1, "会话已过期")
+    let biz_ex = GarrisonException::new(-1, "session expired")
         .with_token("T1-uuid-token")
         .with_login_id("1001")
         .with_login_type(1)
@@ -64,13 +64,13 @@ pub fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 4. GarrisonError → GarrisonException（反向转换，按语义映射 code）
     // ----------------------------------------------------------------
-    let not_login_err = GarrisonError::NotLogin("token 缺失".to_string());
+    let not_login_err = GarrisonError::NotLogin("token missing".to_string());
     let converted: GarrisonException = not_login_err.into();
     println!("[4] GarrisonError::NotLogin → GarrisonException:");
     println!("    code    = {}（-1 表示未登录）", converted.code);
     println!("    message = {}\n", converted.message);
 
-    let not_perm_err = GarrisonError::NotPermission("缺少 user:delete 权限".to_string());
+    let not_perm_err = GarrisonError::NotPermission("missing user:delete permission".to_string());
     let converted: GarrisonException = not_perm_err.into();
     println!(
         "    NotPermission → code = {}（-2 表示无权限）",

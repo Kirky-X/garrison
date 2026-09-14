@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! SSO Server 独立抽象示例（依据 spec protocol-sso-server，0.4.0 新增）。
@@ -84,7 +84,7 @@ impl GarrisonDao for InMemoryDao {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 
@@ -99,7 +99,7 @@ impl GarrisonDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 
@@ -234,8 +234,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 5. 自定义 SsoChannel 计数 push 调用
     // ----------------------------------------------------------------
     println!("\n[Channel] CountingChannel 计数 push 调用:");
-    server.push_message(login_id, "登录通知").await?;
-    server.push_message(login_id, "权限变更").await?;
+    server.push_message(login_id, "login notification").await?;
+    server.push_message(login_id, "permission change").await?;
     let push_count = channel.count.load(Ordering::SeqCst);
     println!(
         "    push_message 调用 {} 次后，channel.count = {}",

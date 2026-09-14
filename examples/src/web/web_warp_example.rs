@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! web_warp_example 示例（web-warp feature）。
@@ -89,7 +89,7 @@ impl GarrisonDao for InMemoryDao {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 
@@ -104,7 +104,7 @@ impl GarrisonDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 

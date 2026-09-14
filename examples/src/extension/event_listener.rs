@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 事件监听器示例：演示 GarrisonListener trait 与 GarrisonListenerManager。
@@ -86,7 +86,7 @@ struct FailingListener;
 impl GarrisonListener for FailingListener {
     async fn on_event(&self, _event: &GarrisonEvent) -> GarrisonResult<()> {
         Err(garrison::error::GarrisonError::Internal(
-            "FailingListener 故意失败".to_string(),
+            "FailingListener intentional failure".to_string(),
         ))
     }
 }
@@ -186,7 +186,7 @@ pub async fn run() -> GarrisonResult<()> {
     let event = GarrisonEvent::Kickout {
         login_id: "2002".to_string(),
         token: "T2-token".to_string(),
-        reason: "管理员强制下线".to_string(),
+        reason: "forced offline by administrator".to_string(),
         request_context: None,
     };
     let cloned = event.clone();

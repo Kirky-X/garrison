@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 防火墙策略示例：演示 GarrisonPermissionStrategy trait 与自定义策略实现。
@@ -80,7 +80,9 @@ impl GarrisonPermissionStrategy for CustomFirewall {
 
     async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
         if permission.is_empty() {
-            return Err(GarrisonError::InvalidToken("权限不能为空".to_string()));
+            return Err(GarrisonError::InvalidToken(
+                "permission must not be empty".to_string(),
+            ));
         }
         let perms = self.get_permission_list(login_id).await?;
         Ok(perms.iter().any(|p| p == permission))
@@ -88,7 +90,9 @@ impl GarrisonPermissionStrategy for CustomFirewall {
 
     async fn check_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool> {
         if role.is_empty() {
-            return Err(GarrisonError::InvalidToken("角色不能为空".to_string()));
+            return Err(GarrisonError::InvalidToken(
+                "role must not be empty".to_string(),
+            ));
         }
         let roles = self.get_role_list(login_id).await?;
         Ok(roles.iter().any(|r| r == role))

@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 临时凭证示例：演示 TempCredentialHandler 的签发/读取/撤销/消费。
@@ -55,7 +55,7 @@ impl GarrisonDao for MockDao {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("key not found: {}", key)))
         }
     }
 

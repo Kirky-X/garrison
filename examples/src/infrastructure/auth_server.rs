@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! Auth Server 示例：演示 GarrisonAuthServer 双端口配置与一键启动。
@@ -91,8 +91,8 @@ pub async fn run() -> GarrisonResult<()> {
     // 2. 从环境变量读取 internal API Key（禁止硬编码，防止泄漏）
     let internal_api_key = std::env::var("EXAMPLE_INTERNAL_API_KEY").unwrap_or_else(|_| {
         eprintln!(
-            "⚠️  警告：未设置 EXAMPLE_INTERNAL_API_KEY 环境变量，使用占位值 \"REPLACE_ME\"。\n\
-             请通过 `export EXAMPLE_INTERNAL_API_KEY=<your-key>` 设置真实 API Key 后再运行示例。"
+            "⚠️  Warning: EXAMPLE_INTERNAL_API_KEY environment variable is not set; using placeholder \"REPLACE_ME\".\n\
+             Set a real API key via `export EXAMPLE_INTERNAL_API_KEY=<your-key>` before running this example."
         );
         "REPLACE_ME".to_string()
     });
@@ -161,8 +161,8 @@ pub async fn serve() -> GarrisonResult<()> {
         .unwrap_or(100);
     let internal_api_key = std::env::var("EXAMPLE_INTERNAL_API_KEY").unwrap_or_else(|_| {
         eprintln!(
-            "FATAL: EXAMPLE_INTERNAL_API_KEY 未设置，fail-closed 退出。\n\
-             请通过 `export EXAMPLE_INTERNAL_API_KEY=<your-key>` 设置真实 API Key 后再启动。"
+            "FATAL: EXAMPLE_INTERNAL_API_KEY is not set; exiting fail-closed.\n\
+             Set a real API key via `export EXAMPLE_INTERNAL_API_KEY=<your-key>` before starting."
         );
         std::process::exit(1);
     });

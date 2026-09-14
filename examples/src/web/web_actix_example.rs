@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! web_actix_example 示例（web-actix feature）。
@@ -91,7 +91,7 @@ impl GarrisonDao for InMemoryDao {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 
@@ -106,7 +106,7 @@ impl GarrisonDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 
@@ -177,7 +177,7 @@ impl GarrisonInterceptor for LoggingInterceptor {
             Annotation::CheckLogin => {
                 let logged_in = GarrisonUtil::check_login().await?;
                 if !logged_in {
-                    return Err(GarrisonError::NotLogin("未登录".to_string()));
+                    return Err(GarrisonError::NotLogin("not logged in".to_string()));
                 }
                 Ok(())
             },

@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! HTTP Digest 认证示例：演示 RFC 7616 质询生成、HA1 预计算与响应校验。
@@ -50,8 +50,9 @@ pub fn run() -> GarrisonResult<()> {
     // ----------------------------------------------------------------
     // 客户端从质询头提取 nonce（base64(timestamp:uuid) 格式），
     // 使用 HA1 + nonce + method + uri 计算 response。
-    let nonce = extract_nonce_from_challenge(&challenge)
-        .ok_or_else(|| garrison::error::GarrisonError::Internal("无法提取 nonce".into()))?;
+    let nonce = extract_nonce_from_challenge(&challenge).ok_or_else(|| {
+        garrison::error::GarrisonError::Internal("failed to extract nonce".into())
+    })?;
     let nc = "00000001";
     let cnonce = "0a4f113c";
     let method = "GET";
@@ -99,8 +100,9 @@ pub fn run() -> GarrisonResult<()> {
     let auth_int = HttpDigestAuth::new("secure@realm", "SHA256")?;
     let ha1_int = auth_int.compute_ha1(username, password);
     let challenge_int = auth_int.challenge();
-    let nonce_int = extract_nonce_from_challenge(&challenge_int)
-        .ok_or_else(|| garrison::error::GarrisonError::Internal("无法提取 nonce".into()))?;
+    let nonce_int = extract_nonce_from_challenge(&challenge_int).ok_or_else(|| {
+        garrison::error::GarrisonError::Internal("failed to extract nonce".into())
+    })?;
     let body = b"request-body-content";
     let method_int = "POST";
     let uri_int = "/api/data";

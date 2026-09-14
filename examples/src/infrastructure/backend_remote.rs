@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 远程后端示例：演示 BackendRemote 连接远程 Auth Server。
@@ -29,15 +29,15 @@ pub async fn run() -> GarrisonResult<()> {
     // 1. 从环境变量读取 API Key（禁止硬编码，防止泄漏）
     let internal_api_key = std::env::var("EXAMPLE_INTERNAL_API_KEY").unwrap_or_else(|_| {
         eprintln!(
-            "⚠️  警告：未设置 EXAMPLE_INTERNAL_API_KEY 环境变量，使用占位值 \"REPLACE_ME\"。\n\
-             请通过 `export EXAMPLE_INTERNAL_API_KEY=<your-key>` 设置真实 API Key 后再运行示例。"
+            "⚠️  Warning: EXAMPLE_INTERNAL_API_KEY environment variable is not set; using placeholder \"REPLACE_ME\".\n\
+             Set a real API key via `export EXAMPLE_INTERNAL_API_KEY=<your-key>` before running this example."
         );
         "REPLACE_ME".to_string()
     });
     let external_api_key = std::env::var("EXAMPLE_EXTERNAL_API_KEY").unwrap_or_else(|_| {
         eprintln!(
-            "⚠️  警告：未设置 EXAMPLE_EXTERNAL_API_KEY 环境变量，使用占位值 \"REPLACE_ME\"。\n\
-             请通过 `export EXAMPLE_EXTERNAL_API_KEY=<your-key>` 设置真实 API Key 后再运行示例。"
+            "⚠️  Warning: EXAMPLE_EXTERNAL_API_KEY environment variable is not set; using placeholder \"REPLACE_ME\".\n\
+             Set a real API key via `export EXAMPLE_EXTERNAL_API_KEY=<your-key>` before running this example."
         );
         "REPLACE_ME".to_string()
     });

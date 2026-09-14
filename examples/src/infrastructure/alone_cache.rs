@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! AloneCache 多 Redis 实例隔离示例（依据 spec alone-cache，0.4.0 新增）。
@@ -85,7 +85,7 @@ impl GarrisonDao for InMemoryDao {
                 *existing = value.to_string();
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 
@@ -100,7 +100,7 @@ impl GarrisonDao for InMemoryDao {
                 };
                 Ok(())
             },
-            None => Err(GarrisonError::Dao(format!("键不存在: {}", key))),
+            None => Err(GarrisonError::Dao(format!("key not found: {}", key))),
         }
     }
 

@@ -1,4 +1,4 @@
-//! Copyright (c) 2026 Kirky.X. All rights reserved.
+//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
 //! 认证逻辑示例：演示 AuthLogic trait 与 AuthLogicDefault 默认实现。
@@ -67,7 +67,7 @@ impl GarrisonDao for MockDao {
             data.insert(key.to_string(), value.to_string());
             Ok(())
         } else {
-            Err(GarrisonError::Dao(format!("键不存在: {}", key)))
+            Err(GarrisonError::Dao(format!("key not found: {}", key)))
         }
     }
 
