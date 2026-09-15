@@ -11,13 +11,14 @@
 #
 # 阶段：
 #   S0 环境自举    docker compose 拉起 Redis(16379)/PostgreSQL(15432)/MySQL(13306)
-#                  （Keycloak 18090 可选 --with-keycloak），健康探活后注入
-#                  GARRISON_TEST_* 地址覆盖环境变量
+#                  + Keycloak(18090，scripts/keycloak_provision.py 幂等供给
+#                  真实 IdP)，健康探活后注入 GARRISON_TEST_* 地址覆盖环境变量
 #   S1 静态门禁    rustfmt --check / clippy(default) / clippy(full) / cargo-deny
 #   S2 单元测试    cargo test --lib（default 与 full 两种特性面）
 #   S3 验收/集成   cargo test --features full --tests --no-fail-fast
 #                  （tests/acceptance 19 域：正常/异常/组合场景，
-#                   Redis/Postgres/MySQL(testcontainers) 真实服务路径）
+#                   Redis/Postgres/MySQL/Keycloak/HIBP 真实服务路径；
+#                   S3kc 追加 keycloak-oidc 面、S3hibp 追加 policy-hibp 面）
 #   S4 示例套件    cargo test -p garrison-examples --all-features
 #   S5 特性矩阵    聚合特性(default/development/production/full) + web×db 网格
 #                  (axum/actix/warp × sqlite/postgres/mysql) + 定向两两组合的
@@ -32,7 +33,6 @@
 #   bash scripts/e2e_matrix.sh --skip-bench     # 跳过性能基准
 #   bash scripts/e2e_matrix.sh --skip-e2e-http  # 跳过 HTTP E2E（快速迭代）
 #   bash scripts/e2e_matrix.sh --keep-env       # 结束后保留 compose 环境（调试）
-#   bash scripts/e2e_matrix.sh --with-keycloak  # 额外拉起 Keycloak（手动 OIDC 联调）
 #
 # 输出：
 #   logs/e2e_matrix/<stage>.log   各阶段完整日志
@@ -53,14 +53,12 @@ FULL_MATRIX=false
 KEEP_ENV=false
 SKIP_BENCH=false
 SKIP_E2E_HTTP=false
-WITH_KEYCLOAK=false
 while [ $# -gt 0 ]; do
     case "$1" in
         --full-matrix) FULL_MATRIX=true ;;
         --keep-env) KEEP_ENV=true ;;
         --skip-bench) SKIP_BENCH=true ;;
         --skip-e2e-http) SKIP_E2E_HTTP=true ;;
-        --with-keycloak) WITH_KEYCLOAK=true ;;
         -h|--help) sed -n '2,60p' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "未知参数: $1（--help 查看用法）" >&2; exit 2 ;;
     esac
@@ -105,36 +103,41 @@ run_stage() {
 # ==========================================================================
 # S0 环境自举
 # ==========================================================================
-log_stage "S0" "环境自举（docker compose 中间件）"
+log_stage "S0" "环境自举（docker compose 中间件 + Keycloak realm 供给）"
 ENV_READY=false
-PROFILE_ARGS=()
-if [ "${WITH_KEYCLOAK}" = "true" ]; then
-    PROFILE_ARGS=(--profile keycloak)
-fi
 if ! docker info > /dev/null 2>&1; then
     record_skip "S0" "docker daemon 不可达，服务依赖阶段将按探测结果 [SKIP]"
 else
-    if ${COMPOSE} up -d "${PROFILE_ARGS[@]}" --wait >"${LOG_DIR}/S0.log" 2>&1; then
+    if ${COMPOSE} up -d --wait >"${LOG_DIR}/S0.log" 2>&1; then
         # 探活（2s 超时 ×2 轮重试，compose --wait 已含健康检查，此处为双保险）
         probe() { (echo > "/dev/tcp/$1/$2") > /dev/null 2>&1; }
-        REDIS_OK=false; PG_OK=false
+        REDIS_OK=false; PG_OK=false; KC_OK=false
         for i in 1 2; do
             probe 127.0.0.1 16379 && REDIS_OK=true
             probe 127.0.0.1 15432 && PG_OK=true
-            ${REDIS_OK} && ${PG_OK} && break
+            probe 127.0.0.1 18090 && KC_OK=true
+            ${REDIS_OK} && ${PG_OK} && ${KC_OK} && break
             sleep 2
         done
-        if ${REDIS_OK} && ${PG_OK}; then
-            # 地址覆盖：验收测试经 GARRISON_TEST_* 读取（默认值不变，向后兼容）
-            export GARRISON_TEST_REDIS_ADDR="127.0.0.1:16379"
-            export GARRISON_TEST_REDIS_URL="redis://127.0.0.1:16379"
-            export GARRISON_TEST_POSTGRES_ADDR="127.0.0.1:15432"
-            export GARRISON_TEST_POSTGRES_URL="postgres://garrison:garrison@localhost:15432/garrison_test"
-            ENV_READY=true
-            echo "Redis(16379) + PostgreSQL(15432) + MySQL(13306) 就绪$( [ "${WITH_KEYCLOAK}" = "true" ] && echo ' + Keycloak(18090)' )"
-            record_pass "S0"
+        if ${REDIS_OK} && ${PG_OK} && ${KC_OK}; then
+            # Keycloak realm 供给（幂等；2026-09 起协议验收打真实 IdP）
+            if python3 scripts/keycloak_provision.py                 --base-url http://127.0.0.1:18090 >>"${LOG_DIR}/S0.log" 2>&1; then
+                # 地址覆盖：验收测试经 GARRISON_TEST_* 读取（默认值不变，向后兼容）
+                export GARRISON_TEST_REDIS_ADDR="127.0.0.1:16379"
+                export GARRISON_TEST_REDIS_URL="redis://127.0.0.1:16379"
+                export GARRISON_TEST_POSTGRES_ADDR="127.0.0.1:15432"
+                export GARRISON_TEST_POSTGRES_URL="postgres://garrison:garrison@localhost:15432/garrison_test"
+                export GARRISON_TEST_KEYCLOAK_URL="http://127.0.0.1:18090"
+                ENV_READY=true
+                echo "Redis(16379) + PostgreSQL(15432) + MySQL(13306) + Keycloak(18090, realm 供给完成) 就绪"
+                record_pass "S0"
+            else
+                echo "Keycloak realm 供给失败：" | tee -a "${LOG_DIR}/S0.log"
+                tail -n 20 "${LOG_DIR}/S0.log"
+                record_fail "S0"
+            fi
         else
-            echo "Redis 可达=${REDIS_OK} Postgres 可达=${PG_OK}" | tee -a "${LOG_DIR}/S0.log"
+            echo "Redis 可达=${REDIS_OK} Postgres 可达=${PG_OK} Keycloak 可达=${KC_OK}" | tee -a "${LOG_DIR}/S0.log"
             record_fail "S0"
         fi
     else
@@ -183,6 +186,12 @@ if [ "${ENV_READY}" = "true" ]; then
         bash -c 'GARRISON_TEST_POSTGRES_ADDR=127.0.0.1:15432 GARRISON_TEST_POSTGRES_URL=postgres://garrison:garrison@localhost:15432/garrison_test cargo test --test acceptance_db_postgres --no-default-features --features "db-postgres" --locked -- --test-threads=1'
     run_stage "S3my" "acceptance_db_mysql (MySQL via testcontainers)" \
         bash -c 'cargo test --test acceptance_db_mysql --no-default-features --features "db-mysql" --locked -- --test-threads=1'
+    # keycloak-oidc 面（full 未含 keycloak-oidc）：真实 Keycloak OIDC RP 完整流程
+    run_stage "S3kc" "acceptance keycloak-oidc face (real Keycloak OIDC RP)" \
+        bash -c 'GARRISON_TEST_KEYCLOAK_URL=http://127.0.0.1:18090 cargo test --test acceptance --features "full,keycloak-oidc,testing" --locked keycloak_oidc_rp_full_flow -- --test-threads=1'
+    # policy-hibp 面（full 未含 policy-hibp）：真实 api.pwnedpasswords.com 泄露库
+    run_stage "S3hibp" "acceptance policy-hibp face (real HIBP API)" \
+        bash -c 'cargo test --test acceptance --features "full,policy-hibp,testing" --locked hibp -- --test-threads=1'
 fi
 
 # ==========================================================================
@@ -201,6 +210,9 @@ run_stage "S4" "examples tests (all features)" \
 #     后者是 2026-09 实录的测试代码 feature 门控漂移防线（ci.yml guard job）。
 MATRIX_OK=true
 
+# 注：本函数在 `{...} | tee` 管道的子 shell 中执行，父 shell 变量（MATRIX_OK）
+# 修改不可回传——失败经标记文件 S5.failed 回传，管道结束后由父 shell 判定。
+S5_FAILED_MARK="${LOG_DIR}/S5.failed"
 matrix_combo() {
     local label="$1" features="$2"
     local feat_args=()
@@ -212,11 +224,12 @@ matrix_combo() {
         echo "  ✅ ${label} [${features}]"
     else
         echo "  ❌ ${label} [${features}]（详情: ${LOG_DIR}/S5.log）"
-        MATRIX_OK=false
+        echo "${label} [${features}]" >>"${S5_FAILED_MARK}"
     fi
 }
 
 echo "=== [STAGE S5] 特性组合矩阵（编译级） ==="
+rm -f "${S5_FAILED_MARK}"
 {
     echo "# S5 特性组合矩阵 — $(date -Is)"
     echo "## 聚合特性"
@@ -250,6 +263,11 @@ echo "=== [STAGE S5] 特性组合矩阵（编译级） ==="
     matrix_combo "full+testing（验收 target 实际特性面）" "full,testing"
     matrix_combo "minimal（零特性）" ""
 } 2>&1 | tee "${LOG_DIR}/S5.progress"
+
+# 子 shell 失败标记回传判定（见 matrix_combo 注释）
+if [ -s "${S5_FAILED_MARK}" ]; then
+    MATRIX_OK=false
+fi
 
 if [ "${FULL_MATRIX}" = "true" ]; then
     echo "=== [STAGE S5x] each-feature 全量扫描（cargo-hack，耗时数小时） ==="
