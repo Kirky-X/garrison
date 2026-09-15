@@ -634,7 +634,7 @@ impl Parse for CheckApiKeyAttr {
 ///
 /// - `permission`（必填）：权限标识
 /// - `resource`（可选）：Cedar resource EntityUid 字符串（如 `Resource::"default"`）。
-/// 未提供时使用默认值 `Resource::"default"`（向后兼容）。
+///   未提供时使用默认值 `Resource::"default"`（向后兼容）。
 /// - `abac`（可选）：Cedar 条件表达式
 ///
 /// 位置参数形式（`#[check_permission("x")]`）不走此解析器，
@@ -689,7 +689,7 @@ impl Parse for CheckPermissionAttr {
 ///
 /// - `action`（必填）：Cedar action 标识
 /// - `resource`（可选）：Cedar resource EntityUid 字符串（如 `Resource::"default"`）。
-/// 未提供时使用默认值 `Resource::"default"`（向后兼容）。
+///   未提供时使用默认值 `Resource::"default"`（向后兼容）。
 /// - `abac`（必填）：Cedar 条件表达式
 ///
 /// `action` 和 `abac` 均为必填，缺失任一返回编译错误。
@@ -786,7 +786,7 @@ fn detect_asyncness(item_fn: &ItemFn) -> Asyncness {
 /// - `Ok(true)`：已登录，继续执行 fn body
 /// - `Ok(false)`：未登录（`throw_on_not_login=false`），返回 401
 /// - `Err(e)`：错误（如 Manager 未初始化，或 `throw_on_not_login=true` 时未登录），
-/// 返回错误对应的 Response（NotLogin → 401，其他 → 500/etc.）
+///   返回错误对应的 Response（NotLogin → 401，其他 → 500/etc.）
 fn expand_check_login(item_fn: ItemFn) -> TokenStream {
     let asyncness = detect_asyncness(&item_fn);
     let checks = match asyncness {

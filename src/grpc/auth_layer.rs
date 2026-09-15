@@ -22,7 +22,7 @@ use tower::{Layer, Service};
 /// 1. 从 `Authorization: Bearer <token>` 提取 token（复用拦截器的严格 Bearer 校验）；
 /// 2. 缺失/格式错误/未登录/伪造 → `Status::unauthenticated` 拒绝（不再进入 handler）；
 /// 3. 已登录 → 在 `with_current_token` 作用域内调用内层 service，
-/// handler 内 `GarrisonUtil::check_login()` 等静态 API 可直接使用。
+///    handler 内 `GarrisonUtil::check_login()` 等静态 API 可直接使用。
 ///
 /// # 用法
 /// ```ignore

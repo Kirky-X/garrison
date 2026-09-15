@@ -12,12 +12,12 @@
 //! # 并发语义（已知限制）
 //!
 //! - `update` 使用 `compare_and_swap`（expected = 读取值）写入，并发修改会显式
-//! 返回 `credential-concurrent-modification` 错误，不静默覆盖。
+//!   返回 `credential-concurrent-modification` 错误，不静默覆盖。
 //! - `delete` 采用两阶段（先全量校验 ownership 再删除），消除混合
-//! IDOR 结果下的部分删除；但校验与删除之间仍存在理论窗口——`GarrisonDao`
-//! trait 暂无 compare-and-delete 原语，需要强一致删除时请在 DAO 后端层实现。
+//!   IDOR 结果下的部分删除；但校验与删除之间仍存在理论窗口——`GarrisonDao`
+//!   trait 暂无 compare-and-delete 原语，需要强一致删除时请在 DAO 后端层实现。
 //! - `keys()` 的错误原样向上传播（不静默吞掉）；`GarrisonDaoOxcache` 默认
-//! （未启用 `dao-key-index`）不支持 `keys()`，见 mod.rs「已知限制」。
+//!   （未启用 `dao-key-index`）不支持 `keys()`，见 mod.rs「已知限制」。
 
 use super::*;
 

@@ -84,9 +84,9 @@ fn warn_no_cors_feature_once() {
 ///
 /// - `Some(origin)`：回显请求的 `Origin`（推荐，兼容 credentials）。
 /// - **允许列表防御边界**：`web-cors` feature 启用时，若
-/// `config.cors_config.allowed_origins` 非空，仅回显命中允许列表的 Origin，
-/// 未命中时不设置 `Allow-Origin`（fail-closed）；允许列表为空时保持旧行为
-/// （回显任意 Origin，由调用方自行过滤）并 warn 提示配置允许列表。
+///   `config.cors_config.allowed_origins` 非空，仅回显命中允许列表的 Origin，
+///   未命中时不设置 `Allow-Origin`（fail-closed）；允许列表为空时保持旧行为
+///   （回显任意 Origin，由调用方自行过滤）并 warn 提示配置允许列表。
 /// - `None`：不设置 `Allow-Origin` header（安全默认，避免 wildcard + credentials 冲突）。
 ///
 /// `frontend_separation=false` 时不设置任何头部。

@@ -16,7 +16,7 @@ use std::time::Duration;
 /// 根据租户上下文返回实际存储 key。
 ///
 /// - `tenant-isolation` feature 启用且 `TENANT.try_get()` 返回 `Ok(ctx)`：
-/// 返回 `format!("{}{}:{}", DaoKeyPrefix::Tenant, ctx.tenant_id, key)`
+///   返回 `format!("{}{}:{}", DaoKeyPrefix::Tenant, ctx.tenant_id, key)`
 /// - feature 关闭或 `TENANT` 上下文不存在（`try_get` 返回 `Err`）：返回 `key.to_string()`（不变）
 ///
 /// # 设计
@@ -84,7 +84,7 @@ fn strip_prefix(prefixed: &str) -> String {
 /// - L1（内存）+ L2（redis）由 oxcache 0.3 自动管理（oxcache 0.3 支持 per-entry TTL）。
 /// - Garrison 自身不实现任何缓存逻辑，全部委托给 oxcache。
 /// - 启用 `sync_mode(true)` 后使用 `_sync` API，
-/// 要求调用方在 multi_thread tokio runtime 中执行。
+///   要求调用方在 multi_thread tokio runtime 中执行。
 ///
 /// # TTL 保留
 /// - `update` 通过 `cache.ttl_sync()` 读取剩余 TTL，用 `set_with_ttl_sync` 保留原 TTL（不重置过期时间）

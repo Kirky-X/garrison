@@ -41,8 +41,8 @@ impl GarrisonListenerManager {
     /// 异步遍历所有监听器的 `on_event` 方法：
     /// - 单个监听器返回 `Err` 仅记录 `tracing::warn!`，不中断广播，最终返回 `Ok(())`；
     /// - 单个监听器 **panic** 同样被 `catch_unwind` 捕获并降级为 `tracing::warn!`
-    /// （panic 不得传播出 `broadcast`，违背监听器隔离承诺），
-    /// 后续监听器继续收到事件。
+    ///   （panic 不得传播出 `broadcast`，违背监听器隔离承诺），
+    ///   后续监听器继续收到事件。
     ///
     /// panic 捕获在当前 task 内完成（非 spawn），`task_local` 上下文（如 `TENANT`）
     /// 对监听器仍然可见。

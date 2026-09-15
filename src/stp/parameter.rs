@@ -9,9 +9,9 @@
 //! ## 设计
 //!
 //! - `ParameterQuery` trait：定义 `with_login_id` / `with_device` / `with_token` /
-//! `check_permission` / `check_role` 链式 API（check_* 为 async）
+//!   `check_permission` / `check_role` 链式 API（check_* 为 async）
 //! - `ParameterQueryBuilder`：默认实现，持有 `Option<String>` login_id / `Option<String>`
-//! device / `Option<String>` token 上下文，委托 `GarrisonUtil` 静态方法执行校验
+//!   device / `Option<String>` token 上下文，委托 `GarrisonUtil` 静态方法执行校验
 //!
 //! ## login_id 形式
 //!

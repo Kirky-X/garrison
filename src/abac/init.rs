@@ -92,7 +92,7 @@ const ABAC_EXPR_MAX_LEN: usize = 512;
 /// 拒绝以下恶意模式：
 /// - 空表达式或仅空白
 /// - 超长表达式（>512 字符，DoS 防御；按 trim 后长度判定——
-/// 原实现用未 trim 的原始长度，纯空白填充可导致合法表达式被误拒）
+///   原实现用未 trim 的原始长度，纯空白填充可导致合法表达式被误拒）
 /// - 含 `};`：尝试闭合 `when { ... }` 块并注入新策略
 /// - 含 `permit(` / `forbid(`：尝试在表达式内声明新策略
 /// - 纯字面量：无 `principal` / `resource` / `action` 引用（要求表达式绑定到上下文）
@@ -169,15 +169,15 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
 /// 2. 校验 `abac_expr` 防止 Cedar 策略注入
 /// 3. 获取当前 `login_id` 作为 principal，未登录 → 返回 `Err(NotLogin)`
 /// 4. 将 `abac_expr` 包装为 Cedar 策略：
-/// `permit(principal, action == Action::"<action>", resource) when { <abac_expr> };`
+///    `permit(principal, action == Action::"<action>", resource) when { <abac_expr> };`
 /// 5. 使用 `evaluate_with_temp_policy` 求值（不修改共享策略集），resource 由调用方显式传入
 /// 6. Allow → `Ok(())`，Deny → `Err(NotPermission)`
 ///
 /// # 参数
 /// - `action`: 权限标识（如 "order:read"），作为 Cedar action
 /// - `resource`: Cedar resource EntityUid 字符串（如 `Resource::"default"`、`Resource::"order"`）。
-/// 由宏属性 `resource = "..."` 注入，避免硬编码。
-/// 非法格式由 Cedar 解析器拒绝（返回 `Err(InvalidParam)`，fail-closed）。
+///   由宏属性 `resource = "..."` 注入，避免硬编码。
+///   非法格式由 Cedar 解析器拒绝（返回 `Err(InvalidParam)`，fail-closed）。
 /// - `abac_expr`: Cedar 条件表达式（如 "resource.user_id == principal.id"）
 ///
 /// # 错误

@@ -1001,7 +1001,7 @@ impl AuthExecutor {
     /// 2. `ctx.input` 为空 → `ChallengeRequired`（提示用户提交 SSO ticket）。
     /// 3. 从 `ctx.extras["client_id"]` 取客户端标识（解析为 `i64`，缺失则 0）。
     /// 4. 调用 `sso_resolver.validate_and_get_login_id(server_id, ctx.input, client_id)`
-    /// 取得 `login_id`（内部委托 `SsoServer::validate_ticket`，一次性消费 ticket）。
+    ///    取得 `login_id`（内部委托 `SsoServer::validate_ticket`，一次性消费 ticket）。
     /// 5. 用 `login_id` 调用 `logic.login` 建立本地会话，返回 `token`。
     /// 6. 写回 `ctx.user_id = Some(login_id)`。
     async fn execute_sso(

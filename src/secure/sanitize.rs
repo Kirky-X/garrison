@@ -31,7 +31,7 @@ use crate::error::{GarrisonError, GarrisonResult};
 ///
 /// 覆盖范围：
 /// - Cf（Format）：U+00AD, U+0600-0605, U+061C, U+06DD, U+070F, U+180E,
-/// U+200B-200F, U+202A-202E, U+2060-206F, U+FEFF, U+FFF9-FFFB
+///   U+200B-200F, U+202A-202E, U+2060-206F, U+FEFF, U+FFF9-FFFB
 /// - Zl（Line Separator）：U+2028
 /// - Zp（Paragraph Separator）：U+2029
 fn is_unicode_format_or_separator(c: char) -> bool {

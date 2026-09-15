@@ -87,7 +87,7 @@ impl SimpleTokenStyle {
     /// - 本函数是纯函数，RFC 4648 test vectors 在 `#[cfg(test)]` 中锁定行为
     /// - 输入恒为 HMAC-SHA256 输出（32 字节定长），编码分支极少
     /// - 切换 `base64::engine::general_purpose::URL_SAFE_NO_PAD` 已列入
-    /// protocol-zeroize 迁移同一批次（见 SimpleTokenStyle 文档）
+    ///   protocol-zeroize 迁移同一批次（见 SimpleTokenStyle 文档）
     fn base64_url_no_pad(bytes: &[u8]) -> String {
         // 手动实现 URL-safe Base64 无 padding，避免引入额外 base64 依赖
         // （base64 crate 已是 optional dep，但 secure-simple-token feature 未启用它）

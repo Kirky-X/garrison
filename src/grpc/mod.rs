@@ -93,9 +93,9 @@ pub trait GarrisonGrpcTokenValidator: Send + Sync + 'static {
 /// `tonic::Interceptor::call` 是**同步** trait，无法直接调用异步的
 /// `GarrisonUtil::check_login()`：
 /// - **未配置校验器**（`new()` / 默认）：仅做上述格式校验，**不**执行登录态校验，
-/// 实际鉴权须在 handler 内通过 `task_local`（`with_current_token`）显式调用。
+///   实际鉴权须在 handler 内通过 `task_local`（`with_current_token`）显式调用。
 /// - **配置了同步校验器**（`with_token_validator`）：在拦截器内执行真实鉴权，
-/// 失败直接以 `Status::UNAUTHENTICATED` 拒绝。
+///   失败直接以 `Status::UNAUTHENTICATED` 拒绝。
 ///
 /// # 完整 async 鉴权请使用 [`GarrisonGrpcAuthLayer`]
 ///

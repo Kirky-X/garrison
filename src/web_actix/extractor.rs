@@ -5,17 +5,17 @@
 //!
 //! 集中提供 actix-web `FromRequest` extractor 实现：
 //! - `GarrisonPrincipal`：从 `Authorization: Bearer <token>` header 解析当前登录用户 ID，
-//! 携带 `login_id` 字段供 handler 直接读取。
+//!   携带 `login_id` 字段供 handler 直接读取。
 //! - `CheckLogin` / `CheckRole` / `CheckPermission`：per-handler 鉴权 extractor，
-//! 仅执行鉴权（返回 unit-like struct），struct 声明位于 `mod.rs`。
+//!   仅执行鉴权（返回 unit-like struct），struct 声明位于 `mod.rs`。
 //! - `TenantContext`（feature gate `tenant-isolation`）：从 `X-Tenant-Id` header 解析租户 ID。
 //!
 //! ## 设计
 //!
 //! - `GarrisonPrincipal` 与 `CheckLogin`/`CheckRole`/`CheckPermission` 互补：
-//! 前者携带身份信息，后者仅做鉴权校验。
+//!   前者携带身份信息，后者仅做鉴权校验。
 //! - 与 `GarrisonContext` trait（请求/响应/存储上下文抽象层）解耦：trait 名字保持不变，
-//! extractor 使用不同名称 `GarrisonPrincipal` 避免命名冲突。
+//!   extractor 使用不同名称 `GarrisonPrincipal` 避免命名冲突。
 //!
 //! ## 使用示例
 //!
@@ -272,7 +272,7 @@ fn warn_header_tenant_unverified_once() {
 ///
 /// 本 extractor **仅做格式校验**（非空 + i64 解析），提取的 `tenant_id`：
 /// - **未**与认证主体（login_id）做归属授权比对——框架的 `SessionData`
-/// 不携带主体→租户映射，无注册表可比对；
+///   不携带主体→租户映射，无注册表可比对；
 /// - **未**对租户注册表/白名单做存在性校验。
 ///
 /// 因此 `X-Tenant-Id` 是**客户端可控**输入：调用方可声明任意租户 ID。

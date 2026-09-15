@@ -274,14 +274,14 @@ pub trait CredentialRepository: Send + Sync {
 /// # 已知限制
 ///
 /// - `find_by_user` / `find_by_user_and_type` / `delete` 依赖 `GarrisonDao::keys()`，
-/// `keys()` 的错误会原样向上传播（保持失败可见，不静默吞掉）。
-/// `GarrisonDaoOxcache` 默认**未启用** `dao-key-index` feature 时不实现 `keys()`
-/// （返回 `NotImplemented`）——生产环境需启用 `dao-key-index`，
-/// 或使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
+///   `keys()` 的错误会原样向上传播（保持失败可见，不静默吞掉）。
+///   `GarrisonDaoOxcache` 默认**未启用** `dao-key-index` feature 时不实现 `keys()`
+///   （返回 `NotImplemented`）——生产环境需启用 `dao-key-index`，
+///   或使用支持 `keys()` 的 DAO 后端，或由业务方维护 key 索引。
 /// - `delete(caller_login_id, credential_id)` 通过扫描 `cred:*:{credential_id}` 定位
-/// 完整 key（`credential_id` 为 UUID v4 全局唯一，理论上仅匹配一个 key），
-/// 再反序列化校验 `user_id == caller_login_id` 后删除。
-/// 异常多键场景下逐 key 处理：先删除的 key 不回滚（详见 repository_impl 模块文档）。
+///   完整 key（`credential_id` 为 UUID v4 全局唯一，理论上仅匹配一个 key），
+///   再反序列化校验 `user_id == caller_login_id` 后删除。
+///   异常多键场景下逐 key 处理：先删除的 key 不回滚（详见 repository_impl 模块文档）。
 pub struct DaoCredentialRepository {
     dao: Arc<dyn GarrisonDao>,
 }

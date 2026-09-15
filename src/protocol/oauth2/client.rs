@@ -220,7 +220,7 @@ impl OAuth2Client {
     ///
     /// # 错误
     /// - `GarrisonError::InvalidParam`: redirect_uri 无 `://`、scheme 非 https/http、
-    /// 或 http 但 host 非 localhost/127.0.0.1。
+    ///   或 http 但 host 非 localhost/127.0.0.1。
     fn validate_redirect_uri(redirect_uri: &str) -> GarrisonResult<()> {
         let Some(scheme_end) = redirect_uri.find("://") else {
             return Err(GarrisonError::InvalidParam(format!(
@@ -639,8 +639,8 @@ impl OAuth2Client {
     ///
     /// - 若 [`with_introspect_url`](Self::with_introspect_url) 已设置 → 使用该 URL。
     /// - 否则若 `token_url` 以 `/token` 结尾 → 仅替换**末尾**这段为 `/introspect`
-    /// （不能全局 `replace`：路径中段出现 `/token` 时会把所有出现处都替换，
-    /// 产生畸形端点，如 `/v2/oauth2/token/rotate/token` → `/v2/oauth2/introspect/rotate/introspect`）。
+    ///   （不能全局 `replace`：路径中段出现 `/token` 时会把所有出现处都替换，
+    ///   产生畸形端点，如 `/v2/oauth2/token/rotate/token` → `/v2/oauth2/introspect/rotate/introspect`）。
     /// - 否则在 `token_url` 末尾追加 `/introspect`。
     fn introspect_url(&self) -> String {
         if let Some(url) = &self.introspect_url {

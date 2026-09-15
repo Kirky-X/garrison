@@ -218,8 +218,8 @@ impl AnomalyDetector for SessionHijackDetector {
 /// 实现 `AnomalyDetector` trait，在 `check_on_login` 时：
 /// 1. 通过 `GarrisonSession::get_tokens_by_login_id` 获取该 login_id 的所有 token
 /// 2. 逐个 `get_token_session` 验证存活性（**只统计未过期 token**，
-/// `get_token_session` 对已过期 session 返回 `None` 并顺带触发过期清理，
-/// 长期堆积的过期 token 不再造成误报）
+///    `get_token_session` 对已过期 session 返回 `None` 并顺带触发过期清理，
+///    长期堆积的过期 token 不再造成误报）
 /// 3. 若活跃 token 数量 >= 阈值，发出 `AnomalyLogin { anomaly_type: RapidSuccessiveLogin }`
 ///
 /// 默认阈值为 5，可通过 `with_threshold` 自定义。

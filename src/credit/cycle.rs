@@ -37,7 +37,7 @@ impl CreditCycle {
     ///
     /// # 参数
     /// - `window_start`: 滚动窗口的起始时间戳（仅 `Rolling` 模式使用）。
-    /// `None` 表示尚未开始（首次消费），返回当前时间。
+    ///   `None` 表示尚未开始（首次消费），返回当前时间。
     /// - `now`: 当前时间。
     pub fn cycle_start(&self, window_start: Option<i64>, now: NaiveDateTime) -> i64 {
         match self {
@@ -177,7 +177,7 @@ impl CreditCycle {
     /// 违反文档约定时返回 `None`（调用方如 [`crate::credit::storage`] 的 meta
     /// 反序列化将其转为脏数据错误，fail-fast）：
     /// - `fixed`：`day_of_month` 必须在 `1..=28`。0 会使 `from_ymd_opt` 恒失败
-    /// 并静默回退月末；29/30/31 有「月末漂移」问题（见变体文档）。
+    ///   并静默回退月末；29/30/31 有「月末漂移」问题（见变体文档）。
     /// - `rolling`：`days` 必须 >= 1。0 会产生立即过期的空窗口。
     pub fn from_tag(type_tag: &str, param: u32) -> Option<Self> {
         match type_tag {

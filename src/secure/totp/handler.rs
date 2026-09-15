@@ -49,7 +49,7 @@ impl TotpHandler {
     /// # 返回
     /// - `Ok(String)`: 指定位数的数字字符串。
     /// - `Err(GarrisonError::InvalidParam)`: `now` 为负值（裸 `as u64` 会静默回绕
-    /// 为巨大计数器，产生错误时间窗口的验证码，故显式拒绝）。
+    ///   为巨大计数器，产生错误时间窗口的验证码，故显式拒绝）。
     pub fn generate(&self, now: i64) -> GarrisonResult<String> {
         let now = Self::check_now(now)?;
         Ok(self.totp.generate(now).to_string())
@@ -86,7 +86,7 @@ impl TotpHandler {
     ///
     /// 新实现使用 [`GarrisonDao::incr`] 的原子性消除 TOCTOU 竞态：
     /// - `incr` 在后端（`GarrisonDaoOxcache` 用 `parking_lot::Mutex`，`MockDao` 用
-    /// `parking_lot::Mutex`，Redis 后端用 `INCR` 命令）保证进程内原子
+    ///   `parking_lot::Mutex`，Redis 后端用 `INCR` 命令）保证进程内原子
     /// - 首次调用返回 1（key 不存在 → 初始化为 "1"），后续调用返回 2+（递增）
     /// - `incr` 返回 1 时视为首次使用，返回 >1 时视为重放
     ///

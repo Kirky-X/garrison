@@ -10,12 +10,12 @@
 //! # 订阅生命周期（错误处理/可靠性修复）
 //!
 //! - `subscribe` 通过 oneshot 回传首次连接+订阅结果：连接/订阅失败时向调用方
-//! 返回 `Err`（不再"假成功"）；
+//!   返回 `Err`（不再"假成功"）；
 //! - 后台任务句柄保存到结构体（[`RedisPubSubSsoChannel::shutdown`] 可主动停止，
-//! `Drop` 时自动 abort），任务失败可观测、资源可回收；
+//!   `Drop` 时自动 abort），任务失败可观测、资源可回收；
 //! - 订阅建立后若连接断开（stream 结束），后台任务按可配置次数重连并重新
-//! SUBSCRIBE（指数退避，见 [`RedisPubSubSsoChannel::with_reconnect_attempts`]），
-//! 超过次数后记 error 日志退出。
+//!   SUBSCRIBE（指数退避，见 [`RedisPubSubSsoChannel::with_reconnect_attempts`]），
+//!   超过次数后记 error 日志退出。
 
 use super::server::SsoChannel;
 use crate::error::{GarrisonError, GarrisonResult};

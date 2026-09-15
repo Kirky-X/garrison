@@ -70,7 +70,7 @@ pub(crate) fn idx_key_for(key_id: &str) -> String {
 /// 都不得写入明文 secret：
 /// - 双段格式 `key_id.key_secret`：仅返回 `key_id`（公开标识，永不含 secret）；
 /// - 不含 `.` 的输入（格式异常）：截断为前 8 hex 字符 + `…`，
-/// 避免将完整凭证写入审计层（8/64 hex ≈ 32 bit，不足以暴力还原剩余 224 bit）。
+///   避免将完整凭证写入审计层（8/64 hex ≈ 32 bit，不足以暴力还原剩余 224 bit）。
 ///
 /// 仅 `listener` 启用时编译（唯一调用方是 rotate 的 TokenRotate 事件广播）。
 #[cfg(feature = "listener")]

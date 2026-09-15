@@ -117,11 +117,11 @@ impl MathCaptchaProvider {
     /// 验证用户提交的答案。
     ///
     /// - 用 `dao.get_and_delete`（GETDEL 原子）取出存储答案：并发同 challenge_id
-    /// 的 verify 仅有一个取到值，保证一次性使用语义（消除 get→delete TOCTOU）。
+    ///   的 verify 仅有一个取到值，保证一次性使用语义（消除 get→delete TOCTOU）。
     /// - 匹配则 challenge 已删除（一次性使用，防止复用）。
     /// - 不匹配时用 `dao.incr` 原子递增尝试计数器（消除 get→add→set 竞态），
-    /// 超过 `max_attempts` 后废弃 challenge（防暴力穷举）；
-    /// 未超限则回写 challenge（TTL 重置），允许继续重试。
+    ///   超过 `max_attempts` 后废弃 challenge（防暴力穷举）；
+    ///   未超限则回写 challenge（TTL 重置），允许继续重试。
     /// - challenge_id 不存在（已被消费/过期）返回 `Ok(false)`。
     ///
     /// # 并发说明

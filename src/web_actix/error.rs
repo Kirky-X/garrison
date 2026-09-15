@@ -5,10 +5,10 @@
 //!
 //! 包含两类 impl：
 //! - `HeaderLookup for actix_web::http::header::HeaderMap`：桥接 actix HeaderMap 与
-//! `extract_token_from_headers`，使 token 提取逻辑可同时接受 `http::HeaderMap`
-//! 和 `actix_web::http::header::HeaderMap` 两种类型。
+//!   `extract_token_from_headers`，使 token 提取逻辑可同时接受 `http::HeaderMap`
+//!   和 `actix_web::http::header::HeaderMap` 两种类型。
 //! - `ResponseError for GarrisonError`：将 GarrisonError 映射为 actix-web HttpResponse，
-//! 复用 `response_parts()` 保证与 axum/warp 三框架响应一致。
+//!   复用 `response_parts()` 保证与 axum/warp 三框架响应一致。
 
 use crate::context::token_extract::HeaderLookup;
 use crate::error::GarrisonError;

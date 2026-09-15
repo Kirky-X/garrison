@@ -214,7 +214,7 @@ impl InvitationHandler {
     ///
     /// # 错误
     /// - `GarrisonError::InvalidParam`: 码格式非法、不存在、过期、已吊销或已耗尽
-    /// （`invitation-*::` key 前缀）。
+    ///   （`invitation-*::` key 前缀）。
     pub async fn redeem(
         &self,
         code_input: &str,

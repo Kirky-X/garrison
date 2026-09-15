@@ -165,7 +165,7 @@ impl GarrisonAuthServer {
     ///
     /// # 参数
     /// - `resolver`：`Arc<dyn TenantResolver>`（如 `HeaderTenantResolver` /
-    /// `SubdomainTenantResolver` / `ClaimTenantResolver`）
+    ///   `SubdomainTenantResolver` / `ClaimTenantResolver`）
     ///
     /// # 示例
     ///
@@ -354,10 +354,10 @@ impl GarrisonAuthServer {
     /// # 内网路由保护
     ///
     /// - 内网路由同样挂载 `rate_limit_middleware`（限速参数复用外网配置：
-    /// `external_rate_limit_per_ip` / `rate_limit_max_entries` / `rate_limit_trusted_proxies`），
-    /// 防止持有合法 API Key 的调用方无限速打满后端资源。
+    ///   `external_rate_limit_per_ip` / `rate_limit_max_entries` / `rate_limit_trusted_proxies`），
+    ///   防止持有合法 API Key 的调用方无限速打满后端资源。
     /// - OAuth2 内网路由（introspect）**先 merge 再统一挂中间件**：axum `merge` 不继承
-    /// layer，若 introspect 路由在挂 layer 后 merge 会绕过 `api_key_auth`。
+    ///   layer，若 introspect 路由在挂 layer 后 merge 会绕过 `api_key_auth`。
     ///
     /// 中间件栈（从外到内）：
     /// `tenant_resolution? → audit_log → rate_limit → api_key_auth → internal_path_filter → handler`

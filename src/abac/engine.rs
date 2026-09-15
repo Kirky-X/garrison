@@ -118,8 +118,8 @@ impl AbacEngine {
     /// # 参数
     /// - `schema_json`：Cedar schema JSON 字符串
     /// - `entity_loader`：实体加载器（`Arc<dyn EntityLoader>`）。
-    /// 传 `Arc::new(EmptyEntityLoader)` 保持空实体行为，传 `Arc::new(StaticEntityLoader::new(...))`
-    /// 支持基于属性的策略。
+    ///   传 `Arc::new(EmptyEntityLoader)` 保持空实体行为，传 `Arc::new(StaticEntityLoader::new(...))`
+    ///   支持基于属性的策略。
     ///
     /// # 错误
     /// - schema JSON 解析失败：`GarrisonError::InvalidParam`
@@ -408,7 +408,7 @@ impl AbacEngine {
     ///
     /// # 返回
     /// - `(Decision, has_eval_errors)`：`has_eval_errors` 为 true 表示诊断含错误，
-    /// 决策为 fail-closed 拒绝；调用方不得将该决策写入缓存（瞬态故障不钉死 TTL）。
+    ///   决策为 fail-closed 拒绝；调用方不得将该决策写入缓存（瞬态故障不钉死 TTL）。
     ///
     /// # 错误
     /// - EntityUid/Context/Request 解析失败：`GarrisonError::InvalidParam`

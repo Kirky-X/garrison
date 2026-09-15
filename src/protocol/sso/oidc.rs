@@ -11,7 +11,7 @@
 //! - `exchange_code`：通过 reqwest POST 到 token_endpoint 交换 id_token
 //! - `get_user_info`：通过 reqwest GET userinfo_endpoint 获取用户信息
 //! - `validate_id_token`：JWKS 验签（RS256）+ iss/aud/exp 校验（需 `protocol-jwt` feature）；
-//! 未启用 feature 时返回 `NotImplemented`
+//!   未启用 feature 时返回 `NotImplemented`
 //!
 //! 与 `protocol::oauth2::oidc::OidcHandler` 的区别：
 //! - `OidcHandler`：Garrison 作为 IdP 签发/验证 id_token
@@ -351,7 +351,7 @@ impl DefaultOidcProvider {
     /// # 错误
     /// - `GarrisonError::Network`: `reqwest::Client` 构建失败（E1：含超时配置）。
     /// - `GarrisonError::Config`: discovery 端点 scheme 非 https/localhost
-    /// （安全审计修复：明文 http 端点拒绝构造）。
+    ///   （安全审计修复：明文 http 端点拒绝构造）。
     pub fn new(
         config: OidcDiscoveryConfig,
         client_id: &str,
@@ -385,7 +385,7 @@ impl DefaultOidcProvider {
     ///
     /// - JWKS 缓存 key：`oidc:jwks:{issuer}`，TTL 由 `JWKS_CACHE_TTL` 控制。
     /// - state 缓存 key：`oidc:state:{state}`，TTL 由 `OIDC_STATE_TTL` 或
-    /// `with_state_ttl` 控制。
+    ///   `with_state_ttl` 控制。
     ///
     /// # 参数
     ///
@@ -520,7 +520,7 @@ impl DefaultOidcProvider {
     ///
     /// 1. 解析 JWT header，提取 `kid`。
     /// 2. 从 DAO 缓存读取 JWKS（key=`oidc:jwks:{issuer}`），
-    /// 缓存 miss 或反序列化失败时调用 `fetch_jwks` 重新拉取并写入缓存。
+    ///    缓存 miss 或反序列化失败时调用 `fetch_jwks` 重新拉取并写入缓存。
     /// 3. 按 `kid` 匹配 JWKS 公钥，用 `n`/`e` 模数构造 `DecodingKey`。
     /// 4. 用 RS256 算法验签，解析为 [`IdTokenClaims`]。
     /// 5. 校验 `iss`（匹配 `config.issuer`）。
@@ -531,7 +531,7 @@ impl DefaultOidcProvider {
     ///
     /// - `GarrisonError::Config`: 未调用 [`with_dao`](Self::with_dao) 注入 DAO。
     /// - `GarrisonError::InvalidToken`: JWT header 解析失败 / kid 缺失 / JWKS 无匹配公钥 /
-    /// 签名验证失败 / claims 解析失败 / token 已过期 / iss 不匹配 / aud 不匹配。
+    ///   签名验证失败 / claims 解析失败 / token 已过期 / iss 不匹配 / aud 不匹配。
     /// - `GarrisonError::Internal`: JWKS 拉取失败 / DAO 读写失败 / 反序列化失败。
     #[cfg(feature = "protocol-jwt")]
     // 清洗 JWT `kid` 用于日志/错误输出：过滤控制字符并限长 128，

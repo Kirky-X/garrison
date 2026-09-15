@@ -240,7 +240,7 @@ impl TenantResolver for SubdomainTenantResolver {
 /// # 行为
 ///
 /// - Authorization header 存在且为 `Bearer <jwt>`（大小写不敏感，RFC 7235）：
-/// 验证 JWT 签名（HS256）+ exp + 解码 `tenant_id` claim
+///   验证 JWT 签名（HS256）+ exp + 解码 `tenant_id` claim
 /// - Authorization 缺失：返回 `GarrisonError::InvalidToken`
 /// - 非 Bearer scheme：返回 `GarrisonError::InvalidToken`
 /// - JWT 签名验证失败：返回 `GarrisonError::InvalidToken`
@@ -253,9 +253,9 @@ impl TenantResolver for SubdomainTenantResolver {
 /// - Bearer scheme 大小写不敏感（RFC 7235：`Bearer`/`bearer`/`BEARER` 均合法）
 /// - 不默认 0（失败显性化），任何失败均返回 `InvalidToken`
 /// - **多租户安全建议**：多服务共享同一 HS256 secret 时，
-/// 务必通过 `with_expected_issuers` 配置期望的 `iss`，防止其他服务签发的合法 JWT
-/// 被跨服务重放。`aud` 同理（jsonwebtoken 对 token 携带 `aud` 而本地未配置期望值的
-/// 情况默认 fail-closed 拒绝）。
+///   务必通过 `with_expected_issuers` 配置期望的 `iss`，防止其他服务签发的合法 JWT
+///   被跨服务重放。`aud` 同理（jsonwebtoken 对 token 携带 `aud` 而本地未配置期望值的
+///   情况默认 fail-closed 拒绝）。
 #[cfg(feature = "protocol-jwt")]
 #[derive(Clone)]
 pub struct ClaimTenantResolver {

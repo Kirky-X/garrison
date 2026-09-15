@@ -21,7 +21,7 @@
 //! `GarrisonError` 无专用 `CircuitOpen` 变体，熔断打开的快速拒绝映射为
 //! `GarrisonError::Network`，以 `circuit-open::` 消息前缀区分：
 //! - 调用方不应将 `circuit-open::` 前缀的 Network 错误视作瞬时故障重试
-//! （熔断打开意味着上游已判定不可用，重试应等待半开探测）；
+//!   （熔断打开意味着上游已判定不可用，重试应等待半开探测）；
 //! - 无前缀的 `Network` 错误才是真正的网络层失败，可按常规退避重试。
 
 use crate::error::{GarrisonError, GarrisonResult};
@@ -120,7 +120,7 @@ impl CircuitBreakerWrapper {
     ///
     /// - 熔断器关闭/半开 → 执行 `operation`，根据结果更新状态
     /// - 熔断器打开 → 立即返回 `GarrisonError::Network`（消息带 `circuit-open::`
-    /// 前缀，见模块文档「错误语义」；`GarrisonError` 无专用 `CircuitOpen` 变体）
+    ///   前缀，见模块文档「错误语义」；`GarrisonError` 无专用 `CircuitOpen` 变体）
     ///
     /// # 参数
     /// - `operation`: 要保护的异步操作

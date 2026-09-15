@@ -24,10 +24,10 @@ use std::marker::PhantomData;
 ///
 /// 提取顺序（受 config 开关控制）：
 /// 1. 若 `is_read_header=true`：
-/// a. `Authorization: Bearer <token>` header（Bearer 大小写不敏感，依据 RFC 7235）
-/// b. 自定义 `token_name` header（如 `garrison_token: <token>`）
+///    a. `Authorization: Bearer <token>` header（Bearer 大小写不敏感，依据 RFC 7235）
+///    b. 自定义 `token_name` header（如 `garrison_token: <token>`）
 /// 2. 若 `is_read_cookie=true`：
-/// `Cookie: <token_name>=<token>` cookie
+///    `Cookie: <token_name>=<token>` cookie
 fn extract_token_from_parts(parts: &Parts, config: &GarrisonConfig) -> Option<String> {
     // 1. 从 header 提取
     if config.is_read_header {

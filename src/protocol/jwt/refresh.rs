@@ -56,7 +56,7 @@
 /// - `scopes`: OAuth2 授权的 scope 列表（空格分隔，JWT 模块不使用）
 /// - `username`: OAuth2 password grant type 用户名（JWT 模块不使用）
 /// - `user_id`: OAuth2 user_id（与 `login_id` 区分：`login_id` 是 JWT 模块的 i64 ID，
-/// `user_id` 是 OAuth2 的 `Option<i64>`，`client_credentials` 时为 `None`）
+///   `user_id` 是 OAuth2 的 `Option<i64>`，`client_credentials` 时为 `None`）
 ///
 /// 反序列化时这 4 个字段必须**显式存在**（值可为 `null`），缺失任一字段即失败
 /// （fail-closed，见 [`deserialize_required_option`]）。
@@ -191,16 +191,16 @@ mod service {
         /// 1. 计算 `old_hash = SHA-256(old_token)`
         /// 2. 预检 reuse：`old_hash` 已 revoked 则吊销整个链后返回 `TokenRevoked`
         /// 3. **原子消费**：条件 UPDATE（`revoked = 0 → 1`）作为 compare-and-swap，
-        /// 并发对同一 old_token 的 rotate 仅有一个调用方 `rows_affected = 1`；
-        /// 未抢到的调用方直接返回 `InvalidToken`（不吊销链——并发落败方与
-        /// 胜者是同一客户端的同时请求/网络重试，误吊销会击落胜者的新
-        /// session；真正的重用由步骤 2 预检识别）。据此消除 SELECT/UPDATE
-        /// 分离的 TOCTOU 双花窗口：并发同 token 刷新只能一个成功
+        ///    并发对同一 old_token 的 rotate 仅有一个调用方 `rows_affected = 1`；
+        ///    未抢到的调用方直接返回 `InvalidToken`（不吊销链——并发落败方与
+        ///    胜者是同一客户端的同时请求/网络重试，误吊销会击落胜者的新
+        ///    session；真正的重用由步骤 2 预检识别）。据此消除 SELECT/UPDATE
+        ///    分离的 TOCTOU 双花窗口：并发同 token 刷新只能一个成功
         /// 4. SELECT 读取 login_id / tenant_id 及 OAuth2 扩展字段（此时已独占持有
-        /// 消费权，无需再过滤 `revoked = 0`）
+        ///    消费权，无需再过滤 `revoked = 0`）
         /// 5. 生成新 refresh token（UUID v4）+ 签发新 access token（JwtHandler，1 小时有效期）
         /// 6. 计算 `new_hash = SHA-256(new_refresh)`，INSERT new record
-        /// （`parent_token_hash = old_hash`, `revoked=0`，7 天过期，继承 OAuth2 扩展字段）
+        ///    （`parent_token_hash = old_hash`, `revoked=0`，7 天过期，继承 OAuth2 扩展字段）
         /// 7. 返回 `(new_access, new_refresh)`
         ///
         /// 崩溃语义（fail-closed）：若在原子消费后、INSERT 前进程崩溃，旧 token 已

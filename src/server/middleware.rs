@@ -225,9 +225,9 @@ const CT_EQ_FIXED_WORKLOAD: usize = 256;
 ///
 /// - 长度比较用 `u64::ct_eq`（常量时间），不 early return
 /// - 字节比较执行**固定工作量**（`CT_EQ_FIXED_WORKLOAD` 次迭代，与输入长度无关），
-/// 短的一方用 0 padding 对齐
+///   短的一方用 0 padding 对齐
 /// - 任一输入超过固定工作量上限时返回 false：仅泄露"长度 > 256"这一粗粒度信息，
-/// 不再泄露精确长度（合法 API Key 不会达到该长度）
+///   不再泄露精确长度（合法 API Key 不会达到该长度）
 fn constant_time_eq(a: &str, b: &str) -> bool {
     use subtle::ConstantTimeEq;
 

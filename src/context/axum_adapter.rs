@@ -52,7 +52,7 @@ impl<'a> AxumRequest<'a> {
     /// # 参数
     /// - `request`: axum `Request<Body>` 引用。
     /// - `body_bytes`: 预读的 body 字节（调用方在 async 上下文中通过
-    /// `http_body_util::BodyExt::collect` 等方式读取后传入）。
+    ///   `http_body_util::BodyExt::collect` 等方式读取后传入）。
     ///
     /// # 返回
     /// 包装该请求引用与 body 字节的 `AxumRequest` 实例。

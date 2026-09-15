@@ -367,7 +367,7 @@ fn sanitize_whitelist(input: &str, allowed: &[&'static str]) -> String {
 /// - 三种引号形式：双引号、单引号、无引号
 /// - `=` 与引号间空白：`href= "javascript:alert(1)"`（值解析前先跳过空白）
 /// - 属性紧跟引号无空白：`<a title="x"href="javascript:alert(1)">`
-/// （属性边界识别含 `"`/`'`，与 `strip_event_handlers` 一致）
+///   （属性边界识别含 `"`/`'`，与 `strip_event_handlers` 一致）
 ///
 /// # 实现策略
 ///

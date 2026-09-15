@@ -267,12 +267,12 @@ pub struct TenantIsolationConfig {
 /// JWT secret 类型别名。
 ///
 /// - `protocol-zeroize` feature 启用：`Zeroizing<String>`，Drop 时自动 zeroize buffer，
-/// 防止进程内存 dump / swap-to-disk 泄露 jwt_secret。
+///   防止进程内存 dump / swap-to-disk 泄露 jwt_secret。
 /// - 不启用：退化为 `String`。
 ///
 /// 调用方适配规则：
 /// - 赋值：`config.jwt_secret = "xxx".to_string().into()`（`String: From<String>` identity，
-/// `Zeroizing<String>: From<String>`）
+///   `Zeroizing<String>: From<String>`）
 /// - 读取：`config.jwt_secret.as_str()` 或 `&*config.jwt_secret`（两种类型都支持）
 #[cfg(feature = "protocol-zeroize")]
 pub type JwtSecret = zeroize::Zeroizing<String>;

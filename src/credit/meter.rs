@@ -67,10 +67,10 @@ impl CreditMeter {
     /// 消费 credit（热路径）。
     ///
     /// 1. 从 `CreditSchedule` 获取 resource weight → `credits = cost * weight`
-    /// （`checked_mul`，溢出返回 [`CreditError::ConfigInvalid`]，不再静默回绕）
+    ///    （`checked_mul`，溢出返回 [`CreditError::ConfigInvalid`]，不再静默回绕）
     /// 2. 检查周期是否过期，过期则重置
     /// 3. **预检**：已消费 + credits 超限时直接拒绝，**不递增计数**
-    /// （被拒请求不消耗配额，租户可继续用剩余额度发起小额请求）
+    ///    （被拒请求不消耗配额，租户可继续用剩余额度发起小额请求）
     /// 4. KV incr 递增 consumed；并发交错导致超限时 decr 回滚本次递增并拒绝
     /// 5. 计算 usage_percent，检查 alert_thresholds
     /// 6. 更新 meta
@@ -80,10 +80,10 @@ impl CreditMeter {
     /// # 一致性语义
     ///
     /// - 拒绝路径不消耗配额：预检拒绝零副作用；并发交错超限时回滚本次扣减
-    /// （decr 为 best-effort，单次失败仅 `tracing::warn`，见
-    /// [`CreditMeterStorage::decr_consumed`]）；
+    ///   （decr 为 best-effort，单次失败仅 `tracing::warn`，见
+    ///   [`CreditMeterStorage::decr_consumed`]）；
     /// - 回滚后 `total_consumed` / `usage_percent` 基于回滚后的已消费量，
-    /// `alerts_triggered` 为空（无新消耗即不触发新告警）。
+    ///   `alerts_triggered` 为空（无新消耗即不触发新告警）。
     pub async fn consume_credit(
         &self,
         tenant_id: i64,

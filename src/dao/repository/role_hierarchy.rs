@@ -124,7 +124,7 @@ mod service {
         /// # 算法
         /// 1. 查询所有 `role_hierarchy` 记录，构建 `child → parents` 邻接表
         /// 2. 对每个 child，DFS 遍历收集所有祖先（避免环：用 visited 集合；
-        /// 并以备忘录复用无环子图的完整祖先集合，线性链从 O(n²) 降为 O(n+e)）
+        ///    并以备忘录复用无环子图的完整祖先集合，线性链从 O(n²) 降为 O(n+e)）
         /// 3. 返回闭包表
         ///
         /// # 语义（自环 / 环）
@@ -173,9 +173,9 @@ mod service {
         /// # 返回
         /// `(ancestors, complete)`：
         /// - `ancestors`: `role` 的祖先集合（**不含 `role` 自身**——自环 A→A 与
-        /// 环路均不会把 `role` 写入自身祖先集）
+        ///   环路均不会把 `role` 写入自身祖先集）
         /// - `complete`: 结果是否为全图完整祖先集（未因环截断）。
-        /// 仅 `complete == true` 的结果可安全写入 `memo` 复用。
+        ///   仅 `complete == true` 的结果可安全写入 `memo` 复用。
         fn dfs_ancestors(
             role: &str,
             adj: &HashMap<String, Vec<String>>,

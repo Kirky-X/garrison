@@ -41,7 +41,7 @@ impl HttpBasicAuth {
     /// # 返回
     /// - `Ok(Credential)`: 解码成功。
     /// - `Err(GarrisonError::InvalidParam)`: 输入超长 / Base64 非法 / UTF-8 解码失败 /
-    /// 缺失冒号分隔符（均为客户端输入错误，映射 HTTP 400，而非 500 Internal）。
+    ///   缺失冒号分隔符（均为客户端输入错误，映射 HTTP 400，而非 500 Internal）。
     pub fn decode(header_value: &str) -> GarrisonResult<Credential> {
         if header_value.len() > MAX_CREDENTIAL_LEN {
             return Err(GarrisonError::InvalidParam(
@@ -72,7 +72,7 @@ impl HttpBasicAuth {
     /// # 返回
     /// - `Ok(Credential)`: 解析成功。
     /// - `Err(GarrisonError::InvalidParam)`: 方案非 Basic / 缺少凭证 / Base64 解码失败
-    /// （客户端输入错误，映射 HTTP 400，由下游中间件决定是否升级为 401）。
+    ///   （客户端输入错误，映射 HTTP 400，由下游中间件决定是否升级为 401）。
     pub fn parse_authorization_header(header: &str) -> GarrisonResult<Credential> {
         if header.len() > MAX_CREDENTIAL_LEN {
             return Err(GarrisonError::InvalidParam(

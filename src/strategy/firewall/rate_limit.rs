@@ -103,7 +103,7 @@ pub struct RateLimitConfig {
     ///
     /// - `None`：禁用动态调整，固定使用 `max_requests` 作为阈值。
     /// - `Some(upper)`：允许 [`RateLimitStrategy::current_threshold`] 在
-    /// `[max_requests, upper]` 区间内根据历史流量动态调整。
+    ///   `[max_requests, upper]` 区间内根据历史流量动态调整。
     ///
     /// 调整规则见 [`RateLimitStrategy::adjust_threshold`]。
     pub dynamic_threshold: Option<usize>,
@@ -224,7 +224,7 @@ impl RateLimitStrategy {
     ///
     /// - `dynamic_threshold=None` 时恒返回 `max_requests`。
     /// - `dynamic_threshold=Some(_)` 时返回 DAO 中持久化的当前阈值
-    /// （区间 `[max_requests, dynamic_threshold]`），缺省回退到 `max_requests`。
+    ///   （区间 `[max_requests, dynamic_threshold]`），缺省回退到 `max_requests`。
     pub async fn current_threshold(&self, ctx: &FirewallContext) -> GarrisonResult<usize> {
         let max = self.config.max_requests as usize;
         let Some(upper) = self.config.dynamic_threshold else {

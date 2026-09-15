@@ -95,7 +95,7 @@ impl GarrisonRouter {
     ///
     /// # 参数
     /// - `path`: 请求路径模式（精确匹配 / `:param`、`{param}` 参数段 / `{*wildcard}` 通配段，
-    /// 语义见 [`route_matches`]）。
+    ///   语义见 [`route_matches`]）。
     /// - `handler`: axum handler（GET 方法）。
     /// - `annotation`: 鉴权注解。
     pub fn route_protected<H, T>(mut self, path: &str, handler: H, annotation: Annotation) -> Self
@@ -115,7 +115,7 @@ impl GarrisonRouter {
     ///
     /// # 参数
     /// - `prefix`: 路由前缀（如 `/api/v1`），必须非空，以 `/` 开头。
-    /// 尾部 `/` 自动 trim（`/api/v1/` → `/api/v1`）。
+    ///   尾部 `/` 自动 trim（`/api/v1/` → `/api/v1`）。
     /// - `annotation`: 组级公共注解。`Annotation::Ignore` 时组内所有路由跳过注解校验。
     /// - `f`: 闭包，接收子 `GarrisonRouter`，返回注册完路由后的 `GarrisonRouter`。
     ///
@@ -197,10 +197,10 @@ impl GarrisonRouter {
 /// - 静态段：精确相等
 /// - `:param`（旧语法）与 `{param}`（axum 0.8 语法）：匹配任意非空单段
 /// - `{*wildcard}`（axum 0.8 通配）：匹配剩余所有段（含零段，前缀保护语义，
-/// 如 `/api/{*rest}` 覆盖 `/api` 与 `/api/a/b`）
+///   如 `/api/{*rest}` 覆盖 `/api` 与 `/api/a/b`）
 /// - 段数不一致（除尾部通配外）不匹配——未命中规则时 middleware 跳过
-/// `pre_handle`（fail-closed 由注册侧保证：需要保护的路径必须注册；
-/// 通配段可显式声明前缀保护）。
+///   `pre_handle`（fail-closed 由注册侧保证：需要保护的路径必须注册；
+///   通配段可显式声明前缀保护）。
 fn route_matches(pattern: &str, path: &str) -> bool {
     let mut pi = pattern.split('/');
     let mut ri = path.split('/');

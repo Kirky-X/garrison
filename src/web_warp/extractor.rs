@@ -9,8 +9,8 @@
 //! ## 设计
 //!
 //! - 与现有 `check_login` / `check_role` / `check_permission` Filter 互补：
-//! 现有 Filter 仅执行鉴权（返回 `()`），`garrison_principal` 携带
-//! `login_id` 字段供 handler 直接读取当前用户身份。
+//!   现有 Filter 仅执行鉴权（返回 `()`），`garrison_principal` 携带
+//!   `login_id` 字段供 handler 直接读取当前用户身份。
 //! - `GarrisonPrincipal` 类型定义在 [`crate::context`] 模块，与 actix extractor 共享。
 //!
 //! ## 使用示例

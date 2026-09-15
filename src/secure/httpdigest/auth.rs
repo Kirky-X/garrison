@@ -238,11 +238,11 @@ impl HttpDigestAuth {
     ///
     /// 通过 DAO 跟踪每个 nonce 的最后接受的 nc 值，拒绝 nc 回退或重复。
     /// - `dao` 为 None：跳过校验（返回 true）。
-    /// **安全代价**：仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
-    /// 生产环境强烈建议通过 `with_dao` 注入 DAO；仅单元测试 / 无重放风险场景可省略。
+    ///   **安全代价**：仅依赖 nonce TTL 防护（默认 300s），300s 窗口内可任意重放。
+    ///   生产环境强烈建议通过 `with_dao` 注入 DAO；仅单元测试 / 无重放风险场景可省略。
     /// - `dao` 为 Some：get `digest:nc:{nonce}` → 比较 → set 更新
     /// - DAO 错误：fail-closed（返回 false，原 fail-open 实现允许重放，
-    /// 违背 RFC 7616 §3.4.6；nonce TTL 不足以防重放，仅时间 bounded）
+    ///   违背 RFC 7616 §3.4.6；nonce TTL 不足以防重放，仅时间 bounded）
     /// - nc 非法 hex 格式：返回 false（拒绝畸形请求）
     /// - 无 runtime / current_thread runtime：fail-closed（返回 false）
     ///
@@ -394,7 +394,7 @@ impl HttpDigestAuth {
     /// # 返回
     /// - `true`: 校验通过。
     /// - `false`: 校验失败（密码错误 / method 不匹配 / qop=auth-int 未携带 body /
-    /// qop 不支持 / nonce 过期 / 格式错误）。
+    ///   qop 不支持 / nonce 过期 / 格式错误）。
     pub fn validate(&self, authorization_header: &str, method: &str, uri: &str, ha1: &str) -> bool {
         self.validate_inner(authorization_header, method, uri, None, ha1)
     }

@@ -22,8 +22,8 @@
 //!
 //! - 外网 3 端点：login / logout / refresh
 //! - 内网 12 端点：check-login / check-permission / check-role / check-safe /
-//! check-disable / check-api-key / get-token-info / get-session / kickout /
-//! switch-to / renew-to-equivalent / health
+//!   check-disable / check-api-key / get-token-info / get-session / kickout /
+//!   switch-to / renew-to-equivalent / health
 
 #![cfg(feature = "auth-server-sdforge")]
 // #[forge] 宏生成的代码含 #[cfg(feature = "mcp")] / #[cfg(feature = "cli")] 等

@@ -326,7 +326,7 @@ impl PasswordCredential {
     /// # 参数
     /// - `model`: 凭证存储模型（`secret_data` 字段应包含已哈希的密码）
     /// - `hasher`: 密码哈希器（用于 `verify` 时校验）。
-    /// 接受 `Arc`（原 `Box`），以支持 `verify` 内部的 `spawn_blocking`。
+    ///   接受 `Arc`（原 `Box`），以支持 `verify` 内部的 `spawn_blocking`。
     pub fn new(model: CredentialModel, hasher: Arc<dyn PasswordHasher>) -> Self {
         Self { model, hasher }
     }

@@ -87,7 +87,7 @@ impl CorsConfig {
     /// # 校验规则
     ///
     /// - 若 `allow_credentials == true` 且 `allowed_origins` 包含 `"*"`，返回 `Err`：
-    /// CORS 规范禁止 credentials 与通配符 origin 同时使用。
+    ///   CORS 规范禁止 credentials 与通配符 origin 同时使用。
     ///
     /// # 错误
     ///

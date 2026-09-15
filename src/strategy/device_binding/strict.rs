@@ -43,14 +43,14 @@ use super::DeviceBindingPolicy;
 /// 无编译期或运行期强制。语义要点：
 ///
 /// - **设计意图**：no-op 断言器。真正的"是否新设备"判定在 `is_new_device`，
-/// 本方法只表达"严格模式下新设备必须二级认证"这一常量决策。
+///   本方法只表达"严格模式下新设备必须二级认证"这一常量决策。
 /// - **调用方责任**：必须先调 `is_new_device` 且结果为 `true` 才调用本方法
-/// （stp 层 `check_device_binding` 已按此顺序接线）。每次登录都调用本方法
-/// 会导致全部登录被要求二级认证（过度阻断，**fail-closed 方向**——本方法
-/// 不可能错误放行，只可能错误拦截）。
+///   （stp 层 `check_device_binding` 已按此顺序接线）。每次登录都调用本方法
+///   会导致全部登录被要求二级认证（过度阻断，**fail-closed 方向**——本方法
+///   不可能错误放行，只可能错误拦截）。
 /// - **限制**：`is_new_device` 对空 `device_id` 返回 `Ok(false)`（见 `policies`），
-/// 空设备标识的登录不经过本方法即可通过——fail-closed 部署应在上游拒绝
-/// 空设备标识。
+///   空设备标识的登录不经过本方法即可通过——fail-closed 部署应在上游拒绝
+///   空设备标识。
 pub struct StrictBinding {
     /// 会话管理器引用，用于查询历史 session 的 device 字段。
     session: Arc<GarrisonSession>,

@@ -84,9 +84,9 @@ impl UserLockoutConfig {
     /// - `max_failure_factor > 0`：0 会导致首次失败即触发锁定
     /// - `failure_window_seconds > 0`：0 使窗口判断退化（永不重置计数）
     /// - `permanent_lockout == true` 时 `max_temporary_lockouts > 0`：
-    /// 0 会在第一次临时锁定时立即升级为永久锁定
+    ///   0 会在第一次临时锁定时立即升级为永久锁定
     /// - `wait_strategy` 的 `base_seconds` / `multiplier > 0`：0 会使锁定时长为 0
-    /// （锁定即刻过期，等于没有锁定）
+    ///   （锁定即刻过期，等于没有锁定）
     ///
     /// # 返回
     /// - `Ok(())`: 配置合法。

@@ -112,7 +112,7 @@ impl TotpCredential {
     ///
     /// - 进程内防重放：同一进程内重复提交同一验证码（同一凭证）会被拒绝
     /// - 多实例/多进程部署的跨进程重放防护请使用
-    /// [`verify_with_replay_check`](Self::verify_with_replay_check)（DAO 原子记录）
+    ///   [`verify_with_replay_check`](Self::verify_with_replay_check)（DAO 原子记录）
     /// - 缓存容量有界（超限时先清理过期条目），不会无界增长
     ///
     /// # 返回

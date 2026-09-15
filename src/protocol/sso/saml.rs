@@ -23,7 +23,7 @@
 //! 并通过 `tracing::warn!` 记录告警。这意味着：
 //!
 //! - 使用 `DefaultSamlProvider` 解析的 Response **不会包含 Assertion 数据**，
-//! 无法完成 SSO 单点登录流程。
+//!   无法完成 SSO 单点登录流程。
 //! - 调用方拿到的 `SamlResponse` 中 `assertion` 字段为 `None`。
 //!
 //! ## 生产环境使用建议
@@ -48,20 +48,20 @@
 //! 其余约定（原样字节验签 IdP 兼容性）：
 //!
 //! - DigestValue 计算约定：被引用元素**去除 Signature 子元素后的原始字节**
-//! （隐式 enveloped-signature transform），不做 C14N。仅与采用相同约定的
-//! IdP/测试装置兼容。
+//!   （隐式 enveloped-signature transform），不做 C14N。仅与采用相同约定的
+//!   IdP/测试装置兼容。
 //!
 //! ## 已实现的安全检查
 //!
 //! 以下安全检查已内置，无需自行实现：
 //!
 //! - **NotOnOrAfter 过期校验**：`parse_saml_response_xml` 解析后立即校验
-//! Assertion 的 `NotOnOrAfter` 时间戳，过期则返回 `InvalidToken` 错误。
+//!   Assertion 的 `NotOnOrAfter` 时间戳，过期则返回 `InvalidToken` 错误。
 //! - **Assertion 重放防护**：[`check_assertion_replay`] 函数通过 DAO 记录已消费的
-//! Assertion ID（key = `saml:replay:{assertion_id}`），TTL 由 `not_on_or_after` 决定。
+//!   Assertion ID（key = `saml:replay:{assertion_id}`），TTL 由 `not_on_or_after` 决定。
 //! - **fail-closed 剥离**：未验证的 Assertion 一律剥离，不会泄漏给调用方。
 //! - **XXE 防护**：底层 XML 解析器为 `quick-xml`（纯 Rust 实现），默认不解析外部实体
-//! （无 `libxml2` 依赖），不存在 XML External Entity (XXE) 注入风险。
+//!   （无 `libxml2` 依赖），不存在 XML External Entity (XXE) 注入风险。
 
 use crate::constants::DaoKeyPrefix;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -827,8 +827,8 @@ fn parse_saml_response_xml(xml: &str) -> GarrisonResult<SamlResponse> {
 ///
 /// # 原子 set_if_absent（SET NX）消除 TOCTOU 竞态
 ///
-/// 原实现 v1 使用 `dao.get()` + `dao.set()` 两步操作，v2 改为 `get_and_delete`
-/// + `set`。但 `get_and_delete` 对**不存在**的键不产生任何预留——并发请求可能
+/// 原实现 v1 使用 `dao.get()` + `dao.set()` 两步操作，v2 改为
+/// `get_and_delete` + `set`。但 `get_and_delete` 对**不存在**的键不产生任何预留——并发请求可能
 /// 同时拿到 `None` 后各自 `set`，导致同一 Assertion 被多次消费（跨进程场景
 /// 尤其明显）。
 ///
@@ -876,10 +876,10 @@ pub async fn check_assertion_replay(
 /// InResponseTo ↔ AuthnRequest ID 绑定校验。
 ///
 /// - 配置了 DAO：`InResponseTo` 非空时原子 get_and_delete 注册表条目
-/// （`saml:req:{id}`，由 build_authn_request 写入，TTL 600 秒），
-/// 未命中即拒绝（不存在的在途请求 / 重放 / 过期）。
+///   （`saml:req:{id}`，由 build_authn_request 写入，TTL 600 秒），
+///   未命中即拒绝（不存在的在途请求 / 重放 / 过期）。
 /// - 未配置 DAO：携带 InResponseTo 的 SP-initiated 响应无法验证绑定 → fail-closed 拒绝；
-/// 无 InResponseTo 的 IdP-initiated 响应放行但 warn 一次（防护未启用提示）。
+///   无 InResponseTo 的 IdP-initiated 响应放行但 warn 一次（防护未启用提示）。
 pub(crate) async fn enforce_in_response_to(
     dao: Option<&std::sync::Arc<dyn crate::dao::GarrisonDao>>,
     warned_no_dao: &std::sync::atomic::AtomicBool,
@@ -1139,7 +1139,7 @@ fn extract_reference_bindings(signed_info_xml: &str) -> Vec<ReferenceBinding> {
 ///
 /// **容错匹配**（修复原字符串精确匹配对属性变体/混合前缀的漏配）：
 /// - 开始标签带属性（`<ds:SignedInfo xmlns:ds="...">`）同样命中——通过
-/// 「local name 后必须是空白/`>`/`/`」边界检查 + 跳过属性定位 `>` 实现；
+///   「local name 后必须是空白/`>`/`/`」边界检查 + 跳过属性定位 `>` 实现；
 /// - 混合前缀：开始 `ds:` 前缀 + 结束无前缀（或反之）也能配对（同前缀优先）；
 /// - 边界检查避免 `<ds:Signature` 误配 `<ds:SignedInfo` 这类更长标签名。
 ///
@@ -1284,15 +1284,15 @@ fn strip_enveloped_signature(element_xml: &str) -> String {
 /// 1. **移除注释**（`<!--...-->`，与 C14N「无注释模式」一致）；
 /// 2. **自闭合标签展开**为双标签形式（`<X/>` → `<X></X>`）；
 /// 3. **属性规范化**：属性间空白压缩为单个空格、属性值统一双引号、
-/// 属性按限定名字典序排序（消除属性顺序/空白差异导致的字节歧义）；
+///    属性按限定名字典序排序（消除属性顺序/空白差异导致的字节歧义）；
 /// 4. 文本节点原样保留（C14N 不修改文本内容，不做 trim）。
 ///
 /// # 限制（fail-closed，不产生错误放行）
 ///
 /// - **命名空间声明不重写/不搬移**：Exclusive C14N 的 visibly-utilized
-/// 命名空间渲染未实现。若 IdP 的 SignedInfo 内部携带 `xmlns` 声明且依赖
-/// 完整 C14N 的命名空间重写，规范化输出与 IdP 签名输入不一致 → 验签失败
-/// （拒绝，而非错误放行）。
+///   命名空间渲染未实现。若 IdP 的 SignedInfo 内部携带 `xmlns` 声明且依赖
+///   完整 C14N 的命名空间重写，规范化输出与 IdP 签名输入不一致 → 验签失败
+///   （拒绝，而非错误放行）。
 /// - **字符引用不展开**（`&#x41;` → `A` 等）。
 ///
 /// 上述限制已在模块文档与 `verify_saml_signature` 运行时告警中说明。
@@ -1667,7 +1667,7 @@ impl XmlSecSamlProvider {
     ///
     /// # 参数
     /// - `idp_public_key_pem`: IdP RSA 公钥 PEM 字符串（PKCS#8 或 PKCS#1）。
-    /// 通常从 IdP 元数据 `<ds:X509Certificate>` 提取后转为 PEM 格式。
+    ///   通常从 IdP 元数据 `<ds:X509Certificate>` 提取后转为 PEM 格式。
     ///
     /// # 返回
     /// - `Ok(Self)`: 创建成功

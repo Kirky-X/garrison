@@ -289,10 +289,10 @@ impl OidcHandler {
     /// # 正确性约束
     ///
     /// - `OidcHandler` 仅支持 HMAC 对称密钥，**没有 JWKS 端点**，因此
-    /// 不输出 `jwks_uri`（宣告死链会误导客户端按 spec 去 GET 该端点而失败）。
+    ///   不输出 `jwks_uri`（宣告死链会误导客户端按 spec 去 GET 该端点而失败）。
     /// - `id_token_signing_alg_values_supported` 只输出实际可用的 HMAC 算法；
-    /// 非 HMAC 算法（sign/verify 会返回 Config 错误）输出空数组，
-    /// 绝不输出 `"unknown"` 这类客户端无法使用的伪算法。
+    ///   非 HMAC 算法（sign/verify 会返回 Config 错误）输出空数组，
+    ///   绝不输出 `"unknown"` 这类客户端无法使用的伪算法。
     pub fn discovery_metadata(&self) -> serde_json::Value {
         // 只宣告实际可用的 HMAC 算法；非 HMAC 算法（sign/verify 时返回 Config
         // 错误）输出空数组，绝不输出 "unknown" 伪算法误导客户端。

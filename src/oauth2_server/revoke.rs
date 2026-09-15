@@ -49,7 +49,7 @@ impl RevokeHandler {
     ///
     /// # 返回
     /// - `Ok(())`：撤销成功；或 token 无效 / 归属其他 client / 撤销过程出现
-    /// 瞬态错误（RFC 7009 §2.2 要求一律返回成功，不暴露内部状态）
+    ///   瞬态错误（RFC 7009 §2.2 要求一律返回成功，不暴露内部状态）
     /// - `Err`：客户端认证失败（统一 invalid_client 错误串，防枚举）
     pub async fn handle(&self, req: &RevokeRequest) -> GarrisonResult<()> {
         // 1. 客户端认证

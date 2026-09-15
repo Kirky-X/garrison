@@ -56,8 +56,8 @@ pub async fn init_inklog_logging() -> Result<::inklog::LoggerManager, ::inklog::
 /// 1. 尝试 inklog::LoggerManager::builder().level().console().build()
 /// 2. 成功 → 返回 `InklogInit { guard: Some(mgr), degraded: false }`
 /// 3. 失败 → 降级路径（当 `metrics-prometheus` 或 `tracing-log` 启用时用 tracing-subscriber
-/// JSON；无 observability feature 时用 `eprintln!` 警告）；再 tracing::warn! 记录降级原因，
-/// 返回 `InklogInit { guard: None, degraded: true }`
+///    JSON；无 observability feature 时用 `eprintln!` 警告）；再 tracing::warn! 记录降级原因，
+///    返回 `InklogInit { guard: None, degraded: true }`
 #[cfg(feature = "audit-inklog")]
 pub async fn init_inklog_logging_with_fallback() -> InklogInit {
     match init_inklog_logging().await {
