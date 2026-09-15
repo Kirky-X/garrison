@@ -178,7 +178,7 @@ jobs:
         env:
           VERSION: ${{ steps.extract-version.outputs.version }}
         run: |
-          if ! grep -qE "^## \[${VERSION}\] " CHANGELOG.md; then
+          if ! grep -qE "^## \[${VERSION}\] " docs/CHANGELOG.md; then
             echo "::error::CHANGELOG.md 缺少 ## [${VERSION}] - YYYY-MM-DD 章节"
             exit 1
           fi
@@ -197,7 +197,7 @@ jobs:
             index($0, ver " ") == 1 {flag=1; next}
             /^## \[/ {if (flag) exit}
             flag {print}
-          ' CHANGELOG.md)
+          ' docs/CHANGELOG.md)
           if [[ -z "$BODY" ]]; then
             echo "::error::CHANGELOG.md 中未提取到 ## [${VERSION}] 章节内容"
             exit 1

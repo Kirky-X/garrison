@@ -36,7 +36,7 @@ flowchart TD
 
 - **Git tag 格式**：`v{Major}.{Minor}.{Patch}`（如 `v0.7.1`），符合 semver
 - **Cargo.toml `[package].version` 字段**：`{Major}.{Minor}.{Patch}`（如 `0.7.1`）
-- **CHANGELOG.md**：每次发布新增 `## [{version}] - {YYYY-MM-DD}` 章节
+- **docs/CHANGELOG.md**：每次发布新增 `## [{version}] - {YYYY-MM-DD}` 章节
 - **规则 29 例外**：Cargo.toml 的 `[dependencies]` 版本用 `x.x` 格式（无 patch 段），但 `[package].version` 仍用 `x.x.x`（与 crates.io / git tag 一致）
 - **Workspace 成员**：`bump-version` 子命令只更新主包 `Cargo.toml`。如需同步 `garrison-macros` / `examples` 版本，需手动修改对应 `Cargo.toml`
 
@@ -120,7 +120,7 @@ version = "0.7.1"  # 旧值 0.7.0 → 新值 0.7.1
 ### 4. 提交版本变更
 
 ```bash
-git add Cargo.toml CHANGELOG.md
+git add Cargo.toml docs/CHANGELOG.md
 git commit -m "chore(release): bump version to 0.7.1"
 ```
 
