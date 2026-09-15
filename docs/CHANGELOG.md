@@ -11,8 +11,8 @@
 <summary>📑 目录（点击展开）</summary>
 
 - [Unreleased](#unreleased)
-- [0.9.0-rc.2](#090-rc.2---2026-08-26)
-- [0.9.0-rc.1](#090-rc.1---2026-08-25)
+- [0.9.0-rc.2](#090-rc2---2026-08-26)
+- [0.9.0-rc.1](#090-rc1---2026-08-25)
 
 </details>
 
@@ -55,6 +55,24 @@
 
 ### Added
 
+- **验收层去 mock：真实服务测试矩阵（2026-09 用户裁定「仅单元测试可 mock」）**：
+  - **真实 Keycloak 26**（compose :18090）：OAuth2/OIDC 协议验收 16 场景 + OIDC RP
+    完整流程全部打真实 IdP（realm 经 `scripts/keycloak_provision.py` 幂等供给，
+    走 Admin API 分步创建——KC 26 全量导入不创建内置 client scopes，id_token 会缺
+    sub/realm_access；tenant_id 需注册进 realm user profile）。授权码经
+    `tests/acceptance/keycloak_fixture.rs` 驱动真实登录表单流（reqwest cookie jar +
+    解析 `<form action>`）获取；撤销场景直连真实 RFC 7009 `/revoke`。
+  - **真实 backend-remote 故障路径**：上游 401 来自真实 auth-server fail-closed、
+    超时来自真实挂起 TCP 对端（持有连接不响应，非协议模拟）、熔断由真实连接拒绝
+    驱动打开、真实服务恢复关闭。
+  - **真实 HIBP**（`policy-hibp` 面）：泄露/干净密码查询打真实
+    api.pwnedpasswords.com，离线环境 [SKIP]。
+  - 原 wiremock 模拟面（`expires_in=0` 解析、空串 scope 请求体构造等响应/请求体
+    边界）下沉至 `src/protocol/oauth2/tests.rs` 单元层；`MockAuthBackend` 更名
+    `InMemoryAuthBackend`（真实 auth-server 的内存后端，非外部服务模拟）。
+  - `scripts/e2e_matrix.sh` S0 默认拉起并供给 Keycloak（注入
+    `GARRISON_TEST_KEYCLOAK_URL`），新增 S3kc（keycloak-oidc 面）/ S3hibp
+    （policy-hibp 面）特性阶段。
 - **优雅停机（T011）**：`server-graceful-shutdown` feature 下 SIGTERM/SIGINT 触发后停止接收新连接并 drain 在途请求（非 TLS 经 `with_graceful_shutdown`；TLS 经 `axum_server::Handle`，30s 上限）；`auth-server` 聚合默认包含，tokio 新增 `signal` feature。
 - **prelude 增补（T014）**：`LoginParams`、`GarrisonDaoOxcache`（cache-* feature）、`Annotation`、`with_current_token`、`current_token`——README 快速开始代码 `use garrison::prelude::*` 即可编译。
 - **README 快速开始回归测试（T018）**：新增 `examples/src/web/readme_quickstart.rs` + `examples/tests/readme_quickstart.rs`（与 README「最小示例」逐字对应），防止文档示例与 API 漂移；lib.rs 顶部示例改为可编译可运行 doctest（T017）。

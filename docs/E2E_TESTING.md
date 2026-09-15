@@ -148,8 +148,14 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
   UserRepository CRUD（ACC-ENV-005..006）。
 - **MySQL**（compose :13306 供手动验证；自动化经 testcontainers 动态拉起，
   ACC-ENV-007..008）：docker 探活门控，不可达自动 [SKIP]。
-- **Keycloak**：自动化路径经 wiremock 模拟 discovery/JWKS/token（production-mock-purge
-  用户裁定豁免；compose `--profile keycloak` 提供真例供手动 OIDC 联调）。
+- **Keycloak 26**（compose :18090，S0 经 `scripts/keycloak_provision.py` 幂等供给
+  realm `garrison`：客户端 `garrison-cli` / 用户 `alice`）：OAuth2 四种 grant、
+  授权码 PKCE、introspection、RFC 7009 吊销与 OIDC RP（`keycloak-oidc` 面，
+  S3kc）全部打真实 IdP；授权码经 keycloak_fixture 驱动真实登录表单流获取
+  （2026-09 用户裁定：验收层禁止 mock，原 wiremock 模拟面移除/下沉单元层；
+  不可达自动 [SKIP]）。
+- **HIBP**（`policy-hibp` 面，S3hibp）：泄露/干净密码查询打真实
+  api.pwnedpasswords.com（k-anonymity 仅上传 5 hex 前缀）；离线自动 [SKIP]。
 
 > **db 专用验收 target**：dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与
 > server-side（postgres/mysql）驱动共存，而 `full` 聚合含 `db-sqlite`——因此
@@ -166,6 +172,7 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 | `GARRISON_TEST_REDIS_URL` | 由 ADDR 推导 | `redis://127.0.0.1:16379` |
 | `GARRISON_TEST_POSTGRES_ADDR` | `127.0.0.1:5432` | `127.0.0.1:15432` |
 | `GARRISON_TEST_POSTGRES_URL` | `postgres://garrison:garrison@localhost:5432/garrison_test` | 端口 `15432` |
+| `GARRISON_TEST_KEYCLOAK_URL` | `http://127.0.0.1:18090` | 端口 `18090` |
 
 ### 2.3 编译级矩阵（组合冲突防线）
 
