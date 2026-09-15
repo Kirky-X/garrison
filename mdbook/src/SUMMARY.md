@@ -43,12 +43,7 @@
 # 运维与部署
 
 - [部署指南](./deployment.md)
-- [开发指南](./development.md)
-- [故障排查](./troubleshooting.md)
 
 # 附录
 
 - [版本路线图](./roadmap.md)
-- [FAQ](./faq.md)
-- [安全策略](./SECURITY.md)
-- [贡献指南](./CONTRIBUTING.md)
