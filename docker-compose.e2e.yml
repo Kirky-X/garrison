@@ -4,19 +4,21 @@
 # Garrison E2E 测试中间件自举（scripts/e2e_matrix.sh 使用）。
 #
 # 设计约束：
-#   1. 端口全部错开常用默认值（6379/5432/3306/8080/8081），与开发机已驻留
-#      服务（sinnan-*、confers-* 等容器）零冲突；
+#   1. 端口全部错开常用默认值（6379/5432/3306/8080/8081/18090），与开发机
+#      已驻留服务（sinnan-*、confers-* 等容器）零冲突；
 #   2. 凭据与 tests/acceptance/environment.rs 默认值一致，地址经
 #      GARRISON_TEST_*_ADDR / GARRISON_TEST_*_URL 环境变量注入测试进程；
 #   3. MySQL 8.0 供 db-mysql 手动验证与后续测试扩展（验收矩阵的 MySQL
 #      自动化路径走 testcontainers，见 ACC-ENV-007/008）；
-#   4. Keycloak 仅自动化套件不需要（协议层经 wiremock 模拟，
-#      置于 `keycloak` profile 供 OIDC RP 手动联调。
+#   4. Keycloak 26 为 OAuth2/OIDC 协议验收的真实授权服务器（2026-09 起
+#      协议层验收禁止 wiremock 模拟，一律打真实 IdP）：realm 数据由
+#      scripts/keycloak_provision.py 经 Admin API 供给（幂等）。不走
+#      --import-realm——Keycloak 26 的全量导入不创建内置 client scopes
+#      （basic/profile/email/roles），id_token 会缺失 sub 等基础 claims。
 #
 # 用法：
 #   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e up -d --wait
-#   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e \
-#     --profile keycloak up -d --wait   # 含 Keycloak
+#   python3 scripts/keycloak_provision.py   # Keycloak realm 供给（幂等）
 #   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e down -v --remove-orphans
 
 name: garrison-e2e
@@ -72,11 +74,11 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
 
-  # 手动 OIDC 联调（自动化测试不依赖）：--profile keycloak 启用
+  # 真实授权服务器（OAuth2/OIDC 协议验收 + OIDC RP 手动联调共用）：
+  # realm 数据由 scripts/keycloak_provision.py 供给（幂等，见脚本头注释）
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: garrison-e2e-keycloak
-    profiles: ["keycloak"]
     ports:
       - "18090:8080"
     environment:
@@ -84,10 +86,13 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin
     command: start-dev
     healthcheck:
-      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && echo -e 'GET / HTTP/1.1\\nHost: localhost\\nConnection: close\\n\\n' >&3 && cat <&3 | head -1 | grep -q ' 200 '"]
+      # 容器 sh 非 bash：echo -e 不解释转义会发出畸形 HTTP；/ 根路径亦非 200。
+      # 用 printf + master realm discovery（确定性 200）探测。
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /realms/master/.well-known/openid-configuration HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | head -1 | grep -q ' 200 '"]
       interval: 10s
       timeout: 5s
       retries: 24
+      start_period: 30s
 
 volumes:
   redis-data:
