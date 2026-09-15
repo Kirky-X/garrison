@@ -255,7 +255,6 @@ The table below mirrors the `[features]` section of `Cargo.toml`, where `default
 | [🚀 Deployment](docs/DEPLOYMENT.md) | Production deployment notes |
 | [🗺️ Roadmap](docs/ROADMAP.md) | Version evolution plan |
 | [📦 Release Workflow](docs/RELEASING.md) | Release process and gates |
-| [📦 Dependency Update](docs/DEPENDENCY_UPDATE_202609.md) | 2026-09 dependency upgrade and in-house crate feature absorption |
 | [🤝 Contributing](docs/CONTRIBUTING.md) | How to participate in project development |
 | [📋 Changelog](docs/CHANGELOG.md) | Change records for every release |
 | [📦 Online API Docs](https://docs.rs/garrison) | Latest documentation auto-generated on docs.rs |

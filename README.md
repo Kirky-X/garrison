@@ -255,7 +255,6 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 | [🚀 部署指南](docs/DEPLOYMENT.md) | 生产部署注意事项 |
 | [🗺️ 路线图](docs/ROADMAP.md) | 版本演进规划 |
 | [📦 发布工作流](docs/RELEASING.md) | 版本发布流程与门禁 |
-| [📦 依赖升级方案](docs/DEPENDENCY_UPDATE_202609.md) | 2026-09 依赖升级与自研库特性吸收 |
 | [🤝 贡献指南](docs/CONTRIBUTING.md) | 如何参与项目开发 |
 | [📋 更新日志](docs/CHANGELOG.md) | 每个版本的变更记录 |
 | [📦 在线 API 文档](https://docs.rs/garrison) | docs.rs 自动生成的最新文档 |
