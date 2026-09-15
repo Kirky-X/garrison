@@ -12,16 +12,11 @@
 
 ## 📋 目录
 
-<details open>
-<summary>📑 目录（点击展开）</summary>
-
 - [架构概览](#-架构概览)
 - [模块划分](#-模块划分)
 - [关键 trait 关系图](#-关键-trait-关系图)
 - [数据流：请求处理链路](#-数据流请求处理链路)
 - [设计决策](#-设计决策)
-
-</details>
 
 ---
 
@@ -431,5 +426,6 @@ impl GarrisonPermissionStrategy for MyStrategy {
 | [🛠️ 开发规范](./DEVELOPMENT.md) | TDD 工作流与代码规范 |
 | [🗺️ 路线图](./ROADMAP.md) | 版本演进规划 |
 | [🚀 部署指南](./DEPLOYMENT.md) | 生产部署注意事项 |
+
 - 早期领域建模参考
 - specmark specs：`specmark/specs/*`

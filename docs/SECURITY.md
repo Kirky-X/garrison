@@ -7,18 +7,14 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架，安全是项�
 
 ## 📋 目录
 
-<details open>
-<summary>📑 目录（点击展开）</summary>
-
 - [支持的版本](#-支持的版本)
 - [报告漏洞](#-报告漏洞)
-- [响应承诺](#-响应承诺)
+- [响应承诺](#️-响应承诺)
 - [披露策略](#-披露策略)
-- [安全配置建议](#-安全配置建议)
-- [已知安全考量](#-已知安全考量)
-- [相关文档](#-相关文档)
-
-</details>
+- [安全配置建议](#️-安全配置建议)
+- [供应链与门禁](#️-供应链与门禁)
+- [已知安全考量](#️-已知安全考量)
+- [相关文档](#-报告漏洞)
 
 ---
 
@@ -166,6 +162,18 @@ Garrison 的 API Key（`protocol-apikey`）采用以下安全设计：
 
 ---
 
+## ⛓️ 供应链与门禁
+
+Garrison 在 CI 与发布流程中内置三道供应链门禁（发布阶段门禁标准见 [📦 发布工作流](./RELEASING.md)）：
+
+- **`cargo deny check`**（`deny.toml`）：安全公告、许可证、禁用依赖与来源校验，CI 每次 PR 执行（`ci.yml` deny 步骤），发布门禁要求 0 failures。
+- **`cargo audit`**：RustSec 安全公告扫描，发布门禁要求 0 CRITICAL；`deny.toml` 中的忽略项均注明理由（如 RUSTSEC-2023-0071，见下文[已知安全考量](#️-已知安全考量)）。
+- **pre-commit 私钥扫描**：gitleaks（`.gitleaks.toml` + `.pre-commit-config.yaml`），与 `detect-private-key` 钩子互补，覆盖 git 历史扫描。
+
+此外，GitHub Actions 第三方 action 统一按 40 字符 commit SHA pin 引用（`ci.yml` / `docs.yml` / `codeql.yml`），防 tag 替换类供应链攻击。
+
+---
+
 ## ⚠️ 已知安全考量
 
 以下为 Garrison 当前已知的安全相关考量点，使用时请评估是否影响你的业务场景。
@@ -209,4 +217,4 @@ Garrison 的 API Key（`protocol-apikey`）采用以下安全设计：
 
 ---
 
-如对本文档有任何疑问或建议，请通过 [GitHub Discussions](https://github.com/Kirky-X/garrison/discussions) 提出（非漏洞类）；安全漏洞请遵循 [报告漏洞](#报告漏洞) 流程私密提交。
+如对本文档有任何疑问或建议，请通过 [GitHub Discussions](https://github.com/Kirky-X/garrison/discussions) 提出（非漏洞类）；安全漏洞请遵循 [报告漏洞](#-报告漏洞) 流程私密提交。

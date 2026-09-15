@@ -7,14 +7,9 @@
 
 ## 📋 目录
 
-<details open>
-<summary>📑 目录（点击展开）</summary>
-
 - [Unreleased](#unreleased)
 - [0.9.0-rc.2](#090-rc2---2026-08-26)
 - [0.9.0-rc.1](#090-rc1---2026-08-25)
-
-</details>
 
 ---
 

@@ -7,7 +7,7 @@
 
 [中文](README.md) | **English**
 
-<b>One-stop authentication &amp; authorization framework for the Rust ecosystem</b>
+**One-stop authentication &amp; authorization framework for the Rust ecosystem**
 
 [✨ Features](#-features) • [🚀 Quick Start](#-quick-start) • [📚 Documentation](#-documentation) • [💻 Examples](#-examples) • [🤝 Contributing](#-contributing)
 
@@ -15,10 +15,26 @@
 
 ---
 
-## 📋 Table of Contents
+<div align="center">
 
-<details open>
-<summary>📑 Contents</summary>
+### 🎯 Annotate Guard Points, Call Stateless APIs
+
+Inject your dependencies into `GarrisonManager` once at startup — from login to logout, the framework takes care of the rest:
+
+<table style="width:100%; border-collapse: collapse">
+<tr>
+<td align="center" width="25%">🧩<br><b>Annotation-Driven</b><br><span style="color:#64748B">10 attribute macros · declarative wiring</span></td>
+<td align="center" width="25%">🔀<br><b>Dual-Mode Sessions</b><br><span style="color:#64748B">Account-level · Token-level · Multi-device</span></td>
+<td align="center" width="25%">🌐<br><b>Web Integration</b><br><span style="color:#64748B">axum · actix · warp</span></td>
+<td align="center" width="25%">⚙️<br><b>Feature Gating</b><br><span style="color:#64748B">100+ flags · compile only what you need</span></td>
+</tr>
+</table>
+
+</div>
+
+---
+
+## 📋 Table of Contents
 
 - [✨ Features](#-features)
 - [🚀 Quick Start](#-quick-start)
@@ -36,8 +52,6 @@
 - [🙏 Acknowledgments](#-acknowledgments)
 - [📞 Contact & Support](#-contact--support)
 - [⭐ Star History](#-star-history)
-
-</details>
 
 ---
 
@@ -57,26 +71,12 @@
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>High Observability</b><br><span style="color:#64748B"><code>tracing</code> logging + <code>listener</code> event subscriptions + <code>prometheus</code> metrics (optional)</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">3967+ tests passing (3899 lib + 68 E2E), 95%+ line coverage, clippy zero warnings</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">5300+ tests (≈4800 lib + ≈530 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web Framework Adapters</b><br><span style="color:#64748B">axum/actix/warp annotation-style extractors + proc macros</span></td>
 </tr>
 </table>
 
-Beyond the core capabilities above, everything else ships as independent, opt-in feature flags.
-
-### 🧩 Feature Domain Coverage
-
-The complete set of delivered feature domains; per-flag definitions mirror the `[features]` section of `Cargo.toml`, see [🎨 Feature Flags](#-feature-flags):
-
-| Category | Feature Domains |
-|----------|-----------------|
-| Core Engine | Login auth · RBAC permissions · Dual-mode sessions (Account + Token) · Route interception (axum / actix / warp) · WAF / CORS / CSRF middleware |
-| Auth Protocols | JWT (three modes + refresh) · OAuth2 four modes · OIDC (discovery + triple anti-replay) · Keycloak OIDC RP · SAML 2.0 · SSO (ticket / SsoServer abstraction / Redis pub/sub across instances) · API Key · Temporary credentials · API signing anti-replay · TOTP · Basic / Digest · OAuth 2.1 PKCE · Token Introspection · RefreshToken rotation |
-| Authorization & Decision | Role hierarchy (TC precomputation) · OAuth2 Scope Handler · OAuth2 Server · ABAC (Cedar DSL) · Decision tracing (`Decision` + `authorize()`) |
-| Account & Credentials | Account security engine (Credential SPI + password policy + auth flow DSL) · Password hashing (Argon2 / Bcrypt) · Email verification · Social login (WeChat / Alipay) · Invitation codes |
-| Protection & Audit | Firewall suite (brute-force / rate-limit / anomalous / GeoIP / DDoS) · Multi-tenant isolation · Audit logging · Security toolkit (masking / XSS protection / constant-time comparison) |
-| Storage & Extension | SQLite / PostgreSQL / MySQL backends · Repository layer · AloneCache multi-instance isolation · ParameterQuery · Plugin system · Event listeners · Proc-macro annotations |
-| Microservices & Production | Remote backend (backend-remote) · Standalone auth server · gRPC interceptor · Config encryption / hot-reload · i18n · Observability (tracing / Prometheus / OTLP) |
+Beyond the core capabilities above, everything else (auth protocols, firewall, account security, multi-tenancy, observability, microservice building blocks, etc.) ships as independent, opt-in feature flags — see the [🎨 Feature Flags](#-feature-flags) section for the complete per-flag matrix.
 
 ---
 
@@ -93,6 +93,8 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
 
+Requires Rust 1.85 or later (MSRV, see `rust-version` in `Cargo.toml`).
+
 > Pre-release versions require the full version number; `"0.9"` will not match prerelease. To enable all protocol and security modules: `features = ["full"]`.
 
 | Preset | Installation | Use Case |
@@ -103,7 +105,7 @@ tokio = { version = "1", features = ["full"] }
 
 ### 💡 Minimal Example
 
-Complete business flow: initialize manager → log in → verify login state → log out.
+The following example is adapted from [`examples/src/bin/readme_quickstart.rs`](examples/src/bin/readme_quickstart.rs) (complete business flow: initialize manager → log in → verify login state → log out):
 
 ```rust
 use std::sync::Arc;
@@ -154,14 +156,21 @@ async fn main() -> GarrisonResult<()> {
 }
 ```
 
-> This example is continuously validated by [examples/tests/readme_quickstart.rs](./examples/tests/readme_quickstart.rs) (runs with CI).
+```bash
+cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
+# Output: Login successful, token = <8-char random token prefix>
+```
+
+> This example is continuously validated by [examples/tests/readme_quickstart.rs](./examples/tests/readme_quickstart.rs) (runs with CI); its business code mirrors [`examples/src/web/readme_quickstart.rs`](examples/src/web/readme_quickstart.rs) verbatim.
 
 ### 🧭 Core Concepts
 
-- **Dual Abstraction Layer**: `dbnexus` database abstraction (SQLite / PostgreSQL / MySQL) + `oxcache` cache abstraction (L1 in-memory + L2 redis), unified behind the `GarrisonDao` trait.
-- **Global Singleton**: `GarrisonManager` holds `Arc<GarrisonLogicDefault>` (implementing 6 sub-traits); business code injects dependencies once at startup and uses static APIs thereafter.
-- **Dual-Mode Sessions**: Account-Session (long-lived, account-level data) + Token-Session (per-login temporary data), controlled by `is_share` / `is_concurrent` config.
-- **Feature Gating**: every optional capability is an independent feature; compiled artifacts only include what you enable.
+- **Global Singleton + Static API**: `GarrisonManager` injects dao / config / interface once at startup; business code then uses the stateless `GarrisonUtil` static API.
+- **Token Context**: the token is carried via a task_local context (`garrison::stp::with_current_token`) that web middleware binds automatically, and static APIs read the current token automatically.
+- **Dual-Mode Sessions**: Account-Session (account-level) and Token-Session (login-level) are controlled by `is_share` / `is_concurrent` for the multi-device policy.
+- **Feature Gating**: every optional capability is an independent feature, so compiled artifacts only include what you enable.
+
+> For deeper coverage (token context, dual abstraction storage, etc.), see the [📖 User Guide · Core Concepts](docs/USER_GUIDE.md#-核心概念).
 
 ---
 
@@ -171,49 +180,50 @@ async fn main() -> GarrisonResult<()> {
 
 The table below mirrors the `[features]` section of `Cargo.toml`, where `default = ["backend-embedded"]`.
 
-| Feature | Default | Since | Description |
-|---------|:-------:|:-----:|-------------|
-| `backend-embedded` | ✅ | 0.7.0 | Embedded backend mode (in-process auth, delegates to GarrisonManager) |
-| `backend-remote` | ❌ | 0.7.0 | Remote backend adapter (auth via HTTP to remote Auth Server) |
-| `backend-kit` | ❌ | 0.7.0 | trait-kit typestate DI construction |
-| `auth-server` | ❌ | 0.7.0 | Standalone auth server (sdforge declarative routing + TLS) |
-| `abac` | ❌ | 0.7.0 | Cedar DSL-based attribute-based access control engine |
-| `oauth2-server` | ❌ | 0.7.0 | Full OAuth2 Server 4 endpoints |
-| `cache-memory` | ❌ | 0.1.0 | In-memory cache backend (oxcache L1) |
-| `cache-redis` | ❌ | 0.1.0 | Redis cache backend (oxcache L2) |
-| `db-sqlite` | ❌ | 0.1.0 | SQLite database backend |
-| `db-postgres` | ❌ | 0.5.0 | PostgreSQL backend |
-| `db-mysql` | ❌ | 0.5.3 | MySQL backend |
-| `web-axum` | ❌ | 0.1.0 | axum Web framework adapter |
-| `web-actix` | ❌ | 0.4.2 | actix-web framework adapter |
-| `web-warp` | ❌ | 0.4.2 | warp framework adapter |
-| `web-waf` / `web-cors` / `web-csrf` | ❌ | 0.6.4 | WAF / CORS / CSRF middleware |
-| `protocol-jwt` | ❌ | 0.2.0 | JWT issuance & validation (HS256/HS512 + refresh) |
-| `protocol-oauth2` | ❌ | 0.2.0 | OAuth2 four modes |
-| `protocol-sso` / `protocol-sso-server` | ❌ | 0.2.0 / 0.4.0 | SSO ticket / SSO Server abstraction |
-| `protocol-sign` | ❌ | 0.2.0 | API signing + nonce anti-replay |
-| `protocol-apikey` | ❌ | 0.2.0 | API Key auth |
-| `protocol-temp` | ❌ | 0.2.0 | Temporary credentials |
-| `protocol-oidc` | ❌ | 0.4.0 | OIDC id_token issuance/validation + discovery |
-| `protocol-httpbasic` / `protocol-httpdigest` | ❌ | 0.2.0 | HTTP Basic / Digest auth |
-| `protocol-saml` | ❌ | 0.5.0 | SAML 2.0 skeleton |
-| `protocol-zeroize` | ❌ | 0.4.2 | Protocol-layer key zeroization |
-| `secure-totp` | ❌ | 0.2.0 | TOTP (RFC 6238) |
-| `secure-sign` | ❌ | 0.2.0 | HMAC-SHA256/SHA512 utilities |
-| `secure-confusable` / `secure-masking` / `secure-xss` / `secure-sanitize` | ❌ | 0.5.1~0.6.2 | Security toolset |
-| `secure-simple-token` / `secure-ct-eq` | ❌ | 0.7.1 / 0.8.0 | Signing / constant-time comparison |
-| `account-credential` / `account-policy` / `account-lockout` / `account-authflow` | ❌ | 0.6.0 | Account security engine |
-| `firewall` / `firewall-*` | ❌ | 0.5.0~0.6.4 | Security suite (brute-force / rate-limit / anomalous / GeoIP / DDoS / WAF) |
-| `listener` | ❌ | 0.2.0 | Event listeners (15 event variants) |
-| `tracing-log` / `metrics-prometheus` / `otlp` | ❌ | 0.1.0~0.3.0 | Observability |
-| `annotation-macros` | ❌ | 0.4.2 | 10 attribute macros |
-| `tenant-isolation` | ❌ | 0.5.0 | Multi-tenant logical isolation |
-| `social-wechat` / `social-alipay` | ❌ | 0.5.0 | Social login |
-| `core-advanced` / `session-extra` | ❌ | 0.9.0 | Core enhancements / Session enhancements merged |
-| `email-verification` / `email-verification-smtp` | ❌ | 0.9.0 | Email verification codes |
-| `config-*` | ❌ | 0.8.0 | Config file encryption/validation/hot-reload/interpolation/dynamic/toggle (confers passthrough) |
-| `i18n` / `i18n-icu` | ❌ | 0.3.0 | Internationalization |
-| `full` / `production` / `development` | ❌ | — | Aggregate features |
+<table style="width:100%; border-collapse: collapse">
+<tr><th style="text-align:left">Feature</th><th style="text-align:center">Default</th><th style="text-align:center">Since</th><th style="text-align:left">Description</th></tr>
+<tr><td><code>backend-embedded</code></td><td align="center">✅</td><td align="center">0.7.0</td><td>Embedded backend mode (in-process auth, delegates to GarrisonManager)</td></tr>
+<tr><td><code>backend-remote</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>Remote backend adapter (auth via HTTP to remote Auth Server)</td></tr>
+<tr><td><code>backend-kit</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>trait-kit typestate DI construction</td></tr>
+<tr><td><code>auth-server</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>Standalone auth server (sdforge declarative routing + TLS)</td></tr>
+<tr><td><code>abac</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>Cedar DSL-based attribute-based access control engine</td></tr>
+<tr><td><code>oauth2-server</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>Full OAuth2 Server 4 endpoints</td></tr>
+<tr><td><code>cache-memory</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>In-memory cache backend (oxcache L1)</td></tr>
+<tr><td><code>cache-redis</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>Redis cache backend (oxcache L2)</td></tr>
+<tr><td><code>db-sqlite</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>SQLite database backend</td></tr>
+<tr><td><code>db-postgres</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>PostgreSQL backend</td></tr>
+<tr><td><code>db-mysql</code></td><td align="center">❌</td><td align="center">0.5.3</td><td>MySQL backend</td></tr>
+<tr><td><code>web-axum</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>axum Web framework adapter</td></tr>
+<tr><td><code>web-actix</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>actix-web framework adapter</td></tr>
+<tr><td><code>web-warp</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>warp framework adapter</td></tr>
+<tr><td><code>web-waf</code> / <code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td align="center">0.6.4</td><td>WAF / CORS / CSRF middleware</td></tr>
+<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>JWT issuance &amp; validation (HS256/HS512 + refresh)</td></tr>
+<tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>OAuth2 four modes</td></tr>
+<tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td align="center">0.2.0 / 0.4.0</td><td>SSO ticket / SSO Server abstraction</td></tr>
+<tr><td><code>protocol-sign</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>API signing + nonce anti-replay</td></tr>
+<tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>API Key auth</td></tr>
+<tr><td><code>protocol-temp</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>Temporary credentials</td></tr>
+<tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td align="center">0.4.0</td><td>OIDC id_token issuance/validation + discovery</td></tr>
+<tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>HTTP Basic / Digest auth</td></tr>
+<tr><td><code>protocol-saml</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>SAML 2.0 skeleton</td></tr>
+<tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>Protocol-layer key zeroization</td></tr>
+<tr><td><code>secure-totp</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>TOTP (RFC 6238)</td></tr>
+<tr><td><code>secure-sign</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>HMAC-SHA256/SHA512 utilities</td></tr>
+<tr><td><code>secure-confusable</code> / <code>secure-masking</code> / <code>secure-xss</code> / <code>secure-sanitize</code></td><td align="center">❌</td><td align="center">0.5.1~0.6.2</td><td>Security toolset</td></tr>
+<tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td align="center">0.7.1 / 0.8.0</td><td>Signing / constant-time comparison</td></tr>
+<tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td align="center">0.6.0</td><td>Account security engine</td></tr>
+<tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td align="center">0.5.0~0.6.4</td><td>Security suite (brute-force / rate-limit / anomalous / GeoIP / DDoS / WAF)</td></tr>
+<tr><td><code>listener</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>Event listeners (15 event variants)</td></tr>
+<tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td align="center">0.1.0~0.3.0</td><td>Observability</td></tr>
+<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>10 attribute macros</td></tr>
+<tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>Multi-tenant logical isolation</td></tr>
+<tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>Social login</td></tr>
+<tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td align="center">0.9.0</td><td>Core enhancements / Session enhancements merged</td></tr>
+<tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td align="center">0.9.0</td><td>Email verification codes</td></tr>
+<tr><td><code>config-*</code></td><td align="center">❌</td><td align="center">0.8.0</td><td>Config file encryption/validation/hot-reload/interpolation/dynamic/toggle (confers passthrough)</td></tr>
+<tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td align="center">0.3.0</td><td>Internationalization</td></tr>
+<tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td align="center">—</td><td>Aggregate features</td></tr>
+</table>
 
 > **v0.9.0 Feature Rename Mapping**:
 >
@@ -232,17 +242,22 @@ The table below mirrors the `[features]` section of `Cargo.toml`, where `default
 
 | Document | Description |
 |----------|-------------|
+| [📖 User Guide](docs/USER_GUIDE.md) | Complete tutorial from installation to advanced usage |
+| [📘 API Reference](docs/API_REFERENCE.md) | Public API and module reference |
 | [🏗️ Architecture](docs/ARCHITECTURE.md) | Design principles, module layout, and data flow |
 | [⚙️ Configuration](docs/CONFIGURATION.md) | Three-tier config sources, full field reference, and hot-reload |
-| [🤝 Contributing](docs/CONTRIBUTING.md) | How to participate in project development |
-| [📋 Changelog](docs/CHANGELOG.md) | Change records for every release |
-| [🛠️ Development](docs/DEVELOPMENT.md) | TDD workflow, code standards, and debugging tips |
-| [🚀 Deployment](docs/DEPLOYMENT.md) | Production deployment notes |
+| [⚡ Performance](docs/PERFORMANCE.md) | Performance targets, benchmarks, and optimization advice |
+| [🧪 Test Scenarios](docs/TEST_SCENARIOS.md) | Acceptance scenario matrix, feature combination matrix, and quality gates |
 | [🔒 Security](docs/SECURITY.md) | Security policy and vulnerability reporting process |
-| [🗺️ Roadmap](docs/ROADMAP.md) | Version evolution plan |
 | [❓ FAQ](docs/FAQ.md) | Frequently asked questions |
 | [🔧 Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
-| [🧪 E2E Testing](docs/E2E_TESTING.md) | Feature combination test suite |
+| [🛠️ Development](docs/DEVELOPMENT.md) | TDD workflow, code standards, and debugging tips |
+| [🚀 Deployment](docs/DEPLOYMENT.md) | Production deployment notes |
+| [🗺️ Roadmap](docs/ROADMAP.md) | Version evolution plan |
+| [📦 Release Workflow](docs/RELEASING.md) | Release process and gates |
+| [📦 Dependency Update](docs/DEPENDENCY_UPDATE_202609.md) | 2026-09 dependency upgrade and in-house crate feature absorption |
+| [🤝 Contributing](docs/CONTRIBUTING.md) | How to participate in project development |
+| [📋 Changelog](docs/CHANGELOG.md) | Change records for every release |
 | [📦 Online API Docs](https://docs.rs/garrison) | Latest documentation auto-generated on docs.rs |
 | [📦 crates.io](https://crates.io/crates/garrison) | Release page |
 
@@ -250,17 +265,7 @@ The table below mirrors the `[features]` section of `Cargo.toml`, where `default
 
 ## 💻 Examples
 
-All examples live in the [`examples/`](examples/) directory as a standalone workspace member (`garrison-examples` crate).
-
-| Example | File | Description |
-|---------|------|-------------|
-| basic_login | `examples/src/bin/basic_login.rs` | Full business flow (167 lines) |
-| axum_integration | `examples/src/bin/axum_integration.rs` | Complete web app (253 lines) |
-| oidc_handler | `examples/src/bin/oidc_handler.rs` | OIDC id_token issuance/validation |
-| scope_handler | `examples/src/bin/scope_handler.rs` | ScopeHandler registry |
-| sso_server | `examples/src/bin/sso_server.rs` | SSO Server abstraction |
-| alone_cache | `examples/src/bin/alone_cache.rs` | AloneCache multi-instance isolation |
-| parameter_query | `examples/src/bin/parameter_query.rs` | ParameterQuery parameterized query |
+All 65 runnable examples live in the [`examples/`](examples/) directory (a standalone workspace member, the `garrison-examples` crate), each paired with a 1:1 dedicated test and grouped by theme (login / session / token basics, annotations and web integration, auth protocols, protection suites, observability and infrastructure). See [examples/README.md](examples/README.md) for the complete list and per-example feature requirements.
 
 ```bash
 # Run a single example
@@ -274,27 +279,9 @@ cargo build -p garrison-examples --features full
 
 ## 🏗️ Architecture
 
-Garrison follows a **dual-abstraction-layer + global singleton** architecture: the public modules under `src/` (`stp`, `session`, `strategy`, `manager`, `annotation`, `router`, `dao`) re-export, while the real implementation is behind the `GarrisonDao` trait masking storage backend differences (`dbnexus` SQLite / PostgreSQL / MySQL + `oxcache` L1 in-memory / L2 redis). Optional capabilities (`protocol-*`, `secure-*`, `firewall-*`, `account-*`, `web-*`, etc.) are gated behind independent features. The core data path runs: business code → `GarrisonUtil` static API → `GarrisonManager` singleton → `GarrisonLogicDefault` (6 sub-traits) → `GarrisonDao` / `GarrisonPermissionStrategy` → storage backend.
+Garrison follows a **dual-abstraction-layer + global singleton** architecture: the `GarrisonDao` trait masks storage backend differences behind `dbnexus` (SQLite / PostgreSQL / MySQL) + `oxcache` (L1 in-memory / L2 redis); core modules are always on while optional capabilities (`protocol-*`, `secure-*`, `firewall-*`, `account-*`, `web-*`, etc.) are gated behind independent features; the core data path runs "business code → `GarrisonUtil` → `GarrisonManager` singleton → `GarrisonLogicDefault` → `GarrisonDao` / `GarrisonPermissionStrategy` → storage backend".
 
-```mermaid
-graph TD
-    User["Business Code"] --> Util["GarrisonUtil Static API"]
-    Util --> Manager["GarrisonManager Singleton"]
-    Manager --> Logic["GarrisonLogicDefault"]
-    Logic --> Session["GarrisonSession"]
-    Logic --> Strategy["GarrisonPermissionStrategy"]
-    Session --> Dao["GarrisonDao trait"]
-    Strategy --> Interface["GarrisonInterface Callback"]
-    Dao --> Oxcache["oxcache (L1 memory + L2 redis)"]
-    Dao --> Dbnexus["dbnexus (SQLite / PostgreSQL / MySQL)"]
-    Logic --> Plugin["GarrisonPlugin (inventory)"]
-    Logic --> Listener["GarrisonListener (inventory)"]
-    Annotation["axum annotations<br/>CheckLogin / CheckRole / CheckPermission"] --> Logic
-    Router["GarrisonRouter"] --> Interceptor["GarrisonInterceptor"]
-    Interceptor --> Util
-```
-
-> For the full module breakdown and data flow, see the [🏗️ Architecture doc](docs/ARCHITECTURE.md).
+For the full module layering, trait relationships, and request-handling data flow, see the [🏗️ Architecture doc](docs/ARCHITECTURE.md).
 
 ---
 
@@ -302,45 +289,59 @@ graph TD
 
 ### 🎯 Test Strategy
 
-| Layer | Location | Description |
-|-------|----------|-------------|
-| Unit tests | Inline `#[cfg(test)]` modules in `src/` | Cover core logic under each feature gate |
-| Integration tests | `examples/tests/` | 68+ example-level integration tests |
-| End-to-end tests | `tests/acceptance/` | API matrix / performance baselines / penetration testing |
-| Benchmarks | `benches/` | Criterion benchmarks |
-| Doc tests | rustdoc examples on public APIs | Run with `cargo test` |
+Tests are organized in three layers — unit (inline `#[cfg(test)]` in `src/`), acceptance / integration (`tests/acceptance/` organized by domain + dedicated db targets + trybuild UI tests), and example-level integration (`examples/tests/`, one file per example binary) — plus Criterion benchmarks, doc tests, and a feature-combination compile matrix (`ci.yml` test-compile-guard + weekly `feature-matrix.yml`). For the full scenario inventory, real-service matrix (Redis / PostgreSQL / MySQL / Keycloak 26 / HIBP), and feature dependency analysis, see the [🧪 Test Scenarios doc](docs/TEST_SCENARIOS.md).
 
-### ▶️ Commands
+### ▶️ Commands (matching CI)
 
 ```bash
-# Unit + integration tests
-cargo test --features full
+# Unit tests (the two feature faces of the CI test job)
+cargo test --no-default-features --features "default" --lib --locked
+cargo test --features "full" --lib --locked
 
-# E2E tests (API matrix + penetration)
-cargo test --test e2e --features "full testing" -- --nocapture
+# Acceptance / integration tests (CI integration-test job; services include Redis and PostgreSQL)
+cargo test --features "full" --tests --no-fail-fast
 
-# Performance baselines
-cargo test --test e2e --features "full testing" -- --ignored perf_ --test-threads=1 --nocapture
+# Acceptance matrix (full + testing feature face)
+cargo test --test acceptance --features "full testing"
 
-# One-shot: E2E + perf + penetration + combined report
+# Performance baselines (#[ignore] perf_* cases in the concurrency domain)
+cargo test --test acceptance --features "full testing" perf_ -- \
+    --nocapture --test-threads=1 --ignored
+
+# Doc tests (CI Linux/MSRV leg)
+cargo test --features "full,audit-log" --doc --locked
+
+# One-shot E2E (auth_server_serve smoke + full acceptance + perf baseline + report aggregation)
 bash scripts/e2e_run.sh
+# Local full pipeline (compose real-service bootstrap + static gates + all tests + feature matrix + bench)
+bash scripts/e2e_matrix.sh
+
+# Lint and format gates
+cargo clippy --no-default-features --features "default" -- -D warnings
+cargo clippy --features "full" -- -D warnings
+cargo fmt --all -- --check
+
+# Coverage gate: line coverage no lower than 85%
+cargo llvm-cov --features "full" --fail-under-lines 85
+
+# Dependency security gate
+cargo deny --all-features --locked check
+
+# Benchmarks (--bench limits to the criterion target, avoids also running lib unittests)
+cargo bench --bench garrison_benchmark --features full --locked -- --quick
 ```
+
+> Build dependency: `protoc` (required by the sdforge build script; CI installs it via taiki-e/install-action).
 
 ### 📊 Test Scale
 
-| Category | Count |
-|----------|-------|
-| Unit tests (inline in `src/`) | 3899+ |
-| E2E tests (`tests/`) | 68+ |
-| Line coverage | 95%+ |
+About 5330 tests (≈4800 unit + ≈406 acceptance / integration / UI + ≈116 example-level + 8 proc macros) and 4 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (currently about 95.8%). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
 
 ---
 
 ## 📊 Performance
 
-> The E2E test suite includes performance baselines (P99 < 200ms / 1000RPS). All HTTP interactions are captured to `logs/e2e_http.jsonl` via `RecordingClient` and aggregated into reports by `scripts/e2e_analyze.py`.
-
-Performance design highlights: `GarrisonManager` singleton uses `arc_swap::ArcSwapOption` for lock-free reads; `oxcache` L1 in-memory layer with per-entry TTL for fine-grained expiration; three-tier cache TTL random jitter to prevent cache stampede; all optional capabilities are feature-gated to control compile time and binary size.
+Benchmark scenarios and targets are defined in [`benches/garrison_benchmark.rs`](benches/garrison_benchmark.rs) (four Criterion scenarios: `login_flow` / `token_verify_stateless` / `permission_check` / `oxcache_backend_switch`), reproduced locally with `cargo bench`; the acceptance layer additionally carries an HTTP performance baseline (P99 < 200ms / 1000 RPS) captured and aggregated by `scripts/e2e_run.sh`. Performance design highlights (lock-free singleton reads, slow hashing offloaded via `spawn_blocking`, per-request snapshot reuse, cache TTL jitter, full feature gating) and itemized optimization advice live in the [⚡ Performance guide](docs/PERFORMANCE.md).
 
 ---
 
@@ -348,13 +349,11 @@ Performance design highlights: `GarrisonManager` singleton uses `arc_swap::ArcSw
 
 ### 🛡️ Security Design
 
-Garrison's security design centers on protecting the full identity lifecycle: Argon2id / Bcrypt password hashing with slow hash offloaded from the async executor, constant-time token comparison (`secure-ct-eq`, CWE-208 defense), API Key secure storage (CWE-916 fix), IP-dimension rate limiting (CWE-307), multi-tenant IDOR protection, JWT blacklist write-failure retry + alerting, external login endpoint fail-closed, and unified token masking in event payloads (CWE-532). Mechanism-level details live in the [Architecture doc](docs/ARCHITECTURE.md); security best practices and the vulnerability handling process are covered by the [Security doc](docs/SECURITY.md).
+Garrison applies defense-in-depth across the identity lifecycle: Argon2id / Bcrypt hashing offloaded via `spawn_blocking`, constant-time token comparison (`secure-ct-eq`, CWE-208), API Key hash storage and IP-level rate limiting (CWE-916 / CWE-307), multi-tenant IDOR protection, unified token masking in audit events (CWE-532), and fail-closed external login endpoints. Mechanism-level details live in the [Architecture doc](docs/ARCHITECTURE.md) and the [📖 User Guide · Security & Protection](docs/USER_GUIDE.md); security configuration best practices and the vulnerability handling process are covered by the [Security doc](docs/SECURITY.md).
 
 ### ⛓️ Supply Chain and Gates
 
-- `cargo deny check`: vulnerability, license, and banned dependency checks (`deny.toml`).
-- `cargo audit`: RustSec advisory scanning.
-- Pre-commit private key scanning (gitleaks).
+The CI and release pipelines enforce three supply-chain gates: `cargo deny check` (vulnerabilities / licenses / banned dependencies), `cargo audit` (RustSec advisory scanning), and pre-commit secret scanning with gitleaks. For gate criteria and handling details, see the [Security doc · Supply Chain and Gates](docs/SECURITY.md).
 
 ### 🚨 Reporting Security Issues
 
@@ -371,6 +370,7 @@ Please do not report security vulnerabilities through public issues. Use the Git
 <tr><td align="center">✅</td><td>Security and protection</td><td>Account security engine / firewall suite / multi-tenant / audit logging</td></tr>
 <tr><td align="center">✅</td><td>Microservice architecture</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
 <tr><td align="center">✅</td><td>Observability</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
+<tr><td align="center">🚧</td><td>Next-release security hardening</td><td>Fail-closed external login endpoints, password-login timing side-channel alignment, OAuth2 password grant rate-limit fail-closed, JWT blacklist write retry (see [docs/CHANGELOG.md](docs/CHANGELOG.md) · Unreleased)</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 Stable</td><td>API freeze + performance benchmarks + production case studies</td></tr>
 </table>
 
@@ -384,11 +384,7 @@ For the detailed contribution workflow and code standards, see the [🤝 Contrib
 
 ### 🛠️ Development Environment
 
-| Item | Requirement |
-|------|-------------|
-| Toolchain | Rust 1.85+ (pinned in `rust-toolchain.toml`) |
-| Format and lint | `cargo fmt --all -- --check`, `cargo clippy --all-targets --all-features -- -D warnings` |
-| Commit messages | Conventional Commits (`feat`, `fix`, `docs`, etc.) |
+The toolchain is Rust 1.85+ (pinned in `rust-toolchain.toml`); run `cargo fmt --all -- --check` and `cargo clippy --all-targets --all-features -- -D warnings` before committing; commit messages follow Conventional Commits (`feat`, `fix`, `docs`, etc.). For the full environment setup, see the [🤝 Contributing Guide · Development Environment](docs/CONTRIBUTING.md#-开发环境搭建).
 
 ### 💖 Ways to Contribute
 
@@ -407,7 +403,7 @@ Found an issue?<br>
 ### 💡 Feature Suggestions
 
 Have a great idea?<br>
-<a href="https://github.com/Kirky-X/garrison/discussions">Start Discussion</a>
+<a href="https://github.com/Kirky-X/garrison/issues/new?template=feature_request.md">Submit Suggestion</a>
 
 </td>
 <td width="33%" align="center" style="padding: 16px">
@@ -432,15 +428,12 @@ For the full version history, see the [📋 Changelog](docs/CHANGELOG.md) (follo
 | 0.9.0-rc.2 | 2026-08-26 | Fail-closed security hardening (check_api_key / check_abac); self-hosted crate rc.4 upgrade |
 | 0.9.0-rc.1 | 2026-08-25 | Acceptance test system + DAO atomic contract + gRPC async auth layer |
 | 0.8.1 | 2026-07-25 | Documentation consistency + dependency version alignment |
-| 0.8.0 | 2026-07-24 | Security hardening + pre-release audit fixes (CWE-916 / CWE-307 / IDOR / ct-eq, etc.) |
 
 ---
 
 ## 📄 License
 
-This project is licensed under [Apache-2.0](LICENSE).
-
-Why Apache-2.0 instead of MIT: Apache-2.0 includes patent grant provisions, making it more suitable for enterprise-grade frameworks.
+This project is licensed under [Apache-2.0](LICENSE). Why Apache-2.0 instead of MIT: Apache-2.0 includes patent grant provisions, making it more suitable for enterprise-grade frameworks.
 
 ---
 
@@ -476,8 +469,8 @@ Garrison stands on the shoulders of these excellent open source projects:
 <span style="color:#64748B">Report bugs & issues</span>
 </td>
 <td align="center" width="33%">
-<a href="https://github.com/Kirky-X/garrison/discussions"><b style="color:#1E40AF">Discussions</b></a><br>
-<span style="color:#64748B">Ask questions & share ideas</span>
+<a href="docs/FAQ.md"><b style="color:#1E40AF">FAQ</b></a><br>
+<span style="color:#64748B">Frequently asked questions</span>
 </td>
 <td align="center" width="33%">
 <a href="https://github.com/Kirky-X/garrison"><b style="color:#1E293B">GitHub</b></a><br>

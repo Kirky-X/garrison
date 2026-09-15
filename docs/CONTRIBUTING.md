@@ -10,9 +10,6 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 T
 
 ## 📋 目录
 
-<details open>
-<summary>📑 目录（点击展开）</summary>
-
 - [欢迎](#-欢迎)
 - [开发环境搭建](#-开发环境搭建)
 - [前置系统依赖](#-前置系统依赖)
@@ -22,8 +19,6 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 T
 - [PR 流程](#-pr-流程)
 - [测试覆盖率要求](#-测试覆盖率要求)
 - [联系方式](#-联系方式)
-
-</details>
 
 ---
 
@@ -260,7 +255,7 @@ git checkout -b feat/your-feature
 
 ### 2. 提交代码
 
-按 [提交规范](#提交规范) 编写 commit message，建议每个 commit 聚焦单一职责：
+按 [提交规范](#-提交规范) 编写 commit message，建议每个 commit 聚焦单一职责：
 
 ```bash
 git add <相关文件>
