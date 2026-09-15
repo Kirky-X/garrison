@@ -190,8 +190,12 @@ impl UserLockoutStrategy {
 
             state.failure_count = state.failure_count.saturating_add(1);
 
-            // 锁定触发标记（指标在 CAS 成功后记录，避免重试导致重复计数）
+            // 锁定触发标记（指标在 CAS 成功后记录，避免重试导致重复计数）。
+            // 仅 metrics-prometheus 消费——特性面关闭时变量与赋值同步剥离，
+            // 否则空.feature 组合下产生 unused_variables/unused_assignments 告警。
+            #[cfg(feature = "metrics-prometheus")]
             let mut locked_permanent = false;
+            #[cfg(feature = "metrics-prometheus")]
             let mut locked_temporary = false;
 
             if state.failure_count >= self.config.max_failure_factor {
@@ -201,7 +205,10 @@ impl UserLockoutStrategy {
                 {
                     // 永久锁定
                     state.permanent_locked = true;
-                    locked_permanent = true;
+                    #[cfg(feature = "metrics-prometheus")]
+                    {
+                        locked_permanent = true;
+                    }
                 } else {
                     // 临时锁定
                     state.temporary_lockout_count = state.temporary_lockout_count.saturating_add(1);
@@ -213,7 +220,10 @@ impl UserLockoutStrategy {
                     // 使 locked_until 落在过去、锁定即刻失效），并用 saturating_add 防溢出
                     let lock_seconds_i64 = i64::try_from(lock_seconds).unwrap_or(i64::MAX);
                     state.locked_until = now.saturating_add(lock_seconds_i64);
-                    locked_temporary = true;
+                    #[cfg(feature = "metrics-prometheus")]
+                    {
+                        locked_temporary = true;
+                    }
                 }
             }
 
