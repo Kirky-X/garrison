@@ -4,7 +4,7 @@
 //! i18n_usage 示例测试（i18n feature）。
 //!
 //! 验证 GarrisonLocale + set_locale + translate_error 行为：
-//! - 默认 locale 为 Zh
+//! - 默认 locale 为 En（与 src/i18n.rs 库语义一致）
 //! - set_locale 返回 RAII guard，drop 后恢复
 //! - 嵌套 set_locale 支持
 //! - translate_error 中英文翻译正确
@@ -19,10 +19,11 @@ use garrison::exception::GarrisonException;
 use garrison::i18n::{current_locale, set_locale, translate_error, GarrisonLocale};
 
 #[test]
-fn test_default_locale_is_zh() {
-    // 未调用 set_locale 时栈为空，返回默认值
+fn test_default_locale_is_en() {
+    // 未调用 set_locale 时栈为空，返回库默认值 En
+    //（src/i18n.rs：GarrisonLocale::default() == En，与库单测同语义）
     let locale = current_locale();
-    assert_eq!(locale, GarrisonLocale::Zh);
+    assert_eq!(locale, GarrisonLocale::En);
 }
 
 #[test]
