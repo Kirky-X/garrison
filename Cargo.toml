@@ -187,8 +187,9 @@ testcontainers = "0.28"
 criterion = { version = "0.8", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
-# 集成测试需要直接发送 HTTP 请求到服务器，因此无条件引入 reqwest
-reqwest = { default-features = false, features = ["json", "rustls"], workspace = true }
+# 集成测试需要直接发送 HTTP 请求到服务器，因此无条件引入 reqwest；
+# cookies 供 keycloak_fixture 以 cookie jar 驱动真实登录表单流
+reqwest = { default-features = false, features = ["json", "rustls", "cookies"], workspace = true }
 # macros UI 测试（tests/macros_ui.rs）：trybuild 子项目继承父 dev-deps（axum 供
 # `use axum::response::IntoResponse`），annotation-macros feature 由测试运行面透传
 trybuild = "1.0"

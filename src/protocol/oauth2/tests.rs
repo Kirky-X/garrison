@@ -1036,3 +1036,100 @@ async fn introspect_token_error_does_not_leak_response_body() {
         err_msg
     );
 }
+
+// ========================================================================
+// 验收层下沉场景（2026-09：验收层禁止 mock 后，响应解析/请求体构造边界
+// 回收至单元层；真实服务器可观测语义由 tests/acceptance/protocol_oauth2.rs 覆盖）
+// ========================================================================
+
+/// `expires_in=0` 解析为 `Some(0)`——协议层只解析不判定过期（判定权在
+/// 业务方），业务方应据 `expires_in <= 0` 视为立即过期。
+/// （迁自验收 acc_oauth2_015 的原 wiremock 边界，见 tests/acceptance/protocol_oauth2.rs）
+#[tokio::test]
+async fn expires_in_zero_parsed_as_immediate_expiry() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "zero-expiry-token",
+            "token_type": "Bearer",
+            "expires_in": 0
+        })))
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+    let resp = client
+        .get_client_credentials_token(None)
+        .await
+        .expect("请求应成功");
+
+    assert_eq!(
+        resp.expires_in,
+        Some(0),
+        "expires_in=0 应解析为 Some(0)，表示立即过期"
+    );
+    assert!(
+        resp.expires_in.map(|e| e <= 0).unwrap_or(true),
+        "业务方应判定 expires_in=0 为立即过期"
+    );
+}
+
+/// `scope=Some("")` 与 `scope=None` 产生不同的请求体——空串携带 `scope=`
+/// 参数、None 不携带；两个互斥 mock 分别命中并返回不同 token，证明行为
+/// 差异真实发生在请求体层面（而非客户端内部状态）。
+/// （迁自验收 acc_oauth2_014 的原 wiremock 边界）
+#[tokio::test]
+async fn scope_empty_string_vs_none_body_differs() {
+    use wiremock::matchers::body_string_contains;
+
+    let server = MockServer::start().await;
+
+    // Mock 1：body 含 "scope=" → token-empty-scope（仅消费一次）
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .and(body_string_contains("scope="))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "token-empty-scope",
+            "token_type": "Bearer"
+        })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    // Mock 2：其余 POST（不含 "scope="）→ token-no-scope（仅消费一次）
+    Mock::given(method("POST"))
+        .and(path("/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "token-no-scope",
+            "token_type": "Bearer"
+        })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+
+    let client = make_client(&server).await;
+
+    let resp_empty = client
+        .get_client_credentials_token(Some(""))
+        .await
+        .expect("scope=Some(\"\") 应成功");
+    assert_eq!(
+        resp_empty.access_token, "token-empty-scope",
+        "scope=Some(\"\") 应触发含 scope= 的请求"
+    );
+
+    let resp_none = client
+        .get_client_credentials_token(None)
+        .await
+        .expect("scope=None 应成功");
+    assert_eq!(
+        resp_none.access_token, "token-no-scope",
+        "scope=None 应触发不含 scope= 的请求"
+    );
+
+    assert_ne!(
+        resp_empty.access_token, resp_none.access_token,
+        "scope=\"\" 与 scope=None 应产生不同行为"
+    );
+}

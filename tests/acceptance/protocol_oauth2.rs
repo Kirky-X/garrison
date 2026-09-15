@@ -7,68 +7,40 @@
 //! 错误 redirect_uri / PKCE verifier 不匹配 / 无效 refresh token / scope 越权
 //! 等异常路径，「正常 + 异常」成对覆盖。
 //!
-//! 全部场景经 wiremock 0.6（dev-deps）mock 授权服务器响应，每测试自建 MockServer
-//! + `#[serial]` 串行守卫；本域为纯协议客户端，不依赖 `GarrisonTestHarness`
-//! （与 tests/protocol/oauth2_*.rs 同构；oauth2_server 服务端端点见 server.rs
-//! 与 tests/e2e/oauth2_flow.rs，本文件不重复）。
+//! # 真实授权服务器（2026-09 起，用户裁定：验收层禁止 mock）
 //!
-//! 吸收 tests/protocol/oauth2_integration.rs（授权 URL
-//! redirect_uri 参数、空 client_id 构造拒绝）与 oauth2_edge_cases.rs（scope
-//! 空串 vs None 请求体差异、expires_in=0）。
+//! 全部场景打 docker-compose.e2e.yml 拉起的真实 Keycloak 26（realm=garrison，
+//! scripts/keycloak_provision.py 幂等供给），授权码经 tests/acceptance/
+//! keycloak_fixture.rs 驱动真实登录表单流获取。Keycloak 不可达时按
+//! environment.rs 门控约定 `[SKIP]`。原 wiremock 模拟面（响应体断言 /
+//! expires_in=0 / 空串 scope 请求体差异）下沉至 src/protocol/oauth2/tests.rs
+//! 单元测试（单元层允许 mock）。
 //!
 //! # API 偏差记录
 //!
 //! - `OAuth2Client` 不提供 revoke 方法（RFC 7009 撤销属授权服务器职责，客户端库
-//! 无此 API）。 以「撤销后 introspection 返回 active=false」的
-//! 客户端可观测语义覆盖撤销路径。
-//! - 授权码重放检测同样是授权服务器的职责（客户端无状态）， 经
-//! wiremock 模拟服务端拒绝重放（首次 200 / 二次 400）。
+//!   无此 API）。撤销路径以「fixture 直连真实 /revoke 端点吊销 → introspection
+//!   返回 active=false」的客户端可观测语义覆盖。
+//! - 授权码重放检测同样是授权服务器的职责（客户端无状态），由真实 Keycloak
+//!   的授权码单次消费语义覆盖（首次 200 / 重放 400 invalid_grant）。
 
 #![cfg(feature = "protocol-oauth2")]
 
+use crate::keycloak_fixture::{
+    KeycloakFixture, CLIENT_ID, CLIENT_SECRET, PASSWORD, REDIRECT_HTTPS, REDIRECT_LOCAL,
+    REVOKE_PATH, USERNAME,
+};
 use garrison::error::GarrisonError;
 use garrison::protocol::oauth2::OAuth2Client;
 use serial_test::serial;
-use wiremock::matchers::{body_string_contains, method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
-// ============================================================================
-// 辅助函数
-// ============================================================================
-
-/// 构造指向 mock 授权服务器的 OAuth2Client（默认正确 client_secret）。
-fn client_for(server: &MockServer) -> OAuth2Client {
-    OAuth2Client::new(
-        "acc-client-id",
-        "acc-client-secret",
-        "https://app.example.com/callback",
-        "https://auth.example.com/authorize", // auth_url 仅用于拼接，不实际请求
-        server.uri().as_str(),
-    )
-    .expect("OAuth2Client 构造失败")
-}
-
-/// 构造指定 client_secret 的 OAuth2Client（错误密钥场景）。
-fn client_with_secret(server: &MockServer, client_secret: &str) -> OAuth2Client {
-    OAuth2Client::new(
-        "acc-client-id",
-        client_secret,
-        "https://app.example.com/callback",
-        "https://auth.example.com/authorize",
-        server.uri().as_str(),
-    )
-    .expect("OAuth2Client 构造失败")
-}
-
-/// 标准 token 端点成功响应。
-fn token_response(access_token: &str) -> serde_json::Value {
-    serde_json::json!({
-        "access_token": access_token,
-        "token_type": "Bearer",
-        "expires_in": 3600,
-        "refresh_token": "acc-refresh",
-        "scope": "read"
-    })
+/// Keycloak 不可达时统一跳过（真实 IdP 门控）。
+macro_rules! require_keycloak {
+    ($fx:expr) => {
+        if !$fx.available_or_skip("oauth2").await {
+            return;
+        }
+    };
 }
 
 /// 断言错误类型为 `GarrisonError::OAuth2` 且消息包含 `needle`。
@@ -87,30 +59,39 @@ fn assert_oauth2_err(
     }
 }
 
+/// 驱动真实登录表单流获取授权码（带 PKCE challenge），返回 `(code, state)`。
+async fn real_auth_code(
+    fx: &KeycloakFixture,
+    scope: Option<&str>,
+    redirect_uri: &str,
+    state: &str,
+    code_challenge: Option<&str>,
+) -> (String, String) {
+    fx.obtain_auth_code(scope, redirect_uri, state, code_challenge)
+        .await
+        .expect("真实登录表单流应成功获取授权码")
+}
+
 // ============================================================================
 // 四种授权流程 + introspection（正常）
 // ============================================================================
 
-/// （正常）：authorization_code + PKCE 全流程——授权 URL 参数齐全、
-/// code_challenge 符合 RFC 7636 测试向量、token 交换成功且请求体确含 code_verifier。
+/// （正常）：authorization_code + PKCE 全流程（真实 Keycloak）——授权 URL 参数
+/// 齐全、code_challenge 符合 RFC 7636 测试向量；经真实登录表单流获取授权码后
+/// 交换成功。PKCE 真实验证语义：challenge 绑定在授权码上，错误 verifier 的
+/// 交换必须失败（见 acc_oauth2_010），故交换成功本身就证明 code_verifier
+/// 被真实发送并通过了授权服务器的 S256 比对。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_001_authorization_code_with_pkce_full_flow() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .and(body_string_contains("grant_type=authorization_code"))
-        .and(body_string_contains("code_verifier="))
-        .respond_with(ResponseTemplate::new(200).set_body_json(token_response("ac-token")))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_LOCAL);
     // RFC 7636 Appendix B 测试向量（43 字符合法 verifier）
     let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
 
-    // 1) 授权 URL：含 PKCE 所需全部参数
+    // 1) 授权 URL：含 PKCE 所需全部参数（客户端侧构造）
     let (auth_url, challenge) = client
         .get_auth_url_with_pkce("acc-state", verifier)
         .expect("get_auth_url_with_pkce 应成功");
@@ -123,7 +104,7 @@ async fn acc_oauth2_001_authorization_code_with_pkce_full_flow() {
         "URL 应含 response_type=code"
     );
     assert!(
-        auth_url.contains("client_id=acc-client-id"),
+        auth_url.contains(&format!("client_id={}", CLIENT_ID)),
         "URL 应含 client_id"
     );
     assert!(auth_url.contains("state=acc-state"), "URL 应含 state");
@@ -136,102 +117,103 @@ async fn acc_oauth2_001_authorization_code_with_pkce_full_flow() {
         "URL 应含 code_challenge_method=S256"
     );
 
-    // 2) 授权码 + verifier 交换 token
+    // 2) 真实登录表单流：以授权 URL 的 challenge 获取真实授权码
+    let (code, state) = real_auth_code(
+        &fx,
+        Some("openid"),
+        REDIRECT_LOCAL,
+        "acc-state",
+        Some(&challenge),
+    )
+    .await;
+    assert_eq!(
+        state, "acc-state",
+        "回调 state 应与授权请求一致（真实 CSRF 锚点）"
+    );
+
+    // 3) 授权码 + verifier 交换 token（真实 Keycloak 校验 S256(verifier)=challenge）
     let token = client
-        .exchange_code_with_pkce("auth-code-1", "acc-state", "acc-state", verifier)
+        .exchange_code_with_pkce(&code, "acc-state", &state, verifier)
         .await
         .expect("PKCE 交换应成功");
-    assert_eq!(token.access_token, "ac-token");
-    assert_eq!(token.token_type, "Bearer");
-    assert_eq!(token.expires_in, Some(3600));
-    assert_eq!(token.refresh_token.as_deref(), Some("acc-refresh"));
-    assert_eq!(token.scope.as_deref(), Some("read"));
-
-    // 3) 请求体确含 code_verifier（PKCE 实际随交换请求发送，而非仅拼 URL）
-    let requests = server.received_requests().await.unwrap();
-    assert_eq!(requests.len(), 1, "应恰好发送 1 次 token 请求");
-    let body = String::from_utf8_lossy(&requests[0].body).to_string();
     assert!(
-        body.contains("code_verifier=dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
-        "交换请求体应携带 code_verifier，实际: {}",
-        body
+        !token.access_token.is_empty(),
+        "access_token 应非空（真实签发）"
     );
-    assert!(body.contains("code=auth-code-1"), "交换请求体应携带授权码");
+    assert_eq!(token.token_type, "Bearer");
+    assert!(
+        token.expires_in.map(|e| e > 0).unwrap_or(false),
+        "expires_in 应为正数，实际: {:?}",
+        token.expires_in
+    );
+    assert!(
+        token.refresh_token.is_some(),
+        "authorization_code 流程应签发 refresh_token"
+    );
+    assert!(
+        token
+            .scope
+            .as_deref()
+            .unwrap_or_default()
+            .contains("openid"),
+        "scope 应包含请求的 openid，实际: {:?}",
+        token.scope
+    );
 }
 
-/// （正常）：client_credentials 流程——请求体含 grant_type + scope，
-/// 响应解析正确且不含 refresh_token。
+/// （正常）：client_credentials 流程（真实 Keycloak 服务账号）——token 签发
+/// 且不含 refresh_token（授权服务器对 client_credentials 不签发刷新令牌的
+/// 真实语义）。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_002_client_credentials_flow() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .and(body_string_contains("grant_type=client_credentials"))
-        .and(body_string_contains("scope="))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "cc-token",
-            "token_type": "Bearer",
-            "expires_in": 7200
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS);
     let token = client
-        .get_client_credentials_token(Some("api:read"))
+        .get_client_credentials_token(None)
         .await
         .expect("client_credentials 应成功");
-    assert_eq!(token.access_token, "cc-token");
-    assert_eq!(token.expires_in, Some(7200));
+    assert!(!token.access_token.is_empty(), "access_token 应非空");
+    assert!(
+        token.expires_in.map(|e| e > 0).unwrap_or(false),
+        "expires_in 应为正数"
+    );
     assert_eq!(
         token.refresh_token, None,
-        "client_credentials 响应不应含 refresh_token"
-    );
-
-    // 请求体确实携带了 scope（而非被丢弃）
-    let requests = server.received_requests().await.unwrap();
-    let body = String::from_utf8_lossy(&requests[0].body).to_string();
-    assert!(
-        body.contains("scope="),
-        "请求体应含 scope 参数，实际: {}",
-        body
-    );
-    assert!(
-        body.contains("client_secret=acc-client-secret"),
-        "请求体应含 client_secret"
+        "client_credentials 响应不应含 refresh_token（Keycloak 真实语义）"
     );
 }
 
-/// （正常+异常）：password grant——正确凭证换 token（含 refresh_token）；
-/// 空 username 客户端预校验拒绝（InvalidParam，不发 HTTP）。
+/// （正常+异常）：password grant（真实 Keycloak ROPC）——正确凭证换 token
+/// （含 refresh_token）；空 username 客户端预校验拒绝（InvalidParam，不发 HTTP）。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_003_password_grant_flow() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .and(body_string_contains("grant_type=password"))
-        .and(body_string_contains("username=alice"))
-        .and(body_string_contains("password=secret-pass"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(token_response("pwd-token")))
-        .mount(&server)
-        .await;
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS);
 
-    let client = client_for(&server);
-
-    // 正常：正确用户名密码 → token + refresh_token
+    // 正常：真实用户凭证 → token + refresh_token
     let token = client
-        .get_password_token("alice", "secret-pass", None)
+        .get_password_token(USERNAME, PASSWORD, Some("openid"))
         .await
         .expect("password grant 应成功");
-    assert_eq!(token.access_token, "pwd-token");
-    assert_eq!(token.refresh_token.as_deref(), Some("acc-refresh"));
-    assert_eq!(token.scope.as_deref(), Some("read"));
+    assert!(!token.access_token.is_empty(), "access_token 应非空");
+    assert!(token.refresh_token.is_some(), "ROPC 响应应含 refresh_token");
+    assert!(
+        token
+            .scope
+            .as_deref()
+            .unwrap_or_default()
+            .contains("openid"),
+        "scope 应包含请求的 openid，实际: {:?}",
+        token.scope
+    );
 
-    // 异常：空 username 客户端预校验拒绝（不发起 HTTP）
+    // 异常：空 username 客户端预校验拒绝（不发 HTTP）
     let err = client
         .get_password_token("", "secret-pass", None)
         .await
@@ -240,42 +222,34 @@ async fn acc_oauth2_003_password_grant_flow() {
         GarrisonError::InvalidParam(msg) => assert!(msg.contains("username"), "实际: {}", msg),
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
-    assert!(
-        server.received_requests().await.unwrap().len() <= 1,
-        "空 username 不应额外发起 HTTP 请求"
-    );
 }
 
-/// （正常+异常）：refresh_token 换新 access_token；空 refresh_token
-/// 客户端预校验拒绝（InvalidParam）。
+/// （正常+异常）：refresh_token 换新 access_token（真实 Keycloak）；空
+/// refresh_token 客户端预校验拒绝（InvalidParam）。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_004_refresh_token_flow() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .and(body_string_contains("grant_type=refresh_token"))
-        .and(body_string_contains("refresh_token=acc-refresh"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "rotated-token",
-            "token_type": "Bearer",
-            "expires_in": 3600
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS);
+    let granted = client
+        .get_password_token(USERNAME, PASSWORD, Some("openid"))
+        .await
+        .expect("password grant 应成功");
+    let refresh_token = granted
+        .refresh_token
+        .expect("password grant 应含 refresh_token");
 
     // 正常：刷新成功且 access_token 轮换
     let token = client
-        .refresh_access_token("acc-refresh", None)
+        .refresh_access_token(&refresh_token, Some("openid"))
         .await
         .expect("refresh_token 应成功");
-    assert_eq!(token.access_token, "rotated-token");
-    assert_eq!(
-        token.refresh_token, None,
-        "刷新响应未强制携带新 refresh_token"
+    assert!(!token.access_token.is_empty(), "刷新后 access_token 应非空");
+    assert_ne!(
+        token.access_token, granted.access_token,
+        "刷新应签发新的 access_token（真实轮换）"
     );
 
     // 异常：空 refresh_token → InvalidParam
@@ -286,135 +260,133 @@ async fn acc_oauth2_004_refresh_token_flow() {
     }
 }
 
-/// （正常）：introspect（RFC 7662）——active=true 的完整 claims 正确解析，
-/// 查询请求 POST 至 introspection 端点并携带 token。
+/// （正常）：introspect（RFC 7662，真实 Keycloak）——active token 内省返回
+/// active=true 与 sub/exp/jti 等标准 claims，查询请求 POST 至真实
+/// introspection 端点并携带 client 凭证。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_005_introspect_active_token() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    Mock::given(method("POST"))
-        .and(path("/introspect"))
-        .and(body_string_contains("token=acc-access-token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "active": true,
-            "scope": "read write",
-            "client_id": "acc-client-id",
-            "username": "alice",
-            "token_type": "Bearer",
-            "exp": 1_700_000_100,
-            "sub": "user-42",
-            "aud": "api",
-            "iss": "https://auth.example.com",
-            "jti": "jti-1"
-        })))
-        .mount(&server)
-        .await;
+    let client = fx
+        .oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS)
+        .with_introspect_url(format!(
+            "{}/token/introspect",
+            crate::keycloak_fixture::oidc_base()
+        ));
+    let token = client
+        .get_password_token(USERNAME, PASSWORD, Some("openid"))
+        .await
+        .expect("password grant 应成功");
 
-    let client = client_for(&server).with_introspect_url(format!("{}/introspect", server.uri()));
     let info = client
-        .introspect_token("acc-access-token")
+        .introspect_token(&token.access_token)
         .await
         .expect("introspect 应成功");
-    assert!(info.active, "token 应为 active");
-    assert_eq!(info.scope.as_deref(), Some("read write"));
-    assert_eq!(info.client_id.as_deref(), Some("acc-client-id"));
-    assert_eq!(info.username.as_deref(), Some("alice"));
-    assert_eq!(info.sub.as_deref(), Some("user-42"));
-    assert_eq!(info.exp, Some(1_700_000_100));
-    assert_eq!(info.jti.as_deref(), Some("jti-1"));
+    assert!(info.active, "真实签发的 token 应为 active");
+    assert!(
+        info.sub.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+        "active 响应应携带 sub（Keycloak 真实 claims），实际: {:?}",
+        info.sub
+    );
+    assert!(info.exp.is_some(), "active 响应应携带 exp");
+    assert!(info.jti.is_some(), "active 响应应携带 jti");
 }
 
 // ============================================================================
 // 撤销后的 introspection（异常侧，客户端可观测语义）
 // ============================================================================
 
-/// （异常）：token 被撤销后 introspection 返回 active=false——
-/// 经 wiremock 模拟授权服务器撤销后的状态变化（首次 active=true → 撤销 → false），
-/// 验证客户端正确解析撤销结果。
+/// （异常）：token 被撤销后 introspection 返回 active=false——fixture 直连
+/// 真实 RFC 7009 /revoke 端点吊销有效 token，验证内省状态真实翻转
+///（active=true → 吊销 → false）。
 /// 注：OAuth2Client 无 revoke API（RFC 7009 属授权服务器职责），见文件头偏差记录。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_006_revoked_token_introspects_inactive() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    // 撤销前：active=true（仅命中一次）
-    Mock::given(method("POST"))
-        .and(path("/introspect"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "active": true,
-            "username": "alice"
-        })))
-        .up_to_n_times(1)
-        .mount(&server)
-        .await;
-
-    // 撤销后：active=false
-    Mock::given(method("POST"))
-        .and(path("/introspect"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "active": false
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server).with_introspect_url(format!("{}/introspect", server.uri()));
+    let client = fx
+        .oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS)
+        .with_introspect_url(format!(
+            "{}/token/introspect",
+            crate::keycloak_fixture::oidc_base()
+        ));
+    let token = client
+        .get_password_token(USERNAME, PASSWORD, Some("openid"))
+        .await
+        .expect("password grant 应成功");
 
     let before = client
-        .introspect_token("acc-token")
+        .introspect_token(&token.access_token)
         .await
         .expect("撤销前 introspect 应成功");
     assert!(before.active, "撤销前 token 应 active");
-    assert_eq!(before.username.as_deref(), Some("alice"));
+    assert!(before.sub.is_some(), "撤销前 active 响应应携带 sub");
+
+    // 真实吊销：RFC 7009 端点（客户端凭证 + token）
+    let resp = fx
+        .post_form(
+            REVOKE_PATH,
+            &[
+                ("token", token.access_token.as_str()),
+                ("client_id", CLIENT_ID),
+                ("client_secret", CLIENT_SECRET),
+            ],
+        )
+        .await
+        .expect("吊销请求应发送成功");
+    assert!(
+        resp.status().is_success(),
+        "真实 /revoke 端点应成功，实际: {}",
+        resp.status()
+    );
 
     let after = client
-        .introspect_token("acc-token")
+        .introspect_token(&token.access_token)
         .await
         .expect("撤销后 introspect 应成功");
-    assert!(!after.active, "撤销后 token 应 inactive");
-    assert_eq!(after.username, None, "inactive 响应不应携带 username");
+    assert!(!after.active, "撤销后 token 应 inactive（真实吊销语义）");
 }
 
 // ============================================================================
 // 异常路径
 // ============================================================================
 
-/// （异常）：授权码重放被拒——首次交换 200 成功，同一 code 二次
-/// 交换被授权服务器拒绝（400），客户端返回 OAuth2 错误。
+/// （异常）：授权码重放被拒（真实 Keycloak 单次消费语义）——首次交换 200
+/// 成功，同一 code 二次交换被授权服务器拒绝（400 invalid_grant），客户端返回
+/// OAuth2 错误。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_007_authorization_code_replay_rejected() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    // 首次：成功（仅消费一次）
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(token_response("first-token")))
-        .up_to_n_times(1)
-        .mount(&server)
-        .await;
-
-    // 重放：invalid_grant
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "error": "invalid_grant",
-            "error_description": "The authorization code has been used."
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_LOCAL);
     let verifier = "a".repeat(43);
+    let challenge = OAuth2Client::generate_pkce_challenge(&verifier).expect("challenge 应生成");
+    let (code, state) = real_auth_code(
+        &fx,
+        Some("openid"),
+        REDIRECT_LOCAL,
+        "state",
+        Some(&challenge),
+    )
+    .await;
 
     let first = client
-        .exchange_code_with_pkce("same-auth-code", "state", "state", &verifier)
+        .exchange_code_with_pkce(&code, "state", &state, &verifier)
         .await;
     assert!(first.is_ok(), "首次使用 code 应成功");
-    assert_eq!(first.unwrap().access_token, "first-token");
+    assert!(
+        !first.unwrap().access_token.is_empty(),
+        "首次交换应签发真实 token"
+    );
 
     let second = client
-        .exchange_code_with_pkce("same-auth-code", "state", "state", &verifier)
+        .exchange_code_with_pkce(&code, "state", "state", &verifier)
         .await;
     assert!(second.is_err(), "重放同一 code 应被拒绝");
     match second.err() {
@@ -425,56 +397,44 @@ async fn acc_oauth2_007_authorization_code_replay_rejected() {
     }
 }
 
-/// （异常）：错误 client_secret——请求体携带错误密钥，授权服务器
-/// 拒绝（400），客户端返回 OAuth2 错误；断言实际传输的正是错误密钥。
+/// （异常）：错误 client_secret——真实 Keycloak 拒绝（401 invalid_client），
+/// 客户端返回 OAuth2 错误；同一客户端凭证在密钥正确时成功，证明传输的正是
+/// 所配置密钥（错误密钥被真实校验拒绝）。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_008_wrong_client_secret_rejected() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .and(body_string_contains("client_secret=wrong-secret"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "error": "invalid_client",
-            "error_description": "Invalid client credentials."
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_with_secret(&server, "wrong-secret");
-    let result = client.get_client_credentials_token(None).await;
-    let err = result.expect_err("错误 client_secret 应被拒绝");
+    let client = fx.oauth2_client("wrong-secret", REDIRECT_HTTPS);
+    let err = client
+        .get_client_credentials_token(None)
+        .await
+        .expect_err("错误 client_secret 应被真实授权服务器拒绝");
     match err {
-        GarrisonError::OAuth2(msg) => assert!(msg.contains("400"), "实际: {}", msg),
+        GarrisonError::OAuth2(msg) => assert!(msg.contains("401"), "实际: {}", msg),
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
 
-    // 证据：请求体确实携带了错误密钥（而非正确密钥）
-    let requests = server.received_requests().await.unwrap();
-    let body = String::from_utf8_lossy(&requests[0].body).to_string();
+    // 对照：密钥正确时同一端点成功（错误密钥确实被传输并被真实校验拒绝）
+    let ok_client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS);
     assert!(
-        body.contains("client_secret=wrong-secret"),
-        "请求体应携带错误 client_secret，实际: {}",
-        body
-    );
-    assert!(
-        !body.contains("client_secret=acc-client-secret"),
-        "请求体不应携带正确 client_secret"
+        ok_client.get_client_credentials_token(None).await.is_ok(),
+        "正确 client_secret 应成功（对照）"
     );
 }
 
 /// （异常）：错误 redirect_uri——构造期拒绝非 https/localhost 回调
-/// （spec P2.3 客户端侧校验）；授权服务器对未知回调返回 400 时客户端报 OAuth2 错误，
-/// 且请求体携带的是配置的回调地址。
+/// （spec P2.3 客户端侧校验）；真实 Keycloak 对回调不匹配的交换返回 400
+/// invalid_grant（授权码绑定授权请求时的 redirect_uri）。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_009_wrong_redirect_uri_rejected() {
     // 1) 构造期：明文 HTTP + 公网域名回调被拒绝（P2.3）
     // OAuth2Client 无 Debug，unwrap_err 不可用，用 match 解构
     let err = match OAuth2Client::new(
-        "acc-client-id",
-        "acc-client-secret",
+        CLIENT_ID,
+        CLIENT_SECRET,
         "http://evil.example.com/callback",
         "https://auth.example.com/authorize",
         "https://auth.example.com/token",
@@ -489,8 +449,8 @@ async fn acc_oauth2_009_wrong_redirect_uri_rejected() {
     // localhost 开发例外放行
     assert!(
         OAuth2Client::new(
-            "acc-client-id",
-            "acc-client-secret",
+            CLIENT_ID,
+            CLIENT_SECRET,
             "http://localhost:8080/cb",
             "https://auth.example.com/authorize",
             "https://auth.example.com/token",
@@ -499,48 +459,39 @@ async fn acc_oauth2_009_wrong_redirect_uri_rejected() {
         "localhost 回调应放行"
     );
 
-    // 2) 授权服务器侧：注册回调不匹配 → 400 invalid_request
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "error": "invalid_request",
-            "error_description": "redirect_uri does not match the registered callback."
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
+    // 2) 授权服务器侧（真实 Keycloak）：以 REDIRECT_LOCAL 获取授权码，
+    //    再以另一个已注册回调 REDIRECT_HTTPS 交换 → 授权码绑定的回调
+    //    不匹配 → 400 invalid_grant
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
     let verifier = "a".repeat(43);
-    let result = client
-        .exchange_code_with_pkce("code-x", "state", "state", &verifier)
+    let challenge = OAuth2Client::generate_pkce_challenge(&verifier).expect("challenge 应生成");
+    let (code, state) = real_auth_code(
+        &fx,
+        Some("openid"),
+        REDIRECT_LOCAL,
+        "state",
+        Some(&challenge),
+    )
+    .await;
+
+    let mismatched = fx.oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS);
+    let result = mismatched
+        .exchange_code_with_pkce(&code, "state", &state, &verifier)
         .await;
     assert_oauth2_err(&result, "400");
-
-    // 证据：交换请求携带配置的回调地址
-    let requests = server.received_requests().await.unwrap();
-    let body = String::from_utf8_lossy(&requests[0].body).to_string();
-    assert!(
-        body.contains("redirect_uri="),
-        "交换请求应携带 redirect_uri，实际: {}",
-        body
-    );
 }
 
 /// （异常）：PKCE verifier 不匹配——客户端预校验非法 verifier
-/// （InvalidParam，不发 HTTP）；state 不匹配（CSRF 防护，不发 HTTP）；授权服务器
-/// 端 verifier 与 challenge 不一致返回 400 invalid_grant。
+/// （InvalidParam，不发 HTTP）；state 不匹配（CSRF 防护，不发 HTTP）；真实
+/// Keycloak 端 verifier 与授权码绑定的 challenge 不一致返回 400 invalid_grant。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_010_pkce_verifier_mismatch_rejected() {
     // 1) 非法 verifier（长度 < 43）：客户端预校验拒绝，不发 HTTP
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(token_response("unexpected")))
-        .mount(&server)
-        .await;
-    let client = client_for(&server);
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_LOCAL);
 
     let err = client
         .exchange_code_with_pkce("code-x", "state", "state", "too-short")
@@ -552,10 +503,6 @@ async fn acc_oauth2_010_pkce_verifier_mismatch_rejected() {
         },
         other => panic!("期望 InvalidParam，实际: {:?}", other),
     }
-    assert!(
-        server.received_requests().await.unwrap().is_empty(),
-        "非法 verifier 不应发起 HTTP 请求"
-    );
 
     // 2) state 不匹配：CSRF 防护在客户端拦截，不发 HTTP
     let verifier = "a".repeat(43);
@@ -567,63 +514,43 @@ async fn acc_oauth2_010_pkce_verifier_mismatch_rejected() {
         GarrisonError::OAuth2(msg) => assert!(msg.contains("state"), "实际: {}", msg),
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
-    assert!(
-        server.received_requests().await.unwrap().is_empty(),
-        "state 不匹配不应发起 HTTP 请求"
-    );
 
-    // 3) 授权服务器端：verifier 与授权请求的 challenge 不一致 → 400 invalid_grant
-    let server2 = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "error": "invalid_grant",
-            "error_description": "code_verifier does not match the code_challenge."
-        })))
-        .mount(&server2)
-        .await;
-    let client2 = client_for(&server2);
-    let result = client2
-        .exchange_code_with_pkce("code-x", "state", "state", &verifier)
+    // 3) 授权服务器端（真实 Keycloak）：verifier 与授权请求的 challenge
+    //    不一致 → 400 invalid_grant
+    let challenge = OAuth2Client::generate_pkce_challenge(&verifier).expect("challenge 应生成");
+    let (code, state) = real_auth_code(
+        &fx,
+        Some("openid"),
+        REDIRECT_LOCAL,
+        "state",
+        Some(&challenge),
+    )
+    .await;
+    let wrong_verifier = "b".repeat(43);
+    let result = client
+        .exchange_code_with_pkce(&code, "state", &state, &wrong_verifier)
         .await;
     assert_oauth2_err(&result, "400");
 }
 
-/// （异常）：无效 refresh_token——授权服务器返回 400 invalid_grant，
-/// 客户端返回 OAuth2 错误；请求体确实携带该 refresh_token。
+/// （异常）：无效 refresh_token——真实 Keycloak 返回 400 invalid_grant，
+/// 客户端返回 OAuth2 错误。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_011_invalid_refresh_token_rejected() {
-    let server = MockServer::start().await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .and(body_string_contains("refresh_token=stolen-or-expired"))
-        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
-            "error": "invalid_grant",
-            "error_description": "The refresh token is invalid or expired."
-        })))
-        .mount(&server)
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS);
+    let result = client
+        .refresh_access_token("stolen-or-expired-not-a-real-token", None)
         .await;
-
-    let client = client_for(&server);
-    let result = client.refresh_access_token("stolen-or-expired", None).await;
     assert_oauth2_err(&result, "400");
-
-    // 证据：请求体确实携带该 refresh_token（而非其他）
-    let requests = server.received_requests().await.unwrap();
-    let body = String::from_utf8_lossy(&requests[0].body).to_string();
-    assert!(
-        body.contains("refresh_token=stolen-or-expired")
-            && body.contains("grant_type=refresh_token"),
-        "请求体应携带 refresh_token + grant_type，实际: {}",
-        body
-    );
 }
 
 /// （异常）：scope 越权——client 注入 ScopeRegistry（oauth2-scope-handler）
-/// 后，请求未授权 scope 在发送 HTTP 前被拦截（OAuth2 错误，零网络请求）；
-/// 授权 scope 正常放行。经 wiremock + received_requests 证明拦截发生在客户端侧。
+/// 后，请求未授权 scope 在发送 HTTP 前被拦截（OAuth2 错误）；授权 scope
+/// 经真实 Keycloak client_credentials 正常放行（token scope 含 read）。
 #[cfg(feature = "oauth2-scope-handler")]
 #[tokio::test]
 #[serial]
@@ -638,19 +565,17 @@ async fn acc_oauth2_012_scope_privilege_escalation_blocked_client_side() {
         }
     }
 
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(token_response("ok-token")))
-        .mount(&server)
-        .await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
     let registry = ScopeRegistry::new();
     registry.register("read", Arc::new(ReadOnlyScope));
     registry.register("admin", Arc::new(ReadOnlyScope)); // admin → handler 拒绝（越权）
-    let client = client_for(&server).with_scope_registry(Arc::new(registry));
+    let client = fx
+        .oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS)
+        .with_scope_registry(Arc::new(registry));
 
-    // 越权 scope（handler 显式拒绝）：客户端侧拦截（OAuth2 错误），零 HTTP 请求
+    // 越权 scope（handler 显式拒绝）：客户端侧拦截（OAuth2 错误）
     let err = client
         .get_client_credentials_token(Some("admin"))
         .await
@@ -661,10 +586,6 @@ async fn acc_oauth2_012_scope_privilege_escalation_blocked_client_side() {
         },
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
-    assert!(
-        server.received_requests().await.unwrap().is_empty(),
-        "越权 scope 应在发送 HTTP 请求前被拦截"
-    );
 
     // 未注册 scope：同样客户端侧拦截（fail-loud，不静默放行）
     let err = client
@@ -681,34 +602,41 @@ async fn acc_oauth2_012_scope_privilege_escalation_blocked_client_side() {
         },
         other => panic!("期望 OAuth2 错误，实际: {:?}", other),
     }
-    assert!(
-        server.received_requests().await.unwrap().is_empty(),
-        "未注册 scope 也应客户端侧拦截"
-    );
 
-    // 授权 scope：正常放行
+    // 授权 scope：真实 Keycloak 放行，token scope 含 read（realm 内置
+    // optional client scope read，scripts/keycloak_provision.py 供给）
     let token = client
         .get_client_credentials_token(Some("read"))
         .await
         .expect("授权 scope 应放行");
-    assert_eq!(token.access_token, "ok-token");
+    assert!(
+        token
+            .scope
+            .as_deref()
+            .unwrap_or_default()
+            .split(' ')
+            .any(|s| s == "read"),
+        "真实签发 token 的 scope 应含 read，实际: {:?}",
+        token.scope
+    );
 }
 
 // ============================================================================
 // 构造校验与边界（迁自 tests/protocol/oauth2_*.rs）
 // ============================================================================
 
-/// （正常+异常）：授权 URL 构造——`redirect_uri` 以 URL 编码
-/// 查询参数出现（其余必填参数已由 覆盖）；空 client_id 构造期
-/// 拒绝（`Config("oauth2-client-id-empty")`，src/protocol/oauth2/client.rs:178）。
+/// （正常+异常）：授权 URL 构造——`redirect_uri` 以 URL 编码查询参数出现；
+/// 空 client_id 构造期拒绝（`Config("oauth2-client-id-empty")`）。
 /// 迁自 tests/protocol/oauth2_integration.rs::get_auth_url_with_pkce_includes_required_params
-/// 与 new_rejects_empty_client_id（2 例合并）
+/// 与 new_rejects_empty_client_id（2 例合并）。纯客户端构造，无网络请求。
 #[tokio::test]
 #[serial]
 async fn acc_oauth2_013_auth_url_redirect_uri_and_empty_client_id_rejected() {
-    // 正常：授权 URL 含 URL 编码的 redirect_uri 参数
-    let server = MockServer::start().await;
-    let client = client_for(&server);
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
+
+    // 正常：授权 URL 含 URL 编码的 redirect_uri 参数（真实端点 URL 拼接）
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS);
     let verifier = "a".repeat(43);
     let (url, _challenge) = client
         .get_auth_url_with_pkce("xyz-state", &verifier)
@@ -738,237 +666,113 @@ async fn acc_oauth2_013_auth_url_redirect_uri_and_empty_client_id_rejected() {
     }
 }
 
-/// （正常）：`scope=Some("")` 与 `scope=None` 产生不同的请求体
-/// ——空串携带 `scope=` 参数、None 不携带；两个互斥 mock 分别命中并返回不同
-/// token，证明行为差异真实发生在请求体层面（而非客户端内部状态）。
-/// 迁自 tests/protocol/oauth2_edge_cases.rs::scope_empty_string_vs_none_behavior_differs
+/// （正常）：请求 scope 与不请求 scope 的真实行为差异——client_credentials
+/// 携带 `scope=read` 时真实 Keycloak 签发的 token scope 含 `read`，未携带时
+/// 仅含默认 scopes，证明 scope 参数真实随请求传输并被授权服务器生效。
+/// （原 wiremock 场景「空串 scope 请求体差异」已下沉至单元测试
+/// src/protocol/oauth2/tests.rs，验收层以真实服务器可观测语义覆盖。）
 #[tokio::test]
 #[serial]
-async fn acc_oauth2_014_empty_scope_vs_none_body_differs() {
-    let server = MockServer::start().await;
+async fn acc_oauth2_014_requested_scope_narrows_real_token_scope() {
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    // Mock 1：body 含 "scope=" → token-empty-scope（仅消费一次）
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .and(body_string_contains("scope="))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "token-empty-scope",
-            "token_type": "Bearer"
-        })))
-        .up_to_n_times(1)
-        .mount(&server)
-        .await;
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS);
 
-    // Mock 2：其余 POST（不含 "scope="）→ token-no-scope（仅消费一次）
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "token-no-scope",
-            "token_type": "Bearer"
-        })))
-        .up_to_n_times(1)
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
-
-    let resp_empty = client
-        .get_client_credentials_token(Some(""))
+    let with_scope = client
+        .get_client_credentials_token(Some("read"))
         .await
-        .expect("scope=Some(\"\") 应成功");
-    assert_eq!(
-        resp_empty.access_token, "token-empty-scope",
-        "scope=Some(\"\") 应触发含 scope= 的请求"
+        .expect("scope=read 请求应成功");
+    assert!(
+        with_scope
+            .scope
+            .as_deref()
+            .unwrap_or_default()
+            .split(' ')
+            .any(|s| s == "read"),
+        "携带 scope=read 时签发 token 应含 read，实际: {:?}",
+        with_scope.scope
     );
 
-    let resp_none = client
+    let without_scope = client
         .get_client_credentials_token(None)
         .await
-        .expect("scope=None 应成功");
-    assert_eq!(
-        resp_none.access_token, "token-no-scope",
-        "scope=None 应触发不含 scope= 的请求"
-    );
-
-    assert_ne!(
-        resp_empty.access_token, resp_none.access_token,
-        "scope=\"\" 与 scope=None 应产生不同行为"
+        .expect("无 scope 请求应成功");
+    assert!(
+        !without_scope
+            .scope
+            .as_deref()
+            .unwrap_or_default()
+            .split(' ')
+            .any(|s| s == "read"),
+        "未携带 scope 时签发 token 不应含 read，实际: {:?}",
+        without_scope.scope
     );
 }
 
-/// （异常）：`expires_in=0` 解析为 `Some(0)`——协议层只解析
-/// 不判定过期（判定权在业务方），业务方应据 `expires_in <= 0` 视为立即过期。
-/// 迁自 tests/protocol/oauth2_edge_cases.rs::expires_in_zero_means_immediate_expiry
+/// （正常）：真实签发 token 的 `expires_in` 为正且内省 active——协议层只解析
+/// 不判定过期（判定权在业务方）；真实授权服务器不会签发立即过期的 token，
+/// `expires_in=0` 的解析边界已下沉至单元测试（src/protocol/oauth2/tests.rs）。
 #[tokio::test]
 #[serial]
-async fn acc_oauth2_015_expires_in_zero_parsed_as_immediate_expiry() {
-    let server = MockServer::start().await;
+async fn acc_oauth2_015_expires_in_positive_and_token_active() {
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
-    Mock::given(method("POST"))
-        .and(path("/"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "zero-expiry-token",
-            "token_type": "Bearer",
-            "expires_in": 0
-        })))
-        .mount(&server)
-        .await;
-
-    let client = client_for(&server);
+    let client = fx
+        .oauth2_client(CLIENT_SECRET, REDIRECT_HTTPS)
+        .with_introspect_url(format!(
+            "{}/token/introspect",
+            crate::keycloak_fixture::oidc_base()
+        ));
     let resp = client
         .get_client_credentials_token(None)
         .await
         .expect("请求应成功");
 
     assert_eq!(
-        resp.expires_in,
-        Some(0),
-        "expires_in=0 应解析为 Some(0)，表示立即过期"
+        resp.expires_in.map(|e| e > 0),
+        Some(true),
+        "真实签发 token 的 expires_in 应为正，实际: {:?}",
+        resp.expires_in
     );
-    assert!(
-        resp.expires_in.map(|e| e <= 0).unwrap_or(true),
-        "业务方应判定 expires_in=0 为立即过期"
-    );
+    let info = client
+        .introspect_token(&resp.access_token)
+        .await
+        .expect("内省应成功");
+    assert!(info.active, "expires_in>0 的真实 token 应内省 active");
 }
 
 // ============================================================================
 // Keycloak OIDC RP 完整流程（`keycloak-oidc` 门控）
 // ============================================================================
 
-/// （正常）：Keycloak OIDC RP 完整授权码流程端到端——
-/// wiremock 模拟 Keycloak 的 discovery / JWKS / token 端点，验证
-/// `discover` → `exchange_code` → `verify_id_token`（RSA 签名的 id_token 含
+/// （正常）：Keycloak OIDC RP 完整授权码流程端到端（真实 Keycloak）——
+/// `discover` → 真实登录表单流获取授权码 → `exchange_code` →
+/// `verify_id_token`（真实 JWKS RS256 验签，id_token 含
 /// sub / preferred_username / email / realm_access.roles / resource_access /
-/// tenant_id claim 全部正确解析）。
+/// tenant_id claim 全部由真实 realm 供给产生，scripts/keycloak_provision.py）。
 #[cfg(all(
     feature = "keycloak-oidc",
     feature = "db-sqlite",
     feature = "cache-memory"
 ))]
 #[tokio::test(flavor = "multi_thread")]
+#[serial]
 async fn acc_oauth2_016_keycloak_oidc_rp_full_flow_e2e() {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine;
     use garrison::dao::GarrisonDaoOxcache;
     use garrison::{KeycloakConfig, KeycloakProvider};
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-    use rsa::pkcs1::EncodeRsaPrivateKey;
-    use rsa::traits::PublicKeyParts;
-    use rsa::RsaPrivateKey;
-    use serde::Serialize;
     use std::sync::Arc;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    #[derive(Serialize)]
-    struct TestIdTokenClaims {
-        iss: String,
-        sub: String,
-        aud: String,
-        exp: i64,
-        iat: i64,
-        preferred_username: String,
-        email: String,
-        realm_access: serde_json::Value,
-        resource_access: serde_json::Value,
-        tenant_id: i64,
-    }
-
-    let server = MockServer::start().await;
-
-    let mut rng = rsa::rand_core::OsRng;
-    let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
-    let public_key = rsa::RsaPublicKey::from(&private_key);
-
-    let n_bytes = public_key.n().to_bytes_be();
-    let e_bytes = public_key.e().to_bytes_be();
-    let n_b64 = URL_SAFE_NO_PAD.encode(n_bytes);
-    let e_b64 = URL_SAFE_NO_PAD.encode(e_bytes);
-    let kid = "key1";
-
-    let issuer = server.uri();
-    let token_endpoint = format!("{}/protocol/openid-connect/token", server.uri());
-    let jwks_uri = format!("{}/protocol/openid-connect/certs", server.uri());
-
-    // Mock: discovery endpoint
-    Mock::given(method("GET"))
-        .and(path("/.well-known/openid-configuration"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "issuer": issuer,
-            "authorization_endpoint": format!("{}/protocol/openid-connect/auth", server.uri()),
-            "token_endpoint": token_endpoint,
-            "jwks_uri": jwks_uri,
-            "response_types_supported": ["code"],
-            "subject_types_supported": ["public"],
-            "id_token_signing_alg_values_supported": ["RS256"],
-        })))
-        .mount(&server)
-        .await;
-
-    // Mock: JWKS endpoint
-    Mock::given(method("GET"))
-        .and(path("/protocol/openid-connect/certs"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "keys": [{
-                "kid": kid,
-                "kty": "RSA",
-                "alg": "RS256",
-                "use": "sig",
-                "n": n_b64,
-                "e": e_b64
-            }]
-        })))
-        .mount(&server)
-        .await;
-
-    // 生成 id_token
-    let sub = "user-123";
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
-
-    let claims = TestIdTokenClaims {
-        iss: issuer.clone(),
-        sub: sub.into(),
-        aud: "garrison-rp".into(),
-        exp: now + 3600,
-        iat: now,
-        preferred_username: "testuser".into(),
-        email: "test@example.com".into(),
-        realm_access: serde_json::json!({ "roles": ["admin", "user"] }),
-        resource_access: serde_json::json!({
-            "account": { "roles": ["manage-account"] }
-        }),
-        tenant_id: 42,
-    };
-
-    let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
-    let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
-    let mut header = Header::new(Algorithm::RS256);
-    header.kid = Some(kid.to_string());
-    let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
-
-    // Mock: token endpoint
-    Mock::given(method("POST"))
-        .and(path("/protocol/openid-connect/token"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "access_token": "access-token-abc",
-            "refresh_token": "refresh-token-xyz",
-            "id_token": id_token,
-            "token_type": "Bearer",
-            "expires_in": 3600,
-            "scope": "openid profile email"
-        })))
-        .mount(&server)
-        .await;
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
 
     let config = KeycloakConfig {
-        base_url: server.uri(),
-        client_id: "garrison-rp".into(),
-        client_secret: Some("client-secret-123".into()),
-        redirect_uri: "https://app.example.com/cb".into(),
-        expected_iss: server.uri(),
+        base_url: crate::keycloak_fixture::realm_base(),
+        client_id: CLIENT_ID.to_string(),
+        client_secret: Some(CLIENT_SECRET.to_string()),
+        redirect_uri: REDIRECT_HTTPS.to_string(),
+        expected_iss: crate::keycloak_fixture::realm_base(),
     };
     let provider = KeycloakProvider::new(config)
         .expect("KeycloakProvider::new 应成功")
@@ -978,47 +782,68 @@ async fn acc_oauth2_016_keycloak_oidc_rp_full_flow_e2e() {
                 .expect("构造 GarrisonDaoOxcache 应成功"),
         ));
 
-    // Step 1: discover
+    // Step 1: discover（真实 discovery 端点）
     let metadata = provider.discover().await.expect("discover 应成功");
-    assert_eq!(metadata.issuer, issuer);
-    assert_eq!(metadata.token_endpoint, token_endpoint);
-    assert_eq!(metadata.jwks_uri, jwks_uri);
+    assert_eq!(metadata.issuer, crate::keycloak_fixture::realm_base());
+    assert_eq!(
+        metadata.token_endpoint,
+        format!("{}/token", crate::keycloak_fixture::oidc_base())
+    );
+    assert_eq!(
+        metadata.jwks_uri,
+        format!(
+            "{}/protocol/openid-connect/certs",
+            crate::keycloak_fixture::realm_base()
+        )
+    );
 
-    // Step 2: exchange_code
+    // Step 2: 真实登录表单流获取授权码（无 PKCE，confidential client 凭证交换）
+    let (code, state) = real_auth_code(&fx, Some("openid"), REDIRECT_HTTPS, "rp-state", None).await;
+    assert_eq!(state, "rp-state", "回调 state 应与授权请求一致");
     let token_set = provider
-        .exchange_code("auth-code-xyz")
+        .exchange_code(&code)
         .await
         .expect("exchange_code 应成功");
     assert!(!token_set.access_token.is_empty(), "access_token 应非空");
     assert!(!token_set.refresh_token.is_empty(), "refresh_token 应非空");
     assert!(!token_set.id_token.is_empty(), "id_token 应非空");
-    assert_eq!(token_set.expires_in, 3600);
+    assert!(token_set.expires_in > 0, "expires_in 应为正数");
 
-    // Step 3: verify_id_token
+    // Step 3: verify_id_token（真实 JWKS RS256 验签 + claims 解析）
     let keycloak_claims = provider
         .verify_id_token(&token_set.id_token)
         .await
         .expect("verify_id_token 应成功");
-    assert_eq!(keycloak_claims.sub, sub, "claims.sub 应匹配");
+    assert!(
+        !keycloak_claims.sub.is_empty(),
+        "claims.sub 应为真实用户主体标识"
+    );
     assert_eq!(
         keycloak_claims.preferred_username.as_deref(),
-        Some("testuser"),
+        Some(USERNAME),
         "preferred_username 应匹配"
     );
     assert_eq!(
         keycloak_claims.email.as_deref(),
-        Some("test@example.com"),
+        Some("alice@garrison.test"),
         "email 应匹配"
     );
-    assert_eq!(
-        keycloak_claims.realm_access.roles,
-        vec!["admin", "user"],
-        "realm_access.roles 应匹配"
+    assert!(
+        keycloak_claims
+            .realm_access
+            .roles
+            .contains(&"admin".to_string())
+            && keycloak_claims
+                .realm_access
+                .roles
+                .contains(&"user".to_string()),
+        "realm_access.roles 应含 admin/user，实际: {:?}",
+        keycloak_claims.realm_access.roles
     );
     assert_eq!(
         keycloak_claims.tenant_id,
         Some(42),
-        "tenant_id claim 应正确解析"
+        "tenant_id claim 应正确解析（user profile + mapper 真实供给）"
     );
     assert!(
         keycloak_claims.resource_access.contains_key("account"),

@@ -16,6 +16,11 @@ mod common;
 #[path = "acceptance/harness.rs"]
 mod harness;
 
+// 真实 Keycloak 夹具（OAuth2/OIDC 协议验收共享；登录表单流自动化 + 探活门控）
+#[cfg(feature = "protocol-oauth2")]
+#[path = "acceptance/keycloak_fixture.rs"]
+mod keycloak_fixture;
+
 #[path = "acceptance/web_smoke.rs"]
 mod web_smoke;
 

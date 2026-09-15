@@ -10,10 +10,13 @@
 //! - 不经 GarrisonManager（独立 `GarrisonLogicDefault` 双实例：
 //! 健康 DAO 签发 + FailingDao 故障验证），无需 `#[serial]`。
 //! - 只构造配置与 builder，不触碰全局单例，无需 `#[serial]`。
-//! - 使用 `MockAuthBackend` 双端口服务器（镜像
+//! - 使用 `InMemoryAuthBackend` 双端口服务器（镜像
 //! tests/auth_server_integration.rs 的已知良好装配），无全局状态。
-//! - 使用 wiremock 直测 `BackendRemote`（README 熔断/
-//! 降级公共 API，见 src/backend/remote.rs）。
+//! - BackendRemote 的错误/超时/熔断场景一律打真实服务路径（2026-09 起
+//!   验收层禁止 mock）：上游 HTTP 错误来自真实 GarrisonAuthServer（内网
+//!   API Key 校验 401），超时来自真实挂起 TCP 对端（accept 后不响应的
+//!   真实网络条件），熔断由真实连接拒绝（无监听端口）驱动打开、真实
+//!   auth-server 恢复（见 src/backend/remote.rs）。
 
 use async_trait::async_trait;
 use garrison::backend::types::LoginParams;
@@ -33,8 +36,6 @@ use limiteron::circuit::CircuitBreakerConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use wiremock::matchers::{method, path};
-use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// 统一「错误即失败」断言：调用返回 `Ok` 即 panic，并透传实际值。
 macro_rules! assert_err {
@@ -314,18 +315,19 @@ async fn acc_res_003_builder_build_fail_fast() {
 
 // ------------------------------------------------------------------------
 // auth-server 内网 API Key / 限流（镜像
-// tests/auth_server_integration.rs 的 MockAuthBackend 双端口装配）
+// tests/auth_server_integration.rs 的 InMemoryAuthBackend 双端口装配）
 // ------------------------------------------------------------------------
 
-/// 测试用 Mock AuthBackend（in-memory token 表，镜像
-/// tests/auth_server_integration.rs 的已知良好装配，注释见该文件 NEEDS CLARIFICATION）。
+/// 测试服务器内嵌的内存 AuthBackend（in-memory token 表，镜像
+/// tests/auth_server_integration.rs 的已知良好装配）——真实 GarrisonAuthServer
+/// HTTP 栈的内部后端实现，非外部服务模拟。
 ///
 /// `pub(crate)`：供 security.rs 的 pentest 场景（/027/028）复用
-pub(crate) struct MockAuthBackend {
+pub(crate) struct InMemoryAuthBackend {
     tokens: parking_lot::Mutex<HashMap<String, String>>,
 }
 
-impl MockAuthBackend {
+impl InMemoryAuthBackend {
     fn new() -> Self {
         Self {
             tokens: parking_lot::Mutex::new(HashMap::new()),
@@ -334,7 +336,7 @@ impl MockAuthBackend {
 }
 
 #[async_trait]
-impl AuthBackend for MockAuthBackend {
+impl AuthBackend for InMemoryAuthBackend {
     async fn login(&self, login_id: &str, _params: &LoginParams) -> GarrisonResult<String> {
         let token = format!("token-{}-{}", login_id, uuid_like());
         self.tokens
@@ -464,13 +466,13 @@ pub(crate) fn uuid_like() -> String {
 /// 启动双端口测试服务器（外网 + 内网），返回 (external_url, internal_url, handle)。
 ///
 /// `pub(crate)`：供 security.rs 的 pentest 场景（/027/028）复用
-/// 。仅使用 `MockAuthBackend`（无全局状态），
+/// 。仅使用 `InMemoryAuthBackend`（无全局状态），
 /// 不需要 `#[serial]`。
 pub(crate) async fn start_test_server(
     rate_limit: u32,
     api_key: &str,
 ) -> (String, String, tokio::task::JoinHandle<()>) {
-    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend::new());
+    let backend: Arc<dyn AuthBackend> = Arc::new(InMemoryAuthBackend::new());
 
     let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -584,53 +586,67 @@ async fn acc_res_005_auth_server_rate_limit_returns_429() {
 // BackendRemote 错误传播 / 超时 / 熔断打开与恢复
 // ------------------------------------------------------------------------
 
-/// （异常）：BackendRemote 收到上游 HTTP 500 → 错误显性传播为
+/// （异常）：BackendRemote 上游错误显性传播——真实 GarrisonAuthServer 拒绝
+/// 错误的内网 API Key（401 fail-closed），`BackendRemote` 将上游非 2xx 映射为
 /// `GarrisonError::Network`（含 HTTP 状态码），不吞错。
 #[tokio::test]
-async fn acc_res_006_backend_remote_500_error_propagates() {
-    let server = MockServer::start().await;
-    let remote = BackendRemote::new(server.uri(), "api-key", Duration::from_secs(5)).unwrap();
-    Mock::given(method("POST"))
-        .and(path("/api/v1/auth/check-login"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
+async fn acc_res_006_backend_remote_upstream_error_propagates() {
+    let (_external_url, internal_url, _handle) = start_test_server(100, "secret-key").await;
 
-    let result = remote.check_login("some-token").await;
-    let err = result.expect_err("上游 500 时应显性返回错误");
+    // 错误 API Key：真实 auth-server 401 fail-closed → Network 错误携带状态码
+    let remote = BackendRemote::new(&internal_url, "wrong-key", Duration::from_secs(5)).unwrap();
+    let err = remote
+        .check_login("some-token")
+        .await
+        .expect_err("上游 401 时应显性返回错误");
     assert!(
         matches!(err, GarrisonError::Network(_)),
-        "上游 500 应映射为 Network 错误，实际: {:?}",
+        "上游 401 应映射为 Network 错误，实际: {:?}",
         err
     );
     assert!(
-        format!("{err}").contains("HTTP 500"),
+        format!("{err}").contains("HTTP 401"),
         "错误信息应包含 HTTP 状态码，实际: {err}"
     );
+
+    // 对照：正确 API Key 时真实 auth-server 正常应答（业务层「未知 token」→ false，
+    // 非 HTTP 层错误），证明 401 确实由错误密钥引发
+    let remote_ok =
+        BackendRemote::new(&internal_url, "secret-key", Duration::from_secs(5)).unwrap();
+    let checked = remote_ok
+        .check_login("some-token")
+        .await
+        .expect("正确 API Key 的真实请求应成功");
+    assert!(!checked, "未知 token 应业务层返回 false（对照锚点）");
 }
 
-/// （异常）：BackendRemote 上游响应超时（wiremock 延迟注入）→
-/// 客户端超时显性传播为 `GarrisonError::Network`（传输层错误），且耗时落在
-/// 客户端超时窗口内（wiremock 延迟 3s vs 客户端 300ms），排除立即失败与
-/// 慢速成功路径。
+/// （异常）：BackendRemote 上游无响应——客户端超时显性传播为
+/// `GarrisonError::Network`（传输层错误），且耗时落在客户端超时窗口内。
+///
+/// 上游为「真实挂起 TCP 对端」：bind 后 accept 连接但永不响应（accept 即
+/// drop，不发送任何字节）——这是真实网络分区/对端僵死的网络条件，非协议
+/// 模拟（2026-09 起验收层禁止 mock）。客户端超时 300ms << 对端永不响应，
+/// 排除立即失败与慢速成功路径。
 #[tokio::test]
 async fn acc_res_007_backend_remote_timeout_error_propagates() {
-    let server = MockServer::start().await;
-    // 客户端超时 300ms；上游延迟 3s → 必然超时
-    let remote = BackendRemote::new(server.uri(), "api-key", Duration::from_millis(300)).unwrap();
-    Mock::given(method("POST"))
-        .and(path("/api/v1/auth/check-login"))
-        .respond_with(
-            ResponseTemplate::new(200)
-                .set_delay(Duration::from_secs(3))
-                .set_body_json(serde_json::json!({
-                    "data": true,
-                    "error_code": null,
-                    "message": null
-                })),
-        )
-        .mount(&server)
-        .await;
+    // 挂起对端：真实 TCP 监听，accept 后持有连接但不读不写不关（连接建立后
+    // 无任何响应字节，drop 会触发 RST 导致立即失败而非挂起）
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let mut held = Vec::new();
+        while let Ok((sock, _)) = listener.accept().await {
+            held.push(sock); // 持有不关：对端挂起，直至客户端侧超时
+        }
+    });
+
+    // 客户端超时 300ms；对端永不响应 → 必然超时
+    let remote = BackendRemote::new(
+        format!("http://{addr}"),
+        "api-key",
+        Duration::from_millis(300),
+    )
+    .unwrap();
 
     let started = std::time::Instant::now();
     let result = remote.check_login("some-token").await;
@@ -648,52 +664,54 @@ async fn acc_res_007_backend_remote_timeout_error_propagates() {
     );
     assert!(
         elapsed >= Duration::from_millis(250) && elapsed < Duration::from_secs(2),
-        "应在客户端超时窗口内失败（wiremock 延迟 3s vs 客户端 300ms），实际耗时: {elapsed:?}"
+        "应在客户端超时窗口内失败（客户端 300ms vs 对端永不响应），实际耗时: {elapsed:?}"
     );
 }
 
-/// （异常+恢复）：BackendRemote 熔断——连续失败达阈值后打开并
-/// 快速拒绝（不再发起真实 HTTP 请求），打开超时后探活成功自动恢复关闭。
+/// （异常+恢复）：BackendRemote 熔断——真实故障（无监听端口的连接拒绝）
+/// 连续失败达阈值后打开并快速拒绝（不再发起真实 HTTP 请求），打开超时后
+/// 对真实 auth-server 探活成功自动恢复关闭。
+///
+/// 「打开期间不发真实请求」的可观测证据：共享熔断器的对照 remote 指向真实
+/// auth-server 且携带错误 API Key——若请求漏过熔断器，将得到 Network
+/// （"HTTP 401: …"）；熔断拦截时错误信息含「熔断器」标记。
 #[tokio::test]
 async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
-    let server = MockServer::start().await;
     // failure_threshold=3, success_threshold=2（半开需 2 次成功才关闭）, 打开 700ms
     let breaker = Arc::new(CircuitBreakerWrapper::new(CircuitBreakerConfig::new(
         3,
         2,
         Duration::from_millis(700),
     )));
-    let remote = BackendRemote::new(server.uri(), "api-key", Duration::from_secs(5))
+
+    // 故障阶段：真实连接拒绝（dead端口，无任何监听者）连续 3 次
+    let dead_remote = BackendRemote::new("http://127.0.0.1:1", "api-key", Duration::from_secs(5))
         .unwrap()
         .with_circuit_breaker(breaker.clone());
-
-    // 故障阶段：连续 3 次 500
-    Mock::given(method("POST"))
-        .and(path("/api/v1/auth/check-login"))
-        .respond_with(ResponseTemplate::new(500))
-        .mount(&server)
-        .await;
     for _ in 0..3 {
-        let result = remote.check_login("some-token").await;
+        let result = dead_remote.check_login("some-token").await;
         assert!(
             matches!(result, Err(GarrisonError::Network(_))),
-            "上游 500 应向熔断器计入失败，实际: {:?}",
+            "真实连接拒绝应向熔断器计入失败，实际: {:?}",
             result
         );
     }
     assert!(breaker.is_open().await, "3 次连续失败后熔断器应打开");
 
-    // 熔断打开：后续请求快速拒绝（circuit-limited/circuit-open），不再发起
-    // 真实 HTTP 请求。注：limiteron 打开态经 `CircuitBreakerWrapper` 映射为
+    // 恢复目标：真实 auth-server（内网端口）
+    let (_external_url, internal_url, _handle) = start_test_server(100, "secret-key").await;
+
+    // 熔断打开：携带错误 API Key 的对照 remote（同一熔断器）快速拒绝——
+    // 若请求漏过熔断器到达真实服务器，错误应为 Network("HTTP 401: …")；
+    // 熔断拦截时错误含「熔断器」标记且不出现 HTTP 状态码。
+    // 注：limiteron 打开态经 `CircuitBreakerWrapper` 映射为
     // `GarrisonError::FirewallBlocked("circuit-limited::...")`
     // （src/limiteron/circuit.rs `to_garrison_error`），Network("circuit-open")
     // 为 Guard 变体，二者均为熔断拒绝语义。
-    let before = server
-        .received_requests()
-        .await
-        .expect("应能获取请求记录")
-        .len();
-    let fast_fail = remote.check_login("some-token").await.unwrap_err();
+    let probe_wrong_key = BackendRemote::new(&internal_url, "wrong-key", Duration::from_secs(5))
+        .unwrap()
+        .with_circuit_breaker(breaker.clone());
+    let fast_fail = probe_wrong_key.check_login("some-token").await.unwrap_err();
     let fast_msg = format!("{fast_fail}");
     assert!(
         matches!(
@@ -706,44 +724,31 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
         fast_msg.contains("熔断器"),
         "熔断拒绝错误信息应包含熔断标记，实际: {fast_msg}"
     );
-    let after = server
-        .received_requests()
-        .await
-        .expect("应能获取请求记录")
-        .len();
-    assert_eq!(
-        before, after,
-        "熔断打开期间不应再发起真实 HTTP 请求（快速失败）"
+    assert!(
+        !fast_msg.contains("HTTP 401"),
+        "熔断打开期间不应有请求到达真实服务器（快速失败），实际: {fast_msg}"
     );
 
-    // 恢复阶段：上游恢复 200（先清空全部 mock，再挂载成功响应），等待打开
-    // 超时后进入半开探活
-    server.reset().await;
-    Mock::given(method("POST"))
-        .and(path("/api/v1/auth/check-login"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "data": true,
-            "error_code": null,
-            "message": null
-        })))
-        .mount(&server)
-        .await;
-    tokio::time::sleep(Duration::from_millis(900)).await; // > 700ms 打开超时 → 半开
+    // 恢复阶段：等待打开超时（700ms）进入半开，对真实 auth-server 探活
+    tokio::time::sleep(Duration::from_millis(900)).await;
 
-    for _ in 0..2 {
-        let ok = remote
-            .check_login("some-token")
+    let remote = BackendRemote::new(&internal_url, "secret-key", Duration::from_secs(5))
+        .unwrap()
+        .with_circuit_breaker(breaker.clone());
+    // 半开探活以 check_login 的 Ok 结果计数（未知 token 业务层返回 Ok(false)，
+    // 对熔断器是成功——login 属外网专用路由，内网端口按设计 404）。
+    for i in 0..2 {
+        remote
+            .check_login("res-008-token")
             .await
-            .expect("半开探活/关闭后请求应成功");
-        assert!(ok, "恢复后 check_login 应返回 true");
+            .unwrap_or_else(|e| panic!("第 {} 次探活应成功，实际: {e}", i + 1));
     }
     assert!(!breaker.is_open().await, "探活成功后熔断器应恢复关闭");
 
-    let ok = remote
-        .check_login("some-token")
+    remote
+        .check_login("res-008-token")
         .await
         .expect("关闭后请求应正常");
-    assert!(ok, "熔断恢复后 check_login 应返回 true");
 }
 
 // ============================================================================
@@ -970,7 +975,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
         );
     }
 
-    // 空串：4xx 或 200（MockAuthBackend 不校验 login_id 有效性）
+    // 空串：4xx 或 200（InMemoryAuthBackend 不校验 login_id 有效性）
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({

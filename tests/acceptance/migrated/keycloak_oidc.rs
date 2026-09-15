@@ -3,17 +3,24 @@
 
 //! Keycloak OIDC RP 完整流程端到端集成测试。
 //!
-//! 使用 wiremock 模拟 Keycloak 的 discovery/JWKS/token endpoints，
-//! 验证 garrison 作为 OIDC RP 的完整授权码流程：discover → exchange_code → verify_id_token。
+//! 打真实 Keycloak 26（docker-compose.e2e.yml + scripts/keycloak_provision.py
+//! 幂等供给 realm=garrison），验证 garrison 作为 OIDC RP 的完整授权码流程：
+//! discover → 真实登录表单流获取授权码（tests/acceptance/keycloak_fixture.rs）→
+//! exchange_code → verify_id_token（真实 JWKS RS256 验签）。
 //!
 //! 运行：
 //! ```bash
-//! cargo test --features "keycloak-oidc db-sqlite cache-memory" --test integration
+//! GARRISON_TEST_KEYCLOAK_URL=http://127.0.0.1:18090 \
+//!   cargo test --features "full,keycloak-oidc" --test acceptance keycloak_oidc
 //! ```
 //!
-//! # production-mock-purge
+//! # production-mock-purge（2026-09 二次裁定）
 //!
-//! wiremock: 外部第三方（keycloak/oauth2）协议模拟，经 production-mock-purge 方案豁免（NEEDS CLARIFICATION #1 用户裁定保留）
+//! 原 wiremock 模拟 Keycloak 端点的实现（曾在 2026-09 早期裁定豁免保留），
+//! 依用户最新裁定「仅单元测试可 mock，验收/集成一律打真实服务」移除；Keycloak
+//! 不可达时经 tests/acceptance/keycloak_fixture.rs 门控 `[SKIP]`。id_token 的
+//! sub / preferred_username / email / realm_access.roles / resource_access /
+//! tenant_id claims 均由真实 realm 数据产生（用户 alice + tenant_id mapper）。
 
 #[cfg(all(
     feature = "keycloak-oidc",
@@ -21,142 +28,37 @@
     feature = "cache-memory"
 ))]
 mod keycloak_e2e {
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine;
+    use crate::keycloak_fixture::{KeycloakFixture, CLIENT_ID, CLIENT_SECRET, REDIRECT_HTTPS};
     use garrison::dao::GarrisonDaoOxcache;
     use garrison::{KeycloakConfig, KeycloakProvider};
-    use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
-    use rsa::pkcs1::EncodeRsaPrivateKey;
-    use rsa::traits::PublicKeyParts;
-    use rsa::RsaPrivateKey;
-    use serde::Serialize;
+    use serial_test::serial;
     use std::sync::Arc;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    #[derive(Serialize)]
-    struct TestIdTokenClaims {
-        iss: String,
-        sub: String,
-        aud: String,
-        exp: i64,
-        iat: i64,
-        preferred_username: String,
-        email: String,
-        realm_access: serde_json::Value,
-        resource_access: serde_json::Value,
-        tenant_id: i64,
-    }
 
     /// 验证 Keycloak OIDC RP 完整流程：discover → exchange_code → verify_id_token。
     ///
-    /// 使用 wiremock 模拟 Keycloak 的 discovery/JWKS/token endpoints，
-    /// 验证 garrison 作为 OIDC RP 的完整授权码流程。
-    ///
     /// 断言：
-    /// 1. `discover()` 返回正确的 OIDC discovery metadata
-    /// 2. `exchange_code("auth_code")` 返回 KeycloakTokenSet 含三个 token
-    /// 3. `verify_id_token(id_token)` 返回 KeycloakClaims 含 sub/realm_access.roles
+    /// 1. `discover()` 返回正确的 OIDC discovery metadata（真实 realm）
+    /// 2. 真实登录表单流授权码经 `exchange_code` 换取 KeycloakTokenSet 三 token
+    /// 3. `verify_id_token(id_token)` 经真实 JWKS 验签并解析 KeycloakClaims
+    ///    （sub / preferred_username / email / realm_access.roles / resource_access /
+    ///    tenant_id）
     // multi_thread flavor 必需：oxcache memory 后端的 sync API 通过
     // `block_in_place` 复用 runtime，current-thread runtime 下会 panic
     //（"Cannot start a runtime from within a runtime"）。
     #[tokio::test(flavor = "multi_thread")]
+    #[serial]
     async fn keycloak_oidc_rp_full_flow_e2e() {
-        let server = MockServer::start().await;
-
-        let mut rng = rsa::rand_core::OsRng;
-        let private_key = RsaPrivateKey::new(&mut rng, 2048).expect("生成 RSA 私钥应成功");
-        let public_key = rsa::RsaPublicKey::from(&private_key);
-
-        let n_bytes = public_key.n().to_bytes_be();
-        let e_bytes = public_key.e().to_bytes_be();
-        let n_b64 = URL_SAFE_NO_PAD.encode(n_bytes);
-        let e_b64 = URL_SAFE_NO_PAD.encode(e_bytes);
-        let kid = "key1";
-
-        let issuer = server.uri();
-        let token_endpoint = format!("{}/protocol/openid-connect/token", server.uri());
-        let jwks_uri = format!("{}/protocol/openid-connect/certs", server.uri());
-
-        // Mock: discovery endpoint
-        Mock::given(method("GET"))
-            .and(path("/.well-known/openid-configuration"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "issuer": issuer,
-                "authorization_endpoint": format!("{}/protocol/openid-connect/auth", server.uri()),
-                "token_endpoint": token_endpoint,
-                "jwks_uri": jwks_uri,
-                "response_types_supported": ["code"],
-                "subject_types_supported": ["public"],
-                "id_token_signing_alg_values_supported": ["RS256"],
-            })))
-            .mount(&server)
-            .await;
-
-        // Mock: JWKS endpoint
-        Mock::given(method("GET"))
-            .and(path("/protocol/openid-connect/certs"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "keys": [{
-                    "kid": kid,
-                    "kty": "RSA",
-                    "alg": "RS256",
-                    "use": "sig",
-                    "n": n_b64,
-                    "e": e_b64
-                }]
-            })))
-            .mount(&server)
-            .await;
-
-        // 生成 id_token
-        let sub = "user-123";
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        let claims = TestIdTokenClaims {
-            iss: issuer.clone(),
-            sub: sub.into(),
-            aud: "garrison-rp".into(),
-            exp: now + 3600,
-            iat: now,
-            preferred_username: "testuser".into(),
-            email: "test@example.com".into(),
-            realm_access: serde_json::json!({ "roles": ["admin", "user"] }),
-            resource_access: serde_json::json!({
-                "account": { "roles": ["manage-account"] }
-            }),
-            tenant_id: 42,
-        };
-
-        let der = private_key.to_pkcs1_der().expect("转 PKCS#1 DER 应成功");
-        let encoding_key = EncodingKey::from_rsa_der(der.as_bytes());
-        let mut header = Header::new(Algorithm::RS256);
-        header.kid = Some(kid.to_string());
-        let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
-
-        // Mock: token endpoint
-        Mock::given(method("POST"))
-            .and(path("/protocol/openid-connect/token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "access_token": "access-token-abc",
-                "refresh_token": "refresh-token-xyz",
-                "id_token": id_token,
-                "token_type": "Bearer",
-                "expires_in": 3600,
-                "scope": "openid profile email"
-            })))
-            .mount(&server)
-            .await;
+        let fx = KeycloakFixture::new();
+        if !fx.available_or_skip("keycloak_oidc").await {
+            return;
+        }
 
         let config = KeycloakConfig {
-            base_url: server.uri(),
-            client_id: "garrison-rp".into(),
-            client_secret: Some("client-secret-123".into()),
-            redirect_uri: "https://app.example.com/cb".into(),
-            expected_iss: server.uri(),
+            base_url: crate::keycloak_fixture::realm_base(),
+            client_id: CLIENT_ID.to_string(),
+            client_secret: Some(CLIENT_SECRET.to_string()),
+            redirect_uri: REDIRECT_HTTPS.to_string(),
+            expected_iss: crate::keycloak_fixture::realm_base(),
         };
         let provider = KeycloakProvider::new(config)
             .expect("KeycloakProvider::new 应成功")
@@ -166,42 +68,70 @@ mod keycloak_e2e {
                     .expect("构造 GarrisonDaoOxcache 应成功"),
             ));
 
-        // Step 1: discover
+        // Step 1: discover（真实 discovery 端点）
         let metadata = provider.discover().await.expect("discover 应成功");
-        assert_eq!(metadata.issuer, issuer);
-        assert_eq!(metadata.token_endpoint, token_endpoint);
-        assert_eq!(metadata.jwks_uri, jwks_uri);
+        assert_eq!(
+            metadata.issuer,
+            crate::keycloak_fixture::realm_base(),
+            "issuer 应为真实 realm URL"
+        );
+        assert_eq!(
+            metadata.token_endpoint,
+            format!("{}/token", crate::keycloak_fixture::oidc_base())
+        );
+        assert_eq!(
+            metadata.jwks_uri,
+            format!(
+                "{}/protocol/openid-connect/certs",
+                crate::keycloak_fixture::realm_base()
+            )
+        );
 
-        // Step 2: exchange_code
+        // Step 2: 真实登录表单流获取授权码 → 换取 token set
+        let (code, state) = fx
+            .obtain_auth_code(Some("openid"), REDIRECT_HTTPS, "e2e-state", None)
+            .await
+            .expect("真实登录表单流应成功");
+        assert_eq!(state, "e2e-state", "回调 state 应与授权请求一致");
         let token_set = provider
-            .exchange_code("auth-code-xyz")
+            .exchange_code(&code)
             .await
             .expect("exchange_code 应成功");
         assert!(!token_set.access_token.is_empty(), "access_token 应非空");
         assert!(!token_set.refresh_token.is_empty(), "refresh_token 应非空");
         assert!(!token_set.id_token.is_empty(), "id_token 应非空");
-        assert_eq!(token_set.expires_in, 3600);
+        assert!(token_set.expires_in > 0, "expires_in 应为正数");
 
-        // Step 3: verify_id_token
+        // Step 3: verify_id_token（真实 JWKS RS256 验签 + claims 解析）
         let keycloak_claims = provider
             .verify_id_token(&token_set.id_token)
             .await
             .expect("verify_id_token 应成功");
-        assert_eq!(keycloak_claims.sub, sub, "claims.sub 应匹配");
+        assert!(
+            !keycloak_claims.sub.is_empty(),
+            "claims.sub 应为真实主体标识"
+        );
         assert_eq!(
             keycloak_claims.preferred_username.as_deref(),
-            Some("testuser"),
+            Some(crate::keycloak_fixture::USERNAME),
             "preferred_username 应匹配"
         );
         assert_eq!(
             keycloak_claims.email.as_deref(),
-            Some("test@example.com"),
+            Some("alice@garrison.test"),
             "email 应匹配"
         );
-        assert_eq!(
-            keycloak_claims.realm_access.roles,
-            vec!["admin", "user"],
-            "realm_access.roles 应匹配"
+        assert!(
+            keycloak_claims
+                .realm_access
+                .roles
+                .contains(&"admin".to_string())
+                && keycloak_claims
+                    .realm_access
+                    .roles
+                    .contains(&"user".to_string()),
+            "realm_access.roles 应含 admin/user，实际: {:?}",
+            keycloak_claims.realm_access.roles
         );
         assert_eq!(
             keycloak_claims.tenant_id,
