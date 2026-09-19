@@ -1,7 +1,6 @@
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 //! 二级认证（Safe Auth）瞬态标记实现。
-//!
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
 //!
 //! 本模块在 `safe-auth` feature 启用时，为 `GarrisonLogicDefault` 提供
 //! `open_safe` / `is_safe` / `close_safe` 的 inherent method 实现，

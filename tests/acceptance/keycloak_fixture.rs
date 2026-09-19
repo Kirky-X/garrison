@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 真实 Keycloak 测试夹具（OAuth2/OIDC 协议验收共享）。
 //!

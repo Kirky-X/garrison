@@ -1,8 +1,5 @@
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-
-# Pre-commit hooks for Garrison
-# Usage: pip install pre-commit && pre-commit install
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 repos:
   # === 通用检查 ===
   - repo: https://github.com/pre-commit/pre-commit-hooks

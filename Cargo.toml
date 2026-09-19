@@ -31,18 +31,18 @@ categories = ["authentication", "web-programming"]
 
 [workspace.dependencies]
 garrison = { path = ".", default-features = false }
-garrison-macros = { path = "macros", version = "0.9.0-rc.1" }
+garrison-macros = { version = "0.9.0-rc.1", path = "macros" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.53", features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 async-trait = "0.1"
 parking_lot = "0.12"
 inventory = "0.3"
 axum = { version = "0.8", default-features = false, features = ["json"] }
-actix-web = { version = "4.0", default-features = false }
+actix-web = { version = "4.12", default-features = false }
 warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
-oxcache = { version = "0.5.0-rc.4", default-features = false }
-dbnexus = { version = "0.6.0-rc.4", default-features = false }
+oxcache = { version = "0.5.0-rc.4", path = "../base/oxcache", default-features = false }
+dbnexus = { version = "0.6.0-rc.4", path = "../base/dbnexus", default-features = false }
 md5 = { version = "0.8" }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "env-filter"] }
 rand = { version = "0.10" }
@@ -50,7 +50,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 wiremock = "0.6"
 http-body-util = "0.1"
 tempfile = { version = "3.27" }
-jsonwebtoken = { version = "11.0", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
 totp-rs = { version = "6.0" }
 bcrypt = { version = "0.19" }
 zeroize = { version = "1.9", default-features = false, features = ["derive", "serde"] }
@@ -65,8 +65,8 @@ path = "src/lib.rs"
 # === Required dependencies ===
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-confers = { version = "0.6.0-rc.4" }
-tokio = { version = "1.0", features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
+confers = { version = "0.6.0-rc.4", path = "../base/confers" }
+tokio = { version = "1.53", features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 inventory = "0.3"
 thiserror = "2.0"
 tracing = "0.1"
@@ -84,7 +84,7 @@ axum = { optional = true, default-features = false, features = ["json"], workspa
 axum-server = { version = "0.8", optional = true, default-features = false }
 actix-web = { optional = true, default-features = false, workspace = true }
 warp = { optional = true, default-features = false, workspace = true }
-jsonwebtoken = { version = "11.0", optional = true, default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"], optional = true }
 reqwest = { optional = true, default-features = false, features = ["json", "rustls", "form"], workspace = true }
 totp-rs = { version = "6.0", optional = true }
 sha2 = { version = "0.11", optional = true }
@@ -102,7 +102,9 @@ rand = { optional = true, workspace = true }
 getrandom = { version = "0.4", optional = true }
 zeroize = { version = "1.9", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1.13", optional = true, default-features = false }
-oxcache = { version = "0.5.0-rc.4", default-features = false }
+# optional 化：唯一常驻使用点 three-tier-cache（src/cache/three_tier.rs）显式 dep:oxcache；
+# dao/oxcache_impl（cache-memory|cache-redis）与 abac（经 cache-memory）经 oxcache/* 引用自动激活。
+oxcache = { version = "0.5.0-rc.4", path = "../base/oxcache", default-features = false, optional = true }
 # dbnexus 0.4+ 在 src/lib.rs#L51 设置 compile_error!，强制至少启用一个数据库驱动 feature
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
@@ -121,6 +123,8 @@ tonic-health = { version = "0.14", optional = true, default-features = false }
 tower = { version = "0.5", optional = true, default-features = false }
 fluent = { version = "0.17", default-features = false }
 unic-langid = { version = "0.9", default-features = false }
+# 系统语言探测：i18n detect_locale 检测链末端（env 链未命中时读取 OS locale）
+sys-locale = "0.3"
 miette = { version = "7.6", optional = true, default-features = false }
 garrison-macros = { optional = true, workspace = true }
 # rsa 0.9 内部依赖 sha2 0.10，与项目 sha2 0.11 不兼容，故用 `rsa::pkcs1v15::SigningKey` + `rsa::sha2::Sha256`（sha2 0.10 re-export）
@@ -131,28 +135,32 @@ ipnetwork = { version = "0.21", optional = true, default-features = false }
 # HIBP k-anonymity 前缀哈希（policy-hibp 使用；sha2 0.11 不再包含 Sha1，
 # 需独立的 sha1 0.11——RustCrypto 0.11 稳定版已发布，无需再锁 rc）
 sha1 = { version = "0.11", optional = true, default-features = false }
-quick-xml = { version = "0.42", optional = true, default-features = false, features = ["serialize"] }
+quick-xml = { version = "0.42", default-features = false, features = ["serialize"], optional = true }
 # 版本与 oxcache 0.5 的 redis 间接依赖保持一致，避免双版本共存
-redis = { version = "1.7", optional = true, default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"] }
+redis = { version = "1.7", default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"], optional = true }
 futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true }
-inklog = { version = "0.3.0-rc.4", default-features = false }
-limiteron = { version = "0.3.0-rc.4", default-features = false, features = ["distributed"] }
+# optional 化：唯一使用点 observability/inklog（audit-inklog 门控），其 inklog/* 引用自动激活。
+inklog = { version = "0.3.0-rc.4", path = "../base/inklog", default-features = false, optional = true }
+limiteron = { version = "0.3.0-rc.4", path = "../base/limiteron", default-features = false, features = ["distributed"] }
 # sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
 # 始终可用（`server_impl.rs` 无条件调用 `sdforge::http::build()`）。
 # 但 `#[forge]` 宏生成的 `inventory::submit!` 被 `#[cfg(feature = "http")]` 保护，
 # 此 cfg 在 **garrison 上下文** 求值——garrison 必须暴露同名 `http` feature 才能让
 # 路由注册代码编译进来。详见 `[features]` 段的 `http` 桥接 feature。
-sdforge = { version = "0.5.0-rc.4", default-features = false, features = ["http"] }
-trait-kit = { version = "0.5.0-rc.5", default-features = false, features = ["async"] }
-cedar-policy = { version = "4.12", optional = true, default-features = false }
-icu_plurals = { version = "2.3", optional = true, default-features = false, features = ["compiled_data"] }
-icu_datetime = { version = "2.3", optional = true, default-features = false, features = ["compiled_data"] }
-icu_decimal = { version = "2.3", optional = true, default-features = false, features = ["compiled_data", "alloc"] }
-icu_locale_core = { version = "2.3", optional = true, default-features = false }
-icu_calendar = { version = "2.3", optional = true, default-features = false, features = ["compiled_data"] }
-icu_time = { version = "2.3", optional = true, default-features = false, features = ["compiled_data"] }
+# 2026-09-19 审计 optional 化：sdforge 仅被 auth-server 门控的 src/server 使用；
+# 由 auth-server-sdforge（dep:sdforge）与 api-docs（sdforge/openapi）按需激活。
+# default 构建不再白编译 axum/tower 栈，也不再要求 sdforge build.rs 的 protoc。
+sdforge = { version = "0.5.0-rc.4", path = "../base/sdforge", default-features = false, features = ["http"], optional = true }
+trait-kit = { version = "0.5.0-rc.5", path = "../base/trait-kit", default-features = false, features = ["async"] }
+cedar-policy = { version = "4.12", default-features = false, optional = true }
+icu_plurals = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
+icu_datetime = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
+icu_decimal = { version = "2.3", default-features = false, features = ["compiled_data", "alloc"], optional = true }
+icu_locale_core = { version = "2.3", default-features = false, optional = true }
+icu_calendar = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
+icu_time = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
 fixed_decimal = { version = "0.7", optional = true, default-features = false }
 percent-encoding = { version = "2.3", optional = true, default-features = false }
 hkdf = { version = "0.13", optional = true, default-features = false }
@@ -183,7 +191,7 @@ warp = { default-features = false, features = ["test"], workspace = true }
 # keycloak-oidc 等未启用可选 rsa 的测试面也能解析 OsRng
 rsa = { version = "0.9", features = ["getrandom"] }
 rand = { workspace = true }
-testcontainers = "0.28"
+testcontainers = "0.27"
 criterion = { version = "0.8", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
@@ -252,7 +260,7 @@ ban-sync = ["limiteron/ban-sync", "cache-invalidation"]
 # === 数据库后端（通过 dbnexus 0.4） ===
 # [INTERNAL] dbnexus 禁止 embedded 与 server-side 混用。
 db-base = [
-    "dbnexus",
+    "dep:dbnexus",
     "dbnexus/runtime-tokio-rustls",
     "dbnexus/permission",
     "dbnexus/sql-parser",
@@ -266,7 +274,7 @@ db-base = [
     "dbnexus/pool-warmup",
     "dbnexus/failover",
     "dbnexus/observability",
-    "sea-orm",
+    "dep:sea-orm",
 ]
 # db-sqlite 启用 sqlite embedded 驱动
 db-sqlite = ["db-base", "dbnexus/sqlite"]
@@ -286,9 +294,9 @@ embedded-migrations = ["dep:include_dir", "dep:tempfile"]
 # === 协议层插件 ===
 protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64", "dep:percent-encoding"]
 # protocol-sso 隐含 protocol-jwt：OIDC exchange_code 必须验签 id_token（fail-closed）。
-protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
-protocol-jwt = ["jsonwebtoken", "dep:sha2"]
-protocol-sign = ["dep:sha2", "hmac", "dep:base64", "dep:hkdf"]
+protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "dep:hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
+protocol-jwt = ["dep:jsonwebtoken", "dep:sha2"]
+protocol-sign = ["dep:sha2", "dep:hmac", "dep:base64", "dep:hkdf"]
 # protocol-apikey：API Key 生成/校验/吊销/轮换。
 # dep:sha2 + secure-ct-eq：secret 以 sha256 哈希存储（CWE-916）+ 复用公共常量时间比较原语（消除本地副本）。
 # dao-key-index：启用 GarrisonDaoOxcache::keys() 生产实现，使 list_by_namespace 可用。
@@ -300,7 +308,7 @@ protocol-invitation = ["dep:rand", "dep:sha2"]
 # protocol-zeroize：协议层密钥零化（Drop 时清零 secret 字段，防止内存残留）
 # 启用 rsa/zeroize 让 RsaPrivateKey 实现 Zeroize（AlipayProvider Drop 清零 RSA 私钥大数）
 # NOTE: rsa 0.9.10 没有 zeroize feature，暂时移除以解除编译阻塞
-protocol-zeroize = ["zeroize"]
+protocol-zeroize = ["dep:zeroize"]
 # OIDC 扩展（id_token 签发/验证 + discovery endpoint），依赖 protocol-jwt + protocol-oauth2
 protocol-oidc = ["protocol-jwt", "protocol-oauth2", "dep:subtle"]
 # OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry），依赖 protocol-oauth2
@@ -309,15 +317,15 @@ oauth2-scope-handler = ["protocol-oauth2"]
 protocol-sso-server = ["protocol-sso"]
 # protocol-saml：启用 XmlSecSamlProvider，使用 rsa crate 验证 SAML Assertion XML 签名
 # dep:subtle：DigestValue 比对使用常量时间比较
-protocol-saml = ["protocol-sso", "rsa", "dep:base64", "dep:subtle"]
+protocol-saml = ["protocol-sso", "dep:rsa", "dep:base64", "dep:subtle"]
 
 # === 安全模块 ===
-secure-totp = ["totp-rs", "dep:base32"]
-secure-sign = ["dep:sha2", "hmac", "dep:base64", "dep:subtle"]
+secure-totp = ["dep:totp-rs", "dep:base32"]
+secure-sign = ["dep:sha2", "dep:hmac", "dep:base64", "dep:subtle"]
 # secure-httpbasic → protocol-httpbasic（域统一到协议层）
 protocol-httpbasic = ["dep:base64"]
 # secure-httpdigest → protocol-httpdigest（域统一到协议层）
-protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "dep:subtle", "dep:hkdf", "hmac"]
+protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "dep:subtle", "dep:hkdf", "dep:hmac"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
 # 依赖 regex：Custom mask 真实脱敏（原 placeholder 实现静默泄露敏感数据）
@@ -333,7 +341,7 @@ email-verification-smtp = ["email-verification", "dep:lettre"]
 # === 账号安全引擎 ===
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:getrandom", "dep:sha2", "dep:base32"]
 # account-credential-zeroize → credential-zeroize（缩短名称）
-credential-zeroize = ["account-credential", "zeroize"]
+credential-zeroize = ["account-credential", "dep:zeroize"]
 account-policy = ["account-credential", "dep:regex"]
 account-lockout = ["firewall"]
 account-authflow = ["account-credential", "account-policy", "account-lockout", "dep:ipnetwork"]
@@ -341,9 +349,9 @@ account-authflow = ["account-credential", "account-policy", "account-lockout", "
 policy-hibp = ["dep:reqwest", "dep:sha1"]
 
 # === Web 框架适配 ===
-web-axum = ["axum", "axum/tokio", "axum/http1"]
-web-actix = ["actix-web"]
-web-warp = ["warp"]
+web-axum = ["dep:axum", "axum/tokio", "axum/http1"]
+web-actix = ["dep:actix-web"]
+web-warp = ["dep:warp"]
 
 # === HTTPS/TLS 终止（axum-server rustls） ===
 # 依赖 auth-server（server 模块门控）
@@ -373,13 +381,15 @@ web-security = ["web-cors", "web-csrf", "web-security-headers"]
 annotation-macros = ["dep:garrison-macros", "web-axum"]
 
 # === 扩展 ===
+# AloneCache 装饰器：DAO 层单飞缓存（dao::alone_cache，未命中再加锁回源，防击穿）
 alone-cache = []
+# STP 参数化查询：strategy 层 parameter 模块（按参数占位符构造查询）
 parameter-query = []
 api-docs = ["sdforge/openapi"]
 
 # === 审计日志 ===
 # dep:getrandom：AuditEventChain 链首随机盐（吸收自 inklog ArchiveChain，防换盐重放）
-audit-log = ["listener", "dep:sha2", "hmac", "dep:getrandom", "secure-masking", "secure-ct-eq"]
+audit-log = ["listener", "dep:sha2", "dep:hmac", "dep:getrandom", "secure-masking", "secure-ct-eq"]
 
 # === 常量时间比较原语（CWE-208 防御）===
 # 提供 `secure::ct_eq::constant_time_eq` 公共函数，基于 subtle::ConstantTimeEq。
@@ -447,12 +457,12 @@ session-hijack-detection = ["security-alert", "auth-server"]
 session-extra = []
 
 # === 三层缓存架构 ===
-three-tier-cache = []
+three-tier-cache = ["dep:oxcache"]
 
 # === 社交登录 ===
 social-wechat = ["protocol-oauth2"]
 # 启用 rsa（RSA2 签名 + PEM 解析）+ base64（签名值编码）
-social-alipay = ["protocol-oauth2", "rsa", "dep:base64", "protocol-zeroize"]
+social-alipay = ["protocol-oauth2", "dep:rsa", "dep:base64", "protocol-zeroize"]
 
 # === Keycloak OIDC RP ===
 keycloak-oidc = ["protocol-oidc"]
@@ -463,7 +473,7 @@ backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallbac
 # secure-simple-token：为 SimpleTokenStyle 启用 HMAC-SHA256 签名
 # 格式：<login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
-secure-simple-token = ["dep:sha2", "hmac", "dep:subtle"]
+secure-simple-token = ["dep:sha2", "dep:hmac", "dep:subtle"]
 auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown"]
 # dep:sha2：决策缓存 key 的 context_json 摘要成分（SHA-256 前 16 字节）
 abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
@@ -490,16 +500,17 @@ backend-shutdown = ["backend-kit", "trait-kit/shutdown"]
 # 命名约定：必须叫 `http`（sdforge 宏硬编码 `feature = "http"`），不可改名。
 # sdforge/http 由依赖声明 `features = ["http"]` 无条件启用，故此 feature 仅作 cfg 开关。
 http = []
-auth-server-sdforge = ["http"]
+# dep:sdforge：auth-server 的 sdforge 面在此激活（http 为宏镜像 marker）
+auth-server-sdforge = ["http", "dep:sdforge"]
 
 # === 可观测性 ===
 listener = []
 credit-metering = ["listener"]
-tracing-log = ["tracing/log", "tracing-subscriber"]
-metrics-prometheus = ["prometheus", "tracing-subscriber"]
+tracing-log = ["tracing/log", "dep:tracing-subscriber"]
+metrics-prometheus = ["dep:prometheus", "dep:tracing-subscriber"]
 # [INTERNAL] OpenTelemetry 分布式追踪（OTLP gRPC 导出），独立门控以隔离重依赖
-otlp = ["opentelemetry", "opentelemetry_sdk", "opentelemetry-otlp", "tracing-subscriber"]
-grpc = ["tonic", "dep:tonic-health", "dep:tower", "sdforge/grpc"]
+otlp = ["dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp", "dep:tracing-subscriber"]
+grpc = ["dep:tonic", "dep:tonic-health", "dep:tower", "sdforge/grpc"]
 # 基础层已无条件编译，此 feature 仅门控 i18n 相关测试代码，不改变运行时行为。
 i18n = []
 # ICU4X 增强层：复数规则 + 日期/数字本地化（依赖 i18n 基础层）
@@ -634,6 +645,9 @@ required-features = ["auth-server", "cache-memory"]
 name = "garrison_benchmark"
 path = "benches/garrison_benchmark.rs"
 harness = false
+# bench 文档化用法即 --features full（见 benches/garrison_benchmark.rs 头注）；
+# 声明后 CI 的 full 口径 clippy/test 即自然覆盖 bench 目标。
+required-features = ["full"]
 
 # === Lint 配置 ===
 # sdforge #[forge] 宏在 garrison 中展开时生成 #[cfg(feature = "mcp")] /
@@ -642,7 +656,7 @@ harness = false
 # 将 unexpected_cfgs 保持为 warn 级别（而非 allow）以便发现真正的意外 cfg。
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-invalidation", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "subtle", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-waf", "web-warp"))',
+    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-invalidation", "cache-memory", "cache-redis", "cli", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-warp"))',
 ] }
 
 # === 本地 base 库桥接（⚠️ 临时，上游发布后拆除） ===

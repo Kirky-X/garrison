@@ -1,9 +1,5 @@
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-
-# CodeQL 静态安全分析（GitHub 原生，跨语言自动检测）。
-# 触发: push 到主分支 / PR / 每周二定时全量扫描
-# 无需额外 secret：使用自动注入的 GITHUB_TOKEN。
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 name: CodeQL
 
 on:

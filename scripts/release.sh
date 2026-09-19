@@ -1,18 +1,6 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-#
-# Release 工作流本地预检查脚本
-# 用法：
-#   ./scripts/release.sh precheck              # 完整预检查（所有检查项）
-#   ./scripts/release.sh check-version <ver>   # 检查版本一致性（Cargo.toml == CHANGELOG == tag）
-#   ./scripts/release.sh gen-changelog <range> [version]  # 从 git log 生成 changelog 段落
-#   ./scripts/release.sh bump-version <ver>    # bump Cargo.toml 版本号
-#
-# 退出码：
-#   0 = 所有检查通过
-#   1 = 检查失败（见错误输出）
-#   2 = 用法错误
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
 

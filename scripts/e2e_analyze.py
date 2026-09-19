@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 """E2E 测试日志聚合分析器（一键报告生成）。
 

@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! GarrisonUtil 静态方法入口 + JwtMode 校验模式枚举 + AuthBackend 全局桥接。
 use crate::config::GarrisonConfig;

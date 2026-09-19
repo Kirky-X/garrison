@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-
-# 下载 MaxMind DB 测试数据文件（GeoLite2-City-Test / GeoLite2-Country-Test）
-# 用于 firewall-maxminddb feature 的集成测试
-#
-# 数据源：https://github.com/maxmind/MaxMind-DB 仓库的 test-data 目录
-# 注意：github.com URL 会返回 429 Too Many Requests，使用 raw.githubusercontent.com 替代
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
 

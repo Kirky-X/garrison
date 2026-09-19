@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 凭证模型 SPI 子模块（吸收 keycloak CredentialModel SPI）。
 //! 提供统一凭证抽象，支持 password / TOTP / WebAuthn等多种凭证类型。

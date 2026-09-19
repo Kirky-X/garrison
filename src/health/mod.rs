@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 健康检查模块，提供 liveness/readiness 探针与依赖项健康检测。
 //!

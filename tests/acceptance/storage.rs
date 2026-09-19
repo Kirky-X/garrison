@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 存储域验收（DAO 原子性并发补盲）。
 //!

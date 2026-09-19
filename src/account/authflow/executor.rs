@@ -1,7 +1,6 @@
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 //! AuthExecutor 核心。
-//!
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
 //!
 //! 提供认证流程执行引擎，按 [`AuthenticationFlow`] 步骤顺序执行认证逻辑。
 //!

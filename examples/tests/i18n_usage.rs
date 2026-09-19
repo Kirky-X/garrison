@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! i18n_usage 示例测试（i18n feature）。
 //!
@@ -11,19 +11,16 @@
 //! - Display trait 依据 locale 切换
 //!
 //! 注：i18n 使用 thread_local 栈，测试间天然隔离，无需 `#[serial]`。
-
-#![cfg(feature = "i18n")]
-
 use garrison::error::GarrisonError;
 use garrison::exception::GarrisonException;
-use garrison::i18n::{current_locale, set_locale, translate_error, GarrisonLocale};
+use garrison::i18n::{current_locale, detect_locale, set_locale, translate_error, GarrisonLocale};
 
 #[test]
-fn test_default_locale_is_en() {
-    // 未调用 set_locale 时栈为空，返回库默认值 En
-    //（src/i18n.rs：GarrisonLocale::default() == En，与库单测同语义）
-    let locale = current_locale();
-    assert_eq!(locale, GarrisonLocale::En);
+fn test_default_locale_follows_detection() {
+    // 未调用 set_locale 时栈为空，返回系统检测结果（探测失败回退 En）
+    //（src/i18n.rs：current_locale() == detect_locale()，与库单测同语义；
+    //  进程 env 因机器而异，此处不断言具体值，检测链映射由库内纯函数测试覆盖）
+    assert_eq!(current_locale(), detect_locale());
 }
 
 #[test]

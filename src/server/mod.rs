@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! GarrisonAuthServer — 将 AuthBackend 方法暴露为 HTTP 端点的 axum 服务器。
 //!
@@ -37,6 +37,7 @@ use crate::backend::AuthBackend;
 #[cfg(feature = "tenant-isolation")]
 use crate::context::tenant::TenantResolver;
 
+/// Server bootstrap configuration (binding, TLS, graceful shutdown settings).
 pub mod config;
 pub mod middleware;
 

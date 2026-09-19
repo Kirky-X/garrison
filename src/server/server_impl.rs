@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! `GarrisonAuthServer` 的实现下沉（builder 方法、路由构建、listen），
 //! 与 [`crate::server`] 中的类型定义（struct/config）分离，遵循 mod 接口隔离原则。

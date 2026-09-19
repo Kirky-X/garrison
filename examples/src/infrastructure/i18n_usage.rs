@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! i18n_usage 示例（i18n feature）。
 //!
@@ -14,10 +14,9 @@
 //! ```sh
 //! cargo run -p garrison-examples --bin i18n_usage --features i18n
 //! ```
-
 use garrison::error::GarrisonError;
 use garrison::exception::GarrisonException;
-use garrison::i18n::{current_locale, set_locale, translate_error, GarrisonLocale};
+use garrison::i18n::{current_locale, detect_locale, set_locale, translate_error, GarrisonLocale};
 
 /// 返回一组覆盖主要变体的错误样本，用于演示翻译。
 ///
@@ -55,7 +54,7 @@ pub fn sample_errors() -> Vec<(&'static str, GarrisonError)> {
 /// 运行 i18n_usage 示例。
 ///
 /// 演示 locale 切换 + 错误翻译的完整流程：
-/// 1. 默认中文 locale
+/// 1. 系统语言检测（默认跟随系统，检测失败回退 En，显式设置优先于检测值）
 /// 2. 切换英文 locale
 /// 3. 嵌套 locale scope
 /// 4. 所有错误变体的中英文翻译对照
@@ -63,10 +62,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison i18n 国际化示例 ===\n");
 
     // ----------------------------------------------------------------
-    // 1. 默认 locale（Zh）
+    // 1. 系统语言检测（默认跟随系统，检测失败回退 En）
     // ----------------------------------------------------------------
-    println!("[默认 locale] current_locale() = {:?}", current_locale());
-    assert_eq!(current_locale(), GarrisonLocale::Zh);
+    let detected = detect_locale();
+    println!(
+        "[系统语言检测] detect_locale() = {:?}（无显式 set_locale 时 current_locale() 与之\
+         一致，显式设置优先于检测值）",
+        detected
+    );
+    assert_eq!(current_locale(), detected);
     println!();
 
     // ----------------------------------------------------------------
@@ -89,10 +93,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(translate_error(&err), "Not logged in: please login first");
     }
     println!(
-        "    guard drop 后 current_locale() = {:?}",
+        "    guard drop 后 current_locale() = {:?}（回到缓存的检测值）",
         current_locale()
     );
-    assert_eq!(current_locale(), GarrisonLocale::Zh);
+    assert_eq!(current_locale(), detected);
     println!();
 
     // ----------------------------------------------------------------
@@ -117,7 +121,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(current_locale(), GarrisonLocale::En);
     }
     println!("    外层 guard drop 后 → {:?}", current_locale());
-    assert_eq!(current_locale(), GarrisonLocale::Zh);
+    assert_eq!(current_locale(), detected);
     println!();
 
     // ----------------------------------------------------------------

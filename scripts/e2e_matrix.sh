@@ -1,46 +1,6 @@
 #!/bin/bash
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-
-# Garrison E2E 特性组合测试套件（一键全量质量门禁）。
-#
-# 按 CI/CD Pipeline Design 方法论组织为 8 个阶段门禁，fail-fast 粒度为
-# 「阶段内短路、阶段间继续收集」——任一阶段失败都记录并在结尾汇总，
-# 但依赖外部服务/编译产物的阶段在前提缺失时显式跳过（[SKIP] 语义与
-# tests/acceptance/environment.rs 一致）。
-#
-# 阶段：
-#   S0 环境自举    docker compose 拉起 Redis(16379)/PostgreSQL(15432)/MySQL(13306)
-#                  + Keycloak(18090，scripts/keycloak_provision.py 幂等供给
-#                  真实 IdP)，健康探活后注入 GARRISON_TEST_* 地址覆盖环境变量
-#   S1 静态门禁    rustfmt --check / clippy(default) / clippy(full) / cargo-deny
-#   S2 单元测试    cargo test --lib（default 与 full 两种特性面）
-#   S3 验收/集成   cargo test --features full --tests --no-fail-fast
-#                  （tests/acceptance 19 域：正常/异常/组合场景，
-#                   Redis/Postgres/MySQL/Keycloak/HIBP 真实服务路径；
-#                   S3kc 追加 keycloak-oidc 面、S3hibp 追加 policy-hibp 面）
-#   S4 示例套件    cargo test -p garrison-examples --all-features
-#   S5 特性矩阵    聚合特性(default/development/production/full) + web×db 网格
-#                  (axum/actix/warp × sqlite/postgres/mysql) + 定向两两组合的
-#                  check 与测试编译；--full-matrix 追加 cargo-hack each-feature 全量
-#   S6 性能基准    criterion --quick，保存/对比 e2e 基线，回归即失败
-#   S7 HTTP E2E    auth_server_serve + scripts/e2e_run.sh（外部 18080/内部 18081）
-#   S8 清理报告    docker compose down -v --remove-orphans + Markdown 汇总报告
-#
-# 用法：
-#   bash scripts/e2e_matrix.sh                  # 默认快速矩阵
-#   bash scripts/e2e_matrix.sh --full-matrix    # 追加 each-feature 全量扫描（数小时）
-#   bash scripts/e2e_matrix.sh --skip-bench     # 跳过性能基准
-#   bash scripts/e2e_matrix.sh --skip-e2e-http  # 跳过 HTTP E2E（快速迭代）
-#   bash scripts/e2e_matrix.sh --keep-env       # 结束后保留 compose 环境（调试）
-#
-# 输出：
-#   logs/e2e_matrix/<stage>.log   各阶段完整日志
-#   logs/e2e_matrix_report.md     汇总报告（阶段结果/基准回归/组合矩阵结果）
-#
-# 清理保证：compose 项目名固定 garrison-e2e，down -v 只清理本套件创建的
-# 容器与卷，不触碰宿主机其他容器（如开发机常驻的 sinnan-*/confers-*）。
-# 退出码：0 = 全部阶段通过；1 = 存在失败阶段（见报告）。
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 set -uo pipefail
 

@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! authentication 域验收。
 //! 登录 / 登出 / 切换 / 续期 / 顶替 / 踢出 / 过期 / 封禁 / 锁定，

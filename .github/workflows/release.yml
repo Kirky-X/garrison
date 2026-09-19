@@ -1,20 +1,5 @@
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-#
-# Release 工作流
-#
-# 触发：
-#   1. push tag v*.*.* → 自动触发完整发布流程
-#   2. workflow_dispatch → 手动触发（输入 version 经 env 传递，防 shell 注入）
-#
-# 流程（规则 19 + project_memory 安全/质量门禁）：
-#   阶段 1: lint-check + test-check + security-check + doc-check (并行)
-#   阶段 2: version-consistency (依赖阶段 1 全部通过)
-#   阶段 3: publish-crates-io (依赖阶段 2)
-#   阶段 4: github-release (依赖阶段 3，crates.io 失败则不创建 GitHub Release)
-#   阶段 5: verify-release (依赖阶段 4，验证 GitHub Release + crates.io)
-#
-# 失败显性化（规则 12）：所有 job 都不用 continue-on-error，失败即阻断发布
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 name: Release
 

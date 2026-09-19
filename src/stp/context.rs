@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! task_local 上下文 — Token 续签结果传递 + CURRENT_TOKEN 跨 spawn 传播。
 use super::{GarrisonContext, CURRENT_TOKEN};

@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 国际化模块，提供异常消息多语言切换（中英文）。
 //!
@@ -28,7 +28,6 @@
 //!
 //! // guard drop 后自动恢复中文
 //! ```
-
 use crate::error::GarrisonError;
 use fluent::concurrent::FluentBundle;
 use fluent::{FluentArgs, FluentResource};
@@ -78,12 +77,13 @@ macro_rules! loc {
 
 /// 支持的语言枚举。
 ///
-/// 默认 `En`（英文）。
+/// 仅支持中文与英文；`#[default] En` 充当系统语言探测失败时的回退值。
+/// 未显式 [`set_locale`] 时，[`current_locale()`] 首次调用会探测系统语言并缓存。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum GarrisonLocale {
     /// 中文。
     Zh,
-    /// 英文（默认语言）。
+    /// 英文（默认语言，亦为探测失败回退）。
     #[default]
     En,
 }
@@ -103,6 +103,81 @@ impl GarrisonLocale {
 }
 
 // ============================================================================
+// 系统语言自动检测（GARRISON_LANG → LC_ALL → LC_MESSAGES → LANG → sys-locale）
+// ============================================================================
+
+/// 系统语言检测结果缓存（进程级）。
+///
+/// locale 栈为空时由 [`current_locale()`] 首次调用填充，之后所有线程的
+/// "无显式 locale" 状态共用同一检测值；[`set_locale`] 显式覆盖栈内值，
+/// guard 全部 pop 后回到该缓存值。
+static DETECTED_LOCALE: OnceLock<GarrisonLocale> = OnceLock::new();
+
+/// 探测系统语言（检测链，命中即返回）：
+///
+/// 1. `GARRISON_LANG`（项目覆盖变量）
+/// 2. `LC_ALL` → `LC_MESSAGES` → `LANG`（POSIX 环境链；Unix 上 sys-locale 内部
+///    也读这些，显式读取是为 Windows/边缘环境确定性）
+/// 3. `sys_locale::get_locale()`（系统探测，覆盖 Windows/macOS 等无 env 场景）
+/// 4. 终极回退 [`GarrisonLocale::En`]
+///
+/// 仅支持 `zh*` → [`GarrisonLocale::Zh`] 与 `en*` → [`GarrisonLocale::En`]；
+/// `C`/`POSIX` 与不支持的第三语言跳过并继续走链，链尾必为 `En`（无第三语言）。
+pub fn detect_locale() -> GarrisonLocale {
+    detect_from(
+        &|key| std::env::var(key).ok(),
+        sys_locale::get_locale().as_deref(),
+    )
+}
+
+/// 检测链纯函数：env 查找与系统 locale 均注入，不读进程环境，便于测试。
+fn detect_from(getenv: &dyn Fn(&str) -> Option<String>, sys: Option<&str>) -> GarrisonLocale {
+    detect_from_env(getenv)
+        .or_else(|| sys.and_then(normalize_lang))
+        .unwrap_or(GarrisonLocale::En)
+}
+
+/// 环境变量检测链：`GARRISON_LANG` → `LC_ALL` → `LC_MESSAGES` → `LANG`。
+///
+/// 全链未命中（无变量、空值、`C`/`POSIX`、不支持的第三语言）返回 `None`，
+/// 交由 [`detect_from`] 继续走 sys-locale / `En` 回退。
+fn detect_from_env(getenv: &dyn Fn(&str) -> Option<String>) -> Option<GarrisonLocale> {
+    const CHAIN: [&str; 4] = ["GARRISON_LANG", "LC_ALL", "LC_MESSAGES", "LANG"];
+    CHAIN.iter().find_map(|key| {
+        getenv(key)
+            .filter(|raw| !raw.trim().is_empty())
+            .and_then(|raw| normalize_lang(&raw))
+    })
+}
+
+/// 归一化单个语言标签：去 `@modifier` 与 `.codeset`（`zh_CN.UTF-8` → `zh-CN`），
+/// `zh*` → [`GarrisonLocale::Zh`]、`en*` → [`GarrisonLocale::En`]；
+/// `C`/`POSIX` 与其余语言返回 `None`（禁止第三语言，交由检测链继续回退）。
+fn normalize_lang(raw: &str) -> Option<GarrisonLocale> {
+    let tag = raw
+        .split('@')
+        .next()
+        .unwrap_or_default()
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .replace('_', "-");
+    if matches!(tag.as_str(), "C" | "POSIX") {
+        return None;
+    }
+    let lang = tag
+        .split('-')
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    match lang.as_str() {
+        "zh" => Some(GarrisonLocale::Zh),
+        "en" => Some(GarrisonLocale::En),
+        _ => None,
+    }
+}
+
+// ============================================================================
 // thread_local 栈式 scope（支持嵌套 set_locale 调用）
 // ============================================================================
 
@@ -112,14 +187,20 @@ thread_local! {
 
 /// 获取当前 locale（线程本地）。
 ///
-/// 未调用 `set_locale()` 时返回默认 `GarrisonLocale::En`。
+/// 处于任何 [`set_locale`] RAII scope 内时返回栈顶显式值；否则返回系统语言
+/// 检测值——首次调用经 [`detect_locale`] 探测并缓存，之后复用缓存，
+/// 探测失败回退 `En`。
 pub fn current_locale() -> GarrisonLocale {
-    CURRENT_LOCALE_STACK.with(|stack| stack.borrow().last().copied().unwrap_or_default())
+    CURRENT_LOCALE_STACK.with(|stack| match stack.borrow().last() {
+        Some(locale) => *locale,
+        None => *DETECTED_LOCALE.get_or_init(detect_locale),
+    })
 }
 
 /// 设置当前线程的 locale，返回 RAII guard。
 ///
 /// guard drop 时自动 pop，恢复上一个 locale。支持嵌套调用。
+/// 显式设置优先于 [`detect_locale`] 检测值：栈 pop 回空后回到缓存的检测值。
 ///
 /// # 示例
 ///
@@ -538,7 +619,7 @@ mod tests {
     // GarrisonLocale 枚举测试
     // ========================================================================
 
-    /// 默认 locale 应为英文。
+    /// 枚举默认值应为英文；`En` 同时是系统语言探测失败的最终回退。
     #[test]
     fn default_locale_is_en() {
         let locale = GarrisonLocale::default();
@@ -556,13 +637,14 @@ mod tests {
     // current_locale / set_locale 测试
     // ========================================================================
 
-    /// 未设置 locale 时返回默认值 En。
+    /// 未显式 set_locale 时，current_locale() 返回系统检测结果（探测失败回退 En）。
+    ///
+    /// 进程环境因机器而异（如 LANG=zh_CN 的开发机会得到 Zh），故此处仅断言
+    /// current_locale() 与 detect_locale() 同源；env→locale 的映射细节由
+    /// detect_from / detect_from_env 纯函数测试覆盖，不依赖进程 env。
     #[test]
-    fn current_locale_defaults_to_en_when_not_set() {
-        // 注意：此测试依赖 thread_local 状态，可能受其他测试影响
-        // 但因为使用栈式 scope，无 set_locale 调用时栈为空
-        let locale = current_locale();
-        assert_eq!(locale, GarrisonLocale::En);
+    fn current_locale_defaults_to_detected_locale_when_not_set() {
+        assert_eq!(current_locale(), detect_locale());
     }
 
     /// set_locale 后 current_locale 返回新值，drop 后恢复。
@@ -592,11 +674,129 @@ mod tests {
         assert_eq!(current_locale(), original);
     }
 
+    /// set_locale 显式覆盖检测值；guard drop 后回到缓存的检测值。
+    #[test]
+    fn set_locale_overrides_detection_and_pop_restores_detected() {
+        let detected = current_locale(); // 首次调用触发探测并缓存
+        {
+            let _guard = set_locale(GarrisonLocale::En);
+            assert_eq!(current_locale(), GarrisonLocale::En);
+        }
+        assert_eq!(current_locale(), detected);
+        {
+            let _guard = set_locale(GarrisonLocale::Zh);
+            assert_eq!(current_locale(), GarrisonLocale::Zh);
+        }
+        assert_eq!(current_locale(), detected);
+    }
+
+    // ========================================================================
+    // 系统语言检测链测试（env 注入纯函数，不依赖进程环境）
+    // ========================================================================
+
+    /// 构造注入式 env 查找闭包（按值持有，无生命周期绑定）。
+    fn env_of<const N: usize>(
+        vars: [(&'static str, &'static str); N],
+    ) -> impl Fn(&str) -> Option<String> {
+        move |key| {
+            vars.iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    /// LANG=zh_CN.UTF-8（去 codeset + 归一化）→ Zh。
+    #[test]
+    fn detect_chain_zh_cn_utf8_yields_zh() {
+        let getenv = env_of([("LANG", "zh_CN.UTF-8")]);
+        assert_eq!(detect_from(&getenv, None), GarrisonLocale::Zh);
+    }
+
+    /// fr_FR 不在支持范围（仅 en/zh），链尾回退 En。
+    #[test]
+    fn detect_chain_fr_fr_falls_back_to_en() {
+        let getenv = env_of([("LANG", "fr_FR.UTF-8")]);
+        assert_eq!(detect_from(&getenv, None), GarrisonLocale::En);
+    }
+
+    /// C / POSIX / C.UTF-8 跳过，链尾回退 En。
+    #[test]
+    fn detect_chain_c_and_posix_fall_back_to_en() {
+        let c = env_of([("LANG", "C")]);
+        assert_eq!(detect_from(&c, None), GarrisonLocale::En);
+        let posix = env_of([("LC_ALL", "POSIX")]);
+        assert_eq!(detect_from(&posix, None), GarrisonLocale::En);
+        let c_utf8 = env_of([("LANG", "C.UTF-8")]);
+        assert_eq!(detect_from(&c_utf8, None), GarrisonLocale::En);
+    }
+
+    /// GARRISON_LANG 优先于 LC_ALL（双向验证）。
+    #[test]
+    fn detect_chain_garrison_lang_takes_precedence() {
+        let en_overrides_zh = env_of([("GARRISON_LANG", "en_US"), ("LC_ALL", "zh_CN.UTF-8")]);
+        assert_eq!(detect_from(&en_overrides_zh, None), GarrisonLocale::En);
+        let zh_overrides_en = env_of([("GARRISON_LANG", "zh_CN"), ("LC_ALL", "en_US.UTF-8")]);
+        assert_eq!(detect_from(&zh_overrides_en, None), GarrisonLocale::Zh);
+    }
+
+    /// LC_ALL 优先于 LANG。
+    #[test]
+    fn detect_chain_lc_all_precedes_lang() {
+        let getenv = env_of([("LC_ALL", "zh_CN.UTF-8"), ("LANG", "en_US.UTF-8")]);
+        assert_eq!(detect_from(&getenv, None), GarrisonLocale::Zh);
+    }
+
+    /// 空值/空白值跳过，继续走链。
+    #[test]
+    fn detect_chain_empty_value_skipped() {
+        let getenv = env_of([("GARRISON_LANG", "  "), ("LANG", "zh_CN")]);
+        assert_eq!(detect_from(&getenv, None), GarrisonLocale::Zh);
+    }
+
+    /// 全链未命中（无 env、sys-locale 无值）→ En。
+    #[test]
+    fn detect_chain_empty_falls_back_to_en() {
+        let none: fn(&str) -> Option<String> = |_key| None;
+        assert_eq!(detect_from(&none, None), GarrisonLocale::En);
+    }
+
+    /// sys-locale 探测值仅在 env 链未命中时生效，且仅映射 zh/en。
+    #[test]
+    fn detect_chain_sys_locale_fallback() {
+        let none: fn(&str) -> Option<String> = |_key| None;
+        assert_eq!(detect_from(&none, Some("zh-Hans-CN")), GarrisonLocale::Zh);
+        assert_eq!(detect_from(&none, Some("en-US")), GarrisonLocale::En);
+        assert_eq!(detect_from(&none, Some("fr-FR")), GarrisonLocale::En);
+        // env 链命中时 sys-locale 不参与
+        let getenv = env_of([("LANG", "en_US.UTF-8")]);
+        assert_eq!(detect_from(&getenv, Some("zh-CN")), GarrisonLocale::En);
+    }
+
+    /// zh/en 常见变体全部归一化到两个枚举值（无第三语言）。
+    #[test]
+    fn detect_chain_normalizes_variants() {
+        let none: fn(&str) -> Option<String> = |_key| None;
+        for raw in ["zh", "zh_TW", "zh-Hant", "ZH-CN", "zh_SG@pinyin"] {
+            assert_eq!(
+                detect_from(&none, Some(raw)),
+                GarrisonLocale::Zh,
+                "raw={raw}"
+            );
+        }
+        for raw in ["en", "en_GB.UTF-8", "EN-us"] {
+            assert_eq!(
+                detect_from(&none, Some(raw)),
+                GarrisonLocale::En,
+                "raw={raw}"
+            );
+        }
+    }
+
     // ========================================================================
     // translate_error 测试
     // ========================================================================
 
-    /// 默认中文：NotLogin 翻译为中文消息。
+    /// 中文 locale（显式 set_locale(Zh)）：NotLogin 翻译为中文消息。
     #[test]
     fn translate_error_zh_returns_chinese_message() {
         let _guard = set_locale(GarrisonLocale::Zh);

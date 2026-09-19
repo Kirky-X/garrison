@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
 """
 Unify copyright headers across all code files in the project.
 """
@@ -20,8 +23,8 @@ COMMENT_STYLES: dict[str, str] = {
     ".py": "# ",
 }
 
-LINE1_TEXT = "Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved."
-LINE2_TEXT = "See LICENSE for full license text."
+LINE1_TEXT = "Copyright (c) 2026 Kirky.X🌠"
+LINE2_TEXT = "SPDX-License-Identifier: Apache-2.0"
 
 
 def prefix(ext: str) -> str:

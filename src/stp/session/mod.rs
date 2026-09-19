@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! SessionLogic trait — 会话生命周期管理契约（登录/登出/踢出/校验）。
 //! 本 trait 承接会话生命周期相关 10 个方法，super-trait 为 [`GarrisonCore`]。

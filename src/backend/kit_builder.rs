@@ -1,5 +1,5 @@
-// Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>
-// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! trait-kit AsyncKit 构建器集成（feature = "backend-kit"）。
 //!

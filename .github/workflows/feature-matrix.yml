@@ -1,18 +1,5 @@
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-#
-# Feature 组合矩阵与 examples 测试（审查报告 R-09/R-10）。
-#
-# - R-09：108 个 feature 的 each-feature 独立编译检查 + 重点两两组合采样。
-#   全量 powerset 为 O(2^108)，不可行；单一 feature + 定向采样覆盖
-#   「feature 单独启用/组合冲突」两类历史事故面（如 db-* × embedded-migrations、
-#   protocol-* × secure-ct-eq、web-* × annotation-macros）。
-# - R-10：examples 是独立 workspace member，根目录 `cargo test --features full`
-#   不会运行其 103 个测试；本工作流补齐该盲区。
-#
-# 调度策略：每周一 03:00 UTC 定时 + 手动触发，不阻塞 PR 关键路径。
-# 出现红色结果时按 feature 组合逐项 triage：真实冲突 → 修 Cargo.toml 依赖约束
-# 或登记 check-cfg；误报 → 加入排除清单并注释原因。
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 name: Feature Matrix
 

@@ -1,25 +1,5 @@
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-
-# Garrison E2E 测试中间件自举（scripts/e2e_matrix.sh 使用）。
-#
-# 设计约束：
-#   1. 端口全部错开常用默认值（6379/5432/3306/8080/8081/18090），与开发机
-#      已驻留服务（sinnan-*、confers-* 等容器）零冲突；
-#   2. 凭据与 tests/acceptance/environment.rs 默认值一致，地址经
-#      GARRISON_TEST_*_ADDR / GARRISON_TEST_*_URL 环境变量注入测试进程；
-#   3. MySQL 8.0 供 db-mysql 手动验证与后续测试扩展（验收矩阵的 MySQL
-#      自动化路径走 testcontainers，见 ACC-ENV-007/008）；
-#   4. Keycloak 26 为 OAuth2/OIDC 协议验收的真实授权服务器（2026-09 起
-#      协议层验收禁止 wiremock 模拟，一律打真实 IdP）：realm 数据由
-#      scripts/keycloak_provision.py 经 Admin API 供给（幂等）。不走
-#      --import-realm——Keycloak 26 的全量导入不创建内置 client scopes
-#      （basic/profile/email/roles），id_token 会缺失 sub 等基础 claims。
-#
-# 用法：
-#   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e up -d --wait
-#   python3 scripts/keycloak_provision.py   # Keycloak realm 供给（幂等）
-#   docker compose -f docker-compose.e2e.yml --project-name garrison-e2e down -v --remove-orphans
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 name: garrison-e2e
 

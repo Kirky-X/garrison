@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! JSON 模板与序列化示例：演示 GarrisonJsonTemplate 占位符渲染 + GarrisonSerializer 类型化序列化。
 //!

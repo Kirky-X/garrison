@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
+
 //! 匿名 Session 模块。
 //!
 //! 启用 `anonymous-session` feature 后编译。提供未登录用户的匿名会话支持，

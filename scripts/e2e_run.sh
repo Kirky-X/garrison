@@ -1,35 +1,6 @@
 #!/bin/bash
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
-
-# Garrison E2E 测试一键执行脚本。
-#
-# 【2026-09 重写】Phase 4 测试迁移后，原 tests/e2e target
-# 已并入 tests/acceptance/（pentest → security.rs ACC-SEC-021..030；
-# perf → concurrency.rs 文件尾 #[ignore] 用例），本脚本同步指向现行 target。
-#
-# 流程：
-#   1. export 环境变量（API Key / 端口 / 限速）
-#   2. 后台启动 auth_server_serve（examples bin，full features）——进程级黑盒
-#      冒烟：验证示例服务真实可启动、health 端点可达（验收套件内的 server.rs /
-#      concurrency.rs 均为自 spawn 进程，不覆盖「外部进程 + health 探活」信号）
-#   3. trap EXIT 信号杀掉子进程
-#   4. curl health check 重试 30 次（每次 1s）
-#   5. 依次跑（均为 tests/acceptance 现行域）：
-#      - 全量验收（含 pentest 攻击面 security:: 域）
-#      - 性能基线（#[ignore] perf_*，写 logs/perf.jsonl）
-#   6. 调用 scripts/e2e_analyze.py 聚合 logs/ 下 JSONL 为 Markdown 报告
-#
-# 输出文件：
-#   - logs/perf.jsonl：性能报告（每行一个 JSON）
-#   - logs/e2e_final_report.md：综合 Markdown 报告
-#
-# 用法：
-#   bash scripts/e2e_run.sh
-#
-# 退出码：
-#   0 = 所有测试通过
-#   非 0 = 编译失败 / health check 失败 / 某个测试套件失败
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 set -euo pipefail
 

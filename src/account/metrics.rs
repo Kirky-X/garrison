@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 账号安全能力 Prometheus 指标。
 //! 启用 `metrics-prometheus` feature 时编译，提供 4 个指标覆盖凭证验证 / 策略校验 /

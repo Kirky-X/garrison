@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 审计事件防篡改 HMAC 链（吸收自 inklog `ArchiveChain`，与 dbnexus 权限审计链同构）。
 //!

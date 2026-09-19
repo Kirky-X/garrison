@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! AuthenticationFlow DSL 子模块（吸收 keycloak AuthenticationFlow）。
 //! 提供声明式认证流程编排，覆盖登录 + MFA + 社交登录 + SSO 全认证流程。

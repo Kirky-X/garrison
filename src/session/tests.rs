@@ -1,3 +1,6 @@
+﻿// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
+
 ﻿//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
 //! See LICENSE for full license text.
 
@@ -778,7 +781,7 @@ async fn kickout_by_device_accepts_login_id_numeric() {
 
 /// 验证 kickout_by_device 注入 listener_manager 后广播 Kickout 事件。
 ///
-/// 
+///
 /// 通过 `GarrisonListenerManager::register`（运行时注册 API）注入计数监听器，
 /// 真实断言 Kickout 事件被派发（而非仅验证不 panic）。
 #[cfg(feature = "listener")]

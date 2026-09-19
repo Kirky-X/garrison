@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! FlowBuilder 流式构建 DSL。
 //! 提供链式 API 构建 [`AuthenticationFlow`]，每个方法返回 `Self`（除 [`FlowBuilder::build`]）。

@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 #![doc(html_root_url = "https://docs.rs/garrison/latest")]
 #![allow(rustdoc::invalid_rust_codeblocks)]
@@ -323,7 +323,7 @@ pub mod web_warp;
 /// - `web-csrf`：CSRF 跨站请求伪造防护
 /// - `web-security-headers`：HTTP 安全响应头中间件
 #[cfg(any(
-    feature = "web-waf",
+    feature = "firewall-waf",
     feature = "web-cors",
     feature = "web-csrf",
     feature = "web-security-headers",

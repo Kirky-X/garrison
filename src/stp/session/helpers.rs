@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
+
 //! SessionLogic 私有 helper 方法。
 //!
 //! 从 `session/mod.rs` 拆分出的 `GarrisonLogicDefault` 私有 impl 块，

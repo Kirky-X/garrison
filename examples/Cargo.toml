@@ -1,5 +1,5 @@
-# Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-# See LICENSE for full license text.
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
 
 # Garrison 官方示例集（workspace member，不发布到 crates.io）
 # 每个 bin 演示 Garrison 的一个特性模块，配套 tests/<name>.rs 独立测试。
@@ -16,7 +16,7 @@ description = "Garrison 官方示例集（workspace member，不发布到 crates
 
 [dependencies]
 garrison = { default-features = false, workspace = true }
-tokio = { version = "1.53", features = ["full"] }
+tokio = { version = "1.53", features = ["macros", "net", "rt", "rt-multi-thread", "sync", "time"] }
 async-trait = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -81,12 +81,14 @@ full = [
     "oauth2-server", "web-cors", "web-csrf",
     "credit-metering", "sms-rate-limit", "three-tier-cache",
     "protocol-invitation", "email-verification", "i18n",
+    "secure-simple-token",
 ]
 
 # 单特性转发到 garrison（保持与 garrison feature 名一致）
 firewall = ["garrison/firewall"]
 i18n = ["garrison/i18n"]
 secure-sign = ["garrison/secure-sign"]
+secure-simple-token = ["garrison/secure-simple-token"]
 account-credential = ["garrison/account-credential"]
 protocol-httpbasic = ["garrison/protocol-httpbasic"]
 protocol-httpdigest = ["garrison/protocol-httpdigest"]

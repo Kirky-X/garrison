@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 账号安全引擎模块（吸收 keycloak 安全能力）。
 //! 本模块吸收 Keycloak 安全能力，提升 Garrison 原生账号安全能力。

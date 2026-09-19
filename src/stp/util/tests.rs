@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
+
 mod suite {
     use crate::dao::tests::MockDao;
     use crate::dao::GarrisonDao;

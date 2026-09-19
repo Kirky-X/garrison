@@ -1,5 +1,5 @@
-// Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>
-// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! sdforge 声明式路由（feature = "auth-server-sdforge"）。
 //!

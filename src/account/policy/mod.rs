@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 密码策略套件子模块（吸收 keycloak PasswordPolicyRule）。
 //! 提供可插拔密码策略规则 + 统一引擎执行，支持企业合规场景。

@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! GarrisonAuthServer 二进制入口。
 //!
@@ -24,7 +24,6 @@
 //! ```sh
 //! cargo run --features auth-server --bin auth_server
 //! ```
-
 use std::sync::Arc;
 
 use garrison::backend::embedded::BackendEmbedded;
@@ -55,6 +54,33 @@ impl GarrisonInterface for SimpleInterface {
     async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
         Ok(vec![])
     }
+}
+
+/// auth_server 启动引导配置。
+///
+/// 经 confers 派生宏从 `GARRISON_*` 环境变量加载（env 覆盖 + 默认值），
+/// 替代原先逐项手写的 `std::env::var` 解析。字段名按大写映射环境变量：
+/// `external_port` → `GARRISON_EXTERNAL_PORT`，以此类推。
+///
+/// fail-closed 语义：
+/// - `internal_api_key` 无默认值——未配置时 `load_sync` 直接报错，拒绝启动；
+/// - 空串与 `rate_limit=0` 的防御检查保留在加载之后（见 `async_main`）。
+///
+/// 与旧手写解析的行为差异：`GARRISON_EXTERNAL_LOGIN_ENABLED` 仅接受
+/// `true`/`false`（大小写不敏感），不再接受 `1`；非法值将启动失败而非静默忽略。
+#[derive(Debug, Clone, serde::Deserialize, confers::Config)]
+#[config(env_prefix = "GARRISON_")]
+struct AuthServerBootstrapConfig {
+    #[config(default = 8080)]
+    external_port: u16,
+    #[config(default = 8081)]
+    internal_port: u16,
+    #[config(default = 100)]
+    rate_limit: u32,
+    /// 内网 API Key——无默认值，未配置即启动失败（fail-closed, M-SAST-1/M-5）
+    internal_api_key: String,
+    #[config(default = false)]
+    external_login_enabled: bool,
 }
 
 /// 初始化全局 GarrisonManager 单例。
@@ -102,21 +128,21 @@ fn main() -> GarrisonResult<()> {
 }
 
 async fn async_main() -> GarrisonResult<()> {
-    // 从环境变量读取配置（带默认值）
-    let external_port = std::env::var("GARRISON_EXTERNAL_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8080);
-    let internal_port = std::env::var("GARRISON_INTERNAL_PORT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(8081);
-    let rate_limit = std::env::var("GARRISON_RATE_LIMIT")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(100);
+    // 启动配置：confers 派生宏统一加载（env 覆盖 + 默认值 + 必填缺失即失败）
+    let bootstrap = match AuthServerBootstrapConfig::load_sync() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "FATAL: failed to load auth_server bootstrap config from GARRISON_* env vars: {e}"
+            );
+            std::process::exit(1);
+        },
+    };
+    let external_port = bootstrap.external_port;
+    let internal_port = bootstrap.internal_port;
+    let rate_limit = bootstrap.rate_limit;
     // 拒绝 0 值——rate_limit=0 会让限速器拒绝所有请求（全部 429）。
-    // 负值在 u32 解析阶段即失败并回退默认值，无需额外校验。
+    // 负值在解析阶段即失败并启动失败，无需额外校验。
     if rate_limit == 0 {
         eprintln!(
             "FATAL: GARRISON_RATE_LIMIT=0 would reject every request (all 429); \
@@ -124,21 +150,13 @@ async fn async_main() -> GarrisonResult<()> {
         );
         std::process::exit(1);
     }
-    let internal_api_key = std::env::var("GARRISON_INTERNAL_API_KEY").unwrap_or_else(|_| {
-        eprintln!(
-            "FATAL: GARRISON_INTERNAL_API_KEY env var not configured, refusing to start (fail-closed, M-SAST-1/M-5)"
-        );
-        std::process::exit(1);
-    });
+    let internal_api_key = bootstrap.internal_api_key;
     if internal_api_key.is_empty() {
         eprintln!("FATAL: GARRISON_INTERNAL_API_KEY is empty, refusing to start (fail-closed)");
         std::process::exit(1);
     }
     // C-1: 外网登录端点默认关闭（secure-by-default）；业务方注入凭证校验后显式开启
-    let external_login_enabled = std::env::var("GARRISON_EXTERNAL_LOGIN_ENABLED")
-        .ok()
-        .map(|s| s.eq_ignore_ascii_case("true") || s == "1")
-        .unwrap_or(false);
+    let external_login_enabled = bootstrap.external_login_enabled;
     if external_login_enabled {
         eprintln!(
             "WARN: external login endpoint ENABLED (GARRISON_EXTERNAL_LOGIN_ENABLED=true); \

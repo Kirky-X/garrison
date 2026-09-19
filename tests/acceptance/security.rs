@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 安全域验收。
 //! TOTP 时间窗口 / HTTP Basic / HTTP Digest（含 nc 重放防护）/ 密码策略规则矩阵 /

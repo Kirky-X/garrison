@@ -1,5 +1,5 @@
-//! Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
-//! See LICENSE for full license text.
+// Copyright (c) 2026 Kirky.X🌠
+// SPDX-License-Identifier: Apache-2.0
 
 //! 三层缓存示例：演示 L1（oxcache 内存）→ L2（DAO 持久化）→ L3（interface 回调）架构。
 //!
