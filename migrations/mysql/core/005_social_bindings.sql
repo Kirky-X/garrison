@@ -1,5 +1,5 @@
--- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
--- See LICENSE for full license text.
+-- Copyright (c) 2026 Kirky.X🌠
+-- SPDX-License-Identifier: Apache-2.0
 
 -- Migration: 社交账号绑定表（MySQL 版本，v0.5.0 新增，依据 proposal H2 / spec social-login R-social-login-004）
 -- 对应 spec: social-login（社交登录账号绑定）

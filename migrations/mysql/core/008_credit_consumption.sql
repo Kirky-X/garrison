@@ -1,5 +1,5 @@
--- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
--- See LICENSE for full license text.
+-- Copyright (c) 2026 Kirky.X🌠
+-- SPDX-License-Identifier: Apache-2.0
 
 -- Migration: Credit 消费流水表（MySQL 版本，credit-metering feature）
 -- 对应 spec: multi-tenant-credit-metering（多租户配额计量）

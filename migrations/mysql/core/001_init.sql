@@ -1,5 +1,5 @@
--- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
--- See LICENSE for full license text.
+-- Copyright (c) 2026 Kirky.X🌠
+-- SPDX-License-Identifier: Apache-2.0
 
 -- Migration: 初始化 8 张核心表 + app_user_ext 扩展表（MySQL 版本）
 -- 对应 spec: extensible-schema

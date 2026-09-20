@@ -1,5 +1,5 @@
--- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
--- See LICENSE for full license text.
+-- Copyright (c) 2026 Kirky.X🌠
+-- SPDX-License-Identifier: Apache-2.0
 
 -- Migration: 角色层级表（PostgreSQL 版本，v0.5.0 新增，依据 proposal H6）
 -- 对应 spec: role-hierarchy（TC 预计算）

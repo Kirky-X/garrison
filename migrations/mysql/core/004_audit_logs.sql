@@ -1,5 +1,5 @@
--- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
--- See LICENSE for full license text.
+-- Copyright (c) 2026 Kirky.X🌠
+-- SPDX-License-Identifier: Apache-2.0
 
 -- Migration: 审计日志表（MySQL 版本，v0.5.0 新增，依据 proposal H3）
 -- 对应 spec: audit-log（AuditLogListener 持久化事件）

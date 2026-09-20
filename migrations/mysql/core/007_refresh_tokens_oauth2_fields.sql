@@ -1,5 +1,5 @@
--- Copyright (c) 2026 Kirky-X <Kirky-X@outlook.com>. All rights reserved.
--- See LICENSE for full license text.
+-- Copyright (c) 2026 Kirky.X🌠
+-- SPDX-License-Identifier: Apache-2.0
 
 -- Migration: refresh_tokens 表扩展 OAuth2 字段（MySQL 版本，v0.7.1 字段补齐）
 -- 对应 change: v0.7.1-refresh-token-unification
