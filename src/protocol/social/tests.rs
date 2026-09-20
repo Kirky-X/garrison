@@ -75,8 +75,8 @@ fn provider_names_constants_match_expected_strings() {
 #[tokio::test(flavor = "multi_thread")]
 async fn social_bindings_table_exists_after_migration() {
     use crate::dao::GarrisonMigration;
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement};
     use dbnexus::{DbConfig, DbPool, PoolConfig};
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use std::path::PathBuf;
 
     // 单连接池强制所有 `get_session` 复用同一 connection，`:memory:` 才能工作
@@ -150,8 +150,8 @@ async fn social_bindings_table_exists_after_migration() {
 async fn social_binding_service_find_or_create_creates_new_binding() {
     use super::*;
     use crate::dao::{tests::MockDao, GarrisonDaoDbnexus, GarrisonMigration};
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use dbnexus::{DbConfig, DbPool, PoolConfig};
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
     use std::sync::Arc;
 

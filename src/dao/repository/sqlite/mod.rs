@@ -19,8 +19,8 @@
 //! - **时间字段**：SQLite 用 CURRENT_TIMESTAMP 默认生成，读取为 String。
 
 use crate::error::{GarrisonError, GarrisonResult};
+use dbnexus::sea_orm::{QueryResult, Value};
 use dbnexus::DbPool;
-use sea_orm::{QueryResult, Value};
 
 // ============================================================================
 // 子模块声明（impl 块拆分到独立文件，遵循 mod.rs 加固规则）

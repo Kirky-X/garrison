@@ -88,9 +88,9 @@ use async_trait::async_trait;
 #[cfg(feature = "db-sqlite")]
 use chrono::Utc;
 #[cfg(feature = "db-sqlite")]
-use dbnexus::DbPool;
+use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
 #[cfg(feature = "db-sqlite")]
-use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+use dbnexus::DbPool;
 // HMAC-SHA256 签名链依赖（audit-log feature 启用 sha2 + hmac）
 #[cfg(all(feature = "audit-log", feature = "db-sqlite"))]
 use hmac::{Hmac, KeyInit, Mac};
@@ -1313,8 +1313,8 @@ mod db_sqlite_tests {
     use super::{AuditConfig, AuditEntry, AuditLogListener, AuditMaskMode, AuditQuery};
     use crate::dao::{init_dbnexus, GarrisonMigration};
     use crate::listener::{GarrisonEvent, GarrisonListener, RequestContext};
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use dbnexus::DbPool;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
 
     /// 定位项目根目录的 migrations/sqlite/ 目录。

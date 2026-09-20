@@ -231,7 +231,7 @@ async fn bw_ac_006_oxcache_memory_backend_works() {
 #[tokio::test]
 #[serial]
 async fn bw_ac_007_dbnexus_sqlite_backend_works() {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
 
     let pool = crate::common::setup_db().await;
     let session = pool.get_session("admin").await.expect("获取 admin session");

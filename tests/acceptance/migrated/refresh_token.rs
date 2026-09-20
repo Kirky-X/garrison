@@ -14,10 +14,10 @@
 
 #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
 mod refresh_token_e2e {
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use dbnexus::DbPool;
     use garrison::protocol::jwt::JwtHandler;
     use garrison::{GarrisonError, RefreshTokenRotation};
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::sync::{Arc, RwLock};
 
     use crate::common::{setup_db, sha256_hex};

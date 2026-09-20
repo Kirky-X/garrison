@@ -22,6 +22,7 @@
 //! 每个场景独立 `sqlite::memory:` 连接池（in-memory 互不污染），无全局单例，
 //! 不需要 `#[serial]`；与 `tests/repository/*.rs` 装配一致。
 
+use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement};
 use garrison::dao::{
     init_dbnexus,
     repository::{
@@ -39,7 +40,6 @@ use garrison::dao::{
     GarrisonMigration,
 };
 use garrison::error::GarrisonError;
-use sea_orm::{ConnectionTrait, DbBackend, Statement};
 use std::path::PathBuf;
 
 const TENANT_A: i64 = 1;

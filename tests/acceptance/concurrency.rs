@@ -390,7 +390,7 @@ async fn insert_refresh_token(
     expires_at: i64,
     revoked: i64,
 ) {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     let session = pool.get_session("admin").await.expect("获取 admin session");
     let conn = session.connection().expect("获取连接");
     let stmt = Statement::from_sql_and_values(
@@ -411,7 +411,7 @@ async fn insert_refresh_token(
 }
 
 async fn query_revoked(pool: &dbnexus::DbPool, token_hash: &str) -> i64 {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     let session = pool.get_session("admin").await.expect("获取 admin session");
     let conn = session.connection().expect("获取连接");
     let stmt = Statement::from_sql_and_values(

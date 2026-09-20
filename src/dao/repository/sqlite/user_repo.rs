@@ -10,8 +10,8 @@ use crate::dao::repository::{
 };
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
+use dbnexus::sea_orm::{ConnectionTrait, QueryResult};
 use dbnexus::DbPool;
-use sea_orm::{ConnectionTrait, QueryResult};
 
 impl DbnexusUserRepository {
     /// 创建实例。

@@ -254,7 +254,7 @@ fn copy_embedded_dir(dir: &include_dir::Dir, dest: &std::path::Path) -> std::io:
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
     use super::*;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     // ========================================================================
     // init_dbnexus 辅助函数测试

@@ -472,8 +472,8 @@ mod tests {
 mod db_sqlite_tests {
     use super::*;
     use crate::dao::{init_dbnexus, GarrisonDao, GarrisonDaoDbnexus, GarrisonMigration};
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use dbnexus::DbPool;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
     use std::sync::Arc;
 

@@ -2643,12 +2643,10 @@ dependencies = [
  "quick-xml",
  "rand 0.10.2",
  "rcgen",
- "redis",
  "regex",
  "reqwest",
  "rsa",
  "sdforge",
- "sea-orm",
  "serde",
  "serde_json",
  "serial_test",
@@ -5717,7 +5715,6 @@ dependencies = [
  "pin-project-lite",
  "rand 0.10.2",
  "ryu",
- "sha1_smol",
  "socket2",
  "tokio",
  "tokio-util",
@@ -6110,6 +6107,7 @@ version = "0.5.0-rc.4"
 dependencies = [
  "axum",
  "axum-extra",
+ "fluent-bundle",
  "futures-util",
  "inventory",
  "log",
@@ -6128,6 +6126,7 @@ dependencies = [
  "tonic-prost-build",
  "tower",
  "tower-http 0.7.1",
+ "unic-langid",
  "utoipa",
  "uuid",
  "validator",
@@ -6542,12 +6541,6 @@ dependencies = [
  "cpufeatures 0.3.1",
  "digest 0.11.3",
 ]
-
-[[package]]
-name = "sha1_smol"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
 
 [[package]]
 name = "sha2"

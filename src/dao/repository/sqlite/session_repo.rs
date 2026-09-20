@@ -8,8 +8,8 @@ use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, NewSession, SessionRepository, SessionRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
+use dbnexus::sea_orm::{ConnectionTrait, QueryResult};
 use dbnexus::DbPool;
-use sea_orm::{ConnectionTrait, QueryResult};
 
 impl DbnexusSessionRepository {
     /// 创建实例。

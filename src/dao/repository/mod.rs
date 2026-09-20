@@ -768,7 +768,7 @@ pub mod role_hierarchy;
 /// # 示例
 ///
 /// ```
-/// use sea_orm::DbBackend;
+/// use dbnexus::sea_orm::DbBackend;
 /// use garrison::dao::repository::convert_placeholders;
 ///
 /// let sql = "WHERE id = ? AND name = ?";
@@ -776,8 +776,8 @@ pub mod role_hierarchy;
 /// assert_eq!(convert_placeholders(sql, DbBackend::Postgres), "WHERE id = $1 AND name = $2");
 /// ```
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
-pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
-    use sea_orm::DbBackend;
+pub fn convert_placeholders(sql: &str, backend: dbnexus::sea_orm::DbBackend) -> String {
+    use dbnexus::sea_orm::DbBackend;
     if backend != DbBackend::Postgres {
         return sql.to_string();
     }
@@ -866,9 +866,9 @@ pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
     result
 }
 
-/// 构造 backend-agnostic 的 [`sea_orm::Statement`]，根据 conn 的 backend 自动转换占位符。
+/// 构造 backend-agnostic 的 [`dbnexus::sea_orm::Statement`]，根据 conn 的 backend 自动转换占位符。
 ///
-/// 封装 [`convert_placeholders`] + [`sea_orm::Statement::from_sql_and_values`]，
+/// 封装 [`convert_placeholders`] + [`dbnexus::sea_orm::Statement::from_sql_and_values`]，
 /// 让 Repository 实现无需关心后端差异——传入 `?` 占位符的 SQL 即可，
 /// Postgres backend 会自动转换为 `$1`, `$2`, ...
 ///
@@ -876,20 +876,20 @@ pub fn convert_placeholders(sql: &str, backend: sea_orm::DbBackend) -> String {
 ///
 /// ```ignore
 /// use garrison::dao::repository::make_statement;
-/// use sea_orm::Value;
+/// use dbnexus::sea_orm::Value;
 ///
 /// // 实际使用时传入真实的 DatabaseConnection（Sqlite 或 Postgres 后端）
 /// let stmt = make_statement(&conn, "WHERE id = ?", vec![Value::Int(Some(1))]);
 /// ```
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub fn make_statement(
-    conn: &impl sea_orm::ConnectionTrait,
+    conn: &impl dbnexus::sea_orm::ConnectionTrait,
     sql: &str,
-    values: Vec<sea_orm::Value>,
-) -> sea_orm::Statement {
+    values: Vec<dbnexus::sea_orm::Value>,
+) -> dbnexus::sea_orm::Statement {
     let backend = conn.get_database_backend();
     let sql = convert_placeholders(sql, backend);
-    sea_orm::Statement::from_sql_and_values(backend, sql, values)
+    dbnexus::sea_orm::Statement::from_sql_and_values(backend, sql, values)
 }
 
 #[cfg(test)]
@@ -1230,7 +1230,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_sqlite_keeps_question_mark() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "WHERE id = ? AND name = ?";
         let result = convert_placeholders(sql, DbBackend::Sqlite);
         assert_eq!(result, "WHERE id = ? AND name = ?");
@@ -1240,7 +1240,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_replaces_with_dollar_n() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "WHERE id = ? AND name = ?";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(result, "WHERE id = $1 AND name = $2");
@@ -1250,7 +1250,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_single_placeholder() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "WHERE id = ?";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(result, "WHERE id = $1");
@@ -1260,7 +1260,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_no_placeholder_unchanged() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "SELECT 1";
         assert_eq!(convert_placeholders(sql, DbBackend::Postgres), "SELECT 1");
         assert_eq!(convert_placeholders(sql, DbBackend::Sqlite), "SELECT 1");
@@ -1270,7 +1270,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_postgres_five_placeholders() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "VALUES (?, ?, ?, ?, ?)";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(result, "VALUES ($1, $2, $3, $4, $5)");
@@ -1283,7 +1283,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_skips_question_mark_inside_string_literal() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "SELECT * FROM t WHERE note = '?' AND id = ?";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(
@@ -1299,7 +1299,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_handles_escaped_single_quote() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "SELECT '' AS empty, ? AS v";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(
@@ -1317,7 +1317,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_handles_escaped_quote_inside_string_literal() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "SELECT 'a''b' AS s, ? AS v";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(
@@ -1333,7 +1333,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_skips_question_mark_in_line_comment() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "SELECT ? -- comment with ? here\nWHERE id = ?";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(
@@ -1346,7 +1346,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_skips_question_mark_in_block_comment() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "SELECT ?, /* hint: ? not a placeholder */ ? AS b";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(
@@ -1359,7 +1359,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_handles_nested_block_comments() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "SELECT ? /* outer /* inner ? */ still comment ? */ , ? AS b";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(
@@ -1372,7 +1372,7 @@ mod tests {
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[test]
     fn convert_placeholders_comment_markers_inside_string_are_literal() {
-        use sea_orm::DbBackend;
+        use dbnexus::sea_orm::DbBackend;
         let sql = "SELECT '-- not a comment /* neither */ ?' AS s, ? AS v";
         let result = convert_placeholders(sql, DbBackend::Postgres);
         assert_eq!(
@@ -1389,21 +1389,21 @@ mod tests {
     /// 其他方法未实现（`make_statement` 仅调用 `get_database_backend`）。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     struct MockConn {
-        backend: sea_orm::DbBackend,
+        backend: dbnexus::sea_orm::DbBackend,
     }
 
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
     #[async_trait::async_trait]
-    impl sea_orm::ConnectionTrait for MockConn {
-        fn get_database_backend(&self) -> sea_orm::DbBackend {
+    impl dbnexus::sea_orm::ConnectionTrait for MockConn {
+        fn get_database_backend(&self) -> dbnexus::sea_orm::DbBackend {
             self.backend
         }
 
         async fn execute_raw(
             &self,
-            _stmt: sea_orm::Statement,
-        ) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
-            Err(sea_orm::DbErr::Custom(
+            _stmt: dbnexus::sea_orm::Statement,
+        ) -> Result<dbnexus::sea_orm::ExecResult, dbnexus::sea_orm::DbErr> {
+            Err(dbnexus::sea_orm::DbErr::Custom(
                 "MockConn only supports get_database_backend".into(),
             ))
         }
@@ -1411,26 +1411,26 @@ mod tests {
         async fn execute_unprepared(
             &self,
             _sql: &str,
-        ) -> Result<sea_orm::ExecResult, sea_orm::DbErr> {
-            Err(sea_orm::DbErr::Custom(
+        ) -> Result<dbnexus::sea_orm::ExecResult, dbnexus::sea_orm::DbErr> {
+            Err(dbnexus::sea_orm::DbErr::Custom(
                 "MockConn only supports get_database_backend".into(),
             ))
         }
 
         async fn query_one_raw(
             &self,
-            _stmt: sea_orm::Statement,
-        ) -> Result<Option<sea_orm::QueryResult>, sea_orm::DbErr> {
-            Err(sea_orm::DbErr::Custom(
+            _stmt: dbnexus::sea_orm::Statement,
+        ) -> Result<Option<dbnexus::sea_orm::QueryResult>, dbnexus::sea_orm::DbErr> {
+            Err(dbnexus::sea_orm::DbErr::Custom(
                 "MockConn only supports get_database_backend".into(),
             ))
         }
 
         async fn query_all_raw(
             &self,
-            _stmt: sea_orm::Statement,
-        ) -> Result<Vec<sea_orm::QueryResult>, sea_orm::DbErr> {
-            Err(sea_orm::DbErr::Custom(
+            _stmt: dbnexus::sea_orm::Statement,
+        ) -> Result<Vec<dbnexus::sea_orm::QueryResult>, dbnexus::sea_orm::DbErr> {
+            Err(dbnexus::sea_orm::DbErr::Custom(
                 "MockConn only supports get_database_backend".into(),
             ))
         }
@@ -1441,14 +1441,14 @@ mod tests {
     #[test]
     fn make_statement_sqlite_uses_question_mark() {
         let conn = MockConn {
-            backend: sea_orm::DbBackend::Sqlite,
+            backend: dbnexus::sea_orm::DbBackend::Sqlite,
         };
         let stmt = make_statement(
             &conn,
             "WHERE id = ? AND name = ?",
             vec![
-                sea_orm::Value::Int(Some(1)),
-                sea_orm::Value::String(Some("alice".into())),
+                dbnexus::sea_orm::Value::Int(Some(1)),
+                dbnexus::sea_orm::Value::String(Some("alice".into())),
             ],
         );
         assert_eq!(stmt.sql, "WHERE id = ? AND name = ?");
@@ -1459,14 +1459,14 @@ mod tests {
     #[test]
     fn make_statement_postgres_uses_dollar_n() {
         let conn = MockConn {
-            backend: sea_orm::DbBackend::Postgres,
+            backend: dbnexus::sea_orm::DbBackend::Postgres,
         };
         let stmt = make_statement(
             &conn,
             "WHERE id = ? AND name = ?",
             vec![
-                sea_orm::Value::Int(Some(1)),
-                sea_orm::Value::String(Some("alice".into())),
+                dbnexus::sea_orm::Value::Int(Some(1)),
+                dbnexus::sea_orm::Value::String(Some("alice".into())),
             ],
         );
         assert_eq!(stmt.sql, "WHERE id = $1 AND name = $2");
@@ -1495,7 +1495,7 @@ mod tests {
     async fn dbnexus_user_repository_works_with_postgres_backend() {
         use crate::dao::init_dbnexus;
         use crate::dao::repository::sqlite::DbnexusUserRepository;
-        use sea_orm::ConnectionTrait;
+        use dbnexus::sea_orm::ConnectionTrait;
 
         let database_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
             panic!("DATABASE_URL 未设置，请指向 PostgreSQL 连接字符串");

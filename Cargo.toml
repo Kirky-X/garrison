@@ -109,7 +109,6 @@ oxcache = { version = "0.5.0-rc.4", path = "../base/oxcache", default-features =
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
 dbnexus = { optional = true, default-features = false, workspace = true }
-sea-orm = { version = "2.0", default-features = false, features = ["sqlx-sqlite", "runtime-tokio-rustls"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 tracing-subscriber = { optional = true, default-features = false, features = ["fmt", "json", "env-filter"], workspace = true }
 opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
@@ -137,7 +136,7 @@ ipnetwork = { version = "0.21", optional = true, default-features = false }
 sha1 = { version = "0.11", optional = true, default-features = false }
 quick-xml = { version = "0.42", default-features = false, features = ["serialize"], optional = true }
 # 版本与 oxcache 0.5 的 redis 间接依赖保持一致，避免双版本共存
-redis = { version = "1.7", default-features = false, features = ["aio", "tokio-comp", "connection-manager", "script"], optional = true }
+
 futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true }
@@ -249,7 +248,7 @@ cache-memory = ["oxcache/memory", "oxcache/serialization", "oxcache/metrics", "o
 # 缓存审计事件流（吸收 oxcache/audit）：hit/miss/set/delete/evict/expired 结构化
 # 事件经 TracingAuditPublisher 桥接 tracing，键名自动脱敏（GarrisonDaoOxcache 自动接线）
 cache-audit = ["cache-memory", "oxcache/audit", "oxcache/telemetry"]
-cache-redis = ["cache-memory", "oxcache/redis", "oxcache/lua", "dep:redis", "oxcache/compression"]
+cache-redis = ["cache-memory", "oxcache/redis", "oxcache/lua", "oxcache/pubsub", "oxcache/compression"]
 cache-lock = ["cache-redis", "oxcache/lock"]
 cache-batch = ["cache-memory", "oxcache/batch"]
 # 跨实例缓存一致性：oxcache 键空间通知失效（多实例部署下 L1 自动同步）
@@ -274,7 +273,6 @@ db-base = [
     "dbnexus/pool-warmup",
     "dbnexus/failover",
     "dbnexus/observability",
-    "dep:sea-orm",
 ]
 # db-sqlite 启用 sqlite embedded 驱动
 db-sqlite = ["db-base", "dbnexus/sqlite"]

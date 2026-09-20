@@ -23,8 +23,8 @@ use super::GarrisonDao;
 use crate::dao::repository::make_statement;
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
+use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Value};
 use dbnexus::DbPool;
-use sea_orm::{ConnectionTrait, DbBackend, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -379,7 +379,7 @@ impl GarrisonDao for GarrisonDaoDbnexus {
 mod tests {
     use super::*;
     use crate::dao::{init_dbnexus, GarrisonMigration, InMemoryDao};
-    use sea_orm::Statement;
+    use dbnexus::sea_orm::Statement;
     use std::path::PathBuf;
 
     /// 创建已执行 core 迁移的 sqlite 内存 DAO，KV 委托为 `InMemoryDao`。

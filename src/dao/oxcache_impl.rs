@@ -756,7 +756,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// eval_lua 委托 oxcache 的 `Cache::eval_lua` 执行 Redis Lua 脚本。
     ///
     /// 仅在 `cache-redis` feature 启用时可用（启用 `oxcache/lua` → 编译 `Cache::eval_lua`）。
-    /// 将 `redis::Value` 递归转换为 `Vec<String>`，与 `GarrisonDao::eval_lua` 签名对齐。
+    /// 将 `oxcache::redis::Value` 递归转换为 `Vec<String>`，与 `GarrisonDao::eval_lua` 签名对齐。
     ///
     /// 非 Redis 后端（内存模式）调用时返回 `Operation` 错误（oxcache 语义），
     /// 调用方应据此降级到非原子路径。
@@ -778,7 +778,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     }
 }
 
-/// 将 `redis::Value` 递归转换为 `Vec<String>`。
+/// 将 `oxcache::redis::Value` 递归转换为 `Vec<String>`。
 ///
 /// 匹配 redis 1.5 的 `Value` 枚举变体：
 /// - `Nil` → 空
@@ -791,19 +791,23 @@ impl GarrisonDao for GarrisonDaoOxcache {
 /// - `Map` → 递归展平 key-value 对
 /// - `Attribute` → 递归转换 data 部分
 #[cfg(feature = "cache-redis")]
-fn redis_value_to_strings(value: redis::Value) -> Vec<String> {
+fn redis_value_to_strings(value: oxcache::redis::Value) -> Vec<String> {
     match value {
-        redis::Value::Nil => vec![],
-        redis::Value::Int(i) => vec![i.to_string()],
-        redis::Value::BulkString(v) => {
+        oxcache::redis::Value::Nil => vec![],
+        oxcache::redis::Value::Int(i) => vec![i.to_string()],
+        oxcache::redis::Value::BulkString(v) => {
             vec![String::from_utf8_lossy(&v).to_string()]
         },
-        redis::Value::SimpleString(s) => vec![s],
-        redis::Value::Okay => vec!["OK".to_string()],
-        redis::Value::Double(d) => vec![d.to_string()],
-        redis::Value::Array(items) => items.into_iter().flat_map(redis_value_to_strings).collect(),
-        redis::Value::Set(items) => items.into_iter().flat_map(redis_value_to_strings).collect(),
-        redis::Value::Map(pairs) => {
+        oxcache::redis::Value::SimpleString(s) => vec![s],
+        oxcache::redis::Value::Okay => vec!["OK".to_string()],
+        oxcache::redis::Value::Double(d) => vec![d.to_string()],
+        oxcache::redis::Value::Array(items) => {
+            items.into_iter().flat_map(redis_value_to_strings).collect()
+        },
+        oxcache::redis::Value::Set(items) => {
+            items.into_iter().flat_map(redis_value_to_strings).collect()
+        },
+        oxcache::redis::Value::Map(pairs) => {
             // 预分配：每个 pair 产生 key + value 两个字符串
             let mut result = Vec::with_capacity(pairs.len() * 2);
             for (k, v) in pairs {
@@ -812,7 +816,7 @@ fn redis_value_to_strings(value: redis::Value) -> Vec<String> {
             }
             result
         },
-        redis::Value::Attribute { data, .. } => redis_value_to_strings(*data),
+        oxcache::redis::Value::Attribute { data, .. } => redis_value_to_strings(*data),
         _ => vec!["[unsupported redis value type]".to_string()],
     }
 }
@@ -1407,26 +1411,32 @@ mod tests {
         #[test]
         fn redis_value_to_strings_scalars() {
             assert!(
-                redis_value_to_strings(redis::Value::Nil).is_empty(),
+                redis_value_to_strings(oxcache::redis::Value::Nil).is_empty(),
                 "Nil → 空"
             );
-            assert_eq!(redis_value_to_strings(redis::Value::Int(-7)), vec!["-7"]);
             assert_eq!(
-                redis_value_to_strings(redis::Value::BulkString(b"hello".to_vec())),
+                redis_value_to_strings(oxcache::redis::Value::Int(-7)),
+                vec!["-7"]
+            );
+            assert_eq!(
+                redis_value_to_strings(oxcache::redis::Value::BulkString(b"hello".to_vec())),
                 vec!["hello"]
             );
             // 非法 UTF-8 → lossy 替换字符
             assert_eq!(
-                redis_value_to_strings(redis::Value::BulkString(vec![0xff])),
+                redis_value_to_strings(oxcache::redis::Value::BulkString(vec![0xff])),
                 vec!["\u{FFFD}"]
             );
             assert_eq!(
-                redis_value_to_strings(redis::Value::SimpleString("PONG".to_string())),
+                redis_value_to_strings(oxcache::redis::Value::SimpleString("PONG".to_string())),
                 vec!["PONG"]
             );
-            assert_eq!(redis_value_to_strings(redis::Value::Okay), vec!["OK"]);
             assert_eq!(
-                redis_value_to_strings(redis::Value::Double(1.5)),
+                redis_value_to_strings(oxcache::redis::Value::Okay),
+                vec!["OK"]
+            );
+            assert_eq!(
+                redis_value_to_strings(oxcache::redis::Value::Double(1.5)),
                 vec!["1.5"]
             );
         }
@@ -1436,36 +1446,38 @@ mod tests {
         fn redis_value_to_strings_composites_and_fallback() {
             // Array 嵌套展平
             assert_eq!(
-                redis_value_to_strings(redis::Value::Array(vec![
-                    redis::Value::Int(1),
-                    redis::Value::Array(vec![redis::Value::Okay]),
+                redis_value_to_strings(oxcache::redis::Value::Array(vec![
+                    oxcache::redis::Value::Int(1),
+                    oxcache::redis::Value::Array(vec![oxcache::redis::Value::Okay]),
                 ])),
                 vec!["1", "OK"]
             );
             // Set 展平
             assert_eq!(
-                redis_value_to_strings(redis::Value::Set(vec![redis::Value::Int(2)])),
+                redis_value_to_strings(oxcache::redis::Value::Set(vec![
+                    oxcache::redis::Value::Int(2)
+                ])),
                 vec!["2"]
             );
             // Map 递归展平 key-value 对
             assert_eq!(
-                redis_value_to_strings(redis::Value::Map(vec![(
-                    redis::Value::BulkString(b"k".to_vec()),
-                    redis::Value::Int(1),
+                redis_value_to_strings(oxcache::redis::Value::Map(vec![(
+                    oxcache::redis::Value::BulkString(b"k".to_vec()),
+                    oxcache::redis::Value::Int(1),
                 )])),
                 vec!["k", "1"]
             );
             // Attribute → data 部分
             assert_eq!(
-                redis_value_to_strings(redis::Value::Attribute {
-                    data: Box::new(redis::Value::Int(9)),
+                redis_value_to_strings(oxcache::redis::Value::Attribute {
+                    data: Box::new(oxcache::redis::Value::Int(9)),
                     attributes: vec![],
                 }),
                 vec!["9"]
             );
             // 未匹配变体（Boolean 无显式分支）→ 占位符
             assert_eq!(
-                redis_value_to_strings(redis::Value::Boolean(true)),
+                redis_value_to_strings(oxcache::redis::Value::Boolean(true)),
                 vec!["[unsupported redis value type]"]
             );
         }

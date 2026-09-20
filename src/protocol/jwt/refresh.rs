@@ -115,8 +115,8 @@ mod service {
     use super::RefreshTokenRecord;
     use crate::error::{GarrisonError, GarrisonResult};
     use crate::protocol::jwt::JwtHandler;
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use dbnexus::DbPool;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use sha2::{Digest, Sha256};
     use std::sync::{Arc, RwLock};
     use uuid::Uuid;
@@ -768,8 +768,8 @@ mod db_sqlite_tests {
     use crate::dao::{init_dbnexus, GarrisonMigration};
     use crate::error::GarrisonError;
     use crate::protocol::jwt::JwtHandler;
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use dbnexus::DbPool;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
     use std::path::PathBuf;
     use std::sync::{Arc, RwLock};
 

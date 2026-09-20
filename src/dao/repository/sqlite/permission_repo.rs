@@ -8,8 +8,8 @@ use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, NewPermission, PermissionRepository, PermissionRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
+use dbnexus::sea_orm::{ConnectionTrait, QueryResult};
 use dbnexus::DbPool;
-use sea_orm::{ConnectionTrait, QueryResult};
 
 impl DbnexusPermissionRepository {
     /// 创建实例。

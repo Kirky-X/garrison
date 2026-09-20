@@ -8,8 +8,8 @@ use crate::dao::dao_session;
 use crate::dao::repository::{make_statement, UserExtRepository, UserExtRow};
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
+use dbnexus::sea_orm::{ConnectionTrait, QueryResult};
 use dbnexus::DbPool;
-use sea_orm::{ConnectionTrait, QueryResult};
 
 impl DbnexusUserExtRepository {
     /// 创建实例。
@@ -77,7 +77,7 @@ impl UserExtRepository for DbnexusUserExtRepository {
         // SQLite/Postgres 使用 ON CONFLICT ... DO UPDATE SET ... = excluded.field；
         // MySQL 使用 ON DUPLICATE KEY UPDATE ... = VALUES(field)（MySQL 不支持 ON CONFLICT 语法）。
         let new_id = uuid::Uuid::new_v4().to_string();
-        let sql = if conn.get_database_backend() == sea_orm::DbBackend::MySql {
+        let sql = if conn.get_database_backend() == dbnexus::sea_orm::DbBackend::MySql {
             "INSERT INTO app_user_ext (id, user_id, field_key, field_value, field_type, tenant_id) \
              VALUES (?, ?, ?, ?, ?, ?) \
              ON DUPLICATE KEY UPDATE \

@@ -445,7 +445,7 @@ fn postgres_migrations_dir() -> std::path::PathBuf {
 /// dbnexus 的 DDL 白名单 guard，同 tests/repository/postgres_integration.rs）。
 #[cfg(feature = "db-postgres")]
 async fn reset_postgres_database(pool: &dbnexus::DbPool) {
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement};
     let session = pool
         .get_session("admin")
         .await
@@ -483,8 +483,8 @@ async fn acc_env_005_postgres_connect_and_migrate_core_tables() {
         return;
     }
 
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement};
     use garrison::dao::{init_dbnexus, GarrisonMigration};
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     let pool = init_dbnexus(&postgres_url())
         .await
@@ -656,8 +656,8 @@ async fn setup_mysql_pool() -> (
 /// 同 tests/db_mysql_testcontainers.rs::retry_init_dbnexus）。
 #[cfg(feature = "db-mysql")]
 async fn retry_init_mysql_pool(url: &str) -> dbnexus::DbPool {
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement};
     use garrison::dao::init_dbnexus;
-    use sea_orm::{ConnectionTrait, DbBackend, Statement};
 
     let mut last_err = None;
     for _ in 0..30u32 {
@@ -698,8 +698,8 @@ async fn acc_env_007_mysql_testcontainers_connect_and_migrate() {
         return;
     }
 
+    use dbnexus::sea_orm::DbBackend;
     use garrison::dao::GarrisonMigration;
-    use sea_orm::DbBackend;
 
     let (pool, _container) = setup_mysql_pool().await;
     let session = pool.get_session("admin").await.expect("get_session 应成功");
