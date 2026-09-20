@@ -786,7 +786,7 @@ counter-overflow = counter overflow: key={$arg0}
 # --- strategy ---
 strategy-login-frequency-exceeded = login frequency exceeded: IP {$arg0}
 strategy-account-locked = account locked: login_id={$arg0}
-strategy-geo-anomaly = geo anomaly detected: login_id={$arg0} last location differs from current
+strategy-geo-anomaly = geo anomaly detected: login_id={$arg0} last location {$arg1} differs from current
 strategy-token-reuse-blocked = token reuse detected: login_id={$arg0} token has been blacklisted
 strategy-device-anomaly = device anomaly: login_id={$arg0} device fingerprint {$arg1} not in known device list
 
