@@ -249,17 +249,17 @@ impl OidcHandler {
         let decoded = decode::<OidcClaims>(id_token, &key, &validation).map_err(|e| {
             let msg = e.to_string();
             if msg.contains("ExpiredSignature") {
-                // L6 修复：错误消息不含 token 内容，仅含 jsonwebtoken 错误类别
+                // 修复：错误消息不含 token 内容，仅含 jsonwebtoken 错误类别
                 GarrisonError::ExpiredToken(format!("jwt-expired::{}", e))
             } else {
-                // L6 修复：错误消息不含 token 内容/密钥，仅含 jsonwebtoken 错误类别
+                // 修复：错误消息不含 token 内容/密钥，仅含 jsonwebtoken 错误类别
                 //（如 "InvalidSignature" / "InvalidToken"）
                 GarrisonError::InvalidToken(format!("jwt-invalid::{}", e))
             }
         })?;
         let claims = decoded.claims;
         // OIDC 规范要求校验 iss 和 aud
-        // L6 修复：错误消息不含 claims.iss 实际值（虽 iss 通常公开，但 fail-closed 不泄露任何 token claim）
+        // 修复：错误消息不含 claims.iss 实际值（虽 iss 通常公开，但 fail-closed 不泄露任何 token claim）
         if claims.iss != self.issuer {
             return Err(GarrisonError::InvalidToken(
                 "oidc-iss-mismatch::".to_string(),
@@ -267,13 +267,13 @@ impl OidcHandler {
         }
         // aud 支持String 或数组形式（RFC 7519 §4.1.3）。
         // 校验 `aud` 是否包含本客户端的 `client_id`，与 `sso/oidc.rs` 行为对齐。
-        // L6 修复：错误消息不含 claims.aud 实际值（虽 aud 通常公开，但 fail-closed 不泄露任何 token claim）
+        // 修复：错误消息不含 claims.aud 实际值（虽 aud 通常公开，但 fail-closed 不泄露任何 token claim）
         if !claims.aud.contains(&self.audience) {
             return Err(GarrisonError::InvalidToken(
                 "oidc-aud-mismatch::".to_string(),
             ));
         }
-        // nonce 校验（防重放）— L2 修复：使用 subtle::ConstantTimeEq 常量时间比较，
+        // nonce 校验（防重放）— 修复：使用 subtle::ConstantTimeEq 常量时间比较，
         // 避免 nonce 长度/前缀差异导致的 timing side-channel 泄漏 nonce 信息。
         // subtle 的 ct_eq 在长度不等时返回 0（不提前 return），全程常量时间。
         if !bool::from(claims.nonce.as_bytes().ct_eq(expected_nonce.as_bytes())) {
@@ -459,7 +459,7 @@ mod tests {
         }
     }
 
-    /// 篡改 id_token 返回 InvalidToken 错误（L9 修复：强化断言错误类型）。
+    /// 篡改 id_token 返回 InvalidToken 错误（修复：强化断言错误类型）。
     #[test]
     fn verify_id_token_tampered_fails() {
         let handler = make_handler();

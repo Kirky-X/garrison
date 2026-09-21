@@ -107,7 +107,7 @@ impl GarrisonDao for AloneCache {
         self.inner.incr(&self.prefixed_key(key), ttl_seconds).await
     }
 
-    /// M2 修复：compare_and_update_if_greater 委托内部 dao（消除 TOCTOU 竞态）。
+    /// 修复：compare_and_update_if_greater 委托内部 dao（消除 TOCTOU 竞态）。
     ///
     /// 默认实现已改为返回 `NotImplemented`（fail-closed），AloneCache 必须显式 forward
     /// 到 inner dao，保证装饰器透明委托语义，使内部 dao 的原子 CAS 实现得以复用。

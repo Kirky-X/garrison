@@ -38,7 +38,7 @@ impl ResponseError for GarrisonError {
 
     fn error_response(&self) -> HttpResponse {
         tracing::error!(error = ?self, "garrison rejection");
-        // 单次调用 response_parts_i18n() 获取所有字段（M2：消除冗余调用）
+        // 单次调用 response_parts_i18n() 获取所有字段（消除冗余调用）
         let (s, error_code, message, ex_code) = self.response_parts_i18n();
         let status = StatusCode::from_u16(s).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
         let body = if let Some(code) = ex_code {

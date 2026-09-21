@@ -252,32 +252,15 @@ jobs:
         with:
           shared-key: release-full-deps
 
-      - name: Build source package (.crate)
-        run: |
-          # cargo package 构建 .crate 源码包（位于 target/package/）
-          # --no-verify 跳过本地构建验证（已在 test-check 阶段完成）
-          # --allow-dirty 仅用于紧急修复（生产发布前必须 git clean）
-          cargo package --no-verify
-          # 列出生成的 .crate 文件路径，供后续 upload 步骤使用
-          CRATE_FILE=$(find target/package -name "*.crate" -type f | head -1)
-          if [[ -z "$CRATE_FILE" ]]; then
-            echo "::error::未找到 .crate 源码包文件"
-            exit 1
-          fi
-          echo "CRATE_FILE=$CRATE_FILE" >> $GITHUB_ENV
-          echo "构建源码包: $CRATE_FILE"
-
+      # Release 只带 GitHub 自动生成的源码压缩包,不附 .crate/二进制产物。
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ needs.version-consistency.outputs.version }}
           name: Release v${{ needs.version-consistency.outputs.version }}
-          body: ${{ needs.version-consistency.outputs.body }}
+          generate_release_notes: true
           draft: false
           prerelease: ${{ contains(needs.version-consistency.outputs.version, '-rc') || contains(needs.version-consistency.outputs.version, '-beta') || contains(needs.version-consistency.outputs.version, '-alpha') }}
-          # 上传 .crate 源码包作为 Release asset，方便用户从 GitHub 直接下载
-          files: |
-            ${{ env.CRATE_FILE }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

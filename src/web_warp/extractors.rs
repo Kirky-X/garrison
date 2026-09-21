@@ -41,7 +41,7 @@ impl std::fmt::Display for super::GarrisonRejection {
 /// [`Reply for GarrisonError`]、[`Reply for GarrisonRejection`] 与 [`garrison_recover`]
 /// 共用，单一事实来源，确保三框架响应同一形态。
 fn unified_error_reply(err: &GarrisonError) -> Response {
-    // 单次调用 response_parts_i18n() 获取所有字段（M2：消除冗余调用）
+    // 单次调用 response_parts_i18n() 获取所有字段（消除冗余调用）
     let (status, error_code, message, ex_code) = err.response_parts_i18n();
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
     let body = if let Some(code) = ex_code {

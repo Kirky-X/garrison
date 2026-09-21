@@ -19,7 +19,7 @@ const NONCE_HMAC_HKDF_INFO: &[u8] = b"garrison-httpdigest-nonce-v1";
 
 /// 默认 nonce 有效期（秒），RFC 7616 §3.2.1 建议 nonce 应有合理 TTL。
 const DEFAULT_NONCE_TTL_SECONDS: u64 = 300;
-/// Authorization header 最大长度（字节），L5 修复：防止超长 header 导致 DoS。
+/// Authorization header 最大长度（字节），修复：防止超长 header 导致 DoS。
 ///
 /// 8KB 覆盖正常 Digest Auth header（通常 < 1KB），拒绝明显恶意的超长输入。
 /// 超过此长度时 validate_inner 直接返回 false（拒绝认证），不进入 parse_authorization
@@ -430,7 +430,7 @@ impl HttpDigestAuth {
         body: Option<&[u8]>,
         ha1: &str,
     ) -> bool {
-        // L5 修复：input validation，拒绝过长的 Authorization header 防 DoS。
+        // 修复：input validation，拒绝过长的 Authorization header 防 DoS。
         // 超长 header 会触发 O(n) parse_authorization + 多次 hash 计算，
         // 恶意客户端可发送超大 header 耗尽 CPU。8KB 上限覆盖所有合法 Digest Auth 请求。
         if authorization_header.len() > MAX_AUTHORIZATION_HEADER_LEN {
@@ -655,7 +655,7 @@ fn parse_unquoted_value(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) ->
     value
 }
 
-/// 常量时间字符串比较，避免时序攻击（L1 修复）。
+/// 常量时间字符串比较，避免时序攻击。
 ///
 /// 使用 `subtle::ConstantTimeEq` trait 的 `ct_eq` 方法，全程常量时间：
 /// - 长度不等时返回 0（subtle 库内部处理，不提前 return，避免长度泄漏）

@@ -2130,7 +2130,7 @@ mod tests {
     // 测试: required_action_step_returns_failed
     // ------------------------------------------------------------------------
 
-    /// RequiredAction 步骤未实现 → Failed（错误消息 "RequiredAction 步骤在 v0.6.0 未实现"）。
+    /// RequiredAction 步骤未实现 → Failed（错误消息 "RequiredAction 步骤未实现"）。
     /// FlowBuilder 未提供 required_action 方法，直接构造 AuthenticationFlow。
     #[tokio::test]
     async fn required_action_step_returns_failed() {

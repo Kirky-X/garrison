@@ -311,7 +311,7 @@ pub trait GarrisonDao: Send + Sync {
     /// - `Ok(false)`: new_value <= current_value，未更新。
     ///
     /// # 默认实现（返回 NotImplemented）
-    /// 默认实现返回 `GarrisonError::NotImplemented`（M2 修复，消除 TOCTOU 竞态）：
+    /// 默认实现返回 `GarrisonError::NotImplemented`（修复，消除 TOCTOU 竞态）
     /// 原默认实现为 get → parse → compare → set 四步操作，存在 TOCTOU 竞态，
     /// 在并发场景下多个调用可能同时读到旧值并各自执行 set，破坏 nc 单调性。
     /// 此方法用于 HTTP Digest nc 单调性校验等安全敏感场景，必须由后端用原子 CAS 实现。
@@ -2038,10 +2038,10 @@ pub mod tests {
         );
     }
 
-    /// `compare_and_update_if_greater` 默认实现返回 `NotImplemented`（M2 修复）。
+    /// `compare_and_update_if_greater` 默认实现返回 `NotImplemented`。
     ///
     /// 默认实现原为 get → parse → compare → set 四步操作，存在 TOCTOU 竞态。
-    /// M2 修复：改为返回 `NotImplemented`（fail-closed），强制后端重写以使用原子 CAS。
+    /// 修复：改为返回 `NotImplemented`（fail-closed），强制后端重写以使用原子 CAS。
     /// 此测试验证 MinimalDao（不重写任何默认方法）调用时返回 NotImplemented。
     #[tokio::test]
     async fn default_compare_and_update_if_greater_returns_not_implemented() {

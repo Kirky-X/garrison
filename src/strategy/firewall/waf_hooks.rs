@@ -1050,7 +1050,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 URL 编码 `..`（`%2e%2e`）时 WhitePathHook 不短路（FM-013 修复）。
+    /// 验证 path 含 URL 编码 `..`（`%2e%2e`）时 WhitePathHook 不短路。
     #[tokio::test]
     async fn white_path_url_encoded_traversal_not_short_circuited() {
         let log = Arc::new(Mutex::new(Vec::new()));
@@ -1071,7 +1071,7 @@ mod tests {
         );
     }
 
-    /// 验证 path 含 URL 编码 `/`（`%2f`）时 WhitePathHook 不短路（FM-013 修复）。
+    /// 验证 path 含 URL 编码 `/`（`%2f`）时 WhitePathHook 不短路。
     #[tokio::test]
     async fn white_path_url_encoded_slash_not_short_circuited() {
         let log = Arc::new(Mutex::new(Vec::new()));

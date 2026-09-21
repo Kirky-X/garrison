@@ -77,7 +77,7 @@ struct AuthServerBootstrapConfig {
     internal_port: u16,
     #[config(default = 100)]
     rate_limit: u32,
-    /// 内网 API Key——无默认值，未配置即启动失败（fail-closed, M-SAST-1/M-5）
+    /// 内网 API Key——无默认值，未配置即启动失败（fail-closed, M-SAST-1）
     internal_api_key: String,
     #[config(default = false)]
     external_login_enabled: bool,
