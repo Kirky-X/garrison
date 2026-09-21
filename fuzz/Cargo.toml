@@ -1,0 +1,55 @@
+[package]
+name = "garrison-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+# block_on async trait 方法（fuzz_saml_xml）
+tokio = { version = "1", default-features = false, features = ["rt"] }
+# OidcDiscoveryConfig 反序列化（fuzz_oidc_discovery）
+serde_json = "1"
+
+[dependencies.garrison]
+path = ".."
+# fuzz 覆盖的解析入口所需 feature：
+# - protocol-saml：DefaultSamlProvider::parse_response（传递 protocol-sso/protocol-jwt）
+# - protocol-jwt：JwtHandler::verify
+# - protocol-httpbasic / protocol-httpdigest：Authorization 头解析
+features = ["protocol-saml", "protocol-jwt", "protocol-httpbasic", "protocol-httpdigest"]
+
+# Use independent workspace for fuzzers
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "fuzz_saml_xml"
+path = "fuzz_targets/fuzz_saml_xml.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_oidc_discovery"
+path = "fuzz_targets/fuzz_oidc_discovery.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_jwt_verify"
+path = "fuzz_targets/fuzz_jwt_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_http_auth_headers"
+path = "fuzz_targets/fuzz_http_auth_headers.rs"
+test = false
+doc = false
+bench = false

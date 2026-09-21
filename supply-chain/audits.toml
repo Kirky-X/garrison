@@ -1,0 +1,62 @@
+
+# cargo-vet audits file
+
+[[audits.confers]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.5"
+notes = "配置加载框架（confers 系），声明式配置解析与校验。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.confers-macros]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.5"
+notes = "confers 过程宏，无网络/文件系统副作用。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.dbnexus]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.5"
+notes = "数据库访问框架（dbnexus 系），SQL 参数化与连接池。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.dbnexus-macros]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.5"
+notes = "dbnexus 过程宏，生成 DAO 样板代码。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.inklog]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.3.0-rc.5"
+notes = "结构化审计日志库（inklog 系），脱敏与压缩管线。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.limiteron]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.3.0-rc.5"
+notes = "限流框架（limiteron 系），滑动窗口/封禁/GeoMatch。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.oxcache]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.5"
+notes = "缓存框架（oxcache 系），多级缓存与 Redis 协同。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.sdforge]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.5"
+notes = "声明式路由运行时（sdforge 系），HTTP/gRPC 路由注册。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.sdforge-macros]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.5"
+notes = "sdforge 过程宏，#[forge] 路由注册代码生成。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.trait-kit]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.6"
+notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）。"

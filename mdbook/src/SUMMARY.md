@@ -40,6 +40,10 @@
 - [异常消息 i18n](./i18n.md)
 - [防火墙安全钩子](./firewall.md)
 
+# 安全治理
+
+- [威胁模型（STRIDE）](./security-threat-model.md)
+
 # 运维与部署
 
 - [部署指南](./deployment.md)

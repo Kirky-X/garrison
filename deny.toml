@@ -8,8 +8,11 @@
 db-urls = ["https://github.com/RustSec/advisory-db"]
 yanked = "deny"
 # rsa 0.9.x 有 RUSTSEC-2023-0071（Marvin Attack 定时侧信道），但目前无 patched 版本。
-# garrison 在 social-alipay feature 中使用 RSA 签名（SigningKey/Signer），不使用解密功能。
-# Marvin Attack 针对 RSA 解密操作的时序侧信道，签名操作不受影响，漏洞不可达。
+# garrison 使用 rsa 的路径全部为私钥签名/公钥验签，不存在解密路径：
+# 1. social-alipay feature：RSA 签名（SigningKey/Signer）。
+# 2. protocol-jwt 非对称扩展（RS256/RS384/RS512）：私钥签名 + 公钥验签（验证端
+#    经 pkcs1/pkcs8 纯 DER 解析提取 (n,e)，不走 rsa crate 解密 API）。
+# Marvin Attack 针对 RSA 解密操作的时序侧信道，签名/验签操作不受影响，漏洞不可达。
 # 另外 rsa 也作为 dev-dependency 用于 keycloak-oidc 测试生成 RSA 密钥对。
 # 官方状态：No patch available（截至 2026-07-13），显式忽略 advisory。
 # 参见 https://rustsec.org/advisories/RUSTSEC-2023-0071

@@ -17,6 +17,10 @@ mod handler;
 #[cfg(test)]
 mod tests;
 
+use handler::KeyMaterial;
+
+pub use handler::JwkPublicKey;
+
 use jsonwebtoken::Algorithm;
 use serde::{Deserialize, Serialize};
 
@@ -78,4 +82,10 @@ pub struct JwtHandler {
     pub algorithm: Algorithm,
     /// 可选设备标识（签发时写入 claims）。
     pub device: Option<String>,
+    /// 密钥材料（crate 内私有）：决定 sign/verify 的密钥来源与算法白名单。
+    ///
+    /// `new()` 默认 [`KeyMaterial::Hs`](crate::protocol::jwt::KeyMaterial)；非对称
+    /// 密钥经 `with_rsa_private_pem` / `with_ec_pem` / `with_ed_pem` 构造器注入
+    /// （见 `handler.rs`）。算法与密钥类型的匹配约束见 `validate_algorithm_match`。
+    pub(crate) key_material: KeyMaterial,
 }

@@ -74,6 +74,46 @@ services:
       retries: 24
       start_period: 30s
 
+  # === Redis Sentinel 故障演练拓扑（chaos profile，默认不启动）===
+  # 单 Sentinel + quorum 1 仅用于演练提速；生产至少 3 Sentinel + quorum 2。
+  # 场景脚本：scripts/chaos_redis.sh sentinel
+  redis-chaos-master:
+    image: redis:7-alpine
+    container_name: garrison-chaos-master
+    profiles: ["chaos"]
+    ports:
+      - "16380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis-chaos-replica:
+    image: redis:7-alpine
+    container_name: garrison-chaos-replica
+    profiles: ["chaos"]
+    command: ["redis-server", "--replicaof", "redis-chaos-master", "6379"]
+    depends_on:
+      redis-chaos-master:
+        condition: service_healthy
+    ports:
+      - "16381:6379"
+
+  redis-chaos-sentinel:
+    image: redis:7-alpine
+    container_name: garrison-chaos-sentinel
+    profiles: ["chaos"]
+    # Sentinel 要求配置文件可写（failover 时重写），落到 /tmp
+    # Sentinel 在解析 monitor 行时立即做 DNS 解析，compose 网络 DNS 未就绪会
+    # FATAL——用循环重试直至解析成功
+    entrypoint: sh -c 'printf "sentinel resolve-hostnames yes\nsentinel announce-hostnames yes\nsentinel monitor mymaster redis-chaos-master 6379 1\nsentinel down-after-milliseconds mymaster 3000\nsentinel failover-timeout mymaster 10000\nsentinel parallel-syncs mymaster 1\n" > /tmp/sentinel.conf; until redis-server /tmp/sentinel.conf --sentinel; do echo "sentinel retry - waiting for DNS"; sleep 2; done'
+    depends_on:
+      redis-chaos-master:
+        condition: service_healthy
+    ports:
+      - "26379:26379"
+
 volumes:
   redis-data:
   postgres-data:

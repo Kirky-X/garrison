@@ -851,3 +851,225 @@ async fn acc_oauth2_016_keycloak_oidc_rp_full_flow_e2e() {
         keycloak_claims.resource_access
     );
 }
+
+// ============================================================================
+// redirect_uri / state / nonce 对抗测试（审计项 2：OAuth state/nonce 绕过、
+// redirect_uri 精确匹配、token/state 重放的对抗回归锁定）
+// ============================================================================
+
+/// （对抗）：redirect_uri 白名单精确匹配锁定（garrison 自有 AS 侧，进程内真实
+/// `AuthorizeHandler`，非 mock）——白名单含 query string 的既有行为保持（精确相等
+/// 放行）；前缀 / 子路径 / 大小写 / 百分号编码变体全部拒绝。open-redirect 防线的
+/// 回归锚点：白名单匹配一旦漂移为前缀/大小写不敏感匹配，本测试即红。
+#[cfg(feature = "oauth2-server")]
+#[tokio::test]
+#[serial]
+async fn acc_oauth2_017_redirect_uri_exact_match_adversarial() {
+    use garrison::dao::InMemoryDao;
+    use garrison::oauth2_server::authorize::{
+        generate_code_challenge, AuthorizeHandler, AuthorizeRequest, AuthorizeResponse,
+    };
+    use garrison::oauth2_server::client::{DaoOAuth2ClientStore, GrantType, OAuth2ClientStore};
+    use std::sync::Arc;
+
+    const ALLOWED: &str = "https://app.example.com/cb?tenant=acme";
+
+    let dao = Arc::new(InMemoryDao::new());
+    let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+    let handler =
+        AuthorizeHandler::new(store.clone(), dao, "https://auth.example.com/login".into());
+
+    store
+        .create(
+            garrison::oauth2_server::client::OAuth2Client::new(
+                "acc-017",
+                "secret-123",
+                vec![ALLOWED.to_string()],
+                vec![GrantType::AuthorizationCode],
+                vec!["read".into()],
+            )
+            .expect("client 构造应成功"),
+        )
+        .await
+        .expect("client 注册应成功");
+
+    let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+    let challenge = generate_code_challenge(verifier);
+    let mut req = AuthorizeRequest {
+        response_type: "code".into(),
+        client_id: "acc-017".into(),
+        redirect_uri: ALLOWED.into(),
+        scope: Some("read".into()),
+        state: Some("acc-017-state".into()),
+        code_challenge: challenge,
+        code_challenge_method: "S256".into(),
+    };
+
+    // 白名单含 query string 的既有行为保持：精确相等 → 放行（Redirect）
+    let resp = handler
+        .authorize(&req, Some(1))
+        .await
+        .expect("精确匹配（含 query string）应放行");
+    match resp {
+        AuthorizeResponse::Redirect { location } => {
+            assert!(
+                location.starts_with(ALLOWED),
+                "重定向应落在白名单 URI 上，实际: {}",
+                location
+            );
+        },
+        other => panic!("期望 Redirect，实际: {:?}", other),
+    }
+
+    // 对抗变体：全部必须拒绝（任何变体被放行即 open-redirect 防线失效）
+    let variants: Vec<(&str, String)> = vec![
+        // 前缀变体：白名单 URI 前缀 + 附加路径段
+        ("path-prefix", format!("{}/extra", ALLOWED)),
+        // 子路径变体：scheme+host 相同、路径不同
+        (
+            "sub-path",
+            "https://app.example.com/cb/tenant=acme".to_string(),
+        ),
+        // query 注入变体：额外参数拼接
+        ("query-append", format!("{}&evil=1", ALLOWED)),
+        // 大小写变体：host / scheme 大小写混淆
+        (
+            "case-variant",
+            "https://app.example.com/CB?tenant=acme".to_string(),
+        ),
+        // 百分号编码变体：query 值编码形式不同（%61cme ≙ acme）
+        (
+            "percent-encoded",
+            "https://app.example.com/cb?tenant=%61cme".to_string(),
+        ),
+    ];
+    for (name, uri) in variants {
+        req.redirect_uri = uri;
+        let result = handler.authorize(&req, Some(1)).await;
+        assert!(
+            result.is_err(),
+            "redirect_uri 变体 [{}] 必须被精确匹配拒绝，实际放行",
+            name
+        );
+    }
+}
+
+/// （对抗）：state 缺失与旧回调重放拒绝——
+/// 1) state 缺失（expected/actual 任一空串）：客户端 fail-closed 拦截，不发 HTTP；
+/// 2) state 重复使用（攻击者重放旧回调 URL：旧 state + 已消费授权码）：
+///    客户端 state 比对通过（旧 state 与预期一致），由授权服务器授权码单次消费
+///    语义拒绝（400 invalid_grant）——state 防护 + 单次消费双层防线端到端锁定。
+#[tokio::test]
+#[serial]
+async fn acc_oauth2_018_state_missing_and_callback_replay_rejected() {
+    let fx = KeycloakFixture::new();
+    require_keycloak!(fx);
+    let client = fx.oauth2_client(CLIENT_SECRET, REDIRECT_LOCAL);
+
+    // 1) state 缺失：客户端 fail-closed（不发 HTTP）
+    let verifier = "a".repeat(43);
+    for (expected, actual) in [("", ""), ("expected", ""), ("", "actual")] {
+        let err = client
+            .exchange_code_with_pkce("code-x", expected, actual, &verifier)
+            .await
+            .unwrap_err();
+        match err {
+            GarrisonError::OAuth2(msg) => {
+                assert!(
+                    msg.contains("oauth2-state-missing"),
+                    "state 缺失应返回 state-missing，实际: {}",
+                    msg
+                );
+            },
+            other => panic!("期望 OAuth2(state-missing)，实际: {:?}", other),
+        }
+    }
+
+    // 2) 旧回调重放：真实流程获取授权码 → 正常交换 → 重放同一回调
+    //    （同 state、同 code）→ 授权服务器 400 invalid_grant
+    let challenge = OAuth2Client::generate_pkce_challenge(&verifier).expect("challenge 应生成");
+    let (code, state) = real_auth_code(
+        &fx,
+        Some("openid"),
+        REDIRECT_LOCAL,
+        "acc-018-state",
+        Some(&challenge),
+    )
+    .await;
+
+    client
+        .exchange_code_with_pkce(&code, "acc-018-state", &state, &verifier)
+        .await
+        .expect("首次交换应成功");
+
+    let replay = client
+        .exchange_code_with_pkce(&code, "acc-018-state", "acc-018-state", &verifier)
+        .await;
+    assert_oauth2_err(&replay, "400");
+}
+
+/// （对抗）：OIDC nonce 缺失拒绝（garrison OidcHandler 签发/验证原语，进程内
+/// 真实代码）——expected nonce 缺失（空串）fail-closed 拒绝（含空对空）；token
+/// nonce 缺失（签发方未回传）由常量时间比较拒绝；正确 nonce 对照放行。
+#[cfg(feature = "protocol-oidc")]
+#[test]
+#[serial]
+fn acc_oauth2_019_oidc_nonce_missing_rejected() {
+    use garrison::protocol::oauth2::oidc::OidcHandler;
+
+    let handler = OidcHandler::new(
+        "https://auth.example.com",
+        "acc-019-client",
+        "acc-019-signing-secret-with-enough-entropy",
+    )
+    .expect("OidcHandler 构造应成功");
+
+    // nonce 缺失形态 1：调用方未生成 expected nonce（空串）→ fail-closed
+    let token = handler
+        .sign_id_token("1001", "acc-019-nonce", "openid", 3600)
+        .expect("签发应成功");
+    let err = handler.verify_id_token(&token, "").unwrap_err();
+    match err {
+        GarrisonError::OAuth2(msg) => {
+            assert!(
+                msg.contains("oidc-nonce-missing"),
+                "expected nonce 缺失应 fail-closed，实际: {}",
+                msg
+            );
+        },
+        other => panic!("期望 OAuth2(nonce-missing)，实际: {:?}", other),
+    }
+
+    // nonce 缺失形态 2：空对空（token 无 nonce + expected 空）→ 拒绝
+    let nonceless = handler
+        .sign_id_token("1001", "", "openid", 3600)
+        .expect("签发应成功");
+    let err = handler.verify_id_token(&nonceless, "").unwrap_err();
+    match err {
+        GarrisonError::OAuth2(msg) => {
+            assert!(
+                msg.contains("oidc-nonce-missing"),
+                "空对空 nonce 不得放行，实际: {}",
+                msg
+            );
+        },
+        other => panic!("期望 OAuth2(nonce-missing)，实际: {:?}", other),
+    }
+
+    // nonce 缺失形态 3：token nonce 缺失而 expected 非空 → 常量时间比较拒绝
+    let err = handler
+        .verify_id_token(&nonceless, "acc-019-nonce")
+        .unwrap_err();
+    match err {
+        GarrisonError::OAuth2(msg) => {
+            assert!(msg.contains("nonce mismatch"), "实际: {}", msg);
+        },
+        other => panic!("期望 OAuth2(nonce mismatch)，实际: {:?}", other),
+    }
+
+    // 对照：正确 nonce 校验通过
+    let claims = handler
+        .verify_id_token(&token, "acc-019-nonce")
+        .expect("正确 nonce 应放行");
+    assert_eq!(claims.nonce, "acc-019-nonce");
+}

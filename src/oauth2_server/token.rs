@@ -489,6 +489,15 @@ impl TokenHandler {
         self
     }
 
+    /// refresh 轮换服务是否已注入（reuse detection 可用性探针）。
+    ///
+    /// 供 `OAuth2State` 构造完成时的结构性告警与部署自检使用：
+    /// `false` 表示 refresh grant 将走 DAO 退化路径（无 reuse detection）。
+    #[cfg(feature = "db-sqlite")]
+    pub fn has_refresh_rotation(&self) -> bool {
+        self.refresh_rotation.is_some()
+    }
+
     /// 处理 token 请求。
     pub async fn handle(&self, req: &TokenRequest) -> GarrisonResult<TokenResponse> {
         self.handle_with_authorization(req, None).await
@@ -755,6 +764,14 @@ impl TokenHandler {
         }
 
         // DAO fallback 路径 — refresh_token 轮换 + 原子消费旧 token
+        //
+        // 退化路径显性化（每次降级刷新告警一次）：本路径无 reuse detection——
+        // 盗用 refresh_token 的重放仅因单次消费失败而拒绝，不会触发链式撤销，
+        // 攻击者持有的同链其他 token 不受影响。启动期 `OAuth2State::new` 已输出
+        // 结构性 warn，此处为按请求级标记。
+        tracing::warn!(
+            "oauth2 refresh_token rotation not configured: serving refresh grant via DAO fallback without reuse detection — stolen refresh_token replay will NOT trigger chain revocation"
+        );
         //
         // 原子消费（get_and_delete）：读取 + 删除在 DAO 单次临界区内完成，
         // 并发对同一 refresh_token 的刷新仅有一个调用方拿到记录（防双花），
@@ -3255,6 +3272,205 @@ mod refresh_rotation_tests {
         assert!(
             token3_record.is_none(),
             "token3 应已 revoked（链式撤销孙代，validate 返回 None）"
+        );
+    }
+
+    // ========================================================================
+    // 退化路径显性化：未注入 rotation → 结构化 warn（日志验收）
+    // ========================================================================
+
+    /// 进程内日志捕获 writer（fmt Layer 的 MakeWriter，收集格式化行）。
+    #[derive(Clone)]
+    struct LogCapture(Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogCaptureWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            LogCaptureWriter(self.0.clone())
+        }
+    }
+
+    struct LogCaptureWriter(Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl std::io::Write for LogCaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("日志缓冲锁应可用")
+                .push(String::from_utf8_lossy(buf).to_string());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// 退化 refresh（未注入 rotation）必须输出结构性 warn：含 reuse detection
+    /// 不可用后果说明；同时 has_refresh_rotation 探针为 false（对照：注入后为
+    /// true 且不告警）。
+    #[test]
+    fn degraded_refresh_emits_structured_warning() {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let logs = LogCapture(Arc::new(std::sync::Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(logs.clone()),
+        );
+
+        // 单线程 runtime + with_default：保证 warn 事件落在捕获订阅者内
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime 构建应成功");
+
+        let _guard = subscriber.set_default();
+        let logs_value = rt.block_on(async {
+            let handler = make_handler_without_rotation();
+            // 对照探针：未注入 → false
+            assert!(
+                !handler.has_refresh_rotation(),
+                "未注入 rotation 时探针应为 false"
+            );
+
+            let handler = handler.with_password_verifier(Arc::new(TestPasswordVerifier));
+            let client = make_full_client("rot-degraded-warn-001");
+            handler.store.create(client).await.unwrap();
+
+            // password grant 签发（带 refresh_token）
+            let issue_req = TokenRequest {
+                grant_type: "password".into(),
+                client_id: "rot-degraded-warn-001".into(),
+                client_secret: "secret-123".into(),
+                code: None,
+                redirect_uri: None,
+                code_verifier: None,
+                refresh_token: None,
+                scope: None,
+                username: Some("alice".into()),
+                password: Some("wonderland".into()),
+            };
+            let issue_resp = handler
+                .handle(&issue_req)
+                .await
+                .expect("password 签发应成功");
+            let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
+
+            // 退化路径 refresh（rotation 未注入 → DAO fallback + warn）
+            let refresh_req = TokenRequest {
+                grant_type: "refresh_token".into(),
+                client_id: "rot-degraded-warn-001".into(),
+                client_secret: "secret-123".into(),
+                code: None,
+                redirect_uri: None,
+                code_verifier: None,
+                refresh_token: Some(old_refresh),
+                scope: None,
+                username: None,
+                password: None,
+            };
+            handler
+                .handle(&refresh_req)
+                .await
+                .expect("退化路径 refresh 应成功（行为降级非功能损坏）");
+
+            logs.0.lock().expect("日志缓冲锁应可用").clone()
+        });
+
+        let degraded_warns: Vec<&String> = logs_value
+            .iter()
+            .filter(|l| l.contains("rotation not configured"))
+            .collect();
+        assert!(
+            degraded_warns
+                .iter()
+                .any(|l| l.contains("without reuse detection")),
+            "退化 warn 应说明 reuse detection 不可用后果，日志: {:?}",
+            logs_value
+        );
+        assert_eq!(
+            degraded_warns.len(),
+            1,
+            "单次降级刷新应恰好输出一条退化 warn，日志: {:?}",
+            logs_value
+        );
+    }
+
+    /// 注入 rotation 后（对照）：同一流程不再输出退化 warn，探针为 true。
+    #[test]
+    fn rotation_injected_refresh_emits_no_degraded_warning() {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let logs = LogCapture(Arc::new(std::sync::Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(logs.clone()),
+        );
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime 构建应成功");
+
+        let _guard = subscriber.set_default();
+        let logs_value = rt.block_on(async {
+            let handler = make_handler_with_rotation().await;
+            assert!(
+                handler.has_refresh_rotation(),
+                "注入 rotation 后探针应为 true"
+            );
+            let handler = handler.with_password_verifier(Arc::new(TestPasswordVerifier));
+            let client = make_full_client("rot-warn-clean-001");
+            handler.store.create(client).await.unwrap();
+
+            let issue_req = TokenRequest {
+                grant_type: "password".into(),
+                client_id: "rot-warn-clean-001".into(),
+                client_secret: "secret-123".into(),
+                code: None,
+                redirect_uri: None,
+                code_verifier: None,
+                refresh_token: None,
+                scope: None,
+                username: Some("alice".into()),
+                password: Some("wonderland".into()),
+            };
+            let issue_resp = handler
+                .handle(&issue_req)
+                .await
+                .expect("password 签发应成功");
+            let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
+
+            let refresh_req = TokenRequest {
+                grant_type: "refresh_token".into(),
+                client_id: "rot-warn-clean-001".into(),
+                client_secret: "secret-123".into(),
+                code: None,
+                redirect_uri: None,
+                code_verifier: None,
+                refresh_token: Some(old_refresh),
+                scope: None,
+                username: None,
+                password: None,
+            };
+            handler
+                .handle(&refresh_req)
+                .await
+                .expect("统一路径 refresh 应成功");
+
+            logs.0.lock().expect("日志缓冲锁应可用").clone()
+        });
+
+        assert!(
+            !logs_value
+                .iter()
+                .any(|l| l.contains("rotation not configured")),
+            "注入 rotation 后不得输出退化 warn，日志: {:?}",
+            logs_value
         );
     }
 }

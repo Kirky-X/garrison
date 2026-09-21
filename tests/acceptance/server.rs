@@ -1005,6 +1005,8 @@ async fn acc_srv_016_token_password_grant() {
         token_handler,
         revoke_handler,
         introspect_handler,
+        // 本测试不配置非对称签名密钥，JWKS 端点 fail-closed 返回 404
+        jwks_source: None,
     });
 
     let (external_url, _internal_url, _handle) =

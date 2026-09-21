@@ -17,15 +17,18 @@
 
 ### Security
 
+- **OAuth2 state / OIDC nonce 缺失 fail-closed（对抗测试驱动）**：`OAuth2Client::exchange_code_with_pkce` 拒绝空串 state（原双空相等放行，CSRF 注入可静默通过）；`OidcHandler::verify_id_token` 拒绝空串 expected nonce（原空对空恒等放行，防重放锚点失效）。redirect_uri 精确匹配 / state 旧回调重放 / nonce 缺失三形态由验收测试锁定（`tests/acceptance/protocol_oauth2.rs`）。
+- **Refresh Token 轮换退化路径显性化**：`OAuth2State::new` 未注入 `RefreshTokenRotation` 时输出结构性 warn（含 reuse detection 不可用后果），DAO 退化分支每次刷新输出请求级 warn——不再静默降级。
 - **外网登录端点 fail-closed（Critical，C-1）**：`AuthServerConfig` 新增 `external_login_enabled`（默认 **false**）。框架 login 端点不校验凭证（Sa-Token 模型），禁用时 `POST /api/v1/auth/login` 返回 404；开启时启动输出 warn。`auth_server` bin 经 `GARRISON_EXTERNAL_LOGIN_ENABLED` 显式开启；依赖外网登录的测试/示例已显式 opt-in。
 - **密码登录时序侧信道对齐（High，H-1）**：用户不存在分支执行一次等价开销的 dummy Argon2id verify（`DUMMY_ARGON2_HASH`），消除与密码错误分支的响应耗时双峰，防用户名枚举。
 - **OAuth2 password grant 限流 fail-closed（M-3）**：`PasswordRateLimiter::check` 与 `TokenRateLimiter::check_username`（username 维度，撞库防护）DAO 故障时改拒绝；`check_client`（client QPS）保持 fail-open。
-- **JWT 黑名单写失败重试 + 告警（T005）**：撤销写入改为最多 3 次尝试（间隔 100/300ms），最终失败升级 `error` 日志（含 jti 与尝试次数）；对外保持幂等成功。
+- **JWT 黑名单写失败重试 + 告警**：撤销写入改为最多 3 次尝试（间隔 100/300ms），最终失败升级 `error` 日志（含 jti 与尝试次数）；对外保持幂等成功。
 
 ### Breaking
 
+- **`JwtHandler::with_algorithm` 非法组合语义微调（fail-open → fail-closed）**：构造期不再立即失败，设置与密钥类型不匹配的算法后在 `sign`/`verify` 入口被 `validate_algorithm_match` 拦截；推荐构造期 fail-fast 用 `try_with_algorithm`。现有 HS 用法（14 个引用方）行为不变。
 - **事件载荷 token 统一掩码（CWE-532）**：Login / Logout / Kickout / Replaced / TokenExpired / TokenRefresh 事件的 token 类字段改为 `listener::mask_token_for_event` 掩码形式（前 8 字符 + `***`），自定义 listener 无法再从事件获取完整 token（`SessionExpiryListener` 回调参数不变，打日志前应用 `mask_token_for_event` 脱敏）。
-- **`PasswordCredential::new` 哈希器参数 `Box<dyn PasswordHasher>` → `Arc<dyn PasswordHasher>`**：支持 verify 内部 `spawn_blocking`（T007）。
+- **`PasswordCredential::new` 哈希器参数 `Box<dyn PasswordHasher>` → `Arc<dyn PasswordHasher>`**：支持 verify 内部 `spawn_blocking`。
 - **`server-graceful-shutdown` feature 语义落地**：原为空壳（反向依赖 `auth-server`），现改为真实门控；`auth-server` 聚合默认包含。
 - **release profile `panic = "unwind"`（原 `abort`）**：恢复 `catch_unwind` 任务隔离语义（listener 广播 / SSO channel），单 listener panic 不再终止整个认证节点。
 - **移除 `firewall-quota` feature 与 `GarrisonDaoQuotaStorage` 适配器**：全仓零调用（SMS 实际限速走 `GarrisonDaoDistributedLimiter` 双窗口计数），连同 `limiteron/quota-control` 透传一并移除；需要配额控制能力的下游直接使用 limiteron `QuotaController`。
@@ -37,19 +40,27 @@
 
 ### Performance
 
-- **慢哈希移出 async executor（T007）**：bcrypt / Argon2 的 hash / verify 全部登录路径调用点包 `tokio::task::spawn_blocking`，登录风暴不再阻塞 tokio worker。
-- **`CURRENT_BACKEND` 无锁化（T006）**：全局后端引用由 `std::sync::Mutex<Option<Arc<..>>>` 改为 `ArcSwapOption`（Sized 包装 `BackendHandle`），check_login / check_permission 热路径去全局锁；并发初始化 CAS 语义不变。
-- **TokenSession 请求内复用（T008）**：`is_valid_with_session` 返回快照供 hover 复用，消除同一请求内重复读取（原 3-4 次 → 1-2 次）；新增 task_local `CURRENT_LOGIN_ID` 缓存（axum middleware 与 grpc auth_layer 创建作用域），`get_login_id` / `check_permission` 缓存命中零 DAO 读取，logout/kickout/revoke 即时失效。
+- **慢哈希移出 async executor**：bcrypt / Argon2 的 hash / verify 全部登录路径调用点包 `tokio::task::spawn_blocking`，登录风暴不再阻塞 tokio worker。
+- **`CURRENT_BACKEND` 无锁化**：全局后端引用由 `std::sync::Mutex<Option<Arc<..>>>` 改为 `ArcSwapOption`（Sized 包装 `BackendHandle`），check_login / check_permission 热路径去全局锁；并发初始化 CAS 语义不变。
+- **TokenSession 请求内复用**：`is_valid_with_session` 返回快照供 hover 复用，消除同一请求内重复读取（原 3-4 次 → 1-2 次）；新增 task_local `CURRENT_LOGIN_ID` 缓存（axum middleware 与 grpc auth_layer 创建作用域），`get_login_id` / `check_permission` 缓存命中零 DAO 读取，logout/kickout/revoke 即时失效。
 
 ### Fixed
 
-- **`max_login_count` 闸门改读 DAO（T009）**：原读进程本地 `login_token_map`，多节点共享存储部署下闸门被短路形同虚设；现以 DAO AccountSession 为权威数据源。
-- **DbHealthCheck 真实探测（T010）**：新增 `DbHealthCheck::with_pool(pool)`，readiness 执行真实 SQL 往返（`get_session` + `SELECT 1`）；未注入连接池时返回 `Degraded`（原探测内存 KV DAO，Postgres 宕机 readiness 仍 Healthy，K8s 摘流失效）。
+- **`max_login_count` 闸门改读 DAO**：原读进程本地 `login_token_map`，多节点共享存储部署下闸门被短路形同虚设；现以 DAO AccountSession 为权威数据源。
+- **DbHealthCheck 真实探测**：新增 `DbHealthCheck::with_pool(pool)`，readiness 执行真实 SQL 往返（`get_session` + `SELECT 1`）；未注入连接池时返回 `Degraded`（原探测内存 KV DAO，Postgres 宕机 readiness 仍 Healthy，K8s 摘流失效）。
 - **`l1_cache_capacity` 配置静默无效（自研库吸收）**：`GarrisonConfig::l1_cache_capacity` 有默认值有校验但从未接入 L1（恒为库默认 10000）；新增 `UserCacheService::new_with_capacity` 构造器并在 `GarrisonManagerBuilder` 装配路径传入。
 - **listener ∧ ¬credit-metering 组合面编译失败**：`audit.rs` 事件 match 的 `CreditConsumed`/`CreditAlert` 臂缺 `#[cfg(feature = "credit-metering")]` 门控（枚举变体有门控），`audit-log` 等不含 credit-metering 的面必然编译失败；按 `AnomalousLoginDetected` 臂既有模式补门控。
 
 ### Added
 
+- **JWT 非对称签名全链路**：`JwtHandler` 密钥类型感知白名单（`KeyMaterial`：Secret→HS 系 / RSA PEM→RS256/384/512 / EC PEM→ES256/384 / Ed PEM→EdDSA），构造期 fail-fast（`try_with_algorithm` / `with_rsa_private_pem` / `with_ec_pem` / `with_ed_pem`）；config 层 `JWT_ALGORITHMS` 白名单扩展 + 非对称私钥配置（Debug 脱敏，RSA ≥2048 位校验）；`/oauth2/jwks.json` 端点（RFC 7638 kid thumbprint，未配置非对称密钥 404 fail-closed）。
+- **`password_hasher` 配置节**：Argon2id（默认 m=19456/t=2/p=1，OWASP 建议档）/ bcrypt（cost 区间 [10,15]）可配置，`validate_core` 下限校验 + `allow_weak_argon2_params` 显式风险接受位；`build_hasher()` 工厂经 `with_password_hasher` 注入。
+- **CI 安全门禁与供应链可信链**：新增 `security.yml`（Semgrep p/rust+p/secrets、gitleaks 全量 history、cargo vet、SBOM CycloneDX、fuzz 语料回归）与 `fuzz-weekly.yml`（4 个解析入口 target 周一深扫）；`release.yml` 增加 Artifact Attestations（SLSA 构建溯源）+ SBOM Release 资产；`supply-chain/` cargo vet 审核记录入库。
+- **安全文档体系**：`SECURITY.md` 根目录化（GitHub Security tab 识别位置，docs/ 留跳转页）；`docs/THREAT.md` STRIDE 六维 × 框架防御/业务方责任矩阵（mdbook 章节 + README 双语互链）；`docs/adr/` 三篇（Argon2id 选型、CSPRNG 统一策略、常量时间比较）；`docs/SECURITY_ASVS.md` OWASP ASVS 4.0 V2/V3 自评留档；`docs/RELIABILITY.md` Redis 故障演练指南 + `scripts/chaos_redis.sh` 三场景脚本。
+- **OWASP Top 10（2021）映射文档**：`docs/OWASP_TOP10.md` 十类风险逐条映射框架机制（证据链接）与业务方责任边界，与 THREAT.md / SECURITY_ASVS.md 三视角互补；SECURITY.md / THREAT.md / mdbook 互链。
+- **可复现构建验证**：`scripts/verify_reproducible_build.sh` 两次独立编译逐字节比对 `libgarrison.rlib`（SOURCE_DATE_EPOCH 固定 + remap-path-prefix，含负对照语义）；`security.yml` 新增 `reproducible-build` job（PR 持续锚定）；RELEASING.md 记录与 Artifact Attestations 的互补关系。本机实测 PASS（rustc 1.97.1）。
+- **数据合规能力（`data-erasure` feature）**：`compliance::DataErasureService` 按 login_id/IP 擦除框架管辖内数据（会话索引、锁定状态、BF 计数），会话擦除委托 `logout_by_login_id`（并发锁语义不复制），产出留档报告（已删键 + 委托结果 + 业务方残留提示）；`docs/DATA_COMPLIANCE.md` 数据清单/保存期限/删除权行使/本地化部署指引（HIBP 为唯一可选出站、仅 5 字符哈希前缀）。
+- **Redis Sentinel 故障切换演练**：compose 新增 `chaos` profile（master/replica/sentinel，默认不启动）；`chaos_redis.sh` 新增场景 4（复制确认后注入 → 自动提升验证 → 旧主降级回切 → 拓扑收敛断言，生产拓扑差异显式声明）；RELIABILITY.md 场景表与判读标准同步。
 - **验收层去 mock：真实服务测试矩阵（2026-09 用户裁定「仅单元测试可 mock」）**：
   - **真实 Keycloak 26**（compose :18090）：OAuth2/OIDC 协议验收 16 场景 + OIDC RP
     完整流程全部打真实 IdP（realm 经 `scripts/keycloak_provision.py` 幂等供给，
@@ -68,15 +79,15 @@
   - `scripts/e2e_matrix.sh` S0 默认拉起并供给 Keycloak（注入
     `GARRISON_TEST_KEYCLOAK_URL`），新增 S3kc（keycloak-oidc 面）/ S3hibp
     （policy-hibp 面）特性阶段。
-- **优雅停机（T011）**：`server-graceful-shutdown` feature 下 SIGTERM/SIGINT 触发后停止接收新连接并 drain 在途请求（非 TLS 经 `with_graceful_shutdown`；TLS 经 `axum_server::Handle`，30s 上限）；`auth-server` 聚合默认包含，tokio 新增 `signal` feature。
-- **prelude 增补（T014）**：`LoginParams`、`GarrisonDaoOxcache`（cache-* feature）、`Annotation`、`with_current_token`、`current_token`——README 快速开始代码 `use garrison::prelude::*` 即可编译。
-- **README 快速开始回归测试（T018）**：新增 `examples/src/web/readme_quickstart.rs` + `examples/tests/readme_quickstart.rs`（与 README「最小示例」逐字对应），防止文档示例与 API 漂移；lib.rs 顶部示例改为可编译可运行 doctest（T017）。
+- **优雅停机**：`server-graceful-shutdown` feature 下 SIGTERM/SIGINT 触发后停止接收新连接并 drain 在途请求（非 TLS 经 `with_graceful_shutdown`；TLS 经 `axum_server::Handle`，30s 上限）；`auth-server` 聚合默认包含，tokio 新增 `signal` feature。
+- **prelude 增补**：`LoginParams`、`GarrisonDaoOxcache`（cache-* feature）、`Annotation`、`with_current_token`、`current_token`——README 快速开始代码 `use garrison::prelude::*` 即可编译。
+- **README 快速开始回归测试**：新增 `examples/src/web/readme_quickstart.rs` + `examples/tests/readme_quickstart.rs`（与 README「最小示例」逐字对应），防止文档示例与 API 漂移；lib.rs 顶部示例改为可编译可运行 doctest。
 - **`init_dbnexus_with_pool_config(url, PoolConfig)`**：走 dbnexus `DbPoolBuilder` 通路透传连接池参数（max/min connections、超时），替代 `DbPool::new` 的库默认值；需要 failover/副本的部署可直接用 dbnexus builder + `FailoverConfig`。
 
 ### Changed
 
-- **sea-orm 版本 req `2.0.0-rc.43` → `2.0`（T013）**：lock 解析 2.0.3 stable。
-- **文档修复（T015/T016）**：README 安装片段版本与 feature 表修正（`development` 聚合 + 8 个废弃 feature 名替换为 0.9 现名并补全改名映射表）；`route_protected` 仅注册 GET 已标注。
+- **sea-orm 版本 req `2.0.0-rc.43` → `2.0`**：lock 解析 2.0.3 stable。
+- **文档修复**：README 安装片段版本与 feature 表修正（`development` 聚合 + 8 个废弃 feature 名替换为 0.9 现名并补全改名映射表）；`route_protected` 仅注册 GET 已标注。
 
 ### Performance
 
@@ -475,9 +486,9 @@
 - `cargo test --features "secure-httpdigest oauth2-server"`：所有测试通过
 - `cargo clippy --features "secure-httpdigest oauth2-server" -- -D warnings`：0 warnings
 
-### Changed (0.7.x Phase 1 - cargo feature 划分优化)
+### Changed (0.7.x - cargo feature 划分优化)
 
-本期为 **cargo feature 划分优化 Phase 1（保守，0.7.x 兼容）**，基于 kueiku 决策分析（方案 B 分层重构 + 渐进式迁移）实施。无破坏性变更，0.7.x 内向后兼容。
+本期为 **cargo feature 划分优化（保守，0.7.x 兼容）**，基于 kueiku 决策分析（方案 B 分层重构 + 渐进式迁移）实施。无破坏性变更，0.7.x 内向后兼容。
 
 #### Added
 
@@ -490,12 +501,12 @@
 
 #### Documented
 
-- 审查确认 `protocol-apikey` / `protocol-temp` / `secure-xss` / `secure-sanitize` 4 个 feature 均有实际 `#[cfg(feature = "...")]` 门控（如 `src/protocol/mod.rs:32,36` / `src/secure/mod.rs:108,124`），**不是占位特性**，启用后编译对应模块。原 Phase 1 草案误标为 PLACEHOLDER，已修正回正常 feature 注释。
+- 审查确认 `protocol-apikey` / `protocol-temp` / `secure-xss` / `secure-sanitize` 4 个 feature 均有实际 `#[cfg(feature = "...")]` 门控（如 `src/protocol/mod.rs:32,36` / `src/secure/mod.rs:108,124`），**不是占位特性**，启用后编译对应模块。原草案误标为 PLACEHOLDER，已修正回正常 feature 注释。
 - `i18n` feature 标注修正为"启用后编译 i18n 相关测试代码"（src 中有 8 处 `#[cfg(feature = "i18n")]` 测试门控，与运行时行为无关）。
 
 ### 0.8.0 重命名计划预告（破坏性变更）
 
-0.8.0 将执行 cargo feature 重新划分 Phase 2（方案 B 分层重构），包含以下破坏性变更（旧名作为 alias 保留至 0.9.0）：
+0.8.0 将执行 cargo feature 重新划分（方案 B 分层重构），包含以下破坏性变更（旧名作为 alias 保留至 0.9.0）：
 
 | 0.7.x 旧名                | 0.8.0 新名                      | 理由                                           |
 | ------------------------- | ------------------------------- | ---------------------------------------------- |
@@ -608,7 +619,7 @@ v0.7.0 微服务架构 + ABAC/Cedar + OAuth2 Server + 依赖优化 + 架构加�
 
 ### 概述
 
-v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF 级防火墙、三层缓存架构、SMS 验证码渐进式限速、AnomalousLoginDetector 双引擎。通过 specmark `v0.6.7-waf-safe-defaults-cache-sms-anomalous` change 管理，31 个 TDD 任务 + Phase 2.1/4.1/5.1 审计修复 + Phase 6 一致性修复完成。Phase 6 一致性检查 91%（29/31 需求正确实现），修复 3 个不一致项（D3-1 logout 缓存失效集成 + D5-1 interval 校验 + D5-3 spec 同步）。diting 最终审计 88 分（0 CRITICAL + 0 HIGH），tiangang SAST 0 CRITICAL，满足发布门禁。
+v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF 级防火墙、三层缓存架构、SMS 验证码渐进式限速、AnomalousLoginDetector 双引擎。通过 specmark `v0.6.7-waf-safe-defaults-cache-sms-anomalous` change 管理，31 个 TDD 任务 + 审计修复 + 一致性修复完成。一致性检查 91%（29/31 需求正确实现），修复 3 个不一致项（D3-1 logout 缓存失效集成 + D5-1 interval 校验 + D5-3 spec 同步）。diting 最终审计 88 分（0 CRITICAL + 0 HIGH），tiangang SAST 0 CRITICAL，满足发布门禁。
 
 ### 新增
 
@@ -630,7 +641,7 @@ v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF
   - `DirectoryTraversalHook`：路径遍历检测（`../`、`./`、`//`、`%2e`、`%2f`、`%00`）
   - `HeaderHook`：请求头黑名单检测
 - `WafEngine::evaluate` 按 Hook 注册顺序执行，`AllowAndSkip` 短路
-- Phase 2.1 审计修复：WhitePathHook 百分号编码兜底 + BlackPathHook 前缀混淆防护
+- 审计修复：WhitePathHook 百分号编码兜底 + BlackPathHook 前缀混淆防护
 
 #### D3: 三层缓存架构（`three-tier-cache` feature）
 
@@ -651,7 +662,7 @@ v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF
 - 通道回收：未验证验证码超阈值（默认 3）时回收通道
 - `GarrisonDao::incr` 原子递增计数器（`GarrisonDaoOxcache` 用 `atomic_lock` 重写）
 - 验证码使用 `OsRng` 密码学安全随机数生成
-- Phase 4.1 审计修复：decrement_counter 容错 + phone 校验强化
+- 审计修复：decrement_counter 容错 + phone 校验强化
 
 #### D5: AnomalousLoginDetector 双引擎（`anomalous-detector-dual` feature）
 
@@ -666,11 +677,11 @@ v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF
 - `GarrisonDaoOxcache` 新增 `key_index: RwLock<HashSet<String>>` 实现 `keys()` 方法（oxcache 0.3.3 无原生 iter API）
 - `GarrisonConfig` 新增 `anomalous_analyzer_interval_secs`（默认 3600）/ `anomalous_analyzer_burst_threshold`（默认 5）
 - `MAX_SCAN = 10000` DoS 防护 + 扫描耗时 > 1s 告警
-- Phase 5.1 审计修复：CRIT-001 keys() 实现 + HIGH-001 扫描监控 + HIGH-002 纳秒 key
+- 审计修复：keys() 实现 + 扫描监控 + 纳秒 key
 
 ### 修复
 
-- Phase 6 一致性检查修复：
+- 一致性检查修复：
   - D3-1 (P0): `logout` / `logout_by_login_id` 集成 `UserCacheService::invalidate()`（R-three-tier-cache-005）
   - D5-1 (P1): `anomalous_analyzer_interval_secs` 校验从 `== 0` 改为 `< 60`（对齐 spec R-007）
   - D5-3 (P2): spec R-001 存储键描述更新为纳秒精度
@@ -682,7 +693,7 @@ v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF
 
 - `cargo test --features full --lib` → 2404 passed, 0 failed
 - 新增 6 个测试：3 个 three-tier-cache 集成测试 + 3 个 config validate 测试
-- Phase 5 新增 27 个 anomalous_analyzer 测试
+- 新增 27 个 anomalous_analyzer 测试
 
 ### 审计
 
@@ -694,7 +705,7 @@ v0.6.7 安全与性能增强，实施 5 个能力域：forbid 优先语义、WAF
 
 ### 概述
 
-v0.6.6 会话管理增强，实施 6 个能力域：并发登录策略细化、从请求体读取 Token、动态 Active-Timeout、login_token_map 持久化双层、匿名 Session、会话搜索。通过 specmark `v0.6.6-concurrent-login-session-search-anon-rotation` change 管理，33 个 TDD 任务 + Phase 审计修复完成。Phase 4 审计 2 个 HIGH（persistent 方法缺锁 + last_active_at 未更新）+ Phase 5 审计 2 个 HIGH（匿名 token 路由 + TOCTOU 竞态）+ Phase 6 审计 2 个 HIGH（DoS 防护 + 反序列化容错），均已修复。
+v0.6.6 会话管理增强，实施 6 个能力域：并发登录策略细化、从请求体读取 Token、动态 Active-Timeout、login_token_map 持久化双层、匿名 Session、会话搜索。通过 specmark `v0.6.6-concurrent-login-session-search-anon-rotation` change 管理，33 个 TDD 任务 + 审计修复完成。审计 2 个 HIGH（persistent 方法缺锁 + last_active_at 未更新）+ 审计 2 个 HIGH（匿名 token 路由 + TOCTOU 竞态）+ 审计 2 个 HIGH（DoS 防护 + 反序列化容错），均已修复。
 
 ### 新增
 
@@ -724,7 +735,7 @@ v0.6.6 会话管理增强，实施 6 个能力域：并发登录策略细化、�
 - `rebuild_login_token_map()` 方法：从 DAO 重建内存 DashMap（重启恢复）
 - `add_login_token_persistent` / `remove_login_token_persistent`：DAO + 内存双层写入
 - `create` / `logout` 已实现双层写入（DAO AccountSession.tokens + 内存 DashMap）
-- Phase 4 审计修复：persistent 方法用 `with_login_lock` 包裹 + 更新 `last_active_at`
+- 审计修复：persistent 方法用 `with_login_lock` 包裹 + 更新 `last_active_at`
 
 #### D5: 匿名 Session（`anonymous-session` feature）
 
@@ -736,7 +747,7 @@ v0.6.6 会话管理增强，实施 6 个能力域：并发登录策略细化、�
 - `TokenSession` 新增 `is_anon: bool` 字段（feature-gated + `#[serde(default)]`）
 - `GarrisonConfig` 新增 `anon_session_timeout: u64`（默认 1800=30 分钟）
 - `logout` 方法入口检测匿名 token 并路由到 `logout_anon`
-- Phase 5 审计修复：`get_anon_token_session` 用 `with_token_session_lock` 包裹 + 输入校验
+- 审计修复：`get_anon_token_session` 用 `with_token_session_lock` 包裹 + 输入校验
 
 #### D6: 会话搜索（`session-search` feature）
 
@@ -746,22 +757,22 @@ v0.6.6 会话管理增强，实施 6 个能力域：并发登录策略细化、�
 - `search_session_id(keyword, start, size, sort_type)`：按 login_id 搜索 Account-Session
 - `search_token_session_id(keyword, start, size, sort_type)`：按 TokenSession.login_id 搜索 token
 - 支持分页（start/size）和排序，排除匿名 Session
-- Phase 6 审计修复：MAX_SCAN 上限防 DoS + 反序列化容错跳过 + 输入校验
+- 审计修复：MAX_SCAN 上限防 DoS + 反序列化容错跳过 + 输入校验
 
 ### 审计记录
 
-- **Phase 1 审计**（diting 92/100 Approved）
-- **Phase 2 审计**（HIGH 已修复：body 读取安全）
-- **Phase 3 审计**（diting 71/100 Approved with Changes）
-- **Phase 4 审计**（diting 85/100，HIGH-001 persistent 方法缺锁 + MED-001 last_active_at 未更新，已修复）
-- **Phase 5 审计**（diting 85/100，HIGH-001 匿名 token 路由 + tiangang HIGH-001 TOCTOU 竞态，已修复）
-- **Phase 6 审计**（diting 66→修复后通过，HIGH-001 DoS 防护 + HIGH-002 反序列化容错，已修复）
+- **审计 1**（diting 92/100 Approved）
+- **审计 2**（HIGH 已修复：body 读取安全）
+- **审计 3**（diting 71/100 Approved with Changes）
+- **审计 4**（diting 85/100，persistent 方法缺锁 + last_active_at 未更新，已修复）
+- **审计 5**（diting 85/100，匿名 token 路由 + TOCTOU 竞态，已修复）
+- **审计 6**（diting 66→修复后通过，DoS 防护 + 反序列化容错，已修复）
 
 ## [0.6.5] - 2026-07-12
 
 ### 概述
 
-v0.6.5 安全告警 + 设备绑定 + 封禁库 + 二级认证 + Token 清理，实施 5 个能力域：安全告警系统、设备绑定策略、封禁库实现、二级认证瞬态标记、login_token_map 自动清理。通过 specmark `v0.6.5-security-alert-device-binding-disable-safe-auth-cleanup` change 管理，30 个原始任务 + M-002 收敛修复完成。Phase 4 审计发现 2 个 HIGH（service 参数校验 + token 泄露）+ Phase 5 审计 3 个 MEDIUM，均已修复。
+v0.6.5 安全告警 + 设备绑定 + 封禁库 + 二级认证 + Token 清理，实施 5 个能力域：安全告警系统、设备绑定策略、封禁库实现、二级认证瞬态标记、login_token_map 自动清理。通过 specmark `v0.6.5-security-alert-device-binding-disable-safe-auth-cleanup` change 管理，30 个原始任务 + M-002 收敛修复完成。审计发现 2 个 HIGH（service 参数校验 + token 泄露）+ 审计 3 个 MEDIUM，均已修复。
 
 ### 新增
 
@@ -799,7 +810,7 @@ v0.6.5 安全告警 + 设备绑定 + 封禁库 + 二级认证 + Token 清理，�
 - `GarrisonLogicDefault` inherent method：`open_safe`/`is_safe`/`close_safe`
 - service 级瞬态标记：多 service 独立、覆盖更新、duration_secs=0 立即过期
 - `check_safe()` 默认实现改为调用 `is_safe("default")`
-- Phase 4 审计修复：service 空值校验 + token 前缀脱敏（`&token[..8]`）
+- 审计修复：service 空值校验 + token 前缀脱敏（`&token[..8]`）
 - 19 个单元测试
 
 #### D5: login_token_map 自动清理
@@ -809,18 +820,18 @@ v0.6.5 安全告警 + 设备绑定 + 封禁库 + 二级认证 + Token 清理，�
 - `spawn_cleanup_task()`：tokio::spawn 后台定时清理，interval_secs<=0 不启动
 - `GarrisonConfig` 新增 `token_map_cleanup_interval_secs`（默认 300，-1 禁用）
 - `GarrisonManager::init` 集成：启动后台 task，Drop/reset_for_test 时 abort
-- Phase 5 审计修复 M-002：abort 旧 task 移到 spawn 之前，消除重叠窗口
+- 审计修复 M-002：abort 旧 task 移到 spawn 之前，消除重叠窗口
 - 20 个单元测试
 
 ### 审查与修复
 
-#### Phase 4 审计（diting + tiangang）
+#### 审计 4（diting + tiangang）
 
 - **HIGH-001 修复**：`open_safe`/`is_safe`/`close_safe` 未校验 service 空值 → 新增 `InvalidParam` 校验
 - **HIGH-002 修复**：错误消息暴露完整 token → 改为 `&token[..8]` 前缀脱敏（与 `core/auth/mod.rs` 一致）
 - tiangang SAST：0 CRITICAL，0 findings
 
-#### Phase 5 审计（diting + tiangang）
+#### 审计 5（diting + tiangang）
 
 - **M-002 修复**：`init_with_factory_selector` 新旧 cleanup task 短暂重叠 → abort 移到 spawn 之前
 - M-001/M-003 延后：cleanup 频率自适应 / 清理统计 metrics（非阻断优化）
@@ -897,19 +908,19 @@ v0.6.4 Web 安全中间件 + 分布式限流，实施 5 个能力域：WAF 请�
 - **A3 [Medium] 延后**：WAF 每请求重建规则链的堆分配优化（非阻断）
 - **MED-001 [Medium] 修复**：`GARRISON_RATE_LIMIT_BACKEND` 未知值静默忽略 → 改为返回 `GarrisonError::Config`（规则12：失败必须显性化）
 
-#### specmark Converge（T032-T040）
+#### specmark Converge
 
 第 1 轮 converge 发现 12 个缺口，追加 9 个收敛任务；第 2 轮 converge 无新缺口：
 
-- **T032**：CSRF 空 token 返回 false（常量时间比较前显式检查）
-- **T033**：HTTP method 大小写敏感（RFC 7230，移除 `to_uppercase()`）
-- **T034**：CORS OPTIONS 短路返回 204（非匹配 Origin 不 passthrough）
-- **T035**：WafConfig 支持 `custom_rules: Vec<Arc<dyn WafRule>>`
-- **T036**：`validate()` 校验 Redis `redis_url` 非空
-- **T037**：Redis 限流器错误类型改为 `GarrisonError::Dao`
-- **T038**：Lua else 分支补充 EXPIRE 防止 key 内存泄漏
-- **T039**：环境变量覆盖（CORS/CSRF/RateLimit 4 个变量）
-- **T040**：spec 更新 Set-Cookie 含 SameSite/Secure（匹配更安全代码）
+- CSRF 空 token 返回 false（常量时间比较前显式检查）
+- HTTP method 大小写敏感（RFC 7230，移除 `to_uppercase()`）
+- CORS OPTIONS 短路返回 204（非匹配 Origin 不 passthrough）
+- WafConfig 支持 `custom_rules: Vec<Arc<dyn WafRule>>`
+- `validate()` 校验 Redis `redis_url` 非空
+- Redis 限流器错误类型改为 `GarrisonError::Dao`
+- Lua else 分支补充 EXPIRE 防止 key 内存泄漏
+- 环境变量覆盖（CORS/CSRF/RateLimit 4 个变量）
+- spec 更新 Set-Cookie 含 SameSite/Secure（匹配更安全代码）
 
 #### tiangang SAST
 
@@ -1084,64 +1095,64 @@ v0.6.x 系列第一批安全增强 Quick Wins，借鉴 cedar/QIdentity 两项目
 
 本版本包含两批变更：
 
-1. **gap-closure-remaining**（T001-T011）：补齐 origin 文档与代码实现之间的 11 项 gap，覆盖 remember-me 配置、Redis 部署模式、身份切换、Token 置换、OAuth2 注解、路由分组、会话过期回调、SAML 2.0 骨架、OIDC RP 骨架、Redis pub/sub SsoChannel。**至此，所有 origin 文档与代码实现之间的 gap 已全部关闭，零残留。**
+1. **gap-closure-remaining**：补齐 origin 文档与代码实现之间的 11 项 gap，覆盖 remember-me 配置、Redis 部署模式、身份切换、Token 置换、OAuth2 注解、路由分组、会话过期回调、SAML 2.0 骨架、OIDC RP 骨架、Redis pub/sub SsoChannel。**至此，所有 origin 文档与代码实现之间的 gap 已全部关闭，零残留。**
 
-2. **v0.6.1-concurrency-syncfn-macro-enum**（T001-T016）：通过 specmark change 修复 4 项核心问题——并发安全、sync fn 宏支持、宏覆盖审计、字符串枚举化。
+2. **v0.6.1-concurrency-syncfn-macro-enum**：通过 specmark change 修复 4 项核心问题——并发安全、sync fn 宏支持、宏覆盖审计、字符串枚举化。
 
 ### 新增
 
-#### T001/T008: remember-me 扩展会话超时
+#### remember-me 扩展会话超时
 
 - `GarrisonConfig` 新增 `remember_me_enabled`（默认 false）与 `remember_me_timeout`（默认 7776000 秒 = 90 天）字段
 - `login` 方法支持 `remember_me=true` 参数，启用后使用 `remember_me_timeout` 作为会话 TTL
 - 环境变量 `GARRISON_REMEMBER_ME_ENABLED` / `GARRISON_REMEMBER_ME_TIMEOUT` 覆盖支持
 - `validate()` 校验：`remember_me_enabled=true` 时 `remember_me_timeout` 必须 > `timeout`
 
-#### T002: Redis 部署模式枚举
+#### Redis 部署模式枚举
 
 - 新增 `RedisDeploymentMode` 枚举（Single / Sentinel / Cluster / MasterSlave），覆盖生产环境常见 Redis 拓扑
 - 新增 `RedisConfig` 聚合结构（mode + password + db + connection_timeout_secs + pool_size）
 - `Display` 实现输出人类可读的部署模式描述
 
-#### T003: 身份切换 switch_to
+#### 身份切换 switch_to
 
 - `switch_to(login_id)` 方法：在当前会话中切换登录身份，保留原会话 token 与设备信息
 
-#### T004: Token 置换 renew_to_equivalent
+#### Token 置换 renew_to_equivalent
 
 - `renew_to_equivalent()` 方法：生成等效新 Token 并迁移会话状态，旧 Token 失效
 
-#### T005: OAuth2 注解 CheckAccessToken/CheckClientToken
+#### OAuth2 注解 CheckAccessToken/CheckClientToken
 
 - `Annotation` 枚举新增 `CheckAccessToken` 与 `CheckClientToken` 变体
 - `pre_handle` 中返回 `NotImplemented`，提示用户使用 `protocol::oauth2::OAuth2Client` 或自定义拦截器
 
-#### T006: 路由分组 group() 方法
+#### 路由分组 group() 方法
 
 - `GarrisonRouter::group(prefix, annotation, f)` 方法：支持路由分组与前缀挂载
 - 子 router 继承父 router 的 interceptor 和 config
 - `Annotation::Ignore` 时覆盖路由注解；否则保留路由自身注解
 
-#### T007: 会话过期回调 SessionExpiryListener
+#### 会话过期回调 SessionExpiryListener
 
 - `SessionExpiryListener` trait：会话过期时触发异步回调
 - `add_expiry_listener` / `trigger_expiry_listeners` 方法
 
-#### T009: SAML 2.0 骨架
+#### SAML 2.0 骨架
 
 - `SamlProvider` trait：`build_authn_request` / `parse_response` / `validate_assertion`
 - `DefaultSamlProvider` 实现：quick-xml pull reader 解析 SAML Response
 - 数据结构：`SamlAssertion` / `SamlResponse` / `SamlRequest`
 - Feature gate：`protocol-sso`
 
-#### T010: OIDC RP 骨架
+#### OIDC RP 骨架
 
 - `OidcProvider` trait：`get_authorization_url` / `exchange_code` / `get_user_info` / `validate_id_token`
 - `DefaultOidcProvider` 实现：reqwest HTTP client + discovery config
 - 数据结构：`OidcDiscoveryConfig` / `OidcUserInfo`
 - 与 `OidcHandler` 区别：OidcHandler 是 Garrison 作为 IdP，OidcProvider 是 Garrison 作为 RP
 
-#### T011: Redis pub/sub SsoChannel
+#### Redis pub/sub SsoChannel
 
 - `RedisPubSubSsoChannel` 实现 `SsoChannel` trait
 - `push(topic, message)`：通过 `redis::cmd("PUBLISH")` 发布消息
@@ -1151,26 +1162,26 @@ v0.6.x 系列第一批安全增强 Quick Wins，借鉴 cedar/QIdentity 两项目
 
 ### S1: 并发安全修复（v0.6.1-concurrency-syncfn-macro-enum）
 
-#### T001: 并发审计报告
+#### 并发审计报告
 
 - 输出 13 个竞态条件报告到 `specmark/changes/v0.6.1-concurrency-syncfn-macro-enum/concurrency-audit.md`
 - 其中 R-001~R-004 为 HIGH（Account-Session read-modify-write 非原子序列）
 - 根因：`GarrisonDao` 仅提供 per-key 原子操作，无跨 key 事务
 
-#### T002: per-login_id 操作锁
+#### per-login_id 操作锁
 
 - `GarrisonSession` 新增 `login_locks: DashMap<String, Arc<tokio::sync::Mutex<()>>>` 字段
 - `with_login_lock` 异步闭包方法：按 login_id 串行化 create/logout/logout_by_login_id 操作
 - `logout` 拆分为 `logout`（获取锁）+ `logout_inner`（无锁，供 `kickout_by_device` 调用避免死锁）
 - 新增测试 `concurrent_login_same_user_creates_consistent_session`（SlowDao wrapper 放大竞态窗口）
 
-#### T003: task_local 上下文传播
+#### task_local 上下文传播
 
 - 新增 `GarrisonContext` struct + `capture()` + `within(self, f)` 方法
 - 使用 `CURRENT_TOKEN.scope(token, f).await` 实现 task_local 跨 spawn 传播
 - 2 个测试：`task_local_propagates_across_spawn` / `garrison_context_capture_without_token_propagates_none`
 
-#### T004: Plugin/Listener 线程安全审计
+#### Plugin/Listener 线程安全审计
 
 - 输出审计报告到 `specmark/changes/v0.6.1-concurrency-syncfn-macro-enum/plugin-listener-thread-safety.md`
 - 结论：0 竞态、0 死锁风险
@@ -1179,18 +1190,18 @@ v0.6.x 系列第一批安全增强 Quick Wins，借鉴 cedar/QIdentity 两项目
 
 ### S2: sync fn 宏支持
 
-#### T005: detect_asyncness 枚举
+#### detect_asyncness 枚举
 
 - `require_async()` 替换为 `detect_asyncness(item_fn) -> Asyncness`（`Async`/`Sync` 两变体）
 - 不再拒绝 sync fn，为后续 sync 路径生成铺路
 
-#### T006: GarrisonUtil 同步方法
+#### GarrisonUtil 同步方法
 
 - 新增 7 个 `check_*_sync()` 方法：`check_login_sync` / `check_permission_sync(perm)` / `check_role_sync(role)` / `check_access_token_sync` / `check_client_token_sync` / `check_temp_token_sync` / `check_api_key_sync(ns)`
 - 模式：`task::block_in_place(|| Handle::current().block_on(Self::check_login()))`
 - 8 个测试覆盖成功路径 + 未认证路径
 
-#### T007: expand_wrapper sync fn 分支
+#### expand_wrapper sync fn 分支
 
 - `expand_wrapper` 新增 `asyncness: Asyncness` 参数
 - Async 路径：生成 `async fn wrapper` + `.await` 调用
@@ -1199,7 +1210,7 @@ v0.6.x 系列第一批安全增强 Quick Wins，借鉴 cedar/QIdentity 两项目
 
 ### S3: 宏覆盖审计
 
-#### T008: 覆盖矩阵文档化
+#### 覆盖矩阵文档化
 
 - 在 `garrison-macros/src/lib.rs` 模块文档添加 `# 覆盖矩阵` 段落
 - 7 个宏 × 13 个特性域的覆盖情况表格
@@ -1207,26 +1218,26 @@ v0.6.x 系列第一批安全增强 Quick Wins，借鉴 cedar/QIdentity 两项目
 
 ### S4: 硬编码字符串枚举化
 
-#### T009: DaoKeyPrefix 枚举
+#### DaoKeyPrefix 枚举
 
 - 新建 `src/constants/mod.rs` + `src/constants/dao_keys.rs`
 - `DaoKeyPrefix` 枚举 8 变体：Session / Token / Captcha / Saml / Cred / Lockout / BruteForce / Tenant
 - `as_str()`（const fn）/ `build_key(id)` / `Display` 实现
 - 3 个单元测试
 
-#### T010: EventReason 枚举
+#### EventReason 枚举
 
 - 新建 `src/constants/events.rs`
 - `EventReason` 枚举 6 变体：InvalidCredentials / Expired / Revoked / Locked / Logout / Kickout
 - `as_str()`（const fn）/ `Display` 实现
 - 2 个单元测试
 
-#### T011: DAO key 前缀替换
+#### DAO key 前缀替换
 
 - 11 个文件共 20 处 `format!("prefix:{}", ...)` 替换为 `DaoKeyPrefix::Variant.build_key(...)`
 - 涉及文件：session/security_listener、strategy/hooks、session/mod、firewall/captcha_provider、protocol/sso/saml、account/credential/{mod,backup_code}、account/lockout、firewall/brute_force、dao/repository/role_hierarchy、dao/mod
 
-#### T012: 事件 reason 替换
+#### 事件 reason 替换
 
 - `src/stp/password.rs` 2 处 `"invalid_credentials"` 替换为 `EventReason::InvalidCredentials.to_string()`
 - `src/stp/session.rs` 1 处 `"管理员强制下线"` **保留原样**（用户面向显示消息，非 reason code）
@@ -1319,8 +1330,8 @@ Garrison 0.6.0 是"账号安全引擎版"，通过 specmark change `v0-6-0-accou
 
 ### 破坏性变更
 
-1. **`PasswordHasher` 迁移（T002）**：从 `src/secure/password.rs` 迁移到 `account/credential/password.rs`，`secure-password` feature 删除（功能合并到 `account` feature）
-2. **`FirewallContext.login_id` 类型变更（T010）**：`i64` → `String`（所有 FirewallStrategy 实现需更新签名）
+1. **`PasswordHasher` 迁移**：从 `src/secure/password.rs` 迁移到 `account/credential/password.rs`，`secure-password` feature 删除（功能合并到 `account` feature）
+2. **`FirewallContext.login_id` 类型变更**：`i64` → `String`（所有 FirewallStrategy 实现需更新签名）
 
 ### 修复
 
@@ -1563,13 +1574,13 @@ Token Introspection。
 
 #### 核心类型
 
-- **LoginId newtype（Phase 1）**：`src/stp/login_id.rs` 新增 `LoginId` enum
+- **LoginId newtype**：`src/stp/login_id.rs` 新增 `LoginId` enum
   （`Numeric(i64)` / `String(String)`），实现 `From<i64>`/`From<String>`/`From<&str>`/
   `as_str`/`as_i64`/`Display`/`Serialize`/`Deserialize`。`stp`/`session`/
   `protocol/{jwt,oauth2,sso,apikey}` 公开方法签名改为 `impl Into<LoginId>`，保留 i64
   通过 `From<i64>` 兼容（`login_id_to_i64` 改 `pub(crate)` 复用）
 
-#### DAO 层（Phase 2）
+#### DAO 层
 
 - **GarrisonDao 4 方法扩展**：新增 `set_permanent`（无 TTL）/`get_timeout`（查询剩余 TTL）/
   `keys`（glob pattern 扫描）/`rename`（重命名 key），均提供默认实现保持向后兼容。
@@ -1578,16 +1589,16 @@ Token Introspection。
 
 #### 安全模块
 
-- **PasswordHasher（Phase 3）**：新增 `secure-password` feature + `PasswordHasher` trait +
+- **PasswordHasher**：新增 `secure-password` feature + `PasswordHasher` trait +
   `Argon2Hasher` + `BcryptHasher` + `PasswordVerifier`（自动识别 hash 格式：argon2/bcrypt/BCrypt）。
   依赖 argon2 0.5 + bcrypt 0.15 + rand 0.8
-- **JWT 三模式（Phase 7）**：`JwtMode` enum（`Stateless`/`Mixin`/`Simple`），
+- **JWT 三模式**：`JwtMode` enum（`Stateless`/`Mixin`/`Simple`），
   `GarrisonLogicDefault::with_jwt_mode` builder，`check_login` 按模式分支：
   Stateless 仅 JWT verify / Mixin JWT+session / Simple 仅 session
 
 #### 数据访问
 
-- **Repository 层（Phase 4）**：`db-sqlite` 启用 `src/dao/repository/` 模块，定义 9 个
+- **Repository 层**：`db-sqlite` 启用 `src/dao/repository/` 模块，定义 9 个
   Repository trait（UserRepository/RoleRepository/PermissionRepository/UserRoleRepository/
   RolePermissionRepository/AuthMethodRepository/SessionRepository/LoginLogRepository/
   UserExtRepository），所有方法首参 `tenant_id: i64`。9 个 SqliteRepository 基于 dbnexus
@@ -1595,45 +1606,45 @@ Token Introspection。
 
 #### 认证路径
 
-- **密码登录（Phase 5）**：`GarrisonLogic::login_with_password(login_id, password)` 默认方法，
+- **密码登录**：`GarrisonLogic::login_with_password(login_id, password)` 默认方法，
   整合 `UserRepository::find_by_username` + `PasswordHasher::verify` + `login`。
   `GarrisonLogicDefault::with_password_hasher` builder 注入 `Arc<dyn PasswordHasher>`
-- **多账户 login_type（Phase 6）**：`GarrisonInterface` 新增
+- **多账户 login_type**：`GarrisonInterface` 新增
   `get_permission_list_with_type(login_id, login_type)` + `get_role_list_with_type`，
   旧方法默认委托（login_type="default"）。`with_login_type` builder
 
 #### 协议层
 
-- **API Key namespace（Phase 8）**：`ApiKeyInfo` 新增 `namespace: String` 字段
+- **API Key namespace**：`ApiKeyInfo` 新增 `namespace: String` 字段
   （`#[serde(default = "default_namespace")]` 填充 "default"），key 格式升级为
   `garrison:apikey:<namespace>:<key>`。`generate_with_namespace` 方法 +
   `list_by_namespace`（依赖 `GarrisonDao::keys`）。`verify` 兼容旧格式
-- **SSO TOCTOU 修复（Phase 9）**：`GarrisonDao::get_and_delete(key)` 原子方法（默认实现
+- **SSO TOCTOU 修复**：`GarrisonDao::get_and_delete(key)` 原子方法（默认实现
   get→delete 两步，`GarrisonDaoOxcache` 用 `parking_lot::Mutex` 保护进程内原子）。
   `SsoClient::validate_ticket` / `DefaultSsoServer::validate_ticket` 改用原子消费消除竞态
-- **OAuth 2.1 PKCE（Phase 15）**：`OAuth2Client::generate_pkce_challenge`（S256 方法，
+- **OAuth 2.1 PKCE**：`OAuth2Client::generate_pkce_challenge`（S256 方法，
   RFC 7636 测试向量验证）+ `get_auth_url_with_pkce(state, code_verifier)` +
   `exchange_code_with_pkce(code, state, code_verifier)`。旧 `get_auth_url`/`exchange_code`
   标记 `#[deprecated]`
-- **Token Introspection（Phase 16）**：`OAuth2Client::introspect_token(token)` 方法
+- **Token Introspection**：`OAuth2Client::introspect_token(token)` 方法
   （RFC 7662），`TokenIntrospectionResponse` struct（12 字段：active/scope/client_id/
   username/token_type/exp/iat/nbf/sub/aud/iss/jti）。`with_introspect_url` builder，
   URL 推导（显式 → token_url 替换 `/token`→`/introspect` → 追加 `/introspect`）
 
 #### 会话管理
 
-- **kickout_by_device（Phase 10）**：`GarrisonSession::kickout_by_device(login_id, device)`
+- **kickout_by_device**：`GarrisonSession::kickout_by_device(login_id, device)`
   方法，查询 account session → 过滤 device → 批量 logout_by_token
 
 #### 事件与策略
 
-- **GarrisonEvent 14 变体（Phase 11）**：新增 8 个事件（`LoginFailure`/`TokenRefresh`/
+- **GarrisonEvent 14 变体**：新增 8 个事件（`LoginFailure`/`TokenRefresh`/
   `TokenRevoke`/`SessionTimeout`/`AccountLocked`/`FirewallBlock`/`ApiKeyRotate`/
   `TempCredentialConsumed`），8 个 broadcast 集成点（login_with_password
   失败/refresh_token/revoke_token/check_login session timeout/FirewallCheckHook 锁定/FirewallStrategy
   阻止/ApiKeyHandler::rotate/TempCredentialHandler::consume）。`GarrisonEvent` 派生
   `PartialEq`。`ConfigReload` 变体因 `ConfigLoader` 无 reload 方法未添加，待 v0.5.0+ 实现
-- **Strategy Registry（Phase 13）**：`src/strategy/registry.rs` 新增 6 个策略 trait
+- **Strategy Registry**：`src/strategy/registry.rs` 新增 6 个策略 trait
   （`LoginHandler`/`LogoutHandler`/`PermissionHandler`/`TokenGenerator`/`SessionCreator`/
   `FirewallStrategy`）+ 6 个默认实现（委托 `Arc<dyn GarrisonLogic>`）+ `Strategy` 注册表
   struct（18 个 register/get/remove 方法）。`GarrisonManager` 持有
@@ -1641,7 +1652,7 @@ Token Introspection。
 
 #### Web 适配器
 
-- **ActixContext + WarpContext（Phase 12）**：新增 `web-actix` 启用
+- **ActixContext + WarpContext**：新增 `web-actix` 启用
   `src/context/actix_adapter.rs`（`ActixContext`/`ActixRequest`/`ActixResponse`/
   `ActixStorage` 4 件套，34 测试，`ActixRequestWrapper` 私有结构体绕过生命周期限制）。
   新增 `web-warp` 启用 `src/context/warp_adapter.rs`（`WarpContext`/`WarpRequest`/
@@ -1650,7 +1661,7 @@ Token Introspection。
 
 #### 过程宏
 
-- **garrison-macros crate（Phase 14）**：新建 workspace member `garrison-macros`，提供
+- **garrison-macros crate**：新建 workspace member `garrison-macros`，提供
   `#[check_login]`/`#[check_permission]`/`#[check_role]` 三个 `#[proc_macro_attribute]`。
   `annotation-macros` feature 启用（依赖 `web-axum`）。wrapper + inner function 模式：
   原 fn 重命名为 `__garrison_inner_<name>`，wrapper 使用原名称返回 `axum::response::Response`。
@@ -1665,7 +1676,7 @@ Token Introspection。
   `web-warp`，均加入 `full` 聚合
 - `Cargo.toml` 新增依赖：argon2 0.5 / bcrypt 0.15 / rand 0.8 / garrison-macros path 依赖；
   `protocol-oauth2` feature 添加 `sha2` + `base64` 依赖（PKCE S256 复用）
-- `GarrisonDao` trait 新增 5 个方法（4 个 Phase 2 + get_and_delete Phase 9），均提供默认
+- `GarrisonDao` trait 新增 5 个方法，均提供默认
   实现保持向后兼容
 - `SsoClient::validate_ticket` / `DefaultSsoServer::validate_ticket` 改用两步法
   （get 校验 client_id → get_and_delete 原子消费），client_id 不匹配时不消费 ticket
@@ -1679,7 +1690,7 @@ Token Introspection。
   与测试期望"client_id 不匹配不删除 ticket"（允许重试）冲突。改为两步法：先 `get` 校验
   client_id，匹配后 `get_and_delete` 原子消费。同时满足"用户友好"（错误 client_id 不消费）
   和"TOCTOU 修复"（并发仅一个成功）
-- **examples apikey_management MockDao keys() 缺失**：Phase 8 namespace isolation 引入
+- **examples apikey_management MockDao keys() 缺失**：namespace isolation 引入
   `GarrisonDao::keys` 后，`examples/src/apikey_management.rs` 的 MockDao 未实现 `keys()`，
   导致 `ApiKeyHandler::verify` 扫描新格式 key 失败。添加 `keys()` 实现 + `glob_match` 函数
   （与 `tests/protocol_apikey_edge_cases.rs` 保持一致）

@@ -235,10 +235,10 @@ jobs:
   github-release:
     name: GitHub Release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: [version-consistency, publish-crates-io]
     permissions:
-      contents: write # 创建 Release 需要
+      contents: write # 创建 Release 与 Build Provenance 需要
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -253,7 +253,18 @@ jobs:
         with:
           shared-key: release-full-deps
 
-      # Release 只带 GitHub 自动生成的源码压缩包,不附 .crate/二进制产物。
+      # 生成 CycloneDX SBOM（全特性面，覆盖 optional 依赖）并作为 Release 资产附加，
+      # 与后续 Artifact Attestation 构成可验证的供应链可信链。
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-cyclonedx
+        with:
+          tool: cargo-cyclonedx
+      - name: Generate Cargo.lock (library crate, not committed)
+        run: cargo generate-lockfile
+      - name: Generate SBOM (all features)
+        run: cargo cyclonedx -f json --all-features
+
+      # Release 附 SBOM 资产；源码压缩包由 GitHub 自动生成。
       - name: Create GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
@@ -261,9 +272,17 @@ jobs:
           name: Release v${{ needs.version-consistency.outputs.version }}
           generate_release_notes: true
           draft: false
+          files: garrison.cdx.json
           prerelease: ${{ contains(needs.version-consistency.outputs.version, '-rc') || contains(needs.version-consistency.outputs.version, '-beta') || contains(needs.version-consistency.outputs.version, '-alpha') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 对 Release 资产（SBOM）生成 SLSA 构建溯源 attestation，
+      # 记录到 GitHub Artifact Attestations 存储（gh attestation verify 可验证）。
+      - name: Attest build provenance (SBOM)
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: garrison.cdx.json
 
   # ============================================================================
   # 阶段 5：发布后验证（GitHub Release + crates.io 双重验证）

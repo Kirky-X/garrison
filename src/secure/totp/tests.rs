@@ -662,3 +662,94 @@ async fn e3_incr_count_increments_with_replays() {
         "E3: 4 次调用后 replay_key 的 incr 计数应为 4"
     );
 }
+
+// ========================================================================
+// RFC 6238 Appendix B 官方向量（行为锁定）
+// ========================================================================
+
+/// RFC 6238 Appendix B SHA1 官方向量（8 位数字模式）。
+///
+/// 密钥 `12345678901234567890`（20 字节 ASCII），step=30。
+/// 任一向量不符即为实现缺陷，须修复实现而非放宽断言。
+#[test]
+fn rfc6238_appendix_b_sha1_official_vectors() {
+    let handler = TotpHandler::new(TEST_SECRET.to_vec(), 30, 8).unwrap();
+
+    // (T, 期望 8 位 TOTP)，取自 RFC 6238 Appendix B SHA1 组
+    let vectors: &[(i64, &str)] = &[
+        (59, "94287082"),
+        (1_111_111_109, "07081804"),
+        (1_111_111_111, "14050471"),
+        (1_234_567_890, "89005924"),
+        (2_000_000_000, "69279037"),
+        (20_000_000_000, "65353130"),
+    ];
+
+    for (t, expected) in vectors {
+        let code = handler.generate(*t).unwrap();
+        assert_eq!(
+            code, *expected,
+            "T={t} 的 TOTP 应为官方向量 {expected}（RFC 6238 Appendix B SHA1）"
+        );
+    }
+}
+
+/// RFC 6238 Appendix B SHA256 官方向量（8 位数字模式）。
+///
+/// 密钥 `12345678901234567890123456789012`（32 字节 ASCII），step=30。
+#[test]
+fn rfc6238_appendix_b_sha256_official_vectors() {
+    use totp_rs::Algorithm;
+
+    let secret = b"12345678901234567890123456789012";
+    let handler =
+        TotpHandler::new_with_hash_algorithm(secret.to_vec(), 30, 8, Algorithm::SHA256).unwrap();
+
+    // (T, 期望 8 位 TOTP)，取自 RFC 6238 Appendix B SHA256 组
+    let vectors: &[(i64, &str)] = &[
+        (59, "46119246"),
+        (1_111_111_109, "68084774"),
+        (1_111_111_111, "67062674"),
+        (1_234_567_890, "91819424"),
+        (2_000_000_000, "90698825"),
+        (20_000_000_000, "77737706"),
+    ];
+
+    for (t, expected) in vectors {
+        let code = handler.generate(*t).unwrap();
+        assert_eq!(
+            code, *expected,
+            "T={t} 的 TOTP 应为官方向量 {expected}（RFC 6238 Appendix B SHA256）"
+        );
+    }
+}
+
+/// RFC 6238 Appendix B SHA512 官方向量（8 位数字模式）。
+///
+/// 密钥 `1234567890...1234`（64 字节 ASCII），step=30。
+#[test]
+fn rfc6238_appendix_b_sha512_official_vectors() {
+    use totp_rs::Algorithm;
+
+    let secret = b"1234567890123456789012345678901234567890123456789012345678901234";
+    let handler =
+        TotpHandler::new_with_hash_algorithm(secret.to_vec(), 30, 8, Algorithm::SHA512).unwrap();
+
+    // (T, 期望 8 位 TOTP)，取自 RFC 6238 Appendix B SHA512 组
+    let vectors: &[(i64, &str)] = &[
+        (59, "90693936"),
+        (1_111_111_109, "25091201"),
+        (1_111_111_111, "99943326"),
+        (1_234_567_890, "93441116"),
+        (2_000_000_000, "38618901"),
+        (20_000_000_000, "47863826"),
+    ];
+
+    for (t, expected) in vectors {
+        let code = handler.generate(*t).unwrap();
+        assert_eq!(
+            code, *expected,
+            "T={t} 的 TOTP 应为官方向量 {expected}（RFC 6238 Appendix B SHA512）"
+        );
+    }
+}

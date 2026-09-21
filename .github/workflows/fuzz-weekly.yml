@@ -1,0 +1,50 @@
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
+name: Fuzz Weekly
+
+# 每周一 04:00 UTC（错开 feature-matrix 03:00 / codeql 周二 04:37）对 4 个解析入口
+# 深扫 10 分钟/个。崩溃输入（fuzz/artifacts/<target>/crash-*）上传 artifact 供复现修复。
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-weekly-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz-deep:
+    name: Fuzz Deep Scan (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_saml_xml
+          - fuzz_oidc_discovery
+          - fuzz_jwt_verify
+          - fuzz_http_auth_headers
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz deep scan (10 minutes)
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=600
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: |
+            fuzz/artifacts/
+            crash-*
+          if-no-files-found: ignore

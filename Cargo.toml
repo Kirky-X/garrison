@@ -50,7 +50,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 wiremock = "0.6"
 http-body-util = "0.1"
 tempfile = { version = "3.27" }
-jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto", "use_pem"] }
 totp-rs = { version = "6.0" }
 bcrypt = { version = "0.19" }
 zeroize = { version = "1.9", default-features = false, features = ["derive", "serde"] }
@@ -84,7 +84,7 @@ axum = { optional = true, default-features = false, features = ["json"], workspa
 axum-server = { version = "0.8", optional = true, default-features = false }
 actix-web = { optional = true, default-features = false, workspace = true }
 warp = { optional = true, default-features = false, workspace = true }
-jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto"], optional = true }
+jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
 reqwest = { optional = true, default-features = false, features = ["json", "rustls", "form"], workspace = true }
 totp-rs = { version = "6.0", optional = true }
 sha2 = { version = "0.11", optional = true }
@@ -109,6 +109,15 @@ oxcache = { version = "0.5.0-rc.5", default-features = false, optional = true }
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
 dbnexus = { optional = true, default-features = false, workspace = true }
+# loom 竞态模型验证（loom-test feature，T033）：一次性凭证原子消费的交错穷举测试。
+# 用 feature 门控而非 loom 官方推荐的 RUSTFLAGS="--cfg loom"：后者是全图编译期
+# cfg 泄漏，会令 tokio 在 loom 模式下剔除 net 模块，依赖图中无条件 `use
+# tokio::net` 的 crate（hyper-util / redis 等）必然编译失败，与 garrison 依赖图
+# 不兼容。feature 门控下默认构建零成本，显式触发：
+# `cargo test --lib --features protocol-temp,loom-test protocol::temp`
+# 测试内显式使用 loom::sync::Mutex / loom::thread / loom::future::block_on 建模，
+# futures feature 提供 block_on（驱动零 await 点的 async DAO 方法）。
+loom = { version = "0.7", features = ["futures"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 tracing-subscriber = { optional = true, default-features = false, features = ["fmt", "json", "env-filter"], workspace = true }
 opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
@@ -163,6 +172,16 @@ icu_time = { version = "2.3", default-features = false, features = ["compiled_da
 fixed_decimal = { version = "0.7", optional = true, default-features = false }
 percent-encoding = { version = "2.3", optional = true, default-features = false }
 hkdf = { version = "0.13", optional = true, default-features = false }
+# pkcs1/pkcs8：JWT RS 系验证路径从私钥 PEM 提取公钥组件（n,e）。纯 DER 解析库
+# （无 RSA 运算代码，与 RUSTSEC-2023-0071 无关），本为 rsa 的传递依赖。
+pkcs1 = { version = "0.7", optional = true, default-features = false, features = ["std", "pem", "pkcs8"] }
+pkcs8 = { version = "0.10", optional = true, default-features = false, features = ["std", "pem", "alloc"] }
+# ES 系验证路径的公钥点计算（曲线标量乘法），见 protocol-jwt 注释
+p256 = { version = "0.13", optional = true, default-features = false, features = ["arithmetic", "std"] }
+p384 = { version = "0.13", optional = true, default-features = false, features = ["arithmetic", "std"] }
+sec1 = { version = "0.7", optional = true, default-features = false, features = ["std", "der"] }
+# Ed25519 验证路径的公钥计算（RFC 8410 种子 → 公钥）；2.2.0 已修 RUSTSEC-2022-0093（≥2.0）
+ed25519-dalek = { version = "2.2", optional = true, default-features = false, features = ["fast"] }
 # 嵌入式迁移文件（embedded-migrations feature）：编译时用 include_dir! 嵌入 postgres 迁移 SQL，
 # 供 crates.io 消费者在运行时无需访问 garrison 源码目录即可执行迁移。
 include_dir = { version = "0.7", optional = true }
@@ -175,6 +194,9 @@ once_cell = "1.21"
 toml = "1.1"
 tokio-test = "0.4"
 mockall = "0.15"
+# 日志断言（refresh 退化路径 warn 验收）：workspace 版本启用 fmt/json/env-filter，
+# fmt feature 传递 registry，测试以 registry().with(fmt Layer + 自定义 writer) 捕获事件
+tracing-subscriber = { workspace = true }
 # tempfile 同时存在于 [dependencies]（optional，由 embedded-migrations feature 启用，供生产代码使用）
 # 与 [dev-dependencies]（测试代码无条件可用，如 db-sqlite 下的 tempdir 测试）。
 # Cargo 允许同名 crate 同时出现在两处，dev-dep 在测试构建时优先生效。
@@ -293,13 +315,26 @@ embedded-migrations = ["dep:include_dir", "dep:tempfile"]
 protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64", "dep:percent-encoding"]
 # protocol-sso 隐含 protocol-jwt：OIDC exchange_code 必须验签 id_token（fail-closed）。
 protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "dep:hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
-protocol-jwt = ["dep:jsonwebtoken", "dep:sha2"]
+# protocol-jwt：JWT 签发/校验/刷新。
+# dep:pkcs1/pkcs8/base64：RS 系验证路径从私钥 PEM 提取公钥组件（n,e）——jsonwebtoken
+# 的 DecodingKey::from_rsa_pem 仅接受公钥 PEM。pkcs1/pkcs8 为纯 DER 解析库（无 RSA
+# 运算代码，与 RUSTSEC-2023-0071 无关），且本为 rsa 的传递依赖，显式化零新增体积；
+# garrison 代码不接触 rsa crate（其仅存在于 jsonwebtoken 内部签名路径，非解密不受影响）。
+# dep:p256/p384/sec1：ES 系验证路径从私钥标量计算 SEC1 公钥点（jsonwebtoken 验证端
+# 仅接受公钥）。p256/p384 为 jsonwebtoken rust_crypto 传递依赖，零新增体积；
+# 五者均无 RustSec 通告（advisory-db 全库检索 2026-09-21）。
+protocol-jwt = ["dep:jsonwebtoken", "dep:sha2", "dep:pkcs1", "dep:pkcs8", "dep:base64", "dep:p256", "dep:p384", "dep:sec1", "dep:ed25519-dalek"]
 protocol-sign = ["dep:sha2", "dep:hmac", "dep:base64", "dep:hkdf"]
 # protocol-apikey：API Key 生成/校验/吊销/轮换。
 # dep:sha2 + secure-ct-eq：secret 以 sha256 哈希存储（CWE-916）+ 复用公共常量时间比较原语（消除本地副本）。
 # dao-key-index：启用 GarrisonDaoOxcache::keys() 生产实现，使 list_by_namespace 可用。
 protocol-apikey = ["dep:sha2", "secure-ct-eq", "dao-key-index"]
 protocol-temp = []
+# loom-test：一次性凭证原子消费的 loom 交错穷举测试（默认关；不进 CI 常规链）。
+# 触发：cargo test --lib --features protocol-temp,loom-test protocol::temp
+loom-test = ["dep:loom"]
+# data-erasure：数据主体擦除编排（GDPR/个保法删除权的框架侧能力，compliance 模块）
+data-erasure = []
 # protocol-invitation：邀请码定向注册（一次性/N 次、TTL、吊销、防爆破、注册编排钩子）。
 # dep:rand：短码随机字符选取（OsRng）；dep:sha2：防爆破计数键的 source 摘要（SHA-256）。
 protocol-invitation = ["dep:rand", "dep:sha2"]

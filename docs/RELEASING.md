@@ -68,7 +68,27 @@ flowchart TD
 
 # 生成 changelog 段落（从 git log 提取，可指定版本号）
 ./scripts/release.sh gen-changelog v0.7.0..HEAD 0.7.1
+
+# 可复现构建验证（两次独立编译逐字节比对）
+scripts/verify_reproducible_build.sh
 ```
+
+### 可复现构建（Reproducible Build）
+
+`scripts/verify_reproducible_build.sh` 对 garrison 库做两次独立编译，比对
+`libgarrison.rlib` 的 sha256 是否逐字节一致。与 Release 资产上的
+**Artifact Attestations（构建溯源）互补**：attestation 回答"产物是否来自本仓库
+CI"，可复现验证回答"相同输入是否产出相同字节"——下游可用两者交叉核验所获产物。
+
+前提与边界：
+
+- 可复现性以**同 rustc 工具链 + 同 Cargo.lock** 为前提（`--locked --frozen` 强制）；
+  工具链或依赖版本变化后需重新验证（CI `security.yml` 的 `reproducible-build`
+  job 在每次 PR 上持续锚定）。
+- 构建输入固定：`SOURCE_DATE_EPOCH` 固定时间戳、`--remap-path-prefix` 消除本地
+  绝对路径差异；两次构建间仅清理 garrison 自身指纹与产物（依赖缓存复用）。
+- 脚本含负对照语义：任何源码变化必然改变哈希（已验证），不存在"构建未发生"的
+  假阳性通过。
 
 ## 🚀 发布步骤
 

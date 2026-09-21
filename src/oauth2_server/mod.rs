@@ -28,3 +28,6 @@ pub mod revoke;
 
 /// /oauth2/introspect 端点模块（RFC 7662）。
 pub mod introspect;
+
+/// /oauth2/jwks.json 端点模块（RFC 7517 JWK Set 导出）。
+pub mod jwks;

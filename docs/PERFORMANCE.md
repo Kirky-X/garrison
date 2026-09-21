@@ -92,10 +92,10 @@ python3 scripts/e2e_analyze.py --log-dir logs
 
 | 设计 | 位置 / 来源 | 说明 |
 |------|-------------|------|
-| 全局单例无锁化 | `GarrisonManager`（CHANGELOG PERF-01） | `logic` / `strategy` 字段由 `parking_lot::RwLock<Option<Arc<..>>>` 迁移为 `arc_swap::ArcSwapOption`；热路径 `GarrisonManager::logic()`（`backend/embedded.rs` 每请求调用）无锁原子加载，消除多核高 QPS 缓存行争用 |
-| 全局后端引用无锁化 | `CURRENT_BACKEND`（T006） | `Mutex<Option<Arc<..>>>` → `ArcSwapOption`（`BackendHandle` Sized 包装），check_login / check_permission 热路径去全局锁，并发初始化保持 CAS 语义 |
-| 慢哈希移出 async executor | `spawn_blocking`（T007） | bcrypt / Argon2 的 hash / verify 全部登录路径调用点包 `tokio::task::spawn_blocking`，登录风暴不阻塞 tokio worker |
-| TokenSession 请求内复用 | T008 | `is_valid_with_session` 返回快照供 hover 复用，同一请求内重复读取由 3-4 次降为 1-2 次；task_local `CURRENT_LOGIN_ID` 缓存使 `get_login_id` / `check_permission` 缓存命中零 DAO 读取（logout / kickout / revoke 即时失效） |
+| 全局单例无锁化 | `GarrisonManager`（CHANGELOG） | `logic` / `strategy` 字段由 `parking_lot::RwLock<Option<Arc<..>>>` 迁移为 `arc_swap::ArcSwapOption`；热路径 `GarrisonManager::logic()`（`backend/embedded.rs` 每请求调用）无锁原子加载，消除多核高 QPS 缓存行争用 |
+| 全局后端引用无锁化 | `CURRENT_BACKEND` | `Mutex<Option<Arc<..>>>` → `ArcSwapOption`（`BackendHandle` Sized 包装），check_login / check_permission 热路径去全局锁，并发初始化保持 CAS 语义 |
+| 慢哈希移出 async executor | `spawn_blocking` | bcrypt / Argon2 的 hash / verify 全部登录路径调用点包 `tokio::task::spawn_blocking`，登录风暴不阻塞 tokio worker |
+| TokenSession 请求内复用 | — | `is_valid_with_session` 返回快照供 hover 复用，同一请求内重复读取由 3-4 次降为 1-2 次；task_local `CURRENT_LOGIN_ID` 缓存使 `get_login_id` / `check_permission` 缓存命中零 DAO 读取（logout / kickout / revoke 即时失效） |
 | 编译期注册 | `inventory::submit!` | 插件 / 监听器工厂编译期注册，零运行时反射、零动态加载 |
 | 三层缓存 + TTL 随机抖动 | `oxcache` 集成 | L1 内存层 per-entry TTL 精细化过期；L1 写入经 oxcache `CacheBuilder::ttl_jitter` 自动 ±10% 抖动，L2 经 `UserCacheService::l2_ttl_with_jitter` 同等抖动，防大量 key 同时过期的缓存雪崩 |
 | L1 容量可配 | `l1_cache_capacity` | `UserCacheService::new_with_capacity` 接线 `GarrisonConfig::l1_cache_capacity`（曾静默无效，已修复） |

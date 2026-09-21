@@ -333,10 +333,15 @@ impl GarrisonManagerBuilder {
             None => Arc::new(GarrisonListenerManager::new()),
         };
         // 4.4 AuthLogic（委托 session + token_handler 实现登录/校验）
-        let token_handler: Arc<dyn crate::core::token::Token> = Arc::from(TokenStyleFactory::new(
-            &config.token_style,
-            config.jwt_secret.as_str(),
-        )?);
+        let token_handler: Arc<dyn crate::core::token::Token> =
+            Arc::from(TokenStyleFactory::new_with_jwt_keys(
+                &config.token_style,
+                config.jwt_secret.as_str(),
+                Some(&config.jwt_algorithm),
+                config.jwt_rsa_private_key_pem.as_deref(),
+                config.jwt_ec_private_key_pem.as_deref(),
+                config.jwt_ed_private_key_pem.as_deref(),
+            )?);
         let auth_logic: Arc<dyn AuthLogic> = match self.auth_logic {
             Some(al) => al,
             None => Arc::new(AuthLogicDefault::new(

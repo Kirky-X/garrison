@@ -30,8 +30,32 @@ impl TotpHandler {
     /// - `Ok(Self)`: 构造成功。
     /// - `Err(GarrisonError::Internal)`: 密钥长度或位数不合法。
     pub fn new(secret: Vec<u8>, step: u64, digits: u32) -> GarrisonResult<Self> {
+        Self::new_with_hash_algorithm(secret, step, digits, Algorithm::SHA1)
+    }
+
+    /// 以指定哈希算法创建 TOTP 处理器（SHA1/SHA256/SHA512）。
+    ///
+    /// 默认构造器 [`new`](Self::new) 使用 SHA1（RFC 6238 默认，兼容主流
+    /// Authenticator App）；SHA256/SHA512 用于服务端间对齐 RFC 6238 完整算法组。
+    /// 算法必须在构造期选定（totp-rs 的 `TOTP` 构建后不可变更哈希算法）。
+    ///
+    /// # 参数
+    /// - `secret`: 原始密钥字节（RFC 6238 向量：SHA1/20 字节，SHA256/32 字节，SHA512/64 字节）。
+    /// - `step`: 时间步长（秒），RFC 6238 默认 30。
+    /// - `digits`: 验证码位数，通常 6 或 8。
+    /// - `algorithm`: 哈希算法。
+    ///
+    /// # 返回
+    /// - `Ok(Self)`: 构造成功。
+    /// - `Err(GarrisonError::Internal)`: 密钥长度或位数不合法。
+    pub fn new_with_hash_algorithm(
+        secret: Vec<u8>,
+        step: u64,
+        digits: u32,
+        algorithm: Algorithm,
+    ) -> GarrisonResult<Self> {
         let totp = TotpBuilder::new()
-            .with_algorithm(Algorithm::SHA1)
+            .with_algorithm(algorithm)
             .with_digits(digits as u8)
             .with_skew(1) // skew = 1，允许 ±1 时间窗口偏差（RFC 6238 §5.2 推荐）
             .with_step_duration(step)

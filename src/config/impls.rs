@@ -20,6 +20,58 @@ impl Default for TenantIsolationConfig {
     }
 }
 
+impl Default for PasswordHasherConfig {
+    fn default() -> Self {
+        Self {
+            algorithm: "argon2id".to_string(),
+            argon2_m_cost: ARGON2_MIN_M_COST,
+            argon2_t_cost: 2,
+            argon2_p_cost: 1,
+            bcrypt_cost: 12,
+            allow_weak_argon2_params: false,
+        }
+    }
+}
+
+impl PasswordHasherConfig {
+    /// 按本配置段构造密码哈希器（`account-credential` feature）。
+    ///
+    /// 返回 `Arc<dyn PasswordHasher>`，可直接传入 `with_password_hasher`。
+    /// 校验规则与 `validate_core` 一致（algorithm 白名单 + 参数区间），非法配置
+    /// 返回 `Err(GarrisonError::Config)`（fail-fast，与 `validate()` 同语义）。
+    ///
+    /// 仅影响**新哈希**参数；verify 路径由 `PasswordVerifier` 按哈希前缀自动识别，
+    /// 与本配置无关。
+    #[cfg(feature = "account-credential")]
+    pub fn build_hasher(
+        &self,
+    ) -> GarrisonResult<std::sync::Arc<dyn crate::account::credential::PasswordHasher>> {
+        match self.algorithm.as_str() {
+            "argon2id" => {
+                if self.argon2_t_cost == 0 || self.argon2_p_cost == 0 {
+                    return Err(GarrisonError::Config(
+                        "config-password-hash-argon2-param-invalid::".to_string(),
+                    ));
+                }
+                Ok(std::sync::Arc::new(
+                    crate::account::credential::password::Argon2Hasher::with_params(
+                        self.argon2_m_cost,
+                        self.argon2_t_cost,
+                        self.argon2_p_cost,
+                    ),
+                ))
+            },
+            "bcrypt" => Ok(std::sync::Arc::new(
+                crate::account::credential::password::BcryptHasher::with_cost(self.bcrypt_cost),
+            )),
+            other => Err(GarrisonError::Config(format!(
+                "config-password-hash-algorithm-unsupported::{}",
+                other
+            ))),
+        }
+    }
+}
+
 // 手动 Debug 实现（非 derive）：
 // GarrisonConfig 含 `jwt_secret`（`Zeroizing<String>` 的 Debug 是透明的），
 // derive(Debug) 会把密钥明文打印进日志。此处借 derived Serialize 输出完整字段映射
@@ -39,6 +91,17 @@ impl std::fmt::Debug for GarrisonConfig {
                 "jwt_secret".to_string(),
                 serde_json::Value::String("<redacted>".to_string()),
             );
+            // 非对称私钥 PEM 脱敏（与 jwt_secret 同等安全等级）
+            for key in [
+                "jwt_rsa_private_key_pem",
+                "jwt_ec_private_key_pem",
+                "jwt_ed_private_key_pem",
+            ] {
+                map.insert(
+                    key.to_string(),
+                    serde_json::Value::String("<redacted>".to_string()),
+                );
+            }
         }
         f.write_str("GarrisonConfig ")?;
         std::fmt::Debug::fmt(&value, f)
@@ -77,6 +140,9 @@ impl GarrisonConfig {
             cookie_same_site: DEFAULT_COOKIE_SAME_SITE.to_string(),
             jwt_algorithm: DEFAULT_JWT_ALGORITHM.to_string(),
             jwt_secret: default_jwt_secret(),
+            jwt_rsa_private_key_pem: None,
+            jwt_ec_private_key_pem: None,
+            jwt_ed_private_key_pem: None,
             sign_window_seconds: DEFAULT_SIGN_WINDOW_SECONDS,
             sso_ticket_ttl_seconds: DEFAULT_SSO_TICKET_TTL_SECONDS,
             remember_me_enabled: false,
@@ -107,6 +173,7 @@ impl GarrisonConfig {
             allow_stateless_jwt_no_revocation: false,
             audit_mask_mode: AuditMaskMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
+            password_hasher: PasswordHasherConfig::default(),
             #[cfg(feature = "web-cors")]
             cors_config: CorsConfig::default(),
             #[cfg(feature = "web-csrf")]
@@ -449,7 +516,7 @@ impl GarrisonConfig {
     ///
     /// 配置校验分组：
     ///
-    /// - `validate_core`：`token_style` / `timeout` / `cookie_same_site`
+    /// - `validate_core`：`token_style` / `timeout` / `cookie_same_site` / `password_hasher`
     /// - `validate_jwt_secret`：JWT 密钥强度与算法白名单
     /// - `validate_session_config`：`remember_me` / `auto_renewal` / `is_share`
     /// - `validate_device_binding`：`device_binding_mode`
@@ -498,6 +565,79 @@ impl GarrisonConfig {
                 self.jwt_algorithm
             )));
         }
+        // 非对称算法-密钥类型匹配校验（fail-closed）：
+        // - 禁止同时配置两类及以上私钥 PEM（防配置歧义）
+        // - 非对称算法必须配套同类型私钥 PEM；HS 系算法禁止配置任何非对称私钥
+        let rsa_set = self.jwt_rsa_private_key_pem.is_some();
+        let ec_set = self.jwt_ec_private_key_pem.is_some();
+        let ed_set = self.jwt_ed_private_key_pem.is_some();
+        let configured_keys = rsa_set as u8 + ec_set as u8 + ed_set as u8;
+        if configured_keys > 1 {
+            return Err(GarrisonError::Config(
+                "config-jwt-key-multiple-types::".to_string(),
+            ));
+        }
+        let required_key_set = match self.jwt_algorithm.as_str() {
+            "RS256" => Some(rsa_set),
+            "ES256" => Some(ec_set),
+            "EdDSA" => Some(ed_set),
+            _ => None, // HS 系
+        };
+        if let Some(present) = required_key_set {
+            if !present {
+                return Err(GarrisonError::Config(format!(
+                    "config-jwt-key-missing::{}",
+                    self.jwt_algorithm
+                )));
+            }
+        } else if configured_keys > 0 {
+            return Err(GarrisonError::Config(format!(
+                "config-jwt-key-unexpected-for-hs::{}",
+                self.jwt_algorithm
+            )));
+        }
+        // 密码哈希参数校验（fail-closed）：默认即 OWASP 建议档，仅防配置弱化。
+        // Argon2id m_cost < 19456 须显式 allow_weak_argon2_params（内存受限部署的
+        // 风险接受位，放行时 warn 不静默）；bcrypt cost 限 [10, 15]（OWASP ≥10；
+        // >15 单次哈希秒级耗多为误配）。
+        self.validate_password_hasher()?;
+        Ok(())
+    }
+
+    /// `password_hasher` 配置段校验（见 `PasswordHasherConfig` 文档）。
+    fn validate_password_hasher(&self) -> GarrisonResult<()> {
+        let ph = &self.password_hasher;
+        if !PASSWORD_HASH_ALGORITHMS.contains(&ph.algorithm.as_str()) {
+            return Err(GarrisonError::Config(format!(
+                "config-password-hash-algorithm-unsupported::{}",
+                ph.algorithm
+            )));
+        }
+        if ph.algorithm == "argon2id" {
+            if ph.argon2_t_cost == 0 || ph.argon2_p_cost == 0 {
+                return Err(GarrisonError::Config(
+                    "config-password-hash-argon2-param-invalid::".to_string(),
+                ));
+            }
+            if ph.argon2_m_cost < ARGON2_MIN_M_COST {
+                if !ph.allow_weak_argon2_params {
+                    return Err(GarrisonError::Config(format!(
+                        "config-password-hash-argon2-m-below-floor::{} (min {})::{}",
+                        ph.argon2_m_cost, ARGON2_MIN_M_COST, ph.algorithm
+                    )));
+                }
+                tracing::warn!(
+                    "password_hasher: argon2 m_cost {} < OWASP floor {} KiB — weak params explicitly accepted via allow_weak_argon2_params (memory-constrained deployment?)",
+                    ph.argon2_m_cost,
+                    ARGON2_MIN_M_COST
+                );
+            }
+        } else if !(BCRYPT_MIN_COST..=BCRYPT_MAX_COST).contains(&ph.bcrypt_cost) {
+            return Err(GarrisonError::Config(format!(
+                "config-password-hash-bcrypt-cost-out-of-range::{} (allowed {}-{})",
+                ph.bcrypt_cost, BCRYPT_MIN_COST, BCRYPT_MAX_COST
+            )));
+        }
         Ok(())
     }
 
@@ -506,6 +646,11 @@ impl GarrisonConfig {
     /// HS256 需 ≥32 字节、HS384 需 ≥48 字节、HS512 需 ≥64 字节（RFC 7518 §3.2）。
     fn validate_jwt_secret(&self) -> GarrisonResult<()> {
         if self.token_style == "jwt" {
+            // 非对称算法：密钥强度由 PEM 决定（JwtHandler 构造期校验），
+            // jwt_secret 可留空作占位，跳过对称密钥长度校验
+            if matches!(self.jwt_algorithm.as_str(), "RS256" | "ES256" | "EdDSA") {
+                return Ok(());
+            }
             let secret_len = self.jwt_secret.as_str().len();
             if secret_len == 0 {
                 return Err(GarrisonError::Config(
@@ -516,6 +661,9 @@ impl GarrisonConfig {
                 "HS256" => 32,
                 "HS384" => 48,
                 "HS512" => 64,
+                // 非对称算法：密钥强度由 PEM 私钥位长/曲线阶决定（RS256 ≥2048 位
+                // 在 JwtHandler 构造期用 pkcs1 精确校验），不做 HMAC 对称长度校验
+                "RS256" | "ES256" | "EdDSA" => 0,
                 other => {
                     return Err(GarrisonError::Config(format!(
                         "config-jwt-algorithm-unsupported::{}",

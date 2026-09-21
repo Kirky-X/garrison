@@ -226,6 +226,14 @@ pub mod strategy;
 /// 会话模块，提供 GarrisonSession 会话模型。
 pub mod session;
 
+/// 数据合规模块（GDPR / 个保法数据主体权利编排）。
+///
+/// 启用 `data-erasure` feature 时编译。提供按主体（login_id / IP）擦除
+/// 框架管辖内数据的 [`compliance::erasure::DataErasureService`] 与擦除报告；
+/// 数据清单与责任边界见 `docs/DATA_COMPLIANCE.md`。
+#[cfg(feature = "data-erasure")]
+pub mod compliance;
+
 /// 缓存模块，提供三层缓存架构（L1 oxcache 内存 + L2 DAO + L3 interface）。
 ///
 /// 启用 `three-tier-cache` feature 时编译。提供 [`UserCacheService`]，

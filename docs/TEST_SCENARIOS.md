@@ -371,7 +371,7 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
 - **工具链**：兄弟生态 crate（confers/dbnexus/oxcache/sdforge/limiteron/inklog/
   trait-kit rc.2）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable
   （`RUSTUP_DIST_SERVER=https://static.rust-lang.org rustup update stable`）。
-- **e2e target 残留**：Phase 4 迁移删除了 examples 的 `--test e2e`
+- **e2e target 残留**：迁移删除了 examples 的 `--test e2e`
   target，但 `scripts/e2e_run.sh` 仍引用之——已重写指向现行 `tests/acceptance`
   （pentest→security 域、perf→concurrency 域 `#[ignore]` 用例），并保留
   auth_server_serve 进程级黑盒冒烟 + health 探活。

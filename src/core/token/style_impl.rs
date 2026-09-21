@@ -287,6 +287,26 @@ impl JwtTokenStyle {
             handler: crate::protocol::jwt::JwtHandler::new(secret),
         }
     }
+
+    /// 按算法名与私钥 PEM 构建 JWT 风格（config 非对称透传路径）。
+    ///
+    /// # 参数
+    /// - `algorithm`: 算法名（config 白名单口径）。
+    /// - `secret`: 对称密钥（HS 系使用；非对称路径作占位）。
+    /// - `rsa_pem` / `ec_pem` / `ed_pem`: 对应私钥 PEM（未配置传 None）。
+    pub fn from_algorithm_parts(
+        algorithm: &str,
+        secret: &str,
+        rsa_pem: Option<&str>,
+        ec_pem: Option<&str>,
+        ed_pem: Option<&str>,
+    ) -> GarrisonResult<Self> {
+        Ok(Self {
+            handler: crate::protocol::jwt::JwtHandler::from_algorithm_parts(
+                algorithm, secret, rsa_pem, ec_pem, ed_pem,
+            )?,
+        })
+    }
 }
 
 #[cfg(feature = "protocol-jwt")]
@@ -328,13 +348,36 @@ impl TokenStyleFactory {
     /// - `Err(GarrisonError::Config)`: 未知风格，消息含 "unknown token_style"。
     #[allow(clippy::new_ret_no_self)]
     pub fn new(style: &str, secret: &str) -> GarrisonResult<Box<dyn Token>> {
+        Self::new_with_jwt_keys(style, secret, None, None, None, None)
+    }
+
+    /// 非对称 JWT 扩展工厂：透传 config 的算法名与私钥 PEM。
+    ///
+    /// HS 现状路径传 `jwt_algorithm=None` + 三个 PEM `None`（行为与 [`new`](Self::new)
+    /// 完全一致）；RS256/ES256/EdDSA 需配套对应 PEM。
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new_with_jwt_keys(
+        style: &str,
+        secret: &str,
+        jwt_algorithm: Option<&str>,
+        rsa_pem: Option<&str>,
+        ec_pem: Option<&str>,
+        ed_pem: Option<&str>,
+    ) -> GarrisonResult<Box<dyn Token>> {
+        let jwt_algorithm = jwt_algorithm.unwrap_or("HS256");
         match style {
             "uuid" => Ok(Box::new(UuidTokenStyle)),
             "random_64" => Ok(Box::new(Random64TokenStyle)),
             // SimpleTokenStyle 需传入 secret 用于 HMAC-SHA256 签名
             "simple" => Ok(Box::new(SimpleTokenStyle::new(secret.to_string()))),
             #[cfg(feature = "protocol-jwt")]
-            "jwt" => Ok(Box::new(JwtTokenStyle::new(secret))),
+            "jwt" => Ok(Box::new(JwtTokenStyle::from_algorithm_parts(
+                jwt_algorithm,
+                secret,
+                rsa_pem,
+                ec_pem,
+                ed_pem,
+            )?)),
             #[cfg(not(feature = "protocol-jwt"))]
             "jwt" => {
                 let _ = secret; // 避免 unused 警告（jwt 风格需 protocol-jwt feature）

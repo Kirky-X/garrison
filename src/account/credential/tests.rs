@@ -972,3 +972,34 @@ async fn dao_create_is_trusted_boundary_stores_model_as_given() {
         .expect_err("alice 查询 bob 凭证应被拒绝");
     assert_idor_denied(err, "create trusted boundary: alice→bob find_by_user");
 }
+
+// ========================================================================
+// Argon2id 默认策略锁定（ADR-0001）
+// ========================================================================
+
+/// Argon2Hasher::default() 参数锁定：m=19456 KiB / t=2 / p=1（OWASP 建议最低档）。
+/// 默认策略无声漂移（降参数、换算法）会被本测试阻断。
+#[test]
+fn argon2_default_policy_is_owasp_baseline() {
+    // 参数经 PHC 字符串锁定（见 argon2_hash_phc_prefix_locks_algorithm_and_params），
+    // 字段为模块私有，此处仅锁定默认构造行为的可观测输出
+    let hasher = crate::account::credential::password::Argon2Hasher::default();
+    let hash = hasher.hash("policy-lock-probe").unwrap();
+    assert!(
+        hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+        "默认策略应为 Argon2id m=19456/t=2/p=1，实际: {}",
+        &hash[..hash.len().min(48)]
+    );
+}
+
+/// hash 输出 PHC 字符串锁定：算法标识 Argon2id + 版本 v=19 + 默认参数。
+#[test]
+fn argon2_hash_phc_prefix_locks_algorithm_and_params() {
+    let hasher = crate::account::credential::password::Argon2Hasher::default();
+    let hash = hasher.hash("correct horse battery staple").unwrap();
+    assert!(
+        hash.starts_with("$argon2id$v=19$m=19456,t=2,p=1$"),
+        "PHC 前缀应为 $argon2id$v=19$m=19456,t=2,p=1$，实际: {}",
+        &hash[..hash.len().min(48)]
+    );
+}

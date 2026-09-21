@@ -6,7 +6,19 @@
 # oidc.rs:507/496 —— wiremock 模拟 OIDC token 端点的假 id_token（dummy JWT，sub=user123）
 800740ceaca95154ece58d07a423c4edfc7fefc4:src/protocol/sso/oidc.rs:generic-api-key:507
 04421207ad65120ef9b3925f76c1c18730831888:src/protocol/sso/oidc.rs:generic-api-key:496
-# totp.rs:138 —— RFC 6238 标准公开测试密钥 "12345678901234567890" 的 Base32 编码
+# totp.rs 同一 RFC 6238 公开测试密钥 Base32 在历史 commit 中的不同行号位置：
+# - line 138（commit e395763c）历史版本位置
+# - line 316/338（commit 043bd4f3）现行位置（2026-09-21 重核更新）
 e395763cec4dcad25a26ef359512412862e11a57:src/account/credential/totp.rs:generic-api-key:138
-# README_EN.md:292 —— 文档示例输出中的占位符 token 值，非真实凭证（entropy=3.59）
-README_EN.md:generic-api-key:292
+043bd4f3d94b2b8ff4ceedf2e1f436cc84c80f04:src/account/credential/totp.rs:generic-api-key:316
+043bd4f3d94b2b8ff4ceedf2e1f436cc84c80f04:src/account/credential/totp.rs:generic-api-key:338
+# README_EN.md:287 —— 文档示例输出中的占位符 token 值，非真实凭证（entropy=3.59）
+# （原 line 292 条目因文档编辑行号漂移失效，2026-09-21 重核后更新指纹）
+9797250e19969780def036cd049b8bf12ae61be5:README_EN.md:generic-api-key:287
+# 以下为 src/ 内嵌的 CI 已验证测试夹具 PEM（非真实私钥，detect-private-key 钩子同批豁免）：
+# - jwt/handler.rs：非对称构造器文档示例块
+# - oauth2_server/jwks.rs、server/oauth2_routes.rs：JWKS 端点测试夹具（JWKS_TEST_RSA_PEM）
+# 无 commit 前缀 = 对该文件任意历史版本生效（夹具为永久测试资产）
+src/protocol/jwt/handler.rs:private-key:359
+src/oauth2_server/jwks.rs:private-key:139
+src/server/oauth2_routes.rs:private-key:1066

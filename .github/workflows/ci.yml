@@ -90,7 +90,7 @@ jobs:
       - name: Check (production features)
         run: cargo check --features "production" --locked
       - name: Check (examples, all features)
-        run: cargo check -p vecboost-examples --all-features --locked
+        run: cargo check -p garrison-examples --all-features --locked
 
   # === 格式化检查 ===
   fmt:
@@ -286,7 +286,7 @@ jobs:
       - name: Check broken links
         run: |
           set -euo pipefail
-          OUTPUT=$(cargo deadlinks --dir target/doc/vecboost 2>&1 || true)
+          OUTPUT=$(cargo deadlinks --dir target/doc/garrison 2>&1 || true)
           echo "$OUTPUT"
           # 过滤已知外部 crate 死链（opentelemetry Context / tracing-subscriber dispatcher / warp Response）
           # 精确匹配路径片段边界（/ 或 . 分隔），避免误过滤 TenantContext/GarrisonResponse 等自身类型
@@ -348,9 +348,9 @@ jobs:
           - 5432:5432
         env:
           # 与 tests/acceptance/environment.rs 的 POSTGRES_URL 常量对齐（CI 专用测试凭据）
-          POSTGRES_USER: vecboost
-          POSTGRES_PASSWORD: vecboost
-          POSTGRES_DB: vecboost_test
+          POSTGRES_USER: garrison
+          POSTGRES_PASSWORD: garrison
+          POSTGRES_DB: garrison_test
         options: >-
           --health-cmd "pg_isready -U garrison"
           --health-interval 10s
@@ -401,9 +401,9 @@ jobs:
           - 5432:5432
         env:
           # 与 tests/acceptance/environment.rs 的 POSTGRES_URL 常量对齐（CI 专用测试凭据）
-          POSTGRES_USER: vecboost
-          POSTGRES_PASSWORD: vecboost
-          POSTGRES_DB: vecboost_test
+          POSTGRES_USER: garrison
+          POSTGRES_PASSWORD: garrison
+          POSTGRES_DB: garrison_test
         options: >-
           --health-cmd "pg_isready -U garrison"
           --health-interval 10s

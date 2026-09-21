@@ -161,8 +161,14 @@ impl TokenLogic for GarrisonLogicDefault {
     async fn verify_token(&self, token: &str) -> GarrisonResult<String> {
         // 委托 core-token::Token::verify
         // spec: "不泄露 token 具体失效原因（统一 InvalidToken）"
-        let token_handler =
-            TokenStyleFactory::new(&self.config.token_style, self.config.jwt_secret.as_str())?;
+        let token_handler = TokenStyleFactory::new_with_jwt_keys(
+            &self.config.token_style,
+            self.config.jwt_secret.as_str(),
+            Some(&self.config.jwt_algorithm),
+            self.config.jwt_rsa_private_key_pem.as_deref(),
+            self.config.jwt_ec_private_key_pem.as_deref(),
+            self.config.jwt_ed_private_key_pem.as_deref(),
+        )?;
         match token_handler.verify(token) {
             Ok(Some(login_id)) => Ok(login_id),
             Ok(None) => Err(GarrisonError::InvalidToken(
@@ -185,7 +191,13 @@ impl TokenLogic for GarrisonLogicDefault {
         }
         // 获取 login_id（用于 plugin/listener 回调）
         let login_id = self.verify_token(token).await?;
-        let handler = crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
+        let handler = crate::protocol::jwt::JwtHandler::from_algorithm_parts(
+            &self.config.jwt_algorithm,
+            self.config.jwt_secret.as_str(),
+            self.config.jwt_rsa_private_key_pem.as_deref(),
+            self.config.jwt_ec_private_key_pem.as_deref(),
+            self.config.jwt_ed_private_key_pem.as_deref(),
+        )?;
         let new_token = handler.refresh(token, self.config.timeout)?;
         // auto-wire: 触发 plugin on_login（新 token）
         if let Some(pm) = &self.plugin_manager {

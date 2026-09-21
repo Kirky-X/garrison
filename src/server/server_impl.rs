@@ -512,7 +512,7 @@ impl GarrisonAuthServer {
                     let notify = Arc::clone(&shutdown_notify);
                     tokio::spawn(async move {
                         notify.notified().await;
-                        h2.graceful_shutdown(std::time::Duration::from_secs(30));
+                        h2.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
                     });
                     handle
                 };
@@ -574,7 +574,7 @@ impl GarrisonAuthServer {
                     let notify = Arc::clone(&shutdown_notify);
                     tokio::spawn(async move {
                         notify.notified().await;
-                        h2.graceful_shutdown(std::time::Duration::from_secs(30));
+                        h2.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
                     });
                     handle
                 };

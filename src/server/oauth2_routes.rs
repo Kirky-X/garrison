@@ -8,7 +8,8 @@
 //!
 //! # 端点
 //!
-//! - 外网：`GET /oauth2/authorize`、`POST /oauth2/token`、`POST /oauth2/revoke`
+//! - 外网：`GET /oauth2/authorize`、`POST /oauth2/token`、`POST /oauth2/revoke`、
+//!   `GET /oauth2/jwks.json`（非对称签名时可用）
 //! - 内网：`POST /oauth2/introspect`
 
 #![cfg(feature = "oauth2-server")]
@@ -44,6 +45,9 @@ pub struct OAuth2State {
     pub revoke_handler: Arc<RevokeHandler>,
     /// Token 内省 handler（/oauth2/introspect，RFC 7662）。
     pub introspect_handler: Arc<IntrospectHandler>,
+    /// JWKS 导出源：`Some((jwt_algorithm, private_key_pem))` 时
+    /// /oauth2/jwks.json 可用；None 时端点 404（fail-closed，不暴露空集合）。
+    pub jwks_source: Option<(String, String)>,
 }
 
 impl OAuth2State {
@@ -68,22 +72,62 @@ impl OAuth2State {
         ));
         let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
         let introspect_handler = Arc::new(IntrospectHandler::new(store, token_handler.clone()));
+        // 退化路径结构性告警（构造完成时检测一次）：refresh grant 可用但
+        // RefreshTokenRotation 未注入 → refresh 走 DAO 退化路径，reuse detection
+        // 不可用（盗用 token 重放不会触发链式撤销）。生产部署应通过
+        // `TokenHandler::with_refresh_rotation` 注入轮换服务消除本告警。
+        #[cfg(feature = "db-sqlite")]
+        if !token_handler.has_refresh_rotation() {
+            tracing::warn!(
+                "OAuth2State constructed without RefreshTokenRotation: /oauth2/token refresh grant will serve via DAO fallback without reuse detection — refresh_token replay/chain revocation is UNAVAILABLE; inject TokenHandler::with_refresh_rotation to enable"
+            );
+        }
         Self {
             authorize_handler,
             token_handler,
             revoke_handler,
             introspect_handler,
+            jwks_source: None,
         }
+    }
+
+    /// 启用 /oauth2/jwks.json 端点（仅非对称 JWT 签名时调用）。
+    ///
+    /// # 参数
+    /// - `jwt_algorithm`: 签名算法名（RS256/ES256/EdDSA）。
+    /// - `private_key_pem`: 对应私钥 PEM（仅用于导出公钥成分，无私钥暴露）。
+    pub fn with_jwks_source(mut self, jwt_algorithm: &str, private_key_pem: &str) -> Self {
+        self.jwks_source = Some((jwt_algorithm.to_string(), private_key_pem.to_string()));
+        self
     }
 }
 
-/// 构建外网 OAuth2 路由（authorize/token/revoke）。
+/// 构建外网 OAuth2 路由（authorize/token/revoke/jwks）。
 pub fn oauth2_external_router(state: Arc<OAuth2State>) -> Router {
     Router::new()
         .route("/oauth2/authorize", get(authorize_endpoint))
         .route("/oauth2/token", post(token_endpoint))
         .route("/oauth2/revoke", post(revoke_endpoint))
+        .route("/oauth2/jwks.json", get(jwks_endpoint))
         .with_state(state)
+}
+
+/// GET /oauth2/jwks.json — 导出非对称签名公钥 JWK Set。
+///
+/// fail-closed：未配置非对称签名密钥时 404（不暴露空集合/对称密钥信息）。
+async fn jwks_endpoint(State(state): State<Arc<OAuth2State>>) -> Response {
+    match &state.jwks_source {
+        Some((algorithm, pem)) => match crate::oauth2_server::jwks::build_jwk_set(algorithm, pem) {
+            Ok(jwk_set) => (
+                StatusCode::OK,
+                [(axum::http::header::CACHE_CONTROL, "public, max-age=300")],
+                axum::Json(jwk_set),
+            )
+                .into_response(),
+            Err(_) => StatusCode::NOT_FOUND.into_response(),
+        },
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// 构建内网 OAuth2 路由（introspect）。
@@ -378,6 +422,65 @@ mod tests {
             "https://auth.example.com/login".to_string(),
         ));
         (state, store)
+    }
+
+    /// 进程内日志捕获 writer（fmt Layer 的 MakeWriter，收集格式化行）。
+    #[derive(Clone)]
+    struct LogCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
+        type Writer = LogCaptureWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            LogCaptureWriter(self.0.clone())
+        }
+    }
+
+    struct LogCaptureWriter(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl std::io::Write for LogCaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("日志缓冲锁应可用")
+                .push(String::from_utf8_lossy(buf).to_string());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// OAuth2State::new 构造完成时的结构性告警（T032）：refresh grant 可用
+    /// （db-sqlite）但 RefreshTokenRotation 未注入 → 构造期输出结构化 warn
+    /// （含重放检测不可用后果与修复指引），探针 has_refresh_rotation 为 false。
+    #[cfg(feature = "db-sqlite")]
+    #[test]
+    fn oauth2_state_new_without_rotation_warns_at_construction() {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let logs = LogCapture(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(logs.clone()),
+        );
+
+        let _guard = subscriber.set_default();
+        let (state, _store) = make_state();
+        assert!(
+            !state.token_handler.has_refresh_rotation(),
+            "OAuth2State::new 默认不注入 rotation，探针应为 false"
+        );
+
+        let logs = logs.0.lock().expect("日志缓冲锁应可用").clone();
+        assert!(
+            logs.iter().any(|l| {
+                l.contains("without RefreshTokenRotation") && l.contains("reuse detection")
+            }),
+            "构造期应输出结构化退化 warn（含 reuse detection 不可用后果），日志: {:?}",
+            logs
+        );
     }
 
     /// 创建测试用 OAuth2Client（支持 AuthorizationCode + ClientCredentials）。
@@ -744,6 +847,7 @@ mod tests {
             token_handler,
             revoke_handler,
             introspect_handler,
+            jwks_source: None,
         });
 
         store.create(make_test_client("rl-429")).await.unwrap();
@@ -944,5 +1048,99 @@ mod tests {
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(resp_json["error"], "invalid_request");
+    }
+}
+
+#[cfg(test)]
+mod jwks_tests {
+    use super::*;
+    use crate::dao::{GarrisonDao, InMemoryDao};
+    use crate::oauth2_server::client::{DaoOAuth2ClientStore, OAuth2ClientStore};
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    /// 测试专用 RSA 2048 私钥（非真实凭证）。
+    const JWKS_TEST_RSA_PEM: &str = "\
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDMQoXOvmvs4kpj
+nYshns5CYyNziLt/xBQBZtlkzY3KUuHtJMz9zK0TTz0DbhCnDCWF8tpWqxHBTtON
+pMnnC6bTN4Wg/PWDn67hub23b4xAKq5qH45RmWn4a0TGTUyQktebjlCiWBlMCo43
+j7FLyvGrOx3SmyUUaI5vh02Pf5Swg2CCQ69ht3L58jM6lp+jILJ4gEjNC2hmaWgH
+bbYhTX5qCaPgZTndfgPXX9wkDG8jhpgRpfwmSuJ4aRiRrjvgycWuPccryX7aXiBU
+c5H8rdKVgnjPTzSL8h3P/2tpZkNj5OFBZKTgmdPuwF87Mjlbr7Oi2xpCIpNpnyF1
+L8G/mIIRAgMBAAECggEAY2vnzIOEbceRtN4cuC8fr1GpElXWCfELWclRfI7O+tGP
+9YlpnAmxnsn9ZTuAMIcphoL4QqI+4Kw5LeMtgV/7AikuyncGG9ywV1+819ocVqlP
+vwkAEXjOi2PPFITQhThsaOODHRorqgcjRSkUf9NXAWUjdX0dtcrUtbWSi4vqeGWC
+O0Ni/9iWJYFjAgHu+XJgYXZtn7sJGe30PuIFmiKHfHuuM9alo6SubQ3UU80B+hQm
+N4VVuYN+dYmGsekp+Ofj65mq2+WAyvHE2V9OB92L+yVY0uKZ428eXdN9ydp8kVqh
+yOW2yLTq6sBNBOi/F/DMim6QrIzn6zpp0hXyc97d1wKBgQD+2qQOQ+urTE1ymdXT
+C/os5kMrjsYd/rfcMaBbl4XmDE/PjlJg1Z6yVBGMmvM/shjTslcV8kgKyKf+aHm1
+b3ckgu9PLtoYGX0yjeHbYCidwkjJPz8sy5pIFHslY/bGhV5RqsSPJo1aX2En0c4R
+3cJHGGGn2YguQuWSOU94VTKgowKBgQDNLaS9Q08j/tiozEY23oH9i5p5iSwxc3It
+hS/UwLYNFad6byRiDgVlvx+sVHZfLBsmNMlHEY+oMGocctqGAC8+a0pvtaLnU12/
+GI61axWfAlCJrYs3CBOKwOH3hBM04mqPUb2ySHdlzPawpIr55jMkohuXXyw/22je
+pK7iIPHZuwKBgQC+/Gi/TAUbjQXpIQHNtAcaiMDDrq4nolB00jfjC81LVeSlnXl8
+mfngmAHCxggOrs/OLbL3fmagtji2/eJfppW5penjBDBqqQda0Fr2xLwLZaKYNi6I
+ylfnNnoGzkAMC7xgJUJCKNj7ZcjwR1lPqElEcDAW0n0sdfOGvi4g9nAHUwKBgGIB
+E1dz9zFyYXr/V+qNjfnV3QuAgiN8yWUE4Tv2cP7/AOhyfiZ4HAvlpvNhxMjhAHbX
+b+0KblwgBA9irQ6kt+xQw1VopU9perX0vPXbGJDDQkUBKCY5LVxxlX3tEF+KZuve
+V4X5J07xAESP0/JaCsPMyvEa/L/jxcvTTdWlduBRAoGBAPx2MMqUGXa+UZ+a0cyF
+tW0xGglEWCX+e2vSNf31v4FyoGxNi6h2ap2OWEddpGttS+UbOzO9BlzcCtYJvPwW
+lRVGEQXEoVyslCUwTlV8LmtrJS6Xl9YwRHmmajJMH6GJTk/CToOLIvj2bOMxHW5A
+dzWfBsm+KAfTJuqbV7VnJL3G
+-----END PRIVATE KEY-----
+";
+
+    fn make_state() -> OAuth2State {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        OAuth2State::new(store, dao, "http://localhost/login".into())
+    }
+
+    /// 未配置非对称签名密钥：404（fail-closed）。
+    #[tokio::test]
+    async fn jwks_endpoint_returns_404_without_source() {
+        let app = oauth2_external_router(Arc::new(make_state()));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/oauth2/jwks.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// 配置 RS256 签名密钥：200 + 合法 JWK Set JSON（含 kid/n/e，无私钥成分）。
+    #[tokio::test]
+    async fn jwks_endpoint_returns_200_with_rsa_source() {
+        let app = oauth2_external_router(Arc::new(
+            make_state().with_jwks_source("RS256", JWKS_TEST_RSA_PEM),
+        ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/oauth2/jwks.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = BodyExt::collect(resp.into_body()).await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let keys = json["keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0]["kty"], "RSA");
+        assert_eq!(keys[0]["use"], "sig");
+        assert!(keys[0]["kid"].as_str().unwrap().len() > 20);
+        assert!(keys[0]["n"].as_str().is_some() && keys[0]["e"].as_str().is_some());
+        assert!(!json.to_string().contains("PRIVATE KEY"));
     }
 }

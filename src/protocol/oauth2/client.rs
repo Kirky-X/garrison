@@ -442,6 +442,11 @@ impl OAuth2Client {
         actual_state: &str,
         code_verifier: &str,
     ) -> GarrisonResult<TokenResponse> {
+        // CSRF 防护：state 缺失（空串）fail-closed 拒绝——双空相等若放行，
+        // 调用方未生成 state / 回调被剥离 state 的 CSRF 注入将静默通过
+        if expected_state.is_empty() || actual_state.is_empty() {
+            return Err(GarrisonError::OAuth2("oauth2-state-missing".to_string()));
+        }
         // CSRF 防护：校验 state 参数
         if expected_state != actual_state {
             return Err(GarrisonError::OAuth2("oauth2-state-mismatch".to_string()));
@@ -684,6 +689,47 @@ mod tests {
         for ch in ['-', '_', '.', '~'] {
             let s = ch.to_string();
             assert_eq!(url_encode(&s), s, "字符 {} 应被保留", ch);
+        }
+    }
+
+    /// state 缺失 fail-closed：expected/actual 任一为空串即拒绝，不发 HTTP
+    /// （双空相等若放行，CSRF 注入将静默通过；守卫先于 mismatch 比较与网络请求）。
+    #[tokio::test]
+    async fn exchange_code_rejects_missing_state_before_http() {
+        let client = OAuth2Client::new(
+            "cid",
+            "secret",
+            "https://localhost/callback",
+            "https://auth.example.com/authorize",
+            "https://auth.example.com/token",
+        )
+        .expect("client 构建成功");
+        let verifier = "a".repeat(43);
+
+        // 双空（调用方未生成 state + 回调无 state）
+        let err = client
+            .exchange_code_with_pkce("code-x", "", "", &verifier)
+            .await
+            .unwrap_err();
+        match err {
+            GarrisonError::OAuth2(msg) => {
+                assert!(msg.contains("oauth2-state-missing"), "实际: {}", msg)
+            },
+            other => panic!("期望 OAuth2(state-missing)，实际: {:?}", other),
+        }
+
+        // expected 空 / actual 空（回调被剥离 state 的 CSRF 注入形态）
+        for (expected, actual) in [("", "s"), ("s", "")] {
+            let err = client
+                .exchange_code_with_pkce("code-x", expected, actual, &verifier)
+                .await
+                .unwrap_err();
+            match err {
+                GarrisonError::OAuth2(msg) => {
+                    assert!(msg.contains("oauth2-state-missing"), "实际: {}", msg)
+                },
+                other => panic!("期望 OAuth2(state-missing)，实际: {:?}", other),
+            }
         }
     }
 

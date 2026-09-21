@@ -5,7 +5,7 @@
 # 每个 bin 演示 Garrison 的一个特性模块，配套 tests/<name>.rs 独立测试。
 
 [package]
-name = "vecboost-examples"
+name = "garrison-examples"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

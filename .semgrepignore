@@ -1,0 +1,29 @@
+# Semgrep 扫描忽略清单（对齐 .github/codeql-config.yml 排除测试/生成物的先例）
+# 用途：semgrep scan --config p/rust --config p/secrets 时排除非生产代码路径，
+# 降噪不关检——src/ 真实源码中的安全反模式仍会被检出。
+# 参考: https://semgrep.dev/docs/cli-reference/#semgrepignore-files
+
+# 编译产物
+target/
+
+# 测试与示例（含 wiremock 假凭证、测试专用硬编码密钥——预期行为非漏洞）
+tests/
+examples/
+benches/
+
+# 第三方参考源码与临时文件（pre-commit forbid-temp-dir 同源约束）
+temp/
+
+# 文档与站点构建产物
+docs/
+mdbook/book/
+mdbook/theme/
+mdbook/fonts/
+
+# specmark 变更管理（.gitignore 已忽略，双保险）
+specmark/
+
+# 运行日志与本地工具状态
+logs/
+.mimosa/
+.security-audit/

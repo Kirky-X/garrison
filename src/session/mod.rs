@@ -314,7 +314,9 @@ pub struct GarrisonSession {
 }
 
 /// 生成 Account-Session 的存储 key。
-fn account_key(login_id: &str) -> String {
+///
+/// `pub(crate)`：`compliance::erasure` 擦除编排复用同一构造（键格式单点维护）。
+pub(crate) fn account_key(login_id: &str) -> String {
     format!("account:session:{}", login_id)
 }
 

@@ -72,6 +72,7 @@ fn zeroizing_string_drop_clears_buffer() {
 
     // String::zeroize 先 as_bytes_mut().zeroize() 清零 buffer，再 clear() 设 len=0
     // buffer 内存仍属于 String（capacity 不变），ptr 仍有效
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage —— 测试断言只读验证 zeroize 清零，非生产 unsafe
     unsafe {
         let bytes = std::slice::from_raw_parts(ptr, len);
         assert!(
@@ -1795,6 +1796,271 @@ fn load_rejects_directory() {
     assert!(
         matches!(err, GarrisonError::Config(ref m) if m.contains("not a regular file") || m.contains("failed to open")),
         "目录应被拒绝（Linux 走 is_file 检查 / Windows 走 File::open EACCES），实际: {:?}",
+        err
+    );
+}
+
+// ========================================================================
+// JWT 非对称配置扩展（RS256/ES256/EdDSA）
+// ========================================================================
+
+/// 测试专用 RSA 2048 私钥（PKCS#8，非真实凭证）。
+#[allow(dead_code)]
+const TEST_ASYM_RSA_PEM: &str = "\
+-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDMQoXOvmvs4kpj
+nYshns5CYyNziLt/xBQBZtlkzY3KUuHtJMz9zK0TTz0DbhCnDCWF8tpWqxHBTtON
+pMnnC6bTN4Wg/PWDn67hub23b4xAKq5qH45RmWn4a0TGTUyQktebjlCiWBlMCo43
+j7FLyvGrOx3SmyUUaI5vh02Pf5Swg2CCQ69ht3L58jM6lp+jILJ4gEjNC2hmaWgH
+bbYhTX5qCaPgZTndfgPXX9wkDG8jhpgRpfwmSuJ4aRiRrjvgycWuPccryX7aXiBU
+c5H8rdKVgnjPTzSL8h3P/2tpZkNj5OFBZKTgmdPuwF87Mjlbr7Oi2xpCIpNpnyF1
+L8G/mIIRAgMBAAECggEAY2vnzIOEbceRtN4cuC8fr1GpElXWCfELWclRfI7O+tGP
+9YlpnAmxnsn9ZTuAMIcphoL4QqI+4Kw5LeMtgV/7AikuyncGG9ywV1+819ocVqlP
+vwkAEXjOi2PPFITQhThsaOODHRorqgcjRSkUf9NXAWUjdX0dtcrUtbWSi4vqeGWC
+O0Ni/9iWJYFjAgHu+XJgYXZtn7sJGe30PuIFmiKHfHuuM9alo6SubQ3UU80B+hQm
+N4VVuYN+dYmGsekp+Ofj65mq2+WAyvHE2V9OB92L+yVY0uKZ428eXdN9ydp8kVqh
+yOW2yLTq6sBNBOi/F/DMim6QrIzn6zpp0hXyc97d1wKBgQD+2qQOQ+urTE1ymdXT
+C/os5kMrjsYd/rfcMaBbl4XmDE/PjlJg1Z6yVBGMmvM/shjTslcV8kgKyKf+aHm1
+b3ckgu9PLtoYGX0yjeHbYCidwkjJPz8sy5pIFHslY/bGhV5RqsSPJo1aX2En0c4R
+3cJHGGGn2YguQuWSOU94VTKgowKBgQDNLaS9Q08j/tiozEY23oH9i5p5iSwxc3It
+hS/UwLYNFad6byRiDgVlvx+sVHZfLBsmNMlHEY+oMGocctqGAC8+a0pvtaLnU12/
+GI61axWfAlCJrYs3CBOKwOH3hBM04mqPUb2ySHdlzPawpIr55jMkohuXXyw/22je
+pK7iIPHZuwKBgQC+/Gi/TAUbjQXpIQHNtAcaiMDDrq4nolB00jfjC81LVeSlnXl8
+mfngmAHCxggOrs/OLbL3fmagtji2/eJfppW5penjBDBqqQda0Fr2xLwLZaKYNi6I
+ylfnNnoGzkAMC7xgJUJCKNj7ZcjwR1lPqElEcDAW0n0sdfOGvi4g9nAHUwKBgGIB
+E1dz9zFyYXr/V+qNjfnV3QuAgiN8yWUE4Tv2cP7/AOhyfiZ4HAvlpvNhxMjhAHbX
+b+0KblwgBA9irQ6kt+xQw1VopU9perX0vPXbGJDDQkUBKCY5LVxxlX3tEF+KZuve
+V4X5J07xAESP0/JaCsPMyvEa/L/jxcvTTdWlduBRAoGBAPx2MMqUGXa+UZ+a0cyF
+tW0xGglEWCX+e2vSNf31v4FyoGxNi6h2ap2OWEddpGttS+UbOzO9BlzcCtYJvPwW
+lRVGEQXEoVyslCUwTlV8LmtrJS6Xl9YwRHmmajJMH6GJTk/CToOLIvj2bOMxHW5A
+dzWfBsm+KAfTJuqbV7VnJL3G
+-----END PRIVATE KEY-----
+";
+
+/// RS256 + RSA 私钥 PEM：合法配置通过校验。
+#[test]
+fn validate_accepts_rs256_with_rsa_pem() {
+    let mut config = GarrisonConfig::default();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "RS256".to_string();
+    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
+    assert!(config.validate().is_ok(), "RS256 + rsa pem 应通过校验");
+}
+
+/// RS256 缺 RSA 私钥 PEM：拒绝。
+#[test]
+fn validate_rejects_rs256_without_rsa_pem() {
+    let mut config = GarrisonConfig::default();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "RS256".to_string();
+    config.jwt_secret = "0123456789abcdef0123456789abcdef".to_string().into();
+    let err = config.validate().unwrap_err();
+    assert!(err.to_string().contains("config-jwt-key-missing"));
+}
+
+/// 同时配置两类私钥 PEM：拒绝（防配置歧义）。
+#[test]
+fn validate_rejects_multiple_key_types() {
+    let mut config = GarrisonConfig::default();
+    config.jwt_algorithm = "RS256".to_string();
+    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
+    config.jwt_ec_private_key_pem = Some("dummy".to_string());
+    let err = config.validate().unwrap_err();
+    assert!(err.to_string().contains("config-jwt-key-multiple-types"));
+}
+
+/// HS 系算法配置任何非对称私钥：拒绝。
+#[test]
+fn validate_rejects_asymmetric_key_for_hs() {
+    let mut config = GarrisonConfig::default();
+    config.jwt_algorithm = "HS256".to_string();
+    config.jwt_secret = "0123456789abcdef0123456789abcdef".to_string().into();
+    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
+    let err = config.validate().unwrap_err();
+    assert!(err.to_string().contains("config-jwt-key-unexpected-for-hs"));
+}
+
+/// 非对称私钥字段 Debug 输出脱敏。
+#[test]
+fn debug_redacts_asymmetric_pem_fields() {
+    let mut config = GarrisonConfig::default();
+    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
+    let debug = format!("{:?}", config);
+    assert!(!debug.contains("MIIEvg"), "Debug 输出不得包含 PEM 内容");
+    assert!(debug.contains("<redacted>"));
+}
+
+// ============================================================================
+// password_hasher 配置段（T030）
+// ============================================================================
+
+/// 默认值锁定：argon2id + OWASP 建议档（19456/2/1）+ bcrypt 12 + 风险接受位关闭，
+/// 且默认配置整体校验通过。
+#[test]
+fn password_hasher_defaults_are_owasp_recommended() {
+    let config = GarrisonConfig::default();
+    let ph = &config.password_hasher;
+    assert_eq!(ph.algorithm, "argon2id");
+    assert_eq!(ph.argon2_m_cost, 19_456);
+    assert_eq!(ph.argon2_t_cost, 2);
+    assert_eq!(ph.argon2_p_cost, 1);
+    assert_eq!(ph.bcrypt_cost, 12);
+    assert!(!ph.allow_weak_argon2_params);
+    assert!(
+        config.validate().is_ok(),
+        "默认 password_hasher 配置必须通过 validate: {:?}",
+        config.validate().err()
+    );
+}
+
+/// TOML 配置节反序列化（serde(default) 补全缺省字段）。
+#[test]
+fn password_hasher_toml_section_roundtrip() {
+    let toml = r#"
+[password_hasher]
+algorithm = "bcrypt"
+bcrypt_cost = 14
+"#;
+    let config: GarrisonConfig = toml::from_str(toml).unwrap();
+    assert_eq!(config.password_hasher.algorithm, "bcrypt");
+    assert_eq!(config.password_hasher.bcrypt_cost, 14);
+    // 未写出的字段取默认值
+    assert_eq!(config.password_hasher.argon2_m_cost, 19_456);
+    assert!(!config.password_hasher.allow_weak_argon2_params);
+}
+
+/// 非法算法名：拒绝。
+#[test]
+fn validate_rejects_unknown_password_hash_algorithm() {
+    let mut config = GarrisonConfig::default();
+    config.password_hasher.algorithm = "md5".to_string();
+    let err = config.validate().unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("config-password-hash-algorithm-unsupported"),
+        "实际: {}",
+        err
+    );
+}
+
+/// argon2id m_cost 低于 19456 下限且未显式风险接受：拒绝。
+#[test]
+fn validate_rejects_argon2_m_below_floor_without_risk_acceptance() {
+    let mut config = GarrisonConfig::default();
+    config.password_hasher.argon2_m_cost = 8192;
+    let err = config.validate().unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("config-password-hash-argon2-m-below-floor"),
+        "实际: {}",
+        err
+    );
+}
+
+/// argon2id m_cost 低于下限但显式风险接受：放行（内存受限部署逃生口）。
+#[test]
+fn validate_accepts_argon2_m_below_floor_with_risk_acceptance() {
+    let mut config = GarrisonConfig::default();
+    config.password_hasher.argon2_m_cost = 8192;
+    config.password_hasher.allow_weak_argon2_params = true;
+    assert!(
+        config.validate().is_ok(),
+        "显式风险接受后应放行: {:?}",
+        config.validate().err()
+    );
+}
+
+/// argon2id t_cost/p_cost 为 0：拒绝（argon2 Params 构造期会失败，配置层提前拦截）。
+#[test]
+fn validate_rejects_argon2_zero_cost_params() {
+    let mut config = GarrisonConfig::default();
+    config.password_hasher.argon2_t_cost = 0;
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .to_string()
+        .contains("config-password-hash-argon2-param-invalid"));
+
+    let mut config = GarrisonConfig::default();
+    config.password_hasher.argon2_p_cost = 0;
+    assert!(config
+        .validate()
+        .unwrap_err()
+        .to_string()
+        .contains("config-password-hash-argon2-param-invalid"));
+}
+
+/// bcrypt cost 越界：9（低于下限）与 16（高于上界）均拒绝，10/15 边界放行。
+#[test]
+fn validate_rejects_bcrypt_cost_out_of_range() {
+    for cost in [9u32, 16] {
+        let mut config = GarrisonConfig::default();
+        config.password_hasher.algorithm = "bcrypt".to_string();
+        config.password_hasher.bcrypt_cost = cost;
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("config-password-hash-bcrypt-cost-out-of-range"),
+            "cost={} 实际: {}",
+            cost,
+            err
+        );
+    }
+    let mut config = GarrisonConfig::default();
+    config.password_hasher.algorithm = "bcrypt".to_string();
+    config.password_hasher.bcrypt_cost = 10;
+    assert!(config.validate().is_ok());
+    config.password_hasher.bcrypt_cost = 15;
+    assert!(config.validate().is_ok());
+}
+
+/// `build_hasher` 工厂：argon2id 按配置参数产出（PHC 前缀断言 m/t/p）。
+#[cfg(feature = "account-credential")]
+#[test]
+fn build_hasher_argon2id_uses_configured_params() {
+    let mut ph = PasswordHasherConfig::default();
+    ph.argon2_m_cost = 32768;
+    ph.argon2_t_cost = 3;
+    ph.argon2_p_cost = 2;
+    let hasher = ph.build_hasher().unwrap();
+    let hash = hasher.hash("password").unwrap();
+    assert!(
+        hash.starts_with("$argon2id$v=19$m=32768,t=3,p=2"),
+        "PHC 前缀应反映配置参数，实际: {}",
+        &hash[..hash.len().min(40)]
+    );
+}
+
+/// `build_hasher` 工厂：bcrypt 按配置 cost 产出（$2b$ 前缀携带 cost）。
+#[cfg(feature = "account-credential")]
+#[test]
+fn build_hasher_bcrypt_uses_configured_cost() {
+    let mut ph = PasswordHasherConfig::default();
+    ph.algorithm = "bcrypt".to_string();
+    ph.bcrypt_cost = 10;
+    let hasher = ph.build_hasher().unwrap();
+    let hash = hasher.hash("password").unwrap();
+    assert!(
+        hash.starts_with("$2b$10$"),
+        "bcrypt 哈希应使用配置 cost=10，实际: {}",
+        &hash[..hash.len().min(10)]
+    );
+}
+
+/// `build_hasher` 工厂：非法算法名 fail-fast（与 validate 同语义）。
+#[cfg(feature = "account-credential")]
+#[test]
+fn build_hasher_rejects_unknown_algorithm() {
+    let mut ph = PasswordHasherConfig::default();
+    ph.algorithm = "scrypt".to_string();
+    let err = match ph.build_hasher() {
+        Err(e) => e,
+        Ok(_) => panic!("非法算法名应返回 Err"),
+    };
+    assert!(
+        err.to_string()
+            .contains("config-password-hash-algorithm-unsupported"),
+        "实际: {}",
         err
     );
 }

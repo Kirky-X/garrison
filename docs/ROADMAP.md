@@ -387,8 +387,8 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 #### 破坏性变更
 
-1. **`PasswordHasher` 迁移（T002）**：从 `src/secure/password.rs` 迁移到 `account/credential/password.rs`，`secure-password` feature 删除（功能合并到 `account` feature）
-2. **`FirewallContext.login_id` 类型变更（T010）**：`i64` → `String`（所有 FirewallStrategy 实现需更新签名）
+1. **`PasswordHasher` 迁移**：从 `src/secure/password.rs` 迁移到 `account/credential/password.rs`，`secure-password` feature 删除（功能合并到 `account` feature）
+2. **`FirewallContext.login_id` 类型变更**：`i64` → `String`（所有 FirewallStrategy 实现需更新签名）
 
 #### 验证结果
 
@@ -408,22 +408,22 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 ### v0.6.1 gap-closure-remaining（✅ 已完成）
 
-通过 specmark change `gap-closure-remaining` 完成 11 项能力域补齐（T001-T011），**所有 origin 文档与代码实现之间的 gap 已全部关闭，零残留**。
+通过 specmark change `gap-closure-remaining` 完成 11 项能力域补齐，**所有 origin 文档与代码实现之间的 gap 已全部关闭，零残留**。
 
 #### 新增（能力域补齐）
 
 | # | 内容 | 核心变更 |
 |---|------|---------|
-| T001/T008 | remember_me 扩展会话超时 | `remember_me_enabled` / `remember_me_timeout` 配置字段 + 环境变量覆盖 + validate 校验逻辑 |
-| T002 | Redis 部署模式枚举 | `RedisDeploymentMode` 枚举（Single / Sentinel / Cluster / MasterSlave）+ `RedisConfig` 结构 |
-| T003 | 身份切换 switch_to | `switch_to(login_id)` API，支持临时切换登录身份 |
-| T004 | Token 置换 renew_to_equivalent | `renew_to_equivalent()` API，在保留会话状态的前提下置换 Token |
-| T005 | OAuth2 注解 | `CheckAccessToken` / `CheckClientToken` 注解变体 + 路由拦截集成 |
-| T006 | 路由分组 group() | `GarrisonRouter::group()` 方法，支持路由分组与统一中间件应用 |
-| T007 | 会话过期回调 | `SessionExpiryListener` trait + 异步回调机制 |
-| T009 | SAML 2.0 骨干 | `SamlProvider` trait + `DefaultSamlProvider` 实现 |
-| T010 | OIDC RP 骨干 | `OidcProvider` trait + `DefaultOidcProvider` 实现 |
-| T011 | Redis pub/sub SsoChannel | `RedisPubSubSsoChannel` 实现 + `SsoChannel` / `SsoServer` trait 整合 |
+| — | remember_me 扩展会话超时 | `remember_me_enabled` / `remember_me_timeout` 配置字段 + 环境变量覆盖 + validate 校验逻辑 |
+| — | Redis 部署模式枚举 | `RedisDeploymentMode` 枚举（Single / Sentinel / Cluster / MasterSlave）+ `RedisConfig` 结构 |
+| — | 身份切换 switch_to | `switch_to(login_id)` API，支持临时切换登录身份 |
+| — | Token 置换 renew_to_equivalent | `renew_to_equivalent()` API，在保留会话状态的前提下置换 Token |
+| — | OAuth2 注解 | `CheckAccessToken` / `CheckClientToken` 注解变体 + 路由拦截集成 |
+| — | 路由分组 group() | `GarrisonRouter::group()` 方法，支持路由分组与统一中间件应用 |
+| — | 会话过期回调 | `SessionExpiryListener` trait + 异步回调机制 |
+| — | SAML 2.0 骨干 | `SamlProvider` trait + `DefaultSamlProvider` 实现 |
+| — | OIDC RP 骨干 | `OidcProvider` trait + `DefaultOidcProvider` 实现 |
+| — | Redis pub/sub SsoChannel | `RedisPubSubSsoChannel` 实现 + `SsoChannel` / `SsoServer` trait 整合 |
 
 **里程碑意义**：关闭所有剩余能力 gap，remember_me / 身份切换 / Token 置换 / OAuth2 注解 / 路由分组 / 会话过期回调 / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel 十一大能力悉数就位。
 
@@ -521,6 +521,17 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 **里程碑意义**：自研库特性全面吸收，依赖版本统一升级至 rc.2 系列，配置/数据库/防火墙能力大幅增强，协议域命名统一，i18n 硬编码问题全面修复。
 
 ---
+
+### 候选池（Backlog，未排期）
+
+以下条目来自安全自评与审计结论，作为后续变更候选记录：
+
+- **Web 适配层 Cookie safe-by-default**：`cookie_same_site` / HttpOnly / Secure 提供更完整的安全默认组合（OWASP ASVS 自评 V3.4 待增强项，见 `docs/SECURITY_ASVS.md`）。
+- **MFA 编排基座抽象**：TOTP 原语已备（`secure-totp`），多因子编排流程抽象（ASVS 自评 V2.7 待增强项）。
+- **FIDO2/WebAuthn（Passkey）**：基于 0.6 Credential SPI 扩展独立协议栈（企业采购高频问项；正式认证需 FIDO Alliance 认可实验室）。
+- **OIDC discovery 端点**：`/oauth2/jwks.json` 已就绪（本变更），`well-known/openid-configuration` 元数据端点与其互链独立交付。
+- **JWKS 多 kid 轮换**：首版单密钥（kid 为 RFC 7638 thumbprint），密钥轮换多 kid 支持待后续变更。
+- **loom 竞态验证扩展**：一次性凭证消费路径已验证（`loom-test` feature），扩展至 RefreshTokenRotation 竞态。
 
 ### v1.0.0 稳定版（待规划）
 

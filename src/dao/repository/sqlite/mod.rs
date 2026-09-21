@@ -178,6 +178,7 @@ pub(crate) mod test_support {
         // 预创建 0 字节文件（sqlite 视为空库）：不用 `?mode=rwc` query——
         // 老 sqlx（MSRV-aware resolver 在 1.85 面选出的版本）会把 query
         // 并入路径解析导致只读打开（attempt to write a readonly database）。
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir —— 测试专用临时库文件，UUID v4 随机命名防预测，非安全敏感操作
         let db_path = std::env::temp_dir()
             .join(format!("garrison_test_{}.db", uuid::Uuid::new_v4()))
             .to_string_lossy()
@@ -222,6 +223,7 @@ mod tests {
             return pool;
         }
         // 预创建 0 字节文件，URL 不带 query：原因同上方 setup_db 注释
+        // nosemgrep: rust.lang.security.temp-dir.temp-dir —— 测试专用临时库文件，UUID v4 随机命名防预测，非安全敏感操作
         let db_path = std::env::temp_dir()
             .join(format!("garrison_test_{}.db", uuid::Uuid::new_v4()))
             .to_string_lossy()

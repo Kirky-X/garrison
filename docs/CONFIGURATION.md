@@ -89,6 +89,23 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 
 > 启用后需配合 `tenant-isolation` Cargo feature + `tenant_resolution_middleware` 才能生效。
 
+### 2.5 密码哈希配置（password_hasher）
+
+驱动 `Argon2Hasher` / `BcryptHasher` 的构造参数（`config.password_hasher.build_hasher()` 工厂，产出后经 `with_password_hasher` 注入）。默认值即 OWASP 建议档，选型论证见 [ADR-0001](./adr/0001-argon2id-password-hashing.md)。
+
+| 字段名 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `password_hasher.algorithm` | `String` | `"argon2id"` | 新哈希算法（`"argon2id"` / `"bcrypt"`）；verify 路径按哈希前缀自动识别，不受本字段影响 |
+| `password_hasher.argon2_m_cost` | `u32` | `19456` | Argon2id 内存成本（KiB），下限 19456 |
+| `password_hasher.argon2_t_cost` | `u32` | `2` | Argon2id 时间成本（迭代次数），下限 1 |
+| `password_hasher.argon2_p_cost` | `u32` | `1` | Argon2id 并行度，下限 1 |
+| `password_hasher.bcrypt_cost` | `u32` | `12` | bcrypt cost，允许区间 `[10, 15]` |
+| `password_hasher.allow_weak_argon2_params` | `bool` | `false` | 显式风险接受：允许 `argon2_m_cost` 低于 19456（内存受限部署逃生口），放行时输出 warn 日志 |
+
+**校验规则（`validate_core`，fail-closed）**：`algorithm` 白名单外拒绝；Argon2id `m_cost < 19456` 且未显式风险接受拒绝、`t_cost`/`p_cost` 为 0 拒绝；bcrypt cost 越出 `[10, 15]` 拒绝。
+
+> 仅影响**新哈希**；存量哈希参数自 PHC 字符串自描述解析（无需迁移即可 verify），参数升级采用"新密码/重登录时重哈希"自然演进。
+
 ---
 
 ## 📝 配置文件示例
@@ -134,6 +151,14 @@ cookie_same_site = "Lax"
 # [tenant_isolation]
 # enabled = false
 # resolver = "header"
+
+# === 密码哈希参数（默认即 OWASP 建议档，通常无需配置）===
+# [password_hasher]
+# algorithm = "argon2id"       # 可选: argon2id / bcrypt
+# argon2_m_cost = 19456        # KiB，下限 19456（低于需 allow_weak_argon2_params = true）
+# argon2_t_cost = 2
+# argon2_p_cost = 1
+# bcrypt_cost = 12             # 仅 algorithm = "bcrypt" 时生效，区间 [10, 15]
 ```
 
 ### 3.2 环境变量完整列表
@@ -299,6 +324,22 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 | `secure-sign` | 关 | 复用 `sign_window_seconds` |
 | `protocol-httpbasic` | 关 | 凭据由调用方提供 |
 | `protocol-httpdigest` | 关 | nonce / opaque 由内部生成 |
+
+> **⚠️ Refresh Token 轮换退化行为（`db-sqlite` + `oauth2-server` 部署必读）**
+>
+> `/oauth2/token` 的 refresh grant 始终可用，但其安全强度取决于是否注入
+> `RefreshTokenRotation`（`TokenHandler::with_refresh_rotation`）：
+>
+> - **已注入（推荐）**：hash chain 轮换 + reuse detection——盗用的旧 refresh_token
+>   被重放时触发整链撤销，攻击者会话即刻失效。
+> - **未注入（退化）**：DAO 键值存储（`oauth2:rtoken:` 前缀），无 reuse detection、
+>   无链式撤销——旧 token 重放仅因单次消费失败被拒，**不会触发链式撤销**，同链
+>   其他 token 不受影响。
+>
+> 退化形态在两处显性告警（非静默）：`OAuth2State::new` 构造完成时输出一次结构性
+> warn；每次退化路径刷新输出请求级 warn（`refresh_token rotation not configured`）。
+> 生产部署请注入 rotation 消除告警。未启用 `db-sqlite` 的构建不支持轮换注入，
+> refresh grant 恒为退化路径（如无 refresh 需求可忽略）。
 
 ### 6.1 启用 JWT + Redis 的组合示例
 

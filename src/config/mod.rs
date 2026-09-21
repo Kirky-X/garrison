@@ -62,9 +62,25 @@ pub const DEFAULT_JWT_ALGORITHM: &str = "HS256";
 /// JWT 签名算法白名单。
 ///
 /// `validate_core` 无论 `token_style` 是否为 `jwt`，都先按本白名单校验
-/// `jwt_algorithm`，防止非法值（如 "RS256" / 拼写错误）在非 JWT 模式下
+/// `jwt_algorithm`，防止非法值 / 拼写错误在非 JWT 模式下
 /// 静默通过配置校验、切换 token_style 后才暴露。
-pub const JWT_ALGORITHMS: &[&str] = &["HS256", "HS384", "HS512"];
+/// 非对称算法（RS256/ES256/EdDSA）需配套对应私钥 PEM 字段。
+pub const JWT_ALGORITHMS: &[&str] = &["HS256", "HS384", "HS512", "RS256", "ES256", "EdDSA"];
+
+/// Argon2id 内存成本下限（KiB，19 MiB）。
+///
+/// OWASP Password Storage Cheat Sheet 现行建议的最低配置档（m=19 MiB, t=2, p=1）。
+/// `validate_core` 强制 `argon2_m_cost ≥ 19456`，低于下限必须显式设置
+/// `password_hasher.allow_weak_argon2_params = true`（风险接受）才允许通过。
+pub const ARGON2_MIN_M_COST: u32 = 19_456;
+
+/// bcrypt cost 允许区间 `[10, 15]`（OWASP 建议 ≥10；>15 单次哈希秒级耗时，拒绝误配）。
+pub const BCRYPT_MIN_COST: u32 = 10;
+/// bcrypt cost 允许区间上界。
+pub const BCRYPT_MAX_COST: u32 = 15;
+
+/// 密码哈希算法白名单（`password_hasher.algorithm`）。
+pub const PASSWORD_HASH_ALGORITHMS: &[&str] = &["argon2id", "bcrypt"];
 
 /// 默认签名校验时间窗口秒数（5 分钟）。
 pub const DEFAULT_SIGN_WINDOW_SECONDS: i64 = 300;
@@ -264,6 +280,54 @@ pub struct TenantIsolationConfig {
     pub resolver: TenantResolverKind,
 }
 
+/// 密码哈希配置段（`password_hasher`）。
+///
+/// 驱动 `Argon2Hasher` / `BcryptHasher` 的构造参数（`build_hasher()` 工厂），
+/// 默认值即 OWASP 建议档（Argon2id m=19456/t=2/p=1），选型论证见
+/// `docs/adr/0001-argon2id-password-hashing.md`。
+///
+/// # 校验规则（`validate_core`，fail-closed）
+///
+/// - `algorithm` ∈ `{argon2id, bcrypt}`
+/// - Argon2id：`m_cost ≥ 19456`（低于下限需 `allow_weak_argon2_params = true` 显式
+///   风险接受，通过时输出 warn 日志）；`t_cost ≥ 1`、`p_cost ≥ 1`
+/// - bcrypt：`10 ≤ bcrypt_cost ≤ 15`
+///
+/// # 默认值
+///
+/// - `algorithm`: `"argon2id"`
+/// - `argon2_m_cost`: `19456`、`argon2_t_cost`: `2`、`argon2_p_cost`: `1`
+/// - `bcrypt_cost`: `12`
+/// - `allow_weak_argon2_params`: `false`
+///
+/// # 配置示例
+///
+/// ```toml
+/// [password_hasher]
+/// algorithm = "argon2id"
+/// argon2_m_cost = 19456
+/// argon2_t_cost = 2
+/// argon2_p_cost = 1
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PasswordHasherConfig {
+    /// 哈希算法（"argon2id" 默认 | "bcrypt"，仅影响**新哈希**；verify 按 PHC/ bcrypt
+    /// 前缀自动识别，不受本字段影响）。
+    pub algorithm: String,
+    /// Argon2id 内存成本（KiB），下限 19456（`ARGON2_MIN_M_COST`）。
+    pub argon2_m_cost: u32,
+    /// Argon2id 时间成本（迭代次数），下限 1。
+    pub argon2_t_cost: u32,
+    /// Argon2id 并行度，下限 1。
+    pub argon2_p_cost: u32,
+    /// bcrypt cost（允许区间 [10, 15]）。
+    pub bcrypt_cost: u32,
+    /// 显式风险接受：允许 Argon2id `m_cost` 低于 19456 下限（内存受限部署用）。
+    /// 置 true 时 `validate_core` 放行并输出 warn 日志，不静默降级。
+    pub allow_weak_argon2_params: bool,
+}
+
 /// JWT secret 类型别名。
 ///
 /// - `protocol-zeroize` feature 启用：`Zeroizing<String>`，Drop 时自动 zeroize buffer，
@@ -378,6 +442,21 @@ pub struct GarrisonConfig {
     /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`
     /// （`Zeroizing` 的 Debug 是透明的，derive(Debug) 会打印明文）。
     pub jwt_secret: JwtSecret,
+
+    /// JWT RSA 私钥 PEM（PKCS#8/PKCS#1，`jwt_algorithm="RS256"` 时必填）。
+    ///
+    /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`。
+    pub jwt_rsa_private_key_pem: Option<String>,
+
+    /// JWT EC 私钥 PEM（PKCS#8，`jwt_algorithm="ES256"` 时必填，P-256/P-384）。
+    ///
+    /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`。
+    pub jwt_ec_private_key_pem: Option<String>,
+
+    /// JWT Ed25519 私钥 PEM（PKCS#8，`jwt_algorithm="EdDSA"` 时必填）。
+    ///
+    /// `GarrisonConfig` 的 `Debug` 为手动实现，本字段输出 `"<redacted>"`。
+    pub jwt_ed_private_key_pem: Option<String>,
 
     /// 签名校验时间窗口秒数（默认 300 秒）。
     pub sign_window_seconds: i64,
@@ -530,6 +609,13 @@ pub struct GarrisonConfig {
     /// 默认 `enabled: false`（不启用）。启用后需配合 `tenant-isolation` Cargo feature
     /// + `tenant_resolution_middleware` 才能生效。
     pub tenant_isolation: TenantIsolationConfig,
+
+    /// 密码哈希配置段。
+    ///
+    /// 默认 Argon2id m=19456/t=2/p=1（OWASP 建议档）。业务方经
+    /// `config.password_hasher.build_hasher()` 构造 hasher 后注入
+    /// `with_password_hasher`（verify 路径按哈希前缀自动识别算法，不受本节影响）。
+    pub password_hasher: PasswordHasherConfig,
 
     /// CORS 跨域资源共享配置段。
     ///

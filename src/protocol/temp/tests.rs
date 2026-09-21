@@ -513,3 +513,98 @@ async fn with_listener_manager_no_broadcast_when_value_none() {
         "consume 未命中不应广播事件"
     );
 }
+
+// ========================================================================
+// loom 竞态模型验证（T033）：一次性凭证原子消费
+// ========================================================================
+
+/// loom 模型专用 DAO：`loom::sync::Mutex<Option<String>>` 模拟原子 get_and_delete，
+/// 锁内取值即消费——loom 可穷举互斥区交错。async 方法体内零 await 点（未来恒
+/// Send，锁 guard 不跨悬挂点），由 `loom::future::block_on` 驱动。
+#[cfg(feature = "loom-test")]
+struct LoomModelDao {
+    slot: loom::sync::Mutex<Option<String>>,
+}
+
+#[cfg(feature = "loom-test")]
+#[async_trait]
+impl GarrisonDao for LoomModelDao {
+    async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
+        let v = {
+            let slot = self.slot.lock().unwrap();
+            slot.clone()
+        };
+        Ok(v)
+    }
+
+    async fn set(&self, _key: &str, value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
+        let mut slot = self.slot.lock().unwrap();
+        *slot = Some(value.to_string());
+        Ok(())
+    }
+
+    async fn update(&self, _key: &str, value: &str) -> GarrisonResult<()> {
+        let mut slot = self.slot.lock().unwrap();
+        match slot.as_mut() {
+            Some(v) => {
+                *v = value.to_string();
+                Ok(())
+            },
+            None => Err(GarrisonError::Dao("dao-key-not-found::loom".to_string())),
+        }
+    }
+
+    async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
+        Ok(())
+    }
+
+    async fn delete(&self, _key: &str) -> GarrisonResult<()> {
+        let mut slot = self.slot.lock().unwrap();
+        *slot = None;
+        Ok(())
+    }
+
+    /// 与 MockDao 单锁语义一致：锁内 take = 原子 get + delete。
+    async fn get_and_delete(&self, _key: &str) -> GarrisonResult<Option<String>> {
+        let mut slot = self.slot.lock().unwrap();
+        Ok(slot.take())
+    }
+
+    crate::atomic_test_fallback_no_get_and_delete!();
+}
+
+/// 双线程并发 consume 同一 key：loom 穷举全部交错排列下，恰好一次返回
+/// Some（一次性语义 / 防 double-spend），消费后 slot 为空。默认构建不编译
+/// 本模块；触发方式（loom-test feature 门控，理由见 Cargo.toml loom 依赖注释）：
+/// `cargo test --lib --features protocol-temp,loom-test protocol::temp`
+#[cfg(feature = "loom-test")]
+#[test]
+fn loom_consume_same_key_exactly_once() {
+    loom::model(|| {
+        use loom::thread;
+
+        let dao: std::sync::Arc<dyn GarrisonDao> = std::sync::Arc::new(LoomModelDao {
+            slot: loom::sync::Mutex::new(Some("one-shot-payload".to_string())),
+        });
+        let handler = std::sync::Arc::new(TempCredentialHandler::new(dao));
+
+        let h2 = handler.clone();
+        let t = thread::spawn(move || loom::future::block_on(h2.consume("k")));
+        let r1 = loom::future::block_on(handler.consume("k"));
+        let r2 = t.join().expect("消费线程不应 panic");
+
+        let r1 = r1.expect("消费 1 不应返回 Err");
+        let r2 = r2.expect("消费 2 不应返回 Err");
+        let some_count = (r1.is_some() as u8) + (r2.is_some() as u8);
+        assert_eq!(
+            some_count, 1,
+            "并发消费同一 key 必须恰好一次 Some（double-spend 防线），实际 {}",
+            some_count
+        );
+        assert_eq!(
+            r1.or(r2),
+            Some("one-shot-payload".to_string()),
+            "唯一成功的消费应取到载荷"
+        );
+    });
+}

@@ -276,6 +276,12 @@ impl OidcHandler {
         // nonce 校验（防重放）— 修复：使用 subtle::ConstantTimeEq 常量时间比较，
         // 避免 nonce 长度/前缀差异导致的 timing side-channel 泄漏 nonce 信息。
         // subtle 的 ct_eq 在长度不等时返回 0（不提前 return），全程常量时间。
+        // nonce 缺失（expected 为空串）fail-closed 拒绝——空对空 ct_eq 恒等，
+        // 放行会使 id_token 防重放锚点失效（sign_id_token 强制 nonce，verify
+        // 侧对称强制）。
+        if expected_nonce.is_empty() {
+            return Err(GarrisonError::OAuth2("oidc-nonce-missing".to_string()));
+        }
         if !bool::from(claims.nonce.as_bytes().ct_eq(expected_nonce.as_bytes())) {
             return Err(GarrisonError::OAuth2("nonce mismatch".to_string()));
         }
@@ -430,6 +436,39 @@ mod tests {
         match result.err() {
             Some(GarrisonError::OAuth2(msg)) => assert!(msg.contains("nonce mismatch")),
             other => panic!("期望 OAuth2 错误，实际: {:?}", other),
+        }
+    }
+
+    /// nonce 缺失 fail-closed：expected_nonce 为空串拒绝（即使 token nonce 也为空，
+    /// 空对空不得放行）；token nonce 为空而 expected 非空由 ct_eq 拒绝。
+    #[test]
+    fn verify_id_token_missing_nonce_rejected() {
+        let handler = make_handler();
+        // expected 为空：调用方未生成 nonce → fail-closed
+        let token = handler
+            .sign_id_token("1001", "nonce-abc", "openid", 3600)
+            .unwrap();
+        let result = handler.verify_id_token(&token, "");
+        match result.err() {
+            Some(GarrisonError::OAuth2(msg)) => {
+                assert!(msg.contains("oidc-nonce-missing"), "实际: {}", msg)
+            },
+            other => panic!("期望 OAuth2(nonce-missing)，实际: {:?}", other),
+        }
+        // 空对空（token nonce="" + expected=""）：同样拒绝（防重放锚点缺失）
+        let empty_nonce_token = handler.sign_id_token("1001", "", "openid", 3600).unwrap();
+        let result = handler.verify_id_token(&empty_nonce_token, "");
+        match result.err() {
+            Some(GarrisonError::OAuth2(msg)) => {
+                assert!(msg.contains("oidc-nonce-missing"), "实际: {}", msg)
+            },
+            other => panic!("空对空 nonce 应拒绝，实际: {:?}", other),
+        }
+        // token nonce 为空而 expected 非空：ct_eq 拒绝（nonce mismatch）
+        let result = handler.verify_id_token(&empty_nonce_token, "real-nonce");
+        match result.err() {
+            Some(GarrisonError::OAuth2(msg)) => assert!(msg.contains("nonce mismatch")),
+            other => panic!("token nonce 缺失应 mismatch 拒绝，实际: {:?}", other),
         }
     }
 

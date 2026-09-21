@@ -1,0 +1,131 @@
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
+name: Security
+
+# 安全门禁工作流：SAST / 密钥扫描 / 依赖供应链 / SBOM / 模糊测试回归。
+# 与 ci.yml（质量门）、codeql.yml（语义分析）互补，均 PR 阻断。
+# 忽略清单：.semgrepignore（SAST 降噪，对齐 codeql-config.yml 排除测试先例）。
+on:
+  push:
+    branches: [main, develop, "release/*"]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # === Semgrep SAST（registry 规则集：Rust 专项 + 密钥硬编码） ===
+  # 忽略文件 .semgrepignore 排除 examples/tests/temp/benches/target（降噪不关检）。
+  # 镜像 digest 与本地基线验证版本（1.168.0，0 findings）逐字节一致；升级时需
+  # 本地重跑基线后同步 bump digest（显式升级哲学，与 actions SHA-pin 同源）。
+  semgrep:
+    name: Semgrep SAST (p/rust + p/secrets)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: semgrep/semgrep@sha256:59fbed6127ea7c5dde3ba6a85142733bb20ea9aaa36120c953904f1539aaf66e # 1.168.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run semgrep (block on findings)
+        run: semgrep scan --config p/rust --config p/secrets --error --metrics=off
+
+  # === gitleaks 全量 git history 密钥泄漏扫描 ===
+  # 复用根目录 .gitleaks.toml（官方 action 自动检测），.gitleaksignore 收录
+  # 已逐条核实为非真实凭证的历史指纹（降噪不关检）。
+  # fetch-depth: 0 —— 全量历史扫描（pre-commit 仅覆盖 staged，此处补全历史维度）
+  gitleaks:
+    name: Gitleaks (full history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG_FILE: .gitleaks.toml
+        # --redact 语义由 action 内部传递，输出不含疑似密钥明文
+
+  # === cargo vet（供应商依赖人工审核记录，众包审计背书） ===
+  # supply-chain/audits.toml 记录自研库（CodeNexus 系）审核；第三方依赖 init 豁免
+  # 渐进收紧。generate-lockfile：库 crate 不提交 Cargo.lock（对齐 ci.yml deny job 惯例）
+  vet:
+    name: Cargo Vet (supply chain)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1
+      - uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-vet
+        with:
+          tool: cargo-vet
+      - name: Generate Cargo.lock (library crate, not committed)
+        run: cargo generate-lockfile
+      - name: Run cargo vet check
+        run: cargo vet check
+
+  # === SBOM（CycloneDX）软件物料清单 ===
+  # 全特性面生成（覆盖 optional 依赖：dbnexus/jsonwebtoken/argon2 等），
+  # 产物上传 artifact 供下游审计；release.yml 将其附加为 Release 资产。
+  sbom:
+    name: SBOM (CycloneDX)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1
+      - uses: taiki-e/install-action@d5b1c57492c40991d5b03b58d85d06c3626b7542 # cargo-cyclonedx
+        with:
+          tool: cargo-cyclonedx
+      - name: Generate Cargo.lock (library crate, not committed)
+        run: cargo generate-lockfile
+      - name: Generate SBOM (all features)
+        run: cargo cyclonedx -f json --all-features
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-cyclonedx
+          path: garrison.cdx.json
+
+  # === cargo-fuzz 语料回归（PR 阻断） ===
+  # 每个解析入口 target 以现有 corpus 冒烟 60s；深扫由 fuzz-weekly.yml 周一定时承担。
+  # taiki-e/install-action 不含 cargo-fuzz，改用 cargo install（--locked 固定 lockfile）
+  fuzz-regression:
+    name: Fuzz Regression (corpus smoke)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1
+        with:
+          toolchain: nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Fuzz corpus smoke (60s per target)
+        run: |
+          for target in fuzz_saml_xml fuzz_oidc_discovery fuzz_jwt_verify fuzz_http_auth_headers; do
+            echo "::group::$target"
+            cargo +nightly fuzz run "$target" -- -max_total_time=60
+            echo "::endgroup::"
+          done
+
+  reproducible-build:
+    name: Reproducible Build (byte-identical)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1
+      - name: Verify byte-identical rebuild
+        run: scripts/verify_reproducible_build.sh
