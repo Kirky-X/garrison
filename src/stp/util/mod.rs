@@ -138,7 +138,10 @@ pub(crate) fn reset_backend_for_test() {
     CURRENT_BACKEND.store(None);
 }
 
-#[cfg(all(test, any(feature = "backend-embedded", feature = "backend-remote")))]
+// 测试桩使用 BackendEmbedded（仅 backend-embedded 下存在），故模块门控收窄到
+// backend-embedded 单腿；backend-remote 单独启用时 try_init_backend 生产路径
+// 仍编译（上方函数门控不变），仅此测试不参与。
+#[cfg(all(test, feature = "backend-embedded"))]
 mod backend_bridge_tests {
     use super::*;
 

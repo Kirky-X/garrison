@@ -1794,8 +1794,8 @@ fn load_rejects_directory() {
     let path_str = dir.path().to_str().expect("路径转 str 失败");
     let err = GarrisonConfig::load(Some(path_str)).unwrap_err();
     assert!(
-        matches!(err, GarrisonError::Config(ref m) if m.contains("not a regular file") || m.contains("failed to open")),
-        "目录应被拒绝（Linux 走 is_file 检查 / Windows 走 File::open EACCES），实际: {:?}",
+        matches!(err, GarrisonError::Config(ref m) if m.contains("not a regular file") || m.contains("config-open-failed")),
+        "目录应被拒绝（Linux 走 is_file 检查 / Windows 走 File::open EACCES 经 config-open-failed），实际: {:?}",
         err
     );
 }

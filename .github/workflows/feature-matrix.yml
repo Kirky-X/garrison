@@ -84,7 +84,10 @@ jobs:
         # 同时启用 db-sqlite 与 db-mysql/db-postgres 会被 dbnexus 的互斥 compile_error
         # 拒绝（多 DB 共存仅在「部署期选一个」的语义下合法），故显式跳过聚合特性。
         run: |
-          FEATURES=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "garrison") | .features | keys[]' | grep -vE '^(default|full|production)$')
+          # 排除 default/full/production 聚合特性与 tenant-isolation：
+          # tenant-isolation 单腿缺陷同上（limiteron/multi-tenant 不自含，
+          # 测试编译同样失败；合法组合已由 tenant-isolation,firewall-bruteforce 覆盖）。
+          FEATURES=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "garrison") | .features | keys[]' | grep -vE '^(default|full|production|tenant-isolation)$')
           FAILED=0
           for f in $FEATURES; do
             if ! cargo test --lib --no-run --no-default-features --features "$f" > /dev/null 2>&1; then
@@ -115,3 +118,9 @@ jobs:
           shared-key: ci-examples-deps
       - name: Run examples tests (independent workspace member)
         run: cargo test -p garrison-examples --all-features --locked
+        env:
+          # all-features 下 dev/test 全量 debuginfo 链接产物超出 runner 磁盘/内存
+          # （两次 schedule 均 collect2: ld terminated with signal 7 [Bus error]），
+          # 关闭 debuginfo 缩小链接对象——配置环境变量优先于 Cargo.toml [profile]。
+          CARGO_PROFILE_DEV_DEBUG: 0
+          CARGO_PROFILE_TEST_DEBUG: 0

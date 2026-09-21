@@ -401,7 +401,7 @@ impl JwtHandler {
 
     /// 以 RSA PKCS#1/PKCS#8 PEM 私钥切换为非对称签名（RS256/RS384/RS512）。
     ///
-    /// 构造期验证 PEM 可解析（fail-fast）；PEM 内容存于私有 [`KeyMaterial`]，
+    /// 构造期验证 PEM 可解析（fail-fast）；PEM 内容存于私有 `KeyMaterial`，
     /// Debug 输出脱敏。切换后默认算法仍为 HS256，须配合
     /// [`try_with_algorithm`](Self::try_with_algorithm)（推荐）或
     /// [`with_algorithm`](Self::with_algorithm) 设置 RS 系算法。
@@ -424,7 +424,7 @@ impl JwtHandler {
 
     /// 以 EC PEM 私钥切换为非对称签名（ES256/ES384，PKCS#8 格式）。
     ///
-    /// 构造期验证 PEM 可解析（fail-fast）；PEM 内容存于私有 [`KeyMaterial`]，
+    /// 构造期验证 PEM 可解析（fail-fast）；PEM 内容存于私有 `KeyMaterial`，
     /// Debug 输出脱敏。须配合 [`try_with_algorithm`](Self::try_with_algorithm)
     /// 设置 ES 系算法。
     ///
@@ -444,7 +444,7 @@ impl JwtHandler {
 
     /// 以 Ed25519 私钥 PEM 切换为非对称签名（EdDSA，PKCS#8 格式，RFC 8410）。
     ///
-    /// 构造期验证 PEM 可解析（fail-fast）；PEM 内容存于私有 [`KeyMaterial`]，
+    /// 构造期验证 PEM 可解析（fail-fast）；PEM 内容存于私有 `KeyMaterial`，
     /// Debug 输出脱敏。须配合 [`try_with_algorithm`](Self::try_with_algorithm)
     /// 设置 `EdDSA`。
     ///

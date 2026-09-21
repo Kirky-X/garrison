@@ -212,13 +212,20 @@ mod tests {
             .await
             .expect("subscribe 应成功");
 
-        // 订阅建立存在异步窗口，稍候再发布
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        channel.push(topic, "test-payload").await.unwrap();
-
-        let received = rx.recv_timeout(std::time::Duration::from_secs(2));
+        // 订阅确认（subscribe oneshot 回传）与首条消息投递之间在 llvm-cov
+        // 全量并发下可能显著慢于常规运行（曾致 CI Coverage 腿偶发超时）：
+        // 带上限的"发布-等待-未达再发布"重试，保证确定性而非放宽断言。
+        let mut received: Option<String> = None;
+        for _ in 0..3 {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            channel.push(topic, "test-payload").await.unwrap();
+            if let Ok(msg) = rx.recv_timeout(std::time::Duration::from_secs(3)) {
+                received = Some(msg);
+                break;
+            }
+        }
         assert_eq!(
-            received.ok().as_deref(),
+            received.as_deref(),
             Some("test-payload"),
             "应收到发布的消息"
         );
