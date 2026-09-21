@@ -48,27 +48,60 @@ impl PasswordHasherConfig {
     ) -> GarrisonResult<std::sync::Arc<dyn crate::account::credential::PasswordHasher>> {
         match self.algorithm.as_str() {
             "argon2id" => {
-                if self.argon2_t_cost == 0 || self.argon2_p_cost == 0 {
-                    return Err(GarrisonError::Config(
-                        "config-password-hash-argon2-param-invalid::".to_string(),
-                    ));
-                }
-                Ok(std::sync::Arc::new(
-                    crate::account::credential::password::Argon2Hasher::with_params(
-                        self.argon2_m_cost,
-                        self.argon2_t_cost,
-                        self.argon2_p_cost,
-                    ),
-                ))
+                use crate::account::credential::password::Argon2Hasher;
+
+                self.validate_argon2_params()?;
+                let (m, t, p) = (self.argon2_m_cost, self.argon2_t_cost, self.argon2_p_cost);
+                let hasher = Argon2Hasher::with_params(m, t, p);
+                Ok(std::sync::Arc::new(hasher))
             },
-            "bcrypt" => Ok(std::sync::Arc::new(
-                crate::account::credential::password::BcryptHasher::with_cost(self.bcrypt_cost),
-            )),
+            "bcrypt" => {
+                use crate::account::credential::password::BcryptHasher;
+
+                self.validate_bcrypt_cost()?;
+                let hasher = BcryptHasher::with_cost(self.bcrypt_cost);
+                Ok(std::sync::Arc::new(hasher))
+            },
             other => Err(GarrisonError::Config(format!(
                 "config-password-hash-algorithm-unsupported::{}",
                 other
             ))),
         }
+    }
+
+    /// Argon2id 参数校验：t/p 非零 + m_cost 下限（低于下限须显式风险接受，放行时 warn）。
+    fn validate_argon2_params(&self) -> GarrisonResult<()> {
+        if self.argon2_t_cost == 0 || self.argon2_p_cost == 0 {
+            return Err(GarrisonError::Config(
+                "config-password-hash-argon2-param-invalid::".to_string(),
+            ));
+        }
+        if self.argon2_m_cost >= ARGON2_MIN_M_COST {
+            return Ok(());
+        }
+        if !self.allow_weak_argon2_params {
+            return Err(GarrisonError::Config(format!(
+                "config-password-hash-argon2-m-below-floor::{} (min {})::{}",
+                self.argon2_m_cost, ARGON2_MIN_M_COST, self.algorithm
+            )));
+        }
+        tracing::warn!(
+            "password_hasher: argon2 m_cost {} < OWASP floor {} KiB — weak params explicitly accepted via allow_weak_argon2_params (memory-constrained deployment?)",
+            self.argon2_m_cost,
+            ARGON2_MIN_M_COST
+        );
+        Ok(())
+    }
+
+    /// bcrypt cost 区间校验（OWASP ≥10；>15 单次哈希秒级耗多为误配）。
+    fn validate_bcrypt_cost(&self) -> GarrisonResult<()> {
+        if (BCRYPT_MIN_COST..=BCRYPT_MAX_COST).contains(&self.bcrypt_cost) {
+            return Ok(());
+        }
+        Err(GarrisonError::Config(format!(
+            "config-password-hash-bcrypt-cost-out-of-range::{} (allowed {}-{})",
+            self.bcrypt_cost, BCRYPT_MIN_COST, BCRYPT_MAX_COST
+        )))
     }
 }
 
@@ -87,24 +120,32 @@ impl std::fmt::Debug for GarrisonConfig {
             }),
         };
         if let serde_json::Value::Object(ref mut map) = value {
-            map.insert(
-                "jwt_secret".to_string(),
-                serde_json::Value::String("<redacted>".to_string()),
-            );
-            // 非对称私钥 PEM 脱敏（与 jwt_secret 同等安全等级）
-            for key in [
-                "jwt_rsa_private_key_pem",
-                "jwt_ec_private_key_pem",
-                "jwt_ed_private_key_pem",
-            ] {
-                map.insert(
-                    key.to_string(),
-                    serde_json::Value::String("<redacted>".to_string()),
-                );
-            }
+            redact_fields(map, DEBUG_REDACTED_FIELDS.iter().copied());
         }
         f.write_str("GarrisonConfig ")?;
         std::fmt::Debug::fmt(&value, f)
+    }
+}
+
+/// Debug 输出脱敏字段表（对称/非对称签名密钥）。
+const DEBUG_REDACTED_FIELDS: &[&str] = &[
+    "jwt_secret",
+    "jwt_rsa_private_key_pem",
+    "jwt_ec_private_key_pem",
+    "jwt_ed_private_key_pem",
+];
+
+/// 将 map 中指定字段覆写为 `"<redacted>"`（Debug 输出脱敏公共出口）。
+fn redact_fields<I>(map: &mut serde_json::Map<String, serde_json::Value>, keys: I)
+where
+    I: IntoIterator,
+    I::Item: std::ops::Deref<Target = str>,
+{
+    for key in keys {
+        map.insert(
+            key.to_string(),
+            serde_json::Value::String("<redacted>".to_string()),
+        );
     }
 }
 
@@ -337,67 +378,27 @@ impl GarrisonConfig {
 
         #[cfg(feature = "session-extra")]
         {
-            builder = builder.default(
-                "login_token_map_persist_interval_secs",
-                ConfigValue::uint(DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS),
-            );
+            builder = Self::apply_session_extra_defaults(builder);
         }
 
         #[cfg(feature = "three-tier-cache")]
         {
-            builder = builder
-                .default(
-                    "l1_cache_ttl_secs",
-                    ConfigValue::uint(DEFAULT_L1_CACHE_TTL_SECS),
-                )
-                .default(
-                    "l2_cache_ttl_secs",
-                    ConfigValue::uint(DEFAULT_L2_CACHE_TTL_SECS),
-                )
-                .default(
-                    "l1_cache_capacity",
-                    ConfigValue::uint(DEFAULT_L1_CACHE_CAPACITY),
-                );
-        }
-
-        #[cfg(feature = "session-extra")]
-        {
-            builder = builder.default(
-                "anon_session_timeout",
-                ConfigValue::uint(DEFAULT_ANON_SESSION_TIMEOUT_SECS),
-            );
+            builder = Self::apply_three_tier_cache_defaults(builder);
         }
 
         #[cfg(feature = "sms-rate-limit")]
         {
-            builder = builder
-                .default("sms_hourly_limit", ConfigValue::uint(5))
-                .default("sms_daily_limit", ConfigValue::uint(10))
-                .default("sms_verify_max_attempts", ConfigValue::uint(3))
-                .default("sms_unverified_threshold", ConfigValue::uint(3));
+            builder = Self::apply_sms_rate_limit_defaults(builder);
         }
 
         #[cfg(feature = "email-verification")]
         {
-            builder = builder
-                .default("email_hourly_limit", ConfigValue::uint(5))
-                .default("email_daily_limit", ConfigValue::uint(10))
-                .default("email_verify_max_attempts", ConfigValue::uint(3))
-                .default("email_unverified_threshold", ConfigValue::uint(3))
-                .default("email_code_ttl", ConfigValue::uint(600));
+            builder = Self::apply_email_verification_defaults(builder);
         }
 
         #[cfg(feature = "anomalous-detector-dual")]
         {
-            builder = builder
-                .default(
-                    "anomalous_analyzer_interval_secs",
-                    ConfigValue::uint(DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS),
-                )
-                .default(
-                    "anomalous_analyzer_burst_threshold",
-                    ConfigValue::uint(DEFAULT_ANOMALOUS_BURST_THRESHOLD.into()),
-                );
+            builder = Self::apply_anomalous_defaults(builder);
         }
 
         if let Some(path) = toml_path {
@@ -414,14 +415,7 @@ impl GarrisonConfig {
             if path.is_empty() {
                 return Err(GarrisonError::Config(loc!("config-path-empty", "")));
             }
-            let file_source = confers::config::FileSource::new(path)
-                .with_priority(10)
-                .with_loader_config(
-                    confers::loader::LoaderConfig::new()
-                        .allow_absolute()
-                        .max_size(MAX_CONFIG_FILE_SIZE)
-                        .redact_error_paths(),
-                );
+            let file_source = confers_file_source(path, MAX_CONFIG_FILE_SIZE);
             builder = builder.source(Box::new(file_source));
         }
 
@@ -447,44 +441,11 @@ impl GarrisonConfig {
         // confers 通用收集无法处理枚举结构变体，故 CORS/CSRF/RateLimit 的环境变量
         // 由显式逻辑覆盖，优先级最高。
         #[cfg(feature = "web-cors")]
-        {
-            if let Ok(val) = std::env::var("GARRISON_CORS_ALLOWED_ORIGINS") {
-                config.cors_config.allowed_origins = val
-                    .split(',')
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-                    .collect();
-            }
-        }
+        apply_web_cors_env_override(&mut config);
         #[cfg(feature = "web-csrf")]
-        {
-            if let Ok(val) = std::env::var("GARRISON_CSRF_ENABLED") {
-                config.csrf_config.enabled = val.eq_ignore_ascii_case("true");
-            }
-        }
+        apply_web_csrf_env_override(&mut config);
         #[cfg(feature = "rate-limit-redis")]
-        {
-            if let Ok(val) = std::env::var("GARRISON_RATE_LIMIT_BACKEND") {
-                match val.to_lowercase().as_str() {
-                    "memory" => config.rate_limit_backend = RateLimitBackend::Memory,
-                    "redis" => {
-                        let redis_url = std::env::var("GARRISON_REDIS_URL").unwrap_or_default();
-                        config.rate_limit_backend = RateLimitBackend::Redis { redis_url };
-                    },
-                    _ => {
-                        return Err(GarrisonError::Config(format!(
-                            "config-rate-limit-backend-unsupported::{}",
-                            val
-                        )));
-                    },
-                }
-            }
-            if let Ok(val) = std::env::var("GARRISON_REDIS_URL") {
-                if let RateLimitBackend::Redis { redis_url } = &mut config.rate_limit_backend {
-                    *redis_url = val;
-                }
-            }
-        }
+        apply_rate_limit_env_override(&mut config)?;
 
         // watcher 在全部环境变量覆盖完成后附加，保证 watch channel 初值
         // 即最终生效配置（订阅者首次 `borrow_and_update()` 拿到的不是覆盖前的旧值）。
@@ -577,20 +538,22 @@ impl GarrisonConfig {
                 "config-jwt-key-multiple-types::".to_string(),
             ));
         }
-        let required_key_set = match self.jwt_algorithm.as_str() {
-            "RS256" => Some(rsa_set),
-            "ES256" => Some(ec_set),
-            "EdDSA" => Some(ed_set),
-            _ => None, // HS 系
+        // 非对称算法要求配套同类私钥；HS 系无私钥要求
+        let is_asymmetric = matches!(self.jwt_algorithm.as_str(), "RS256" | "ES256" | "EdDSA");
+        let required_key_present = match self.jwt_algorithm.as_str() {
+            "RS256" => rsa_set,
+            "ES256" => ec_set,
+            "EdDSA" => ed_set,
+            _ => true,
         };
-        if let Some(present) = required_key_set {
-            if !present {
-                return Err(GarrisonError::Config(format!(
-                    "config-jwt-key-missing::{}",
-                    self.jwt_algorithm
-                )));
-            }
-        } else if configured_keys > 0 {
+        if !required_key_present {
+            return Err(GarrisonError::Config(format!(
+                "config-jwt-key-missing::{}",
+                self.jwt_algorithm
+            )));
+        }
+        // HS 系算法不得配置任何非对称私钥（原 else-if 分支语义保持）
+        if !is_asymmetric && configured_keys > 0 {
             return Err(GarrisonError::Config(format!(
                 "config-jwt-key-unexpected-for-hs::{}",
                 self.jwt_algorithm
@@ -614,45 +577,10 @@ impl GarrisonConfig {
             )));
         }
         if ph.algorithm == "argon2id" {
-            Self::validate_argon2_params(ph)
+            ph.validate_argon2_params()
         } else {
-            Self::validate_bcrypt_cost(ph)
+            ph.validate_bcrypt_cost()
         }
-    }
-
-    /// Argon2id 参数校验：t/p 非零 + m_cost 下限（低于下限须显式风险接受，放行时 warn）。
-    fn validate_argon2_params(ph: &PasswordHasherConfig) -> GarrisonResult<()> {
-        if ph.argon2_t_cost == 0 || ph.argon2_p_cost == 0 {
-            return Err(GarrisonError::Config(
-                "config-password-hash-argon2-param-invalid::".to_string(),
-            ));
-        }
-        if ph.argon2_m_cost >= ARGON2_MIN_M_COST {
-            return Ok(());
-        }
-        if !ph.allow_weak_argon2_params {
-            return Err(GarrisonError::Config(format!(
-                "config-password-hash-argon2-m-below-floor::{} (min {})::{}",
-                ph.argon2_m_cost, ARGON2_MIN_M_COST, ph.algorithm
-            )));
-        }
-        tracing::warn!(
-            "password_hasher: argon2 m_cost {} < OWASP floor {} KiB — weak params explicitly accepted via allow_weak_argon2_params (memory-constrained deployment?)",
-            ph.argon2_m_cost,
-            ARGON2_MIN_M_COST
-        );
-        Ok(())
-    }
-
-    /// bcrypt cost 区间校验（OWASP ≥10；>15 单次哈希秒级耗多为误配）。
-    fn validate_bcrypt_cost(ph: &PasswordHasherConfig) -> GarrisonResult<()> {
-        if (BCRYPT_MIN_COST..=BCRYPT_MAX_COST).contains(&ph.bcrypt_cost) {
-            return Ok(());
-        }
-        Err(GarrisonError::Config(format!(
-            "config-password-hash-bcrypt-cost-out-of-range::{} (allowed {}-{})",
-            ph.bcrypt_cost, BCRYPT_MIN_COST, BCRYPT_MAX_COST
-        )))
     }
 
     /// JWT 密钥强度校验（仅当 `token_style=jwt` 时强制校验，`simple` 时 warn）。
@@ -690,12 +618,7 @@ impl GarrisonConfig {
             // 非对称算法：密钥强度由 PEM 私钥位长/曲线阶决定（RS256 ≥2048 位
             // 在 JwtHandler 构造期用 pkcs1 精确校验），不做 HMAC 对称长度校验
             "RS256" | "ES256" | "EdDSA" => 0,
-            other => {
-                return Err(GarrisonError::Config(format!(
-                    "config-jwt-algorithm-unsupported::{}",
-                    other
-                )))
-            },
+            other => return Err(unsupported_jwt_algorithm(other)),
         };
         if secret_len < min_len {
             return Err(GarrisonError::Config(format!(
@@ -759,118 +682,223 @@ impl GarrisonConfig {
         Ok(())
     }
 
-    /// feature-gated 校验：`anonymous-session` / `three-tier-cache` / `rate-limit-redis` / `firewall-waf` / `sms-rate-limit` / `anomalous-detector-dual`。
+    /// feature-gated 校验：各 feature 的规则拆分为独立小函数（守卫条款风格，规则单点维护）。
     fn validate_feature_gated(&self) -> GarrisonResult<()> {
         #[cfg(feature = "session-extra")]
+        self.validate_anon_session()?;
+        #[cfg(feature = "three-tier-cache")]
+        self.validate_three_tier_cache()?;
+        #[cfg(feature = "rate-limit-redis")]
+        self.validate_rate_limit_redis()?;
+        #[cfg(feature = "firewall-waf")]
+        self.validate_firewall_waf()?;
+        #[cfg(feature = "sms-rate-limit")]
+        self.validate_sms_rate_limit()?;
+        #[cfg(feature = "email-verification")]
+        self.validate_email_verification()?;
+        #[cfg(feature = "anomalous-detector-dual")]
+        self.validate_anomalous_detector()?;
+        // CORS 配置合法性：credentials 与 wildcard origin 冲突校验
+        // （此前 CorsConfig::validate 仅测试调用，生产路径从不校验）
+        #[cfg(feature = "web-cors")]
+        crate::web::cors::CorsConfig::validate(&self.cors_config)?;
+        Ok(())
+    }
+
+    /// `session-extra` 默认值注入（login token map 持久化间隔 + 匿名会话超时）。
+    #[cfg(feature = "session-extra")]
+    fn apply_session_extra_defaults(builder: ConfigBuilder<Self>) -> ConfigBuilder<Self> {
+        builder
+            .default(
+                "login_token_map_persist_interval_secs",
+                ConfigValue::uint(DEFAULT_LOGIN_TOKEN_MAP_PERSIST_INTERVAL_SECS),
+            )
+            .default(
+                "anon_session_timeout",
+                ConfigValue::uint(DEFAULT_ANON_SESSION_TIMEOUT_SECS),
+            )
+    }
+
+    /// `three-tier-cache` 默认值注入（L1/L2 TTL 与 L1 容量）。
+    #[cfg(feature = "three-tier-cache")]
+    fn apply_three_tier_cache_defaults(builder: ConfigBuilder<Self>) -> ConfigBuilder<Self> {
+        builder
+            .default(
+                "l1_cache_ttl_secs",
+                ConfigValue::uint(DEFAULT_L1_CACHE_TTL_SECS),
+            )
+            .default(
+                "l2_cache_ttl_secs",
+                ConfigValue::uint(DEFAULT_L2_CACHE_TTL_SECS),
+            )
+            .default(
+                "l1_cache_capacity",
+                ConfigValue::uint(DEFAULT_L1_CACHE_CAPACITY),
+            )
+    }
+
+    /// `sms-rate-limit` 默认值注入。
+    #[cfg(feature = "sms-rate-limit")]
+    fn apply_sms_rate_limit_defaults(builder: ConfigBuilder<Self>) -> ConfigBuilder<Self> {
+        builder
+            .default("sms_hourly_limit", ConfigValue::uint(5))
+            .default("sms_daily_limit", ConfigValue::uint(10))
+            .default("sms_verify_max_attempts", ConfigValue::uint(3))
+            .default("sms_unverified_threshold", ConfigValue::uint(3))
+    }
+
+    /// `email-verification` 默认值注入。
+    #[cfg(feature = "email-verification")]
+    fn apply_email_verification_defaults(builder: ConfigBuilder<Self>) -> ConfigBuilder<Self> {
+        builder
+            .default("email_hourly_limit", ConfigValue::uint(5))
+            .default("email_daily_limit", ConfigValue::uint(10))
+            .default("email_verify_max_attempts", ConfigValue::uint(3))
+            .default("email_unverified_threshold", ConfigValue::uint(3))
+            .default("email_code_ttl", ConfigValue::uint(600))
+    }
+
+    /// `anomalous-detector-dual` 默认值注入。
+    #[cfg(feature = "anomalous-detector-dual")]
+    fn apply_anomalous_defaults(builder: ConfigBuilder<Self>) -> ConfigBuilder<Self> {
+        builder
+            .default(
+                "anomalous_analyzer_interval_secs",
+                ConfigValue::uint(DEFAULT_ANOMALOUS_ANALYZER_INTERVAL_SECS),
+            )
+            .default(
+                "anomalous_analyzer_burst_threshold",
+                ConfigValue::uint(DEFAULT_ANOMALOUS_BURST_THRESHOLD.into()),
+            )
+    }
+
+    /// `session-extra`：匿名会话超时必须非零。
+    #[cfg(feature = "session-extra")]
+    fn validate_anon_session(&self) -> GarrisonResult<()> {
         if self.anon_session_timeout == 0 {
             return Err(GarrisonError::Config(
                 "config-anon-timeout-invalid::".to_string(),
             ));
         }
-        #[cfg(feature = "three-tier-cache")]
-        {
-            if self.l1_cache_ttl_secs == 0 {
-                return Err(GarrisonError::Config("config-l1-ttl-invalid".to_string()));
-            }
-            if self.l2_cache_ttl_secs == 0 {
-                return Err(GarrisonError::Config("config-l2-ttl-invalid".to_string()));
-            }
-            if self.l1_cache_capacity == 0 {
-                return Err(GarrisonError::Config(
-                    "config-l1-capacity-invalid".to_string(),
-                ));
-            }
+        Ok(())
+    }
+
+    /// `three-tier-cache`：三级缓存 TTL 与容量必须非零。
+    #[cfg(feature = "three-tier-cache")]
+    fn validate_three_tier_cache(&self) -> GarrisonResult<()> {
+        if self.l1_cache_ttl_secs == 0 {
+            return Err(GarrisonError::Config("config-l1-ttl-invalid".to_string()));
         }
-        #[cfg(feature = "rate-limit-redis")]
-        {
-            if let RateLimitBackend::Redis { redis_url } = &self.rate_limit_backend {
-                if redis_url.is_empty() {
-                    return Err(GarrisonError::Config(
-                        "config-redis-url-empty::".to_string(),
-                    ));
-                }
-            }
+        if self.l2_cache_ttl_secs == 0 {
+            return Err(GarrisonError::Config("config-l2-ttl-invalid".to_string()));
         }
-        #[cfg(feature = "firewall-waf")]
-        {
-            for method in &self.waf_allowed_methods {
-                if method != &method.to_uppercase() {
-                    return Err(GarrisonError::Config(format!(
-                        "config-waf-method-case::{}",
-                        method
-                    )));
-                }
-            }
+        if self.l1_cache_capacity == 0 {
+            return Err(GarrisonError::Config(
+                "config-l1-capacity-invalid".to_string(),
+            ));
         }
-        #[cfg(feature = "sms-rate-limit")]
-        {
-            if self.sms_hourly_limit == 0 {
-                return Err(GarrisonError::Config(
-                    "config-sms-hourly-invalid::".to_string(),
-                ));
-            }
-            if self.sms_daily_limit < self.sms_hourly_limit {
-                return Err(GarrisonError::Config(
-                    "config-sms-daily-invalid::".to_string(),
-                ));
-            }
-            if self.sms_verify_max_attempts == 0 {
-                return Err(GarrisonError::Config(
-                    "config-sms-max-attempts-invalid::".to_string(),
-                ));
-            }
-            if self.sms_unverified_threshold == 0 {
-                return Err(GarrisonError::Config(
-                    "config-sms-threshold-invalid::".to_string(),
-                ));
-            }
+        Ok(())
+    }
+
+    /// `rate-limit-redis`：Redis 后端必须配置非空 URL。
+    #[cfg(feature = "rate-limit-redis")]
+    fn validate_rate_limit_redis(&self) -> GarrisonResult<()> {
+        let redis_url = match &self.rate_limit_backend {
+            RateLimitBackend::Redis { redis_url } => redis_url,
+            _ => return Ok(()),
+        };
+        if !redis_url.is_empty() {
+            return Ok(());
         }
-        #[cfg(feature = "email-verification")]
-        {
-            if self.email_hourly_limit == 0 {
-                return Err(GarrisonError::Config(
-                    "config-email-hourly-invalid::".to_string(),
-                ));
+        Err(GarrisonError::Config(
+            "config-redis-url-empty::".to_string(),
+        ))
+    }
+
+    /// `firewall-waf`：允许的 HTTP 方法必须为大写规范形式。
+    #[cfg(feature = "firewall-waf")]
+    fn validate_firewall_waf(&self) -> GarrisonResult<()> {
+        for method in &self.waf_allowed_methods {
+            if method == &method.to_uppercase() {
+                continue;
             }
-            if self.email_daily_limit < self.email_hourly_limit {
-                return Err(GarrisonError::Config(
-                    "config-email-daily-invalid::".to_string(),
-                ));
-            }
-            if self.email_verify_max_attempts == 0 {
-                return Err(GarrisonError::Config(
-                    "config-email-max-attempts-invalid::".to_string(),
-                ));
-            }
-            if self.email_unverified_threshold == 0 {
-                return Err(GarrisonError::Config(
-                    "config-email-threshold-invalid::".to_string(),
-                ));
-            }
-            if self.email_code_ttl == 0 {
-                return Err(GarrisonError::Config(
-                    "config-email-ttl-invalid::".to_string(),
-                ));
-            }
+            return Err(GarrisonError::Config(format!(
+                "config-waf-method-case::{}",
+                method
+            )));
         }
-        #[cfg(feature = "anomalous-detector-dual")]
-        {
-            if self.anomalous_analyzer_interval_secs < 60 {
-                return Err(GarrisonError::Config(
-                    "config-anomalous-interval-invalid::".to_string(),
-                ));
-            }
-            if self.anomalous_analyzer_burst_threshold == 0 {
-                return Err(GarrisonError::Config(
-                    "config-anomalous-burst-invalid::".to_string(),
-                ));
-            }
+        Ok(())
+    }
+
+    /// `sms-rate-limit`：短信限流阈值一致性（日限额 ≥ 时期限额 > 0，验证尝试/阈值 > 0）。
+    #[cfg(feature = "sms-rate-limit")]
+    fn validate_sms_rate_limit(&self) -> GarrisonResult<()> {
+        if self.sms_hourly_limit == 0 {
+            return Err(GarrisonError::Config(
+                "config-sms-hourly-invalid::".to_string(),
+            ));
         }
-        // CORS 配置合法性：credentials 与 wildcard origin 冲突校验
-        // （此前 CorsConfig::validate 仅测试调用，生产路径从不校验）
-        #[cfg(feature = "web-cors")]
-        {
-            crate::web::cors::CorsConfig::validate(&self.cors_config)?;
+        if self.sms_daily_limit < self.sms_hourly_limit {
+            return Err(GarrisonError::Config(
+                "config-sms-daily-invalid::".to_string(),
+            ));
+        }
+        if self.sms_verify_max_attempts == 0 {
+            return Err(GarrisonError::Config(
+                "config-sms-max-attempts-invalid::".to_string(),
+            ));
+        }
+        if self.sms_unverified_threshold == 0 {
+            return Err(GarrisonError::Config(
+                "config-sms-threshold-invalid::".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// `email-verification`：邮件验证阈值一致性（同短信模型 + TTL 非零）。
+    #[cfg(feature = "email-verification")]
+    fn validate_email_verification(&self) -> GarrisonResult<()> {
+        if self.email_hourly_limit == 0 {
+            return Err(GarrisonError::Config(
+                "config-email-hourly-invalid::".to_string(),
+            ));
+        }
+        if self.email_daily_limit < self.email_hourly_limit {
+            return Err(GarrisonError::Config(
+                "config-email-daily-invalid::".to_string(),
+            ));
+        }
+        if self.email_verify_max_attempts == 0 {
+            return Err(GarrisonError::Config(
+                "config-email-max-attempts-invalid::".to_string(),
+            ));
+        }
+        if self.email_unverified_threshold == 0 {
+            return Err(GarrisonError::Config(
+                "config-email-threshold-invalid::".to_string(),
+            ));
+        }
+        if self.email_code_ttl == 0 {
+            return Err(GarrisonError::Config(
+                "config-email-ttl-invalid::".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// `anomalous-detector-dual`：分析周期 ≥60s、突发阈值非零。
+    #[cfg(feature = "anomalous-detector-dual")]
+    fn validate_anomalous_detector(&self) -> GarrisonResult<()> {
+        if self.anomalous_analyzer_interval_secs < 60 {
+            return Err(GarrisonError::Config(
+                "config-anomalous-interval-invalid::".to_string(),
+            ));
+        }
+        if self.anomalous_analyzer_burst_threshold == 0 {
+            return Err(GarrisonError::Config(
+                "config-anomalous-burst-invalid::".to_string(),
+            ));
         }
         Ok(())
     }
@@ -930,6 +958,70 @@ impl Default for GarrisonConfig {
     }
 }
 
+/// `web-cors` 显式环境变量覆盖：`GARRISON_CORS_ALLOWED_ORIGINS`（逗号分隔列表）。
+#[cfg(feature = "web-cors")]
+fn apply_web_cors_env_override(config: &mut GarrisonConfig) {
+    let Ok(val) = std::env::var("GARRISON_CORS_ALLOWED_ORIGINS") else {
+        return;
+    };
+    config.cors_config.allowed_origins = val
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+}
+
+/// `web-csrf` 显式环境变量覆盖：`GARRISON_CSRF_ENABLED`。
+#[cfg(feature = "web-csrf")]
+fn apply_web_csrf_env_override(config: &mut GarrisonConfig) {
+    let Ok(val) = std::env::var("GARRISON_CSRF_ENABLED") else {
+        return;
+    };
+    config.csrf_config.enabled = val.eq_ignore_ascii_case("true");
+}
+
+/// `rate-limit-redis` 显式环境变量覆盖：`GARRISON_RATE_LIMIT_BACKEND` +
+/// `GARRISON_REDIS_URL`。未知 backend 值返回配置错误（fail-closed）。
+#[cfg(feature = "rate-limit-redis")]
+fn apply_rate_limit_env_override(config: &mut GarrisonConfig) -> GarrisonResult<()> {
+    let Ok(val) = std::env::var("GARRISON_RATE_LIMIT_BACKEND") else {
+        return Ok(());
+    };
+    config.rate_limit_backend = match val.to_lowercase().as_str() {
+        "memory" => RateLimitBackend::Memory,
+        _ => {
+            let redis_url = std::env::var("GARRISON_REDIS_URL").unwrap_or_default();
+            RateLimitBackend::Redis { redis_url }
+        },
+    };
+    // 错误消息保留用户原始输入大小写
+    if !matches!(val.to_lowercase().as_str(), "memory" | "redis") {
+        return Err(GarrisonError::Config(format!(
+            "config-rate-limit-backend-unsupported::{}",
+            val
+        )));
+    }
+    if let Ok(val) = std::env::var("GARRISON_REDIS_URL") {
+        if let RateLimitBackend::Redis { redis_url } = &mut config.rate_limit_backend {
+            *redis_url = val;
+        }
+    }
+    Ok(())
+}
+
+/// 构造 confers FileSource（TOML 文件安全加载配置单点维护）：
+/// 路径遍历/symlink 防护、特殊文件拒绝、10MB 上限 + take 双保险、错误路径脱敏。
+fn confers_file_source(path: &str, max_size: usize) -> confers::config::FileSource {
+    confers::config::FileSource::new(path)
+        .with_priority(10)
+        .with_loader_config(
+            confers::loader::LoaderConfig::new()
+                .allow_absolute()
+                .max_size(max_size)
+                .redact_error_paths(),
+        )
+}
+
 /// 将 confers `ConfigError` 映射为 i18n 化的 `GarrisonError::Config`。
 ///
 /// 配置文件加载迁入 confers `FileSource` 后，文件 IO/大小/缺失错误从
@@ -958,4 +1050,9 @@ fn map_confers_build_error(e: confers::ConfigError) -> GarrisonError {
         },
         other => GarrisonError::Config(format!("config-confers-build-failed::{}", other)),
     }
+}
+
+/// 非对称白名单外算法的统一配置错误。
+fn unsupported_jwt_algorithm(alg: &str) -> GarrisonError {
+    GarrisonError::Config(format!("config-jwt-algorithm-unsupported::{alg}"))
 }
