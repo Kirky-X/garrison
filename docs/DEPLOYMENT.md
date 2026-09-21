@@ -121,7 +121,7 @@ Garrison 支持 4 种 Redis 部署模式（`RedisDeploymentMode` 枚举）：
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.1", features = ["tls", "auth-server"] }
+garrison = { version = "0.9.0-rc.2", features = ["tls", "auth-server"] }
 ```
 
 ```rust

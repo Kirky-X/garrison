@@ -108,4 +108,4 @@ jobs:
         with:
           shared-key: ci-examples-deps
       - name: Run examples tests (independent workspace member)
-        run: cargo test -p garrison-examples --all-features --locked
+        run: cargo test -p vecboost-examples --all-features --locked

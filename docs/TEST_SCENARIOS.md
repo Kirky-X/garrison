@@ -1,8 +1,8 @@
 # 🧪 Garrison 测试场景矩阵
 
-> 适用版本：Garrison **0.9.0-rc.1**（MSRV 1.85，`rust-toolchain.toml` 锁定 1.85.1）
+> 适用版本：Garrison **0.9.0-rc.2**（MSRV 1.85，`rust-toolchain.toml` 锁定 1.85.1）
 > 编写依据（只读核对）：`Cargo.toml [features]` 与 `[[test]]` 注册、`tests/acceptance.rs` 域入口、`tests/acceptance/*.rs`、`tests/acceptance/migrated/*.rs`、`examples/tests/`、`.github/workflows/ci.yml`、`.github/workflows/feature-matrix.yml`、`scripts/e2e_matrix.sh`、`scripts/e2e_run.sh`、`benches/garrison_benchmark.rs`。
-> 本文合并自原《E2E 特性组合测试套件》文档（`E2E_TESTING.md` 现仅保留指针），并补入基于真实测试套件的场景穷举。
+> 本文合并自原《E2E 特性组合测试套件》文档（`E2E_TESTING.md` 已删除），并补入基于真实测试套件的场景穷举。
 > 规模数字均为 `#[test]` / `#[tokio::test]` 属性的 grep 统计（含 `#[tokio::test(flavor = ...)]` 形态），截至 2026-09-15。
 
 ## 📋 目录

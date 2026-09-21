@@ -2,10 +2,10 @@
 
 > Garrison 是面向 Rust 生态的身份认证鉴权框架。
 >
-> - 版本：0.9.0-rc.1（发布候选：验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层）
+> - 版本：0.9.0-rc.2（发布候选：验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
-> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
+> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
 > - 缓存：oxcache 0.5（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [⚙️ 配置指南](./CONFIGURATION.md)；开发规范详见 [🛠️ 开发规范](./DEVELOPMENT.md)。
@@ -29,7 +29,7 @@ Garrison 采用 **双抽象层 + 全局单例** 架构，核心设计目标：
 
 ### 1.1 双抽象层
 
-- **DAO 抽象层**：`GarrisonDao` trait 屏蔽存储后端差异，底层由 `dbnexus`（数据库）+ `oxcache`（缓存）实现，切换 SQLite / PostgreSQL / MySQL 时上层无需改动。
+- **DAO 抽象层**：`GarrisonDao` trait 屏蔽存储后端差异，底层由 `dbnexus`（数据库）+ `oxcache`（缓存）实现，切换 SQLite / PostgreSQL / MySQL / DuckDB 时上层无需改动。
 - **缓存抽象层**：`oxcache` 0.5 提供 L1（oxcache 内存层）+ L2（redis 分布式）两级缓存，支持 per-entry TTL 精细化过期控制，对上层呈现统一 `get / set / remove` 语义。
 
 ### 1.2 全局单例
@@ -111,7 +111,7 @@ graph TB
 
     subgraph InfraLayer["基础设施"]
         oxcache[oxcache 0.5<br/>L1 内存 + L2 redis]
-        dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL + auto-migrate]
+        dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate]
         sdforge[sdforge 0.5<br/>声明式路由]
         trait-kit[trait-kit 0.5<br/>typestate DI]
     end
@@ -136,7 +136,7 @@ graph TB
         listener-events[listener<br/>事件监听]
         metrics[metrics-prometheus<br/>Prometheus 指标]
         tracing[tracing-log<br/>结构化日志]
-        otlp[observability-otlp<br/>OTLP 分布式追踪]
+        otlp[otlp<br/>OTLP 分布式追踪]
     end
 
     CoreLayer --> InfraLayer
@@ -242,7 +242,7 @@ graph LR
     BS --> BD
     BLD --> BI
     BD --> oxcache[oxcache 0.5<br/>L1 内存 + L2 redis]
-    BD --> dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL]
+    BD --> dbnexus[dbnexus 0.6<br/>SQLite / PostgreSQL / MySQL / DuckDB]
 ```
 
 ### trait 职责说明
@@ -280,7 +280,7 @@ sequenceDiagram
     participant BS as GarrisonSession
     participant BD as GarrisonDao
     participant OC as oxcache (L1 内存 + L2 redis)
-    participant DB as dbnexus (SQLite / PostgreSQL / MySQL)
+    participant DB as dbnexus (SQLite / PostgreSQL / MySQL / DuckDB)
 
     C->>AX: HTTP 请求 (Header/Cookie: garrison_token)
     AX->>TL: 提取 token, CURRENT_TOKEN.scope(token, fut)
@@ -352,7 +352,7 @@ sequenceDiagram
 
 ### 4. 为什么用双抽象层（DAO + 缓存）？
 
-**问题**：存储后端多样（SQLite/PostgreSQL/MySQL/Redis），缓存策略多变，业务代码不应感知具体后端。
+**问题**：存储后端多样（SQLite/PostgreSQL/MySQL/DuckDB/Redis），缓存策略多变，业务代码不应感知具体后端。
 
 **方案**：
 

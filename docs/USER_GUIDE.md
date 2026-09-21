@@ -2,7 +2,7 @@
 
 **Garrison** 是面向 Rust 生态的一站式身份认证鉴权框架：登录认证 → 权限校验 → 会话管理 → 路由拦截开箱即用。业务方实现一个 `GarrisonInterface` 回调、注入一个 `GarrisonDao` 存储后端，即可获得完整的认证鉴权能力；全部可选能力（协议层、防火墙、账号安全等）均以独立 feature 门控，编译产物只包含启用的部分。
 
-> 适用版本：0.9.0-rc.1（MSRV 1.85）。本文只讲「怎么用」；架构设计见 [🏗️ 架构文档](ARCHITECTURE.md)，配置项全表见 [⚙️ 配置指南](CONFIGURATION.md)。
+> 适用版本：0.9.0-rc.2（MSRV 1.85）。本文只讲「怎么用」；架构设计见 [🏗️ 架构文档](ARCHITECTURE.md)，配置项全表见 [⚙️ 配置指南](CONFIGURATION.md)。
 
 ## 📋 目录
 
@@ -34,7 +34,7 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.1", features = ["development"] }
+garrison = { version = "0.9.0-rc.2", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```

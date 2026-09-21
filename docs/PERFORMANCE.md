@@ -2,7 +2,7 @@
 
 本指南汇总 Garrison 的性能设计要点、基准测试方法与优化建议。Garrison 的性能目标以认证鉴权框架的热路径为口径：登录链路（含密码哈希）与每请求的无状态校验（token 验证、权限检查）。
 
-> 适用版本：0.9.0-rc.1。本文不发布绝对耗时数字（criterion 区间估计随机器而异）；基准以本机运行 `cargo bench` 复现，验收性能基线以 `scripts/e2e_run.sh` 产出的 `logs/perf.jsonl` 为准。
+> 适用版本：0.9.0-rc.2。本文不发布绝对耗时数字（criterion 区间估计随机器而异）；基准以本机运行 `cargo bench` 复现，验收性能基线以 `scripts/e2e_run.sh` 产出的 `logs/perf.jsonl` 为准。
 
 ## 📋 目录
 
