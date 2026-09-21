@@ -235,7 +235,7 @@ impl std::fmt::Debug for GarrisonException {
 ///
 /// # 安全性
 ///
-/// `extras` 经 [`sanitize_extras`] 处理后写入响应体：敏感 key 掩码、超长值截断、
+/// `extras` 经 `sanitize_extras` 处理后写入响应体：敏感 key 掩码、超长值截断、
 /// 超量键丢弃。`with_extra` 接受任意键值对，调用方仍不应将内部调试元数据、
 /// PII 或密钥放入 extras——脱敏黑名单是兜底而非白名单。
 #[cfg(feature = "web-axum")]

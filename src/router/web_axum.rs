@@ -95,7 +95,7 @@ impl GarrisonRouter {
     ///
     /// # 参数
     /// - `path`: 请求路径模式（精确匹配 / `:param`、`{param}` 参数段 / `{*wildcard}` 通配段，
-    ///   语义见 [`route_matches`]）。
+    ///   语义见 `route_matches`）。
     /// - `handler`: axum handler（GET 方法）。
     /// - `annotation`: 鉴权注解。
     pub fn route_protected<H, T>(mut self, path: &str, handler: H, annotation: Annotation) -> Self

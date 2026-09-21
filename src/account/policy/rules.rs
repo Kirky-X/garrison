@@ -115,7 +115,7 @@ const MAX_HISTORY_COUNT: u32 = 24;
 /// # 性能上限
 ///
 /// 每条比对为同步 KDF 校验（Argon2id m=19456 约数十毫秒），`count` 在
-/// [`HistoryRule::new`] 中被钳制到 [`MAX_HISTORY_COUNT`]（24），单次密码修改
+/// [`HistoryRule::new`] 中被钳制到 `MAX_HISTORY_COUNT`（24），单次密码修改
 /// 的最坏校验耗时可控。
 ///
 /// # 示例
@@ -139,7 +139,7 @@ impl HistoryRule {
     ///
     /// # 参数
     /// - `count`: 比对的历史 hash 数量（从 `password_history` 末尾取最近
-    ///   `count` 条）。超过 [`MAX_HISTORY_COUNT`]（24）时钳制到上限，
+    ///   `count` 条）。超过 `MAX_HISTORY_COUNT`（24）时钳制到上限，
     ///   防止热路径无上限循环 KDF 校验（DoS/阻塞风险）。
     pub fn new(count: u32) -> Self {
         Self {

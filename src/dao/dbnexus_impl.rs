@@ -45,7 +45,7 @@ pub async fn init_dbnexus(url: &str) -> GarrisonResult<DbPool> {
 }
 /// 初始化 dbnexus 连接池（显式连接池参数）。
 ///
-/// 走 dbnexus [`DbPoolBuilder`] 通路，透传 [`PoolConfig`]（最大/最小连接数、
+/// 走 dbnexus `DbPoolBuilder` 通路，透传 `PoolConfig`（最大/最小连接数、
 /// 空闲超时、获取超时），替代 `DbPool::new` 的库默认值（max=20/min=5）。
 /// 需要 failover/副本等完整配置的部署可直接使用 dbnexus `DbPool::builder`
 /// + `FailoverConfig`；本函数覆盖最常见的池参数调优场景。

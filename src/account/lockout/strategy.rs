@@ -154,7 +154,7 @@ impl UserLockoutStrategy {
     /// # 并发安全（CAS 原子读改写）
     ///
     /// 读（get/CAS-expected）→ 改 → 写（compare_and_swap）为原子序列：
-    /// 同一用户并发调用时 CAS 冲突方自动重试（上限 [`MAX_STATE_CAS_RETRIES`]），
+    /// 同一用户并发调用时 CAS 冲突方自动重试（上限 `MAX_STATE_CAS_RETRIES`），
     /// 消除 get→mutate→set 非原子读改写导致的丢失自增。
     /// 重试耗尽返回 `GarrisonError::Dao`（fail-closed，不静默丢失失败计数）。
     pub async fn record_failure(&self, user_id: &str) -> GarrisonResult<()> {
@@ -260,7 +260,7 @@ impl UserLockoutStrategy {
     /// # 并发安全
     ///
     /// 与 [`record_failure`](Self::record_failure) 相同的 CAS 原子读改写 +
-    /// 重试（上限 [`MAX_STATE_CAS_RETRIES`]），避免并发下丢失重置或覆盖他方更新。
+    /// 重试（上限 `MAX_STATE_CAS_RETRIES`），避免并发下丢失重置或覆盖他方更新。
     pub async fn record_success(&self, user_id: &str) -> GarrisonResult<()> {
         for attempt in 1..=MAX_STATE_CAS_RETRIES {
             let key = DaoKeyPrefix::Lockout.build_key(user_id);

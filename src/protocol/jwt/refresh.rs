@@ -59,7 +59,7 @@
 ///   `user_id` 是 OAuth2 的 `Option<i64>`，`client_credentials` 时为 `None`）
 ///
 /// 反序列化时这 4 个字段必须**显式存在**（值可为 `null`），缺失任一字段即失败
-/// （fail-closed，见 [`deserialize_required_option`]）。
+/// （fail-closed，见 `deserialize_required_option`）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct RefreshTokenRecord {
     /// 当前 token 的 SHA-256 哈希（主键）。

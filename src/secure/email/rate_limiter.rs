@@ -22,8 +22,8 @@ const SECONDS_PER_DAY: u64 = 86400;
 /// check 与 rollback **不得**各自用当前时间重算桶键：若跨越小时/午夜边界，
 /// rollback 按当前时间重算的 `%Y-%m-%d`/小时桶与递增时不一致，会递减错误的 key，
 /// 原计数器滞留（静默失败的回滚）。调用方必须把
-/// [`check_and_increment_inner`](EmailRateLimiter::check_and_increment_inner)
-/// 返回的窗口信息原样传给 [`rollback_inner_with`](EmailRateLimiter::rollback_inner_with)。
+/// `check_and_increment_inner`
+/// 返回的窗口信息原样传给 `rollback_inner_with`。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EmailRateWindows {
     /// 小时桶索引（Unix 秒 / 3600）。
@@ -163,8 +163,8 @@ impl EmailRateLimiter {
     ///
     /// 注意：本方法按**当前时间**重算窗口桶，若 check 与 rollback 之间跨越
     /// 小时/午夜边界会递减错误的 key。发送失败路径应改用
-    /// [`rollback_inner_with`](Self::rollback_inner_with) 并传入
-    /// [`check_and_increment_inner`](Self::check_and_increment_inner) 返回的窗口信息。
+    /// `rollback_inner_with` 并传入
+    /// `check_and_increment_inner` 返回的窗口信息。
     pub async fn rollback(&self, email: &str) -> GarrisonResult<()> {
         let normalized = normalize_email(email);
         validate_email(&normalized)?;

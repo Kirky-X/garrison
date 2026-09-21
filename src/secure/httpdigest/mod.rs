@@ -20,7 +20,7 @@
 //! # 重放防护（务必阅读）
 //!
 //! nonce 本身仅是 `base64(timestamp:uuid)` + TTL（默认 300s），**不防重放**。
-//! 完整的 nc 单调性重放防护（RFC 7616 §3.4.6）必须通过 [`HttpDigestAuth::with_dao`]
+//! 完整的 nc 单调性重放防护（RFC 7616 §3.4.6）必须通过 `HttpDigestAuth::with_dao`
 //! 注入 DAO 才会启用：
 //!
 //! - **未注入 DAO**：nc 校验被跳过（fail-open，仅进程级 warn 一次），
