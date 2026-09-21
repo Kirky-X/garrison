@@ -135,8 +135,8 @@ pub fn build_jwk_set(jwt_algorithm: &str, private_key_pem: &str) -> GarrisonResu
 mod tests {
     use super::*;
 
-    const TEST_RSA_PEM: &str = "\
------BEGIN PRIVATE KEY-----
+    // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+    const TEST_RSA_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDMQoXOvmvs4kpj
 nYshns5CYyNziLt/xBQBZtlkzY3KUuHtJMz9zK0TTz0DbhCnDCWF8tpWqxHBTtON
 pMnnC6bTN4Wg/PWDn67hub23b4xAKq5qH45RmWn4a0TGTUyQktebjlCiWBlMCo43

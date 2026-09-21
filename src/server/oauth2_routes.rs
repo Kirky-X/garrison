@@ -1062,8 +1062,8 @@ mod jwks_tests {
     use tower::ServiceExt;
 
     /// 测试专用 RSA 2048 私钥（非真实凭证）。
-    const JWKS_TEST_RSA_PEM: &str = "\
------BEGIN PRIVATE KEY-----
+    // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+    const JWKS_TEST_RSA_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDMQoXOvmvs4kpj
 nYshns5CYyNziLt/xBQBZtlkzY3KUuHtJMz9zK0TTz0DbhCnDCWF8tpWqxHBTtON
 pMnnC6bTN4Wg/PWDn67hub23b4xAKq5qH45RmWn4a0TGTUyQktebjlCiWBlMCo43

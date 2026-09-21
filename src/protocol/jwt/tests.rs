@@ -522,8 +522,8 @@ fn base64_encode_urlsafe(data: &[u8]) -> String {
 // ========================================================================
 
 /// 测试专用 RSA 2048 私钥（PKCS#8 PEM，仅用于单元测试，非真实凭证）。
-const TEST_RSA_PRIVATE_PEM: &str = "\
------BEGIN PRIVATE KEY-----
+// nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+const TEST_RSA_PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDMQoXOvmvs4kpj
 nYshns5CYyNziLt/xBQBZtlkzY3KUuHtJMz9zK0TTz0DbhCnDCWF8tpWqxHBTtON
 pMnnC6bTN4Wg/PWDn67hub23b4xAKq5qH45RmWn4a0TGTUyQktebjlCiWBlMCo43
@@ -625,8 +625,8 @@ fn rsa_key_material_debug_redacts_pem() {
 // ========================================================================
 
 /// 测试专用 P-256 EC 私钥（PKCS#8 PEM，仅用于单元测试，非真实凭证）。
-const TEST_EC_PRIVATE_PEM: &str = "\
------BEGIN PRIVATE KEY-----
+// nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+const TEST_EC_PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgHu89Emnr1D+OpkZF
 T2f/jZRjQNl9Q6AyVEnsI2rH+tihRANCAARSS8Qlg3TwbmWk6ICPdeHxy/X0LARI
 FTcfYH6rUSsxJH2JD7Adnx1iw7UhnOZXVf8YOnDrqaXJkQcXNWPSUBqA
@@ -665,8 +665,8 @@ fn ec_pem_rejects_hs_algorithm() {
 }
 
 /// 测试专用 P-384 EC 私钥（PKCS#8 PEM，仅用于单元测试，非真实凭证）。
-const TEST_EC_P384_PRIVATE_PEM: &str = "\
------BEGIN PRIVATE KEY-----
+// nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+const TEST_EC_P384_PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDA7FBewvmXSGqCaqiUM
 8WJE3UDFs8aHiXNcnz4TzkYW5FHiZKVufY2cGbuu68R71VGhZANiAAQN57zuQF41
 RG768ifH35dHUGaCy0FFgEq/LpAQHQGafVI/DVkmz21C4uezJg4dId/PhuhhXgiR
@@ -693,8 +693,8 @@ fn ec_pem_es384_sign_verify_roundtrip() {
 // ========================================================================
 
 /// 测试专用 Ed25519 私钥（PKCS#8 PEM，RFC 8410，仅用于单元测试，非真实凭证）。
-const TEST_ED_PRIVATE_PEM: &str = "\
------BEGIN PRIVATE KEY-----
+// nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+const TEST_ED_PRIVATE_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MC4CAQAwBQYDK2VwBCIEIOChr1YQD9KWBWWGBLFFjHQiHx9+OznRi69Gh25Uhv8H
 -----END PRIVATE KEY-----
 ";
@@ -718,6 +718,28 @@ fn ed_pem_eddsa_sign_verify_roundtrip() {
 fn ed_pem_invalid_pem_fails_fast() {
     let result = JwtHandler::new("placeholder").with_ed_pem("not-a-pem");
     assert!(result.is_err(), "非法 Ed PEM 必须在构造期报错");
+}
+
+/// 非对称算法 + 空 jwt_secret 占位：sign 与 verify 语义必须对称（都不误拒）。
+///
+/// config 层明确允许非对称算法下 jwt_secret 留空（密钥强度由 PEM 决定，
+/// `validate_jwt_secret` 对 RS/ES/EdDSA 跳过对称长度校验）；verify 曾因无条件的
+/// `secret.is_empty()` 检查误拒该合法配置（sign 有 KeyMaterial 门控而 verify 没有），
+/// 本测试锁定修复后的对称语义。
+#[test]
+fn asymmetric_empty_secret_placeholder_sign_verify_symmetric() {
+    let handler = JwtHandler::new("")
+        .with_ed_pem(TEST_ED_PRIVATE_PEM)
+        .unwrap()
+        .try_with_algorithm(Algorithm::EdDSA)
+        .unwrap();
+    let token = handler
+        .sign("user123", 3600)
+        .expect("空 secret 占位 + EdDSA 的 sign 不应误拒");
+    let claims = handler
+        .verify(&token)
+        .expect("空 secret 占位 + EdDSA 的 verify 不应误拒（修复前 Err(jwt-secret-empty)）");
+    assert_eq!(claims.login_id, "user123");
 }
 
 // ========================================================================

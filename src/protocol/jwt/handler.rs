@@ -487,7 +487,9 @@ impl JwtHandler {
     /// - `Err(GarrisonError::ExpiredToken)`: token 已过期。
     /// - `Err(GarrisonError::InvalidToken)`: 签名/格式/算法校验失败。
     pub fn verify(&self, token: &str) -> GarrisonResult<GarrisonJwtClaims> {
-        if self.secret.is_empty() {
+        // 空密钥检查仅对称路径适用（与 sign 一致）：config 层允许非对称算法下
+        // jwt_secret 留空作占位（密钥强度由 PEM 决定），无条件检查会误拒该合法配置
+        if matches!(self.key_material, KeyMaterial::Hs) && self.secret.is_empty() {
             return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
         }
         // JWT 密钥最小长度校验（防暴力破解，仅对称路径适用）
