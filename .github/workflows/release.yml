@@ -57,7 +57,8 @@ jobs:
   test-check:
     name: Test Check (lib + E2E)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # CI 冷缓存下 lib+E2E 全量曾超 20m 被取消,放宽到 45m
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1, nosemgrep
