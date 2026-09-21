@@ -292,7 +292,7 @@ GarrisonManager::builder()
   - `garrison_active_session_count`
   - `garrison_token_verify_failures_total{reason}`
 
-0.3.0 起已集成 OpenTelemetry（`observability-otlp` feature），提供分布式追踪能力，便于把 Garrison 内部耗时计入全链路 trace span。
+0.3.0 起已集成 OpenTelemetry（`otlp` feature），提供分布式追踪能力，便于把 Garrison 内部耗时计入全链路 trace span。
 
 ---
 

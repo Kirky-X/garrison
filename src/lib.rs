@@ -173,7 +173,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! garrison = { version = "0.9.0-rc.1", features = ["web-axum", "protocol-jwt"] }
+//! garrison = { version = "0.9.0-rc.2", features = ["web-axum", "protocol-jwt"] }
 //! ```
 //!
 //! ```rust

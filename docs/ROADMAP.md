@@ -159,7 +159,7 @@ PATCH 版本，聚焦于 0.2.0 的 bug 修复与协议层稳定性优化，不�
 
 #### 新增（生态集成）
 
-- ✅ OpenTelemetry OTLP 分布式追踪（`observability-otlp` feature，OTLP gRPC 导出）
+- ✅ OpenTelemetry OTLP 分布式追踪（`otlp` feature，OTLP gRPC 导出）
 - ✅ gRPC 鉴权拦截器（`grpc` feature，`tonic::Interceptor` 实现）
 - ✅ 异常消息国际化（`i18n` feature，fluent-rs 中英文切换）
 - ✅ Prometheus 指标（`metrics-prometheus` feature）

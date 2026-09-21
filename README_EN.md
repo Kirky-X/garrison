@@ -88,7 +88,7 @@ Add the following to your `Cargo.toml` (`development` preset = in-memory cache D
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.1", features = ["development"] }
+garrison = { version = "0.9.0-rc.2", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```

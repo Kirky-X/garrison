@@ -1,15 +1,15 @@
 # OpenTelemetry 分布式追踪（0.3.0 新增）
 
-0.3.0 引入 OpenTelemetry 分布式追踪，通过 OTLP gRPC 导出 span，通过 `observability-otlp` feature 启用。
+0.3.0 引入 OpenTelemetry 分布式追踪，通过 OTLP gRPC 导出 span，通过 `otlp` feature 启用。
 
 ## Feature 启用
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["observability-otlp"] }
+garrison = { version = "0.8", features = ["otlp"] }
 ```
 
-`observability-otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-subscriber）：
+`otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-subscriber）：
 
 - `opentelemetry` 0.32（`trace` feature）
 - `opentelemetry_sdk` 0.32（`trace` + `rt-tokio`）
@@ -48,7 +48,7 @@ trace context 经 OpenTelemetry 自身的 `Context` 传播（task_local），通
 
 ## 与 JSON 日志协同
 
-`observability-otlp` 聚合了 `tracing-subscriber`，可与 JSON 日志共用同一 span 上下文：
+`otlp` 聚合了 `tracing-subscriber`，可与 JSON 日志共用同一 span 上下文：
 
 ```rust
 use garrison::observability::init_otlp_tracing;
@@ -74,7 +74,7 @@ pub enum GarrisonOtelError {
 - 生产环境部署 OTel Collector 作为接收端，再转发到 Jaeger / Tempo / Zipkin
 - endpoint 通常为 `http://otel-collector:4317`（gRPC）或 `http://otel-collector:4318`（HTTP）
 - 批量导出适合高吞吐场景；低延迟场景可配置简单导出器
-- `production` 聚合 feature 默认不含 `observability-otlp`，需显式追加
+- `production` 聚合 feature 默认不含 `otlp`，需显式追加
 
 ## 相关章节
 

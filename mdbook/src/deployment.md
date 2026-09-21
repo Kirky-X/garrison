@@ -43,7 +43,7 @@ production = [
 按需追加其他能力：
 
 ```toml
-features = ["production", "observability-otlp", "grpc", "i18n-icu", "web-actix"]
+features = ["production", "otlp", "grpc", "i18n-icu", "web-actix"]
 ```
 
 | 场景 | 推荐组合 |

@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! observability_setup 示例测试（metrics-prometheus + observability-otlp feature）。
+//! observability_setup 示例测试（metrics-prometheus + otlp feature）。
 //!
 //! 验证 GarrisonMetrics 指标记录与收集：
 //! - `register_to` 注册到自定义 registry
