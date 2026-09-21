@@ -181,48 +181,48 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 下表逐项对应 `Cargo.toml` 的 `[features]` 定义，`default = ["backend-embedded"]`。
 
 <table style="width:100%; border-collapse: collapse">
-<tr><th style="text-align:left">特性</th><th style="text-align:center">默认</th><th style="text-align:center">引入版本</th><th style="text-align:left">说明</th></tr>
-<tr><td><code>backend-embedded</code></td><td align="center">✅</td><td align="center">0.7.0</td><td>内嵌后端模式（进程内认证，委托 GarrisonManager）</td></tr>
-<tr><td><code>backend-remote</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>远程后端适配器（通过 HTTP 调用远程 Auth Server）</td></tr>
-<tr><td><code>backend-kit</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>trait-kit typestate DI 构建</td></tr>
-<tr><td><code>auth-server</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>独立认证服务器（sdforge 声明式路由 + TLS）</td></tr>
-<tr><td><code>abac</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>基于 Cedar DSL 的属性访问控制引擎</td></tr>
-<tr><td><code>oauth2-server</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>完整 OAuth2 Server 4 端点</td></tr>
-<tr><td><code>cache-memory</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>内存缓存后端（oxcache 内存层）</td></tr>
-<tr><td><code>cache-redis</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>Redis 缓存后端（oxcache L2）</td></tr>
-<tr><td><code>db-sqlite</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>SQLite 数据库后端</td></tr>
-<tr><td><code>db-postgres</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>PostgreSQL 后端</td></tr>
-<tr><td><code>db-mysql</code></td><td align="center">❌</td><td align="center">0.5.3</td><td>MySQL 后端</td></tr>
-<tr><td><code>web-axum</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>axum Web 框架适配</td></tr>
-<tr><td><code>web-actix</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>actix-web Web 框架适配</td></tr>
-<tr><td><code>web-warp</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>warp Web 框架适配</td></tr>
-<tr><td><code>web-waf</code> / <code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td align="center">0.6.4</td><td>WAF / CORS / CSRF 中间件</td></tr>
-<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>JWT 签发与验证（HS256/HS512 + refresh）</td></tr>
-<tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>OAuth2 四种模式</td></tr>
-<tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td align="center">0.2.0 / 0.4.0</td><td>SSO ticket / SSO Server 抽象</td></tr>
-<tr><td><code>protocol-sign</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>API 签名 + nonce 防重放</td></tr>
-<tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>API Key 认证</td></tr>
-<tr><td><code>protocol-temp</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>临时凭证</td></tr>
-<tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td align="center">0.4.0</td><td>OIDC id_token 签发/验证 + discovery</td></tr>
-<tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>HTTP Basic / Digest 认证</td></tr>
-<tr><td><code>protocol-saml</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>SAML 2.0 骨架</td></tr>
-<tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>协议层密钥零化</td></tr>
-<tr><td><code>secure-totp</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>TOTP 动态验证码 (RFC 6238)</td></tr>
-<tr><td><code>secure-sign</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>HMAC-SHA256/SHA512 工具</td></tr>
-<tr><td><code>secure-confusable</code> / <code>secure-masking</code> / <code>secure-xss</code> / <code>secure-sanitize</code></td><td align="center">❌</td><td align="center">0.5.1~0.6.2</td><td>安全工具集</td></tr>
-<tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td align="center">0.7.1 / 0.8.0</td><td>签名 / 常量时间比较</td></tr>
-<tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td align="center">0.6.0</td><td>账号安全引擎</td></tr>
-<tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td align="center">0.5.0~0.6.4</td><td>安全防护套件（暴力破解/限流/异常/GeoIP/DDoS/WAF）</td></tr>
-<tr><td><code>listener</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>事件监听器（15 个事件变体）</td></tr>
-<tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td align="center">0.1.0~0.3.0</td><td>可观测性</td></tr>
-<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>10 个属性宏</td></tr>
-<tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>多租户逻辑隔离</td></tr>
-<tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>社交登录</td></tr>
-<tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td align="center">0.9.0</td><td>核心增强 / 会话增强合并</td></tr>
-<tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td align="center">0.9.0</td><td>邮箱验证码</td></tr>
-<tr><td><code>config-*</code></td><td align="center">❌</td><td align="center">0.8.0</td><td>配置文件加密/校验/热更新/插值/动态/开关（confers 透传）</td></tr>
-<tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td align="center">0.3.0</td><td>国际化</td></tr>
-<tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td align="center">—</td><td>聚合特性</td></tr>
+<tr><th style="text-align:left">特性</th><th style="text-align:center">默认</th><th style="text-align:left">说明</th></tr>
+<tr><td><code>backend-embedded</code></td><td align="center">✅</td><td>内嵌后端模式（进程内认证，委托 GarrisonManager）</td></tr>
+<tr><td><code>backend-remote</code></td><td align="center">❌</td><td>远程后端适配器（通过 HTTP 调用远程 Auth Server）</td></tr>
+<tr><td><code>backend-kit</code></td><td align="center">❌</td><td>trait-kit typestate DI 构建</td></tr>
+<tr><td><code>auth-server</code></td><td align="center">❌</td><td>独立认证服务器（sdforge 声明式路由 + TLS）</td></tr>
+<tr><td><code>abac</code></td><td align="center">❌</td><td>基于 Cedar DSL 的属性访问控制引擎</td></tr>
+<tr><td><code>oauth2-server</code></td><td align="center">❌</td><td>完整 OAuth2 Server 4 端点</td></tr>
+<tr><td><code>cache-memory</code></td><td align="center">❌</td><td>内存缓存后端（oxcache 内存层）</td></tr>
+<tr><td><code>cache-redis</code></td><td align="center">❌</td><td>Redis 缓存后端（oxcache L2）</td></tr>
+<tr><td><code>db-sqlite</code></td><td align="center">❌</td><td>SQLite 数据库后端</td></tr>
+<tr><td><code>db-postgres</code></td><td align="center">❌</td><td>PostgreSQL 后端</td></tr>
+<tr><td><code>db-mysql</code></td><td align="center">❌</td><td>MySQL 后端</td></tr>
+<tr><td><code>web-axum</code></td><td align="center">❌</td><td>axum Web 框架适配</td></tr>
+<tr><td><code>web-actix</code></td><td align="center">❌</td><td>actix-web Web 框架适配</td></tr>
+<tr><td><code>web-warp</code></td><td align="center">❌</td><td>warp Web 框架适配</td></tr>
+<tr><td><code>web-waf</code> / <code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td>WAF / CORS / CSRF 中间件</td></tr>
+<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td>JWT 签发与验证（HS256/HS512 + refresh）</td></tr>
+<tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td>OAuth2 四种模式</td></tr>
+<tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td>SSO ticket / SSO Server 抽象</td></tr>
+<tr><td><code>protocol-sign</code></td><td align="center">❌</td><td>API 签名 + nonce 防重放</td></tr>
+<tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td>API Key 认证</td></tr>
+<tr><td><code>protocol-temp</code></td><td align="center">❌</td><td>临时凭证</td></tr>
+<tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td>OIDC id_token 签发/验证 + discovery</td></tr>
+<tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td>HTTP Basic / Digest 认证</td></tr>
+<tr><td><code>protocol-saml</code></td><td align="center">❌</td><td>SAML 2.0 骨架</td></tr>
+<tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td>协议层密钥零化</td></tr>
+<tr><td><code>secure-totp</code></td><td align="center">❌</td><td>TOTP 动态验证码 (RFC 6238)</td></tr>
+<tr><td><code>secure-sign</code></td><td align="center">❌</td><td>HMAC-SHA256/SHA512 工具</td></tr>
+<tr><td><code>secure-confusable</code> / <code>secure-masking</code> / <code>secure-xss</code> / <code>secure-sanitize</code></td><td align="center">❌</td><td>安全工具集</td></tr>
+<tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td>签名 / 常量时间比较</td></tr>
+<tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td>账号安全引擎</td></tr>
+<tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td>安全防护套件（暴力破解/限流/异常/GeoIP/DDoS/WAF）</td></tr>
+<tr><td><code>listener</code></td><td align="center">❌</td><td>事件监听器（15 个事件变体）</td></tr>
+<tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td>可观测性</td></tr>
+<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td>10 个属性宏</td></tr>
+<tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td>多租户逻辑隔离</td></tr>
+<tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td>社交登录</td></tr>
+<tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td>核心增强 / 会话增强合并</td></tr>
+<tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td>邮箱验证码</td></tr>
+<tr><td><code>config-*</code></td><td align="center">❌</td><td>配置文件加密/校验/热更新/插值/动态/开关（confers 透传）</td></tr>
+<tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td>国际化</td></tr>
+<tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td>聚合特性</td></tr>
 </table>
 
 > **v0.9.0 Feature 改名映射**：
@@ -248,7 +248,8 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 | [⚙️ 配置指南](docs/CONFIGURATION.md) | 三级配置源、完整配置项与热更新 |
 | [⚡ 性能指南](docs/PERFORMANCE.md) | 性能目标、基准测试与优化建议 |
 | [🧪 测试场景矩阵](docs/TEST_SCENARIOS.md) | 验收场景穷举、特性组合矩阵与质量门禁 |
-| [🔒 安全文档](docs/SECURITY.md) | 安全策略、漏洞报告流程 |
+| [🔒 安全文档](SECURITY.md) | 安全策略、漏洞报告流程 |
+| [🛡️ 威胁模型](docs/THREAT.md) | STRIDE 分析、框架防御与业务方责任边界 |
 | [❓ FAQ](docs/FAQ.md) | 常见问题解答 |
 | [🔧 问题排查](docs/TROUBLESHOOTING.md) | 常见问题与解决方案 |
 | [🛠️ 开发规范](docs/DEVELOPMENT.md) | TDD 工作流、代码规范与调试技巧 |
@@ -348,15 +349,15 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 🛡️ 安全设计
 
-Garrison 围绕身份认证全生命周期做纵深防护：Argon2id / Bcrypt 慢哈希经 `spawn_blocking` 下沉、Token 常量时间比较（`secure-ct-eq`，CWE-208）、API Key 哈希存储与 IP 级限速（CWE-916 / CWE-307）、多租户 IDOR 防护、审计事件 token 统一掩码（CWE-532）、外网登录端点 fail-closed 等。逐项机制的代码级细节见 [🏗️ 架构文档](docs/ARCHITECTURE.md) 与 [📖 用户指南 · 安全与防护](docs/USER_GUIDE.md)，安全配置最佳实践与漏洞处理流程见 [🔒 安全文档](docs/SECURITY.md)。
+Garrison 围绕身份认证全生命周期做纵深防护：Argon2id / Bcrypt 慢哈希经 `spawn_blocking` 下沉、Token 常量时间比较（`secure-ct-eq`，CWE-208）、API Key 哈希存储与 IP 级限速（CWE-916 / CWE-307）、多租户 IDOR 防护、审计事件 token 统一掩码（CWE-532）、外网登录端点 fail-closed 等。逐项机制的代码级细节见 [🏗️ 架构文档](docs/ARCHITECTURE.md) 与 [📖 用户指南 · 安全与防护](docs/USER_GUIDE.md)，安全配置最佳实践与漏洞处理流程见 [🔒 安全文档](SECURITY.md)。
 
 ### ⛓️ 供应链与门禁
 
-CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / 许可证 / 禁用依赖）、`cargo audit`（RustSec 公告扫描）与 pre-commit gitleaks 私钥扫描；门禁标准与处置细节见 [🔒 安全文档 · 供应链与门禁](docs/SECURITY.md)。
+CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / 许可证 / 禁用依赖）、`cargo audit`（RustSec 公告扫描）与 pre-commit gitleaks 私钥扫描；门禁标准与处置细节见 [🔒 安全文档 · 供应链与门禁](SECURITY.md)。
 
 ### 🚨 报告安全漏洞
 
-请勿通过公开 issue 报告安全漏洞。请使用 GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/advisories/new) 私密披露通道或发送邮件至 <Kirky-X@outlook.com>。项目承诺 48 小时内确认、7 天内给出初步评估。完整政策见 [SECURITY.md](docs/SECURITY.md)。
+请勿通过公开 issue 报告安全漏洞。请使用 GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/advisories/new) 私密披露通道或发送邮件至 <Kirky-X@outlook.com>。项目承诺 48 小时内确认、7 天内给出初步评估。完整政策见 [SECURITY.md](SECURITY.md)。
 
 ---
 

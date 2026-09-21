@@ -181,48 +181,48 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 The table below mirrors the `[features]` section of `Cargo.toml`, where `default = ["backend-embedded"]`.
 
 <table style="width:100%; border-collapse: collapse">
-<tr><th style="text-align:left">Feature</th><th style="text-align:center">Default</th><th style="text-align:center">Since</th><th style="text-align:left">Description</th></tr>
-<tr><td><code>backend-embedded</code></td><td align="center">✅</td><td align="center">0.7.0</td><td>Embedded backend mode (in-process auth, delegates to GarrisonManager)</td></tr>
-<tr><td><code>backend-remote</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>Remote backend adapter (auth via HTTP to remote Auth Server)</td></tr>
-<tr><td><code>backend-kit</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>trait-kit typestate DI construction</td></tr>
-<tr><td><code>auth-server</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>Standalone auth server (sdforge declarative routing + TLS)</td></tr>
-<tr><td><code>abac</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>Cedar DSL-based attribute-based access control engine</td></tr>
-<tr><td><code>oauth2-server</code></td><td align="center">❌</td><td align="center">0.7.0</td><td>Full OAuth2 Server 4 endpoints</td></tr>
-<tr><td><code>cache-memory</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>In-memory cache backend (oxcache L1)</td></tr>
-<tr><td><code>cache-redis</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>Redis cache backend (oxcache L2)</td></tr>
-<tr><td><code>db-sqlite</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>SQLite database backend</td></tr>
-<tr><td><code>db-postgres</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>PostgreSQL backend</td></tr>
-<tr><td><code>db-mysql</code></td><td align="center">❌</td><td align="center">0.5.3</td><td>MySQL backend</td></tr>
-<tr><td><code>web-axum</code></td><td align="center">❌</td><td align="center">0.1.0</td><td>axum Web framework adapter</td></tr>
-<tr><td><code>web-actix</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>actix-web framework adapter</td></tr>
-<tr><td><code>web-warp</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>warp framework adapter</td></tr>
-<tr><td><code>web-waf</code> / <code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td align="center">0.6.4</td><td>WAF / CORS / CSRF middleware</td></tr>
-<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>JWT issuance &amp; validation (HS256/HS512 + refresh)</td></tr>
-<tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>OAuth2 four modes</td></tr>
-<tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td align="center">0.2.0 / 0.4.0</td><td>SSO ticket / SSO Server abstraction</td></tr>
-<tr><td><code>protocol-sign</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>API signing + nonce anti-replay</td></tr>
-<tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>API Key auth</td></tr>
-<tr><td><code>protocol-temp</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>Temporary credentials</td></tr>
-<tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td align="center">0.4.0</td><td>OIDC id_token issuance/validation + discovery</td></tr>
-<tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>HTTP Basic / Digest auth</td></tr>
-<tr><td><code>protocol-saml</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>SAML 2.0 skeleton</td></tr>
-<tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>Protocol-layer key zeroization</td></tr>
-<tr><td><code>secure-totp</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>TOTP (RFC 6238)</td></tr>
-<tr><td><code>secure-sign</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>HMAC-SHA256/SHA512 utilities</td></tr>
-<tr><td><code>secure-confusable</code> / <code>secure-masking</code> / <code>secure-xss</code> / <code>secure-sanitize</code></td><td align="center">❌</td><td align="center">0.5.1~0.6.2</td><td>Security toolset</td></tr>
-<tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td align="center">0.7.1 / 0.8.0</td><td>Signing / constant-time comparison</td></tr>
-<tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td align="center">0.6.0</td><td>Account security engine</td></tr>
-<tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td align="center">0.5.0~0.6.4</td><td>Security suite (brute-force / rate-limit / anomalous / GeoIP / DDoS / WAF)</td></tr>
-<tr><td><code>listener</code></td><td align="center">❌</td><td align="center">0.2.0</td><td>Event listeners (15 event variants)</td></tr>
-<tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td align="center">0.1.0~0.3.0</td><td>Observability</td></tr>
-<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td align="center">0.4.2</td><td>10 attribute macros</td></tr>
-<tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>Multi-tenant logical isolation</td></tr>
-<tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td align="center">0.5.0</td><td>Social login</td></tr>
-<tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td align="center">0.9.0</td><td>Core enhancements / Session enhancements merged</td></tr>
-<tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td align="center">0.9.0</td><td>Email verification codes</td></tr>
-<tr><td><code>config-*</code></td><td align="center">❌</td><td align="center">0.8.0</td><td>Config file encryption/validation/hot-reload/interpolation/dynamic/toggle (confers passthrough)</td></tr>
-<tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td align="center">0.3.0</td><td>Internationalization</td></tr>
-<tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td align="center">—</td><td>Aggregate features</td></tr>
+<tr><th style="text-align:left">Feature</th><th style="text-align:center">Default</th><th style="text-align:left">Description</th></tr>
+<tr><td><code>backend-embedded</code></td><td align="center">✅</td><td>Embedded backend mode (in-process auth, delegates to GarrisonManager)</td></tr>
+<tr><td><code>backend-remote</code></td><td align="center">❌</td><td>Remote backend adapter (auth via HTTP to remote Auth Server)</td></tr>
+<tr><td><code>backend-kit</code></td><td align="center">❌</td><td>trait-kit typestate DI construction</td></tr>
+<tr><td><code>auth-server</code></td><td align="center">❌</td><td>Standalone auth server (sdforge declarative routing + TLS)</td></tr>
+<tr><td><code>abac</code></td><td align="center">❌</td><td>Cedar DSL-based attribute-based access control engine</td></tr>
+<tr><td><code>oauth2-server</code></td><td align="center">❌</td><td>Full OAuth2 Server 4 endpoints</td></tr>
+<tr><td><code>cache-memory</code></td><td align="center">❌</td><td>In-memory cache backend (oxcache L1)</td></tr>
+<tr><td><code>cache-redis</code></td><td align="center">❌</td><td>Redis cache backend (oxcache L2)</td></tr>
+<tr><td><code>db-sqlite</code></td><td align="center">❌</td><td>SQLite database backend</td></tr>
+<tr><td><code>db-postgres</code></td><td align="center">❌</td><td>PostgreSQL backend</td></tr>
+<tr><td><code>db-mysql</code></td><td align="center">❌</td><td>MySQL backend</td></tr>
+<tr><td><code>web-axum</code></td><td align="center">❌</td><td>axum Web framework adapter</td></tr>
+<tr><td><code>web-actix</code></td><td align="center">❌</td><td>actix-web framework adapter</td></tr>
+<tr><td><code>web-warp</code></td><td align="center">❌</td><td>warp framework adapter</td></tr>
+<tr><td><code>web-waf</code> / <code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td>WAF / CORS / CSRF middleware</td></tr>
+<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td>JWT issuance &amp; validation (HS256/HS512 + refresh)</td></tr>
+<tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td>OAuth2 four modes</td></tr>
+<tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td>SSO ticket / SSO Server abstraction</td></tr>
+<tr><td><code>protocol-sign</code></td><td align="center">❌</td><td>API signing + nonce anti-replay</td></tr>
+<tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td>API Key auth</td></tr>
+<tr><td><code>protocol-temp</code></td><td align="center">❌</td><td>Temporary credentials</td></tr>
+<tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td>OIDC id_token issuance/validation + discovery</td></tr>
+<tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td>HTTP Basic / Digest auth</td></tr>
+<tr><td><code>protocol-saml</code></td><td align="center">❌</td><td>SAML 2.0 skeleton</td></tr>
+<tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td>Protocol-layer key zeroization</td></tr>
+<tr><td><code>secure-totp</code></td><td align="center">❌</td><td>TOTP (RFC 6238)</td></tr>
+<tr><td><code>secure-sign</code></td><td align="center">❌</td><td>HMAC-SHA256/SHA512 utilities</td></tr>
+<tr><td><code>secure-confusable</code> / <code>secure-masking</code> / <code>secure-xss</code> / <code>secure-sanitize</code></td><td align="center">❌</td><td>Security toolset</td></tr>
+<tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td>Signing / constant-time comparison</td></tr>
+<tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td>Account security engine</td></tr>
+<tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td>Security suite (brute-force / rate-limit / anomalous / GeoIP / DDoS / WAF)</td></tr>
+<tr><td><code>listener</code></td><td align="center">❌</td><td>Event listeners (15 event variants)</td></tr>
+<tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td>Observability</td></tr>
+<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td>10 attribute macros</td></tr>
+<tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td>Multi-tenant logical isolation</td></tr>
+<tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td>Social login</td></tr>
+<tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td>Core enhancements / Session enhancements merged</td></tr>
+<tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td>Email verification codes</td></tr>
+<tr><td><code>config-*</code></td><td align="center">❌</td><td>Config file encryption/validation/hot-reload/interpolation/dynamic/toggle (confers passthrough)</td></tr>
+<tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td>Internationalization</td></tr>
+<tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td>Aggregate features</td></tr>
 </table>
 
 > **v0.9.0 Feature Rename Mapping**:
@@ -248,7 +248,8 @@ The table below mirrors the `[features]` section of `Cargo.toml`, where `default
 | [⚙️ Configuration](docs/CONFIGURATION.md) | Three-tier config sources, full field reference, and hot-reload |
 | [⚡ Performance](docs/PERFORMANCE.md) | Performance targets, benchmarks, and optimization advice |
 | [🧪 Test Scenarios](docs/TEST_SCENARIOS.md) | Acceptance scenario matrix, feature combination matrix, and quality gates |
-| [🔒 Security](docs/SECURITY.md) | Security policy and vulnerability reporting process |
+| [🔒 Security](SECURITY.md) | Security policy and vulnerability reporting process |
+| [🛡️ Threat Model](docs/THREAT.md) | STRIDE analysis, framework defenses vs. operator responsibilities |
 | [❓ FAQ](docs/FAQ.md) | Frequently asked questions |
 | [🔧 Troubleshooting](docs/TROUBLESHOOTING.md) | Common issues and solutions |
 | [🛠️ Development](docs/DEVELOPMENT.md) | TDD workflow, code standards, and debugging tips |
@@ -348,15 +349,15 @@ Benchmark scenarios and targets are defined in [`benches/garrison_benchmark.rs`]
 
 ### 🛡️ Security Design
 
-Garrison applies defense-in-depth across the identity lifecycle: Argon2id / Bcrypt hashing offloaded via `spawn_blocking`, constant-time token comparison (`secure-ct-eq`, CWE-208), API Key hash storage and IP-level rate limiting (CWE-916 / CWE-307), multi-tenant IDOR protection, unified token masking in audit events (CWE-532), and fail-closed external login endpoints. Mechanism-level details live in the [Architecture doc](docs/ARCHITECTURE.md) and the [📖 User Guide · Security & Protection](docs/USER_GUIDE.md); security configuration best practices and the vulnerability handling process are covered by the [Security doc](docs/SECURITY.md).
+Garrison applies defense-in-depth across the identity lifecycle: Argon2id / Bcrypt hashing offloaded via `spawn_blocking`, constant-time token comparison (`secure-ct-eq`, CWE-208), API Key hash storage and IP-level rate limiting (CWE-916 / CWE-307), multi-tenant IDOR protection, unified token masking in audit events (CWE-532), and fail-closed external login endpoints. Mechanism-level details live in the [Architecture doc](docs/ARCHITECTURE.md) and the [📖 User Guide · Security & Protection](docs/USER_GUIDE.md); security configuration best practices and the vulnerability handling process are covered by the [Security doc](SECURITY.md).
 
 ### ⛓️ Supply Chain and Gates
 
-The CI and release pipelines enforce three supply-chain gates: `cargo deny check` (vulnerabilities / licenses / banned dependencies), `cargo audit` (RustSec advisory scanning), and pre-commit secret scanning with gitleaks. For gate criteria and handling details, see the [Security doc · Supply Chain and Gates](docs/SECURITY.md).
+The CI and release pipelines enforce three supply-chain gates: `cargo deny check` (vulnerabilities / licenses / banned dependencies), `cargo audit` (RustSec advisory scanning), and pre-commit secret scanning with gitleaks. For gate criteria and handling details, see the [Security doc · Supply Chain and Gates](SECURITY.md).
 
 ### 🚨 Reporting Security Issues
 
-Please do not report security vulnerabilities through public issues. Use the GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/advisories/new) private disclosure channel or email <Kirky-X@outlook.com>. The project commits to acknowledging reports within 48 hours and providing an initial assessment within 7 days. See the full policy in [SECURITY.md](docs/SECURITY.md).
+Please do not report security vulnerabilities through public issues. Use the GitHub [Security Advisories](https://github.com/Kirky-X/garrison/security/advisories/new) private disclosure channel or email <Kirky-X@outlook.com>. The project commits to acknowledging reports within 48 hours and providing an initial assessment within 7 days. See the full policy in [SECURITY.md](SECURITY.md).
 
 ---
 
