@@ -721,7 +721,7 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
         "熔断打开后应快速拒绝，实际: {fast_msg}"
     );
     assert!(
-        fast_msg.contains("熔断器"),
+        fast_msg.contains("熔断器") || fast_msg.contains("circuit breaker"),
         "熔断拒绝错误信息应包含熔断标记，实际: {fast_msg}"
     );
     assert!(

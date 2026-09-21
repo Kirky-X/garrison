@@ -485,6 +485,11 @@ async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
 
     let mut successes: Vec<(String, String)> = Vec::new();
     let mut reuse_detected = 0usize;
+    // 入口 detect_reuse 命中已 revoked 的落败方走「真重用→吊销整链」路径
+    // （TokenRevoked），该路径会把胜者刚签发的新 token 一并吊销——这是
+    // 正确的重用语义。两种串行化（新 token 存活 / 被链吊销）都合法，终态
+    // 断言按实际发生路径分支。
+    let mut chain_revoked = 0usize;
     while let Some(result) = set.join_next().await {
         match result.expect("并发 rotate task 不应 panic") {
             Ok((access, new_refresh)) => successes.push((access, new_refresh)),
@@ -492,6 +497,9 @@ async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
                 // 重用检测的两种表达（依检测命中时机）：
                 // - detect_reuse 命中已 revoked → TokenRevoked("reuse")
                 // - SELECT...AND revoked=0 落空 → InvalidToken("jwt-refresh-token-consumed")
+                if matches!(err, garrison::error::GarrisonError::TokenRevoked(_)) {
+                    chain_revoked += 1;
+                }
                 let msg = format!("{err}");
                 let rejected = matches!(
                     err,
@@ -528,11 +536,20 @@ async fn acc_conc_005_concurrent_refresh_same_token_exactly_once() {
         "旧 refresh token 应标记为 revoked"
     );
     let new_hash = crate::common::sha256_hex(&new_refresh);
-    assert_eq!(
-        query_revoked(&pool, &new_hash).await,
-        0,
-        "新 refresh token 应未 revoked"
-    );
+    if chain_revoked > 0 {
+        // 有落败方在胜者完成后才呈现旧 token：真重用语义 → 整链吊销（含新 token）
+        assert_eq!(
+            query_revoked(&pool, &new_hash).await,
+            1,
+            "链被真重用吊销时,新 refresh token 应一并 revoked"
+        );
+    } else {
+        assert_eq!(
+            query_revoked(&pool, &new_hash).await,
+            0,
+            "新 refresh token 应未 revoked"
+        );
+    }
 }
 
 /// 单连接 SQLite 内存池（`max_connections=min_connections=1`）。
