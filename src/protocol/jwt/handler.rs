@@ -208,6 +208,83 @@ fn extract_ed25519_seed(pem: &str) -> GarrisonResult<[u8; 32]> {
         .map_err(|_| GarrisonError::Internal("jwt-ed-seed-len::".to_string()))
 }
 
+/// 将 SEC1 未压缩公钥字节（`0x04 ‖ X ‖ Y`）拆分为 JWK 口径的 EC 公钥参数。
+/// 将 jsonwebtoken 验证错误映射为框架错误（错误消息只含错误类别，
+/// 不含 token 内容/密钥，防泄漏）。
+/// 从 RSA 私钥 PEM 构造验签密钥（提取公钥组件，无私钥运算）。
+fn rsa_decoding_key(pem: &str) -> GarrisonResult<DecodingKey> {
+    let (n, e) = extract_rsa_public_components(pem)?;
+    DecodingKey::from_rsa_components(&n, &e)
+        .map_err(|e| GarrisonError::Internal(format!("jwt-rsa-key::{}", e)))
+}
+
+/// 从 EC 私钥 PEM 构造验签密钥（标量乘法计算 SEC1 公钥点）。
+fn ec_decoding_key(pem: &str) -> GarrisonResult<DecodingKey> {
+    let sec1 = extract_ec_public_sec1(pem)?;
+    // from_ec_der 为原样字节入口，验证端内部用 VerifyingKey::from_sec1_bytes 消费
+    Ok(DecodingKey::from_ec_der(&sec1))
+}
+
+/// 从 Ed25519 私钥 PEM 构造验签密钥（种子推导公钥，base64url）。
+fn ed_decoding_key(pem: &str) -> GarrisonResult<DecodingKey> {
+    use base64::Engine;
+
+    let seed = extract_ed25519_seed(pem)?;
+    let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let b64 = |data: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data);
+    DecodingKey::from_ed_components(&b64(signing.verifying_key().as_bytes()))
+        .map_err(|e| GarrisonError::Internal(format!("jwt-ed-key::{}", e)))
+}
+
+fn map_verify_error(e: jsonwebtoken::errors::Error) -> GarrisonError {
+    let msg = e.to_string();
+    if msg.contains("ExpiredSignature") {
+        GarrisonError::ExpiredToken(format!("jwt-expired::{}", e))
+    } else if msg.contains("ImmatureSignature") || msg.contains("nbf") {
+        // nbf 为未来时间 → ImmatureSignature
+        GarrisonError::InvalidToken(format!("jwt-not-yet-valid::{}", e))
+    } else {
+        GarrisonError::InvalidToken(format!("jwt-invalid::{}", e))
+    }
+}
+
+/// 由 Ed25519 种子推导公钥并编码为 JWK 口径 OKP 参数（base64url）。
+fn ed_jwk_from_seed(seed: &[u8; 32]) -> JwkPublicKey {
+    use base64::Engine;
+
+    let signing = ed25519_dalek::SigningKey::from_bytes(seed);
+    JwkPublicKey::Okp {
+        x: base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(signing.verifying_key().as_bytes()),
+    }
+}
+
+/// 将 SEC1 未压缩公钥字节（`0x04 ‖ X ‖ Y`）拆分为 JWK 口径的 EC 公钥参数。
+fn ec_jwk_from_sec1(sec1: &[u8]) -> GarrisonResult<JwkPublicKey> {
+    use base64::Engine;
+
+    // SEC1 未压缩点：0x04 ‖ X ‖ Y（X/Y 等长）
+    if sec1.first() != Some(&0x04) || sec1.len() < 3 || (sec1.len() - 1) % 2 != 0 {
+        return Err(GarrisonError::Internal("jwt-ec-sec1-format::".to_string()));
+    }
+    let coord = (sec1.len() - 1) / 2;
+    let b64 = |data: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data);
+    let crv = match coord {
+        32 => "P-256",
+        48 => "P-384",
+        _ => {
+            return Err(GarrisonError::Internal(
+                "jwt-ec-curve-unsupported::".to_string(),
+            ))
+        },
+    };
+    Ok(JwkPublicKey::Ec {
+        crv,
+        x: b64(&sec1[1..1 + coord]),
+        y: b64(&sec1[1 + coord..]),
+    })
+}
+
 impl JwtHandler {
     /// 创建新的 JWT 处理器，默认采用 HS256 算法。
     ///
@@ -227,8 +304,6 @@ impl JwtHandler {
     /// 对称密钥（Hs）无可公开成分，返回 `Ok(None)`；非对称密钥返回
     /// [`JwkPublicKey`]。kid 由调用方按 RFC 7638 thumbprint 计算。
     pub fn export_public_jwk_parts(&self) -> GarrisonResult<Option<JwkPublicKey>> {
-        use base64::Engine;
-
         match &self.key_material {
             KeyMaterial::Hs => Ok(None),
             KeyMaterial::RsaPkcs1Pem(pem) => {
@@ -237,35 +312,11 @@ impl JwtHandler {
             },
             KeyMaterial::EcPem(pem) => {
                 let sec1 = extract_ec_public_sec1(pem)?;
-                // SEC1 未压缩点：0x04 ‖ X ‖ Y（X/Y 等长）
-                if sec1.first() != Some(&0x04) || sec1.len() < 3 || (sec1.len() - 1) % 2 != 0 {
-                    return Err(GarrisonError::Internal("jwt-ec-sec1-format::".to_string()));
-                }
-                let coord = (sec1.len() - 1) / 2;
-                let b64 =
-                    |data: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data);
-                let crv = match coord {
-                    32 => "P-256",
-                    48 => "P-384",
-                    _ => {
-                        return Err(GarrisonError::Internal(
-                            "jwt-ec-curve-unsupported::".to_string(),
-                        ))
-                    },
-                };
-                Ok(Some(JwkPublicKey::Ec {
-                    crv,
-                    x: b64(&sec1[1..1 + coord]),
-                    y: b64(&sec1[1 + coord..]),
-                }))
+                ec_jwk_from_sec1(&sec1).map(Some)
             },
             KeyMaterial::EdPem(pem) => {
                 let seed = extract_ed25519_seed(pem)?;
-                let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
-                Ok(Some(JwkPublicKey::Okp {
-                    x: base64::engine::general_purpose::URL_SAFE_NO_PAD
-                        .encode(signing.verifying_key().as_bytes()),
-                }))
+                Ok(Some(ed_jwk_from_seed(&seed)))
             },
         }
     }
@@ -463,7 +514,14 @@ impl JwtHandler {
             nbf: Some(now), // 签发时设置 nbf，verify 时强制校验
         };
         let header = Header::new(self.algorithm);
-        let key = match &self.key_material {
+        let key = self.encoding_key()?;
+        encode(&header, &claims, &key)
+            .map_err(|e| GarrisonError::Internal(format!("jwt-sign::{}", e)))
+    }
+
+    /// 按密钥材料构造签名密钥（sign 路径）。
+    fn encoding_key(&self) -> GarrisonResult<EncodingKey> {
+        Ok(match &self.key_material {
             KeyMaterial::Hs => EncodingKey::from_secret(self.secret.as_bytes()),
             KeyMaterial::RsaPkcs1Pem(pem) => EncodingKey::from_rsa_pem(pem.as_bytes())
                 .map_err(|e| GarrisonError::Internal(format!("jwt-rsa-key::{}", e)))?,
@@ -471,9 +529,20 @@ impl JwtHandler {
                 .map_err(|e| GarrisonError::Internal(format!("jwt-ec-key::{}", e)))?,
             KeyMaterial::EdPem(pem) => EncodingKey::from_ed_pem(pem.as_bytes())
                 .map_err(|e| GarrisonError::Internal(format!("jwt-ed-key::{}", e)))?,
-        };
-        encode(&header, &claims, &key)
-            .map_err(|e| GarrisonError::Internal(format!("jwt-sign::{}", e)))
+        })
+    }
+
+    /// 按密钥材料构造验签密钥（verify 路径；非对称从私钥提取公钥成分）。
+    fn decoding_key(&self) -> GarrisonResult<DecodingKey> {
+        match &self.key_material {
+            KeyMaterial::Hs => Ok(DecodingKey::from_secret(self.secret.as_bytes())),
+            // 非对称路径：jsonwebtoken 验证端只接受公钥（RSA 公钥组件/SEC1 点/Ed 公钥），
+            // 由各辅助函数从私钥 PEM 推导；garrison 代码不接触 rsa crate 解密 API
+            // （RUSTSEC-2023-0071 仅影响其解密路径）
+            KeyMaterial::RsaPkcs1Pem(pem) => rsa_decoding_key(pem),
+            KeyMaterial::EcPem(pem) => ec_decoding_key(pem),
+            KeyMaterial::EdPem(pem) => ed_decoding_key(pem),
+        }
     }
 
     /// 校验 JWT 并返回 Claims。
@@ -502,55 +571,15 @@ impl JwtHandler {
         }
         // 算法-密钥类型匹配校验（fail-closed）：防字段被直接改写绕过构造器
         validate_algorithm_match(&self.key_material, self.algorithm)?;
-        let key = match &self.key_material {
-            KeyMaterial::Hs => DecodingKey::from_secret(self.secret.as_bytes()),
-            KeyMaterial::RsaPkcs1Pem(pem) => {
-                // jsonwebtoken 的 DecodingKey::from_rsa_pem 仅接受公钥 PEM；私钥 PEM
-                // 需自行提取公钥组件 (n, e)。用 pkcs1/pkcs8（纯 DER 解析，无 RSA 运算）
-                // 读取，garrison 代码不接触 rsa crate（RUSTSEC-2023-0071 仅影响其解密路径）
-                let (n, e) = extract_rsa_public_components(pem)?;
-                DecodingKey::from_rsa_components(&n, &e)
-                    .map_err(|e| GarrisonError::Internal(format!("jwt-rsa-key::{}", e)))?
-            },
-            KeyMaterial::EcPem(pem) => {
-                // jsonwebtoken 验证端仅接受 SEC1 未压缩公钥字节（from_sec1_bytes）；
-                // 私钥 PEM 需经曲线标量乘法计算公钥点（p256/p384 为 jsonwebtoken
-                // rust_crypto 传递依赖，显式化零新增体积）
-                let sec1 = extract_ec_public_sec1(pem)?;
-                // from_ec_der 为原样字节入口，验证端内部用 VerifyingKey::from_sec1_bytes 消费
-                DecodingKey::from_ec_der(&sec1)
-            },
-            KeyMaterial::EdPem(pem) => {
-                // Ed25519 验证端需要 32 字节公钥（base64url，from_ed_components）；
-                // RFC 8410 PKCS#8 的 private_key 即 32 字节种子，经 ed25519-dalek
-                // 计算对应公钥（2.2.0 已修 RUSTSEC-2022-0093，树内版本不受影响）
-                let seed = extract_ed25519_seed(pem)?;
-                use base64::Engine;
-                let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
-                let b64 =
-                    |data: &[u8]| base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(data);
-                DecodingKey::from_ed_components(&b64(signing.verifying_key().as_bytes()))
-                    .map_err(|e| GarrisonError::Internal(format!("jwt-ed-key::{}", e)))?
-            },
-        };
+        let key = self.decoding_key()?;
         let mut validation = Validation::new(self.algorithm);
         validation.validate_exp = true;
-        validation.validate_nbf = true; // 拒绝 nbf 为未来的 token
-                                        // leeway=0：不容忍时钟偏差，过期立即拒绝（安全框架默认严格）
+        // 拒绝 nbf 为未来的 token；leeway=0：不容忍时钟偏差，过期立即拒绝（安全框架默认严格）
+        validation.validate_nbf = true;
         validation.leeway = 0;
-        decode::<GarrisonJwtClaims>(token, &key, &validation)
-            .map(|data| data.claims)
-            .map_err(|e| {
-                let msg = e.to_string();
-                if msg.contains("ExpiredSignature") {
-                    GarrisonError::ExpiredToken(format!("jwt-expired::{}", e))
-                } else if msg.contains("ImmatureSignature") || msg.contains("nbf") {
-                    // nbf 为未来时间 → ImmatureSignature
-                    GarrisonError::InvalidToken(format!("jwt-not-yet-valid::{}", e))
-                } else {
-                    GarrisonError::InvalidToken(format!("jwt-invalid::{}", e))
-                }
-            })
+        let decoded: jsonwebtoken::TokenData<GarrisonJwtClaims> =
+            decode(token, &key, &validation).map_err(map_verify_error)?;
+        Ok(decoded.claims)
     }
 
     /// 刷新 JWT：解析旧 token 的 claims → 签发新 token。

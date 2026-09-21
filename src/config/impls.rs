@@ -614,36 +614,48 @@ impl GarrisonConfig {
             )));
         }
         if ph.algorithm == "argon2id" {
-            if ph.argon2_t_cost == 0 || ph.argon2_p_cost == 0 {
-                return Err(GarrisonError::Config(
-                    "config-password-hash-argon2-param-invalid::".to_string(),
-                ));
-            }
-            if ph.argon2_m_cost < ARGON2_MIN_M_COST {
-                if !ph.allow_weak_argon2_params {
-                    return Err(GarrisonError::Config(format!(
-                        "config-password-hash-argon2-m-below-floor::{} (min {})::{}",
-                        ph.argon2_m_cost, ARGON2_MIN_M_COST, ph.algorithm
-                    )));
-                }
-                tracing::warn!(
-                    "password_hasher: argon2 m_cost {} < OWASP floor {} KiB — weak params explicitly accepted via allow_weak_argon2_params (memory-constrained deployment?)",
-                    ph.argon2_m_cost,
-                    ARGON2_MIN_M_COST
-                );
-            }
-        } else if !(BCRYPT_MIN_COST..=BCRYPT_MAX_COST).contains(&ph.bcrypt_cost) {
+            Self::validate_argon2_params(ph)
+        } else {
+            Self::validate_bcrypt_cost(ph)
+        }
+    }
+
+    /// Argon2id 参数校验：t/p 非零 + m_cost 下限（低于下限须显式风险接受，放行时 warn）。
+    fn validate_argon2_params(ph: &PasswordHasherConfig) -> GarrisonResult<()> {
+        if ph.argon2_t_cost == 0 || ph.argon2_p_cost == 0 {
+            return Err(GarrisonError::Config(
+                "config-password-hash-argon2-param-invalid::".to_string(),
+            ));
+        }
+        if ph.argon2_m_cost >= ARGON2_MIN_M_COST {
+            return Ok(());
+        }
+        if !ph.allow_weak_argon2_params {
             return Err(GarrisonError::Config(format!(
-                "config-password-hash-bcrypt-cost-out-of-range::{} (allowed {}-{})",
-                ph.bcrypt_cost, BCRYPT_MIN_COST, BCRYPT_MAX_COST
+                "config-password-hash-argon2-m-below-floor::{} (min {})::{}",
+                ph.argon2_m_cost, ARGON2_MIN_M_COST, ph.algorithm
             )));
         }
+        tracing::warn!(
+            "password_hasher: argon2 m_cost {} < OWASP floor {} KiB — weak params explicitly accepted via allow_weak_argon2_params (memory-constrained deployment?)",
+            ph.argon2_m_cost,
+            ARGON2_MIN_M_COST
+        );
         Ok(())
     }
 
+    /// bcrypt cost 区间校验（OWASP ≥10；>15 单次哈希秒级耗多为误配）。
+    fn validate_bcrypt_cost(ph: &PasswordHasherConfig) -> GarrisonResult<()> {
+        if (BCRYPT_MIN_COST..=BCRYPT_MAX_COST).contains(&ph.bcrypt_cost) {
+            return Ok(());
+        }
+        Err(GarrisonError::Config(format!(
+            "config-password-hash-bcrypt-cost-out-of-range::{} (allowed {}-{})",
+            ph.bcrypt_cost, BCRYPT_MIN_COST, BCRYPT_MAX_COST
+        )))
+    }
+
     /// JWT 密钥强度校验（仅当 `token_style=jwt` 时强制校验，`simple` 时 warn）。
-    ///
-    /// HS256 需 ≥32 字节、HS384 需 ≥48 字节、HS512 需 ≥64 字节（RFC 7518 §3.2）。
     fn validate_jwt_secret(&self) -> GarrisonResult<()> {
         if self.token_style == "jwt" {
             // 非对称算法：密钥强度由 PEM 决定（JwtHandler 构造期校验），
@@ -651,38 +663,45 @@ impl GarrisonConfig {
             if matches!(self.jwt_algorithm.as_str(), "RS256" | "ES256" | "EdDSA") {
                 return Ok(());
             }
-            let secret_len = self.jwt_secret.as_str().len();
-            if secret_len == 0 {
-                return Err(GarrisonError::Config(
-                    "config-jwt-secret-empty::".to_string(),
-                ));
-            }
-            let min_len = match self.jwt_algorithm.as_str() {
-                "HS256" => 32,
-                "HS384" => 48,
-                "HS512" => 64,
-                // 非对称算法：密钥强度由 PEM 私钥位长/曲线阶决定（RS256 ≥2048 位
-                // 在 JwtHandler 构造期用 pkcs1 精确校验），不做 HMAC 对称长度校验
-                "RS256" | "ES256" | "EdDSA" => 0,
-                other => {
-                    return Err(GarrisonError::Config(format!(
-                        "config-jwt-algorithm-unsupported::{}",
-                        other
-                    )))
-                },
-            };
-            if secret_len < min_len {
-                return Err(GarrisonError::Config(format!(
-                    "config-jwt-secret-too-short::{} (min {} bytes)::{}",
-                    self.jwt_algorithm, min_len, secret_len
-                )));
-            }
-        } else if self.token_style == "simple" && self.jwt_secret.as_str().len() < 32 {
+            return self.validate_hs_secret_min_len();
+        }
+        if self.token_style == "simple" && self.jwt_secret.as_str().len() < 32 {
             tracing::warn!(
                 "jwt_secret length {} < 32 bytes, token_style={} skips mandatory check, but hardening is recommended against HMAC brute force",
                 self.jwt_secret.as_str().len(),
                 self.token_style
             );
+        }
+        Ok(())
+    }
+
+    /// HS 系对称密钥长度校验（RFC 7518 §3.2：HS256/HS384/HS512 → 32/48/64 字节）。
+    fn validate_hs_secret_min_len(&self) -> GarrisonResult<()> {
+        let secret_len = self.jwt_secret.as_str().len();
+        if secret_len == 0 {
+            return Err(GarrisonError::Config(
+                "config-jwt-secret-empty::".to_string(),
+            ));
+        }
+        let min_len = match self.jwt_algorithm.as_str() {
+            "HS256" => 32,
+            "HS384" => 48,
+            "HS512" => 64,
+            // 非对称算法：密钥强度由 PEM 私钥位长/曲线阶决定（RS256 ≥2048 位
+            // 在 JwtHandler 构造期用 pkcs1 精确校验），不做 HMAC 对称长度校验
+            "RS256" | "ES256" | "EdDSA" => 0,
+            other => {
+                return Err(GarrisonError::Config(format!(
+                    "config-jwt-algorithm-unsupported::{}",
+                    other
+                )))
+            },
+        };
+        if secret_len < min_len {
+            return Err(GarrisonError::Config(format!(
+                "config-jwt-secret-too-short::{} (min {} bytes)::{}",
+                self.jwt_algorithm, min_len, secret_len
+            )));
         }
         Ok(())
     }

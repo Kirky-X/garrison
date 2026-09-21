@@ -364,7 +364,11 @@ impl TokenStyleFactory {
         ec_pem: Option<&str>,
         ed_pem: Option<&str>,
     ) -> GarrisonResult<Box<dyn Token>> {
+        #[cfg(feature = "protocol-jwt")]
         let jwt_algorithm = jwt_algorithm.unwrap_or("HS256");
+        #[cfg(not(feature = "protocol-jwt"))]
+        // 非 jwt 构建下四个 JWT 专用参数不进入任何分支（见下方 not(protocol-jwt) 臂）
+        let _ = (jwt_algorithm, rsa_pem, ec_pem, ed_pem);
         match style {
             "uuid" => Ok(Box::new(UuidTokenStyle)),
             "random_64" => Ok(Box::new(Random64TokenStyle)),
