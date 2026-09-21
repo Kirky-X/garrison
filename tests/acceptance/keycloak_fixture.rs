@@ -185,7 +185,7 @@ impl KeycloakFixture {
         form: &[(&str, &str)],
     ) -> Result<reqwest::Response, String> {
         self.plain
-            .post(&format!(
+            .post(format!(
                 "{oidc_base}{path}",
                 oidc_base = oidc_base(),
                 path = path

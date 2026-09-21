@@ -9,7 +9,7 @@
 //!
 //! TTL 语义（对齐产品 `dao::InMemoryDao`）：
 //! - `set(key, value, ttl_seconds)`：`ttl_seconds == 0` 表示永不过期，
-//! 否则记录过期时间点；
+//!   否则记录过期时间点；
 //! - `get` 读取时惰性判断过期，过期键即删即返 `None`；
 //! - `expire(key, seconds)`：改写过期时间点，键不存在返回 `Err(Dao)`（与产品一致）。
 

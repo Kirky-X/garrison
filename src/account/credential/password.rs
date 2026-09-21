@@ -601,7 +601,7 @@ mod tests {
     /// 的 Drop 实现清零内部字节。此处验证：
     /// 1. hash/verify 在 zeroize feature 启用时仍正确工作（无回归）
     /// 2. Zeroizing<Vec<u8>> 包装的 password 字节在 .zeroize() 后被清零
-    /// （这是 hash 内部使用的清零机制）
+    ///    （这是 hash 内部使用的清零机制）
     /// 3. Zeroizing<String> wrapper 可与 hash 配合使用（通过 Deref<Target=str>）
     #[cfg(feature = "credential-zeroize")]
     #[test]

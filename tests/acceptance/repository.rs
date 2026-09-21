@@ -9,15 +9,15 @@
 //! 吸收原 repository 测试树的全部场景；
 //! - 迁移幂等（`migrate_core` 二次执行不报错、不重复建表）；
 //! - 级联删除（用户删除后 user_role/auth_method/session/user_ext
-//! 级联清除、login_log SET NULL——以实际外键行为为准，sqlx-sqlite 默认
-//! `PRAGMA foreign_keys=ON`，migrations/sqlite/core/001_init.sql 定义级联）；
+//!   级联清除、login_log SET NULL——以实际外键行为为准，sqlx-sqlite 默认
+//!   `PRAGMA foreign_keys=ON`，migrations/sqlite/core/001_init.sql 定义级联）；
 //! - 缺表错误路径（吸收 `tests/repository/error_paths.rs`
-//! 42 例核心语义，按表分组合并同构用例，每表至少 1 个缺表断言：
-//! 未迁移库上操作返回 `GarrisonError::Dao` 而非 panic）。
+//!   42 例核心语义，按表分组合并同构用例，每表至少 1 个缺表断言：
+//!   未迁移库上操作返回 `GarrisonError::Dao` 而非 panic）。
 //! - dbnexus 层语义与未吸收用例（迁移产物精确断言 /
-//! 多租户隔离 / RBAC 全链 / 设备多量隔离 / 空 update 短路 / 唯一约束 /
-//! CHECK 约束 / 事务回滚，吸收 `tests/repository/dbnexus_integration.rs`
-//! 与 `tests/repository/integration.rs` / `error_paths.rs` 未覆盖用例）。
+//!   多租户隔离 / RBAC 全链 / 设备多量隔离 / 空 update 短路 / 唯一约束 /
+//!   CHECK 约束 / 事务回滚，吸收 `tests/repository/dbnexus_integration.rs`
+//!   与 `tests/repository/integration.rs` / `error_paths.rs` 未覆盖用例）。
 //!
 //! 每个场景独立 `sqlite::memory:` 连接池（in-memory 互不污染），无全局单例，
 //! 不需要 `#[serial]`；与 `tests/repository/*.rs` 装配一致。

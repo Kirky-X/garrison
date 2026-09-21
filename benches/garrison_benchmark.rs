@@ -352,11 +352,11 @@ fn bench_permission_check(c: &mut Criterion) {
 /// # 命名冲突说明
 ///
 /// 1. **Caffeine 不存在**：原基准要求验证 "Memory → Caffeine" 切换，
-/// 但 Rust 生态无 Caffeine（oxcache 内存后端），故适配为
-/// memory / redis 两后端
+///    但 Rust 生态无 Caffeine（oxcache 内存后端），故适配为
+///    memory / redis 两后端
 /// 2. **无 runtime backend 字段**：spec 要求修改 `GarrisonConfig.oxcache.backend`
-/// 字段验证切换，但 `GarrisonConfig` 无此字段（后端选择通过 Cargo feature
-/// 编译期决定），故通过不同 `GarrisonDao` 实现验证 DAO 抽象层
+///    字段验证切换，但 `GarrisonConfig` 无此字段（后端选择通过 Cargo feature
+///    编译期决定），故通过不同 `GarrisonDao` 实现验证 DAO 抽象层
 ///
 /// # 验证方式
 ///

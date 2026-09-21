@@ -8,10 +8,10 @@
 //! 熔断打开-恢复。
 //!
 //! - 不经 GarrisonManager（独立 `GarrisonLogicDefault` 双实例：
-//! 健康 DAO 签发 + FailingDao 故障验证），无需 `#[serial]`。
+//!   健康 DAO 签发 + FailingDao 故障验证），无需 `#[serial]`。
 //! - 只构造配置与 builder，不触碰全局单例，无需 `#[serial]`。
 //! - 使用 `InMemoryAuthBackend` 双端口服务器（镜像
-//! tests/auth_server_integration.rs 的已知良好装配），无全局状态。
+//!   tests/auth_server_integration.rs 的已知良好装配），无全局状态。
 //! - BackendRemote 的错误/超时/熔断场景一律打真实服务路径（2026-09 起
 //!   验收层禁止 mock）：上游 HTTP 错误来自真实 GarrisonAuthServer（内网
 //!   API Key 校验 401），超时来自真实挂起 TCP 对端（accept 后不响应的

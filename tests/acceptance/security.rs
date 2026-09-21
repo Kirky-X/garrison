@@ -19,13 +19,13 @@
 //! # API / 行为偏差记录
 //!
 //! - HIBP 端点 **可注入**：`NistComplianceRule::check_hibp_with_base(password, base_url)`
-//! 接受自定义 base URL（rules.rs）；真实场景传官方
-//! `https://api.pwnedpasswords.com/range`（与默认 `check_hibp` 同源）。
+//!   接受自定义 base URL（rules.rs）；真实场景传官方
+//!   `https://api.pwnedpasswords.com/range`（与默认 `check_hibp` 同源）。
 //! - HIBP 网络错误为 **fail-open**（`HibpVerdict.service_available=false` 显性标记 +
-//! warn 日志，proposal 澄清 C-2 的设计决策），并非任务描述的 fail-closed；
-//! 断言实现语义并在报告中说明。
+//!   warn 日志，proposal 澄清 C-2 的设计决策），并非任务描述的 fail-closed；
+//!   断言实现语义并在报告中说明。
 //! - 密码策略集无强制字符集/复杂度规则（NIST SP 800-63B 不推荐），「字符集不满足」
-//! 经 `RegexRule` 自定义约束表达。
+//!   经 `RegexRule` 自定义约束表达。
 
 use crate::resilience::{start_garrison_server, start_test_server, tenant_client};
 use garrison::backend::types::LoginParams;

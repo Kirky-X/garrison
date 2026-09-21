@@ -5,13 +5,13 @@
 //!
 //! 在 `web_smoke` 的 CheckLogin 冒烟基线（spawn_axum 全链路）之上做深度矩阵：
 //! - 中间件 token 来源矩阵：Authorization header / Cookie（`garrison_token`）/
-//! header 优先于 cookie（oneshot 直连 `GarrisonRouter`）；
+//!   header 优先于 cookie（oneshot 直连 `GarrisonRouter`）；
 //! - per-handler extractor 矩阵：`CheckLogin` / `CheckPermission` / `CheckRole`
-//! 通过与 401/403（`PermissionName` / `RoleName` 类型化 marker）；
+//!   通过与 401/403（`PermissionName` / `RoleName` 类型化 marker）；
 //! - 注解宏 `#[check_login]` / `#[check_permission]` / `#[check_role]`
-//! 包装 handler 的编译与运行（`annotation-macros` 门控）；
+//!   包装 handler 的编译与运行（`annotation-macros` 门控）；
 //! - Web 安全件：WAF（`firewall-waf`，原 `web-waf` 已废弃合并）、CORS、
-//! CSRF、安全响应头——正常放行 + 异常拦截。
+//!   CSRF、安全响应头——正常放行 + 异常拦截。
 //!
 //! 错误断言统一锚定 `GarrisonError::response_parts()` / `to_json_body()`
 //! （src/error.rs，三框架一致性基准）：状态码对齐 `response_parts().0`，

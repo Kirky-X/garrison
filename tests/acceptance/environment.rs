@@ -5,17 +5,17 @@
 //!
 //! 真实外部服务门控验收：
 //! - `redis_available()` 探测辅助（`GARRISON_TEST_REDIS=1` 强制
-//! 可用，否则 TCP 探活 127.0.0.1:6379）；
+//!   可用，否则 TCP 探活 127.0.0.1:6379）；
 //! - redis 可达 → `GarrisonDaoOxcache::with_redis_config`
-//! 基本读写 / TTL / 重命名；
+//!   基本读写 / TTL / 重命名；
 //! - redis 可达 → `with_redis_config` 下原子六方法按 src 实际
-//! 行为 fail-closed（显性 `Config` 错误防护）；
+//!   行为 fail-closed（显性 `Config` 错误防护）；
 //! - 基础 DAO 原子六方法成功路径（内存后端，不依赖外部服务）；
 //! - `db-postgres`：`pg_available()` 探活 127.0.0.1:5432，
-//! 可达 → init_dbnexus postgres 连接 + 迁移 10 表 + user_repository CRUD
-//! （吸收 tests/repository/postgres_integration.rs 的 `#[ignore]` 用例语义）；
+//!   可达 → init_dbnexus postgres 连接 + 迁移 10 表 + user_repository CRUD
+//!   （吸收 tests/repository/postgres_integration.rs 的 `#[ignore]` 用例语义）；
 //! - `db-mysql`：testcontainers MySQL 语义——docker 探活
-//! 失败即跳过（吸收 tests/db_mysql_testcontainers.rs 的 1-2 个代表性场景）。
+//!   失败即跳过（吸收 tests/db_mysql_testcontainers.rs 的 1-2 个代表性场景）。
 //!
 //! 门控约定：外部服务不可达时 `eprintln!("[SKIP] …")` 并 `return`——测试
 //! 通过但不运行，保证无外部服务环境（CI / 本机）全绿。

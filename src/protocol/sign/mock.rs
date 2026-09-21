@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 /// TTL 语义（可验证，不再是 no-op）：
 /// - `set` 的 `ttl_seconds > 0` 记录过期时刻，`ttl_seconds == 0` 表示永不过期；
 /// - `expire` 为**已存在**的 key 设置新的过期时刻（与 Redis EXPIRE 对齐，
-/// `seconds == 0` 即立即过期），key 不存在时静默忽略；
+///   `seconds == 0` 即立即过期），key 不存在时静默忽略；
 /// - `get` 命中已过期 key 时惰性清除并返回 `None`。
 ///
 /// 使 TTL 过期行为（如 sign nonce 跨窗口重放）可经此 mock 真实验证，

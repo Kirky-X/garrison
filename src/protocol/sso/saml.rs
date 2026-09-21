@@ -2551,7 +2551,7 @@ mod tests {
         ///
         /// 返回 (assertion_xml, public_key_pem)：
         /// - `assertion_xml`：含 `<ds:Signature>` 的 Assertion XML，SignedInfo 含
-        /// `<ds:Reference URI="#id">` 与 SHA-256 DigestValue（完整校验链）
+        ///   `<ds:Reference URI="#id">` 与 SHA-256 DigestValue（完整校验链）
         /// - `public_key_pem`：对应 RSA 公钥的 PKCS#8 PEM 字符串
         ///
         /// 摘要约定：DigestValue = SHA256(被引用元素去除 Signature 子元素后的原始字节)

@@ -5,12 +5,12 @@
 //!
 //! - `GarrisonAuthServer` 外网/内网端点验收（12 个场景）；
 //! - oauth2_server 端点级验收（`#[cfg(feature = "oauth2-server")]`）：
-//! authorize 重定向 / token 4 种 grant / revoke / introspect（RFC 6749/7009/7662），
-//! 装配参考 `src/oauth2_server/*` 与 `tests/e2e/oauth2_flow.rs`；
+//!   authorize 重定向 / token 4 种 grant / revoke / introspect（RFC 6749/7009/7662），
+//!   装配参考 `src/oauth2_server/*` 与 `tests/e2e/oauth2_flow.rs`；
 //! - auth_server 二进制 smoke（`#[cfg(feature = "auth-server")]`）：
-//! 以子进程方式验证 `src/bin/auth_server.rs` 的 env 装配 + listen() 真实启动
-//! 与 fail-closed 契约（缺失 / 空串 `GARRISON_INTERNAL_API_KEY` → exit(1)，
-//! 端口被占用 → bind 失败 → 非零退出码）。
+//!   以子进程方式验证 `src/bin/auth_server.rs` 的 env 装配 + listen() 真实启动
+//!   与 fail-closed 契约（缺失 / 空串 `GARRISON_INTERNAL_API_KEY` → exit(1)，
+//!   端口被占用 → bind 失败 → 非零退出码）。
 //!
 //! 全局装配同 `tests/auth_server_integration.rs`：随机端口 + `MockAuthBackend`
 //!（in-memory token 表，测试替身）经 HTTP 访问真实端点。本域不触碰

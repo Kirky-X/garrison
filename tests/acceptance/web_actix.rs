@@ -7,14 +7,14 @@
 //! `GarrisonRouter::into_middleware()` middleware 矩阵：无 token 401 /
 //! 有效 token 200 / 权限不足 403（`test::init_service` + `TestRequest` 直连）；
 //! - per-handler extractor 矩阵：`GarrisonPrincipal`（login_id 解析）/
-//! `CheckLogin` / `CheckRole` / `CheckPermission` 通过与拒绝（401/403）；
-//! `TenantContext` extractor 服务链（`tenant-isolation` 门控，X-Tenant-Id 解析 +
-//! fail-closed 拒绝路径）；
-//! `TenantContext` extractor 值语义（`FromRequest` 直连：tenant_id /
-//! `TenantSource::Header` / 非数字拒绝）；
-//! 三框架一致性：`GarrisonError` 经 actix `ResponseError` 的状态码 +
-//! error_code/message body，与 `response_parts()` / `to_json_body()` 对齐
-//! （NotLogin / NotPermission / Internal 三例）。
+//!   `CheckLogin` / `CheckRole` / `CheckPermission` 通过与拒绝（401/403）；
+//!   `TenantContext` extractor 服务链（`tenant-isolation` 门控，X-Tenant-Id 解析 +
+//!   fail-closed 拒绝路径）；
+//!   `TenantContext` extractor 值语义（`FromRequest` 直连：tenant_id /
+//!   `TenantSource::Header` / 非数字拒绝）；
+//!   三框架一致性：`GarrisonError` 经 actix `ResponseError` 的状态码 +
+//!   error_code/message body，与 `response_parts()` / `to_json_body()` 对齐
+//!   （NotLogin / NotPermission / Internal 三例）。
 //!
 //! 错误断言统一锚定 `GarrisonError::response_parts()` / `to_json_body()`
 //! （src/error.rs，三框架一致性基准）。

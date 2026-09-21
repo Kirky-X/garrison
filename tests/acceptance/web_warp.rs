@@ -5,12 +5,12 @@
 //!
 //! 与 `web_smoke`（spawn_warp 冒烟、CheckLogin 基线）区分，本域覆盖：
 //! - guard Filter 矩阵：`check_login` / `check_role` / `check_permission`
-//! 通过与拒绝（`warp::test::request().filter()`，拒绝统一为 `GarrisonRejection`）；
-//! `garrison_principal` value Filter：从 token 解析 `login_id`；
-//! `tenant_context` value Filter（`tenant-isolation` 门控，X-Tenant-Id 解析）；
-//! `GarrisonRejection` 一致性：`.recover(garrison_recover)` 后响应含
-//! `error_code` / `message` JSON，状态码与 `response_parts()` 对齐、
-//! body 与 `to_json_body()` 全等（401 / 200 / 403 三态）。
+//!   通过与拒绝（`warp::test::request().filter()`，拒绝统一为 `GarrisonRejection`）；
+//!   `garrison_principal` value Filter：从 token 解析 `login_id`；
+//!   `tenant_context` value Filter（`tenant-isolation` 门控，X-Tenant-Id 解析）；
+//!   `GarrisonRejection` 一致性：`.recover(garrison_recover)` 后响应含
+//!   `error_code` / `message` JSON，状态码与 `response_parts()` 对齐、
+//!   body 与 `to_json_body()` 全等（401 / 200 / 403 三态）。
 //!
 //! 涉及 `GarrisonManager` 全局单例的用例一律 `#[serial]`。
 
