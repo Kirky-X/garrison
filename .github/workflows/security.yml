@@ -127,5 +127,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@b0480e2d44a72e89a62650e223ba831cbca8d2be # 1.85.1
+      # --frozen 禁网络,而 runner 的 registry 缓存为空,须先经 fetch 落盘依赖
+      # (一次联网解析+下载),否则离线解析直接报 no matching package
+      - name: Fetch dependencies
+        run: cargo fetch --locked
       - name: Verify byte-identical rebuild
         run: scripts/verify_reproducible_build.sh
