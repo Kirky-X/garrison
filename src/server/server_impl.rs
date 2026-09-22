@@ -12,6 +12,8 @@ use axum::Router;
 
 #[cfg(feature = "oauth2-server")]
 use super::oauth2_routes;
+#[cfg(feature = "protocol-qrlogin")]
+use super::qrlogin_routes;
 #[cfg(feature = "tls")]
 use super::TlsConfig;
 use super::{api_key_auth_middleware, audit_log_middleware, rate_limit_middleware};
@@ -49,6 +51,8 @@ impl GarrisonAuthServer {
             tenant_resolver: None,
             #[cfg(feature = "oauth2-server")]
             oauth2_state: None,
+            #[cfg(feature = "protocol-qrlogin")]
+            qrlogin_state: None,
             #[cfg(feature = "tls")]
             tls_config: None,
         }
@@ -194,6 +198,15 @@ impl GarrisonAuthServer {
         self
     }
 
+    /// 注入扫码登录状态，启用 4 个扫码登录端点（feature = "protocol-qrlogin"）。
+    ///
+    /// 外网端口添加 create/poll/scan/confirm。
+    #[cfg(feature = "protocol-qrlogin")]
+    pub fn with_qrlogin(mut self, state: Arc<qrlogin_routes::QrLoginHttpState>) -> Self {
+        self.qrlogin_state = Some(state);
+        self
+    }
+
     /// 启用 HTTPS/TLS 终止（feature = "tls"）。
     ///
     /// 设置证书和私钥文件路径后，`listen()` 使用 `axum_server::bind_rustls`
@@ -313,6 +326,18 @@ impl GarrisonAuthServer {
                 };
 
                 router.merge(oauth2_router)
+            } else {
+                router
+            }
+        };
+
+        #[cfg(feature = "protocol-qrlogin")]
+        let router = {
+            if let Some(state) = &self.qrlogin_state {
+                // 注：qrlogin 存储键为全局命名空间（garrison:qrlogin:*，租户记在
+                // 会话 JSON 内），刻意不注入 tenant_resolution_middleware——匿名
+                // create/poll 与带租户头的 scan/confirm 必须命中同一批 key。
+                router.merge(qrlogin_routes::qrlogin_external_router(state.clone()))
             } else {
                 router
             }

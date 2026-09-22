@@ -774,3 +774,66 @@ fn mask_token_for_event_multibyte_safe() {
     );
     assert_ne!(masked, token);
 }
+
+// ============================================================================
+// 扫码登录事件（QrLogin*）广播分发
+// ============================================================================
+
+/// 验证 broadcast 对 QrLoginCreated 事件正确分发。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn broadcast_qrlogin_created_event() {
+    reset_counters();
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::QrLoginCreated {
+        qr_id: "abcd1234***".to_string(),
+        request_context: None,
+    };
+    manager.broadcast(&event).await;
+    assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
+}
+
+/// 验证 broadcast 对 QrLoginScanned 事件正确分发。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn broadcast_qrlogin_scanned_event() {
+    reset_counters();
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::QrLoginScanned {
+        qr_id: "abcd1234***".to_string(),
+        app_login_id: "1001".to_string(),
+        request_context: None,
+    };
+    manager.broadcast(&event).await;
+    assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
+}
+
+/// 验证 broadcast 对 QrLoginConfirmed 事件正确分发。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn broadcast_qrlogin_confirmed_event() {
+    reset_counters();
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::QrLoginConfirmed {
+        qr_id: "abcd1234***".to_string(),
+        app_login_id: "1001".to_string(),
+        request_context: None,
+    };
+    manager.broadcast(&event).await;
+    assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
+}
+
+/// 验证 broadcast 对 QrLoginCancelled 事件正确分发。
+#[tokio::test(flavor = "multi_thread")]
+#[serial]
+async fn broadcast_qrlogin_cancelled_event() {
+    reset_counters();
+    let manager = GarrisonListenerManager::new();
+    let event = GarrisonEvent::QrLoginCancelled {
+        qr_id: "abcd1234***".to_string(),
+        app_login_id: "1001".to_string(),
+        request_context: None,
+    };
+    manager.broadcast(&event).await;
+    assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
+}

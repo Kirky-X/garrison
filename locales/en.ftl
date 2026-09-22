@@ -62,6 +62,20 @@ wechat-userinfo-response-parse-failed = WeChat userinfo response parse failed: {
 wechat-userinfo-response-missing-openid = WeChat userinfo response missing openid field
 wechat-redirect-uri-must-be-https = WeChat redirect_uri must be an https URL
 
+# --- First-party QR code login (qrlogin) ---
+qrlogin-secret-empty = QR login HMAC secret must not be empty
+qrlogin-session-not-found = QR login session not found
+qrlogin-session-expired = QR login session has expired
+qrlogin-invalid-ticket = QR login ticket signature is invalid
+qrlogin-already-scanned = QR login session has already been scanned
+qrlogin-not-scanned = QR login session has not been scanned yet
+qrlogin-already-consumed = QR login session has already been consumed
+qrlogin-cancelled = QR login session has been cancelled
+qrlogin-confirm-token-invalid = QR login confirm token is invalid or has expired
+qrlogin-domain-not-allowed = QR login ticket domain is not allowed
+qrlogin-issuer-failed = QR login session issuance failed: {$detail}
+qrlogin-app-unauthorized = QR login requires a valid app session token
+
 # --- WeChat Mini App (wechat mini-app) ---
 wechat-mini-app-get-authorization-url-not-supported = WechatMiniAppProvider does not support get_authorization_url (mini app uses wx.login() to get js_code directly)
 wechat-mini-app-jscode2session-request-failed = WeChat mini-app jscode2session request failed: {$detail}

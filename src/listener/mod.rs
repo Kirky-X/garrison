@@ -392,6 +392,48 @@ pub enum GarrisonEvent {
         /// 兑换者 ID。
         redeemer_id: String,
     },
+    /// 扫码登录会话创建事件（第一方扫码登录）。
+    ///
+    /// 在 `QrLoginService::create_session` 成功路径广播。
+    QrLoginCreated {
+        /// 扫码会话 ID（掩码形式：前 8 字符 + `***`，构造点脱敏）。
+        qr_id: String,
+        /// 请求上下文（IP + User-Agent，待登录端）。
+        request_context: Option<RequestContext>,
+    },
+    /// 扫码登录已扫码事件。
+    ///
+    /// 在 `QrLoginService::scan` 成功路径（Pending → Scanned）广播。
+    QrLoginScanned {
+        /// 扫码会话 ID（掩码形式）。
+        qr_id: String,
+        /// 确认者 login_id。
+        app_login_id: String,
+        /// 请求上下文（IP + User-Agent）。
+        request_context: Option<RequestContext>,
+    },
+    /// 扫码登录已确认事件。
+    ///
+    /// 在 `QrLoginService::confirm` Confirm 迁移成功路径广播。
+    QrLoginConfirmed {
+        /// 扫码会话 ID（掩码形式）。
+        qr_id: String,
+        /// 确认者 login_id。
+        app_login_id: String,
+        /// 请求上下文（IP + User-Agent）。
+        request_context: Option<RequestContext>,
+    },
+    /// 扫码登录已取消事件。
+    ///
+    /// 在 `QrLoginService::confirm` Cancel 迁移成功路径广播。
+    QrLoginCancelled {
+        /// 扫码会话 ID（掩码形式）。
+        qr_id: String,
+        /// 确认者 login_id。
+        app_login_id: String,
+        /// 请求上下文（IP + User-Agent）。
+        request_context: Option<RequestContext>,
+    },
 }
 
 /// Debug 脱敏 helper：敏感字符串不输出明文。
@@ -681,6 +723,44 @@ impl std::fmt::Debug for GarrisonEvent {
                 .debug_struct("InvitationRedeemed")
                 .field("code", &redact_secret_for_debug(code))
                 .field("redeemer_id", redeemer_id)
+                .finish(),
+            GarrisonEvent::QrLoginCreated {
+                qr_id,
+                request_context,
+            } => f
+                .debug_struct("QrLoginCreated")
+                .field("qr_id", &redact_secret_for_debug(qr_id))
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::QrLoginScanned {
+                qr_id,
+                app_login_id,
+                request_context,
+            } => f
+                .debug_struct("QrLoginScanned")
+                .field("qr_id", &redact_secret_for_debug(qr_id))
+                .field("app_login_id", app_login_id)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::QrLoginConfirmed {
+                qr_id,
+                app_login_id,
+                request_context,
+            } => f
+                .debug_struct("QrLoginConfirmed")
+                .field("qr_id", &redact_secret_for_debug(qr_id))
+                .field("app_login_id", app_login_id)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::QrLoginCancelled {
+                qr_id,
+                app_login_id,
+                request_context,
+            } => f
+                .debug_struct("QrLoginCancelled")
+                .field("qr_id", &redact_secret_for_debug(qr_id))
+                .field("app_login_id", app_login_id)
+                .field("request_context", request_context)
                 .finish(),
         }
     }

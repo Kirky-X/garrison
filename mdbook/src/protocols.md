@@ -16,6 +16,7 @@
 | OIDC | `protocol::oauth2::oidc` | `protocol-oidc` | `OidcHandler`（sign_id_token / verify_id_token / discovery） | 0.4.0 |
 | ScopeHandler | `protocol::oauth2::scope` | `oauth2-scope-handler` | `ScopeHandler` trait + `ScopeRegistry` | 0.4.0 |
 | SsoServer | `protocol::sso::server` | `protocol-sso-server` | `SsoServer` trait + `DefaultSsoServer` + `CenterIdConverter` | 0.4.0 |
+| QRLogin | `protocol::qrlogin` | `protocol-qrlogin` | `QrLoginService`（create/scan/confirm/poll 两票分离状态机）+ `QrLoginSessionIssuer` 端口 | Unreleased |
 <!-- AloneCache 和 ParameterQuery 属于扩展层而非协议层，详见 architecture.md 扩展层章节 -->
 
 ## JWT（HS256 / HS512）

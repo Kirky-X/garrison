@@ -15,6 +15,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- **`protocol-qrlogin`：第一方扫码登录**：新增 `protocol::qrlogin` 模块（两票分离状态机：Web 端展示二维码、App 端扫码确认、Web 端兑换会话）。qr_ticket 采用 HMAC-SHA256 签名票据（`{64_hex}.{hmac_b64}`，与 SSO ticket 同格式），confirm_token 一次性原子消费（`get_and_delete`）且会话内仅存 SHA-256 摘要；`allowed_domains` 域名白名单（scan 阶段校验）压制二维码替换钓鱼（Quishing）；确认页摘要脱敏（UA 短标签，不下发原始 IP/完整 UA）。HTTP 侧新增 4 个端点（`POST /qrlogin/create|poll|scan|confirm`，经 `GarrisonAuthServer::with_qrlogin` 装配；scan/confirm 强制 Bearer App 会话）；poll 的 Confirmed 分支以服务端存储的确认者 login_id 原子兑换并经 `QrLoginSessionIssuer` 端口签发会话（与密码登录同路径，全量继承权限/踢下线/续期/审计）。新增 `GarrisonEvent::QrLoginCreated/Scanned/Confirmed/Cancelled` 事件（qr_id 掩码，audit 全变体穷尽接入）。
+
 ### Security
 
 - **OAuth2 state / OIDC nonce 缺失 fail-closed（对抗测试驱动）**：`OAuth2Client::exchange_code_with_pkce` 拒绝空串 state（原双空相等放行，CSRF 注入可静默通过）；`OidcHandler::verify_id_token` 拒绝空串 expected nonce（原空对空恒等放行，防重放锚点失效）。redirect_uri 精确匹配 / state 旧回调重放 / nonce 缺失三形态由验收测试锁定（`tests/acceptance/protocol_oauth2.rs`）。

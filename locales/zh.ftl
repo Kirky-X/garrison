@@ -62,6 +62,20 @@ wechat-userinfo-response-parse-failed = 微信用户信息响应解析失败: {$
 wechat-userinfo-response-missing-openid = 微信用户信息响应缺少 openid 字段
 wechat-redirect-uri-must-be-https = 微信 redirect_uri 必须为 https URL
 
+# --- 第一方扫码登录（qrlogin）---
+qrlogin-secret-empty = 扫码登录 HMAC 密钥不能为空
+qrlogin-session-not-found = 扫码登录会话不存在
+qrlogin-session-expired = 扫码登录会话已过期
+qrlogin-invalid-ticket = 扫码登录票据签名无效
+qrlogin-already-scanned = 扫码登录会话已被扫码
+qrlogin-not-scanned = 扫码登录会话尚未被扫码
+qrlogin-already-consumed = 扫码登录会话已被消费
+qrlogin-cancelled = 扫码登录会话已取消
+qrlogin-confirm-token-invalid = 扫码登录确认凭据无效或已过期
+qrlogin-domain-not-allowed = 扫码登录票据域名不在白名单内
+qrlogin-issuer-failed = 扫码登录会话签发失败: {$detail}
+qrlogin-app-unauthorized = 扫码登录需要有效的应用会话 token
+
 # --- 微信小程序（wechat mini-app）---
 wechat-mini-app-get-authorization-url-not-supported = WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）
 wechat-mini-app-jscode2session-request-failed = 微信小程序 jscode2session 请求失败: {$detail}

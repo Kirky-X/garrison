@@ -203,6 +203,7 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>protocol-sign</code></td><td align="center">❌</td><td>API 签名 + nonce 防重放</td></tr>
 <tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td>API Key 认证</td></tr>
 <tr><td><code>protocol-temp</code></td><td align="center">❌</td><td>临时凭证</td></tr>
+<tr><td><code>protocol-qrlogin</code></td><td align="center">❌</td><td>第一方扫码登录（Web 扫码 + App 确认，两票分离）</td></tr>
 <tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td>OIDC id_token 签发/验证 + discovery</td></tr>
 <tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td>HTTP Basic / Digest 认证</td></tr>
 <tr><td><code>protocol-saml</code></td><td align="center">❌</td><td>SAML 2.0 骨架</td></tr>

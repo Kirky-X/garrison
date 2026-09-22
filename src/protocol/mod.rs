@@ -40,6 +40,10 @@ pub mod temp;
 #[cfg(feature = "protocol-invitation")]
 pub mod invitation;
 
+/// 第一方扫码登录协议模块（两票分离状态机：Web 端扫码、App 端确认）。
+#[cfg(feature = "protocol-qrlogin")]
+pub mod qrlogin;
+
 /// 社交登录协议插件模块。
 ///
 /// 核心类型（`SocialLoginProvider` trait / `SocialUserInfo` / `SocialLoginService` 注册中心 /

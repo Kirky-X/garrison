@@ -47,6 +47,10 @@ pub mod sdforge_routes;
 #[cfg(feature = "oauth2-server")]
 pub mod oauth2_routes;
 
+/// 扫码登录 HTTP 端点路由（feature = "protocol-qrlogin"）。
+#[cfg(feature = "protocol-qrlogin")]
+pub mod qrlogin_routes;
+
 mod server_impl;
 
 pub use middleware::{
@@ -144,6 +148,9 @@ pub struct GarrisonAuthServer {
     tenant_resolver: Option<Arc<dyn TenantResolver>>,
     #[cfg(feature = "oauth2-server")]
     oauth2_state: Option<Arc<oauth2_routes::OAuth2State>>,
+    /// 扫码登录路由状态（feature = "protocol-qrlogin"）。
+    #[cfg(feature = "protocol-qrlogin")]
+    qrlogin_state: Option<Arc<qrlogin_routes::QrLoginHttpState>>,
     #[cfg(feature = "tls")]
     tls_config: Option<TlsConfig>,
 }

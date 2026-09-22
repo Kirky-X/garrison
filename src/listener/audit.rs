@@ -217,6 +217,18 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&super::RequestConte
         }
         | GarrisonEvent::Replaced {
             request_context, ..
+        }
+        | GarrisonEvent::QrLoginCreated {
+            request_context, ..
+        }
+        | GarrisonEvent::QrLoginScanned {
+            request_context, ..
+        }
+        | GarrisonEvent::QrLoginConfirmed {
+            request_context, ..
+        }
+        | GarrisonEvent::QrLoginCancelled {
+            request_context, ..
         } => request_context.as_ref(),
         // anomalous-detector-dual feature 关闭时，无 AnomalousLoginDetected 变体，
         // 上述 match 已穷尽所有变体，此分支不可达。
@@ -686,6 +698,62 @@ impl AuditLogListener {
                     ("redeemer_id", redeemer_id),
                 ])),
                 success: true,
+                created_at: now,
+            },
+            GarrisonEvent::QrLoginCreated { qr_id, .. } => AuditEntry {
+                tenant_id,
+                event_type: "qrlogin_created".to_string(),
+                login_id: None,
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("qr_id", qr_id)])),
+                success: true,
+                created_at: now,
+            },
+            GarrisonEvent::QrLoginScanned {
+                qr_id,
+                app_login_id,
+                ..
+            } => AuditEntry {
+                tenant_id,
+                event_type: "qrlogin_scanned".to_string(),
+                login_id: Some(app_login_id.clone()),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("qr_id", qr_id)])),
+                success: true,
+                created_at: now,
+            },
+            GarrisonEvent::QrLoginConfirmed {
+                qr_id,
+                app_login_id,
+                ..
+            } => AuditEntry {
+                tenant_id,
+                event_type: "qrlogin_confirmed".to_string(),
+                login_id: Some(app_login_id.clone()),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("qr_id", qr_id)])),
+                success: true,
+                created_at: now,
+            },
+            GarrisonEvent::QrLoginCancelled {
+                qr_id,
+                app_login_id,
+                ..
+            } => AuditEntry {
+                tenant_id,
+                event_type: "qrlogin_cancelled".to_string(),
+                login_id: Some(app_login_id.clone()),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: Some(json_metadata(&[("qr_id", qr_id)])),
+                success: false,
                 created_at: now,
             },
             // credit-metering feature-gated 变体
