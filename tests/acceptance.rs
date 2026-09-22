@@ -77,3 +77,8 @@ mod bw_ac;
 
 #[path = "acceptance/migrated/mod.rs"]
 mod migrated;
+
+/// 扫码登录真实双端验收（feature = "protocol-qrlogin"）。
+#[cfg(feature = "protocol-qrlogin")]
+#[path = "acceptance/qrlogin.rs"]
+mod qrlogin;
