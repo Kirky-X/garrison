@@ -327,3 +327,25 @@ async fn poll_outcomes_and_post_exchange_confirm() {
         .unwrap_err();
     assert_error_text(&err, "confirm token is invalid");
 }
+
+/// confirm：Cancel 后重放同一 confirm_token 返回 confirm-token-invalid
+///（原子消费先于状态检查，fail-closed——回归钉住 T015 收敛缺口）。
+#[tokio::test]
+async fn confirm_replay_after_cancel_fails_fail_closed() {
+    let svc = service();
+    let created = svc.create_session(web_context()).await.unwrap();
+    let view = svc.scan(&created.qr_content, "user-1").await.unwrap();
+    svc.confirm(&view.confirm_token, QrLoginAction::Cancel)
+        .await
+        .unwrap();
+    assert_eq!(
+        svc.poll(&created.qr_id).await.unwrap(),
+        QrLoginPollOutcome::Cancelled
+    );
+    // 重放已消费的 token：token 查找失败优先于会话状态分支
+    let err = svc
+        .confirm(&view.confirm_token, QrLoginAction::Cancel)
+        .await
+        .unwrap_err();
+    assert_error_text(&err, "confirm token is invalid");
+}
