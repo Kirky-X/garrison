@@ -14,7 +14,8 @@
 //!
 //! 邀请码记录存储在 `garrison:invitation:code:<normalized_code>` 命名空间下，
 //! 与 session/temp/sign/apikey 模块隔离。防爆破计数存储在
-//! `garrison:invitation:attempt:<md5hex(source)>` 命名空间下。
+//! `garrison:invitation:attempt:<sha256(source)>` 命名空间下（source 先经 SHA-256 摘要：
+//! source 为攻击者可控 IP，MD5 chosen-prefix 碰撞可污染他人计数键，故弃用 MD5）。
 //!
 //! ## 消费原子性
 //!

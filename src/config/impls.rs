@@ -493,7 +493,38 @@ impl GarrisonConfig {
         self.validate_jwt_secret()?;
         self.validate_session_config()?;
         self.validate_device_binding()?;
-        self.validate_feature_gated()
+        self.validate_feature_gated()?;
+        // 两个 cfg 互斥定义（rate-limit-redis 启用/未启用）恰存其一，无条件调用
+        self.warn_memory_rate_limit_backend();
+        Ok(())
+    }
+
+    /// Memory 限流后端部署警示（T021）。
+    ///
+    /// Memory 后端为进程内计数：多实例部署时各实例独立计数，实际限额 = 配置值
+    /// × 实例数，限流/爆破防护形同虚设。此处仅 warn（单实例/本地开发是合法
+    /// 场景，不强制失败），提示多实例部署切换 Redis 后端。
+    /// 默认构建（未启用 rate-limit-redis）下恒为进程内计数：同样输出警示。
+    /// （复查修复 F3：原实现随字段一并 cfg 掉，默认部署多实例风险无告警）
+    #[cfg(not(feature = "rate-limit-redis"))]
+    fn warn_memory_rate_limit_backend(&self) {
+        tracing::warn!(
+            backend = "memory",
+            "rate-limit-redis feature disabled: rate limiting is per-process counting only; \
+             multi-instance deployments MUST enable rate-limit-redis for global limits"
+        );
+    }
+
+    #[cfg(feature = "rate-limit-redis")]
+    fn warn_memory_rate_limit_backend(&self) {
+        if self.rate_limit_backend
+            == crate::strategy::rate_limiter_backend::RateLimitBackend::Memory
+        {
+            tracing::warn!(
+                backend = "memory",
+                "rate_limit_backend=Memory: per-process counting only;                  multi-instance deployments MUST switch to Redis for global limits"
+            );
+        }
     }
 
     /// 核心字段校验：`token_style` / `timeout` / `cookie_same_site` / `jwt_algorithm`。

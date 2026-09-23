@@ -68,7 +68,8 @@ impl EmailVerificationService {
             {
                 tracing::error!(
                     error = %re,
-                    email = %normalized,
+                    email = crate::secure::masking::SensitiveDataMasker::new()
+                .mask_value(&normalized, &crate::secure::masking::MaskType::Email),
                     "rollback rate limiter counter failed after code store failure"
                 );
             }
@@ -87,7 +88,8 @@ impl EmailVerificationService {
                 .rollback_inner_with(&normalized, &windows)
                 .await
             {
-                tracing::error!(error = %e, email = %normalized, "rollback rate limiter counter failed during channel recycling");
+                tracing::error!(error = %e, email = crate::secure::masking::SensitiveDataMasker::new()
+                .mask_value(&normalized, &crate::secure::masking::MaskType::Email), "rollback rate limiter counter failed during channel recycling");
             }
             // 回滚未验证计数
             if let Err(e) = EmailRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
@@ -114,7 +116,8 @@ impl EmailVerificationService {
                 .rollback_inner_with(&normalized, &windows)
                 .await
             {
-                tracing::error!(error = %re, email = %normalized, "rollback rate limiter counter failed after send failure");
+                tracing::error!(error = %re, email = crate::secure::masking::SensitiveDataMasker::new()
+                .mask_value(&normalized, &crate::secure::masking::MaskType::Email), "rollback rate limiter counter failed after send failure");
             }
             if let Err(re) = self.dao.delete(&code_key).await {
                 tracing::error!(error = %re, key = %code_key, "delete code failed after send failure");
