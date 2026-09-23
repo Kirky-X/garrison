@@ -340,7 +340,7 @@ async fn acc_mixed_007_sign_nonce_replay_rejected() {
 /// （login_id / scopes / namespace / revoked=false）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_008_apikey_generate_and_verify() {
-    let handler = ApiKeyHandler::new(make_dao());
+    let handler = ApiKeyHandler::new(make_dao()).with_allow_global_verify(true);
 
     let key = handler
         .generate("1001", vec!["read".to_string(), "write".to_string()], 3600)
@@ -369,7 +369,7 @@ async fn acc_mixed_008_apikey_generate_and_verify() {
 /// `InvalidToken("apikey-not-found")`（lookup 先行 fail-loud，非静默成功）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_009_apikey_revoked_invalidates() {
-    let handler = ApiKeyHandler::new(make_dao());
+    let handler = ApiKeyHandler::new(make_dao()).with_allow_global_verify(true);
     let key = handler
         .generate("1001", vec!["read".to_string()], 3600)
         .await
@@ -397,7 +397,7 @@ async fn acc_mixed_009_apikey_revoked_invalidates() {
 /// login_id/scope 保留），旧 key 已被吊销无法再校验。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_010_apikey_rotation_invalidates_old_key() {
-    let handler = ApiKeyHandler::new(make_dao());
+    let handler = ApiKeyHandler::new(make_dao()).with_allow_global_verify(true);
     let old_key = handler
         .generate("1001", vec!["read".to_string()], 3600)
         .await
@@ -421,7 +421,7 @@ async fn acc_mixed_010_apikey_rotation_invalidates_old_key() {
 /// 校验均返回 `InvalidToken`（DAO 查找不命中，fail-closed）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_011_apikey_invalid_format_rejected() {
-    let handler = ApiKeyHandler::new(make_dao());
+    let handler = ApiKeyHandler::new(make_dao()).with_allow_global_verify(true);
 
     for (name, bad) in [
         ("短字符串", "short"),
@@ -444,7 +444,7 @@ async fn acc_mixed_011_apikey_invalid_format_rejected() {
 /// `InvalidToken("apikey-not-found")`（见文件头 API 偏差记录）。
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_012_apikey_expired_rejected() {
-    let handler = ApiKeyHandler::new(make_dao());
+    let handler = ApiKeyHandler::new(make_dao()).with_allow_global_verify(true);
     let key = handler
         .generate("1001", vec!["read".to_string()], 1)
         .await
@@ -725,7 +725,7 @@ async fn acc_mixed_020_sign_empty_or_invalid_signature_rejected() {
 /// 迁自 tests/protocol/apikey_edge_cases.rs::namespace_isolation_blocks_cross_namespace_access
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_mixed_021_apikey_namespace_isolation() {
-    let handler = ApiKeyHandler::new(make_dao());
+    let handler = ApiKeyHandler::new(make_dao()).with_allow_global_verify(true);
 
     // namespace A：login_id=1001（read）；namespace B：login_id=2002（write）
     let key_a = handler
@@ -856,7 +856,7 @@ async fn acc_mixed_023_check_api_key_invalid_and_empty_rejected() {
     );
 
     // 正常路径锚点：同一 DAO 生成的有效 key 放行
-    let handler = ApiKeyHandler::new(dao);
+    let handler = ApiKeyHandler::new(dao).with_allow_global_verify(true);
     let valid_key = handler
         .generate("1001", vec!["read".to_string()], 3600)
         .await

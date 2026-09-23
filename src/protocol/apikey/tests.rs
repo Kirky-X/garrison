@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// 创建 ApiKeyHandler（使用 MockDao）。
 fn make_handler() -> ApiKeyHandler {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    ApiKeyHandler::new(dao)
+    ApiKeyHandler::new(dao).with_allow_global_verify(true)
 }
 
 /// 从双段 token（`key_id.key_secret`）提取公开 `key_id`，作为存储 key 后缀。
@@ -75,7 +75,7 @@ async fn generate_zero_timeout_returns_error() {
 #[tokio::test]
 async fn generate_uses_correct_key_prefix() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key = handler
         .generate("1001", vec!["read".into()], 3600)
         .await
@@ -308,7 +308,7 @@ fn apikey_info_serializes_with_namespace() {
 #[serial_test::serial]
 async fn generate_with_namespace_stores_new_format_key() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key = handler
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
         .await
@@ -331,7 +331,7 @@ async fn generate_with_namespace_stores_new_format_key() {
 #[serial_test::serial]
 async fn list_by_namespace_returns_only_matching_namespace() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     // internal namespace 下生成 1 个 key
     let _k1 = handler
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
@@ -361,7 +361,7 @@ async fn list_by_namespace_returns_only_matching_namespace() {
 #[serial_test::serial]
 async fn list_by_namespace_filters_revoked_keys() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let k1 = handler
         .generate_with_namespace("1001", "internal", vec![], 3600)
         .await
@@ -382,7 +382,7 @@ async fn list_by_namespace_filters_revoked_keys() {
 #[serial_test::serial]
 async fn verify_with_namespace_enforces_isolation() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     // 在 internal namespace 生成 key
     let key = handler
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
@@ -510,7 +510,7 @@ fn public_key_ref_never_exposes_secret() {
 #[serial_test::serial]
 async fn verify_with_namespace_returns_error_when_namespace_mismatch() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     // 1. 在 "internal" namespace 下生成合法 key（带 secret_hash）
     let key = handler
         .generate_with_namespace("1001", "internal", vec![], 3600)
@@ -539,7 +539,7 @@ async fn verify_with_namespace_returns_error_when_namespace_mismatch() {
 #[tokio::test]
 async fn verify_returns_internal_error_when_json_invalid() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key_id = "deadbeefdeadbeefdeadbeefdeadbeef"; // 32 hex
     let key_secret = "0123456789abcdef0123456789abcdef";
     let token = format!("{}.{}", key_id, key_secret);
@@ -569,7 +569,7 @@ async fn verify_returns_internal_error_when_json_invalid() {
 #[tokio::test]
 async fn revoke_returns_internal_error_when_json_invalid() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key_id = "cafebeefcafebeefcafebeefcafebeef"; // 32 hex
     let key_secret = "0123456789abcdef0123456789abcdef";
     let token = format!("{}.{}", key_id, key_secret);
@@ -649,7 +649,7 @@ fn e4_source_verify_revoke_have_no_keys_scan() {
 #[serial_test::serial]
 async fn e4_generate_with_namespace_writes_reverse_index() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key = handler
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
         .await
@@ -675,7 +675,7 @@ async fn e4_generate_with_namespace_writes_reverse_index() {
 #[serial_test::serial]
 async fn e4_generate_writes_reverse_index_default_namespace() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key = handler.generate("1001", vec![], 3600).await.unwrap();
 
     let idx_key = format!("garrison:apikey:idx:{}", key_id_of(&key));
@@ -697,7 +697,7 @@ async fn e4_generate_writes_reverse_index_default_namespace() {
 #[serial_test::serial]
 async fn e4_verify_uses_reverse_index() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
 
     // 预填充一些干扰 key（模拟生产环境中大量 key 共存的场景）
     for i in 0..50 {
@@ -719,7 +719,7 @@ async fn e4_verify_uses_reverse_index() {
 #[serial_test::serial]
 async fn e4_revoke_uses_reverse_index() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key = handler
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
         .await
@@ -743,7 +743,7 @@ async fn e4_revoke_uses_reverse_index() {
 #[serial_test::serial]
 async fn e4_index_has_same_ttl_as_key() {
     let dao = Arc::new(crate::dao::tests::MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let timeout = 3600i64;
     let key = handler
         .generate_with_namespace("ttl-test", "internal", vec![], timeout)
@@ -792,7 +792,7 @@ async fn e4_index_has_same_ttl_as_key() {
 #[serial_test::serial]
 async fn e4_rotate_writes_index_for_new_key() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let old_key = handler
         .generate("1001", vec!["read".into()], 3600)
         .await
@@ -820,7 +820,7 @@ async fn e4_rotate_writes_index_for_new_key() {
 #[serial_test::serial]
 async fn e4_multiple_namespaces_all_indexed() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
 
     let k1 = handler
         .generate_with_namespace("1001", "internal", vec![], 3600)
@@ -892,7 +892,7 @@ async fn e4_revoke_nonexistent_key_returns_invalid_token() {
 #[serial_test::serial]
 async fn e4_verify_falls_through_when_dao_key_deleted() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key = handler
         .generate_with_namespace("1001", "internal", vec![], 3600)
         .await
@@ -920,7 +920,7 @@ async fn e4_verify_falls_through_when_dao_key_deleted() {
 #[serial_test::serial]
 async fn stored_value_contains_no_plaintext_secret() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key = handler
         .generate_with_namespace("1001", "internal", vec![], 3600)
         .await
@@ -1027,7 +1027,9 @@ async fn generate_rejects_disallowed_scope() {
 #[serial_test::serial]
 async fn verify_tracks_last_used_when_enabled() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone()).with_last_used_tracking(true);
+    let handler = ApiKeyHandler::new(dao.clone())
+        .with_last_used_tracking(true)
+        .with_allow_global_verify(true);
     let key = handler
         .generate_with_namespace("1001", "internal", vec![], 3600)
         .await
@@ -1050,7 +1052,7 @@ async fn verify_tracks_last_used_when_enabled() {
 #[serial_test::serial]
 async fn verify_does_not_track_last_used_by_default() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     let key = handler
         .generate_with_namespace("1001", "internal", vec![], 3600)
         .await
@@ -1070,7 +1072,7 @@ async fn verify_does_not_track_last_used_by_default() {
 #[serial_test::serial]
 async fn get_keys_older_than_filters_by_last_used() {
     let dao = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone());
+    let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
     // 生成两个 key（均从未使用）
     let _k1 = handler
         .generate_with_namespace("1001", "internal", vec![], 3600)
@@ -1109,7 +1111,9 @@ async fn verify_passes_without_max_age() {
 #[tokio::test]
 async fn verify_passes_with_valid_max_age() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao).with_max_age(7200); // 2 小时
+    let handler = ApiKeyHandler::new(dao)
+        .with_max_age(7200)
+        .with_allow_global_verify(true); // 2 小时
     let token = handler.generate("user1", vec![], 3600).await.unwrap();
     // key 刚创建，max_age=7200 远未到期
     let info = handler.verify(&token).await.unwrap();
@@ -1120,7 +1124,9 @@ async fn verify_passes_with_valid_max_age() {
 #[tokio::test]
 async fn verify_rejects_expired_max_age() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao.clone()).with_max_age(10); // 10 秒
+    let handler = ApiKeyHandler::new(dao.clone())
+        .with_max_age(10)
+        .with_allow_global_verify(true); // 10 秒
     let token = handler.generate("user1", vec![], 3600).await.unwrap();
 
     // 手动将 created_at 设为 100 秒前（超过 max_age=10）
@@ -1155,4 +1161,36 @@ fn apikey_info_requires_created_at_field() {
         "缺失 created_at 的 JSON 应反序列化失败，实际: {:?}",
         result
     );
+}
+
+/// T017：默认构造下无命名空间 verify() 被 fail-closed 拒绝；
+/// verify_with_namespace 不受影响；with_allow_global_verify(true) 放开。
+#[tokio::test]
+async fn global_verify_disabled_by_default() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let handler = ApiKeyHandler::new(dao.clone());
+    let key = handler
+        .generate_with_namespace("1001", "tenant-a", vec![], 3600)
+        .await
+        .unwrap();
+
+    // 默认禁用：verify() 返回明确错误
+    let err = handler.verify(&key).await.unwrap_err();
+    assert!(
+        err.to_string().contains("apikey-global-verify-disabled"),
+        "默认 verify() 应被禁用，实际: {}",
+        err
+    );
+
+    // verify_with_namespace 不受影响
+    let info = handler
+        .verify_with_namespace(&key, "tenant-a")
+        .await
+        .unwrap();
+    assert_eq!(info.namespace, "tenant-a");
+
+    // 显式放开后 verify() 可用
+    let relaxed = ApiKeyHandler::new(dao).with_allow_global_verify(true);
+    let info = relaxed.verify(&key).await.unwrap();
+    assert_eq!(info.namespace, "tenant-a");
 }

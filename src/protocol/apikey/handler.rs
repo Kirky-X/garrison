@@ -134,7 +134,23 @@ impl ApiKeyHandler {
             allowed_scopes: None,
             track_last_used: false,
             max_age_secs: None,
+            allow_global_verify: false,
         }
+    }
+
+    /// 显式放开无命名空间的 `verify()` 全局校验（默认禁用）。
+    ///
+    /// `verify()` 经反向索引可跨 namespace 校验任意 key；默认禁用强制业务方
+    /// 走 `verify_with_namespace`（租户隔离）。开启时输出 warn 供审计留存。
+    pub fn with_allow_global_verify(mut self, allow: bool) -> Self {
+        if allow {
+            tracing::warn!(
+                "apikey global verify enabled: verify() may validate keys from ANY namespace; \
+                 prefer verify_with_namespace for tenant isolation"
+            );
+        }
+        self.allow_global_verify = allow;
+        self
     }
 
     /// 注入 `GarrisonListenerManager`，启用 TokenRotate 事件广播
@@ -347,6 +363,18 @@ impl ApiKeyHandler {
     /// 主体上下文）：A 的 key 在此通过校验后，授权决策由应用层完成。调用方应
     /// 在业务入口自行比较返回的 `info.owner_id` 与请求主体，再放行资源访问。
     pub async fn verify(&self, key: &str) -> GarrisonResult<ApiKeyInfo> {
+        // fail-closed：无命名空间校验可跨租户命中任意 key，默认禁用（T017）。
+        // rotate / update_last_used 等管理操作走 verify_internal 不受影响。
+        if !self.allow_global_verify {
+            return Err(GarrisonError::InvalidParam(
+                "apikey-global-verify-disabled::use verify_with_namespace or enable via with_allow_global_verify".to_string(),
+            ));
+        }
+        self.verify_internal(key).await
+    }
+
+    /// verify 的内部全量校验（不受 allow_global_verify 开关约束）。
+    async fn verify_internal(&self, key: &str) -> GarrisonResult<ApiKeyInfo> {
         let (dao_key, value, secret) = self.lookup(key).await?;
         let info = self.decode_and_check(&value, &secret)?;
         self.check_max_age(&info)?;
@@ -608,8 +636,9 @@ impl ApiKeyHandler {
     /// - `GarrisonError::InvalidToken`: key 不存在、secret 不匹配或已吊销。
     /// - `GarrisonError::ExpiredToken`: key 已过期。
     pub async fn update_last_used(&self, key: &str) -> GarrisonResult<()> {
-        // CWE-916：走 verify 全量校验（含 secret 哈希常量时间比较），不得绕过
-        let info = self.verify(key).await?;
+        // CWE-916：走全量校验（含 secret 哈希常量时间比较），不得绕过。
+        // 管理操作持有完整 key，不受 allow_global_verify 开关约束。
+        let info = self.verify_internal(key).await?;
         // verify 成功 ⇒ 必为双段格式 key，`key_id` 非空，可由 namespace + key_id 重建 dao_key
         let dao_key = format!("garrison:apikey:{}:{}", info.namespace, info.key_id);
         // 写回前 re-read 最新值，避免用 verify 时的旧快照把并发 revoke 回退
@@ -657,8 +686,8 @@ impl ApiKeyHandler {
     /// - `GarrisonError::InvalidToken`: old_key 不存在或已吊销。
     /// - `GarrisonError::ExpiredToken`: old_key 已过期。
     pub async fn rotate(&self, old_key: &str) -> GarrisonResult<String> {
-        // (1) 校验 old_key
-        let info = self.verify(old_key).await?;
+        // (1) 校验 old_key（管理操作，不受 allow_global_verify 开关约束）
+        let info = self.verify_internal(old_key).await?;
         let now = current_ts()?;
         let remaining_ttl = info.expire_at - now;
         if remaining_ttl <= 0 {

@@ -147,9 +147,12 @@ pub async fn run() -> GarrisonResult<()> {
     // 1. 构建 ApiKeyHandler
     // ----------------------------------------------------------------
     // Key 存储命名空间：garrison:apikey:<key>
+    // 本示例演示默认命名空间下的 generate/verify 全流程，显式放开全局 verify
+    // （安全默认为禁用：verify() 可跨命名空间校验任意 key，生产应优先
+    //  verify_with_namespace —— 见 docs/CHANGELOG Breaking 说明）。
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let handler = ApiKeyHandler::new(dao);
-    println!("[1] ApiKeyHandler 构建完成\n");
+    let handler = ApiKeyHandler::new(dao).with_allow_global_verify(true);
+    println!("[1] ApiKeyHandler 构建完成（allow_global_verify=true，示例语义）\n");
 
     // ----------------------------------------------------------------
     // 2. generate 生成 API Key
@@ -188,7 +191,7 @@ pub async fn run() -> GarrisonResult<()> {
     // 校验不存在的 Key
     let invalid = handler.verify("nonexistent-key").await;
     assert!(invalid.is_err());
-    println!("    verify(\"nonexistent-key\") → Err(InvalidToken) ✓\n");
+    println!("    verify(\"nonexistent-key\") → Err(InvalidToken) ✓（全局 verify 已放开）\n");
 
     // ----------------------------------------------------------------
     // 4. revoke 吊销 Key

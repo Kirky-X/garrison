@@ -141,6 +141,12 @@ pub struct ApiKeyHandler {
     /// - `None`（默认）：不检查生命周期，仅依赖 `expire_at`。
     /// - `Some(secs)`：`verify` 时检查 `created_at + secs >= now`，超期拒绝。
     pub(crate) max_age_secs: Option<i64>,
+    /// 是否允许无命名空间的 `verify()` 全局校验（默认 `false`，fail-closed）。
+    ///
+    /// `verify()` 经反向索引可校验**任意** namespace 的 key，与租户隔离语义冲突。
+    /// 默认禁用：无 namespace 校验必须走 `verify_with_namespace`；确有全局校验
+    /// 需求的部署可经 `with_allow_global_verify(true)` 显式放开（开启时输出 warn）。
+    pub(crate) allow_global_verify: bool,
 }
 
 #[cfg(test)]
