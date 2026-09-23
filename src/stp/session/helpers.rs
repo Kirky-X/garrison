@@ -730,7 +730,7 @@ impl GarrisonLogicDefault {
     /// 则写入 `jwt:blacklist:{jti}` = "1"（TTL = 剩余有效期秒数）。
     /// DAO 失败时 warn 日志不中断主流程。
     #[cfg(feature = "protocol-jwt")]
-    pub(super) async fn blacklist_jwt_jti(&self, token: &str) {
+    pub(crate) async fn blacklist_jwt_jti(&self, token: &str) {
         if !self.config.enable_jwt_revocation || self.config.token_style != "jwt" {
             return;
         }

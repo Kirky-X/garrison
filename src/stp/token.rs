@@ -198,7 +198,27 @@ impl TokenLogic for GarrisonLogicDefault {
             self.config.jwt_ec_private_key_pem.as_deref(),
             self.config.jwt_ed_private_key_pem.as_deref(),
         )?;
+        // 黑名单前置检查（复查修复）：verify 只验签名+exp 不读黑名单——若不在此
+        // 拦截，已被 logout/revoke 吊销的旧 token 在自然过期前仍可经 refresh
+        // 铸出全新 jti 的新 token，整体绕过吊销。
+        if self.config.enable_jwt_revocation {
+            if let Ok(claims) = handler.verify(token) {
+                if let Some(jti) = &claims.jti {
+                    let key = format!("jwt:blacklist:{}", jti);
+                    let revoked = self.session.dao().get(&key).await?;
+                    if revoked.is_some() {
+                        return Err(GarrisonError::InvalidToken(
+                            "stp-refresh-token-revoked::".to_string(),
+                        ));
+                    }
+                }
+            }
+        }
         let new_token = handler.refresh(token, self.config.timeout)?;
+        // 旧 token 吊销：签发新 token 后将旧 access token 的 jti 写入黑名单，
+        // 消除「新旧双重有效」窗口（黑名单写失败仅 warn，不阻断签发）。
+        // 注意：带泄露重用检测的完整轮换应使用 RefreshTokenRotation 路径。
+        self.blacklist_jwt_jti(token).await;
         // auto-wire: 触发 plugin on_login（新 token）
         if let Some(pm) = &self.plugin_manager {
             pm.on_login(&login_id, &new_token);
@@ -746,6 +766,47 @@ mod tests {
             );
         }
 
+        /// 复查修复回归：被吊销（黑名单）的旧 token 不得经 refresh 铸出新 token
+        /// ——verify 只验签名不读黑名单，若无此前置检查则吊销在 refresh 面被整体绕过。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn refresh_token_rejects_blacklisted_token() {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+            let mut config = GarrisonConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.enable_jwt_revocation = true;
+            config.jwt_secret = test_jwt_secret("jwt-refresh-revoke-secret-32bytes-x");
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
+
+            let old_token = logic
+                .login("user-bl", &crate::stp::LoginParams::default())
+                .await
+                .expect("login 应成功");
+
+            // 模拟 logout/revoke：将旧 token 的 jti 写入黑名单
+            logic.blacklist_jwt_jti(&old_token).await;
+
+            let result = logic.refresh_token(&old_token).await;
+            assert!(
+                matches!(result, Err(GarrisonError::InvalidToken(ref msg)) if msg.contains("stp-refresh-token-revoked")),
+                "黑名单 token refresh 应被拒，实际: {:?}",
+                result
+            );
+        }
+
         /// refresh_token + 无效 JWT → 返回错误（verify_token 失败）。
         ///
         /// 覆盖 token.rs 第 170 行 `let login_id = self.verify_token(token).await?` 错误传播。
@@ -778,6 +839,63 @@ mod tests {
                 "无效 JWT refresh_token 应返回 Err，实际: {:?}",
                 result
             );
+        }
+
+        /// refresh_token 后旧 access token 的 jti 写入黑名单（旧 token 立即失效）。
+        ///
+        /// 钉住 T015 修复：JwtHandler::refresh 签发新 token 后，stp 层必须将旧
+        /// token 吊销（Stateless JWT 无 session 可销毁，黑名单是唯一撤销手段）。
+        #[cfg(feature = "protocol-jwt")]
+        #[tokio::test]
+        async fn refresh_token_revokes_old_token() {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+            let mut config = GarrisonConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "jwt".to_string();
+            config.enable_jwt_revocation = true;
+            config.jwt_secret = test_jwt_secret("jwt-refresh-revoke-secret-32bytes-x");
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+            let logic = GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                    dao.clone(),
+                )),
+            );
+
+            let old_token = logic
+                .login("user-refresh", &crate::stp::LoginParams::default())
+                .await
+                .expect("login 应成功");
+
+            let new_token = logic
+                .refresh_token(&old_token)
+                .await
+                .expect("refresh 应成功");
+            assert_ne!(old_token, new_token);
+
+            // 旧 token 的 jti 已入黑名单
+            let handler = crate::protocol::jwt::JwtHandler::from_algorithm_parts(
+                "HS256",
+                test_jwt_secret("jwt-refresh-revoke-secret-32bytes-x").as_str(),
+                None,
+                None,
+                None,
+            )
+            .expect("handler 构造应成功");
+            let jti = handler
+                .verify(&old_token)
+                .expect("旧 token 签名仍可验")
+                .jti
+                .expect("JWT 应包含 jti");
+            let key = format!("jwt:blacklist:{}", jti);
+            let value = dao.get(&key).await.expect("dao get 应成功");
+            assert!(value.is_some(), "refresh 后旧 token 的 jti 应被写入黑名单");
         }
     }
 }

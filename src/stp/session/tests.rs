@@ -3391,6 +3391,69 @@ mod suite {
             assert_eq!(value.unwrap(), "1");
         }
 
+        /// logout_by_login_id 后该主体全部 token 的 jti 写入黑名单
+        ///（Stateless 模式下管理员/改密路径登出，旧 access token 立即失效）。
+        #[serial]
+        #[tokio::test]
+        async fn logout_by_login_id_writes_all_jtis_to_blacklist() {
+            let (logic, dao) = make_jwt_revocation_logic(true);
+            let handler =
+                crate::protocol::jwt::JwtHandler::new("jwt-revocation-test-secret-32bytes!");
+            let token1 = logic
+                .login("user-bl", &LoginParams::default())
+                .await
+                .unwrap();
+            let token2 = logic
+                .login("user-bl", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let jti1 = handler
+                .verify(&token1)
+                .unwrap()
+                .jti
+                .expect("JWT 应包含 jti");
+            let jti2 = handler
+                .verify(&token2)
+                .unwrap()
+                .jti
+                .expect("JWT 应包含 jti");
+
+            logic
+                .logout_by_login_id("user-bl")
+                .await
+                .expect("logout_by_login_id 应成功");
+
+            for (label, jti) in [("token1", jti1), ("token2", jti2)] {
+                let key = format!("jwt:blacklist:{}", jti);
+                let value = dao.get(&key).await.unwrap();
+                assert!(value.is_some(), "{} 的 jti 应被写入黑名单", label);
+            }
+        }
+
+        /// revoke_token 后该 token 的 jti 写入黑名单。
+        #[serial]
+        #[tokio::test]
+        async fn revoke_token_writes_jti_to_blacklist() {
+            let (logic, dao) = make_jwt_revocation_logic(true);
+            let handler =
+                crate::protocol::jwt::JwtHandler::new("jwt-revocation-test-secret-32bytes!");
+            let token = logic
+                .login("user-rt", &LoginParams::default())
+                .await
+                .unwrap();
+            let jti = handler.verify(&token).unwrap().jti.expect("JWT 应包含 jti");
+
+            logic
+                .revoke_token(&token)
+                .await
+                .expect("revoke_token 应成功");
+
+            let key = format!("jwt:blacklist:{}", jti);
+            let value = dao.get(&key).await.unwrap();
+            assert!(value.is_some(), "revoke_token 后 jti 应被写入黑名单");
+        }
+
         /// 黑名单写失败时执行有界重试——前 2 次瞬时失败，第 3 次成功。
         #[tokio::test]
         async fn blacklist_write_retries_then_succeeds() {

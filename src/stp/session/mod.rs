@@ -445,6 +445,19 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()> {
+        // JWT 撤销黑名单（与 kickout 同款：Stateless 模式下改密/管理员登出后
+        // 旧 access token 必须立即失效，而非存活至自然过期）
+        #[cfg(feature = "protocol-jwt")]
+        {
+            let tokens = self.session.get_tokens_by_login_id(login_id);
+            for token in &tokens {
+                self.blacklist_jwt_jti(token).await;
+            }
+        }
+        // 权限判定缓存联动失效（回收角色/权限后 + 登出，旧 Allow 不得存续）
+        if let Err(e) = self.firewall.invalidate_login_cache(login_id).await {
+            tracing::warn!(error = %e, login_id, "invalidate_login_cache failed (does not affect the logout result)");
+        }
         self.session.logout_by_login_id(login_id).await?;
         // 按主体失效请求内登录身份缓存
         crate::stp::context::invalidate_login_identity_by_login_id(login_id);
@@ -468,6 +481,10 @@ impl SessionLogic for GarrisonLogicDefault {
             }
         }
         // kickout 语义等同 logout_by_login_id
+        // 权限判定缓存联动失效
+        if let Err(e) = self.firewall.invalidate_login_cache(login_id).await {
+            tracing::warn!(error = %e, login_id, "invalidate_login_cache failed (does not affect the kickout result)");
+        }
         self.session.logout_by_login_id(login_id).await?;
         // 按主体失效请求内登录身份缓存
         crate::stp::context::invalidate_login_identity_by_login_id(login_id);
@@ -499,6 +516,9 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn revoke_token(&self, token: &str) -> GarrisonResult<()> {
+        // JWT 撤销黑名单：Stateless 模式下销毁 session 不足以废止 JWT
+        #[cfg(feature = "protocol-jwt")]
+        self.blacklist_jwt_jti(token).await;
         // 销毁 Token-Session（幂等：token 不存在也返回 Ok）
         self.session.logout(token).await?;
         // 吊销后立即失效请求内登录身份缓存
