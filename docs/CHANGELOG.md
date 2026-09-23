@@ -17,6 +17,30 @@
 
 ### Added
 
+- **`protocol-qrlogin` 加固（security-audit-remediation）**：create 响应新增 `bind_token`（poll 第二票，仅下发 Web 端本人；qr_id 编码于公开二维码票据，双票兑换防肩窥/截图劫持）；`confirm` 强制确认者身份与扫码者一致（不匹配与 token 无效同错误返回，防枚举）；HMAC secret 强制 ≥32 字节（对齐 JWT HS256 下限）；scan/confirm 事件携带 App 端 IP/UA 上下文；模块文档补 login-CSRF 固有风险与缓解说明。
+- **`UserIdentifierRepository`（`app_user_identifier` 表）**：phone/email 登录标识的数据库级原子防重——`(id_type, id_value)` 主键唯一约束兜底并发注册，`register` 冲突回查返回 `RegisterOutcome::Taken { by_user_id }`。四方言迁移 `012_user_identifier.sql`。**装配边界**：框架登录/注册链路不自动调用，业务方需在注册/绑定流程显式装配 `register` 做防重（能力供给非自动生效）。
+- **权限缓存登出联动**：`GarrisonPermissionStrategy` 新增默认 no-op 的 `invalidate_login_cache`；`DefaultPermissionStrategy` 覆写为删除 `garrison:perm:cache:<tenant>:<login_id>:*`；`logout`/`kickout` 自动调用（权限回收后旧 Allow 不再存续至 300s TTL）。
+
+### Security
+
+- **XFF 解析改 rightmost-untrusted**：可信代理场景从「取最左值」改为「从右向左第一个不可信跳」——客户端预伪造 `X-Forwarded-For` 最左值不再能绕过限流/封禁（限流键与 `inject_client_ip` 统一走新解析）。
+- **qrlogin 4 端点纳入外网中间件栈**：axum merge 不继承 layer，qrlogin router 在 `external_router()` 中 merge 前显式挂载 rate_limit / inject_client_ip / inject_user_agent / audit_log（原装配下端点绕过全部限流与审计）。
+- **stp 密码登录接入账号维度爆破锁定**：`firewall-bruteforce` feature 下，`login_with_password` 前置锁定检查 + 失败计数（键 `bf:<login_id>:count`，5 次失败锁 300s；请求上下文可得 IP 时叠加 `bf:<ip>:*` 维度）+ 成功清零；用户不存在/密码错误/哈希格式异常均计入。**已知权衡**：对不存在用户名同样计数锁定（防「是否触发锁定」成为存在性预言机）——攻击者可持续锁死任意 login_id 300s，部署侧宜叠加验证码/风控；`hooks::reset`（`fw:*` 键）不覆盖 `bf:*` 键，锁仅靠 TTL 自然过期。
+- **改密/按主体登出写 JWT 黑名单**：`logout_by_login_id` / `revoke_token` / `revoke_all_sessions` 补齐 `blacklist_jwt_jti`（与 kickout 同模式）——Stateless 模式下改密后旧 access token 立即失效。
+- **旧 refresh 路径吊销旧 token**：`TokenLogic::refresh_token` 签发新 token 后将旧 token jti 写入黑名单（消除新旧双重有效窗口；带泄露重用检测的完整轮换仍推荐 `RefreshTokenRotation`）。
+- **API Key 全局 verify 默认禁用**：`ApiKeyHandler` 新增 `allow_global_verify`（默认 false）——`verify()` 经反向索引可跨命名空间校验任意 key，与租户隔离冲突；默认强制 `verify_with_namespace`，`rotate`/`update_last_used` 管理操作不受影响。
+- **哈希格式错误并入统一防枚举**：存量用户 password_hash 解析失败不再返回可区分的 `stp-unsupported-hash-format`（账号存在预言机），改与密码错误统一返回 `stp-invalid-password` 并计入失败计数。
+- **email 验证码错误日志脱敏**：error 日志中的全量邮箱改为掩码输出（对齐 SMS 侧 mask_phone，CWE-532）。
+- **Memory 限流后端部署警示**：`rate_limit_backend=Memory`（进程内计数）时配置校验输出 warn——多实例部署实际限额按实例数放大，须切 Redis。
+
+### Breaking
+
+- **QRLogin poll 必填 `bind_token`**：poll 请求体新增 `bind_token` 字段（create 响应下发）。迁移：Web 端保存 create 返回的 `bind_token` 并在每次轮询出示。
+- **OAuth2 空 `allowed_scopes` 语义反转（fail-open → fail-closed）**：空列表不再表示允许任意 scope，而是拒绝一切非空 scope 请求；需要任意 scope 的 client 显式配置 `allowed_scopes = ["*"]`。
+- **`ApiKeyHandler::verify()` 默认禁用**：返回 `apikey-global-verify-disabled`（提示改用 `verify_with_namespace`）；确有全局校验需求的部署经 `with_allow_global_verify(true)` 显式放开。
+- **`QrLoginService::new` 强制 secret ≥32 字节**：短于 32 字节构造返回 `qrlogin-secret-too-short`。
+- **错误码移除 `stp-unsupported-hash-format`**：并入 `stp-invalid-password`（依赖该错误码区分哈希格式异常的业务方需改按统一错误处理）。
+
 - **`protocol-qrlogin`：第一方扫码登录**：新增 `protocol::qrlogin` 模块（两票分离状态机：Web 端展示二维码、App 端扫码确认、Web 端兑换会话）。qr_ticket 采用 HMAC-SHA256 签名票据（`{64_hex}.{hmac_b64}`，与 SSO ticket 同格式），confirm_token 一次性原子消费（`get_and_delete`）且会话内仅存 SHA-256 摘要；`allowed_domains` 域名白名单（scan 阶段校验）压制二维码替换钓鱼（Quishing）；确认页摘要脱敏（UA 短标签，不下发原始 IP/完整 UA）。HTTP 侧新增 4 个端点（`POST /qrlogin/create|poll|scan|confirm`，经 `GarrisonAuthServer::with_qrlogin` 装配；scan/confirm 强制 Bearer App 会话）；poll 的 Confirmed 分支以服务端存储的确认者 login_id 原子兑换并经 `QrLoginSessionIssuer` 端口签发会话（与密码登录同路径，全量继承权限/踢下线/续期/审计）。新增 `GarrisonEvent::QrLoginCreated/Scanned/Confirmed/Cancelled` 事件（qr_id 掩码，audit 全变体穷尽接入）。
 
 ### Security
