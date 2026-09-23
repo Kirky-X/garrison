@@ -2166,7 +2166,7 @@ async fn login_with_password_user_not_found_returns_invalid_param() {
 
 /// 密码哈希格式不支持返回 InvalidParam。
 ///
-/// 注：此错误可泄露（不暴露用户是否存在），返回 "stp-unsupported-hash-format"。
+/// 注：与密码错误统一返回 "stp-invalid-password"（T019 防枚举，不泄露账号存在性）。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 #[tokio::test]
 #[serial]
@@ -2183,8 +2183,8 @@ async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
 
     let result = logic.login_with_password("1001", "any-password").await;
     assert!(
-        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-unsupported-hash-format::"),
-        "不支持的哈希格式应返回 InvalidParam(\"stp-unsupported-hash-format\")，实际: {:?}",
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+        "不支持的哈希格式应与密码错误统一返回 stp-invalid-password（T019），实际: {:?}",
         result
     );
 }

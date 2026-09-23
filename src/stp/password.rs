@@ -15,6 +15,8 @@ use super::GarrisonLogicDefault;
 use super::LoginParams;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use crate::constants::EventReason;
+#[cfg(feature = "firewall-bruteforce")]
+use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 #[cfg(all(
     feature = "listener",
@@ -24,6 +26,8 @@ use crate::error::{GarrisonError, GarrisonResult};
 use crate::listener::GarrisonEvent;
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
+#[cfg(feature = "firewall-bruteforce")]
+use std::sync::Arc;
 
 /// 密码逻辑 trait，定义密码登录契约。
 ///
@@ -91,6 +95,69 @@ static DUMMY_ARGON2_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new
         .expect("固定输入的 Argon2 hash 生成恒成功（H-1 时序对齐 dummy）")
 });
 
+// ============================================================================
+// 账号维度密码爆破锁定（firewall-bruteforce）
+// ============================================================================
+
+/// 账号维度失败计数键（与 strategy/hooks 的 `FW_ACCT_KEY_PREFIX` 同前缀语义）。
+#[cfg(feature = "firewall-bruteforce")]
+fn acct_count_key(login_id: &str) -> String {
+    format!(
+        "{}{}:count",
+        crate::constants::DaoKeyPrefix::BruteForce,
+        login_id
+    )
+}
+
+/// 账号维度锁定标记键。
+#[cfg(feature = "firewall-bruteforce")]
+fn acct_lock_key(login_id: &str) -> String {
+    format!(
+        "{}{}:lock",
+        crate::constants::DaoKeyPrefix::BruteForce,
+        login_id
+    )
+}
+
+/// 前置检查：账号处于锁定期内则拒绝（不消耗校验资源）。
+#[cfg(feature = "firewall-bruteforce")]
+async fn is_password_locked(dao: &Arc<dyn GarrisonDao>, login_id: &str) -> GarrisonResult<bool> {
+    dao.get(&acct_lock_key(login_id))
+        .await
+        .map(|v| v.is_some())
+        .map_err(|e| GarrisonError::Dao(format!("stp-password-lock-check::{}", e)))
+}
+
+/// 记录一次密码认证失败：窗口内原子递增，超阈值置锁定标记。
+#[cfg(feature = "firewall-bruteforce")]
+async fn record_password_failure(dao: &Arc<dyn GarrisonDao>, login_id: &str) -> GarrisonResult<()> {
+    use crate::strategy::firewall::brute_force::BruteForceConfig;
+    let cfg = BruteForceConfig::default();
+    let count = dao
+        .incr(&acct_count_key(login_id), cfg.window_seconds)
+        .await
+        .map_err(|e| GarrisonError::Dao(format!("stp-password-lock-incr::{}", e)))?;
+    // 达到阈值即锁（第 max_attempts 次失败后，下一次尝试无论凭证对错都被拒）
+    if count >= cfg.max_attempts as u64 {
+        dao.set(&acct_lock_key(login_id), "1", cfg.lock_seconds)
+            .await
+            .map_err(|e| GarrisonError::Dao(format!("stp-password-lock-set::{}", e)))?;
+    }
+    Ok(())
+}
+
+/// 登录成功后清零失败计数。
+#[cfg(feature = "firewall-bruteforce")]
+async fn reset_password_failures(dao: &Arc<dyn GarrisonDao>, login_id: &str) {
+    if let Err(e) = dao.delete(&acct_count_key(login_id)).await {
+        tracing::warn!(
+            login_id = login_id,
+            error = %e,
+            "password lockout reset-on-success failed (does not affect the login result)"
+        );
+    }
+}
+
 #[async_trait]
 impl PasswordLogic for GarrisonLogicDefault {
     /// 密码登录实现：校验密码后调用 [`login`](Self::login) 签发 token。
@@ -99,6 +166,16 @@ impl PasswordLogic for GarrisonLogicDefault {
     /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，真实原因记录在 tracing 日志。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     async fn login_with_password(&self, login_id: &str, password: &str) -> GarrisonResult<String> {
+        // 账号维度爆破锁定前置短路（firewall-bruteforce 启用时；未启用无锁定）
+        #[cfg(feature = "firewall-bruteforce")]
+        if is_password_locked(self.session.dao(), login_id).await? {
+            tracing::warn!(login_id = login_id, "login_with_password: account locked");
+            return Err(GarrisonError::FirewallBlocked(format!(
+                "stp-password-account-locked::{}",
+                login_id
+            )));
+        }
+
         let hasher = self.password_hasher.as_ref().ok_or_else(|| {
             GarrisonError::Config("stp-password-hasher-not-configured::".to_string())
         })?;
@@ -152,16 +229,22 @@ impl PasswordLogic for GarrisonLogicDefault {
                     })
                     .await;
                 }
+                // 失败计数：用户不存在同样计入（防用户名枚举爆破）
+                #[cfg(feature = "firewall-bruteforce")]
+                if let Err(e) = record_password_failure(self.session.dao(), login_id).await {
+                    tracing::warn!(login_id = login_id, error = %e,
+                        "password lockout record_failure failed (does not affect the login result)");
+                }
                 return Err(GarrisonError::InvalidParam(
                     "stp-invalid-password::".to_string(),
                 ));
             },
         };
 
-        // 2. 校验密码（哈希格式不支持返回 "stp-unsupported-hash-format"，可泄露）
+        // 2. 校验密码（哈希格式不支持与密码错误统一返回，防账号存在预言机——T019）
         // P2: Argon2/bcrypt 为 50-300ms 级纯 CPU 慢哈希，包 spawn_blocking
         // 避免登录风暴期间阻塞 tokio worker、拖慢同进程全部请求。
-        let verified = tokio::task::spawn_blocking({
+        let verified = match tokio::task::spawn_blocking({
             let hasher = std::sync::Arc::clone(hasher);
             let password = password.to_string();
             let password_hash = user.password_hash.clone();
@@ -169,15 +252,38 @@ impl PasswordLogic for GarrisonLogicDefault {
         })
         .await
         .map_err(|e| GarrisonError::Internal(format!("stp-password-blocking::{}", e)))?
-        .map_err(|e| {
-            tracing::warn!(
-                login_id = login_id,
-                reason = EventReason::HashFormatError.as_str(),
-                error = %e,
-                "login_with_password: unsupported password hash format"
-            );
-            GarrisonError::InvalidParam("stp-unsupported-hash-format::".to_string())
-        })?;
+        {
+            Ok(v) => v,
+            Err(hash_err) => {
+                // 哈希格式非法（存量数据异常）：统一返回 invalid-password，
+                // 不以专用错误码泄露账号存在性。畸形哈希使 Argon2 解析处快速失败
+                //（毫秒级），此处补一次等价开销的 dummy verify 对齐「密码错误」
+                // 分支的耗时轮廓（复查修复：消除时序双峰）。
+                let _verified_dummy = tokio::task::spawn_blocking({
+                    let hasher = std::sync::Arc::clone(hasher);
+                    let password = password.to_string();
+                    move || hasher.verify(&password, &DUMMY_ARGON2_HASH)
+                })
+                .await
+                .map_err(|e| GarrisonError::Internal(format!("stp-password-blocking::{}", e)))?;
+                tracing::warn!(
+                    login_id = login_id,
+                    reason = EventReason::HashFormatError.as_str(),
+                    error = %hash_err,
+                    "login_with_password: unsupported password hash format"
+                );
+                // 哈希格式非法同样计入失败计数（T013 接线）
+                #[cfg(feature = "firewall-bruteforce")]
+                if let Err(record_err) = record_password_failure(self.session.dao(), login_id).await
+                {
+                    tracing::warn!(login_id = login_id, error = %record_err,
+                        "password lockout record_failure failed (does not affect the login result)");
+                }
+                return Err(GarrisonError::InvalidParam(
+                    "stp-invalid-password::".to_string(),
+                ));
+            },
+        };
 
         if !verified {
             // 日志和事件统一为 "invalid_credentials"，
@@ -197,10 +303,20 @@ impl PasswordLogic for GarrisonLogicDefault {
                 })
                 .await;
             }
+            // 失败计数：密码错误
+            #[cfg(feature = "firewall-bruteforce")]
+            if let Err(e) = record_password_failure(self.session.dao(), login_id).await {
+                tracing::warn!(login_id = login_id, error = %e,
+                    "password lockout record_failure failed (does not affect the login result)");
+            }
             return Err(GarrisonError::InvalidParam(
                 "stp-invalid-password::".to_string(),
             ));
         }
+
+        // 密码校验通过：清零失败计数
+        #[cfg(feature = "firewall-bruteforce")]
+        reset_password_failures(self.session.dao(), login_id).await;
 
         // 3. 调用 login 签发 token（触发 plugin/listener auto-wire）
         self.login(login_id, &LoginParams::default()).await
@@ -587,9 +703,8 @@ mod tests {
             );
         }
 
-        /// 哈希格式不支持 → 返回 InvalidParam("stp-unsupported-hash-format")。
-        ///
-        /// 覆盖 password.rs 中 `hasher.verify(...).map_err(...)` 返回 Err 路径。
+        /// 哈希格式不支持（存量数据异常）→ 与密码错误统一返回
+        /// InvalidParam("stp-invalid-password")（T019：消除账号存在预言机）。
         #[tokio::test]
         async fn login_with_password_unsupported_hash_format_returns_error() {
             let logic = make_logic_without_creds();
@@ -605,8 +720,8 @@ mod tests {
 
             let result = logic.login_with_password("1002", "any-password").await;
             assert!(
-                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-unsupported-hash-format::"),
-                "哈希格式不支持应返回 InvalidParam(\"stp-unsupported-hash-format\")，实际: {:?}",
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+                "哈希格式不支持应与密码错误统一返回 stp-invalid-password，实际: {:?}",
                 result
             );
         }
@@ -725,6 +840,49 @@ mod tests {
                 Err(other) => panic!("期望 Dao 错误，实际: {:?}", other),
                 Ok(_) => panic!("期望错误传播，实际返回 Ok"),
             }
+        }
+
+        /// 账号维度爆破锁定：连续失败达阈值（BruteForceConfig::default 5 次）后，
+        /// 正确密码也被拒（FirewallBlocked）；锁定期内不再消耗校验资源。
+        #[cfg(all(
+            feature = "firewall-bruteforce",
+            feature = "account-credential",
+            feature = "db-sqlite"
+        ))]
+        #[tokio::test]
+        async fn login_with_password_locks_account_after_max_failures() {
+            use crate::account::credential::{Argon2Hasher, PasswordHasher};
+            use crate::stp::mock::MockUserRepository;
+            use crate::strategy::firewall::brute_force::BruteForceConfig;
+
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let correct = "correct-horse-battery";
+            let hash = hasher.hash(correct).expect("argon2 hash 生成应成功");
+            let repo = MockUserRepository::new();
+            repo.insert(make_user_row("alice", &hash));
+            let logic = logic
+                .with_password_hasher(Arc::clone(&hasher) as Arc<dyn PasswordHasher>)
+                .with_user_repository(Arc::new(repo));
+
+            let cfg = BruteForceConfig::default();
+            for i in 0..cfg.max_attempts {
+                let result = logic.login_with_password("alice", "wrong-password").await;
+                assert!(
+                    matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+                    "前 {} 次失败应为统一 invalid-password，实际: {:?}",
+                    i + 1,
+                    result
+                );
+            }
+
+            // 阈值后的正确密码：锁定拒绝
+            let result = logic.login_with_password("alice", correct).await;
+            assert!(
+                matches!(result, Err(GarrisonError::FirewallBlocked(ref msg)) if msg.contains("stp-password-account-locked")),
+                "超过阈值后正确密码也应被锁定拒绝，实际: {:?}",
+                result
+            );
         }
     }
 }
