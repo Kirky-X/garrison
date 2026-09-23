@@ -651,7 +651,10 @@ mod tests {
             "SELECT count(*) AS cnt FROM sqlite_master WHERE type='table' AND name LIKE 'app_%'",
         )
         .await;
-        assert_eq!(count, 10, "应有 10 张 app_ 前缀的表");
+        assert_eq!(
+            count, 11,
+            "应有 11 张 app_ 前缀的表（012 新增 app_user_identifier）"
+        );
     }
 
     /// Scenario: 迁移后 app_user 表可正常 CRUD（端到端验证）。

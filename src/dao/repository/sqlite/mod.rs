@@ -34,6 +34,7 @@ mod role_repo;
 mod session_repo;
 mod user_device_repo;
 mod user_ext_repo;
+mod user_identifier_repo;
 mod user_repo;
 mod user_role_repo;
 
@@ -127,6 +128,11 @@ pub struct DbnexusLoginLogRepository {
 
 /// SQLite 用户扩展字段表 Repository 实现。
 pub struct DbnexusUserExtRepository {
+    pool: DbPool,
+}
+
+/// SQLite 登录标识表 Repository 实现。
+pub struct DbnexusUserIdentifierRepository {
     pool: DbPool,
 }
 
@@ -346,5 +352,39 @@ mod tests {
             "返回的 id 应为 UUID v4，实际: {}",
             id
         );
+    }
+
+    /// T023：同手机号二次注册 → Taken{by_user_id}；数据库唯一约束兜底并发。
+    /// （012_user_identifier 迁移由 setup_db 自动执行）
+    #[tokio::test]
+    async fn user_identifier_register_conflict_returns_taken() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserIdentifierRepository::new(pool);
+
+        let first = repo
+            .register(0, "phone", "13800001234", "user-aaa")
+            .await
+            .unwrap();
+        assert_eq!(first, RegisterOutcome::Registered);
+
+        // 换 user_id 二次注册同一手机号：唯一约束拒绝 → 回查归属
+        let second = repo
+            .register(0, "phone", "13800001234", "user-bbb")
+            .await
+            .unwrap();
+        assert_eq!(
+            second,
+            RegisterOutcome::Taken {
+                by_user_id: "user-aaa".to_string()
+            }
+        );
+
+        // find_owner 返回当前归属
+        let owner = repo.find_owner("phone", "13800001234").await.unwrap();
+        assert_eq!(owner.as_deref(), Some("user-aaa"));
+
+        // 未注册标识 → None
+        let none = repo.find_owner("phone", "13900000000").await.unwrap();
+        assert!(none.is_none());
     }
 }

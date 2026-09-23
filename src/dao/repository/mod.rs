@@ -666,6 +666,45 @@ pub trait UserExtRepository: Send + Sync {
     ) -> GarrisonResult<Vec<UserExtRow>>;
 }
 
+// ============================================================================
+// 登录标识唯一性（app_user_identifier）
+// ============================================================================
+
+/// 标识注册结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RegisterOutcome {
+    /// 注册成功（该标识此前未被占用）。
+    Registered,
+    /// 标识已被占用（携带占用者 user_id）。
+    Taken {
+        /// 当前占用该标识的用户 ID。
+        by_user_id: String,
+    },
+}
+
+/// 登录标识 Repository trait。
+///
+/// 提供 phone/email 等登录标识的**数据库级原子防重**：`(id_type, id_value)` 为主键，
+/// 数据库唯一约束兜底并发注册。`register` 返回 [`RegisterOutcome`] 供业务方决定
+/// 冲突语义（拒绝注册 / 引导登录 / 走账号合并流程）。
+#[async_trait::async_trait]
+pub trait UserIdentifierRepository: Send + Sync {
+    /// 注册登录标识。
+    ///
+    /// `id_value` 由调用方归一化（框架提供 trim；格式校验属业务层）。
+    /// INSERT 冲突时回查归属返回 `Taken { by_user_id }`（不泄露其他记录内容）。
+    async fn register(
+        &self,
+        tenant_id: i64,
+        id_type: &str,
+        id_value: &str,
+        user_id: &str,
+    ) -> GarrisonResult<RegisterOutcome>;
+
+    /// 查询标识当前归属（未注册返回 `Ok(None)`）。
+    async fn find_owner(&self, id_type: &str, id_value: &str) -> GarrisonResult<Option<String>>;
+}
+
 /// 单用户最大设备数。
 ///
 /// `register_device` 在 (tenant_id, login_id) 下设备数达到此值时拒绝新注册。

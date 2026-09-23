@@ -1283,9 +1283,10 @@ async fn acc_repo_023_migrate_creates_all_ten_core_tables() {
             "app_user",
             "app_user_device",
             "app_user_ext",
+            "app_user_identifier",
             "app_user_role",
         ],
-        "应创建 10 张 app_ 前缀核心表，实际: {:?}",
+        "应创建 11 张 app_ 前缀核心表（012 新增 app_user_identifier），实际: {:?}",
         tables
     );
 
