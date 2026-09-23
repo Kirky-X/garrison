@@ -68,8 +68,7 @@ impl EmailVerificationService {
             {
                 tracing::error!(
                     error = %re,
-                    email = crate::secure::masking::SensitiveDataMasker::new()
-                .mask_value(&normalized, &crate::secure::masking::MaskType::Email),
+                    email = mask_email_for_log(&normalized),
                     "rollback rate limiter counter failed after code store failure"
                 );
             }
@@ -88,8 +87,7 @@ impl EmailVerificationService {
                 .rollback_inner_with(&normalized, &windows)
                 .await
             {
-                tracing::error!(error = %e, email = crate::secure::masking::SensitiveDataMasker::new()
-                .mask_value(&normalized, &crate::secure::masking::MaskType::Email), "rollback rate limiter counter failed during channel recycling");
+                tracing::error!(error = %e, email = mask_email_for_log(&normalized), "rollback rate limiter counter failed during channel recycling");
             }
             // 回滚未验证计数
             if let Err(e) = EmailRateLimiter::decrement_counter(&*self.dao, &unverified_key).await {
@@ -116,8 +114,7 @@ impl EmailVerificationService {
                 .rollback_inner_with(&normalized, &windows)
                 .await
             {
-                tracing::error!(error = %re, email = crate::secure::masking::SensitiveDataMasker::new()
-                .mask_value(&normalized, &crate::secure::masking::MaskType::Email), "rollback rate limiter counter failed after send failure");
+                tracing::error!(error = %re, email = mask_email_for_log(&normalized), "rollback rate limiter counter failed after send failure");
             }
             if let Err(re) = self.dao.delete(&code_key).await {
                 tracing::error!(error = %re, key = %code_key, "delete code failed after send failure");
@@ -198,4 +195,19 @@ pub(super) fn constant_time_eq(a: &str, b: &str) -> bool {
         result |= x ^ y;
     }
     result == 0
+}
+
+/// 邮箱脱敏：保留首字符 + `***` + `@` + 域名；无 `@` 时整体以 `*` 屏蔽。
+///
+/// 模块内本地实现（对齐 SMS 侧 `mask_phone` 先例）：`secure-masking` 是独立
+/// feature，`email-verification` 不传递它——跨模块引用会在单 feature 组合下
+/// 编译失败（diting C-1 实测复现）。
+fn mask_email_for_log(email: &str) -> String {
+    match email.find('@') {
+        Some(at_pos) if at_pos > 0 => {
+            let first = email[..at_pos].chars().next().unwrap_or('*');
+            format!("{first}***{}", &email[at_pos..])
+        },
+        _ => "*".repeat(email.chars().count()),
+    }
 }
