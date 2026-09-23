@@ -2368,11 +2368,11 @@ mod tests {
         );
     }
 
-    /// 空 allowed_scopes 的客户端允许任意 scope。
+    /// 空 allowed_scopes 的客户端 fail-closed：任意 scope 请求被拒（T016）。
     #[tokio::test]
-    async fn handle_client_credentials_empty_allowed_scopes_allows_any() {
+    async fn handle_client_credentials_empty_allowed_scopes_fail_closed() {
         let (handler, _) = make_handler();
-        // 空 allowed_scopes 表示允许任意 scope
+        // 空 allowed_scopes = 不允许任何 scope（fail-closed；需显式配置或用 ["*"]）
         let client = OAuth2Client::new(
             "cc-empty-scopes",
             "secret-123",
@@ -2395,10 +2395,44 @@ mod tests {
             username: None,
             password: None,
         };
+        let err = handler.handle(&req).await.unwrap_err();
+        assert!(
+            err.to_string().contains("invalid-scope"),
+            "空 allowed_scopes 应拒绝任意 scope（fail-closed），实际: {}",
+            err
+        );
+    }
+
+    /// allowed_scopes = ["*"] 通配允许任意 scope（替代旧空列表语义，T016）。
+    #[tokio::test]
+    async fn handle_client_credentials_wildcard_scope_allows_any() {
+        let (handler, _) = make_handler();
+        let client = OAuth2Client::new(
+            "cc-wildcard-scopes",
+            "secret-123",
+            vec!["https://app.example.com/cb".into()],
+            vec![GrantType::ClientCredentials],
+            vec!["*".into()],
+        )
+        .unwrap();
+        handler.store.create(client).await.unwrap();
+
+        let req = TokenRequest {
+            grant_type: "client_credentials".into(),
+            client_id: "cc-wildcard-scopes".into(),
+            client_secret: "secret-123".into(),
+            code: None,
+            redirect_uri: None,
+            code_verifier: None,
+            refresh_token: None,
+            scope: Some("any-scope".into()),
+            username: None,
+            password: None,
+        };
         let resp = handler
             .handle(&req)
             .await
-            .expect("空 allowed_scopes 应允许任意 scope");
+            .expect("通配 allowed_scopes 应允许任意 scope");
         assert_eq!(resp.scope.as_deref(), Some("any-scope"));
     }
 

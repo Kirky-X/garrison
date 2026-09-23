@@ -173,24 +173,29 @@ impl OAuth2Client {
 
     /// 校验是否允许指定 scope。
     ///
-    /// 空scopes 列表表示允许任意 scope。
+    /// fail-closed：空 allowed_scopes 表示不允许任何 scope（需显式配置）；
+    /// `"*"` 通配元素表示允许任意 scope（替代旧版空列表语义）。
     pub fn allows_scope(&self, scope: &str) -> bool {
-        self.scopes.is_empty() || self.scopes.iter().any(|s| s == scope)
+        self.scopes.iter().any(|s| s == "*" || s == scope)
     }
 
     /// 批量校验 scope 列表是否全部在 allowed_scopes 内。
     ///
-    /// 空 allowed_scopes 表示允许任意 scope。
+    /// fail-closed：空 allowed_scopes 拒绝一切非空 scope 请求；
+    /// `allowed_scopes = ["*"]` 表示允许任意 scope。
     /// 任一 scope 不在 allowed_scopes 内则返回 `invalid_scope` 错误。
     ///
     /// # 参数
     /// - `scopes`: 待校验的 scope 列表
     ///
     /// # 返回
-    /// - `Ok(())`: 所有 scope 均允许（或 allowed_scopes 为空）
+    /// - `Ok(())`: 所有 scope 均允许（或请求 scope 为空）
     /// - `Err(GarrisonError::OAuth2)`: 存在不允许的 scope，错误消息含 `invalid_scope`
     pub fn validate_scopes(&self, scopes: &[String]) -> GarrisonResult<()> {
-        if self.scopes.is_empty() {
+        if scopes.is_empty() {
+            return Ok(());
+        }
+        if self.scopes.iter().any(|s| s == "*") {
             return Ok(());
         }
         for s in scopes {
@@ -592,9 +597,35 @@ mod tests {
     }
 
     #[test]
-    fn allows_scope_empty_means_any() {
+    fn allows_scope_empty_means_none_fail_closed() {
         let client = OAuth2Client::new("c1", "s", vec![], vec![], vec![]).unwrap();
-        assert!(client.allows_scope("anything"));
+        assert!(
+            !client.allows_scope("anything"),
+            "空 allowed_scopes 必须拒绝一切 scope（fail-closed）"
+        );
+    }
+
+    #[test]
+    fn validate_scopes_empty_request_ok_in_all_client_states() {
+        // R-oauth2-001 第 4 条（复查补证）：请求 scope 为空时无论 client
+        // allowed_scopes 为空/通配/显式列表均 Ok
+        for scopes in [Vec::new(), vec!["*".to_string()], vec!["read".to_string()]] {
+            let client = OAuth2Client::new("c1", "s", vec![], vec![], scopes).unwrap();
+            let empty: Vec<String> = Vec::new();
+            assert!(
+                client.validate_scopes(&empty).is_ok(),
+                "空 scope 请求应对任意 client 配置放行"
+            );
+        }
+    }
+
+    #[test]
+    fn allows_scope_wildcard_means_any() {
+        let client = OAuth2Client::new("c1", "s", vec![], vec![], vec!["*".into()]).unwrap();
+        assert!(
+            client.allows_scope("anything"),
+            "\"*\" 通配应允许任意 scope"
+        );
     }
 
     #[test]
