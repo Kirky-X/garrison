@@ -20,27 +20,21 @@ use base64::Engine;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 /// HMAC-SHA256 类型别名（qr_ticket 签名）。
 type HmacSha256 = Hmac<Sha256>;
 
-/// 本地常量时间字节串比较（bind_token 绑定比对用；避免引入 secure feature 依赖）。
-fn ct_eq_bytes(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 /// 会话存储 key 前缀。
 const SESSION_KEY_PREFIX: &str = "garrison:qrlogin:session:";
 /// confirm_token 存储 key 前缀。
 const CONFIRM_KEY_PREFIX: &str = "garrison:qrlogin:confirm:";
+/// 票据形态校验：64 位十六进制（`random_hex64` 的签发形态）。
+fn is_hex64(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
 /// bind_token（poll 第二票）存储 key 前缀。
 const BIND_KEY_PREFIX: &str = "garrison:qrlogin:bind:";
 
@@ -444,6 +438,11 @@ impl QrLoginService {
     /// `get_and_delete` 原子消费——兑换成功的同一次调用消费第二票，并发/重放
     /// 的输家一律见 `Expired`（不向匿名调用方泄露区分度）。
     pub async fn poll(&self, qr_id: &str, bind_token: &str) -> GarrisonResult<QrLoginPollOutcome> {
+        // 票据形态校验（匿名端点，无区分度拒绝）：qr_id/bind_token 均为签发时的
+        // 64-hex——超长/恶意串不得成为 DAO 键
+        if !is_hex64(qr_id) || !is_hex64(bind_token) {
+            return Ok(QrLoginPollOutcome::Expired);
+        }
         let Some((data, _)) = self.load_session_with_ttl(qr_id).await? else {
             return Ok(QrLoginPollOutcome::Expired);
         };
@@ -460,7 +459,7 @@ impl QrLoginService {
                     .await?
             };
             Ok::<_, crate::error::GarrisonError>(matches!(bound,
-                    Some(b) if ct_eq_bytes(b.as_bytes(), qr_id.as_bytes())))
+                    Some(b) if bool::from(b.as_bytes().ct_eq(qr_id.as_bytes()))))
         };
 
         match data.status {

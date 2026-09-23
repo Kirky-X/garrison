@@ -64,6 +64,7 @@ wechat-redirect-uri-must-be-https = 微信 redirect_uri 必须为 https URL
 
 # --- 第一方扫码登录（qrlogin）---
 qrlogin-secret-empty = 扫码登录 HMAC 密钥不能为空
+qrlogin-secret-too-short = 扫码登录 HMAC 密钥不能为空
 qrlogin-session-not-found = 扫码登录会话不存在
 qrlogin-session-expired = 扫码登录会话已过期
 qrlogin-invalid-ticket = 扫码登录票据签名无效

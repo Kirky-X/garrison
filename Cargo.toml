@@ -333,7 +333,7 @@ protocol-temp = []
 # protocol-qrlogin：第一方扫码登录（两票分离状态机 + HMAC 签名票据，Web 端扫码 App 确认）。
 # dep:hmac + dep:base64：qr_ticket 的 `{64_hex}.{hmac_b64}` HMAC-SHA256 签名（与 protocol-sso 同格式）；
 # dep:sha2：confirm_token 的 SHA-256 存储摘要（DAO 泄露不可反推 token）；随机源复用 base 依赖 uuid。
-protocol-qrlogin = ["dep:sha2", "dep:hmac", "dep:base64"]
+protocol-qrlogin = ["dep:sha2", "dep:hmac", "dep:base64", "dep:subtle"]
 # loom-test：一次性凭证原子消费的 loom 交错穷举测试（默认关；不进 CI 常规链）。
 # 触发：cargo test --lib --features protocol-temp,loom-test protocol::temp
 loom-test = ["dep:loom"]

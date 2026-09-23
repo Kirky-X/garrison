@@ -64,6 +64,7 @@ wechat-redirect-uri-must-be-https = WeChat redirect_uri must be an https URL
 
 # --- First-party QR code login (qrlogin) ---
 qrlogin-secret-empty = QR login HMAC secret must not be empty
+qrlogin-secret-too-short = QR login HMAC secret must be at least 32 bytes
 qrlogin-session-not-found = QR login session not found
 qrlogin-session-expired = QR login session has expired
 qrlogin-invalid-ticket = QR login ticket signature is invalid

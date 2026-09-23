@@ -99,21 +99,26 @@ static DUMMY_ARGON2_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new
 // 账号维度密码爆破锁定（firewall-bruteforce）
 // ============================================================================
 
-/// 账号维度失败计数键（与 strategy/hooks 的 `FW_ACCT_KEY_PREFIX` 同前缀语义）。
+/// 账号维度失败计数键。
+///
+/// 键空间说明：`bf:acct:<login_id>:*` 与 brute_force.rs 的 IP 维度（`bf:<ip>:*`）
+/// 同属 `DaoKeyPrefix::BruteForce` 但以 `acct:` 段隔离（登录方可控的 login_id
+/// 不得污染 IP 计数键）；与 hooks 的 `fw:acct:*` **无关**——`hooks::reset` 不覆盖
+/// 本键，解锁仅靠 TTL 自然过期或手动删除 `bf:acct:<login_id>:lock`。
 #[cfg(feature = "firewall-bruteforce")]
 fn acct_count_key(login_id: &str) -> String {
     format!(
-        "{}{}:count",
+        "{}acct:{}:count",
         crate::constants::DaoKeyPrefix::BruteForce,
         login_id
     )
 }
 
-/// 账号维度锁定标记键。
+/// 账号维度锁定标记键（前缀语义见 [`acct_count_key`]）。
 #[cfg(feature = "firewall-bruteforce")]
 fn acct_lock_key(login_id: &str) -> String {
     format!(
-        "{}{}:lock",
+        "{}acct:{}:lock",
         crate::constants::DaoKeyPrefix::BruteForce,
         login_id
     )
@@ -166,14 +171,23 @@ impl PasswordLogic for GarrisonLogicDefault {
     /// 安全约束：用户不存在与密码错误统一返回 `InvalidParam("stp-invalid-password")`，真实原因记录在 tracing 日志。
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     async fn login_with_password(&self, login_id: &str, password: &str) -> GarrisonResult<String> {
-        // 账号维度爆破锁定前置短路（firewall-bruteforce 启用时；未启用无锁定）
+        // 账号维度爆破锁定前置短路（firewall-bruteforce 启用时；未启用无锁定）。
+        // 姿态：锁定检查失败降级放行（与 record/reset 的 warn 降级一致）——锁定是
+        // 加速器，最终防线是密码校验本身；fail-closed 会把 DAO 抖动放大为登录全拒。
         #[cfg(feature = "firewall-bruteforce")]
-        if is_password_locked(self.session.dao(), login_id).await? {
-            tracing::warn!(login_id = login_id, "login_with_password: account locked");
-            return Err(GarrisonError::FirewallBlocked(format!(
-                "stp-password-account-locked::{}",
-                login_id
-            )));
+        match is_password_locked(self.session.dao(), login_id).await {
+            Ok(true) => {
+                tracing::warn!(login_id = login_id, "login_with_password: account locked");
+                return Err(GarrisonError::FirewallBlocked(format!(
+                    "stp-password-account-locked::{}",
+                    login_id
+                )));
+            },
+            Err(e) => {
+                tracing::warn!(login_id = login_id, error = %e,
+                    "password lockout check failed, degrading open (final defense is password verify)");
+            },
+            Ok(false) => {},
         }
 
         let hasher = self.password_hasher.as_ref().ok_or_else(|| {
@@ -327,10 +341,94 @@ impl PasswordLogic for GarrisonLogicDefault {
 mod tests {
     use super::*;
     use crate::config::GarrisonConfig;
+    use crate::dao::repository::UserRow;
     use crate::error::GarrisonResult;
+    use crate::session::GarrisonSession;
     use crate::stp::core::GarrisonCore;
+    use crate::stp::mock::{MockDao, MockFirewall};
     use crate::stp::session::SessionLogic;
+    use crate::strategy::GarrisonPermissionStrategy;
     use std::sync::Arc;
+
+    /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
+    /// 位于 mod tests 顶层：供 default_impl_coverage 与顶层锁定回归测试共用
+    /// （diting B7——锁定测试不能依赖 listener 门）。
+    fn make_logic_without_creds() -> GarrisonLogicDefault {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+        let mut config = GarrisonConfig::default_config();
+        config.throw_on_not_login = false;
+        config.token_style = "uuid".to_string();
+        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+            has_permission: true,
+            has_role: true,
+        });
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+    }
+
+    fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {
+        UserRow {
+            id: format!("u-{}", login_id),
+            username: login_id.to_string(),
+            password_hash: password_hash.to_string(),
+            status: "active".to_string(),
+            tenant_id: 0,
+            created_at: "2026-07-04T00:00:00Z".to_string(),
+            updated_at: "2026-07-04T00:00:00Z".to_string(),
+            last_login_at: None,
+        }
+    }
+
+    /// 账号维度爆破锁定：连续失败达阈值（BruteForceConfig::default 5 次）后，
+    /// 正确密码也被拒（FirewallBlocked）；锁定期内不再消耗校验资源。
+    // 位于 mod tests 顶层而非 default_impl_coverage（后者 cfg 含 listener）——
+    // 锁定回归在最小 feature 组合（无 listener）下也必须编译执行（diting B7）。
+    #[cfg(all(
+        feature = "firewall-bruteforce",
+        feature = "account-credential",
+        feature = "db-sqlite"
+    ))]
+    #[tokio::test]
+    async fn login_with_password_locks_account_after_max_failures() {
+        use crate::account::credential::{Argon2Hasher, PasswordHasher};
+        use crate::strategy::firewall::brute_force::BruteForceConfig;
+
+        let logic = make_logic_without_creds();
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+        let correct = "correct-horse-battery";
+        let hash = hasher.hash(correct).expect("argon2 hash 生成应成功");
+        let repo = crate::stp::mock::MockUserRepository::new();
+        repo.insert(make_user_row("alice", &hash));
+        let logic = logic
+            .with_password_hasher(Arc::clone(&hasher) as Arc<dyn PasswordHasher>)
+            .with_user_repository(Arc::new(repo));
+
+        let cfg = BruteForceConfig::default();
+        for i in 0..cfg.max_attempts {
+            let result = logic.login_with_password("alice", "wrong-password").await;
+            assert!(
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+                "前 {} 次失败应为统一 invalid-password，实际: {:?}",
+                i + 1,
+                result
+            );
+        }
+
+        // 阈值后的正确密码：锁定拒绝
+        let result = logic.login_with_password("alice", correct).await;
+        assert!(
+            matches!(result, Err(GarrisonError::FirewallBlocked(ref msg)) if msg.contains("stp-password-account-locked")),
+            "超过阈值后正确密码也应被锁定拒绝，实际: {:?}",
+            result
+        );
+    }
 
     /// 最小 mock：实现 `GarrisonCore` + `SessionLogic`（9 必需方法）。
     /// `PasswordLogic` 1 个方法有默认实现，空 impl 即可获得默认行为。
@@ -459,13 +557,9 @@ mod tests {
     mod default_impl_coverage {
         use super::*;
         use crate::account::credential::{Argon2Hasher, PasswordHasher};
-        use crate::config::GarrisonConfig;
-        use crate::dao::repository::{NewUser, UpdateUser, UserListRow, UserRepository, UserRow};
-        use crate::dao::GarrisonDao;
+        use crate::dao::repository::{NewUser, UpdateUser, UserListRow, UserRepository};
         use crate::listener::{GarrisonEvent, GarrisonListener, GarrisonListenerManager};
-        use crate::session::GarrisonSession;
-        use crate::stp::mock::{MockDao, MockFirewall, MockUserRepository};
-        use crate::strategy::GarrisonPermissionStrategy;
+        use crate::stp::mock::MockUserRepository;
         use async_trait::async_trait;
         use parking_lot::Mutex;
         use std::sync::Arc;
@@ -493,40 +587,6 @@ mod tests {
                 self.events.lock().push(event.clone());
                 Ok(())
             }
-        }
-
-        fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {
-            UserRow {
-                id: format!("u-{}", login_id),
-                username: login_id.to_string(),
-                password_hash: password_hash.to_string(),
-                status: "active".to_string(),
-                tenant_id: 0,
-                created_at: "2026-07-04T00:00:00Z".to_string(),
-                updated_at: "2026-07-04T00:00:00Z".to_string(),
-                last_login_at: None,
-            }
-        }
-
-        /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
-        fn make_logic_without_creds() -> GarrisonLogicDefault {
-            let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-            let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
-            let mut config = GarrisonConfig::default_config();
-            config.throw_on_not_login = false;
-            config.token_style = "uuid".to_string();
-            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
-                has_permission: true,
-                has_role: true,
-            });
-            GarrisonLogicDefault::new(
-                session,
-                Arc::new(config),
-                firewall,
-                Arc::new(crate::account::disable::DefaultDisableRepository::new(
-                    dao.clone(),
-                )),
-            )
         }
 
         /// 未注入 password_hasher 时返回 Config("stp-password-hasher-not-configured")。
@@ -842,47 +902,7 @@ mod tests {
             }
         }
 
-        /// 账号维度爆破锁定：连续失败达阈值（BruteForceConfig::default 5 次）后，
-        /// 正确密码也被拒（FirewallBlocked）；锁定期内不再消耗校验资源。
-        #[cfg(all(
-            feature = "firewall-bruteforce",
-            feature = "account-credential",
-            feature = "db-sqlite"
-        ))]
-        #[tokio::test]
-        async fn login_with_password_locks_account_after_max_failures() {
-            use crate::account::credential::{Argon2Hasher, PasswordHasher};
-            use crate::stp::mock::MockUserRepository;
-            use crate::strategy::firewall::brute_force::BruteForceConfig;
-
-            let logic = make_logic_without_creds();
-            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
-            let correct = "correct-horse-battery";
-            let hash = hasher.hash(correct).expect("argon2 hash 生成应成功");
-            let repo = MockUserRepository::new();
-            repo.insert(make_user_row("alice", &hash));
-            let logic = logic
-                .with_password_hasher(Arc::clone(&hasher) as Arc<dyn PasswordHasher>)
-                .with_user_repository(Arc::new(repo));
-
-            let cfg = BruteForceConfig::default();
-            for i in 0..cfg.max_attempts {
-                let result = logic.login_with_password("alice", "wrong-password").await;
-                assert!(
-                    matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
-                    "前 {} 次失败应为统一 invalid-password，实际: {:?}",
-                    i + 1,
-                    result
-                );
-            }
-
-            // 阈值后的正确密码：锁定拒绝
-            let result = logic.login_with_password("alice", correct).await;
-            assert!(
-                matches!(result, Err(GarrisonError::FirewallBlocked(ref msg)) if msg.contains("stp-password-account-locked")),
-                "超过阈值后正确密码也应被锁定拒绝，实际: {:?}",
-                result
-            );
-        }
+        // 账号维度爆破锁定回归测试移至 mod tests 顶层（diting B7）——
+        // 本嵌套模块 cfg 含 listener，最小 feature 组合下测试不得随之消失。
     }
 }

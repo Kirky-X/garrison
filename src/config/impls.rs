@@ -522,7 +522,7 @@ impl GarrisonConfig {
         {
             tracing::warn!(
                 backend = "memory",
-                "rate_limit_backend=Memory: per-process counting only;                  multi-instance deployments MUST switch to Redis for global limits"
+                "rate_limit_backend=Memory: per-process counting only; multi-instance deployments MUST switch to Redis for global limits"
             );
         }
     }

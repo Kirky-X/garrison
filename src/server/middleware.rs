@@ -105,7 +105,8 @@ impl RateLimitState {
 /// 从右向左跳过 `trusted_proxies` 中的代理，返回第一个不可信跳。
 /// 客户端可预伪造 XFF 最左值（代理以追加模式写入时），仅最右侧
 /// 不可信跳由可信代理写入、不可伪造；全部跳均可信（纯内网互调）
-/// 时回退最左值。解析失败的跳视为不可信（作为限流键仍可隔离）。
+/// 时回退最左值。存在不可解析跳时返回 `None`（调用方回退连接 IP），
+/// 防止常量键（如 "unknown"）聚合全部异常客户端。
 pub fn parse_forwarded_for_rightmost(xff: &str, trusted_proxies: &[IpAddr]) -> Option<String> {
     let hops: Vec<&str> = xff
         .split(',')
@@ -118,7 +119,11 @@ pub fn parse_forwarded_for_rightmost(xff: &str, trusted_proxies: &[IpAddr]) -> O
     for hop in hops.iter().rev() {
         match hop.parse::<IpAddr>() {
             Ok(ip) if trusted_proxies.contains(&ip) => continue,
-            _ => return Some((*hop).to_string()),
+            // 非 IP 字面量跳（如异常代理写入的 "unknown"）不可采纳：采纳会使
+            // 所有此类客户端聚成同一限流键（可被利用做集体限流/封禁）——返回
+            // None 由调用方回退连接 IP（fail-closed 到 socket 地址）
+            Ok(_) => return Some((*hop).to_string()),
+            Err(_) => return None,
         }
     }
     Some(hops[0].to_string())

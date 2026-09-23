@@ -108,7 +108,8 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// `DefaultPermissionStrategy` 覆写为尽力删除 `garrison:perm:cache:<tenant>:<login_id>:*`
     /// （键枚举不可用的后端 warn 降级，缓存 TTL 兜底）。第三方实现无需覆写。
     /// 注意：权限/角色**变更**点（不经过登出）仍需业务方显式调用
-    /// `DefaultPermissionStrategy::invalidate_permission_cache`。
+    /// `DefaultPermissionStrategy::invalidate_permission_cache`；未覆写的第三方
+    /// 实现下旧 Allow 最长存续缓存 TTL（当前 300s）。
     async fn invalidate_login_cache(&self, _login_id: &str) -> GarrisonResult<()> {
         Ok(())
     }
