@@ -103,6 +103,16 @@ pub use registry::{
 /// 调用 `get_permission_list` / `get_role_list` 获取数据后做字符串匹配。
 #[async_trait]
 pub trait GarrisonPermissionStrategy: Send + Sync {
+    /// 按主体失效权限判定缓存（登出/踢出联动调用；默认 no-op）。
+    ///
+    /// `DefaultPermissionStrategy` 覆写为尽力删除 `garrison:perm:cache:<tenant>:<login_id>:*`
+    /// （键枚举不可用的后端 warn 降级，缓存 TTL 兜底）。第三方实现无需覆写。
+    /// 注意：权限/角色**变更**点（不经过登出）仍需业务方显式调用
+    /// `DefaultPermissionStrategy::invalidate_permission_cache`。
+    async fn invalidate_login_cache(&self, _login_id: &str) -> GarrisonResult<()> {
+        Ok(())
+    }
+
     /// 获取主体的权限列表。
     ///
     /// # 参数

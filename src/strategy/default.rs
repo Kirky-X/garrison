@@ -307,6 +307,18 @@ impl GarrisonPermissionStrategyDefault {
 
 #[async_trait]
 impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
+    async fn invalidate_login_cache(&self, login_id: &str) -> GarrisonResult<()> {
+        if let Err(e) = self.invalidate_permission_cache(login_id).await {
+            // 键枚举不可用等失效失败：warn 降级，缓存 TTL 兜底，不阻断登出主流程
+            tracing::warn!(
+                login_id = login_id,
+                error = %e,
+                "permission cache invalidation failed on logout (cache TTL will expire)"
+            );
+        }
+        Ok(())
+    }
+
     fn firewall_hook_injected(&self) -> bool {
         #[cfg(any(
             feature = "sms-rate-limit",

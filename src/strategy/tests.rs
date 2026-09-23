@@ -620,6 +620,33 @@ async fn invalidate_permission_cache_reflects_revocation_immediately() {
     );
 }
 
+/// T018：trait 方法 invalidate_login_cache（logout/kickout 联动入口）同样
+/// 使权限回收立即生效——钉住登出联动失效路径，防 trait 默认 no-op 回归。
+#[tokio::test]
+async fn invalidate_login_cache_reflects_revocation_immediately() {
+    let dao = Arc::new(MockCacheDao::new());
+    let mut iface = MockInterface::new();
+    iface.set_permissions("1001", &[]);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+
+    // 预先写入矛盾缓存 true
+    fw.cache_permission("1001", "user:read", true, 300)
+        .await
+        .unwrap();
+    assert!(
+        fw.check_permission("1001", "user:read").await.unwrap(),
+        "应命中缓存返回 true"
+    );
+
+    // logout/kickout 联动入口：trait 方法失效缓存
+    fw.invalidate_login_cache("1001").await.unwrap();
+
+    assert!(
+        !fw.check_permission("1001", "user:read").await.unwrap(),
+        "invalidate_login_cache 后应立即回源返回 false"
+    );
+}
+
 /// 验证 check_permission 优先读取缓存（短路优化）。
 #[tokio::test]
 async fn check_permission_uses_cache_short_circuit() {
