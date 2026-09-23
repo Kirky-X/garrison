@@ -274,7 +274,7 @@ impl GarrisonAuthServer {
             .layer(axum::middleware::from_fn(middleware::inject_user_agent))
             .layer(Extension(trusted_proxies))
             .layer(axum::middleware::from_fn_with_state(
-                rate_limit_state,
+                rate_limit_state.clone(),
                 rate_limit_middleware,
             ));
 
@@ -337,7 +337,23 @@ impl GarrisonAuthServer {
                 // 注：qrlogin 存储键为全局命名空间（garrison:qrlogin:*，租户记在
                 // 会话 JSON 内），刻意不注入 tenant_resolution_middleware——匿名
                 // create/poll 与带租户头的 scan/confirm 必须命中同一批 key。
-                router.merge(qrlogin_routes::qrlogin_external_router(state.clone()))
+                //
+                // axum merge 不继承 layer：qrlogin router 必须在 merge 前自带与
+                // 主栈同构的中间件（rate_limit / client_ip / user_agent /
+                // audit_log），否则 4 个端点将绕过外网限流与审计（与下方
+                // oauth2 router 单独注入同一语义）。
+                let qrlogin_router = qrlogin_routes::qrlogin_external_router(state.clone())
+                    .layer(axum::middleware::from_fn(middleware::inject_client_ip))
+                    .layer(axum::middleware::from_fn(middleware::inject_user_agent))
+                    .layer(Extension(middleware::TrustedProxies(
+                        self.config.rate_limit_trusted_proxies.clone(),
+                    )))
+                    .layer(axum::middleware::from_fn_with_state(
+                        rate_limit_state.clone(),
+                        middleware::rate_limit_middleware,
+                    ))
+                    .layer(axum::middleware::from_fn(audit_log_middleware));
+                router.merge(qrlogin_router)
             } else {
                 router
             }

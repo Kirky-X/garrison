@@ -16,7 +16,7 @@
 | OIDC | `protocol::oauth2::oidc` | `protocol-oidc` | `OidcHandler`（sign_id_token / verify_id_token / discovery） | 0.4.0 |
 | ScopeHandler | `protocol::oauth2::scope` | `oauth2-scope-handler` | `ScopeHandler` trait + `ScopeRegistry` | 0.4.0 |
 | SsoServer | `protocol::sso::server` | `protocol-sso-server` | `SsoServer` trait + `DefaultSsoServer` + `CenterIdConverter` | 0.4.0 |
-| QRLogin | `protocol::qrlogin` | `protocol-qrlogin` | `QrLoginService`（create/scan/confirm/poll 两票分离状态机）+ `QrLoginSessionIssuer` 端口 | Unreleased |
+| QRLogin | `protocol::qrlogin` | `protocol-qrlogin` | `QrLoginService`（create/scan/confirm/poll 两票分离状态机 + bind_token 双票兑换）+ `QrLoginSessionIssuer` 端口 | Unreleased |
 <!-- AloneCache 和 ParameterQuery 属于扩展层而非协议层，详见 architecture.md 扩展层章节 -->
 
 ## JWT（HS256 / HS512）
@@ -232,3 +232,18 @@ builder.check_permission("user:write").await?;
 - [安全模块（TOTP/Basic/Digest）](./secure-modules.md)
 - [登录认证与会话](./auth-session.md)
 - [整体架构](./architecture.md)
+
+## QRLogin 安全语义
+
+扫码登录（QRLogin）的凭证模型与固有风险提示：
+
+- **双票兑换**：`qr_id` 编码在公开可见的二维码票据（`t=` 参数）中；`bind_token`
+  作为第二票仅在 create 响应中下发给 Web 端本人。poll 必须出示 `qr_id + bind_token`
+  双票方可兑换会话——肩窥/截图二维码者因缺第二票而无法劫持。
+- **二维码展示环境需可信**：投影、直播、共享屏幕等场景等同于公开票据（含签名票据
+  本身），建议在不可信展示环境提示用户尽快完成或刷新会话（会话 TTL 默认 120s）。
+- **login CSRF（固有面）**：任意已登录 App 用户可扫他人屏幕上的二维码并确认，使
+  受害者浏览器登录进攻击者账号。App 确认页会下发待登录端脱敏摘要（设备标签 +
+  创建时间）供扫码者核对；请引导用户核对后再确认。
+- **确认者绑定**：`confirm` 强制确认者身份与扫码者一致（服务端锁定，不信任请求体），
+  confirm_token 一次性且 TTL 短（默认 60s）。

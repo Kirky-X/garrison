@@ -190,13 +190,21 @@ impl QrLoginSessionIssuer for StoreIssuer {
 
 /// 启动真实双端口服务器（外网含 qrlogin 4 端点），返回 (外网 URL, 内网 URL, 句柄)。
 async fn start_test_server() -> (String, String, tokio::task::JoinHandle<()>) {
+    start_test_server_with_rate_limit(1000).await
+}
+
+/// 指定外网限流阈值启动服务器（供中间件覆盖断言使用）。
+async fn start_test_server_with_rate_limit(
+    per_ip_rate: u32,
+) -> (String, String, tokio::task::JoinHandle<()>) {
     let store = Arc::new(TokenStore::default());
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend {
         store: Arc::clone(&store),
     });
 
     let dao: Arc<dyn garrison::dao::GarrisonDao> = Arc::new(garrison::dao::InMemoryDao::new());
-    let service = Arc::new(QrLoginService::new(dao, "acceptance-qrlogin-secret").unwrap());
+    let service =
+        Arc::new(QrLoginService::new(dao, "acceptance-qrlogin-secret-0123456789abcdef").unwrap());
     let qrlogin_state = Arc::new(garrison::server::qrlogin_routes::QrLoginHttpState {
         service,
         issuer: Arc::new(StoreIssuer {
@@ -214,7 +222,7 @@ async fn start_test_server() -> (String, String, tokio::task::JoinHandle<()>) {
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(internal_port)
-        .with_rate_limit(1000)
+        .with_rate_limit(per_ip_rate)
         .with_external_login_enabled(true)
         .with_internal_api_key("acceptance-internal-key")
         .with_qrlogin(qrlogin_state);
@@ -262,7 +270,7 @@ async fn post_json(
 }
 
 /// Web 端（设备 1）创建扫码会话，返回 (qr_id, qr_content)。
-async fn web_create(client: &reqwest::Client, external_url: &str) -> (String, String) {
+async fn web_create(client: &reqwest::Client, external_url: &str) -> (String, String, String) {
     let resp = client
         .post(format!("{}/qrlogin/create", external_url))
         .header(
@@ -277,16 +285,22 @@ async fn web_create(client: &reqwest::Client, external_url: &str) -> (String, St
     let body: serde_json::Value = resp.json().await.unwrap();
     (
         body["qr_id"].as_str().unwrap().to_string(),
+        body["bind_token"].as_str().unwrap().to_string(),
         body["qr_content"].as_str().unwrap().to_string(),
     )
 }
 
 /// Web 端轮询。
-async fn web_poll(client: &reqwest::Client, external_url: &str, qr_id: &str) -> serde_json::Value {
+async fn web_poll(
+    client: &reqwest::Client,
+    external_url: &str,
+    qr_id: &str,
+    bind_token: &str,
+) -> serde_json::Value {
     let (status, body) = post_json(
         client,
         &format!("{}/qrlogin/poll", external_url),
-        serde_json::json!({ "qr_id": qr_id }),
+        serde_json::json!({ "qr_id": qr_id, "bind_token": bind_token }),
         None,
     )
     .await;
@@ -324,12 +338,12 @@ async fn dual_device_full_flow_confirmed_and_exchange() {
     let app = device_client();
 
     // ① Web 端创建扫码会话
-    let (qr_id, qr_content) = web_create(&web, &external_url).await;
+    let (qr_id, bind_token, qr_content) = web_create(&web, &external_url).await;
     assert_eq!(qr_id.len(), 64, "qr_id 应为 64 hex");
     assert!(qr_content.contains("t="), "qr_content 应含签名票据参数");
 
     // ② Web 端首次轮询：待扫码
-    let poll_body = web_poll(&web, &external_url, &qr_id).await;
+    let poll_body = web_poll(&web, &external_url, &qr_id, &bind_token).await;
     assert_eq!(poll_body["status"], "pending");
 
     // ③ App 端已登录（真实 HTTP 登录流）
@@ -352,7 +366,7 @@ async fn dual_device_full_flow_confirmed_and_exchange() {
     );
 
     // ⑤ Web 端轮询：已扫码待确认
-    let poll_body = web_poll(&web, &external_url, &qr_id).await;
+    let poll_body = web_poll(&web, &external_url, &qr_id, &bind_token).await;
     assert_eq!(poll_body["status"], "scanned");
 
     // ⑥ App 端确认
@@ -367,7 +381,7 @@ async fn dual_device_full_flow_confirmed_and_exchange() {
     assert_eq!(confirm_body["status"], "confirmed");
 
     // ⑦ Web 端轮询：Confirmed 分支原子兑换并签发真实会话
-    let final_poll = web_poll(&web, &external_url, &qr_id).await;
+    let final_poll = web_poll(&web, &external_url, &qr_id, &bind_token).await;
     assert_eq!(final_poll["status"], "confirmed");
     let web_token = final_poll["token"].as_str().unwrap().to_string();
     assert!(
@@ -407,7 +421,7 @@ async fn scan_rejects_missing_and_invalid_bearer() {
     let (external_url, _internal_url, _handle) = start_test_server().await;
     let web = device_client();
     let attacker = device_client();
-    let (_, qr_content) = web_create(&web, &external_url).await;
+    let (_, _bind_token, qr_content) = web_create(&web, &external_url).await;
 
     // 无 Bearer
     let (status, body) = post_json(
@@ -468,7 +482,7 @@ async fn dual_device_cancel_flow_and_replay_rejected() {
     let (external_url, _internal_url, _handle) = start_test_server().await;
     let web = device_client();
     let app = device_client();
-    let (qr_id, qr_content) = web_create(&web, &external_url).await;
+    let (qr_id, bind_token, qr_content) = web_create(&web, &external_url).await;
     let app_token = app_login(&app, &external_url, "app-user").await;
 
     let (_, scan_body) = post_json(
@@ -492,7 +506,7 @@ async fn dual_device_cancel_flow_and_replay_rejected() {
     assert_eq!(confirm_body["status"], "cancelled");
 
     // Web 端轮询：cancelled（无账号信息泄露）
-    let poll_body = web_poll(&web, &external_url, &qr_id).await;
+    let poll_body = web_poll(&web, &external_url, &qr_id, &bind_token).await;
     assert_eq!(poll_body["status"], "cancelled");
     assert!(poll_body.get("token").is_none(), "取消后不得下发 token");
 
@@ -519,7 +533,7 @@ async fn dual_device_concurrent_poll_single_winner() {
     let web_a = device_client();
     let web_b = device_client();
     let app = device_client();
-    let (qr_id, qr_content) = web_create(&web_a, &external_url).await;
+    let (qr_id, bind_token, qr_content) = web_create(&web_a, &external_url).await;
     let app_token = app_login(&app, &external_url, "app-user").await;
 
     let (_, scan_body) = post_json(
@@ -544,8 +558,18 @@ async fn dual_device_concurrent_poll_single_winner() {
     let url_a = format!("{}/qrlogin/poll", external_url);
     let url_b = url_a.clone();
     let (res_a, res_b) = tokio::join!(
-        post_json(&web_a, &url_a, serde_json::json!({ "qr_id": qr_id }), None),
-        post_json(&web_b, &url_b, serde_json::json!({ "qr_id": qr_id }), None),
+        post_json(
+            &web_a,
+            &url_a,
+            serde_json::json!({ "qr_id": qr_id, "bind_token": bind_token }),
+            None,
+        ),
+        post_json(
+            &web_b,
+            &url_b,
+            serde_json::json!({ "qr_id": qr_id, "bind_token": bind_token }),
+            None,
+        ),
     );
     let outcomes = [res_a.1, res_b.1];
     let confirmed = outcomes
@@ -559,4 +583,82 @@ async fn dual_device_concurrent_poll_single_winner() {
     // 落败方响应不得含任何账号信息（匿名轮询信息边界）
     let loser = outcomes.iter().find(|o| o["status"] == "expired").unwrap();
     assert!(loser.get("token").is_none(), "落败方不得下发 token");
+}
+
+/// 场景 6：仅持有二维码中的 qr_id（无 create 响应的 bind_token）无法兑换——
+/// 肩窥/截图二维码者即使等到 Confirmed 也拿不到会话 token。
+#[tokio::test]
+#[serial]
+async fn poll_without_bind_token_cannot_exchange() {
+    let (external_url, _internal_url, _handle) = start_test_server().await;
+    let web = device_client();
+    let app = device_client();
+    let (qr_id, _bind_token, qr_content) = web_create(&web, &external_url).await;
+    let app_token = app_login(&app, &external_url, "app-user").await;
+
+    let (_, scan_body) = post_json(
+        &app,
+        &format!("{}/qrlogin/scan", external_url),
+        serde_json::json!({ "qr_content": qr_content }),
+        Some(&app_token),
+    )
+    .await;
+    let confirm_token = scan_body["confirm_token"].as_str().unwrap().to_string();
+    let (_, confirm_body) = post_json(
+        &app,
+        &format!("{}/qrlogin/confirm", external_url),
+        serde_json::json!({ "confirm_token": confirm_token, "action": "confirm" }),
+        Some(&app_token),
+    )
+    .await;
+    assert_eq!(confirm_body["status"], "confirmed");
+
+    // 肩窥者：只有 qr_id，bind_token 错误 → expired（拿不到 token）
+    let (_, eavesdrop) = post_json(
+        &device_client(),
+        &format!("{}/qrlogin/poll", external_url),
+        serde_json::json!({ "qr_id": qr_id, "bind_token": "guessed" }),
+        None,
+    )
+    .await;
+    assert_eq!(eavesdrop["status"], "expired");
+    assert!(eavesdrop.get("token").is_none(), "不得下发会话 token");
+
+    // 合法 Web 端仍可正常兑换（bind_token 未被错误请求破坏）
+    let legit = web_poll(&web, &external_url, &qr_id, &_bind_token).await;
+    assert_eq!(legit["status"], "confirmed");
+    assert!(!legit["token"].as_str().unwrap_or_default().is_empty());
+}
+
+/// 场景 7：中间件覆盖断言——qrlogin 端点受外网限流保护。
+///
+/// axum merge 不继承 layer：若 qrlogin router 的中间件装配被意外移除，
+/// 本测试以低阈值限流（2 req/s/IP）连发 3 个 create 请求，断言出现 429，
+/// 钉住「端点在中间件栈之内」这一装配事实。
+#[tokio::test]
+#[serial]
+async fn qrlogin_endpoints_are_rate_limited() {
+    let (external_url, _internal_url, _handle) = start_test_server_with_rate_limit(2).await;
+    let web = device_client();
+
+    let mut statuses = Vec::new();
+    for _ in 0..3 {
+        let resp = web
+            .post(format!("{}/qrlogin/create", external_url))
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .expect("create 请求应送达服务器");
+        statuses.push(resp.status());
+    }
+    assert!(
+        statuses.contains(&reqwest::StatusCode::TOO_MANY_REQUESTS),
+        "低阈值限流下 3 连发应出现 429（qrlogin 端点必须在限流中间件覆盖内），实际: {:?}",
+        statuses
+    );
+    assert!(
+        statuses.contains(&reqwest::StatusCode::OK),
+        "限流前 2 个请求应成功，实际: {:?}",
+        statuses
+    );
 }

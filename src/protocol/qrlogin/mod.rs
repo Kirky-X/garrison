@@ -27,6 +27,18 @@
 //!
 //! 本模块只管理票据状态机；兑换出的会话通过 [`QrLoginSessionIssuer`] 端口
 //! （DIP）由调用方实现（server 层提供基于 Stp 的默认实现），协议层不依赖 stp/server。
+//!
+//! ## 安全语义与固有风险
+//!
+//! - **双票兑换**：qr_id 编码在公开可见的二维码票据（`t=` 参数）中，仅凭 qr_id
+//!   可被肩窥/截图者抢先兑换；`bind_token` 作为第二票仅在 create 响应中下发给
+//!   Web 端本人，poll 出示双票方可兑换。**二维码展示环境需可信**（投影/直播/
+//!   共享屏幕场景等同公开票据）。
+//! - **login CSRF（固有面）**：任意已登录 App 用户可扫他人屏幕上的二维码并
+//!   确认，使受害者浏览器登录进攻击者账号。缓解：scan 响应向 App 端下发待登录
+//!   端脱敏摘要（设备标签 + 创建时间）供扫码者核对；不核对的确认即可能被利用。
+//! - **确认者绑定**：`confirm` 强制确认者身份与扫码者一致（服务端锁定，
+//!   不信任请求体）；confirm_token 一次性且 TTL 短（默认 60s）。
 
 pub mod issuer;
 
@@ -131,8 +143,14 @@ pub struct QrLoginScanView {
 /// create 成功返回给 Web 端的扫码登录创建结果。
 #[derive(Debug, Clone, Serialize)]
 pub struct CreatedQrLogin {
-    /// 会话随机标识（Web 端轮询时出示）。
+    /// 会话随机标识（Web 端轮询时出示；二维码仅编码签名票据，不含本值）。
     pub qr_id: String,
+    /// Web 端轮询第二票（与 qr_id 绑定的一次性凭证）。
+    ///
+    /// qr_id 编码在公开展示的二维码票据中，仅凭 qr_id 即可抢先兑换会话；
+    /// poll 必须同时出示本凭证（仅在 create 响应中下发给 Web 端本人），
+    /// 肩窥/截图二维码者因拿不到 bind_token 而无法劫持兑换。
+    pub bind_token: String,
     /// 二维码内容（URL，App 扫码后向 scan 端点提交其中的 `t` 参数票据）。
     pub qr_content: String,
     /// 二维码有效期（秒，等于配置的 session_ttl_secs）。

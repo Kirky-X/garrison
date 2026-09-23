@@ -8,10 +8,19 @@
 //!
 //! # 端点与认证语义
 //!
-//! - `POST /qrlogin/create`：匿名（Web 端创建扫码会话，外网限流中间件统一保护）
-//! - `POST /qrlogin/poll`：匿名（轮询；Confirmed 时原子兑换并签发会话 token）
+//! - `POST /qrlogin/create`：匿名（Web 端创建扫码会话，响应含 qr_id + bind_token）
+//! - `POST /qrlogin/poll`：匿名（双票轮询：qr_id + bind_token；Confirmed 时原子
+//!   消费 bind_token 兑换并签发会话 token）
 //! - `POST /qrlogin/scan`：**Bearer App 会话 token**（handler 内解析校验，失败 401）
-//! - `POST /qrlogin/confirm`：**Bearer App 会话 token**（同上）
+//! - `POST /qrlogin/confirm`：**Bearer App 会话 token**（同上；确认者必须就是扫码者）
+//!
+//! # 中间件覆盖
+//!
+//! axum merge 不继承 layer：本 router 在 `external_router()` 中 merge 前**自带**
+//! 与主栈同构的 TrustedProxies / inject_client_ip / inject_user_agent /
+//! rate_limit / audit_log（见 server_impl.rs），不依赖主栈、也不受
+//! external_path_filter 白名单管辖。已知取舍：`web-security-headers` feature
+//! 的安全头层仅挂主栈（JSON API 响应头影响有限，未随本 router 重复挂载）。
 //!
 //! # 安全要点
 //!
@@ -101,6 +110,8 @@ pub fn qrlogin_external_router(state: Arc<QrLoginHttpState>) -> Router {
 pub struct QrLoginPollRequest {
     /// create 返回的会话随机标识。
     pub qr_id: String,
+    /// create 返回的轮询第二票（仅下发给 Web 端本人；缺失/错误一律 expired）。
+    pub bind_token: String,
 }
 
 /// scan 请求体（App 端提交扫到的完整二维码内容）。
@@ -124,16 +135,17 @@ pub struct QrLoginConfirmRequest {
 // ============================================================================
 
 /// POST /qrlogin/create — 创建扫码会话（匿名）。
+///
+/// IP 取自 `inject_client_ip` 注入的 `Extension<ClientIp>`（rightmost-untrusted
+/// 解析在中间件统一完成）；扩展缺失（如裸路由测试）时为 None，不自行解析 XFF。
 async fn create_endpoint(
     State(state): State<Arc<QrLoginHttpState>>,
+    ip_ext: Option<axum::Extension<crate::server::middleware::ClientIp>>,
     headers: HeaderMap,
 ) -> Response {
-    let ip = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
+    let ip = ip_ext
+        .map(|axum::Extension(c)| c.0)
+        .filter(|s| !s.is_empty() && s != "unknown");
     let user_agent = headers
         .get(axum::http::header::USER_AGENT)
         .and_then(|v| v.to_str().ok())
@@ -148,6 +160,7 @@ async fn create_endpoint(
             StatusCode::OK,
             Json(json!({
                 "qr_id": created.qr_id,
+                "bind_token": created.bind_token,
                 "qr_content": created.qr_content,
                 "expires_in_secs": created.expires_in_secs,
             })),
@@ -162,7 +175,7 @@ async fn poll_endpoint(
     State(state): State<Arc<QrLoginHttpState>>,
     Json(req): Json<QrLoginPollRequest>,
 ) -> Response {
-    match state.service.poll(&req.qr_id).await {
+    match state.service.poll(&req.qr_id, &req.bind_token).await {
         Ok(outcome) => match outcome {
             QrLoginPollOutcome::Pending => ok_json(json!({ "status": "pending" })),
             QrLoginPollOutcome::Scanned => ok_json(json!({ "status": "scanned" })),
@@ -185,9 +198,26 @@ async fn poll_endpoint(
     }
 }
 
+/// 采集 App 端请求上下文（ip, ua）：事件审计用，采集失败不阻断主流程。
+#[cfg_attr(not(feature = "listener"), allow(dead_code))]
+fn app_context(
+    ip_ext: Option<axum::Extension<crate::server::middleware::ClientIp>>,
+    headers: &HeaderMap,
+) -> Option<(String, String)> {
+    let ip = ip_ext
+        .map(|axum::Extension(c)| c.0)
+        .filter(|s| !s.is_empty() && s != "unknown")?;
+    let user_agent = headers
+        .get(axum::http::header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string())?;
+    Some((ip, user_agent))
+}
+
 /// POST /qrlogin/scan — App 端扫码（Bearer 认证必需）。
 async fn scan_endpoint(
     State(state): State<Arc<QrLoginHttpState>>,
+    ip_ext: Option<axum::Extension<crate::server::middleware::ClientIp>>,
     headers: HeaderMap,
     Json(req): Json<QrLoginScanRequest>,
 ) -> Response {
@@ -199,7 +229,15 @@ async fn scan_endpoint(
         Ok(id) => id,
         Err(_) => return unauthorized(),
     };
-    match state.service.scan(&req.qr_content, &app_login_id).await {
+    match state
+        .service
+        .scan(
+            &req.qr_content,
+            &app_login_id,
+            app_context(ip_ext, &headers),
+        )
+        .await
+    {
         Ok(view) => ok_json(json!({
             "confirm_token": view.confirm_token,
             "web_device_label": view.web_device_label,
@@ -213,6 +251,7 @@ async fn scan_endpoint(
 /// POST /qrlogin/confirm — App 端确认/取消（Bearer 认证必需）。
 async fn confirm_endpoint(
     State(state): State<Arc<QrLoginHttpState>>,
+    ip_ext: Option<axum::Extension<crate::server::middleware::ClientIp>>,
     headers: HeaderMap,
     Json(req): Json<QrLoginConfirmRequest>,
 ) -> Response {
@@ -220,9 +259,11 @@ async fn confirm_endpoint(
         Some(token) => token,
         None => return unauthorized(),
     };
-    if state.issuer.resolve_app_login_id(&app_token).await.is_err() {
-        return unauthorized();
-    }
+    // 身份绑定：确认者 login_id 传入 service 与 scan 锁定值比对（不再仅做 401 判断）
+    let app_login_id = match state.issuer.resolve_app_login_id(&app_token).await {
+        Ok(id) => id,
+        Err(_) => return unauthorized(),
+    };
     let action = match req.action.as_str() {
         "confirm" => QrLoginAction::Confirm,
         "cancel" => QrLoginAction::Cancel,
@@ -234,7 +275,16 @@ async fn confirm_endpoint(
                 .into_response()
         },
     };
-    match state.service.confirm(&req.confirm_token, action).await {
+    match state
+        .service
+        .confirm(
+            &req.confirm_token,
+            &app_login_id,
+            action,
+            app_context(ip_ext, &headers),
+        )
+        .await
+    {
         Ok(status) => {
             let status_str = if status == crate::protocol::qrlogin::QrLoginStatus::Confirmed {
                 "confirmed"
@@ -316,12 +366,12 @@ mod tests {
     #[async_trait]
     impl QrLoginSessionIssuer for MockIssuer {
         async fn resolve_app_login_id(&self, app_token: &str) -> GarrisonResult<String> {
-            if app_token == "valid-app-token" {
-                Ok("user-1".to_string())
-            } else {
-                Err(GarrisonError::InvalidToken(
+            match app_token {
+                "valid-app-token" => Ok("user-1".to_string()),
+                "valid-app-token-2" => Ok("user-2".to_string()),
+                _ => Err(GarrisonError::InvalidToken(
                     "mock-invalid-token".to_string(),
-                ))
+                )),
             }
         }
 
@@ -333,7 +383,9 @@ mod tests {
     /// 构造测试路由。
     fn make_app() -> Router {
         let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
-        let service = Arc::new(QrLoginService::new(dao, "test-secret-key").unwrap());
+        let service = Arc::new(
+            QrLoginService::new(dao, "test-secret-key-0123456789abcdef-0123456789abcdef").unwrap(),
+        );
         let state = Arc::new(QrLoginHttpState {
             service,
             issuer: Arc::new(MockIssuer),
@@ -373,12 +425,13 @@ mod tests {
         (status, json)
     }
 
-    /// 创建扫码会话，返回 (qr_id, qr_content)。
-    async fn create_session(app: Router) -> (String, String) {
+    /// 创建扫码会话，返回 (qr_id, bind_token, qr_content)。
+    async fn create_session(app: Router) -> (String, String, String) {
         let (status, json) = post_json(app, "/qrlogin/create", json!({}), None).await;
         assert_eq!(status, StatusCode::OK);
         (
             json["qr_id"].as_str().unwrap().to_string(),
+            json["bind_token"].as_str().unwrap().to_string(),
             json["qr_content"].as_str().unwrap().to_string(),
         )
     }
@@ -398,8 +451,14 @@ mod tests {
     #[tokio::test]
     async fn poll_pending_after_create() {
         let app = make_app();
-        let (qr_id, _) = create_session(app.clone()).await;
-        let (status, json) = post_json(app, "/qrlogin/poll", json!({ "qr_id": qr_id }), None).await;
+        let (qr_id, bind_token, _) = create_session(app.clone()).await;
+        let (status, json) = post_json(
+            app,
+            "/qrlogin/poll",
+            json!({ "qr_id": qr_id, "bind_token": bind_token }),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(json["status"], "pending");
     }
@@ -408,7 +467,7 @@ mod tests {
     #[tokio::test]
     async fn scan_without_bearer_is_401() {
         let app = make_app();
-        let (_, qr_content) = create_session(app.clone()).await;
+        let (_, _bind_token, qr_content) = create_session(app.clone()).await;
         let (status, json) = post_json(
             app,
             "/qrlogin/scan",
@@ -431,7 +490,7 @@ mod tests {
     #[tokio::test]
     async fn scan_with_bearer_returns_confirm_token() {
         let app = make_app();
-        let (_, qr_content) = create_session(app.clone()).await;
+        let (_, _bind_token, qr_content) = create_session(app.clone()).await;
         let (status, json) = post_json(
             app,
             "/qrlogin/scan",
@@ -449,7 +508,7 @@ mod tests {
     #[tokio::test]
     async fn full_flow_confirm_and_exchange() {
         let app = make_app();
-        let (qr_id, qr_content) = create_session(app.clone()).await;
+        let (qr_id, bind_token, qr_content) = create_session(app.clone()).await;
 
         let (status, scan_json) = post_json(
             app.clone(),
@@ -464,7 +523,7 @@ mod tests {
         let (_, poll_json) = post_json(
             app.clone(),
             "/qrlogin/poll",
-            json!({ "qr_id": qr_id }),
+            json!({ "qr_id": qr_id, "bind_token": bind_token }),
             None,
         )
         .await;
@@ -480,8 +539,13 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(confirm_json["status"], "confirmed");
 
-        let (status, poll_json) =
-            post_json(app, "/qrlogin/poll", json!({ "qr_id": qr_id }), None).await;
+        let (status, poll_json) = post_json(
+            app,
+            "/qrlogin/poll",
+            json!({ "qr_id": qr_id, "bind_token": bind_token }),
+            None,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(poll_json["status"], "confirmed");
         assert_eq!(poll_json["token"], "issued-session-token");
@@ -491,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn confirm_cancel_flow() {
         let app = make_app();
-        let (qr_id, qr_content) = create_session(app.clone()).await;
+        let (qr_id, bind_token, qr_content) = create_session(app.clone()).await;
         let (_, scan_json) = post_json(
             app.clone(),
             "/qrlogin/scan",
@@ -511,7 +575,13 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(confirm_json["status"], "cancelled");
 
-        let (_, poll_json) = post_json(app, "/qrlogin/poll", json!({ "qr_id": qr_id }), None).await;
+        let (_, poll_json) = post_json(
+            app,
+            "/qrlogin/poll",
+            json!({ "qr_id": qr_id, "bind_token": bind_token }),
+            None,
+        )
+        .await;
         assert_eq!(poll_json["status"], "cancelled");
     }
 
@@ -534,7 +604,7 @@ mod tests {
     #[tokio::test]
     async fn confirm_invalid_action_is_400() {
         let app = make_app();
-        let (_, qr_content) = create_session(app.clone()).await;
+        let (_, _bind_token, qr_content) = create_session(app.clone()).await;
         let (_, scan_json) = post_json(
             app.clone(),
             "/qrlogin/scan",
@@ -551,5 +621,33 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// 身份绑定：Bearer 用户 B（user-2）确认 A（user-1）的扫码 → 400。
+    #[tokio::test]
+    async fn confirm_by_other_user_is_400() {
+        let app = make_app();
+        let (_, _bind_token, qr_content) = create_session(app.clone()).await;
+        let (_, scan_json) = post_json(
+            app.clone(),
+            "/qrlogin/scan",
+            json!({ "qr_content": qr_content }),
+            Some("valid-app-token"),
+        )
+        .await;
+        let confirm_token = scan_json["confirm_token"].as_str().unwrap().to_string();
+        let (status, json) = post_json(
+            app,
+            "/qrlogin/confirm",
+            json!({ "confirm_token": confirm_token, "action": "confirm" }),
+            Some("valid-app-token-2"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            json["error"].as_str().unwrap().contains("confirm token"),
+            "错误应与 token 无效同族（无区分度），实际: {}",
+            json["error"]
+        );
     }
 }

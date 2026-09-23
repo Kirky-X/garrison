@@ -25,10 +25,24 @@ use uuid::Uuid;
 /// HMAC-SHA256 类型别名（qr_ticket 签名）。
 type HmacSha256 = Hmac<Sha256>;
 
+/// 本地常量时间字节串比较（bind_token 绑定比对用；避免引入 secure feature 依赖）。
+fn ct_eq_bytes(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 /// 会话存储 key 前缀。
 const SESSION_KEY_PREFIX: &str = "garrison:qrlogin:session:";
 /// confirm_token 存储 key 前缀。
 const CONFIRM_KEY_PREFIX: &str = "garrison:qrlogin:confirm:";
+/// bind_token（poll 第二票）存储 key 前缀。
+const BIND_KEY_PREFIX: &str = "garrison:qrlogin:bind:";
 
 /// 会话存储 key。
 fn session_key(qr_id: &str) -> String {
@@ -111,16 +125,23 @@ impl QrLoginService {
     ///
     /// # 参数
     /// - `dao`: 数据访问抽象（票据与会话状态存储）。
-    /// - `secret`: HMAC 签名密钥（qr_ticket 防伪造，禁止空字符串）。
+    /// - `secret`: HMAC 签名密钥（qr_ticket 防伪造，至少 32 字节，对齐 JWT HS256 下限）。
     ///
     /// # 错误
-    /// `secret` 为空时返回 `GarrisonError::InvalidParam`（qrlogin-secret-empty）。
+    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（qrlogin-secret-empty）。
+    /// - `secret` 短于 32 字节时返回 `GarrisonError::InvalidParam`（qrlogin-secret-too-short）。
     pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> GarrisonResult<Self> {
         let secret: String = secret.into();
         if secret.is_empty() {
             return Err(GarrisonError::InvalidParam(loc!(
                 "qrlogin-secret-empty",
                 "QR login HMAC secret must not be empty".to_string()
+            )));
+        }
+        if secret.len() < 32 {
+            return Err(GarrisonError::InvalidParam(loc!(
+                "qrlogin-secret-too-short",
+                "QR login HMAC secret must be at least 32 bytes".to_string()
             )));
         }
         Ok(Self {
@@ -193,8 +214,22 @@ impl QrLoginService {
                 "qrlogin-session-id-collision".to_string(),
             ));
         }
+        // 双票绑定：bind_token 仅下发给 create 调用方（Web 端本人），poll 出示。
+        // 二维码公开可见但不含它——兑换需 qr_id + bind_token 双票。
+        let bind_token = Self::random_hex64();
+        let bind_key = format!("{BIND_KEY_PREFIX}{bind_token}");
+        if !self
+            .dao
+            .set_if_absent(&bind_key, &qr_id, self.config.session_ttl_secs)
+            .await?
+        {
+            return Err(GarrisonError::Internal(
+                "qrlogin-bind-token-collision".to_string(),
+            ));
+        }
         let created = CreatedQrLogin {
             qr_id,
+            bind_token,
             qr_content,
             expires_in_secs: self.config.session_ttl_secs,
         };
@@ -223,7 +258,11 @@ impl QrLoginService {
         &self,
         qr_content: &str,
         app_login_id: &str,
+        app_context: Option<(String, String)>,
     ) -> GarrisonResult<QrLoginScanView> {
+        // listener 关闭时上下文无消费者（事件不广播），显式落空避免警告
+        #[cfg(not(feature = "listener"))]
+        let _ = app_context;
         if let Some(domains) = &self.config.allowed_domains {
             let host_ok = extract_host(qr_content)
                 .map(|host| domains.iter().any(|d| d.eq_ignore_ascii_case(&host)))
@@ -278,7 +317,10 @@ impl QrLoginService {
         self.broadcast(crate::listener::GarrisonEvent::QrLoginScanned {
             qr_id: Self::mask_id(&qr_id),
             app_login_id: app_login_id.to_string(),
-            request_context: None,
+            request_context: app_context.map(|(ip, user_agent)| crate::listener::RequestContext {
+                ip: Some(ip),
+                user_agent: Some(user_agent),
+            }),
         })
         .await;
 
@@ -295,20 +337,28 @@ impl QrLoginService {
     // ========================================================================
 
     /// App 端确认或取消：`get_and_delete` 原子消费 confirm_token（重放必失败），
-    /// 校验与会话内摘要一致后迁移 Scanned → Confirmed（或任意非终态 → Cancelled）。
+    /// 校验确认者身份与 token 摘要后迁移 Scanned → Confirmed（或任意非终态 → Cancelled）。
+    ///
+    /// `app_login_id` 必须与 scan 时锁定的确认者一致——「授权动作者」与「身份
+    /// 主体」绑定：持有他人 confirm_token 的另一登录用户无法代为确认。不一致
+    /// 返回与「token 无效」相同的错误（无区分度，防枚举）。
     ///
     /// 返回迁移后的状态（供 HTTP 层组装响应）。
     ///
     /// # 错误
-    /// - token 无效/过期/与会话不匹配：`qrlogin-confirm-token-invalid`
+    /// - token 无效/过期/与会话不匹配/确认者不是扫码者：`qrlogin-confirm-token-invalid`
     /// - 会话已兑换或已过期：`qrlogin-already-consumed`
     /// - 未扫码即确认：`qrlogin-not-scanned`
     /// - 会话已取消：`qrlogin-cancelled`
     pub async fn confirm(
         &self,
         confirm_token: &str,
+        app_login_id: &str,
         action: QrLoginAction,
+        app_context: Option<(String, String)>,
     ) -> GarrisonResult<QrLoginStatus> {
+        #[cfg(not(feature = "listener"))]
+        let _ = app_context;
         // 原子消费：并发/重放同一 token 仅首次拿到 Some
         let qr_id = self
             .dao
@@ -322,6 +372,10 @@ impl QrLoginService {
             .ok_or_else(|| Self::session_err("qrlogin-already-consumed"))?;
         // 摘要比对：token 确实颁发给该会话（防跨会话 token 挪用）
         if data.confirm_token_hash.as_deref() != Some(Self::token_digest(confirm_token).as_str()) {
+            return Err(Self::session_err("qrlogin-confirm-token-invalid"));
+        }
+        // 身份绑定：确认者必须就是扫码者（授权动作者 = 身份主体）
+        if data.app_login_id.as_deref() != Some(app_login_id) {
             return Err(Self::session_err("qrlogin-confirm-token-invalid"));
         }
 
@@ -355,17 +409,22 @@ impl QrLoginService {
         #[cfg(feature = "listener")]
         {
             let app_login_id = updated.app_login_id.clone().unwrap_or_default();
+            let request_context =
+                app_context.map(|(ip, user_agent)| crate::listener::RequestContext {
+                    ip: Some(ip),
+                    user_agent: Some(user_agent),
+                });
             let event = if action == QrLoginAction::Confirm {
                 crate::listener::GarrisonEvent::QrLoginConfirmed {
                     qr_id: Self::mask_id(&qr_id),
                     app_login_id,
-                    request_context: None,
+                    request_context,
                 }
             } else {
                 crate::listener::GarrisonEvent::QrLoginCancelled {
                     qr_id: Self::mask_id(&qr_id),
                     app_login_id,
-                    request_context: None,
+                    request_context,
                 }
             };
             self.broadcast(event).await;
@@ -377,28 +436,80 @@ impl QrLoginService {
     // poll：Web 端轮询（Confirmed 分支原子兑换）
     // ========================================================================
 
-    /// Web 端轮询扫码状态。
+    /// Web 端轮询扫码状态（双票：qr_id + bind_token）。
     ///
-    /// 非 Confirmed 状态只读返回（不消耗会话、不泄露账号信息）；Confirmed 分支
-    /// 以 `get_and_delete` 原子兑换会话（并发轮询仅一者拿到 login_id，其余见
-    /// `Expired`），由调用方经会话签发端口换取真实会话 token。
-    pub async fn poll(&self, qr_id: &str) -> GarrisonResult<QrLoginPollOutcome> {
+    /// `bind_token` 是 create 时仅下发给 Web 端本人的第二票：qr_id 编码在公开
+    /// 展示的二维码票据中，仅凭 qr_id 可被肩窥/截图者抢先兑换。bind_token 在
+    /// 非终态轮询中只校验不消费（Web 端可循环轮询），仅在 Confirmed 兑换分支
+    /// `get_and_delete` 原子消费——兑换成功的同一次调用消费第二票，并发/重放
+    /// 的输家一律见 `Expired`（不向匿名调用方泄露区分度）。
+    pub async fn poll(&self, qr_id: &str, bind_token: &str) -> GarrisonResult<QrLoginPollOutcome> {
         let Some((data, _)) = self.load_session_with_ttl(qr_id).await? else {
             return Ok(QrLoginPollOutcome::Expired);
         };
+
+        // 第二票校验：与 create 时绑定的 qr_id 常量时间比对
+        let bind_ok = |consumed: bool| async move {
+            let bound = if consumed {
+                self.dao
+                    .get_and_delete(&format!("{BIND_KEY_PREFIX}{bind_token}"))
+                    .await?
+            } else {
+                self.dao
+                    .get(&format!("{BIND_KEY_PREFIX}{bind_token}"))
+                    .await?
+            };
+            Ok::<_, crate::error::GarrisonError>(matches!(bound,
+                    Some(b) if ct_eq_bytes(b.as_bytes(), qr_id.as_bytes())))
+        };
+
         match data.status {
-            QrLoginStatus::Pending => Ok(QrLoginPollOutcome::Pending),
-            QrLoginStatus::Scanned => Ok(QrLoginPollOutcome::Scanned),
-            QrLoginStatus::Cancelled => Ok(QrLoginPollOutcome::Cancelled),
+            QrLoginStatus::Pending => {
+                if bind_ok(false).await? {
+                    Ok(QrLoginPollOutcome::Pending)
+                } else {
+                    Ok(QrLoginPollOutcome::Expired)
+                }
+            },
+            QrLoginStatus::Scanned => {
+                if bind_ok(false).await? {
+                    Ok(QrLoginPollOutcome::Scanned)
+                } else {
+                    Ok(QrLoginPollOutcome::Expired)
+                }
+            },
+            QrLoginStatus::Cancelled => {
+                if bind_ok(false).await? {
+                    Ok(QrLoginPollOutcome::Cancelled)
+                } else {
+                    Ok(QrLoginPollOutcome::Expired)
+                }
+            },
             QrLoginStatus::Confirmed => {
+                // 原子消费第二票：并发/重放仅一者通过，再原子兑换会话
+                if !bind_ok(true).await? {
+                    return Ok(QrLoginPollOutcome::Expired);
+                }
                 // 原子兑换：并发 poll 同一 Confirmed 会话仅一者成功
-                let exchanged = self.dao.get_and_delete(&session_key(qr_id)).await?;
-                match exchanged {
-                    Some(_) => Ok(QrLoginPollOutcome::Confirmed {
+                match self.dao.get_and_delete(&session_key(qr_id)).await {
+                    Ok(Some(_)) => Ok(QrLoginPollOutcome::Confirmed {
                         login_id: data.app_login_id.unwrap_or_default(),
                         tenant_id: data.tenant_id,
                     }),
-                    None => Ok(QrLoginPollOutcome::Expired),
+                    Ok(None) => Ok(QrLoginPollOutcome::Expired),
+                    // DAO 瞬时故障：补偿回写 bind_token（复查修复）——否则合法
+                    // Web 端两票均已损失，只能重开整个扫码流程
+                    Err(e) => {
+                        let _ = self
+                            .dao
+                            .set(
+                                &format!("{BIND_KEY_PREFIX}{bind_token}"),
+                                qr_id,
+                                self.config.session_ttl_secs,
+                            )
+                            .await;
+                        Err(e)
+                    },
                 }
             },
         }
@@ -444,6 +555,9 @@ impl QrLoginService {
             .expect("test confirm token set should succeed");
         if let Some((mut data, remaining)) = self.load_session_with_ttl(qr_id).await.unwrap() {
             data.confirm_token_hash = Some(Self::token_digest(token));
+            // 模拟 scan 的完整副作用：确认者身份已锁定（否则身份绑定守卫先于
+            // not-scanned 守卫命中，测不到目标分支）
+            data.app_login_id = Some("user-1".to_string());
             self.write_session(qr_id, &data, remaining)
                 .await
                 .expect("test session write-back should succeed");
