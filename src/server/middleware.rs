@@ -100,11 +100,36 @@ impl RateLimitState {
     }
 }
 
+/// 从 `X-Forwarded-For` 解析真实客户端 IP（rightmost-untrusted 策略）。
+///
+/// 从右向左跳过 `trusted_proxies` 中的代理，返回第一个不可信跳。
+/// 客户端可预伪造 XFF 最左值（代理以追加模式写入时），仅最右侧
+/// 不可信跳由可信代理写入、不可伪造；全部跳均可信（纯内网互调）
+/// 时回退最左值。解析失败的跳视为不可信（作为限流键仍可隔离）。
+pub fn parse_forwarded_for_rightmost(xff: &str, trusted_proxies: &[IpAddr]) -> Option<String> {
+    let hops: Vec<&str> = xff
+        .split(',')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if hops.is_empty() {
+        return None;
+    }
+    for hop in hops.iter().rev() {
+        match hop.parse::<IpAddr>() {
+            Ok(ip) if trusted_proxies.contains(&ip) => continue,
+            _ => return Some((*hop).to_string()),
+        }
+    }
+    Some(hops[0].to_string())
+}
+
 /// 从请求中提取客户端 IP。
 ///
 /// # 信任模型
 ///
-/// - 若连接 IP 在 `trusted_proxies` 中：采用 X-Forwarded-For 最左值（原始客户端）。
+/// - 若连接 IP 在 `trusted_proxies` 中：采用 XFF rightmost-untrusted
+///   （从右向左第一个非可信代理跳，防客户端预伪造最左值）。
 /// - 若连接 IP 不在 `trusted_proxies` 中：使用连接 IP 本身，忽略 XFF（防伪造）。
 /// - 若无 `ConnectInfo`（如 oneshot 测试）：返回 "unknown"（fail-closed，不信任 XFF）。
 pub fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> String {
@@ -118,8 +143,7 @@ pub fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> String {
             .headers()
             .get("x-forwarded-for")
             .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.split(',').next())
-            .map(|s| s.trim().to_string())
+            .and_then(|s| parse_forwarded_for_rightmost(s, trusted_proxies))
             .unwrap_or_else(|| ip.to_string()),
         Some(ip) => ip.to_string(),
         None => "unknown".to_string(),
@@ -777,7 +801,7 @@ mod tests {
             .extension(ConnectInfo::<SocketAddr>("10.0.0.1:8080".parse().unwrap()))
             .body(Body::empty())
             .unwrap();
-        // XFF 被信任，取最左值 = "1.2.3.4"
+        // 单跳 XFF：rightmost-untrusted 即该跳本身（非可信），取 "1.2.3.4"
         assert_eq!(extract_client_ip(&req, &trusted), "1.2.3.4");
     }
 
@@ -1401,7 +1425,7 @@ mod tests {
         assert_eq!(std::str::from_utf8(&body).unwrap(), "203.0.113.1");
     }
 
-    /// 经可信代理（XFF 有效）：取 XFF 最左值（原始客户端 IP）。
+    /// 经可信代理（XFF 有效）：取 rightmost-untrusted（最右不可信跳）。
     #[tokio::test]
     async fn test_inject_client_ip_trusted_proxy_with_xff() {
         let trusted = vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
@@ -1431,8 +1455,63 @@ mod tests {
         assert_eq!(
             std::str::from_utf8(&body).unwrap(),
             "198.51.100.5",
-            "可信代理场景应取 XFF 最左值"
+            "可信代理场景应取 rightmost-untrusted 跳"
         );
+    }
+
+    /// 客户端预伪造最左 XFF：rightmost-untrusted 应忽略伪造值，取可信代理
+    /// 追加的真实客户端跳（旧「取最左值」实现会返回 1.2.3.4，即攻击者可控）。
+    #[tokio::test]
+    async fn test_inject_client_ip_forged_leftmost_xff_ignored() {
+        let trusted = vec![IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))];
+        let app = Router::new()
+            .route(
+                "/ip",
+                get(|req: super::Request| async move {
+                    req.extensions()
+                        .get::<ClientIp>()
+                        .map(|c| c.0.clone())
+                        .unwrap_or_default()
+                }),
+            )
+            .layer(axum::middleware::from_fn(inject_client_ip))
+            .layer(Extension(TrustedProxies(trusted)));
+
+        let req = Request::builder()
+            .uri("/ip")
+            .header("x-forwarded-for", "1.2.3.4, 198.51.100.5, 10.0.0.1")
+            .extension(ConnectInfo::<SocketAddr>("10.0.0.1:8080".parse().unwrap()))
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            std::str::from_utf8(&body).unwrap(),
+            "198.51.100.5",
+            "预伪造的最左值必须被忽略，取最右不可信跳"
+        );
+    }
+
+    /// parse_forwarded_for_rightmost 纯函数：全可信跳回退最左值。
+    #[test]
+    fn test_parse_forwarded_for_rightmost_all_trusted_returns_leftmost() {
+        let trusted = vec![
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+            IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)),
+        ];
+        assert_eq!(
+            super::parse_forwarded_for_rightmost("10.0.0.2, 10.0.0.1", &trusted),
+            Some("10.0.0.2".to_string())
+        );
+    }
+
+    /// parse_forwarded_for_rightmost 纯函数：空串返回 None。
+    #[test]
+    fn test_parse_forwarded_for_rightmost_empty_returns_none() {
+        assert_eq!(super::parse_forwarded_for_rightmost("", &[]), None);
+        assert_eq!(super::parse_forwarded_for_rightmost(" , ", &[]), None);
     }
 
     /// 非可信代理伪造 XFF：忽略 XFF，使用连接 IP。
