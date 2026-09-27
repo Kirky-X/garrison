@@ -97,6 +97,8 @@ impl Reply for super::GarrisonRejection {
 /// 400 非 JSON 响应（三框架一致承诺失效）。
 pub async fn garrison_recover(err: warp::Rejection) -> Result<Response, warp::Rejection> {
     if let Some(rej) = err.find::<super::GarrisonRejection>() {
+        // 与 axum/actix 的错误渲染路径对齐：每次错误必落日志（限流拒绝 warn）
+        rej.0.log_rejection();
         return Ok(unified_error_reply(&rej.0));
     }
     Err(err)
