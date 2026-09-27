@@ -48,6 +48,18 @@ pub mod tenant;
 
 pub mod token_extract;
 
+// ============================================================================
+// 请求标识（request id）task-local 上下文（无 feature gate）
+// ============================================================================
+
+pub mod request_id;
+
+pub use request_id::{
+    current, generate, inject_request_id_into_error_body, is_valid_inbound_request_id,
+    propagate_or_generate, scope, RequestId, MAX_INBOUND_LEN, REQUEST_ID_BODY_FIELD,
+    REQUEST_ID_HEADER, RETRY_AFTER_HEADER,
+};
+
 pub use token_extract::{
     extract_token_from_headers, extract_token_from_request_parts, is_body_token_allowed_method,
     strip_bearer_prefix, HeaderLookup,

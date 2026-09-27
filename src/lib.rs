@@ -331,7 +331,9 @@ pub mod web_warp;
 /// - `web-cors`：CORS 跨域资源共享
 /// - `web-csrf`：CSRF 跨站请求伪造防护
 /// - `web-security-headers`：HTTP 安全响应头中间件
+/// - `web-axum`：X-Request-ID 请求标识中间件
 #[cfg(any(
+    feature = "web-axum",
     feature = "firewall-waf",
     feature = "web-cors",
     feature = "web-csrf",

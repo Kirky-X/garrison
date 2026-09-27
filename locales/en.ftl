@@ -35,6 +35,9 @@ sms-verify-max-attempts = SMS verification max attempts exceeded
 sms-code-not-found = SMS verification code not found
 sms-channel-recycled = SMS channel recycled
 
+# Gateway-level rate limiting (GarrisonError::RateLimited, R04 unified error model)
+rate-limited = Rate limited
+
 # Email verification code rate limiting exceptions (email-verification)
 email-rate-limit-exceeded = Email rate limit exceeded: {$window} window
 email-verify-max-attempts = Email verification max attempts exceeded
@@ -853,6 +856,7 @@ disable-service-msg = Account disabled
 not-safe-msg = Two-factor authentication required
 invalid-state-transition-msg = Invalid state transition
 sms-rate-limit-exceeded-msg = SMS rate limit exceeded
+rate-limited-msg = Rate limited, please try again later
 sms-verify-max-attempts-msg = Verification code attempts exceeded
 sms-code-not-found-msg = Verification code not found or expired
 sms-channel-recycled-msg = SMS channel recycled
@@ -1039,7 +1043,6 @@ sso-secret-empty = SSO secret must not be empty (per security audit M5: ticket m
 # ============================================================================
 # Server / HTTP layer messages (i18n migration)
 # ============================================================================
-server-rate-limited = Rate limited
 server-invalid-api-key = Invalid API Key
 server-prometheus-encode-failed = Prometheus metrics encoding failed
 server-internal-api-key-missing = internal_api_key not configured, internal API will reject all requests. Please set a non-empty value via with_internal_api_key()

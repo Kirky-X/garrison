@@ -55,10 +55,13 @@ use std::sync::Arc;
 pub mod error;
 pub mod extractor;
 pub mod middleware;
+pub mod request_id;
 pub mod router;
 
 /// 登录主体 extractor（从 Authorization: Bearer `<token>` 解析 login_id）。
 pub use extractor::GarrisonPrincipal;
+/// X-Request-ID 中间件（Transform）：提取 / 生成 / 回传请求标识。
+pub use request_id::{RequestIdMiddleware, RequestIdService};
 
 // ============================================================================
 // 路由规则 + 路由器 struct 声明（impl 见 router.rs）

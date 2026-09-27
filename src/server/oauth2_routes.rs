@@ -244,14 +244,44 @@ fn extract_oauth2_request<T: serde::de::DeserializeOwned>(
     }
 }
 
-/// 429 判定：token/revoke handler 的速率限制错误统一以
+/// 限流错误桥接：token handler 的速率限制错误统一以
 /// `GarrisonError::OAuth2("rate_limited: ...")` 形态产出（见
-/// `oauth2_server::token` 的 `TokenRateLimiter` / `PasswordRateLimiter`）。
-/// 本框架的 `GarrisonError` 尚无独立的限速变体，此处按「变体 + 消息前缀」
-/// 做类型化匹配（比此前对整个 `Display` 做子串匹配更严格、不受错误文案后续
-/// 变化影响），并在 token.rs 侧维持 `rate_limited` 前缀契约。
-fn is_rate_limited_error(e: &crate::error::GarrisonError) -> bool {
-    matches!(e, crate::error::GarrisonError::OAuth2(msg) if msg.starts_with("rate_limited"))
+/// `oauth2_server::token` 的 `TokenRateLimiter` / `PasswordRateLimiter`，
+/// `rate_limited` 消息前缀为跨层契约），此处映射为 `RateLimited` 变体，
+/// 使 `retry_after_secs()` 与 `Retry-After` 响应头真实可达。
+///
+/// `Retry-After` 取值：滑动窗口 TTL 起点在首次计数时确立，桥接处拿不到
+/// 精确剩余秒数，故取 `TokenHandler::rate_limit_window_upper_bound_secs()`
+/// （限流器配置窗口上界）作保守提示——客户端不早于任一窗口过期重试。
+fn bridge_rate_limited_error(
+    e: crate::error::GarrisonError,
+    retry_hint_secs: u64,
+) -> crate::error::GarrisonError {
+    match e {
+        crate::error::GarrisonError::OAuth2(msg) if msg.starts_with("rate_limited") => {
+            crate::error::GarrisonError::RateLimited {
+                retry_after_secs: retry_hint_secs,
+            }
+        },
+        other => other,
+    }
+}
+
+/// OIDC 端点自建错误体（RFC 6749 `{"error": ...}` 信封）仅补 `Retry-After` 头：
+/// body 键保持 OAuth2 惯例不动，限流语义经响应头表达（R04 统一错误模型）。
+/// `Retry-After` 仅在错误桥接为 `RateLimited` 后可达（真实 429 路径），
+/// 其余 OAuth2 错误为防御性 no-op。
+fn with_retry_after(
+    mut response: axum::response::Response,
+    e: &crate::error::GarrisonError,
+) -> axum::response::Response {
+    if let Some(secs) = e.retry_after_secs() {
+        response.headers_mut().insert(
+            axum::http::header::HeaderName::from_static("retry-after"),
+            axum::http::HeaderValue::from(secs),
+        );
+    }
+    response
 }
 
 async fn authorize_endpoint(
@@ -270,11 +300,14 @@ async fn authorize_endpoint(
         },
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts_i18n();
-            (
-                StatusCode::BAD_REQUEST,
-                Json(json!({ "error": error_code, "message": message })),
+            with_retry_after(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": error_code, "message": message })),
+                )
+                    .into_response(),
+                &e,
             )
-                .into_response()
         },
     }
 }
@@ -318,11 +351,15 @@ async fn token_endpoint(
             apply_no_store((StatusCode::OK, Json(resp)).into_response())
         },
         Err(e) => {
+            // 限流错误桥接为 RateLimited（见 bridge 函数 doc），使 429 判定与
+            // Retry-After 头基于变体而非消息前缀
+            let e = bridge_rate_limited_error(
+                e,
+                state.token_handler.rate_limit_window_upper_bound_secs(),
+            );
             let (_, error_code, message, _) = e.response_parts_i18n();
             // RFC 6585 §4 — 速率限制错误返回 429 Too Many Requests。
-            // 按 GarrisonError::OAuth2 变体 + "rate_limited" 消息前缀
-            // 类型化判定（不再对整个 Display 做任意子串匹配）。
-            let is_rate_limited = is_rate_limited_error(&e);
+            let is_rate_limited = matches!(e, crate::error::GarrisonError::RateLimited { .. });
             let status = if is_rate_limited {
                 StatusCode::TOO_MANY_REQUESTS
             } else {
@@ -334,13 +371,14 @@ async fn token_endpoint(
                 error_code
             };
             // RFC 6749 §5.1 — token 端点错误响应同样必须 no-store
-            apply_no_store(
+            apply_no_store(with_retry_after(
                 (
                     status,
                     Json(json!({ "error": body_error, "message": message })),
                 )
                     .into_response(),
-            )
+                &e,
+            ))
         },
     }
 }
@@ -362,13 +400,14 @@ async fn revoke_endpoint(
         Ok(()) => apply_no_store(StatusCode::NO_CONTENT.into_response()),
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts_i18n();
-            apply_no_store(
+            apply_no_store(with_retry_after(
                 (
                     StatusCode::BAD_REQUEST,
                     Json(json!({ "error": error_code, "message": message })),
                 )
                     .into_response(),
-            )
+                &e,
+            ))
         },
     }
 }
@@ -389,13 +428,14 @@ async fn introspect_endpoint(
         Ok(resp) => apply_no_store((StatusCode::OK, Json(resp)).into_response()),
         Err(e) => {
             let (_, error_code, message, _) = e.response_parts_i18n();
-            apply_no_store(
+            apply_no_store(with_retry_after(
                 (
                     StatusCode::BAD_REQUEST,
                     Json(json!({ "error": error_code, "message": message })),
                 )
                     .into_response(),
-            )
+                &e,
+            ))
         },
     }
 }
@@ -455,25 +495,39 @@ mod tests {
     /// （含重放检测不可用后果与修复指引），探针 has_refresh_rotation 为 false。
     #[cfg(feature = "db-sqlite")]
     #[test]
+    #[serial_test::serial]
     fn oauth2_state_new_without_rotation_warns_at_construction() {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
 
-        let logs = LogCapture(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+        let capture = LogCapture(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
         let subscriber = tracing_subscriber::registry().with(
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
-                .with_writer(logs.clone()),
+                .with_writer(capture.clone()),
         );
 
         let _guard = subscriber.set_default();
-        let (state, _store) = make_state();
-        assert!(
-            !state.token_handler.has_refresh_rotation(),
-            "OAuth2State::new 默认不注入 rotation，探针应为 false"
-        );
+        // interest 缓存是进程级全局态：并行非订阅者测试可能抢先首次注册告警
+        // callsite 并缓存 Interest::never（事件被宏直接剔除），须显式重建
+        tracing::callsite::rebuild_interest_cache();
 
-        let logs = logs.0.lock().expect("日志缓冲锁应可用").clone();
+        // 以捕获到告警判断捕获有效，缺失则重建 interest 后重试构造
+        let mut logs: Vec<String> = Vec::new();
+        for _ in 0..3 {
+            let (state, _store) = make_state();
+            assert!(
+                !state.token_handler.has_refresh_rotation(),
+                "OAuth2State::new 默认不注入 rotation，探针应为 false"
+            );
+            logs = capture.0.lock().expect("日志缓冲锁应可用").clone();
+            if logs.iter().any(|l| {
+                l.contains("without RefreshTokenRotation") && l.contains("reuse detection")
+            }) {
+                break;
+            }
+            tracing::callsite::rebuild_interest_cache();
+        }
         assert!(
             logs.iter().any(|l| {
                 l.contains("without RefreshTokenRotation") && l.contains("reuse detection")
@@ -888,6 +942,18 @@ mod tests {
             "超速率限制应返回 429"
         );
 
+        // R04 统一错误模型：429 必须携带 Retry-After 头（rate_limited 错误桥接
+        // RateLimited 后经 with_retry_after 输出）。值为限流器配置窗口上界的
+        // 保守提示：本测试 PasswordRateLimiter 窗口 300s、TokenRateLimiter
+        // 双窗口 60s → 上界 300。
+        assert_eq!(
+            resp.headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok()),
+            Some("300"),
+            "429 响应必须携带 Retry-After 头"
+        );
+
         // 验证响应体含 RATE_LIMIT_EXCEEDED error code
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
@@ -921,6 +987,37 @@ mod tests {
             .unwrap();
         // 非 rate_limited 错误应返回 400（非 429）
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    /// 限流错误桥接（H1）：`rate_limited` 前缀的 OAuth2 错误映射为 RateLimited
+    /// （Retry-After 秒数可达），其余 OAuth2 错误原样保留。
+    #[test]
+    fn bridge_rate_limited_error_maps_prefix_and_preserves_others() {
+        use crate::error::GarrisonError;
+
+        let bridged = bridge_rate_limited_error(
+            GarrisonError::OAuth2("rate_limited: client requests too frequent".to_string()),
+            300,
+        );
+        assert!(
+            matches!(bridged, GarrisonError::RateLimited { .. }),
+            "rate_limited 前缀错误应桥接为 RateLimited，实际: {bridged:?}"
+        );
+        assert_eq!(
+            bridged.retry_after_secs(),
+            Some(300),
+            "桥接后 Retry-After 秒数必须可达"
+        );
+
+        let passthrough = bridge_rate_limited_error(
+            GarrisonError::OAuth2("invalid_client: nope".to_string()),
+            300,
+        );
+        assert!(
+            matches!(passthrough, GarrisonError::OAuth2(_)),
+            "非 rate_limited 前缀错误不得被改写: {passthrough:?}"
+        );
+        assert_eq!(passthrough.retry_after_secs(), None);
     }
 
     // === 表单格式（RFC 6749 §3.2）+ 错误响应 no-store 测试 ===

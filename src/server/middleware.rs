@@ -31,6 +31,7 @@ use std::time::Instant;
 
 use crate::backend::AuthBackend;
 use crate::context::GarrisonPrincipal;
+use crate::error::GarrisonError;
 
 /// per-IP 限速桶条目 — 持有 limiteron 令牌桶 + 最后访问时间（用于 LRU 淘汰）。
 ///
@@ -157,10 +158,12 @@ pub fn extract_client_ip(req: &Request, trusted_proxies: &[IpAddr]) -> String {
 
 /// 限速中间件 — 基于 IP 的令牌桶。
 ///
-/// 超限返回 429 Too Many Requests，响应体为 JSON：
+/// 超限返回 429 Too Many Requests，响应体为统一错误体：
 /// ```json
-/// { "error": "rate_limited", "message": "请求过于频繁" }
+/// { "error_code": "RATE_LIMITED", "error_id": "ratelimit.rate_limited", "message": "..." }
 /// ```
+/// 并携带 `Retry-After`（delta-seconds 整数秒，下限 1）与 `X-Request-ID` 头
+/// （后者需 request id 中间件在外层挂载）。
 pub async fn rate_limit_middleware(
     axum::extract::State(state): axum::extract::State<Arc<RateLimitState>>,
     req: Request,
@@ -216,14 +219,21 @@ pub async fn rate_limit_middleware(
     };
 
     if !allowed {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({
-                "error": "rate_limited",
-                "message": translate_detail("server-rate-limited", &[])
-            })),
-        )
-            .into_response();
+        // 统一错误模型（R04）：429 走 GarrisonError::RateLimited，
+        // Retry-After 取 limiteron 快照的 reset_secs（delta-seconds 整数秒，
+        // 下限 1 由 retry_after_secs() 强制）；响应体为统一错误体
+        // （error_code=RATE_LIMITED / error_id / request_id）。
+        // Retry-After 为 advisory 头：allow 判定与本次二次快照之间存在
+        // refill 窗口，头值允许陈旧（提示性质，非精确承诺）。
+        let reset_secs = bucket
+            .remaining()
+            .await
+            .map(|snapshot| snapshot.reset_secs)
+            .unwrap_or(0);
+        return GarrisonError::RateLimited {
+            retry_after_secs: reset_secs,
+        }
+        .into_response();
     }
 
     next.run(req).await
@@ -689,6 +699,107 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        // 统一错误体（R04）：error_code / error_id 字段
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error_code"], "RATE_LIMITED");
+        assert_eq!(json["error_id"], "ratelimit.rate_limited");
+    }
+
+    /// 429 响应携带 Retry-After 头，值为合法 delta-seconds（>= 1）。
+    ///
+    /// 精确值 = limiteron 快照 reset_secs（受令牌补充时间影响，不作精确断言；
+    /// 下限 1 的强制逻辑由 error.rs 的 `retry_after_secs` 纯函数测试覆盖）。
+    #[tokio::test]
+    async fn rate_limit_429_retry_after_matches_reset_secs() {
+        let state = Arc::new(RateLimitState::new(2));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            rate_limit_middleware,
+        ));
+
+        for _ in 0..2 {
+            let resp = app
+                .clone()
+                .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        }
+        let resp = app
+            .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let value = resp
+            .headers()
+            .get("Retry-After")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        assert!(
+            value >= 1,
+            "Retry-After 应为 delta-seconds 且 >= 1，实际: {value}"
+        );
+    }
+
+    /// reset_secs=0 时 Retry-After 取下限 1（capacity=0 配置强制触发）。
+    #[tokio::test]
+    async fn rate_limit_429_retry_after_floor_is_one() {
+        let state = Arc::new(RateLimitState::new(0));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            rate_limit_middleware,
+        ));
+        let resp = app
+            .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let value = resp
+            .headers()
+            .get("Retry-After")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert_eq!(value, "1", "reset_secs=0 应取下限 1");
+    }
+
+    /// request id 中间件外层挂载时，429 响应体携带 request_id（与请求头一致）。
+    #[tokio::test]
+    async fn rate_limit_429_body_carries_request_id() {
+        let state = Arc::new(RateLimitState::new(0));
+        let app = ok_router()
+            .layer(axum::middleware::from_fn_with_state(
+                state,
+                rate_limit_middleware,
+            ))
+            .layer(axum::middleware::from_fn(
+                crate::web::request_id::request_id_middleware,
+            ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ping")
+                    .header("X-Request-ID", "gw-429-corr")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(
+            resp.headers()
+                .get("X-Request-ID")
+                .and_then(|v| v.to_str().ok()),
+            Some("gw-429-corr")
+        );
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["request_id"], "gw-429-corr");
     }
 
     // ========================================================================

@@ -276,6 +276,11 @@ impl PasswordRateLimiter {
             .map(|v| v.len())
             .unwrap_or(0)
     }
+
+    /// 滑动窗口时长（秒），供限流 429 的 `Retry-After` 保守提示。
+    pub fn window_seconds(&self) -> u64 {
+        self.window_seconds
+    }
 }
 
 /// /token 端点速率限制器 — 防暴力枚举 `client_secret` / 密码。
@@ -408,6 +413,14 @@ impl TokenRateLimiter {
             },
         }
     }
+
+    /// 双窗口时长的上界（秒），供限流 429 的 `Retry-After` 保守提示。
+    ///
+    /// 桥接层（`server::oauth2_routes`）无法区分具体触发的窗口与剩余秒数，
+    /// 取上界保证客户端不早于任一窗口过期重试。
+    pub fn window_upper_bound_secs(&self) -> u64 {
+        self.client_window_secs.max(self.username_window_secs)
+    }
 }
 
 impl Default for TokenRateLimiter {
@@ -496,6 +509,19 @@ impl TokenHandler {
     #[cfg(feature = "db-sqlite")]
     pub fn has_refresh_rotation(&self) -> bool {
         self.refresh_rotation.is_some()
+    }
+
+    /// 限流窗口时长上界（秒）：`TokenRateLimiter` 双窗口与 `PasswordRateLimiter`
+    /// 锁定窗口的最大值。
+    ///
+    /// OAuth2 限流错误（`rate_limited` 消息前缀）经 `server::oauth2_routes`
+    /// 桥接为 `RateLimited` 时用作 `Retry-After` 保守提示——滑动窗口 TTL 起点
+    /// 在首次计数时确立，桥接处拿不到精确剩余秒数，取上界保证客户端不早于
+    /// 任一窗口过期重试（宁长勿短）。
+    pub fn rate_limit_window_upper_bound_secs(&self) -> u64 {
+        self.token_rate_limiter
+            .window_upper_bound_secs()
+            .max(self.password_rate_limiter.window_seconds())
     }
 
     /// 处理 token 请求。

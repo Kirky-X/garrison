@@ -444,6 +444,7 @@ fn error_to_key_args(err: &GarrisonError) -> (&'static str, Vec<(&'static str, S
         GarrisonError::SmsVerifyMaxAttempts => ("sms-verify-max-attempts", vec![]),
         GarrisonError::SmsCodeNotFound => ("sms-code-not-found", vec![]),
         GarrisonError::SmsChannelRecycled => ("sms-channel-recycled", vec![]),
+        GarrisonError::RateLimited { .. } => ("rate-limited", vec![]),
         #[cfg(feature = "email-verification")]
         GarrisonError::EmailRateLimitExceeded { window } => (
             "email-rate-limit-exceeded",
@@ -514,6 +515,7 @@ fn fallback_display(err: &GarrisonError) -> String {
         GarrisonError::SmsVerifyMaxAttempts => "SMS verification max attempts exceeded".to_string(),
         GarrisonError::SmsCodeNotFound => "SMS verification code not found".to_string(),
         GarrisonError::SmsChannelRecycled => "SMS channel recycled".to_string(),
+        GarrisonError::RateLimited { .. } => "Rate limited".to_string(),
         #[cfg(feature = "email-verification")]
         GarrisonError::EmailRateLimitExceeded { window } => {
             format!("Email rate limit exceeded: {} window", window)

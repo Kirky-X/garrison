@@ -7,6 +7,15 @@
 
 /// 全局配置结构体（[GarrisonConfig]）。
 pub use crate::config::GarrisonConfig;
+/// 请求标识传播载体与运行时助手（R04 统一错误模型）。
+///
+/// 自定义中间件作者所需的读取入口（`current` / `scope`）、传播助手与
+/// 头名常量；`inject_request_id_into_error_body` 为 warp 内部回填机制，
+/// 不进 prelude（模块内经 `crate::context::request_id` 路径使用）。
+pub use crate::context::request_id::{
+    current, is_valid_inbound_request_id, propagate_or_generate, scope, RequestId, MAX_INBOUND_LEN,
+    REQUEST_ID_HEADER, RETRY_AFTER_HEADER,
+};
 /// 上下文类型：请求/响应/存储抽象（[GarrisonContext]、[GarrisonRequest]、[GarrisonResponse]、[GarrisonStorage]）。
 pub use crate::context::{GarrisonContext, GarrisonRequest, GarrisonResponse, GarrisonStorage};
 /// 鉴权决策与请求模型（[Decision]、[DecisionReason]、[AuthRequest]，）。

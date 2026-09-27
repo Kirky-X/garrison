@@ -356,6 +356,45 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 > 生产部署请注入 rotation 消除告警。未启用 `db-sqlite` 的构建不支持轮换注入，
 > refresh grant 恒为退化路径（如无 refresh 需求可忽略）。
 
+### 6.0.1 X-Request-ID 请求标识中间件（R04）
+
+> **头名固定非配置**：`X-Request-ID` / `Retry-After` 为编译期常量
+> （`context::request_id::REQUEST_ID_HEADER` / `RETRY_AFTER_HEADER`），
+> **不提供配置项**——中间件行为一致性与安全校验规则（长度 ≤128 + 可见 ASCII）
+> 不应随部署漂移（见 ADR-0004）。
+
+三框架挂载示例：
+
+```toml
+# Cargo.toml
+[dependencies]
+garrison = { version = "0.9", features = ["web-axum"] }        # 或 web-actix / web-warp
+```
+
+```rust,ignore
+// axum：middleware::from_fn，建议挂最外层（错误体 request_id 覆盖全部下游错误）
+use axum::{routing::get, Router};
+
+let app = Router::new()
+    .route("/api", get(handler))
+    .layer(axum::middleware::from_fn(garrison::web::request_id::request_id_middleware));
+
+// actix-web：Transform wrap
+use actix_web::App;
+
+let app = App::new().wrap(garrison::web_actix::RequestIdMiddleware);
+
+// warp：wrap_fn 包装（错误体 request_id 走后置回填，见 ADR-0004）
+let routes = routes.with(warp::wrap_fn(garrison::web_warp::with_request_id));
+```
+
+行为：入站 `X-Request-ID` 合法（非空、≤128 字节、可见 ASCII）则原样回传，
+否则丢弃重新生成 UUID v4；所有响应回传 `X-Request-ID` 头，统一错误体携带
+`request_id` 字段；handler 经 `Extension<RequestId>`（axum）或 request
+extensions（actix）读取；中间件输出结构化日志（span + 事件均含 `request_id`
+字段）。错误响应附带 `Retry-After` 头（仅 `GarrisonError::RateLimited`，
+delta-seconds 整数秒，下限 1）。
+
 ### 6.1 启用 JWT + Redis 的组合示例
 
 ```toml

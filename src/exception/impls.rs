@@ -252,11 +252,24 @@ impl axum::response::IntoResponse for GarrisonException {
             -2 => StatusCode::FORBIDDEN,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
-        let body = axum::Json(serde_json::json!({
+        let mut body = serde_json::json!({
             "code": self.code,
             "message": self.message,
             "extras": sanitize_extras(&self.extras),
-        }));
-        (status, body).into_response()
+        });
+        if let Some(id) = crate::context::request_id::current() {
+            body[crate::context::request_id::REQUEST_ID_BODY_FIELD] =
+                serde_json::Value::String(id.to_string());
+        }
+        let mut response = (status, axum::Json(body)).into_response();
+        if let Some(id) = crate::context::request_id::current() {
+            if let Ok(value) = axum::http::HeaderValue::from_str(id.as_ref()) {
+                response.headers_mut().insert(
+                    axum::http::header::HeaderName::from_static("x-request-id"),
+                    value,
+                );
+            }
+        }
+        response
     }
 }

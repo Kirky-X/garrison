@@ -36,28 +36,39 @@ impl std::fmt::Display for super::GarrisonRejection {
 }
 
 /// 统一错误响应构建：与 axum `IntoResponse` / actix-web `ResponseError` 的
-/// 状态码及 body（`error_code` / `message` / 可选 `code`）完全一致。
+/// 状态码及 body（`error_code` / `error_id` / `message` / 可选 `code`）完全一致。
 ///
 /// [`Reply for GarrisonError`]、[`Reply for GarrisonRejection`] 与 [`garrison_recover`]
 /// 共用，单一事实来源，确保三框架响应同一形态。
-fn unified_error_reply(err: &GarrisonError) -> Response {
-    // 单次调用 response_parts_i18n() 获取所有字段（消除冗余调用）
-    let (status, error_code, message, ex_code) = err.response_parts_i18n();
+///
+/// body 经 [`GarrisonError::to_json_body`] 构造（含 `error_id`；`request_id`
+/// 在 request id task-local scope 内渲染时携带，warp 路径由
+/// [`super::request_id`] 中间件后置回填，三框架终态输出形状一致）。
+pub(crate) fn unified_error_reply(err: &GarrisonError) -> Response {
+    let body = err.to_json_body();
+    // 状态码无需 i18n 分片（to_json_body 内部已完成翻译，避免双重翻译；
+    // 与 actix ResponseError 的 status_code 取值路径对齐）
+    let (status, _, _, _) = err.response_parts();
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-    let body = if let Some(code) = ex_code {
-        serde_json::json!({
-            "error_code": error_code,
-            "message": message,
-            "code": code,
-        })
-    } else {
-        serde_json::json!({
-            "error_code": error_code,
-            "message": message,
-        })
-    };
-    // warp 内置 json + with_status 组合，自动设置 content-type: application/json
-    warp::reply::with_status(warp::reply::json(&body), status).into_response()
+    let mut response = warp::reply::with_status(warp::reply::json(&body), status).into_response();
+    // Retry-After：delta-seconds 整数秒（下限 1），仅限流变体（不依赖 task-local）
+    if let Some(secs) = err.retry_after_secs() {
+        response.headers_mut().insert(
+            warp::http::header::HeaderName::from_static("retry-after"),
+            warp::http::HeaderValue::from(secs),
+        );
+    }
+    // X-Request-ID：request id task-local scope 内回传（warp 中间件 scope 包住
+    // 后置处理，本函数在 route 内渲染时读到的 scope 视中间件挂载而定）
+    if let Some(id) = crate::context::request_id::current() {
+        if let Ok(value) = warp::http::HeaderValue::from_str(id.as_ref()) {
+            response.headers_mut().insert(
+                warp::http::header::HeaderName::from_static("x-request-id"),
+                value,
+            );
+        }
+    }
+    response
 }
 
 /// `impl Reply for GarrisonError`：复用 `unified_error_reply` 保证三框架一致。
@@ -65,7 +76,8 @@ fn unified_error_reply(err: &GarrisonError) -> Response {
 /// 状态码与错误码映射与 axum `IntoResponse` / actix-web `ResponseError` 完全一致。
 impl Reply for GarrisonError {
     fn into_response(self) -> Response {
-        tracing::error!(error = ?self, "garrison rejection");
+        // 完整错误记录到日志（不返回给客户端）；限流拒绝降级 warn（日志洪水防护）
+        self.log_rejection();
         unified_error_reply(&self)
     }
 }

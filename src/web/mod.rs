@@ -49,6 +49,10 @@ pub mod csrf;
 #[cfg(feature = "web-security-headers")]
 pub mod security_headers;
 
+/// X-Request-ID 请求标识中间件模块（提取 / 生成 / 回传，错误体携带 request_id）。
+#[cfg(feature = "web-axum")]
+pub mod request_id;
+
 /// axum 框架适配子模块（firewall-waf middleware 等）。
 #[cfg(feature = "firewall-waf")]
 pub mod axum;

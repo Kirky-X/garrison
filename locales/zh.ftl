@@ -35,6 +35,9 @@ sms-verify-max-attempts = SMS 验证码尝试次数超限
 sms-code-not-found = SMS 验证码不存在
 sms-channel-recycled = SMS 通道已回收
 
+# 网关层限流（GarrisonError::RateLimited，R04 统一错误模型）
+rate-limited = 请求过于频繁
+
 # 邮箱验证码限速异常（email-verification）
 email-rate-limit-exceeded = 邮箱限速超出: {$window} 窗口
 email-verify-max-attempts = 邮箱验证码尝试次数超限
@@ -852,6 +855,7 @@ disable-service-msg = 账号已被封禁
 not-safe-msg = 未完成二次认证
 invalid-state-transition-msg = 非法状态转换
 sms-rate-limit-exceeded-msg = 短信发送频繁
+rate-limited-msg = 请求过于频繁，请稍后重试
 sms-verify-max-attempts-msg = 验证码尝试次数超限
 sms-code-not-found-msg = 验证码不存在或已过期
 sms-channel-recycled-msg = 短信通道已回收
@@ -1038,7 +1042,6 @@ sso-secret-empty = SSO secret 不能为空（依据安全审计 M5：ticket 必�
 # ============================================================================
 # Server / HTTP 层消息（i18n 迁移）
 # ============================================================================
-server-rate-limited = 请求过于频繁
 server-invalid-api-key = 无效的 API Key
 server-prometheus-encode-failed = Prometheus 指标编码失败
 server-internal-api-key-missing = internal_api_key 未配置，内网 API 将拒绝所有请求。请通过 with_internal_api_key() 设置非空值

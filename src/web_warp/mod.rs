@@ -48,6 +48,7 @@ use std::sync::Arc;
 
 pub mod extractor;
 pub mod extractors;
+pub mod request_id;
 pub mod router;
 
 /// 登录主体 extractor Filter（从 Authorization: Bearer `<token>` 解析 login_id）。
@@ -65,6 +66,8 @@ pub use extractors::check_permission;
 pub use extractors::check_role;
 /// `.recover()` 守卫映射处理器：`GarrisonRejection` → 三框架一致的统一 JSON。
 pub use extractors::garrison_recover;
+/// X-Request-ID 中间件：提取 / 生成 / 回传请求标识（错误体后置回填 request_id）。
+pub use request_id::with_request_id;
 
 // ============================================================================
 // 结构体声明：实现见子模块 router / extractors

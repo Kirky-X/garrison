@@ -349,15 +349,73 @@ Display 行为：未启用 `i18n` 时硬编码中文；启用 `i18n` 后按线�
 | `Annotation(String)` | 500 | 注解校验失败 / 组合冲突 |
 | `Context(String)` | 500 | GarrisonContext / Request / Response / Storage 异常 |
 | `Exception(Box<GarrisonException>)` | — | 业务异常（Box 装载控制枚举体积，越过 `result_large_err` 阈值） |
-| `OAuth2(String)` / `Network(String)` / `InvalidResponse(String)` | 502 | OAuth2 协议 / 网络层 / 上游响应解析失败（三者语义互斥） |
+| `OAuth2(String)` | 500 | OAuth2 协议错误（`error_id` 为 `oauth.error`——格式约束不含数字，故模块段用词根 `oauth`） |
+| `Network(String)` / `InvalidResponse(String)` | 502 | 网络层 / 上游响应解析失败（语义互斥） |
 | `InvalidParam(String)` | 400 | 参数无效 |
-| `NotImplemented(String)` | 500 | default 实现未覆盖 |
-| `FirewallBlocked(String)` | 429 | 防火墙拦截（携带 strategy 名与原因，供 audit-log 订阅） |
+| `NotImplemented(String)` | 501 | default 实现未覆盖 |
+| `FirewallBlocked(String)` | 403 | 防火墙拦截（携带 strategy 名与原因，供 audit-log 订阅） |
 | `DisableService { service, until }` | 403 | 账号封禁（`until = None` 为永久；不泄露 user_id / tenant_id） |
-| `NotSafe { reason }` | 401 | 未完成二次认证（如 `MFA_TOTP_REQUIRED`） |
+| `NotSafe { reason }` | 400 | 未完成二次认证（如 `MFA_TOTP_REQUIRED`） |
 | `InvalidStateTransition { from, to }` | 500 | 状态机非法转换 |
 | `SmsRateLimitExceeded { window }` / `SmsVerifyMaxAttempts` / `SmsCodeNotFound` / `SmsChannelRecycled` | 429/400 | 短信验证码（`sms-rate-limit`） |
 | `EmailRateLimitExceeded { window }` 等 | 429/400 | 邮箱验证（`email-verification` 门控变体） |
+| `RateLimited { retry_after_secs }` | 429 | 网关层限流（携带 `Retry-After` 响应头；`server` 限流中间件与 limiteron 桥接使用） |
+
+### 统一错误响应体（R04）
+
+`GarrisonError` / `GarrisonException` 的 HTTP 错误响应体（三框架 axum / actix-web / warp 形状一致）：
+
+```json
+{
+  "error_code": "NOT_LOGIN",
+  "error_id": "auth.not_login",
+  "message": "Not logged in",
+  "request_id": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+- `error_code`：**旧码**（`UPPER_SNAKE_CASE`），冻结原值继续输出，不 deprecate。
+- `error_id`：**新码**（模块前缀 `<module>.<snake>`），新旧并存；单一事实来源为
+  `parts_and_msg_key` 私有函数（逐 arm 显式静态书写，非自动派生）。API 为
+  `GarrisonError::prefixed_code()`。
+- `request_id`：当前请求的 request id（`X-Request-ID` 中间件注入 task-local）。
+  **无 request id 时该字段省略**（omitempty 语义）。
+- `Exception` 变体额外含 `code` 字段（`i32` 业务码）。
+- `message`：i18n 化通用描述，不含变体 detail（防泄露）。
+
+旧码 → `error_id` 对照表（全量，`Exception` 变体按业务 `code` 三分为 `exception.*`）：
+
+| 旧 error_code | error_id | 旧 error_code | error_id |
+|---------------|----------|---------------|----------|
+| `NOT_LOGIN` | `auth.not_login` | `NOT_SAFE` | `auth.not_safe` |
+| `INVALID_TOKEN` | `auth.invalid_token` | `INVALID_STATE_TRANSITION` | `state.invalid_transition` |
+| `TOKEN_REVOKED` | `auth.token_revoked` | `RATE_LIMITED` | `ratelimit.rate_limited` |
+| `EXPIRED_TOKEN` | `auth.expired_token` | `SMS_RATE_LIMIT_EXCEEDED` | `sms.rate_limit_exceeded` |
+| `NOT_PERMISSION` | `auth.not_permission` | `SMS_VERIFY_MAX_ATTEMPTS` | `sms.verify_max_attempts` |
+| `NOT_ROLE` | `auth.not_role` | `SMS_CODE_NOT_FOUND` | `sms.code_not_found` |
+| `DAO_ERROR` | `dao.error` | `SMS_CHANNEL_RECYCLED` | `sms.channel_recycled` |
+| `CONFIG_ERROR` | `config.error` | `EMAIL_RATE_LIMIT_EXCEEDED` | `email.rate_limit_exceeded` |
+| `INTERNAL_ERROR` | `internal.error` | `EMAIL_VERIFY_MAX_ATTEMPTS` | `email.verify_max_attempts` |
+| `SESSION_ERROR` | `session.error` | `EMAIL_CODE_NOT_FOUND` | `email.code_not_found` |
+| `ANNOTATION_ERROR` | `annotation.error` | `EMAIL_CHANNEL_RECYCLED` | `email.channel_recycled` |
+| `CONTEXT_ERROR` | `context.error` | `CREDIT_INSUFFICIENT` | `credit.insufficient` |
+| `OAUTH2_ERROR` | `oauth.error` | `NOT_LOGIN`（Exception -1） | `exception.not_login` |
+| `NETWORK_ERROR` | `network.error` | `NOT_PERMISSION`（Exception -2） | `exception.not_permission` |
+| `INVALID_RESPONSE` | `network.invalid_response` | `EXCEPTION`（其他） | `exception.default` |
+| `INVALID_PARAM` | `validation.invalid_param` | | |
+| `NOT_IMPLEMENTED` | `internal.not_implemented` | | |
+| `FIREWALL_BLOCKED` | `firewall.blocked` | | |
+| `DISABLE_SERVICE` | `account.disable_service` | | |
+
+响应头语义（头名为**固定常量，非配置项**，见 ADR-0004）：
+
+| 头 | 语义 | 条件 |
+|----|------|------|
+| `X-Request-ID` | 回传请求标识（入站合法原样回传；非法/缺失回传生成的 UUID v4） | 挂载 request id 中间件后所有响应 |
+| `Retry-After` | delta-seconds 整数秒（下限 1），仅 `RateLimited` 变体 | `retry_after_secs()` 为 `Some` |
+
+入站 `X-Request-ID` 校验（不可信输入）：非空、长度 ≤ 128、全部可见 ASCII
+（`0x21..=0x7E`）；CRLF / 非 ASCII / 超长即丢弃重新生成，防 header / 日志注入。
 
 ---
 

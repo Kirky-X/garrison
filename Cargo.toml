@@ -77,6 +77,8 @@ dashmap = { version = "6.2", default-features = false }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.26", features = ["v4", "v7", "serde"] }
 http = "1.5"
+# warp request id 后置回填（web-warp feature）：收集错误响应体解析注入 request_id
+http-body-util = { optional = true, workspace = true }
 unicode-normalization = "0.1"
 
 # === Optional dependencies (feature-gated) ===
@@ -388,7 +390,7 @@ policy-hibp = ["dep:reqwest", "dep:sha1"]
 # === Web 框架适配 ===
 web-axum = ["dep:axum", "axum/tokio", "axum/http1"]
 web-actix = ["dep:actix-web"]
-web-warp = ["dep:warp"]
+web-warp = ["dep:warp", "dep:http-body-util"]
 
 # === HTTPS/TLS 终止（axum-server rustls） ===
 # 依赖 auth-server（server 模块门控）

@@ -137,6 +137,16 @@ pub enum GarrisonError {
     /// SMS 通道已回收（异常发送检测触发）。
     SmsChannelRecycled,
 
+    /// 请求速率超限（网关层限流，HTTP 429 Too Many Requests）。
+    ///
+    /// `retry_after_secs` 为建议等待秒数（limiteron 快照的 `reset_secs`），
+    /// 经 `Retry-After` 响应头输出（delta-seconds 整数秒，下限 1）。
+    /// 对应 error_id `ratelimit.rate_limited`。
+    RateLimited {
+        /// 建议客户端等待的秒数（下限由 `retry_after_secs()` 强制为 1）。
+        retry_after_secs: u64,
+    },
+
     /// 邮箱限速超出（`email-verification` feature）。
     ///
     /// `window` 标识触发的窗口（"hourly" / "daily"）。
@@ -217,6 +227,7 @@ impl std::fmt::Debug for GarrisonError {
             Self::SmsVerifyMaxAttempts => "SmsVerifyMaxAttempts",
             Self::SmsCodeNotFound => "SmsCodeNotFound",
             Self::SmsChannelRecycled => "SmsChannelRecycled",
+            Self::RateLimited { .. } => "RateLimited",
             #[cfg(feature = "email-verification")]
             Self::EmailRateLimitExceeded { .. } => "EmailRateLimitExceeded",
             #[cfg(feature = "email-verification")]
@@ -332,7 +343,7 @@ impl GarrisonError {
     ///
     /// 返回的 `message` 仅暴露通用描述（如 "未登录"），完整错误通过 `tracing::error!` 记录。
     pub fn response_parts(&self) -> (u16, &'static str, &'static str, Option<i32>) {
-        let (status, error_code, _, fallback_msg, ex_code) = self.parts_and_msg_key();
+        let (status, error_code, _, fallback_msg, ex_code, _) = self.parts_and_msg_key();
         (status, error_code, fallback_msg, ex_code)
     }
 
@@ -352,28 +363,83 @@ impl GarrisonError {
         }
     }
 
-    /// 内部方法：单次 match 产出所有字段（status, error_code, msg_key, fallback_msg, ex_code）。
+    /// 模块前缀错误码（`<module>.<snake>`，如 `auth.not_login` / `ratelimit.rate_limited`）。
+    ///
+    /// 与旧码 [`Self::code`]（`"NOT_LOGIN"` 等冻结原值）并存的新 API：
+    /// 旧码保持兼容输出，不 deprecate；`error_id` 面向新集成方按模块维度检索。
+    /// 单一事实来源为私有 `parts_and_msg_key`（逐 arm 显式静态书写，非自动派生），
+    /// 对所有变体两两唯一（`Exception` 变体的三个子 arm 分别为
+    /// `exception.not_login` / `exception.not_permission` / `exception.default`）。
+    pub fn prefixed_code(&self) -> &'static str {
+        let (_, _, _, _, _, error_id) = self.parts_and_msg_key();
+        error_id
+    }
+
+    /// `Retry-After` 头值（秒），仅限流变体返回。
+    ///
+    /// [`Self::RateLimited`] 返回 `Some(max(1, retry_after_secs))`（delta-seconds
+    /// 统一整数秒格式，下限 1 防止 0 秒误导客户端立即重试）；其余变体返回 `None`。
+    pub fn retry_after_secs(&self) -> Option<u64> {
+        match self {
+            Self::RateLimited { retry_after_secs } => Some((*retry_after_secs).max(1)),
+            _ => None,
+        }
+    }
+
+    /// 错误响应渲染的统一日志（axum IntoResponse / actix ResponseError /
+    /// warp Reply 三框架适配器共用）。
+    ///
+    /// 限流拒绝是预期行为而非错误：429 攻击路径下每个被拒请求一条 error 日志
+    /// 且 error 级无法被 EnvFilter 静音，构成日志洪水向量，故 `RateLimited`
+    /// 降级为 `warn`；其余变体保持 `error` 级。
+    pub(crate) fn log_rejection(&self) {
+        if matches!(self, Self::RateLimited { .. }) {
+            tracing::warn!(error = ?self, "garrison rejection: rate limited");
+        } else {
+            tracing::error!(error = ?self, "garrison rejection");
+        }
+    }
+
+    /// 内部方法：单次 match 产出所有字段（status, error_code, msg_key, fallback_msg, ex_code, error_id）。
     ///
     /// [`Self::response_parts`] 和 [`Self::response_parts_i18n`] 都复用此方法，
-    /// 避免 27 个变体的 match 被重复维护两份（DRY）。
+    /// 避免变体 match 被重复维护两份（DRY）。
     ///
     /// # 返回
     /// - `status`: HTTP 状态码
-    /// - `error_code`: 结构化错误码字符串
+    /// - `error_code`: 结构化错误码字符串（旧码，冻结原值继续输出）
     /// - `msg_key`: FTL message key（如 `"not-login-msg"`），用于 i18n 翻译
     /// - `fallback_msg`: 硬编码中文回退消息（i18n 翻译失败时使用）
     /// - `ex_code`: 仅 `Exception` 变体返回 `Some(code)`
-    fn parts_and_msg_key(&self) -> (u16, &'static str, &'static str, &'static str, Option<i32>) {
+    /// - `error_id`: 模块前缀错误码（`<module>.<snake>`，如 `auth.not_login`），
+    ///   与旧码并存的新字段（单一事实来源即本函数，逐 arm 显式静态书写，
+    ///   不自动派生；命名风格与 miette dotted 码 `garrison.not_login` 先例一致）
+    fn parts_and_msg_key(
+        &self,
+    ) -> (
+        u16,
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<i32>,
+        &'static str,
+    ) {
         match self {
-            GarrisonError::NotLogin(_) => {
-                (401, "NOT_LOGIN", "not-login-msg", "Not logged in", None)
-            },
+            GarrisonError::NotLogin(_) => (
+                401,
+                "NOT_LOGIN",
+                "not-login-msg",
+                "Not logged in",
+                None,
+                "auth.not_login",
+            ),
             GarrisonError::InvalidToken(_) => (
                 401,
                 "INVALID_TOKEN",
                 "invalid-token-msg",
                 "Invalid token",
                 None,
+                "auth.invalid_token",
             ),
             GarrisonError::TokenRevoked(_) => (
                 401,
@@ -381,6 +447,7 @@ impl GarrisonError {
                 "token-revoked-msg",
                 "Token revoked",
                 None,
+                "auth.token_revoked",
             ),
             GarrisonError::ExpiredToken(_) => (
                 401,
@@ -388,6 +455,7 @@ impl GarrisonError {
                 "expired-token-msg",
                 "Token expired",
                 None,
+                "auth.expired_token",
             ),
             GarrisonError::NotPermission(_) => (
                 403,
@@ -395,15 +463,31 @@ impl GarrisonError {
                 "not-permission-msg",
                 "Permission denied",
                 None,
+                "auth.not_permission",
             ),
-            GarrisonError::NotRole(_) => (403, "NOT_ROLE", "not-role-msg", "Role required", None),
-            GarrisonError::Dao(_) => (500, "DAO_ERROR", "dao-msg", "Data access error", None),
+            GarrisonError::NotRole(_) => (
+                403,
+                "NOT_ROLE",
+                "not-role-msg",
+                "Role required",
+                None,
+                "auth.not_role",
+            ),
+            GarrisonError::Dao(_) => (
+                500,
+                "DAO_ERROR",
+                "dao-msg",
+                "Data access error",
+                None,
+                "dao.error",
+            ),
             GarrisonError::Config(_) => (
                 500,
                 "CONFIG_ERROR",
                 "config-msg",
                 "Configuration error",
                 None,
+                "config.error",
             ),
             GarrisonError::Internal(_) => (
                 500,
@@ -411,30 +495,55 @@ impl GarrisonError {
                 "internal-msg",
                 "Internal error",
                 None,
+                "internal.error",
             ),
-            GarrisonError::Session(_) => {
-                (500, "SESSION_ERROR", "session-msg", "Session error", None)
-            },
+            GarrisonError::Session(_) => (
+                500,
+                "SESSION_ERROR",
+                "session-msg",
+                "Session error",
+                None,
+                "session.error",
+            ),
             GarrisonError::Annotation(_) => (
                 500,
                 "ANNOTATION_ERROR",
                 "annotation-msg",
                 "Annotation error",
                 None,
+                "annotation.error",
             ),
-            GarrisonError::Context(_) => {
-                (500, "CONTEXT_ERROR", "context-msg", "Context error", None)
-            },
-            GarrisonError::OAuth2(_) => (500, "OAUTH2_ERROR", "oauth2-msg", "OAuth2 error", None),
-            GarrisonError::Network(_) => {
-                (502, "NETWORK_ERROR", "network-msg", "Network error", None)
-            },
+            GarrisonError::Context(_) => (
+                500,
+                "CONTEXT_ERROR",
+                "context-msg",
+                "Context error",
+                None,
+                "context.error",
+            ),
+            GarrisonError::OAuth2(_) => (
+                500,
+                "OAUTH2_ERROR",
+                "oauth2-msg",
+                "OAuth2 error",
+                None,
+                "oauth.error",
+            ),
+            GarrisonError::Network(_) => (
+                502,
+                "NETWORK_ERROR",
+                "network-msg",
+                "Network error",
+                None,
+                "network.error",
+            ),
             GarrisonError::InvalidResponse(_) => (
                 502,
                 "INVALID_RESPONSE",
                 "invalid-response-msg",
                 "Invalid upstream response",
                 None,
+                "network.invalid_response",
             ),
             GarrisonError::InvalidParam(_) => (
                 400,
@@ -442,6 +551,7 @@ impl GarrisonError {
                 "invalid-param-msg",
                 "Invalid parameter",
                 None,
+                "validation.invalid_param",
             ),
             GarrisonError::NotImplemented(_) => (
                 501,
@@ -449,6 +559,7 @@ impl GarrisonError {
                 "not-implemented-msg",
                 "Not implemented",
                 None,
+                "internal.not_implemented",
             ),
             GarrisonError::FirewallBlocked(_) => (
                 403,
@@ -456,6 +567,7 @@ impl GarrisonError {
                 "firewall-blocked-msg",
                 "Firewall blocked",
                 None,
+                "firewall.blocked",
             ),
             GarrisonError::DisableService { .. } => (
                 403,
@@ -463,6 +575,7 @@ impl GarrisonError {
                 "disable-service-msg",
                 "Account disabled",
                 None,
+                "account.disable_service",
             ),
             GarrisonError::NotSafe { .. } => (
                 400,
@@ -470,6 +583,7 @@ impl GarrisonError {
                 "not-safe-msg",
                 "Two-factor authentication required",
                 None,
+                "auth.not_safe",
             ),
             GarrisonError::InvalidStateTransition { .. } => (
                 500,
@@ -477,6 +591,15 @@ impl GarrisonError {
                 "invalid-state-transition-msg",
                 "Invalid state transition",
                 None,
+                "state.invalid_transition",
+            ),
+            GarrisonError::RateLimited { .. } => (
+                429,
+                "RATE_LIMITED",
+                "rate-limited-msg",
+                "Rate limited",
+                None,
+                "ratelimit.rate_limited",
             ),
             GarrisonError::SmsRateLimitExceeded { .. } => (
                 429,
@@ -484,6 +607,7 @@ impl GarrisonError {
                 "sms-rate-limit-exceeded-msg",
                 "SMS rate limit exceeded",
                 None,
+                "sms.rate_limit_exceeded",
             ),
             GarrisonError::SmsVerifyMaxAttempts => (
                 400,
@@ -491,6 +615,7 @@ impl GarrisonError {
                 "sms-verify-max-attempts-msg",
                 "Verification code attempts exceeded",
                 None,
+                "sms.verify_max_attempts",
             ),
             GarrisonError::SmsCodeNotFound => (
                 400,
@@ -498,6 +623,7 @@ impl GarrisonError {
                 "sms-code-not-found-msg",
                 "Verification code not found or expired",
                 None,
+                "sms.code_not_found",
             ),
             GarrisonError::SmsChannelRecycled => (
                 403,
@@ -505,6 +631,7 @@ impl GarrisonError {
                 "sms-channel-recycled-msg",
                 "SMS channel recycled",
                 None,
+                "sms.channel_recycled",
             ),
             #[cfg(feature = "email-verification")]
             GarrisonError::EmailRateLimitExceeded { .. } => (
@@ -513,6 +640,7 @@ impl GarrisonError {
                 "email-rate-limit-exceeded-msg",
                 "Email sending too frequent",
                 None,
+                "email.rate_limit_exceeded",
             ),
             #[cfg(feature = "email-verification")]
             GarrisonError::EmailVerifyMaxAttempts => (
@@ -521,6 +649,7 @@ impl GarrisonError {
                 "email-verify-max-attempts-msg",
                 "Verification max attempts exceeded",
                 None,
+                "email.verify_max_attempts",
             ),
             #[cfg(feature = "email-verification")]
             GarrisonError::EmailCodeNotFound => (
@@ -529,6 +658,7 @@ impl GarrisonError {
                 "email-code-not-found-msg",
                 "Verification code not found or expired",
                 None,
+                "email.code_not_found",
             ),
             #[cfg(feature = "email-verification")]
             GarrisonError::EmailChannelRecycled => (
@@ -537,6 +667,7 @@ impl GarrisonError {
                 "email-channel-recycled-msg",
                 "Email channel recycled",
                 None,
+                "email.channel_recycled",
             ),
             #[cfg(feature = "credit-metering")]
             GarrisonError::CreditInsufficient { .. } => (
@@ -545,6 +676,7 @@ impl GarrisonError {
                 "credit-insufficient-msg",
                 "Credit insufficient",
                 None,
+                "credit.insufficient",
             ),
             // Exception 依据 GarrisonException.code 字段映射状态码
             // code = -1 → 未登录 → 401；code = -2 → 无权限 → 403；其他 → 500
@@ -555,6 +687,7 @@ impl GarrisonError {
                     "exception-not-login-msg",
                     "Not logged in",
                     Some(ex.code),
+                    "exception.not_login",
                 ),
                 -2 => (
                     403,
@@ -562,6 +695,7 @@ impl GarrisonError {
                     "exception-not-permission-msg",
                     "Permission denied",
                     Some(ex.code),
+                    "exception.not_permission",
                 ),
                 _ => (
                     500,
@@ -569,6 +703,7 @@ impl GarrisonError {
                     "exception-default-msg",
                     "Business exception",
                     Some(ex.code),
+                    "exception.default",
                 ),
             },
         }
@@ -599,7 +734,7 @@ impl GarrisonError {
     /// （如 `not-login-msg`、`exception-default-msg`），与 `response_parts()`
     /// 的硬编码中文一一对应。
     pub fn response_parts_i18n(&self) -> (u16, &'static str, String, Option<i32>) {
-        let (status, error_code, msg_key, fallback_msg, ex_code) = self.parts_and_msg_key();
+        let (status, error_code, msg_key, fallback_msg, ex_code, _) = self.parts_and_msg_key();
         let translated = crate::i18n::translate_detail(msg_key, &[]);
         // 翻译失败时（translate_detail 返回 key 本身）回退到硬编码 fallback，
         // 避免泄露 FTL key 到 HTTP 响应体（M4 安全修复）。
@@ -616,16 +751,25 @@ impl GarrisonError {
     /// 返回 `serde_json::Value`，由各框架适配器自行序列化为响应 body。
     /// `Exception` 变体额外包含 `code` 字段。
     ///
+    /// 统一体字段：`error_code`（旧码，冻结原值）、`error_id`（模块前缀码）、
+    /// `message`。当前请求存在 request id（[`crate::context::request_id::current`]）
+    /// 时额外携带 `request_id` 字段，无则省略（omitempty 语义）。
+    ///
     /// `message` 字段通过 [`Self::response_parts_i18n`] 翻译为当前 locale 文本，
     /// 避免硬编码中文泄露到 HTTP 响应体（A 类 i18n 遗漏修复）。
     pub fn to_json_body(&self) -> serde_json::Value {
         let (_, error_code, message, ex_code) = self.response_parts_i18n();
         let mut body = serde_json::json!({
             "error_code": error_code,
+            "error_id": self.prefixed_code(),
             "message": message,
         });
         if let Some(code) = ex_code {
             body["code"] = serde_json::json!(code);
+        }
+        if let Some(id) = crate::context::request_id::current() {
+            body[crate::context::request_id::REQUEST_ID_BODY_FIELD] =
+                serde_json::json!(id.as_ref());
         }
         body
     }
@@ -649,47 +793,56 @@ impl GarrisonError {
 #[cfg(feature = "web-axum")]
 impl axum::response::IntoResponse for GarrisonError {
     fn into_response(self) -> axum::response::Response {
+        use axum::http::header::HeaderName;
+        use axum::http::HeaderValue;
         use axum::http::StatusCode;
 
-        // 完整错误记录到日志（不返回给客户端）
-        tracing::error!(error = ?self, "garrison rejection");
+        // 完整错误记录到日志（不返回给客户端）；限流拒绝降级 warn（日志洪水防护）
+        self.log_rejection();
 
-        // 单次调用 response_parts_i18n() 获取所有字段消除冗余调用），
-        // 复用 response_parts_i18n() 保证三框架行为一致（L1：更新注释）。
-        let (status_code, error_code, message, ex_code) = self.response_parts_i18n();
+        // 统一体单一事实来源：error_code + error_id + message（+ code / request_id）
+        let json_value = self.to_json_body();
+        // 状态码无需 i18n 分片（to_json_body 内部已完成翻译，避免双重翻译）
+        let (status_code, _, _, _) = self.response_parts();
         let status = StatusCode::from_u16(status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        let json_value = if let Some(code) = ex_code {
-            serde_json::json!({
-                "error_code": error_code,
-                "message": message,
-                "code": code,
-            })
-        } else {
-            serde_json::json!({
-                "error_code": error_code,
-                "message": message,
-            })
-        };
 
         // 防御性截断：限制响应体大小为 4KB
         // 当前架构下 message 是固定字符串，body 永远 < 4KB；
         // 此截断保护未来架构变化（如 message 字段包含可变内容时）不会导致响应体过大。
         const MAX_BODY_SIZE: usize = 4096;
         let body_str = serde_json::to_string(&json_value).unwrap_or_else(|_| {
-            // L2：i18n 化（英文，避免硬编码中文泄露到响应体）
-            r#"{"error_code":"INTERNAL_ERROR","message":"serialization failed"}"#.to_string()
+            // 序列化失败兜底体：携带 error_id 供错误检索（i18n 化英文，不泄露内部细节）
+            format!(
+                r#"{{"error_code":"INTERNAL_ERROR","error_id":"{}","message":"serialization failed"}}"#,
+                self.prefixed_code()
+            )
         });
 
-        if body_str.len() <= MAX_BODY_SIZE {
-            (status, axum::Json(json_value)).into_response()
-        } else {
-            // 截断后构造简化版 JSON，保证合法
-            let truncated = serde_json::json!({
-                "error_code": error_code,
+        let truncated = body_str.len() > MAX_BODY_SIZE;
+        let json_value = if truncated {
+            serde_json::json!({
+                "error_code": self.code(),
+                "error_id": self.prefixed_code(),
                 "message": "<truncated>",
-            });
-            (status, axum::Json(truncated)).into_response()
+            })
+        } else {
+            json_value
+        };
+
+        let mut response = (status, axum::Json(json_value)).into_response();
+        let headers = response.headers_mut();
+        if let Some(id) = crate::context::request_id::current() {
+            if let Ok(value) = HeaderValue::from_str(id.as_ref()) {
+                headers.insert(HeaderName::from_static("x-request-id"), value);
+            }
         }
+        if let Some(secs) = self.retry_after_secs() {
+            headers.insert(
+                HeaderName::from_static("retry-after"),
+                HeaderValue::from(secs),
+            );
+        }
+        response
     }
 }
 
@@ -717,7 +870,7 @@ impl miette::Diagnostic for GarrisonError {
     /// - `response_parts` 的 error_code → 面向 HTTP 响应体（与 既有惯例一致）
     /// - `Diagnostic::code()` → 面向开发者诊断终端（miette 渲染惯例）
     fn code(&self) -> Option<Box<dyn std::fmt::Display + '_>> {
-        let (_, error_code, _, _, _) = self.parts_and_msg_key();
+        let (_, error_code, _, _, _, _) = self.parts_and_msg_key();
         // 派生规则：garrison. + lowercase(error_code) + 去除尾部 "_error"
         let lower = error_code.to_ascii_lowercase();
         let stem = lower.strip_suffix("_error").unwrap_or(&lower);
@@ -792,6 +945,9 @@ mod tests {
             GarrisonError::SmsVerifyMaxAttempts,
             GarrisonError::SmsCodeNotFound,
             GarrisonError::SmsChannelRecycled,
+            GarrisonError::RateLimited {
+                retry_after_secs: 30,
+            },
         ];
         #[cfg(feature = "email-verification")]
         samples.extend([
@@ -814,25 +970,25 @@ mod tests {
         #[cfg(all(feature = "credit-metering", feature = "email-verification"))]
         assert_eq!(
             samples.len(),
-            31,
+            32,
             "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
         );
         #[cfg(all(feature = "credit-metering", not(feature = "email-verification")))]
         assert_eq!(
             samples.len(),
-            27,
+            28,
             "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
         );
         #[cfg(all(not(feature = "credit-metering"), feature = "email-verification"))]
         assert_eq!(
             samples.len(),
-            30,
+            31,
             "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
         );
         #[cfg(all(not(feature = "credit-metering"), not(feature = "email-verification")))]
         assert_eq!(
             samples.len(),
-            26,
+            27,
             "samples 未覆盖全部变体：新增变体须同步加入本测试列表"
         );
 
@@ -1415,6 +1571,9 @@ mod tests {
             GarrisonError::SmsVerifyMaxAttempts,
             GarrisonError::SmsCodeNotFound,
             GarrisonError::SmsChannelRecycled,
+            GarrisonError::RateLimited {
+                retry_after_secs: 5,
+            },
         ];
         for err in errors {
             let sev = err.severity().expect("severity() 应返回 Some");
@@ -1697,5 +1856,705 @@ mod tests {
         assert_eq!(GarrisonError::BW_ERR_010, 403003); // 账号被封禁
         assert_eq!(GarrisonError::BW_ERR_011, 401004); // 多账号体系冲突
         assert_eq!(GarrisonError::BW_ERR_012, 400001); // 第三方登录失败
+    }
+
+    // ========================================================================
+    // RateLimited 变体（R04 统一错误模型）
+    // ========================================================================
+
+    /// 全变体样本列表（哨兵：新增变体须同步加入，防唯一性检查失去覆盖）。
+    fn all_variant_samples() -> Vec<GarrisonError> {
+        #[cfg_attr(
+            not(any(feature = "email-verification", feature = "credit-metering")),
+            allow(unused_mut)
+        )]
+        let mut samples: Vec<GarrisonError> = vec![
+            GarrisonError::NotLogin("a".into()),
+            GarrisonError::NotPermission("a".into()),
+            GarrisonError::NotRole("a".into()),
+            GarrisonError::InvalidToken("a".into()),
+            GarrisonError::TokenRevoked("a".into()),
+            GarrisonError::ExpiredToken("a".into()),
+            GarrisonError::Dao("a".into()),
+            GarrisonError::Config("a".into()),
+            GarrisonError::Internal("a".into()),
+            GarrisonError::Session("a".into()),
+            GarrisonError::Annotation("a".into()),
+            GarrisonError::Context("a".into()),
+            GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(-1, "a"))),
+            GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(-2, "a"))),
+            GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(500, "a"))),
+            GarrisonError::OAuth2("a".into()),
+            GarrisonError::Network("a".into()),
+            GarrisonError::InvalidResponse("a".into()),
+            GarrisonError::InvalidParam("a".into()),
+            GarrisonError::NotImplemented("a".into()),
+            GarrisonError::FirewallBlocked("a".into()),
+            GarrisonError::DisableService {
+                service: "default".into(),
+                until: None,
+            },
+            GarrisonError::NotSafe {
+                reason: "MFA_TOTP_REQUIRED".into(),
+            },
+            GarrisonError::InvalidStateTransition {
+                from: "Active".into(),
+                to: "Revoked".into(),
+            },
+            GarrisonError::RateLimited {
+                retry_after_secs: 30,
+            },
+            GarrisonError::SmsRateLimitExceeded {
+                window: "hourly".into(),
+            },
+            GarrisonError::SmsVerifyMaxAttempts,
+            GarrisonError::SmsCodeNotFound,
+            GarrisonError::SmsChannelRecycled,
+        ];
+        #[cfg(feature = "email-verification")]
+        samples.extend([
+            GarrisonError::EmailRateLimitExceeded {
+                window: "hourly".into(),
+            },
+            GarrisonError::EmailVerifyMaxAttempts,
+            GarrisonError::EmailCodeNotFound,
+            GarrisonError::EmailChannelRecycled,
+        ]);
+        #[cfg(feature = "credit-metering")]
+        samples.push(GarrisonError::CreditInsufficient {
+            tenant_id: 1,
+            requested: 10,
+            remaining: 0,
+        });
+        samples
+    }
+
+    /// RateLimited 变体 response_parts 返回 429 + RATE_LIMITED。
+    #[test]
+    fn rate_limited_response_parts_returns_429() {
+        let (status, error_code, message, ex_code) = GarrisonError::RateLimited {
+            retry_after_secs: 30,
+        }
+        .response_parts();
+        assert_eq!(status, 429, "RateLimited 应映射为 429 Too Many Requests");
+        assert_eq!(error_code, "RATE_LIMITED");
+        assert_eq!(message, "Rate limited");
+        assert!(ex_code.is_none(), "RateLimited 不携带 exception code");
+    }
+
+    /// retry_after_secs：0 → Some(1)（下限 1）、30 → Some(30)、其余变体 None。
+    #[test]
+    fn retry_after_secs_floor_and_none_for_other_variants() {
+        assert_eq!(
+            GarrisonError::RateLimited {
+                retry_after_secs: 0
+            }
+            .retry_after_secs(),
+            Some(1),
+            "retry_after_secs=0 应取下限 1"
+        );
+        assert_eq!(
+            GarrisonError::RateLimited {
+                retry_after_secs: 30
+            }
+            .retry_after_secs(),
+            Some(30)
+        );
+        assert_eq!(GarrisonError::NotLogin("x".into()).retry_after_secs(), None);
+        assert_eq!(
+            GarrisonError::SmsRateLimitExceeded {
+                window: "hourly".into()
+            }
+            .retry_after_secs(),
+            None,
+            "SMS 限速是 429 但不走统一 Retry-After 头语义（短信发送窗口，非网关限流）"
+        );
+    }
+
+    /// prefixed_code：全变体两两唯一且格式合法（^[a-z]+(_[a-z]+)*\.[a-z_]+$）。
+    ///
+    /// 手写字符检查替代 regex 依赖（regex 为 optional dep，测试面不引入）。
+    #[test]
+    fn prefixed_code_covers_all_variants_unique_and_well_formed() {
+        fn is_well_formed_error_id(s: &str) -> bool {
+            let Some((module, name)) = s.split_once('.') else {
+                return false;
+            };
+            let is_module_seg = |seg: &str| {
+                let mut chars = seg.chars();
+                matches!(chars.next(), Some(c) if c.is_ascii_lowercase())
+                    && seg.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+            };
+            let is_name_seg = |seg: &str| {
+                !seg.is_empty()
+                    && seg.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+                    && !seg.starts_with('_')
+            };
+            is_module_seg(module) && is_name_seg(name)
+        }
+
+        let samples = all_variant_samples();
+        let mut seen = std::collections::HashSet::new();
+        for err in &samples {
+            let error_id = err.prefixed_code();
+            assert!(
+                is_well_formed_error_id(error_id),
+                "error_id 格式非法: {error_id}"
+            );
+            assert!(
+                seen.insert(error_id),
+                "error_id 须两两唯一，重复: {error_id}"
+            );
+        }
+        assert_eq!(samples.len(), seen.len());
+        // 与 miette dotted 码先例风格一致（模块.蛇形名）
+        assert_eq!(
+            GarrisonError::NotLogin("x".into()).prefixed_code(),
+            "auth.not_login"
+        );
+        assert_eq!(
+            GarrisonError::RateLimited {
+                retry_after_secs: 1
+            }
+            .prefixed_code(),
+            "ratelimit.rate_limited"
+        );
+        assert_eq!(
+            GarrisonError::SmsRateLimitExceeded {
+                window: "daily".into()
+            }
+            .prefixed_code(),
+            "sms.rate_limit_exceeded"
+        );
+        // Exception 变体子 arm 各自独立（避免与 auth.* 冲突，保证唯一性）
+        assert_eq!(
+            GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(-1, "x")))
+                .prefixed_code(),
+            "exception.not_login"
+        );
+    }
+
+    /// 旧码冻结锚定：全部 arm 的 HTTP 状态码 / error_code / 变体级机器码逐一
+    /// 对照字面期望值（新旧并存，不 deprecate）。行数与 `all_variant_samples()`
+    /// 对齐作哨兵——新增变体未同步扩表即失败，防止冻结检查同向漂移。
+    #[test]
+    fn legacy_error_codes_frozen_at_original_values() {
+        // (样本, response_parts().0, response_parts().1, code())
+        // Exception 变体 HTTP 层按 ex.code 条件复用 NOT_LOGIN / NOT_PERMISSION，
+        // 变体级机器码固定 EXCEPTION，故两者不同。
+        #[cfg_attr(
+            not(any(feature = "email-verification", feature = "credit-metering")),
+            allow(unused_mut)
+        )]
+        let mut cases: Vec<(GarrisonError, u16, &'static str, &'static str)> = vec![
+            (
+                GarrisonError::NotLogin(String::new()),
+                401,
+                "NOT_LOGIN",
+                "NOT_LOGIN",
+            ),
+            (
+                GarrisonError::NotPermission(String::new()),
+                403,
+                "NOT_PERMISSION",
+                "NOT_PERMISSION",
+            ),
+            (
+                GarrisonError::NotRole(String::new()),
+                403,
+                "NOT_ROLE",
+                "NOT_ROLE",
+            ),
+            (
+                GarrisonError::InvalidToken(String::new()),
+                401,
+                "INVALID_TOKEN",
+                "INVALID_TOKEN",
+            ),
+            (
+                GarrisonError::TokenRevoked(String::new()),
+                401,
+                "TOKEN_REVOKED",
+                "TOKEN_REVOKED",
+            ),
+            (
+                GarrisonError::ExpiredToken(String::new()),
+                401,
+                "EXPIRED_TOKEN",
+                "EXPIRED_TOKEN",
+            ),
+            (
+                GarrisonError::Dao(String::new()),
+                500,
+                "DAO_ERROR",
+                "DAO_ERROR",
+            ),
+            (
+                GarrisonError::Config(String::new()),
+                500,
+                "CONFIG_ERROR",
+                "CONFIG_ERROR",
+            ),
+            (
+                GarrisonError::Internal(String::new()),
+                500,
+                "INTERNAL_ERROR",
+                "INTERNAL_ERROR",
+            ),
+            (
+                GarrisonError::Session(String::new()),
+                500,
+                "SESSION_ERROR",
+                "SESSION_ERROR",
+            ),
+            (
+                GarrisonError::Annotation(String::new()),
+                500,
+                "ANNOTATION_ERROR",
+                "ANNOTATION_ERROR",
+            ),
+            (
+                GarrisonError::Context(String::new()),
+                500,
+                "CONTEXT_ERROR",
+                "CONTEXT_ERROR",
+            ),
+            (
+                GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(
+                    -1, "a",
+                ))),
+                401,
+                "NOT_LOGIN",
+                "EXCEPTION",
+            ),
+            (
+                GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(
+                    -2, "a",
+                ))),
+                403,
+                "NOT_PERMISSION",
+                "EXCEPTION",
+            ),
+            (
+                GarrisonError::Exception(Box::new(crate::exception::GarrisonException::new(
+                    500, "a",
+                ))),
+                500,
+                "EXCEPTION",
+                "EXCEPTION",
+            ),
+            (
+                GarrisonError::OAuth2(String::new()),
+                500,
+                "OAUTH2_ERROR",
+                "OAUTH2_ERROR",
+            ),
+            (
+                GarrisonError::Network(String::new()),
+                502,
+                "NETWORK_ERROR",
+                "NETWORK_ERROR",
+            ),
+            (
+                GarrisonError::InvalidResponse(String::new()),
+                502,
+                "INVALID_RESPONSE",
+                "INVALID_RESPONSE",
+            ),
+            (
+                GarrisonError::InvalidParam(String::new()),
+                400,
+                "INVALID_PARAM",
+                "INVALID_PARAM",
+            ),
+            (
+                GarrisonError::NotImplemented(String::new()),
+                501,
+                "NOT_IMPLEMENTED",
+                "NOT_IMPLEMENTED",
+            ),
+            (
+                GarrisonError::FirewallBlocked(String::new()),
+                403,
+                "FIREWALL_BLOCKED",
+                "FIREWALL_BLOCKED",
+            ),
+            (
+                GarrisonError::DisableService {
+                    service: String::new(),
+                    until: None,
+                },
+                403,
+                "DISABLE_SERVICE",
+                "DISABLE_SERVICE",
+            ),
+            (
+                GarrisonError::NotSafe {
+                    reason: String::new(),
+                },
+                400,
+                "NOT_SAFE",
+                "NOT_SAFE",
+            ),
+            (
+                GarrisonError::InvalidStateTransition {
+                    from: String::new(),
+                    to: String::new(),
+                },
+                500,
+                "INVALID_STATE_TRANSITION",
+                "INVALID_STATE_TRANSITION",
+            ),
+            (
+                GarrisonError::RateLimited {
+                    retry_after_secs: 1,
+                },
+                429,
+                "RATE_LIMITED",
+                "RATE_LIMITED",
+            ),
+            (
+                GarrisonError::SmsRateLimitExceeded {
+                    window: String::new(),
+                },
+                429,
+                "SMS_RATE_LIMIT_EXCEEDED",
+                "SMS_RATE_LIMIT_EXCEEDED",
+            ),
+            (
+                GarrisonError::SmsVerifyMaxAttempts,
+                400,
+                "SMS_VERIFY_MAX_ATTEMPTS",
+                "SMS_VERIFY_MAX_ATTEMPTS",
+            ),
+            (
+                GarrisonError::SmsCodeNotFound,
+                400,
+                "SMS_CODE_NOT_FOUND",
+                "SMS_CODE_NOT_FOUND",
+            ),
+            (
+                GarrisonError::SmsChannelRecycled,
+                403,
+                "SMS_CHANNEL_RECYCLED",
+                "SMS_CHANNEL_RECYCLED",
+            ),
+        ];
+        #[cfg(feature = "email-verification")]
+        cases.extend([
+            (
+                GarrisonError::EmailRateLimitExceeded {
+                    window: String::new(),
+                },
+                429,
+                "EMAIL_RATE_LIMIT_EXCEEDED",
+                "EMAIL_RATE_LIMIT_EXCEEDED",
+            ),
+            (
+                GarrisonError::EmailVerifyMaxAttempts,
+                400,
+                "EMAIL_VERIFY_MAX_ATTEMPTS",
+                "EMAIL_VERIFY_MAX_ATTEMPTS",
+            ),
+            (
+                GarrisonError::EmailCodeNotFound,
+                400,
+                "EMAIL_CODE_NOT_FOUND",
+                "EMAIL_CODE_NOT_FOUND",
+            ),
+            (
+                GarrisonError::EmailChannelRecycled,
+                403,
+                "EMAIL_CHANNEL_RECYCLED",
+                "EMAIL_CHANNEL_RECYCLED",
+            ),
+        ]);
+        #[cfg(feature = "credit-metering")]
+        cases.push((
+            GarrisonError::CreditInsufficient {
+                tenant_id: 1,
+                requested: 10,
+                remaining: 0,
+            },
+            402,
+            "CREDIT_INSUFFICIENT",
+            "CREDIT_INSUFFICIENT",
+        ));
+
+        assert_eq!(
+            cases.len(),
+            all_variant_samples().len(),
+            "冻结表未覆盖全部变体：新增变体须同步加入本表"
+        );
+        for (err, status, error_code, variant_code) in cases {
+            let parts = err.response_parts();
+            assert_eq!(parts.0, status, "HTTP 状态码不得变更（冻结锚定）: {err:?}");
+            assert_eq!(
+                parts.1, error_code,
+                "旧 error_code 不得变更（冻结锚定）: {err:?}"
+            );
+            assert_eq!(
+                err.code(),
+                variant_code,
+                "变体级机器码不得变更（冻结锚定）: {err:?}"
+            );
+        }
+    }
+
+    /// 统一体结构：to_json_body 含 error_code + error_id + message。
+    #[test]
+    fn to_json_body_contains_error_id_alongside_legacy_code() {
+        let body = GarrisonError::NotLogin("token missing".into()).to_json_body();
+        assert_eq!(body["error_code"], "NOT_LOGIN", "旧码冻结输出");
+        assert_eq!(body["error_id"], "auth.not_login", "新码并存输出");
+        assert_eq!(body["message"], "Not logged in");
+    }
+
+    /// 统一体 request_id：scope 内携带、scope 外省略（omitempty 语义）。
+    #[tokio::test]
+    async fn to_json_body_request_id_omitted_outside_scope_and_set_inside() {
+        let body = GarrisonError::NotLogin("x".into()).to_json_body();
+        assert!(
+            body.get("request_id").is_none(),
+            "无 request id 时响应体不得出现 request_id 字段"
+        );
+
+        let body =
+            crate::context::request_id::scope(std::sync::Arc::from("unified-body-id"), async {
+                GarrisonError::NotLogin("x".into()).to_json_body()
+            })
+            .await;
+        assert_eq!(body["request_id"], "unified-body-id");
+    }
+
+    /// RateLimited 的 -msg FTL key 在 zh/en 两个 locale 下均翻译（防回退）。
+    #[test]
+    fn rate_limited_msg_key_translates_in_both_locales() {
+        let err = GarrisonError::RateLimited {
+            retry_after_secs: 30,
+        };
+
+        let _zh = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
+        let (_, _, zh_msg, _) = err.response_parts_i18n();
+        assert_eq!(
+            zh_msg, "请求过于频繁，请稍后重试",
+            "zh locale 下 rate-limited-msg 应翻译为中文"
+        );
+
+        let _en = crate::i18n::set_locale(crate::i18n::GarrisonLocale::En);
+        let (_, _, en_msg, _) = err.response_parts_i18n();
+        assert_eq!(
+            en_msg, "Rate limited, please try again later",
+            "en locale 下 rate-limited-msg 应翻译为英文（不应回退到 fallback）"
+        );
+    }
+
+    /// RateLimited 响应体 message 不携带变体内部数值（复用泄露测试模式）。
+    #[test]
+    fn rate_limited_to_json_body_does_not_leak_internal_value() {
+        let body = GarrisonError::RateLimited {
+            retry_after_secs: 12345,
+        }
+        .to_json_body();
+        let message_str = body["message"].as_str().unwrap();
+        assert!(
+            !message_str.contains("12345"),
+            "message 不应泄露 retry_after_secs 内部值: {message_str}"
+        );
+    }
+
+    /// axum IntoResponse：RateLimited → Retry-After 头等于秒数（下限 1）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn rate_limited_into_response_sets_retry_after_header() {
+        use axum::response::IntoResponse;
+
+        let response = GarrisonError::RateLimited {
+            retry_after_secs: 30,
+        }
+        .into_response();
+        assert_eq!(response.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        let value = response
+            .headers()
+            .get("Retry-After")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert_eq!(value, "30");
+    }
+
+    /// axum IntoResponse：非限流变体不携带 Retry-After 头。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn non_rate_limited_into_response_has_no_retry_after_header() {
+        use axum::response::IntoResponse;
+
+        let response = GarrisonError::NotLogin("x".into()).into_response();
+        assert!(response.headers().get("Retry-After").is_none());
+    }
+
+    /// axum IntoResponse：Retry-After 下限 1（retry_after_secs=0 时头值为 "1"）。
+    #[cfg(feature = "web-axum")]
+    #[test]
+    fn rate_limited_into_response_retry_after_floor_is_one() {
+        use axum::response::IntoResponse;
+
+        let response = GarrisonError::RateLimited {
+            retry_after_secs: 0,
+        }
+        .into_response();
+        let value = response
+            .headers()
+            .get("Retry-After")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert_eq!(value, "1");
+    }
+
+    /// axum IntoResponse：scope 内 X-Request-ID 头与 body.request_id 一致；
+    /// scope 外两者均省略。
+    #[cfg(feature = "web-axum")]
+    #[tokio::test]
+    async fn into_response_x_request_id_header_matches_body_request_id() {
+        use axum::response::IntoResponse;
+        use http_body_util::BodyExt;
+
+        let response =
+            crate::context::request_id::scope(std::sync::Arc::from("hdr-body-match-id"), async {
+                GarrisonError::NotLogin("x".into()).into_response()
+            })
+            .await;
+        let header_value = response
+            .headers()
+            .get("X-Request-ID")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert_eq!(header_value, "hdr-body-match-id");
+        let body_json: serde_json::Value = serde_json::from_slice(
+            &response
+                .into_body()
+                .collect()
+                .await
+                .expect("body collect")
+                .to_bytes(),
+        )
+        .expect("错误响应体应是合法 JSON");
+        assert_eq!(body_json["request_id"], "hdr-body-match-id");
+
+        let response = GarrisonError::NotLogin("x".into()).into_response();
+        assert!(response.headers().get("X-Request-ID").is_none());
+        let body_json: serde_json::Value = serde_json::from_slice(
+            &response
+                .into_body()
+                .collect()
+                .await
+                .expect("body collect")
+                .to_bytes(),
+        )
+        .expect("错误响应体应是合法 JSON");
+        assert!(body_json.get("request_id").is_none());
+    }
+
+    /// RateLimited 统一体错误响应含 Retry-After 头与 error_id 字段（web-axum）。
+    #[cfg(feature = "web-axum")]
+    #[tokio::test]
+    async fn rate_limited_into_response_unified_body() {
+        use axum::response::IntoResponse;
+        use http_body_util::BodyExt;
+
+        let response = GarrisonError::RateLimited {
+            retry_after_secs: 30,
+        }
+        .into_response();
+        let body_json: serde_json::Value = serde_json::from_slice(
+            &response
+                .into_body()
+                .collect()
+                .await
+                .expect("body collect")
+                .to_bytes(),
+        )
+        .expect("错误响应体应是合法 JSON");
+        assert_eq!(body_json["error_code"], "RATE_LIMITED");
+        assert_eq!(body_json["error_id"], "ratelimit.rate_limited");
+    }
+
+    /// 日志级别锁定（性能审查 M6）：限流拒绝是预期行为，RateLimited 渲染不得
+    /// 产生 error 级事件（429 攻击路径下 error 级日志无法被 EnvFilter 静音，
+    /// 构成日志洪水向量）；其余变体保持 error 级。
+    #[cfg(feature = "web-axum")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn rate_limited_into_response_logs_warn_not_error() {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::util::SubscriberInitExt;
+
+        let events: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        struct LevelCapture(std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>);
+        impl<S> tracing_subscriber::layer::Layer<S> for LevelCapture
+        where
+            S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+        {
+            fn on_event(
+                &self,
+                event: &tracing::Event<'_>,
+                _ctx: tracing_subscriber::layer::Context<'_, S>,
+            ) {
+                let level = event.metadata().level().to_string();
+                let mut rendered = String::new();
+                event.record(
+                    &mut |field: &tracing::field::Field, value: &dyn std::fmt::Debug| {
+                        rendered.push_str(&format!("{}={:?} ", field.name(), value));
+                    },
+                );
+                self.0
+                    .lock()
+                    .expect("日志缓冲锁应可用")
+                    .push((level, rendered));
+            }
+        }
+        let _guard = tracing_subscriber::registry()
+            .with(LevelCapture(events.clone()))
+            .set_default();
+        // interest 缓存是进程级全局态：并行非订阅者测试可能抢先首次注册 rejection
+        // 事件 callsite 并缓存 Interest::never（事件被宏直接剔除），须显式重建
+        tracing::callsite::rebuild_interest_cache();
+
+        use axum::response::IntoResponse;
+        // 以 error 级哨兵事件（NotLogin）判断捕获有效，缺失则重建后重试
+        for _ in 0..3 {
+            let _ = GarrisonError::RateLimited {
+                retry_after_secs: 30,
+            }
+            .into_response();
+            let _ = GarrisonError::NotLogin("x".into()).into_response();
+            let snapshot = events.lock().expect("日志缓冲锁应可用").clone();
+            if snapshot
+                .iter()
+                .any(|(level, msg)| level == "ERROR" && msg.contains("NotLogin"))
+            {
+                break;
+            }
+            tracing::callsite::rebuild_interest_cache();
+        }
+
+        let events = events.lock().expect("日志缓冲锁应可用").clone();
+        assert!(
+            !events
+                .iter()
+                .any(|(level, msg)| level == "ERROR" && msg.contains("RateLimited")),
+            "RateLimited 渲染不得产生 error 级事件，实际: {events:?}"
+        );
+        assert!(
+            events.iter().any(|(level, _)| level == "WARN"),
+            "RateLimited 渲染应降级为 warn 级，实际: {events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|(level, msg)| level == "ERROR" && msg.contains("NotLogin")),
+            "非限流变体应保持 error 级（哨兵：防止捕获层失效导致测试恒绿），实际: {events:?}"
+        );
     }
 }
