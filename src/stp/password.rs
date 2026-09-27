@@ -341,7 +341,10 @@ impl PasswordLogic for GarrisonLogicDefault {
 mod tests {
     use super::*;
     use crate::config::GarrisonConfig;
+    // 显式导入：父模块的 GarrisonDao 门控在 firewall-bruteforce 下，
+    // production 等不含该 feature 的组合中 `use super::*` 不可见
     use crate::dao::repository::UserRow;
+    use crate::dao::GarrisonDao;
     use crate::error::GarrisonResult;
     use crate::session::GarrisonSession;
     use crate::stp::core::GarrisonCore;

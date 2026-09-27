@@ -712,13 +712,13 @@ mod embedded_migrations_tests {
     // 单元测试（不需数据库，验证 include_dir! 嵌入与文件写入逻辑）
     // ========================================================================
 
-    /// 验证 POSTGRES_MIGRATIONS 嵌入了 11 个 postgres core SQL 文件。
+    /// 验证 POSTGRES_MIGRATIONS 嵌入了 12 个 postgres core SQL 文件。
     ///
     /// Scenario: 编译时 include_dir!("migrations/postgres") 嵌入成功。
     /// WHEN POSTGRES_MIGRATIONS.get_dir("core")
-    /// THEN core 目录存在且包含 11 个 .sql 文件（001_init ~ 011_add_soft_delete）
+    /// THEN core 目录存在且包含 12 个 .sql 文件（001_init ~ 012_user_identifier）
     #[test]
-    fn embedded_postgres_migrations_contain_11_core_files() {
+    fn embedded_postgres_migrations_contain_12_core_files() {
         let core_dir = POSTGRES_MIGRATIONS
             .get_dir("core")
             .expect("migrations/postgres/core 必须被嵌入");
@@ -728,8 +728,8 @@ mod embedded_migrations_tests {
             .collect();
         assert_eq!(
             sql_files.len(),
-            11,
-            "postgres core 迁移必须有 11 个 SQL 文件，实际: {sql_files:?}"
+            12,
+            "postgres core 迁移必须有 12 个 SQL 文件，实际: {sql_files:?}"
         );
         // 验证文件名边界（按版本号约定）
         let names: Vec<String> = sql_files
@@ -761,7 +761,7 @@ mod embedded_migrations_tests {
     ///
     /// Scenario: 递归复制 include_dir::Dir 到文件系统。
     /// WHEN copy_embedded_dir(&POSTGRES_MIGRATIONS, tempdir)
-    /// THEN tempdir/core/ 包含 11 个 .sql 文件，内容与嵌入文件一致
+    /// THEN tempdir/core/ 包含 12 个 .sql 文件，内容与嵌入文件一致
     #[test]
     fn copy_embedded_dir_writes_files_to_tempdir() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
@@ -773,7 +773,7 @@ mod embedded_migrations_tests {
         let entries: Vec<_> = std::fs::read_dir(&core_dir)
             .expect("读取 core 目录应成功")
             .collect();
-        assert_eq!(entries.len(), 11, "core 目录必须包含 11 个 SQL 文件");
+        assert_eq!(entries.len(), 12, "core 目录必须包含 12 个 SQL 文件");
 
         // 验证文件内容非空（写入的是真实 SQL，不是空字节）
         for entry in entries {
@@ -793,7 +793,7 @@ mod embedded_migrations_tests {
     ///
     /// Scenario: 多次复制同一嵌入目录到同一目标。
     /// WHEN copy_embedded_dir → copy_embedded_dir（再次）
-    /// THEN 第二次成功，core 目录仍为 11 个文件（覆盖写入）
+    /// THEN 第二次成功，core 目录仍为 12 个文件（覆盖写入）
     #[test]
     fn copy_embedded_dir_is_idempotent() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
@@ -804,7 +804,7 @@ mod embedded_migrations_tests {
         let count = std::fs::read_dir(&core_dir)
             .expect("读取 core 目录应成功")
             .count();
-        assert_eq!(count, 11, "重复写入后仍应为 11 个文件");
+        assert_eq!(count, 12, "重复写入后仍应为 12 个文件");
     }
 
     // ========================================================================

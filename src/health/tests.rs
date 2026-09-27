@@ -402,22 +402,22 @@ async fn cache_health_check_unhealthy_when_manager_uninitialized() {
     );
 }
 
-/// 探测路径下，`dao.get` hang 时 `DbHealthCheck` 在 `HEALTH_PROBE_TIMEOUT`（2s）内返回 `Unhealthy`。
+/// 未注入连接池时，即使 manager 的 DAO hang，`DbHealthCheck::check` 也立即返回
+/// `Degraded`（诚实降级），不再探测 dao.get。
 ///
 /// 仅在启用 `db-postgres` 或 `db-mysql`（探测路径）时编译。
 /// `db-sqlite-only`（快路径）下不适用，因 SQLite 嵌入式数据库进程存活即 Healthy。
 ///
-/// # 对称性
-/// 与 `cache_health_check_returns_unhealthy_on_probe_timeout` 对称，覆盖 DbHealthCheck
-/// 的探测超时边界场景，避免未来修改 DbHealthCheck 时未测试路径 silent regression。
+/// # 语义迁移说明
 ///
-/// # 验证点
-/// - `dao.get` 长时间不返回时，`DbHealthCheck::check` 必须在 2s 超时后返回 `Ok(Unhealthy)`
-/// - 整体耗时应在 `HEALTH_PROBE_TIMEOUT`（2s）附近，而非等到 dao 返回（10s）
+/// 探测目标已从内存 KV DAO（dao.get 委托进程内存储，无法反映数据库状态）
+/// 切换为注入连接池的真实 ping（见 `checks.rs` 探测路径注释）。旧语义
+/// 「dao.get 超时 → Unhealthy」随之失效：timeout → Unhealthy 分支现仅存在于
+/// `with_pool` 注入真实池后的 ping 超时路径（需真实数据库，属集成层覆盖）。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]
 #[tokio::test]
 #[serial_test::serial]
-async fn db_health_check_returns_unhealthy_on_probe_timeout() {
+async fn db_health_check_returns_degraded_without_pool_even_when_dao_hangs() {
     use crate::dao::GarrisonDao;
     use crate::manager::GarrisonManager;
     use crate::stp::GarrisonInterface;
@@ -444,17 +444,17 @@ async fn db_health_check_returns_unhealthy_on_probe_timeout() {
     let status = checker
         .check()
         .await
-        .expect("check 应返回 Ok 而非 Err（超时映射为 Unhealthy，不是 Err）");
+        .expect("check 应返回 Ok 而非 Err（无池映射为 Degraded，不是 Err）");
     let elapsed = start.elapsed();
 
     assert_eq!(
         status,
-        HealthStatus::Unhealthy,
-        "dao hang 时 DbHealthCheck 应在 HEALTH_PROBE_TIMEOUT 内返回 Unhealthy"
+        HealthStatus::Degraded,
+        "未注入连接池时 DbHealthCheck 应诚实降级为 Degraded（不探测 dao.get，不误报 Healthy）"
     );
     assert!(
-        elapsed < Duration::from_secs(5),
-        "应在 HEALTH_PROBE_TIMEOUT（2s）附近返回，实际耗时: {:?}",
+        elapsed < Duration::from_secs(1),
+        "无池分支应立即返回（不等待 dao），实际耗时: {:?}",
         elapsed
     );
 
