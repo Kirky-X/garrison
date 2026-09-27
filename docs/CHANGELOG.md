@@ -17,6 +17,8 @@
 
 ### Added
 
+- **Argon2 并发令牌池（R02 内存 DoS 防护）**：`PasswordHasher` trait 新增默认 `None` 的 `concurrency_gate()` 扩展点（自定义实现零改动），`Argon2Hasher::with_pool(n)` 装配并发令牌池；`verify_pooled` 统一封装「async 取 permit → spawn_blocking → permit 移入闭包」——permit 存活期 == 哈希执行期，调用方 future 被取消时孤儿 blocking 任务继续持有 permit 直至完成，Argon2 内存驻留上界在任何取消时序下恒等于 `pool_size × m_cost`（不超卖），等待中的调用异步排队不拒绝，信号量 `close()` 后显性返回 `account-argon2-pool-closed` 错误。生产调用点（`PasswordCredential::verify` + `login_with_password` 三处）全部接线；bcrypt 不入池（工作区 KB 级，池化无内存防护收益，决策以测试固化）。
+- **`password_hasher.argon2_pool_size` 配置**：Argon2 并发令牌池大小，默认 1（secure-by-default，默认配置即受内存 DoS 防护），区间 `[1, 256]`（0 = 零 permit 永久饥饿 fail-fast；256 × 19 MiB ≈ 4.8 GiB 误配上界），环境变量 `GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE`；容量模型与调优建议见 [CONFIGURATION.md](CONFIGURATION.md)。
 - **`protocol-qrlogin` 加固（security-audit-remediation）**：create 响应新增 `bind_token`（poll 第二票，仅下发 Web 端本人；qr_id 编码于公开二维码票据，双票兑换防肩窥/截图劫持）；`confirm` 强制确认者身份与扫码者一致（不匹配与 token 无效同错误返回，防枚举）；HMAC secret 强制 ≥32 字节（对齐 JWT HS256 下限）；scan/confirm 事件携带 App 端 IP/UA 上下文；模块文档补 login-CSRF 固有风险与缓解说明。
 - **`UserIdentifierRepository`（`app_user_identifier` 表）**：phone/email 登录标识的数据库级原子防重——`(id_type, id_value)` 主键唯一约束兜底并发注册，`register` 冲突回查返回 `RegisterOutcome::Taken { by_user_id }`。四方言迁移 `012_user_identifier.sql`。**装配边界**：框架登录/注册链路不自动调用，业务方需在注册/绑定流程显式装配 `register` 做防重（能力供给非自动生效）。
 - **权限缓存登出联动**：`GarrisonPermissionStrategy` 新增默认 no-op 的 `invalidate_login_cache`；`DefaultPermissionStrategy` 覆写为删除 `garrison:perm:cache:<tenant>:<login_id>:*`；`logout`/`kickout` 自动调用（权限回收后旧 Allow 不再存续至 300s TTL）。
@@ -36,6 +38,7 @@
 
 ### Changed
 
+- **登录密码校验统一经 `verify_pooled`**：`login_with_password` 三处与 `PasswordCredential::verify` 的手写 `clone + spawn_blocking` 模板收敛到单一封装（无池行为与原实现等价）。错误路径细化：哈希数据类错误（`InvalidParam`——PHC 解析失败与 verify 期算法未知/参数越界/salt 或 hash 段无效）维持 T019 统一防枚举返回，基础设施错误（join/池关闭）显性传播不再并入 `stp-invalid-password`。
 - **Set-Cookie 属性顺序统一**：构建点固定输出 `name=value; HttpOnly; [Secure; ]SameSite=<ss>; Path=<p>[; Domain=<d>][; Max-Age=<n>]`（原 CSRF 写点 Secure 在 Max-Age 之后、续签写点 Path 在 SameSite 之前）。客户端按属性名解析不受影响。
 - **`cookie_same_site` 构建期语义收窄**：构建点按 `["Lax", "Strict", "None"]` 严格校验（合法值与启动期配置校验白名单 `COOKIE_SAME_SITE_VALUES` 一一对应，跨引用测试锁定漂移）——非法值不再被原样拼入 Set-Cookie，而是拒绝写入；`SameSite=None` 仅在 `cookie_secure=true` 时生效。`cookie_same_site` 配置类型保持 `String` 不变。
 - **三适配器 `set_cookie` 由 override 改继承 trait 默认实现**：axum / actix / warp 删除 `set_cookie` / `set_cookie_with_config` override，统一经单一构建点产出。无配置 `set_cookie` 现同样执行 `frontend_separation` 检查（原 override 无条件写入、不查该配置）；检查依据共享默认配置，其 `frontend_separation` 恒为 `false`，故该路径实际行为不变。显式的 `set_cookie_with_frontend_check`（业务配置 `frontend_separation=true` 时跳过写入）语义不受影响。

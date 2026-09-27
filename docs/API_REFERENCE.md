@@ -18,6 +18,7 @@
 - [Web 集成与注解宏](#-web-集成与注解宏)
 - [插件与监听器](#-插件与监听器)
 - [Repository 层](#️-repository-层)
+- [密码哈希器（account-credential）](#-密码哈希器account-credential)
 - [错误类型](#-错误类型)
 - [模块地图](#️-模块地图)
 - [相关文档](#-相关文档)
@@ -311,6 +312,22 @@ GarrisonManager::builder()
 | `init_dbnexus_with_pool_config(url, PoolConfig)` | 经 dbnexus `DbPoolBuilder` 透传连接池参数（max/min connections、超时） |
 
 协议层补充 re-export：`RefreshTokenRecord` / `RefreshTokenRotation`（`protocol-jwt`）。
+
+---
+
+## 🔑 密码哈希器（`account-credential`）
+
+`account::credential::password` 提供 `PasswordHasher` trait 与内置实现（`config.password_hasher.build_hasher()` 工厂一键构造）：
+
+| API | 说明 |
+|-----|------|
+| `PasswordHasher::hash(password) / verify(password, hash)` | 同步哈希 / 校验（慢哈希调用点包 `spawn_blocking` 使用） |
+| `PasswordHasher::concurrency_gate() -> Option<&Arc<Semaphore>>` | 并发闸门探针（默认 `None`，自定义实现零改动）；返回 `Some` 时由池化封装按 permit 串行化哈希执行 |
+| `Argon2Hasher::with_params(m, t, p).with_pool(pool_size)` | Argon2id 哈希器 + 并发令牌池（`pool_size` 0 钳制为 1）；默认无池（向后兼容） |
+| `BcryptHasher::with_cost(cost)` | bcrypt 哈希器，**不入池**（单次执行工作区 KB 级，池化无内存防护收益） |
+| `PasswordCredential::verify(input)` | 凭证校验：`spawn_blocking` 下沉 + 有池时受 permit 约束；排队不拒绝 |
+
+**并发令牌池行为注记**：permit 在 `spawn_blocking` 前 async 获取并**移入闭包**——permit 存活期 == 哈希执行期，调用方 future 被取消时孤儿 blocking 任务继续持有 permit 直至完成，Argon2 内存驻留上界在任何取消时序下恒等于 `pool_size × m_cost`（不超卖）；等待中的调用异步排队（不拒绝）；信号量 `close()` 后显性返回 `Internal("account-argon2-pool-closed::...")`，不静默成功。池大小经 `password_hasher.argon2_pool_size` 配置（区间 `[1, 256]`，默认 1）。
 
 ---
 

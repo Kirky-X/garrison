@@ -29,6 +29,7 @@ impl Default for PasswordHasherConfig {
             argon2_p_cost: 1,
             bcrypt_cost: 12,
             allow_weak_argon2_params: false,
+            argon2_pool_size: DEFAULT_ARGON2_POOL_SIZE,
         }
     }
 }
@@ -52,7 +53,8 @@ impl PasswordHasherConfig {
 
                 self.validate_argon2_params()?;
                 let (m, t, p) = (self.argon2_m_cost, self.argon2_t_cost, self.argon2_p_cost);
-                let hasher = Argon2Hasher::with_params(m, t, p);
+                let hasher =
+                    Argon2Hasher::with_params(m, t, p).with_pool(self.argon2_pool_size as usize);
                 Ok(std::sync::Arc::new(hasher))
             },
             "bcrypt" => {
@@ -69,12 +71,19 @@ impl PasswordHasherConfig {
         }
     }
 
-    /// Argon2id 参数校验：t/p 非零 + m_cost 下限（低于下限须显式风险接受，放行时 warn）。
+    /// Argon2id 参数校验：t/p 非零 + m_cost 下限（低于下限须显式风险接受，放行时 warn）
+    /// + 池大小区间 [1, 256]（0 = 零 permit 永久饥饿，fail-fast）。
     fn validate_argon2_params(&self) -> GarrisonResult<()> {
         if self.argon2_t_cost == 0 || self.argon2_p_cost == 0 {
             return Err(GarrisonError::Config(
                 "config-password-hash-argon2-param-invalid::".to_string(),
             ));
+        }
+        if !(ARGON2_POOL_SIZE_MIN..=ARGON2_POOL_SIZE_MAX).contains(&self.argon2_pool_size) {
+            return Err(GarrisonError::Config(format!(
+                "config-password-hash-argon2-pool-size-out-of-range::{} (allowed {}-{})",
+                self.argon2_pool_size, ARGON2_POOL_SIZE_MIN, ARGON2_POOL_SIZE_MAX
+            )));
         }
         if self.argon2_m_cost >= ARGON2_MIN_M_COST {
             return Ok(());

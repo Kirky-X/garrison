@@ -72,7 +72,7 @@
 |---------|-----------|
 | 限流：`firewall-ratelimit`（滑动窗口/GCRA）、`rate-limit-redis` 分布式后端、`firewall-ddos`、`firewall-admission`（AIMD 自适应并发） | **上游基础设施**：CDN/云 WAF/ SYN 防护（框架在应用层，无法防御传输层洪水） |
 | 暴破与封禁：`firewall-bruteforce`（IP 级计数封禁）+ `ban-sync`（跨实例同步） | Redis/数据库的容量规划与高可用（缓存穿透时 DAO 回源压力） |
-| 慢哈希稳定耗时：Argon2id/bcrypt 经 `spawn_blocking` 下沉，不阻塞 reactor | 登录端点的并发上限（框架限流参数）按机器规格调优 |
+| 慢哈希稳定耗时：Argon2id/bcrypt 经 `spawn_blocking` 下沉，不阻塞 reactor；Argon2 并发令牌池（`password_hasher.argon2_pool_size`，默认 1）限制同时执行中的 Argon2 数量——**QPS 限流 × 内存驻留双层防护**：限流约束到达率，permit 池约束内存上界 ≈ `pool_size × m_cost`（verify 路径每 permit 驻留按存量哈希内嵌 `m_cost` 计，混合存量部署按 `max(配置 m, 存量 m)` 评估；permit 存活期 == 哈希执行期，任何取消时序下不超卖） | `argon2_pool_size` 按内存预算调优（[CONFIGURATION.md](CONFIGURATION.md)）；`PasswordVerifier::verify` 同步便捷路径不经池（默认参数直连校验，适合低频管理场景），高频校验应走 `PasswordCredential::verify` / `login_with_password` 池化路径 |
 | 解析器健壮性：`fuzz/` 四入口模糊测试（SAML XML/OIDC discovery/JWT/HTTP 认证头）回归 | 新增解析入口时同步扩展 fuzz target（见 fuzz/Cargo.toml） |
 
 ### E — Elevation of Privilege（权限提升）
@@ -100,6 +100,7 @@
 | Set-Cookie 属性注入（name/value 含 `;`、控制字符注入 `Domain=`/移除 HttpOnly） | `context::validate_cookie_name_value` 注入校验 + 单一构建点 `context::cookie::build_set_cookie_value`（三框架适配器 / 续签 / CSRF 写点统一经构建点产出，拒绝后不产出 Set-Cookie） | `src/context/cookie.rs`、`src/context/axum_adapter.rs` 内嵌测试 |
 | Cookie 子域篡改（恶意子域写同Domain cookie 覆盖会话 token） | 默认不设 `Domain`（host-only）；`production` + Secure 上下文强制 `__Host-`（Path=/ 且无 Domain）/ `__Secure-` 前缀，浏览器层拒绝带 Domain 的 `__Host-` cookie | `src/context/cookie.rs`、`src/web/csrf.rs` 内嵌测试 |
 | 非 Secure 上下文 SameSite=None（跨站携带凭证被浏览器拒收 / 属性不一致） | 构建点 None→Lax 降级不变式（`cookie_secure=false` 时降级 `Lax` 并 warn 一次），续签 / CSRF 写点无法直发 `SameSite=None` | `src/context/cookie.rs`、`src/router/tests.rs` 内嵌测试 |
+| 登录风暴内存 DoS（并发慢哈希内存驻留叠加：N 并发 × 19 MiB 无上界） | Argon2 并发令牌池：`argon2_pool_size` permit 约束同时执行数（默认 1），permit 移入 `spawn_blocking` 闭包——取消/panic 任何时序下内存上界恒等于 `pool_size × m_cost`，排队不拒绝、池关闭 fail-closed；bcrypt 不入池（决策测试固化） | `src/account/credential/password.rs` 内嵌并发测试、`src/config/tests.rs` 区间校验 |
 
 ## ⛔ 明确不防御的攻击
 

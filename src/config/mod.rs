@@ -79,6 +79,15 @@ pub const BCRYPT_MIN_COST: u32 = 10;
 /// bcrypt cost 允许区间上界。
 pub const BCRYPT_MAX_COST: u32 = 15;
 
+/// Argon2 并发令牌池默认大小（1 = 同时至多一次 Argon2 执行，默认配置即受内存 DoS 防护）。
+pub const DEFAULT_ARGON2_POOL_SIZE: u32 = 1;
+
+/// Argon2 并发令牌池下界（0 = 零 permit 永久饥饿，校验 fail-fast 拒绝）。
+pub const ARGON2_POOL_SIZE_MIN: u32 = 1;
+
+/// Argon2 并发令牌池上界（256 × 19 MiB ≈ 4.8 GiB，拒绝更大的误配值）。
+pub const ARGON2_POOL_SIZE_MAX: u32 = 256;
+
 /// 密码哈希算法白名单（`password_hasher.algorithm`）。
 pub const PASSWORD_HASH_ALGORITHMS: &[&str] = &["argon2id", "bcrypt"];
 
@@ -290,7 +299,8 @@ pub struct TenantIsolationConfig {
 ///
 /// - `algorithm` ∈ `{argon2id, bcrypt}`
 /// - Argon2id：`m_cost ≥ 19456`（低于下限需 `allow_weak_argon2_params = true` 显式
-///   风险接受，通过时输出 warn 日志）；`t_cost ≥ 1`、`p_cost ≥ 1`
+///   风险接受，通过时输出 warn 日志）；`t_cost ≥ 1`、`p_cost ≥ 1`；
+///   `argon2_pool_size ∈ [1, 256]`
 /// - bcrypt：`10 ≤ bcrypt_cost ≤ 15`
 ///
 /// # 默认值
@@ -299,6 +309,7 @@ pub struct TenantIsolationConfig {
 /// - `argon2_m_cost`: `19456`、`argon2_t_cost`: `2`、`argon2_p_cost`: `1`
 /// - `bcrypt_cost`: `12`
 /// - `allow_weak_argon2_params`: `false`
+/// - `argon2_pool_size`: `1`
 ///
 /// # 配置示例
 ///
@@ -308,6 +319,7 @@ pub struct TenantIsolationConfig {
 /// argon2_m_cost = 19456
 /// argon2_t_cost = 2
 /// argon2_p_cost = 1
+/// argon2_pool_size = 1
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -323,6 +335,17 @@ pub struct PasswordHasherConfig {
     pub argon2_p_cost: u32,
     /// bcrypt cost（允许区间 [10, 15]）。
     pub bcrypt_cost: u32,
+    /// Argon2 并发令牌池大小（默认 1，secure-by-default）。
+    ///
+    /// 限制同时执行中的 Argon2 hash/verify 数量：进程 Argon2 内存驻留上界
+    /// ≈ `argon2_pool_size × argon2_m_cost` KiB（单次执行驻留 ≈ m_cost KiB），
+    /// 任何取消时序下不超卖；等待中的调用异步排队（不拒绝）。
+    /// 允许区间 `[1, 256]`：0 = 零 permit 永久饥饿（fail-fast 拒绝）；
+    /// 256 × 19 MiB ≈ 4.8 GiB 为误配上界。
+    /// 环境变量：`GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE`。
+    /// bcrypt 不入池（单次执行工作区 KB 级，池化无内存防护收益；CPU DoS 由
+    /// 限流与 cost 区间校验承担）。
+    pub argon2_pool_size: u32,
     /// 显式风险接受：允许 Argon2id `m_cost` 低于 19456 下限（内存受限部署用）。
     /// 置 true 时 `validate_core` 放行并输出 warn 日志，不静默降级。
     pub allow_weak_argon2_params: bool,

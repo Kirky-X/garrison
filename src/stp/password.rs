@@ -14,6 +14,8 @@ use super::GarrisonLogicDefault;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use super::LoginParams;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
+use crate::account::credential::password::verify_pooled;
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use crate::constants::EventReason;
 #[cfg(feature = "firewall-bruteforce")]
 use crate::dao::GarrisonDao;
@@ -217,14 +219,8 @@ impl PasswordLogic for GarrisonLogicDefault {
             None => {
                 // 先执行一次与真实校验等价开销的 dummy Argon2 verify（结果丢弃），
                 // 对齐「用户不存在」与「密码错误」两分支的响应耗时（见 DUMMY_ARGON2_HASH）。
-                // spawn_blocking：慢哈希为纯 CPU 工作，移出 async worker 线程。
-                let _verified_dummy = tokio::task::spawn_blocking({
-                    let hasher = std::sync::Arc::clone(hasher);
-                    let password = password.to_string();
-                    move || hasher.verify(&password, &DUMMY_ARGON2_HASH)
-                })
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("stp-password-blocking::{}", e)))?;
+                // verify_pooled：慢哈希下沉 spawn_blocking + 并发令牌池闸门。
+                let _verified_dummy = verify_pooled(hasher, password, &DUMMY_ARGON2_HASH).await?;
 
                 // 日志和事件统一为 "invalid_credentials"，
                 // 不区分 user_not_found/wrong_password，防止日志泄露用户存在性
@@ -255,38 +251,28 @@ impl PasswordLogic for GarrisonLogicDefault {
             },
         };
 
-        // 2. 校验密码（哈希格式不支持与密码错误统一返回，防账号存在预言机——T019）
-        // P2: Argon2/bcrypt 为 50-300ms 级纯 CPU 慢哈希，包 spawn_blocking
-        // 避免登录风暴期间阻塞 tokio worker、拖慢同进程全部请求。
-        let verified = match tokio::task::spawn_blocking({
-            let hasher = std::sync::Arc::clone(hasher);
-            let password = password.to_string();
-            let password_hash = user.password_hash.clone();
-            move || hasher.verify(&password, &password_hash)
-        })
-        .await
-        .map_err(|e| GarrisonError::Internal(format!("stp-password-blocking::{}", e)))?
-        {
+        // 2. 校验密码（哈希数据类错误与密码错误统一返回，防账号存在预言机——T019）
+        // verify_pooled：Argon2/bcrypt 为 50-300ms 级纯 CPU 慢哈希，下沉
+        // spawn_blocking 避免阻塞 tokio worker；有池时受并发 permit 约束
+        // （登录风暴下 Argon2 内存驻留上界 = permits × m_cost）。
+        // 基础设施错误（join/池关闭）显性传播；数据类错误（InvalidParam——PHC
+        // 解析失败与 verify 期算法未知/参数越界/salt 或 hash 段无效）并入统一
+        // 防枚举分支。
+        let verified = match verify_pooled(hasher, password, &user.password_hash).await {
             Ok(v) => v,
-            Err(hash_err) => {
-                // 哈希格式非法（存量数据异常）：统一返回 invalid-password，
+            Err(GarrisonError::InvalidParam(hash_err)) => {
+                // 哈希数据类错误（存量数据异常）：统一返回 invalid-password，
                 // 不以专用错误码泄露账号存在性。畸形哈希使 Argon2 解析处快速失败
                 //（毫秒级），此处补一次等价开销的 dummy verify 对齐「密码错误」
                 // 分支的耗时轮廓（复查修复：消除时序双峰）。
-                let _verified_dummy = tokio::task::spawn_blocking({
-                    let hasher = std::sync::Arc::clone(hasher);
-                    let password = password.to_string();
-                    move || hasher.verify(&password, &DUMMY_ARGON2_HASH)
-                })
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("stp-password-blocking::{}", e)))?;
+                let _verified_dummy = verify_pooled(hasher, password, &DUMMY_ARGON2_HASH).await?;
                 tracing::warn!(
                     login_id = login_id,
                     reason = EventReason::HashFormatError.as_str(),
                     error = %hash_err,
                     "login_with_password: unsupported password hash format"
                 );
-                // 哈希格式非法同样计入失败计数（T013 接线）
+                // 哈希数据类错误同样计入失败计数（T013 接线）
                 #[cfg(feature = "firewall-bruteforce")]
                 if let Err(record_err) = record_password_failure(self.session.dao(), login_id).await
                 {
@@ -297,6 +283,7 @@ impl PasswordLogic for GarrisonLogicDefault {
                     "stp-invalid-password::".to_string(),
                 ));
             },
+            Err(e) => return Err(e),
         };
 
         if !verified {
@@ -430,6 +417,65 @@ mod tests {
             matches!(result, Err(GarrisonError::FirewallBlocked(ref msg)) if msg.contains("stp-password-account-locked")),
             "超过阈值后正确密码也应被锁定拒绝，实际: {:?}",
             result
+        );
+    }
+
+    /// 存量哈希 verify 期数据类错误（`$scrypt$`：`PasswordHash::new` 可解析但
+    /// Argon2 校验期拒绝）→ 与密码错误统一返回 `stp-invalid-password`（响应
+    /// 不可区分，T019）且失败计数递增（T013 不断链）；基础设施错误（join/池
+    /// 关闭）仍显性传播（由 verify_pooled 层测试锁定）。
+    #[cfg(all(
+        feature = "firewall-bruteforce",
+        feature = "account-credential",
+        feature = "db-sqlite"
+    ))]
+    #[tokio::test]
+    async fn login_with_password_verify_time_data_error_unified_and_counted() {
+        use crate::account::credential::{Argon2Hasher, PasswordHasher};
+        use crate::stp::mock::MockUserRepository;
+
+        let logic = make_logic_without_creds();
+        let dao = logic.session.dao().clone();
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+        let repo = MockUserRepository::new();
+        let real_hash = hasher.hash("correct-password").expect("argon2 hash 应成功");
+        repo.insert(make_user_row("alice", &real_hash));
+        repo.insert(make_user_row(
+            "bob",
+            "$scrypt$ln=16,r=8,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg",
+        ));
+        let logic = logic
+            .with_password_hasher(hasher)
+            .with_user_repository(Arc::new(repo));
+
+        let unified = |e: &GarrisonError| matches!(e, GarrisonError::InvalidParam(m) if m == "stp-invalid-password::");
+
+        // 对照组：密码错误
+        let wrong_pw = logic
+            .login_with_password("alice", "wrong-password")
+            .await
+            .unwrap_err();
+        // 实验组：存量 $scrypt$ 哈希（verify 期数据类错误）
+        let legacy = logic
+            .login_with_password("bob", "any-password")
+            .await
+            .unwrap_err();
+
+        assert!(
+            unified(&wrong_pw) && unified(&legacy),
+            "verify 期数据类错误应与密码错误统一返回 stp-invalid-password，实际: {:?} vs {:?}",
+            wrong_pw,
+            legacy
+        );
+        assert_eq!(
+            dao.get(&acct_count_key("bob")).await.unwrap().as_deref(),
+            Some("1"),
+            "verify 期数据类错误应计入账号维度失败计数"
+        );
+        assert_eq!(
+            dao.get(&acct_count_key("alice")).await.unwrap().as_deref(),
+            Some("1"),
+            "密码错误对照组应计入账号维度失败计数"
         );
     }
 

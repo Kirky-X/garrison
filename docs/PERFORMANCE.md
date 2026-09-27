@@ -95,6 +95,7 @@ python3 scripts/e2e_analyze.py --log-dir logs
 | 全局单例无锁化 | `GarrisonManager`（CHANGELOG） | `logic` / `strategy` 字段由 `parking_lot::RwLock<Option<Arc<..>>>` 迁移为 `arc_swap::ArcSwapOption`；热路径 `GarrisonManager::logic()`（`backend/embedded.rs` 每请求调用）无锁原子加载，消除多核高 QPS 缓存行争用 |
 | 全局后端引用无锁化 | `CURRENT_BACKEND` | `Mutex<Option<Arc<..>>>` → `ArcSwapOption`（`BackendHandle` Sized 包装），check_login / check_permission 热路径去全局锁，并发初始化保持 CAS 语义 |
 | 慢哈希移出 async executor | `spawn_blocking` | bcrypt / Argon2 的 hash / verify 全部登录路径调用点包 `tokio::task::spawn_blocking`，登录风暴不阻塞 tokio worker |
+| Argon2 并发令牌池（登录路径内存容量模型） | `argon2_pool_size`（默认 1） | 登录风暴下 Argon2 内存驻留上界 = `pool_size × m_cost` KiB（默认 1 × 19 MiB）：permit 在 `spawn_blocking` 前 async 获取并移入闭包，存活期 == 哈希执行期，任何取消时序不超卖；等待调用异步排队（吞吐退化为串行哈希而非内存膨胀）。与登录 QPS 限流构成双层防护——限流管到达率、池管内存驻留；调优按 `内存预算 ÷ m_cost` 取值并保持 `pool_size ≤ QPS 限流阈值` |
 | TokenSession 请求内复用 | — | `is_valid_with_session` 返回快照供 hover 复用，同一请求内重复读取由 3-4 次降为 1-2 次；task_local `CURRENT_LOGIN_ID` 缓存使 `get_login_id` / `check_permission` 缓存命中零 DAO 读取（logout / kickout / revoke 即时失效） |
 | 编译期注册 | `inventory::submit!` | 插件 / 监听器工厂编译期注册，零运行时反射、零动态加载 |
 | 三层缓存 + TTL 随机抖动 | `oxcache` 集成 | L1 内存层 per-entry TTL 精细化过期；L1 写入经 oxcache `CacheBuilder::ttl_jitter` 自动 ±10% 抖动，L2 经 `UserCacheService::l2_ttl_with_jitter` 同等抖动，防大量 key 同时过期的缓存雪崩 |
@@ -112,7 +113,8 @@ python3 scripts/e2e_analyze.py --log-dir logs
 4. **保持 feature 面最小**：未启用的能力零开销（编译期剔除）；聚合 `full` 仅用于验证，生产按需组合。
 5. **多租户场景复用请求内快照**：`get_login_id` / `check_permission` 在同一请求内命中 task_local 缓存（零 DAO 读取），避免在 handler 内重复手动解析 token。
 6. **压测遵循多账号轮转**：对登录接口压测时不要用单一账号并发（会被 per-login_id 锁串行化，见上文方法论记录）；用 100 账号轮转模拟真实流量。
-7. **建立基线对比**：提交可能影响热路径的改动前 `--save-baseline` 保存基线，改动后 criterion 自动对比 `Regressed`。
+7. **按内存预算调 Argon2 池**：`argon2_pool_size` 增大可提高登录风暴吞吐，代价是内存驻留上界线性增长（`pool_size × m_cost`）；先定内存预算再反推池大小，勿盲目调大（区间 `[1, 256]`，256 × 19 MiB ≈ 4.8 GiB）。
+8. **建立基线对比**：提交可能影响热路径的改动前 `--save-baseline` 保存基线，改动后 criterion 自动对比 `Regressed`。
 
 ---
 

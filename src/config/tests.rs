@@ -2064,3 +2064,96 @@ fn build_hasher_rejects_unknown_algorithm() {
         err
     );
 }
+
+// ============================================================================
+// argon2 并发令牌池（R02 内存 DoS 防护）
+// ============================================================================
+
+/// argon2_pool_size 默认 1（secure-by-default：默认配置即受并发内存上界防护），
+/// 且默认配置整体校验通过。
+#[test]
+fn argon2_pool_size_default_is_one() {
+    let config = GarrisonConfig::default();
+    assert_eq!(config.password_hasher.argon2_pool_size, 1);
+    assert_eq!(
+        config.password_hasher.argon2_pool_size,
+        DEFAULT_ARGON2_POOL_SIZE
+    );
+    assert!(
+        config.validate().is_ok(),
+        "默认 argon2_pool_size 必须通过 validate: {:?}",
+        config.validate().err()
+    );
+}
+
+/// argon2_pool_size 区间校验 [1, 256]：0（零 permit 永久饥饿）与 257
+/// （256 × 19 MiB ≈ 4.8 GiB 误配上界之外）拒绝，1/256 边界放行。
+#[test]
+fn argon2_pool_size_validation_bounds() {
+    for size in [0u32, 257] {
+        let mut config = GarrisonConfig::default();
+        config.password_hasher.argon2_pool_size = size;
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("config-password-hash-argon2-pool-size-out-of-range"),
+            "size={} 实际: {}",
+            size,
+            err
+        );
+    }
+    for size in [1u32, 256] {
+        let mut config = GarrisonConfig::default();
+        config.password_hasher.argon2_pool_size = size;
+        assert!(
+            config.validate().is_ok(),
+            "size={} 应放行: {:?}",
+            size,
+            config.validate().err()
+        );
+    }
+}
+
+/// 环境变量嵌套映射：`GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE=8` 经 load() 生效
+/// （双下划线折叠为嵌套路径，与既有嵌套段同机制）。
+#[test]
+#[serial]
+fn argon2_pool_size_env_mapping() {
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE",
+        "8",
+    )];
+    let config = GarrisonConfig::load(None).expect("load with env");
+    assert_eq!(
+        config.password_hasher.argon2_pool_size, 8,
+        "env 嵌套映射应覆盖默认值 1"
+    );
+}
+
+/// `build_hasher` 池装配：argon2id 分支按 `argon2_pool_size` 配置装配并发令牌池。
+#[cfg(feature = "account-credential")]
+#[test]
+fn build_hasher_argon2_wires_pool_size() {
+    let mut ph = PasswordHasherConfig::default();
+    ph.argon2_pool_size = 3;
+    let hasher = ph.build_hasher().unwrap();
+    let gate = hasher.concurrency_gate().expect("argon2id 分支应装配池");
+    assert_eq!(gate.available_permits(), 3, "permit 数应等于配置池大小");
+}
+
+/// bcrypt 决策锁定：bcrypt 分支不装配并发令牌池（gate 为 None）。
+///
+/// 依据：bcrypt 单次执行工作区 KB 级，池化无内存防护收益；CPU DoS 由限流与
+/// cost 区间校验承担。该决策以测试固化，防止后续无意接入池语义。
+#[cfg(feature = "account-credential")]
+#[test]
+fn build_hasher_bcrypt_has_no_pool() {
+    let mut ph = PasswordHasherConfig::default();
+    ph.algorithm = "bcrypt".to_string();
+    ph.bcrypt_cost = 12;
+    let hasher = ph.build_hasher().unwrap();
+    assert!(
+        hasher.concurrency_gate().is_none(),
+        "bcrypt 不入池：gate 必须为 None"
+    );
+}

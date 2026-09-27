@@ -26,6 +26,7 @@
 use super::{Credential, CredentialModel, CredentialType};
 use crate::error::{GarrisonError, GarrisonResult};
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 // argon2::password_hash::PasswordHasher / PasswordVerifier 与本模块自定义 PasswordHasher 同名，
 // 通过 `as _` 导入 trait 方法可用，但不引入名字，避免冲突。
@@ -63,6 +64,18 @@ pub trait PasswordHasher: Send + Sync {
     /// - `Ok(false)`: 密码不匹配。
     /// - `Err`: 哈希格式无效或校验失败。
     fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool>;
+
+    /// 并发闸门探针：返回哈希执行的并发许可池（Argon2 内存 DoS 防护扩展点）。
+    ///
+    /// 默认 `None`（不限并发，向后兼容——自定义实现零改动）。返回 `Some` 的
+    /// hasher 由 [`verify_pooled`] 统一封装「async 取 permit →
+    /// spawn_blocking → permit 移入闭包」：permit 存活期 == 哈希执行期，调用方
+    /// future 被取消时孤儿 blocking 任务继续持有 permit 直至完成，内存上界在
+    /// 任何取消时序下恒等于 permits × m_cost（Argon2id 单次执行驻留 ≈ m_cost KiB），
+    /// 不超卖；等待中的调用异步排队（不拒绝）。
+    fn concurrency_gate(&self) -> Option<&Arc<Semaphore>> {
+        None
+    }
 }
 
 // ============================================================================
@@ -72,7 +85,8 @@ pub trait PasswordHasher: Send + Sync {
 /// Argon2id 密码哈希器。
 ///
 /// 使用 argon2 0.5 crate，默认参数：Argon2id, m=19456 KiB, t=2, p=1。
-/// 可通过 `with_params` 自定义参数。
+/// 可通过 `with_params` 自定义参数、`with_pool` 装配并发令牌池
+/// （内存 DoS 防护，经 [`verify_pooled`] 生效）。
 pub struct Argon2Hasher {
     /// 内存成本（KiB），默认 19456（19 MiB）。
     m_cost: u32,
@@ -80,6 +94,9 @@ pub struct Argon2Hasher {
     t_cost: u32,
     /// 并行度，默认 1。
     p_cost: u32,
+    /// 并发令牌池（None = 不限并发）。permit 存活期 == 哈希执行期（移入
+    /// spawn_blocking 闭包），任何取消时序下内存上界 = permits × m_cost。
+    pool: Option<Arc<Semaphore>>,
 }
 
 impl Default for Argon2Hasher {
@@ -88,6 +105,7 @@ impl Default for Argon2Hasher {
             m_cost: 19456,
             t_cost: 2,
             p_cost: 1,
+            pool: None,
         }
     }
 }
@@ -109,11 +127,27 @@ impl Argon2Hasher {
             m_cost,
             t_cost,
             p_cost,
+            pool: None,
         }
+    }
+
+    /// 装配并发令牌池（池大小 0 钳制为 1，fail-safe，对齐 [`BcryptHasher::with_cost`]
+    /// 的 clamp 先例；配置层已 fail-fast 拒绝区间外值，此处为直接构造调用的兜底）。
+    ///
+    /// # 参数
+    /// - `pool_size`: 同时执行中的 Argon2 hash/verify 上界；进程内存驻留上界
+    ///   ≈ `pool_size × m_cost` KiB。
+    pub fn with_pool(mut self, pool_size: usize) -> Self {
+        self.pool = Some(Arc::new(Semaphore::new(pool_size.max(1))));
+        self
     }
 }
 
 impl PasswordHasher for Argon2Hasher {
+    fn concurrency_gate(&self) -> Option<&Arc<Semaphore>> {
+        self.pool.as_ref()
+    }
+
     fn hash(&self, password: &str) -> GarrisonResult<String> {
         // P2.1: account-credential-zeroize feature 启用时，将 password 字节拷贝到
         // Zeroizing<Vec<u8>> wrapper；函数返回时 wrapper Drop 清零内部字节。
@@ -153,7 +187,11 @@ impl PasswordHasher for Argon2Hasher {
         match argon2.verify_password(password_ref, &parsed) {
             Ok(()) => Ok(true),
             Err(argon2::password_hash::Error::PasswordInvalid) => Ok(false),
-            Err(e) => Err(GarrisonError::Internal(format!(
+            // verify 期其余错误均为「关于哈希值本身」的数据类错误（算法未知、
+            // 参数越界、salt/hash 段无效），统一映射 InvalidParam——stp 层将其
+            // 并入 T019 统一防枚举分支。基础设施错误（join/池关闭）由
+            // verify_pooled 层映射 Internal，不经此处。
+            Err(e) => Err(GarrisonError::InvalidParam(format!(
                 "account-argon2-verify::{}",
                 e
             ))),
@@ -227,6 +265,46 @@ impl PasswordHasher for BcryptHasher {
             .map_err(|e| GarrisonError::InvalidParam(format!("account-bcrypt-format::{}", e)))
         // password_bytes drops here (if zeroize on); Zeroizing<String>::drop zeroes bytes
     }
+}
+
+// ============================================================================
+// 并发令牌池封装（async 取 permit → spawn_blocking → permit 移入闭包）
+// ============================================================================
+
+/// 取并发 permit（gate None 直通；信号量已关闭显性报错，不静默）。
+async fn acquire_permit(
+    hasher: &dyn PasswordHasher,
+) -> GarrisonResult<Option<tokio::sync::OwnedSemaphorePermit>> {
+    match hasher.concurrency_gate() {
+        Some(sem) => sem
+            .clone()
+            .acquire_owned()
+            .await
+            .map(Some)
+            .map_err(|_| GarrisonError::Internal("account-argon2-pool-closed::".to_string())),
+        None => Ok(None),
+    }
+}
+
+/// 信号量闸门下的异步 verify（[`PasswordHasher::concurrency_gate`] 语义统一出口）。
+///
+/// 无池 hasher 行为与直接 spawn_blocking 等价（直通）；有池时先取 permit 再执行，
+/// permit 移入闭包——存活期 == 哈希执行期，调用方取消不超卖（见 trait 文档）。
+pub(crate) async fn verify_pooled(
+    hasher: &Arc<dyn PasswordHasher>,
+    password: &str,
+    hash: &str,
+) -> GarrisonResult<bool> {
+    let permit = acquire_permit(hasher.as_ref()).await?;
+    let hasher = Arc::clone(hasher);
+    let password = password.to_string();
+    let hash = hash.to_string();
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        hasher.verify(&password, &hash)
+    })
+    .await
+    .map_err(|e| GarrisonError::Internal(format!("credential-verify-blocking::{}", e)))?
 }
 
 // ============================================================================
@@ -343,14 +421,9 @@ impl Credential for PasswordCredential {
     }
 
     async fn verify(&self, input: &str) -> GarrisonResult<bool> {
-        // P2: 慢哈希（bcrypt cost=12 约 100-300ms / Argon2id 19MiB 约 15-50ms）
-        // 为纯 CPU 工作，包 spawn_blocking 避免阻塞 tokio async worker 线程。
-        let hasher = Arc::clone(&self.hasher);
-        let secret_data = self.model.secret_data.clone();
-        let input = input.to_string();
-        tokio::task::spawn_blocking(move || hasher.verify(&input, &secret_data))
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("credential-verify-blocking::{}", e)))?
+        // 统一经并发令牌池封装：慢哈希下沉 spawn_blocking + 有池时受 permit
+        // 约束（内存上界 = permits × m_cost），无池行为与原实现等价。
+        verify_pooled(&self.hasher, input, &self.model.secret_data).await
     }
 }
 
@@ -425,6 +498,56 @@ mod tests {
         let hash = hasher.hash("test").unwrap();
         assert!(hash.starts_with("$argon2id$"));
         assert!(hasher.verify("test", &hash).unwrap());
+    }
+
+    /// verify 期数据类错误——存量哈希算法未知（PHC 结构合法、`PasswordHash::new`
+    /// 可解析，Argon2 校验期拒绝）→ `InvalidParam` 而非 `Internal`：stp 层仅将
+    /// `InvalidParam` 并入 T019 统一防枚举分支，`Internal` 显性传播会对降级
+    /// 账户产生差分响应（防枚举回归防护）。
+    #[test]
+    fn argon2_verify_unknown_algorithm_returns_invalid_param() {
+        let hasher = Argon2Hasher::default();
+        let result = hasher.verify(
+            "password",
+            "$scrypt$ln=16,r=8,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg",
+        );
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
+            "verify 期算法未知应返回 InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// verify 期数据类错误——argon2 变体名未知但参数段合法（覆盖
+    /// `Algorithm::try_from` 失败路径）→ `InvalidParam`。
+    #[test]
+    fn argon2_verify_unknown_algorithm_variant_returns_invalid_param() {
+        let hasher = Argon2Hasher::default();
+        let result = hasher.verify(
+            "password",
+            "$argon2x$v=19$m=19456,t=2,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg",
+        );
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
+            "verify 期 argon2 变体未知应返回 InvalidParam，实际: {:?}",
+            result
+        );
+    }
+
+    /// verify 期数据类错误——参数越界（内嵌 m=1 低于 Argon2 `MIN_M_COST`）→
+    /// `InvalidParam`（存量 PHC 自描述参数，校验期拒绝）。
+    #[test]
+    fn argon2_verify_out_of_range_params_returns_invalid_param() {
+        let hasher = Argon2Hasher::default();
+        let result = hasher.verify(
+            "password",
+            "$argon2id$v=19$m=1,t=2,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg",
+        );
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(_))),
+            "verify 期参数越界应返回 InvalidParam，实际: {:?}",
+            result
+        );
     }
 
     // ========================================================================
@@ -763,6 +886,52 @@ mod tests {
         assert!(result, "dyn Credential 正确密码应校验通过");
     }
 
+    /// 池=1 下 3 个并发 `PasswordCredential::verify`（经 verify_pooled 委托）：
+    /// 排队不拒绝，正确/错误密码结果全对（接线后回归安全网）。
+    #[tokio::test]
+    async fn password_credential_verify_concurrent_correctness() {
+        let hasher = Argon2Hasher::default().with_pool(1);
+        let hash = hasher.hash("pool-secret").expect("hash 应成功");
+        let model = CredentialModel {
+            id: "c3".to_string(),
+            user_id: "carol".to_string(),
+            credential_type: "password".to_string(),
+            secret_data: hash,
+            label: None,
+            created_at: 0,
+            enabled: true,
+            priority: 0,
+        };
+        let cred = Arc::new(PasswordCredential::new(model, Arc::new(hasher)));
+
+        let mut handles = Vec::new();
+        for i in 0..3 {
+            let cred = Arc::clone(&cred);
+            handles.push(tokio::spawn(async move {
+                if i == 1 {
+                    cred.verify("wrong").await
+                } else {
+                    cred.verify("pool-secret").await
+                }
+            }));
+        }
+        assert_eq!(
+            handles.remove(0).await.unwrap().unwrap(),
+            true,
+            "正确密码应通过"
+        );
+        assert_eq!(
+            handles.remove(0).await.unwrap().unwrap(),
+            false,
+            "错误密码应拒绝"
+        );
+        assert_eq!(
+            handles.remove(0).await.unwrap().unwrap(),
+            true,
+            "正确密码应通过"
+        );
+    }
+
     /// `PasswordCredential` 在 `account-credential-zeroize` feature 启用时仍正确工作。
     #[cfg(feature = "credential-zeroize")]
     #[tokio::test]
@@ -774,5 +943,253 @@ mod tests {
         // 错误密码
         let wrong = cred.verify("wrong").await.expect("verify 应成功");
         assert!(!wrong, "zeroize feature 启用时错误密码应校验失败");
+    }
+
+    // ========================================================================
+    // Argon2 并发令牌池（concurrency_gate / with_pool / verify_pooled）
+    // ========================================================================
+
+    /// 可控节奏哈希器：verify 进入时发握手信号，阻塞等待放行后才返回。
+    ///
+    /// 用 oneshot/unbounded 握手控制执行节奏（不用真实 sleep），并以原子计数
+    /// 记录在飞峰值，供并发上界断言。
+    struct GatedHasher {
+        pool: Option<Arc<tokio::sync::Semaphore>>,
+        entered_tx: tokio::sync::mpsc::UnboundedSender<()>,
+        release_rx: std::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<()>>,
+        in_flight: std::sync::atomic::AtomicUsize,
+        max_in_flight: std::sync::atomic::AtomicUsize,
+    }
+
+    impl GatedHasher {
+        fn new(
+            entered_tx: tokio::sync::mpsc::UnboundedSender<()>,
+            release_rx: tokio::sync::mpsc::UnboundedReceiver<()>,
+            pool_size: usize,
+        ) -> Self {
+            Self {
+                pool: Some(Arc::new(tokio::sync::Semaphore::new(pool_size))),
+                entered_tx,
+                release_rx: std::sync::Mutex::new(release_rx),
+                in_flight: std::sync::atomic::AtomicUsize::new(0),
+                max_in_flight: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+
+        fn max_in_flight(&self) -> usize {
+            self.max_in_flight.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl PasswordHasher for GatedHasher {
+        fn hash(&self, password: &str) -> GarrisonResult<String> {
+            Ok(password.to_string())
+        }
+
+        fn verify(&self, _password: &str, _hash: &str) -> GarrisonResult<bool> {
+            use std::sync::atomic::Ordering as AOrd;
+            let n = self.in_flight.fetch_add(1, AOrd::SeqCst) + 1;
+            self.max_in_flight.fetch_max(n, AOrd::SeqCst);
+            let _ = self.entered_tx.send(());
+            // 阻塞等待放行（运行在 spawn_blocking 线程，允许阻塞）
+            let _released = self
+                .release_rx
+                .lock()
+                .expect("release_rx 锁不应中毒")
+                .blocking_recv();
+            self.in_flight.fetch_sub(1, AOrd::SeqCst);
+            Ok(true)
+        }
+
+        fn concurrency_gate(&self) -> Option<&Arc<tokio::sync::Semaphore>> {
+            self.pool.as_ref()
+        }
+    }
+
+    /// 无池直通哈希器（gate 返回默认 None）。
+    struct PassthroughHasher;
+
+    impl PasswordHasher for PassthroughHasher {
+        fn hash(&self, password: &str) -> GarrisonResult<String> {
+            Ok(password.to_string())
+        }
+
+        fn verify(&self, password: &str, hash: &str) -> GarrisonResult<bool> {
+            Ok(password == hash)
+        }
+    }
+
+    /// 默认/with_params 的 Argon2Hasher 与 BcryptHasher 的 gate 均为 None
+    /// （向后兼容：自定义实现与未装配池的 hasher 行为不变）。
+    #[test]
+    fn gate_default_hashers_return_none() {
+        assert!(Argon2Hasher::default().concurrency_gate().is_none());
+        assert!(Argon2Hasher::with_params(8192, 1, 1)
+            .concurrency_gate()
+            .is_none());
+        assert!(BcryptHasher::default().concurrency_gate().is_none());
+    }
+
+    /// with_pool(0) 钳制为 1（fail-safe，对齐 BcryptHasher::with_cost 的 clamp 先例）；
+    /// 正常值按配置装配 permit 数。
+    #[test]
+    fn with_pool_clamps_zero_to_one() {
+        let zero = Argon2Hasher::default().with_pool(0);
+        assert_eq!(
+            zero.concurrency_gate().unwrap().available_permits(),
+            1,
+            "with_pool(0) 应钳制为 1 permit"
+        );
+        let five = Argon2Hasher::default().with_pool(5);
+        assert_eq!(five.concurrency_gate().unwrap().available_permits(), 5);
+    }
+
+    /// 池=1 时 3 个并发 verify_pooled：第 1 个进入后其余排队（不拒绝），
+    /// 放行后依次进入，结果全对——并发上界精确等于 permit 数。
+    #[tokio::test]
+    async fn pool_bounds_concurrent_executions() {
+        let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (release_tx, release_rx) = tokio::sync::mpsc::unbounded_channel();
+        let gated = Arc::new(GatedHasher::new(entered_tx, release_rx, 1));
+        let hasher: Arc<dyn PasswordHasher> = gated.clone();
+
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let h = Arc::clone(&hasher);
+            handles.push(tokio::spawn(async move {
+                verify_pooled(&h, "pw", "$argon2id$fake").await
+            }));
+        }
+
+        // 第 1 个进入 verify（持 permit），其余排队
+        entered_rx.recv().await.expect("应有第 1 个进入信号");
+        assert_eq!(
+            gated.max_in_flight(),
+            1,
+            "池=1 时同时执行中的 verify 至多 1 个"
+        );
+
+        // 依次放行：每放行一个，下一个才进入（第 3 次放行后无新进入者）
+        release_tx.send(()).expect("release 通道应存活");
+        entered_rx.recv().await.expect("第 2 个应在放行后进入");
+        release_tx.send(()).expect("release 通道应存活");
+        entered_rx.recv().await.expect("第 3 个应在放行后进入");
+        release_tx.send(()).expect("release 通道应存活");
+
+        for h in handles {
+            assert_eq!(
+                h.await.expect("任务不应 panic").expect("verify 应成功"),
+                true,
+                "排队不拒绝，3 个 verify 结果全对"
+            );
+        }
+        assert_eq!(
+            gated.max_in_flight(),
+            1,
+            "全程并发上界应精确等于 permit 数 1"
+        );
+    }
+
+    /// verify_pooled 完成后 permit 归还：available_permits() 回到初值（无泄漏）。
+    #[tokio::test]
+    async fn pool_permits_released_after_completion() {
+        let hasher = Arc::new(Argon2Hasher::default().with_pool(2));
+        let gate = hasher.concurrency_gate().unwrap().clone();
+        assert_eq!(gate.available_permits(), 2);
+        let hash = hasher.hash("pw").expect("hash 应成功");
+
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let h: Arc<dyn PasswordHasher> = hasher.clone();
+            let hash = hash.clone();
+            handles.push(tokio::spawn(
+                async move { verify_pooled(&h, "pw", &hash).await },
+            ));
+        }
+        for h in handles {
+            h.await.expect("任务不应 panic").expect("verify 应成功");
+        }
+        assert_eq!(
+            gate.available_permits(),
+            2,
+            "完成后 permits 应回到初值（无泄漏）"
+        );
+    }
+
+    /// 调用方 future 被取消（abort）不超卖：permit 移入 spawn_blocking 闭包，
+    /// 存活期 == 哈希执行期——孤儿 blocking 任务继续持 permit 直到 verify 真正
+    /// 返回，后续调用在该时刻之前不得进入。
+    #[tokio::test]
+    async fn pool_cancelled_caller_does_not_oversell() {
+        let (entered_tx, mut entered_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (release_tx, release_rx) = tokio::sync::mpsc::unbounded_channel();
+        let gated = Arc::new(GatedHasher::new(entered_tx, release_rx, 1));
+        let gate = gated.concurrency_gate().unwrap().clone();
+        let hasher: Arc<dyn PasswordHasher> = gated.clone();
+
+        // task1 进入 verify 并阻塞在放行点（持 permit）
+        let h1 = Arc::clone(&hasher);
+        let task1 = tokio::spawn(async move { verify_pooled(&h1, "pw", "h").await });
+        entered_rx.recv().await.expect("task1 应已进入 verify");
+
+        // 取消 task1 的调用方 future；孤儿 blocking 任务继续持有 permit
+        task1.abort();
+
+        // task2 发起调用：在 task1 的 verify 真正返回前不得进入（不超卖）
+        let h2 = Arc::clone(&hasher);
+        let task2 = tokio::spawn(async move { verify_pooled(&h2, "pw", "h").await });
+        assert!(
+            entered_rx.try_recv().is_err(),
+            "task1 的 verify 仍在执行时 task2 不得进入（permit 存活期绑定哈希执行期）"
+        );
+
+        // 放行 task1：verify 返回后 permit 归还，task2 才进入
+        release_tx.send(()).expect("release 通道应存活");
+        entered_rx
+            .recv()
+            .await
+            .expect("task2 应在 task1 完成后进入");
+        release_tx.send(()).expect("release 通道应存活");
+
+        assert!(
+            task2
+                .await
+                .expect("task2 不应 panic")
+                .expect("task2 verify 应成功"),
+            "task2 排队后应正常完成"
+        );
+        assert_eq!(
+            gate.available_permits(),
+            1,
+            "全部完成后 permits 应回到初值（取消时序下无泄漏）"
+        );
+        assert_eq!(gated.max_in_flight(), 1, "取消时序下并发上界仍为 1");
+    }
+
+    /// 信号量已关闭（sem.close()）：verify_pooled 显性返回 GarrisonError
+    /// （account-argon2-pool-closed，不静默成功）。
+    #[tokio::test]
+    async fn pool_closed_returns_error() {
+        let hasher = Arc::new(Argon2Hasher::default().with_pool(1));
+        hasher.concurrency_gate().unwrap().close();
+        let result = verify_pooled(&(hasher as Arc<dyn PasswordHasher>), "pw", "h").await;
+        match &result {
+            Err(GarrisonError::Internal(msg)) => assert!(
+                msg.contains("account-argon2-pool-closed"),
+                "错误串应含 account-argon2-pool-closed，实际: {}",
+                msg
+            ),
+            other => panic!("池关闭应返回 Internal 错误，实际: {:?}", other),
+        }
+    }
+
+    /// gate 为 None（无池）：verify_pooled 直通 spawn_blocking，行为与现状等价。
+    #[tokio::test]
+    async fn gate_none_passes_through() {
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(PassthroughHasher);
+        let hit = verify_pooled(&hasher, "pw", "pw").await.expect("应直通");
+        assert!(hit, "密码匹配应返回 true");
+        let miss = verify_pooled(&hasher, "pw", "other").await.expect("应直通");
+        assert!(!miss, "密码不匹配应返回 false");
     }
 }

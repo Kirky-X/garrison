@@ -99,10 +99,13 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | `password_hasher.argon2_m_cost` | `u32` | `19456` | Argon2id 内存成本（KiB），下限 19456 |
 | `password_hasher.argon2_t_cost` | `u32` | `2` | Argon2id 时间成本（迭代次数），下限 1 |
 | `password_hasher.argon2_p_cost` | `u32` | `1` | Argon2id 并行度，下限 1 |
+| `password_hasher.argon2_pool_size` | `u32` | `1` | Argon2 并发令牌池大小，允许区间 `[1, 256]`；同时执行中的 Argon2 hash/verify 上限，进程内存驻留上界 ≈ `argon2_pool_size × argon2_m_cost` KiB（任何取消时序下不超卖），等待中的调用异步排队不拒绝。默认 1（secure-by-default）；bcrypt 不入池（单次执行工作区 KB 级，池化无内存防护收益，CPU DoS 由限流与 cost 校验承担） |
 | `password_hasher.bcrypt_cost` | `u32` | `12` | bcrypt cost，允许区间 `[10, 15]` |
 | `password_hasher.allow_weak_argon2_params` | `bool` | `false` | 显式风险接受：允许 `argon2_m_cost` 低于 19456（内存受限部署逃生口），放行时输出 warn 日志 |
 
-**校验规则（`validate_core`，fail-closed）**：`algorithm` 白名单外拒绝；Argon2id `m_cost < 19456` 且未显式风险接受拒绝、`t_cost`/`p_cost` 为 0 拒绝；bcrypt cost 越出 `[10, 15]` 拒绝。
+**校验规则（`validate_core`，fail-closed）**：`algorithm` 白名单外拒绝；Argon2id `m_cost < 19456` 且未显式风险接受拒绝、`t_cost`/`p_cost` 为 0 拒绝、`argon2_pool_size` 越出 `[1, 256]` 拒绝（0 = 零 permit 永久饥饿，fail-fast；256 × 19 MiB ≈ 4.8 GiB 为误配上界）；bcrypt cost 越出 `[10, 15]` 拒绝。
+
+**池大小调优**：环境变量 `GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE`。容量模型：Argon2id 单次执行驻留内存 ≈ `argon2_m_cost` KiB（默认 19 MiB），`argon2_pool_size = N` 时进程 Argon2 内存上界 ≈ `N × 19 MiB`；**verify 路径的每 permit 驻留上界按存量哈希内嵌 `m_cost` 计（PHC 自描述）**，混合存量部署（新旧参数并存）按 `max(配置 m_cost, 存量 m_cost)` 评估，不能只按配置 `m_cost`；按 `可接受内存预算 ÷ m_cost` 取值，并保持 `pool_size ≤ 登录 QPS 限流阈值`（限流承担 QPS 维度、池承担内存驻留维度，双层防护）。
 
 > 仅影响**新哈希**；存量哈希参数自 PHC 字符串自描述解析（无需迁移即可 verify），参数升级采用"新密码/重登录时重哈希"自然演进。
 
@@ -158,6 +161,7 @@ cookie_same_site = "Lax"
 # argon2_m_cost = 19456        # KiB，下限 19456（低于需 allow_weak_argon2_params = true）
 # argon2_t_cost = 2
 # argon2_p_cost = 1
+# argon2_pool_size = 1         # 并发令牌池，区间 [1, 256]；内存上界 ≈ pool_size × m_cost
 # bcrypt_cost = 12             # 仅 algorithm = "bcrypt" 时生效，区间 [10, 15]
 ```
 
@@ -209,6 +213,9 @@ GARRISON_DEVICE_BINDING_MODE=disabled
 # === 多租户隔离 ===
 GARRISON_TENANT_ISOLATION__ENABLED=false
 GARRISON_TENANT_ISOLATION__RESOLVER=header
+
+# === 密码哈希（可选） ===
+GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE=1
 
 # === 数据库与缓存 ===
 GARRISON_DB_URL=sqlite://garrison.db?mode=rwc
