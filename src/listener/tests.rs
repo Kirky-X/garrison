@@ -837,3 +837,121 @@ async fn broadcast_qrlogin_cancelled_event() {
     manager.broadcast(&event).await;
     assert!(EVENT_CALLS.load(Ordering::SeqCst) >= 1);
 }
+
+// ============================================================================
+// 两档派发语义测试（Immediately / OnCommit 事件派发事务绑定）
+// ========================================================================
+
+mod dispatch_tiers {
+    use super::*;
+    use crate::error::GarrisonError;
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    /// 运行时注册的事件记录 listener（绕开 inventory，不污染 manager 计数）。
+    struct RecordingListener {
+        tags: parking_lot::Mutex<Vec<String>>,
+    }
+
+    impl RecordingListener {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                tags: parking_lot::Mutex::new(Vec::new()),
+            })
+        }
+
+        fn snapshot(&self) -> Vec<String> {
+            self.tags.lock().clone()
+        }
+    }
+
+    #[async_trait]
+    impl GarrisonListener for RecordingListener {
+        async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
+            let tag = match event {
+                GarrisonEvent::Login { login_id, .. } => format!("login:{login_id}"),
+                _ => "other".to_string(),
+            };
+            self.tags.lock().push(tag);
+            Ok(())
+        }
+    }
+
+    /// 运行时注册的恒 `Err` listener，驱动 failed 计数。
+    struct AlwaysErrListener;
+
+    #[async_trait]
+    impl GarrisonListener for AlwaysErrListener {
+        async fn on_event(&self, _event: &GarrisonEvent) -> GarrisonResult<()> {
+            Err(GarrisonError::Internal(
+                "on-commit-err-listener".to_string(),
+            ))
+        }
+    }
+
+    fn login_event(login_id: &str) -> GarrisonEvent {
+        GarrisonEvent::Login {
+            login_id: login_id.to_string(),
+            token: "T1".to_string(),
+            device: None,
+            request_context: None,
+        }
+    }
+
+    /// Scenario: OnCommit 档失败计数显性化 + 隔离不中断。
+    /// WHEN manager 注册恒 Err listener（后续还有 Recording listener），
+    /// broadcast_after_commit([e1, e2])
+    /// THEN DispatchOutcome { dispatched: 0, failed: 2 }，且 Recording listener
+    /// 仍收到两个事件（单个 listener Err 不中断同事件后续 listener 与后续事件）。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn broadcast_after_commit_listener_failure_reported() {
+        let manager = GarrisonListenerManager::new();
+        let recorder = RecordingListener::new();
+        manager.register(Arc::new(AlwaysErrListener));
+        manager.register(recorder.clone());
+
+        let events = vec![login_event("e1"), login_event("e2")];
+        let outcome = manager.broadcast_after_commit(&events).await;
+
+        assert_eq!(
+            outcome,
+            DispatchOutcome {
+                dispatched: 0,
+                failed: 2
+            },
+            "恒 Err listener 在场时两个事件都应计入 failed"
+        );
+        assert_eq!(
+            recorder.snapshot(),
+            vec!["login:e1".to_string(), "login:e2".to_string()],
+            "listener Err 不应中断后续 listener 与后续事件"
+        );
+    }
+
+    /// Scenario: Immediately 档语义不变（dispatch_one 提取的回归检查）。
+    /// WHEN 直接 broadcast（无事务 guard）
+    /// THEN inventory listener（EVENT_CALLS）与运行时 Recording listener 均收到
+    /// 事件，与提取前行为一致。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn broadcast_immediately_path_unchanged() {
+        reset_counters();
+        let manager = GarrisonListenerManager::new();
+        let recorder = RecordingListener::new();
+        manager.register(recorder.clone());
+
+        let event = login_event("1001");
+        manager.broadcast(&event).await;
+
+        assert!(
+            EVENT_CALLS.load(Ordering::SeqCst) >= 1,
+            "Immediately 档 inventory listener 仍应收到事件"
+        );
+        assert_eq!(
+            recorder.snapshot(),
+            vec!["login:1001".to_string()],
+            "Immediately 档运行时 listener 仍应收到事件"
+        );
+    }
+}

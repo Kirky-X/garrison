@@ -705,6 +705,25 @@ mod dbnexus_dao;
 pub use dbnexus_dao::GarrisonDaoDbnexus;
 
 // ============================================================================
+// 事件派发事务绑定（OnCommit 语义）
+// ============================================================================
+//
+// `GarrisonEventTx` 需 `listener` feature（缓冲事件派发通道）+ 任一 db 后端
+// feature（依赖 dbnexus Session 事务原语）。
+
+#[cfg(all(
+    feature = "listener",
+    any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql")
+))]
+mod tx;
+
+#[cfg(all(
+    feature = "listener",
+    any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql")
+))]
+pub use tx::GarrisonEventTx;
+
+// ============================================================================
 // Repository 层
 // ============================================================================
 // 9 个核心表的 Repository trait + Row struct，与 dbnexus 解耦。

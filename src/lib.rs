@@ -543,6 +543,24 @@ pub use dao::repository::sqlite::DbnexusLoginLogRepository;
 pub use dao::repository::sqlite::DbnexusUserExtRepository;
 
 // ============================================================================
+// 事件派发事务绑定（OnCommit 语义）
+// ============================================================================
+//
+// 业务方可通过 `use garrison::GarrisonEventTx` 直接使用，
+// 无需写完整路径 `garrison::dao::GarrisonEventTx`。
+//
+// 需 `listener` + 任一 db 后端 feature（`db-sqlite` / `db-postgres` / `db-mysql`）。
+// 返回类型 `DispatchOutcome` 经既有 `garrison::listener::DispatchOutcome` 路径访问
+// （与 `GarrisonEvent` / `GarrisonListenerManager` 同策略，不入根 re-export）。
+
+/// 事件派发事务 guard（OnCommit 语义：数据库事务 commit 成功后才按 FIFO 派发缓冲事件；rollback/丢弃 guard 时事件不派发）。
+#[cfg(all(
+    feature = "listener",
+    any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql")
+))]
+pub use dao::GarrisonEventTx;
+
+// ============================================================================
 // JWT RefreshToken Rotation
 // ============================================================================
 //

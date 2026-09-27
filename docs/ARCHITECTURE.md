@@ -381,6 +381,19 @@ sequenceDiagram
 - **名称来自配置**：garrison 的 cookie 名来自配置（`token_name` / CSRF `cookie_name`）而非硬编码枚举，故 `CookieType` 为可构造 pub struct + 便捷构造器（`token(config)` / `session(name, config)`），而非 Keycloak 式硬编码注册表。
 - **确定性信号**：写路径无请求上下文可感知 UA / `X-Forwarded-Proto`，以 `config.cookie_secure=false` 作为「非 Secure 上下文」的确定性信号；协议头探测列为后续独立增强，不混入构建点。
 
+### 7. 为什么事件派发分 Immediately / OnCommit 两档（事务绑定）？
+
+**问题**：garrison 既有 DAO 全部经 `Session::connection()` 走 auto-commit 路径，「业务写库 + 广播事件」是两个独立动作——写库成功后事件若丢失（或反向），业务表与事件审计链不一致。
+
+**方案**（`listener` + 任一 db 后端 feature，`GarrisonEventTx` 位于 `dao` 模块）：
+
+- **Immediately 档**（`GarrisonListenerManager::broadcast`）：事件产生即派发，不与事务绑定；listener 失败仅 warn，适用于可容忍丢失的旁路事件。
+- **OnCommit 档**（`GarrisonEventTx` + `broadcast_after_commit`）：`begin` 从 `DbPool` 获取独立 `Session` 开启事务，SQL 经 guard `execute`（`Session::execute_raw` 的 in-tx 路由）写入，事件缓冲在 guard 中；`commit(mut self)` 成功后按 FIFO 派发并返回 `DispatchOutcome { dispatched, failed }`（listener `Err`/panic 计入 `failed`，审计链缺口显性化）。
+- **事务 guard 生命周期**：`commit` / `rollback` 消耗 `self`（「提交后不可再用」在类型层面表达）；rollback、未 commit 即 drop、commit 失败、或 commit 成功后派发中途被取消（tokio 超时 / 任务中止）时缓冲事件（或剩余事件）均不派发（`Drop` 兜底 warn 丢弃条数与事件类型摘要，按 uncommitted / commit-failed / dispatch-cancelled 丢弃原因区分，显性化，取消场景携带已派发/总数；打开事务依赖 dbnexus 级联回滚）。
+- **事务路由边界**：经 guard `execute` 的 SQL **加入本事务**；既有 DAO / Repository 经 `session.connection()` 的 SQL **不加入**（auto-commit），混用时由调用方保证顺序。`execute` 走 admin 特权直通通道（dbnexus 对 admin 角色跳过全部表级权限检查、SQL 解析失败同样放行），SQL 内容即权限边界——禁止拼接不可信输入。
+
+「登录日志 SQL 写 + `Login` 事件」是两档机制的典型装配目标（后续接线），当前仅交付机制，不强切既有 33 处 `broadcast` 调用点。
+
 ## 六、扩展点
 
 ### 1. 自定义 GarrisonDao 实现

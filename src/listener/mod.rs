@@ -785,6 +785,19 @@ pub trait GarrisonListener: Send + Sync {
     }
 }
 
+/// 事件派发结果（OnCommit 档，[`broadcast_after_commit`](GarrisonListenerManager::broadcast_after_commit) 返回）。
+///
+/// 不变式：`dispatched + failed == 派发事件总数`。
+/// `failed > 0` 表示存在 listener `Err` / panic 的事件，审计链存在缺口，
+/// 调用方必须显性处理（告警 / 补偿），禁止静默忽略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DispatchOutcome {
+    /// 所有 listener 均成功处理（返回 `Ok`）的事件数。
+    pub dispatched: usize,
+    /// 存在 listener `Err` 或 panic 的事件数（该事件的派发链有缺口）。
+    pub failed: usize,
+}
+
 /// 监听器工厂函数指针，返回 `Arc<dyn GarrisonListener>`。
 pub type GarrisonListenerFactoryFn = fn() -> Arc<dyn GarrisonListener>;
 
@@ -803,8 +816,21 @@ inventory::collect!(GarrisonListenerEntry);
 /// 监听器管理器，收集并管理所有已注册监听器。
 ///
 /// 在 `GarrisonManager::builder()` 时通过 `inventory::iter` 收集所有已注册监听器。
-/// `broadcast` 方法同步遍历所有监听器调用 `on_event`，
-/// 单个监听器失败时仅记录 `tracing::warn!` 日志，不中断广播。
+///
+/// # 两档派发语义
+///
+/// - **Immediately 档**（`broadcast`）：事件产生即同步派发，不与任何数据库事务
+///   绑定。单个监听器 `Err`/panic 仅记录 `tracing::warn!`，不中断广播、不返回
+///   计数——适用于可容忍丢失的旁路事件。
+/// - **OnCommit 档**（`broadcast_after_commit`）：事件先缓冲在
+///   `GarrisonEventTx`（`dao` 模块的事务 guard），数据库事务 commit 成功后才
+///   FIFO 派发，并返回 `DispatchOutcome`（`failed` 计数显性化审计链缺口）；
+///   rollback 或未 commit 丢弃 guard 时缓冲事件不派发。适用于「业务写库与
+///   事件必须同生共死」的场景（如登录日志 SQL 写 + `Login` 事件）。
+///
+/// 两档共用同一监听器集合与同一隔离承诺：单个监听器 `Err`/panic 均被
+/// `catch_unwind` 捕获降级为 `tracing::warn!`，不中断、不传播，后续监听器
+/// 与后续事件继续处理。
 pub struct GarrisonListenerManager {
     /// 已注册的监听器列表（`RwLock` 保护，支持运行时 `register` 追加）。
     listeners: Arc<RwLock<Vec<Arc<dyn GarrisonListener>>>>,
