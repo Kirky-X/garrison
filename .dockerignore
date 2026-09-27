@@ -1,0 +1,88 @@
+# =============================================================================
+# Garrison .dockerignore
+# =============================================================================
+# 原则：构建上下文只保留 cargo-chef recipe / 编译所需文件。
+#
+# 【绝不排除——编译必需，勿加排除项】
+#   src/            库与 bin 源码（含 src/bin/garrison-healthcheck.rs）
+#   locales/        src/i18n.rs include_str! 编译期打包
+#   migrations/     src/dao/dbnexus_impl.rs include_dir! 编译期打包
+#   examples/       workspace member（cargo-chef recipe 需要）
+#   macros/         workspace member（proc-macro 依赖）
+#   Cargo.toml / Cargo.lock / rust-toolchain.toml
+#   tests/ benches/ recipe 生成期需枚举全部 target，缺失会引入一致性风险
+# =============================================================================
+
+# --- 版本控制与 CI ---
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# --- 本地构建产物与运行时数据 ---
+target/
+**/target/
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+pids/
+*.pid
+*.tmp
+coverage/
+tarpaulin-report.html
+lcov.info
+
+# --- 规划 / 审计 / 文档工作区（不影响编译） ---
+temp/
+specmark/
+.mimosa/
+.zcode/
+.trae/
+.security-audit/
+.strix_runs/
+strix_runs/
+**/strix_runs/
+.opencodereview/
+openspec/
+docs/
+mdbook/
+fuzz/
+
+# --- 仓库辅助目录与编排本地配置（不参与编译，上下文瘦身） ---
+scripts/
+supply-chain/
+docker-compose.override.yml
+docker-compose.e2e.yml
+
+# --- 安全与本地密钥（严禁进入镜像层） ---
+.env
+.env.local
+.env.*.local
+.env.example
+*.env
+credentials.json
+.gitleaksignore
+.gitleaks.toml
+.semgrepignore
+deny.toml
+.pre-commit-config.yaml
+.cargo/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+
+# --- IDE / 工具链本地状态 ---
+.idea/
+.vscode/
+.sccache/
+.venv/
+.claude/
+.agents/

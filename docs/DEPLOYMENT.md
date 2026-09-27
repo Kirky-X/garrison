@@ -174,43 +174,82 @@ garrison = { version = "0.9.0-rc.2", features = ["tls", "auth-server"] }
 
 ## 🐳 Docker 部署
 
-> 完整的 Docker Compose 示例请参考仓库根目录的 `docker-compose.e2e.yml`。
+仓库提供两条镜像产物线（多阶段构建，cargo-chef 依赖缓存 + `--locked` 可重现编译）：
 
-基本部署示例：
+| 变体 | Dockerfile | 运行底座 | 适用场景 |
+|------|-----------|---------|---------|
+| **debian-slim** | `Dockerfile` | `debian:bookworm-slim` | 默认推荐：可 shell 调试，自带 `ca-certificates` |
+| **distroless** | `Dockerfile.distroless` | `gcr.io/distroless/cc-debian12:nonroot` | 最小攻击面：无 shell / 包管理器 |
 
-```yaml
-version: "3.8"
-services:
-  auth-server:
-    image: garrison-auth:latest
-    environment:
-      - GARRISON_JWT_SECRET=${JWT_SECRET}
-      - GARRISON_REDIS_URL=redis://redis:6379
-      - GARRISON_TIMEOUT=2592000
-    depends_on:
-      - redis
-      - postgres
-    ports:
-      - "8080:8080"
+两个变体一致的行为：
 
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis-data:/data
+- **非 root 运行**：debian 变体 `uid 1000`（`garrison` 用户）；distroless 变体镜像自带 `65532:65532` nonroot。监听端口 8080/8081 均为非特权端口。
+- **HEALTHCHECK 内置**：探测本容器外网端口的 `/healthz`（`server-health-check` feature 下由 sdforge 挂载的 liveness 探针——进程存活即恒 200，绕过限流/审计中间件）。注意这是 **liveness 语义**，不是库消费者 `/health/live` 的 readiness 语义。
+- **版本仅落 OCI labels**（`org.opencontainers.image.version/revision`）：garrison 无运行时版本端点，不做伪注入。
 
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: garrison
-      POSTGRES_USER: garrison
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-    volumes:
-      - pg-data:/var/lib/postgresql/data
+### 构建镜像
 
-volumes:
-  redis-data:
-  pg-data:
+```bash
+# debian-slim 变体（默认）
+docker build \
+  --build-arg VERSION=0.9.0-rc.2 \
+  --build-arg GIT_SHA=$(git rev-parse HEAD) \
+  -t garrison-auth:local .
+
+# distroless 变体
+docker build -f Dockerfile.distroless \
+  --build-arg VERSION=0.9.0-rc.2 \
+  --build-arg GIT_SHA=$(git rev-parse HEAD) \
+  -t garrison-auth:local-distroless .
 ```
+
+`VERSION` / `GIT_SHA` 仅用于 OCI labels；`GIT_SHA` 不传时落 `unknown`。
+
+> ⚠️ **滚动源与可重现性（记录在案的显式接受决策）**：运行底座（`debian:bookworm-slim` / `gcr.io/distroless/cc-debian12:nonroot`）、`CHEF_IMAGE`（`lukemathwalker/cargo-chef:latest-rust-1` 滚动 tag）与 rustup stable 均为滚动源，构建非 bit 级可重现。release 构建建议为上述底座镜像与 `CHEF_IMAGE` 以 digest pin（`CHEF_IMAGE` 可通过 `--build-arg CHEF_IMAGE=<镜像>@sha256:<digest>` 覆盖）。
+
+### 运行环境变量（容器）
+
+| 变量 | 必填 | 默认 | 说明 |
+|------|:---:|------|------|
+| `GARRISON_INTERNAL_API_KEY` | ✅ | 无（fail-closed） | 内网 API Key，未配置拒绝启动 |
+| `GARRISON_EXTERNAL_PORT` | — | `8080` | 外网端口（HEALTHCHECK 探针自动跟随此值） |
+| `GARRISON_INTERNAL_PORT` | — | `8081` | 内网端口（`check-*` 等管理面，需 X-API-Key） |
+| `GARRISON_EXTERNAL_LOGIN_ENABLED` | — | `false` | 外网登录端点开关（secure-by-default） |
+| `GARRISON_RATE_LIMIT_BACKEND` | — | 未设置（配置默认 Memory） | 限流后端覆盖：需 `rate-limit-redis` feature 才生效，`redis` 须同时配 `GARRISON_REDIS_URL`，未知值拒绝启动 |
+| `GARRISON_WORKER_THREADS` | — | CPU 核数 | Tokio worker 线程数 |
+| `GARRISON_MAX_BLOCKING_THREADS` | — | `512` | Tokio blocking 线程上限 |
+
+完整 `GARRISON_*` 配置见 [⚙️ 配置指南](./CONFIGURATION.md)。
+
+### Docker Compose 示例
+
+仓库根目录的 `docker-compose.example.yml` 是单机部署的最小可运行示例（本地构建 + fail-loud 的 API Key 校验 + healthcheck + 可选 Redis 注释块）：
+
+```bash
+export GARRISON_INTERNAL_API_KEY='<强随机密钥>'
+docker compose -f docker-compose.example.yml up -d
+docker compose -f docker-compose.example.yml ps   # STATUS 应为 healthy
+```
+
+> ⚠️ 换用 distroless 变体时，compose 的 healthcheck 命令需改为绝对路径 `/app/garrison-healthcheck`（distroless 无 `/usr/local/bin` 符号链接，PATH 亦不含 `/app`）。协议联调用的外部依赖编排见 `docker-compose.e2e.yml`。
+
+### 自定义 feature 面
+
+镜像默认 `FEATURES=auth-server,cache-memory,server-health-check,tracing-log`——与 `[[bin]] auth_server` 的 `required-features` 及探针路由对齐的最小面。生产组合（拉入数据库后端等）可覆盖：
+
+```bash
+docker build --build-arg FEATURES=production -t garrison-auth:prod .
+```
+
+> 不加 feature 门控直接换面会导致 `cargo build` 在 `required-features` 校验处失败（fail-fast，不产出半成品镜像）。
+>
+> ⚠️ 切换 `FEATURES` 会使 cargo-chef 的依赖缓存失效（依赖预编译按 feature 面取缓存键），首次按新面构建将全量重编译依赖（约 10-20min），后续构建命中缓存恢复增量。
+>
+> ⚠️ production 等组合含 `db-sqlite` 类内嵌数据库后端时需要可写数据卷：加固部署常将容器根文件系统（含 `/app`）挂为只读，SQLite 落盘路径须挂载数据卷并指定数据目录，否则启动/迁移写库即失败。
+
+### 多架构构建
+
+builder 阶段为 `x86_64-unknown-linux-gnu` gnu 目标。`docker buildx build --platform linux/amd64,linux/arm64` 技术上可行（arm64 走 QEMU 模拟，依赖编译耗时显著增加，建议为 arm64 配置原生 runner）；当前 CI 仅构建 amd64。
 
 ---
 

@@ -1,0 +1,84 @@
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+#
+# Garrison Auth Server 单机部署示例（本地构建镜像）。
+#
+# 用法：
+#   export GARRISON_INTERNAL_API_KEY='<强随机密钥>'   # 必填，缺失即失败（fail-loud）
+#   docker compose -f docker-compose.example.yml up -d
+#   docker compose -f docker-compose.example.yml ps   # STATUS 应为 healthy
+#
+# 镜像变体：默认 debian-slim；改用 distroless 时将 dockerfile 改为
+# Dockerfile.distroless，并把下方 healthcheck 的命令改为绝对路径
+# /app/garrison-healthcheck（distroless 无 /usr/local/bin 符号链接）。
+
+name: garrison
+
+services:
+  auth-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # 仅落 OCI labels（org.opencontainers.image.version/revision），
+        # garrison 无运行时版本端点，不做伪注入
+        VERSION: dev
+        GIT_SHA: unknown
+    container_name: garrison-auth-server
+    ports:
+      - "8080:8080"
+      # 管理面（check-* 等端点，需 X-API-Key）最小暴露：仅绑回环，防本机外
+      # 网络直接触达；确认需要跨机访问时再显式放开
+      - "127.0.0.1:8081:8081"
+    environment:
+      # 内网 API Key：auth_server fail-closed，未配置拒绝启动；
+      # `:?required` 让 compose 在变量缺失/为空时直接报错，不静默起容器
+      GARRISON_INTERNAL_API_KEY: ${GARRISON_INTERNAL_API_KEY:?required}
+      # 端口覆盖（默认 8080/8081，改动后需同步 ports 映射）：
+      # GARRISON_EXTERNAL_PORT: 8080
+      # GARRISON_INTERNAL_PORT: 8081
+      # 外网登录端点默认关闭（secure-by-default），业务方注入凭证校验后再开启：
+      # GARRISON_EXTERNAL_LOGIN_ENABLED: "true"
+    restart: unless-stopped
+    healthcheck:
+      # 探测本容器外网端口的 sdforge liveness 探针（进程存活恒 200），
+      # 目标端口自动跟随 GARRISON_EXTERNAL_PORT
+      test: ["CMD", "garrison-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # === Redis（可选，仅限流后端生效）===
+  # ⚠️ 接线范围如实说明，勿照抄本块假设：
+  #   - Redis 仅在 rate-limit-redis feature 面生效：需构建时传
+  #     args: { FEATURES: "auth-server,cache-memory,server-health-check,tracing-log,rate-limit-redis" }
+  #     且运行时同时设置 GARRISON_RATE_LIMIT_BACKEND=redis 与 GARRISON_REDIS_URL
+  #     （限流后端默认 Memory，仅设 GARRISON_REDIS_URL 不改变后端）。
+  #   - 会话/DAO 侧的 Redis L2 尚未接线（oxcache with_redis_config 未被
+  #     auth_server 调用）：多实例会话共享当前不可用，本示例不构成
+  #     Redis 会话存储方案。
+  # 满足上述条件后取消下方注释，并给 auth-server 追加：
+  #   environment:
+  #     GARRISON_RATE_LIMIT_BACKEND: redis
+  #     GARRISON_REDIS_URL: redis://redis:6379
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #
+  # redis:
+  #   image: redis:7-alpine
+  #   container_name: garrison-redis
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6379:6379"
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 12
+  #   volumes:
+  #     - redis-data:/data
+#
+# volumes:
+#   redis-data:

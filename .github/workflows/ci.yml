@@ -431,3 +431,108 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov.info
+
+  # === 容器镜像构建与冒烟（R03 多阶段容器化交付物） ===
+  # 验证 Dockerfile（debian-slim）与 Dockerfile.distroless 两条产物线：
+  # 构建（cargo-chef 依赖缓存 + --locked）、compose 示例语法、容器内
+  # healthcheck 探针闭环（/healthz → garrison-healthcheck → healthy）。
+  # push:false + load:true——只构建不推送，发布镜像走 release 流程。
+  docker-build:
+    name: Docker build & smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # 镜像构建（cargo 全量 release 依赖编译）会占用大量磁盘，与
+      # test-compile-guard 同款预清理释放 ~25GB
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL /usr/lib/jvm \
+            /usr/local/share/boost /usr/share/swift || true
+          sudo docker image prune --all --force > /dev/null 2>&1 || true
+          df -h /
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build debian-slim image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: garrison-auth:ci
+          # 两变体 builder 阶段逐字相同（同 chef 基座 + 同 apt 层 + 同 cook 参数），
+          # 层按 digest 去重后共享同一 cache scope 无覆盖问题；拆双 scope 只会
+          # 造成同 job 内依赖树二次编译与 gha cache 双份占用（runner 层不同各存各的）
+          cache-from: type=gha,scope=garrison-docker
+          cache-to: type=gha,mode=max,scope=garrison-docker
+          build-args: |
+            VERSION=0.0.0-ci
+            GIT_SHA=${{ github.sha }}
+      - name: Validate compose example
+        # 与本地校验同口径：API Key 缺失时 compose 的 `:?required` 应直接报错
+        run: GARRISON_INTERNAL_API_KEY=ci docker compose -f docker-compose.example.yml config -q
+      - name: Smoke test (debian-slim)
+        # HEALTHCHECK --interval=30s --start-period=10s 下 healthy 最早约 t≈10-40s
+        # 才出现，探活成功后立即单次断言几乎必读 starting——改为有界轮询
+        # Health.Status（上限 30×3s≈90s），读到 healthy 即止；超时则自然失败
+        # 且最终状态可见。curl 仅作循环内兜底探测
+        run: |
+          set -euo pipefail
+          docker run -d --name smoke-debian \
+            -e GARRISON_INTERNAL_API_KEY=ci-smoke-key \
+            -p 127.0.0.1:8080:8080 garrison-auth:ci
+          status=""
+          for _ in $(seq 1 30); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' smoke-debian)"
+            if [ "$status" = "healthy" ]; then break; fi
+            curl -sf http://127.0.0.1:8080/healthz > /dev/null 2>&1 || true
+            sleep 3
+          done
+          echo "final Health.Status: ${status:-<inspect-failed>}"
+          [ "$status" = "healthy" ]
+      - name: Dump smoke-debian diagnostics
+        if: failure()
+        run: |
+          docker logs smoke-debian || true
+          docker inspect --format '{{json .State.Health}}' smoke-debian || true
+      - name: Remove smoke-debian container
+        if: always()
+        run: docker rm -f smoke-debian || true
+      - name: Build distroless image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./Dockerfile.distroless
+          push: false
+          load: true
+          tags: garrison-auth:ci-distroless
+          cache-from: type=gha,scope=garrison-docker
+          cache-to: type=gha,mode=max,scope=garrison-docker
+          build-args: |
+            VERSION=0.0.0-ci
+            GIT_SHA=${{ github.sha }}
+      - name: Smoke test (distroless)
+        # distroless 无 shell/curl，用镜像内自带探针二进制做循环内兜底探测；
+        # Health.Status 轮询口径与 debian 变体一致（见上）
+        run: |
+          set -euo pipefail
+          docker run -d --name smoke-distroless \
+            -e GARRISON_INTERNAL_API_KEY=ci-smoke-key garrison-auth:ci-distroless
+          status=""
+          for _ in $(seq 1 30); do
+            status="$(docker inspect -f '{{.State.Health.Status}}' smoke-distroless)"
+            if [ "$status" = "healthy" ]; then break; fi
+            docker exec smoke-distroless /app/garrison-healthcheck || true
+            sleep 3
+          done
+          echo "final Health.Status: ${status:-<inspect-failed>}"
+          [ "$status" = "healthy" ]
+      - name: Dump smoke-distroless diagnostics
+        if: failure()
+        run: |
+          docker logs smoke-distroless || true
+          docker inspect --format '{{json .State.Health}}' smoke-distroless || true
+      - name: Remove smoke-distroless container
+        if: always()
+        run: docker rm -f smoke-distroless || true

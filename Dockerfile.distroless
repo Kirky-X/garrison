@@ -1,0 +1,61 @@
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
+# Garrison Auth Server 容器镜像（distroless 变体）。
+#
+# 与 Dockerfile（debian-slim）的差异仅在 runner 阶段：
+#   - gcr.io/distroless/cc-debian12:nonroot：gnu 目标动态链接 glibc，
+#     必须用 cc 变体（含 libgcc/libstdc++）而非 static；镜像自带
+#     65532:65532 nonroot 用户与 ca-certificates，无 apt/useradd/shell
+#   - 无符号链接可用，HEALTHCHECK 与编排平台探针一律用绝对路径
+#     /app/garrison-healthcheck（distroless 的 PATH 不含 /app）
+#
+# feature 门禁与构建示例见 Dockerfile 头注释，两变体保持一致。
+
+ARG CHEF_IMAGE=lukemathwalker/cargo-chef:latest-rust-1
+FROM ${CHEF_IMAGE} AS chef
+WORKDIR /app
+# 在 chef 基座层补装 stable（对应仓库 rust-toolchain.toml 的 channel 声明），
+# 将工具链安装固定在 chef 缓存层——planner/builder 共享该层、不逐阶段重装；
+# --profile minimal 跳过 rust-docs 等组件，省数百 MB
+RUN rustup toolchain install stable --profile minimal
+
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS builder
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+# FEATURES 声明置于 apt 层之后、cook 之前：feature 变更不连带重跑 apt 层
+# （ARG 在使用前声明即可）
+ARG FEATURES=auth-server,cache-memory,server-health-check,tracing-log
+COPY --from=planner /app/recipe.json recipe.json
+COPY --from=planner /app/Cargo.lock Cargo.lock
+RUN cargo chef cook --release --locked --recipe-path recipe.json \
+    --features "${FEATURES}" --bin auth_server --bin garrison-healthcheck
+COPY . .
+RUN cargo build --release --locked --features "${FEATURES}" \
+    --bin auth_server --bin garrison-healthcheck
+
+FROM gcr.io/distroless/cc-debian12:nonroot AS runner
+ARG VERSION=dev
+ARG GIT_SHA=unknown
+# 版本仅落 OCI labels：garrison 无运行时版本端点，不做伪注入
+LABEL org.opencontainers.image.title="garrison" \
+    org.opencontainers.image.description="Garrison - 面向 Rust 生态的一站式身份认证鉴权框架（Auth Server 镜像，distroless）" \
+    org.opencontainers.image.licenses="Apache-2.0" \
+    org.opencontainers.image.source="https://github.com/Kirky-X/garrison" \
+    org.opencontainers.image.documentation="https://docs.rs/garrison" \
+    org.opencontainers.image.version="${VERSION}" \
+    org.opencontainers.image.revision="${GIT_SHA}"
+
+WORKDIR /app
+COPY --from=builder /app/target/release/auth_server /app/target/release/garrison-healthcheck /app/
+
+USER nonroot:nonroot
+EXPOSE 8080 8081
+# 探测本容器外网端口的 sdforge liveness 探针（恒 200）；目标端口随
+# GARRISON_EXTERNAL_PORT 环境变量自动对齐（见 src/bin/garrison-healthcheck.rs）
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/app/garrison-healthcheck"]
+ENTRYPOINT ["/app/auth_server"]
