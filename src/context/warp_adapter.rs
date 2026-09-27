@@ -171,32 +171,6 @@ impl GarrisonResponse for WarpResponse {
         self.headers.insert(header_name, header_value);
         Ok(())
     }
-
-    fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
-        // 注入防护：与 axum/actix 适配器一致的 name/value 校验，
-        // 拒绝控制字符与 `;`、`,` 等分隔符，防止注入 Domain 等恶意 Cookie 属性
-        crate::context::validate_cookie_name_value(name, value)?;
-        // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
-        let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
-        self.set_header("Set-Cookie", &cookie_value)
-    }
-
-    fn set_cookie_with_config(
-        &mut self,
-        name: &str,
-        value: &str,
-        config: &crate::config::GarrisonConfig,
-    ) -> GarrisonResult<()> {
-        // 注入防护：同 set_cookie，name/value 校验后再拼接
-        crate::context::validate_cookie_name_value(name, value)?;
-        // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
-        let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
-        let cookie_value = format!(
-            "{}={}; HttpOnly; {}SameSite={}; Path=/",
-            name, value, secure_flag, config.cookie_same_site,
-        );
-        self.set_header("Set-Cookie", &cookie_value)
-    }
 }
 
 // ============================================================================
@@ -572,6 +546,33 @@ mod tests {
         assert!(set_cookie.contains("HttpOnly"));
         assert!(!set_cookie.contains("Secure"));
         assert!(set_cookie.contains("SameSite=Strict"));
+    }
+
+    /// set_cookie_with_config 在 SameSite=None + 非 Secure 上下文下降级为 Lax
+    /// （None→Lax 不变式：浏览器拒收不带 Secure 的 SameSite=None）。
+    #[test]
+    fn warp_response_set_cookie_none_insecure_downgrades_to_lax() {
+        let mut resp = WarpResponse::new();
+        let mut config = GarrisonConfig::default_config();
+        config.cookie_secure = false;
+        config.cookie_same_site = "None".to_string();
+        resp.set_cookie_with_config("token", "v", &config).unwrap();
+        let set_cookie = resp
+            .headers
+            .get("Set-Cookie")
+            .and_then(|v| v.to_str().ok())
+            .unwrap();
+        assert!(
+            set_cookie.contains("SameSite=Lax"),
+            "应降级为 SameSite=Lax，实际: {}",
+            set_cookie
+        );
+        assert!(
+            !set_cookie.contains("SameSite=None"),
+            "不得输出 SameSite=None，实际: {}",
+            set_cookie
+        );
+        assert!(!set_cookie.contains("Secure"), "实际: {}", set_cookie);
     }
 
     /// 验证 set_status 在状态码非法（> 999）时返回 Context 错误。

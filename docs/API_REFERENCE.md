@@ -251,6 +251,26 @@ GarrisonManager::builder()
 | `garrison::web_actix` / `garrison::web_warp` | actix-web / warp 适配 |
 | `garrison::grpc`（`grpc`） | tonic auth layer |
 
+### Set-Cookie 单一构建点（context 层，always-on）
+
+`garrison::context::cookie` — 全部 Set-Cookie 写路径（三框架适配器、axum 续签中间件、CSRF 中间件）的唯一产出点，纯函数、无框架依赖：
+
+| 类型 / 函数 | 说明 |
+|------|------|
+| `CookieScope` | SameSite × HttpOnly 合法组合封闭枚举：`LaxHttpOnly` / `StrictHttpOnly` / `NoneHttpOnly`（HttpOnly 恒定） |
+| `CookiePath` | 路径作用域：`Root`（`Path=/`）/ `Of(String)`（预留：短时 token 限定路径，当前无生产写点） |
+| `CookieType` | 构建参数（`name` / `scope` / `path` / `domain` / `max_age`）；`CookieType::token(&config)` 承接会话 token cookie，`session(name, &config)` 承接其他会话 cookie；`resolved_name(secure)` 输出读侧解析名 |
+| `build_set_cookie_value(&CookieType, value, secure)` | 构建 Set-Cookie 值；校验失败时返回错误，调用方不得产出任何 Set-Cookie |
+| `token_cookie_name(&config)` | 会话 token cookie 读侧统一入口（与写侧产出同名） |
+
+不变式（由构建点强制，写点无法绕过）：
+
+1. **HttpOnly 恒定**：三个 `CookieScope` 变体均输出 HttpOnly。
+2. **SameSite 白名单 fail-fast**：非 `["Lax", "Strict", "None"]` 返回错误（合法值与启动期配置校验白名单 `COOKIE_SAME_SITE_VALUES` 一一对应，由跨引用测试锁定漂移）。
+3. **None→Lax 降级**：`cookie_secure=false`（非 Secure 上下文确定性信号）时 `SameSite=None` 降级为 `Lax`（warn 一次）。
+4. **production 前缀**：`production` feature + Secure 上下文时，`Path=/` 且无 Domain → `__Host-<name>`；限定路径或带 Domain → `__Secure-<name>`；http 降级无前缀。读侧必须经 `token_cookie_name` / `CookieType::resolved_name` 同名解析。
+5. **注入防护**：name/value 复用 `validate_cookie_name_value`，拒绝 `;`、控制字符等分隔符；path 拒 `;` 与控制字符，domain 仅允许主机名字符（字母数字连字符点）。
+
 ### 注解宏（`annotation-macros` feature，过程宏 crate `garrison-macros`）
 
 10 个属性宏（wrapper 生成 axum `Response`），另有 3 个 sdforge `#[forge]` 路由变体：

@@ -51,7 +51,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | `is_write_header` | `bool` | `true` | `GARRISON_IS_WRITE_HEADER` | 是否在登录后写入 Header |
 | `throw_on_not_login` | `bool` | `true` | `GARRISON_THROW_ON_NOT_LOGIN` | 未登录时是否抛出异常（`false` 时返回 `false`） |
 | `cookie_secure` | `bool` | `true` | `GARRISON_COOKIE_SECURE` | Cookie 是否标记 `Secure`（仅 HTTPS 传输） |
-| `cookie_same_site` | `String` | `"Lax"` | `GARRISON_COOKIE_SAME_SITE` | Cookie 的 `SameSite` 策略（`Lax` / `Strict` / `None`） |
+| `cookie_same_site` | `String` | `"Lax"` | `GARRISON_COOKIE_SAME_SITE` | Cookie 的 `SameSite` 策略（`Lax` / `Strict` / `None`；`None` 仅在 `cookie_secure=true` 时生效，非 Secure 上下文构建点降级为 `Lax`） |
 | `is_read_body` | `bool` | `false` | `GARRISON_IS_READ_BODY` | 是否从请求体读取 Token |
 | `is_write_cookie` | `bool` | `false` | `GARRISON_IS_WRITE_COOKIE` | 是否在续签后将新 Token 写入 Cookie |
 | `frontend_separation` | `bool` | `false` | `GARRISON_FRONTEND_SEPARATION` | 是否启用前后端分离模式 |
@@ -288,6 +288,14 @@ assert_eq!(new_config.timeout, 3600);
 | `device_binding_mode` | 必须在 `["strict", "loose", "disabled"]` 内 | `unknown device_binding_mode: invalid` |
 
 > 环境变量覆盖后也会触发 `validate()`，非法值（如 `GARRISON_TIMEOUT=not-a-number`）会被拒绝并返回 `GarrisonError::Config`。
+
+### Cookie 写入语义（Set-Cookie 单一构建点）
+
+所有 Set-Cookie 写路径（三框架适配器、续签中间件、CSRF 中间件）统一经 `context::cookie` 构建点产出，属性顺序统一为 `name=value; HttpOnly; [Secure; ]SameSite=<ss>; Path=<p>[; Domain=<d>][; Max-Age=<n>]`：
+
+- **白名单 fail-fast**：`cookie_same_site` 非法值在构建点同样被拒绝（合法值与启动期校验白名单 `COOKIE_SAME_SITE_VALUES` 一一对应，由跨引用测试锁定），拒绝后不产出 Set-Cookie。
+- **None→Lax 降级**：`cookie_same_site = "None"` 仅在 `cookie_secure = true` 时生效；`cookie_secure = false`（HTTP 调试）时自动降级为 `Lax` 并输出一次 warn——浏览器拒收不带 Secure 的 `SameSite=None`。
+- **production 前缀**：启用 `production` feature 且 `cookie_secure = true` 时 cookie 名强制加前缀——`Path=/` 且无 Domain 的 cookie（会话 token、CSRF cookie）为 `__Host-<name>`，限定路径或带 Domain 的为 `__Secure-<name>`；`cookie_secure = false`（http 降级）不加前缀。框架读写两侧同步解析（读侧统一入口 `token_cookie_name`）。**注意**：升级到带此前缀的版本后，在线用户旧 cookie 失效，需重新登录一次；业务侧自行读取 cookie 的代码需改用同名解析。
 
 ### 5.1 Redis 部署模式配置（0.6.0 新增）
 

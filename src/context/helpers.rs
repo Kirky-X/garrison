@@ -38,3 +38,13 @@ pub fn effective_is_read_header(config: &crate::config::GarrisonConfig) -> bool 
 pub fn effective_is_read_cookie(config: &crate::config::GarrisonConfig) -> bool {
     config.is_read_cookie && !config.frontend_separation
 }
+
+/// 无配置版 `set_cookie` 共享的默认配置（进程级 `OnceLock` 缓存）。
+///
+/// `GarrisonConfig::default_config()` 全字段确定（无随机成分），可安全共享；
+/// 缓存避免兜底路径每次调用重建默认配置（数十次堆分配 + watch channel 创建）。
+pub(crate) fn shared_default_config() -> &'static crate::config::GarrisonConfig {
+    use std::sync::OnceLock;
+    static SHARED_DEFAULT_CONFIG: OnceLock<crate::config::GarrisonConfig> = OnceLock::new();
+    SHARED_DEFAULT_CONFIG.get_or_init(crate::config::GarrisonConfig::default_config)
+}

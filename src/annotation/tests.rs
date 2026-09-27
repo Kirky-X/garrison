@@ -105,14 +105,19 @@ fn make_parts_with_garrison_header(token: &str) -> axum::http::request::Parts {
     req.into_parts().0
 }
 
-/// 构建带 Cookie: garrison_token=<token> 的 axum Parts（含额外 cookie 测试循环分支）。
+/// 构建带 Cookie: <token cookie 解析名>=<token> 的 axum Parts（含额外 cookie 测试循环分支）。
+///
+/// cookie 名经 `token_cookie_name` 解析（production + Secure 上下文为 `__Host-` 前缀名），
+/// 与写侧构建点保持写读同名。
 fn make_parts_with_cookie_token(token: &str) -> axum::http::request::Parts {
+    let config = crate::config::GarrisonConfig::default_config();
+    let cookie_name = crate::context::token_cookie_name(&config);
     let req = Request::builder()
         .method("GET")
         .uri("/protected")
         .header(
             "cookie",
-            format!("other=val; garrison_token={}; foo=bar", token),
+            format!("other=val; {}={}; foo=bar", cookie_name, token),
         )
         .body(Body::empty())
         .unwrap();
@@ -606,6 +611,42 @@ async fn check_login_extracts_token_from_cookie() {
     let mut parts = make_parts_with_cookie_token(&token);
     let result = CheckLogin::from_request_parts(&mut parts, &()).await;
     assert!(result.is_ok(), "Cookie 提取 token 后校验应通过");
+
+    GarrisonManager::reset_for_test();
+}
+
+/// production 构建下 CheckLogin 命中 `__Host-` 前缀 token cookie（写读同名）。
+///
+/// 回归：annotation 提取器曾用裸 `token_name` 直查 cookie，未经
+/// `token_cookie_name` 统一入口——production + Secure 上下文下写侧产出
+/// `__Host-` 前缀名而读侧查裸名，纯 cookie 会话永远 NotLogin。
+#[cfg(feature = "production")]
+#[tokio::test]
+#[serial]
+async fn check_login_extracts_token_from_host_prefixed_cookie() {
+    init_manager(false, &[], &[]).await;
+    let token = GarrisonUtil::login_simple("1001").await.unwrap();
+
+    let config = GarrisonUtil::config().unwrap();
+    let cookie_name = crate::context::token_cookie_name(&config);
+    assert!(
+        cookie_name.starts_with("__Host-"),
+        "production 默认 Secure 上下文应为 __Host- 前缀名，实际: {}",
+        cookie_name
+    );
+
+    let req = Request::builder()
+        .method("GET")
+        .uri("/protected")
+        .header("cookie", format!("{}={}", cookie_name, token))
+        .body(Body::empty())
+        .unwrap();
+    let mut parts = req.into_parts().0;
+    let result = CheckLogin::from_request_parts(&mut parts, &()).await;
+    assert!(
+        result.is_ok(),
+        "__Host- 前缀 cookie 提取 token 后校验应通过"
+    );
 
     GarrisonManager::reset_for_test();
 }

@@ -14,6 +14,7 @@ use crate::context::axum_adapter::AxumRequest;
 #[cfg(feature = "tenant-isolation")]
 use crate::context::tenant::TenantResolver;
 use crate::context::GarrisonRequest;
+use crate::context::{build_set_cookie_value, CookieType};
 use crate::error::GarrisonError;
 use crate::stp::context::{clear_renewed_token, get_renewed_token, with_renewed_token_scope};
 use crate::stp::{with_current_token, with_login_id_scope};
@@ -300,7 +301,7 @@ async fn garrison_middleware(
         // 检查是否有续签 Token，写入响应
         if let Some(renewed_token) = get_renewed_token() {
             if config.is_write_header {
-                // header/cookie 构造失败不再静默丢弃——记 debug 日志
+                // header 构造失败不再静默丢弃——记 debug 日志
                 // （生产排查续签 token 丢失的关键线索）
                 match (
                     HeaderName::from_bytes(config.token_name.as_bytes()),
@@ -325,19 +326,27 @@ async fn garrison_middleware(
                 }
             }
             if config.is_write_cookie {
-                let secure_flag = if config.cookie_secure { "; Secure" } else { "" };
-                let cookie = format!(
-                    "{}={}; HttpOnly; Path=/; SameSite={}{}",
-                    config.token_name, renewed_token, config.cookie_same_site, secure_flag
-                );
-                match HeaderValue::from_str(&cookie) {
-                    Ok(value) => {
-                        resp.headers_mut().append(SET_COOKIE, value);
+                // 单一构建点：注入校验（续签 token 含 `;` 等注入字符时拒绝写入）、
+                // same_site 白名单 fail-fast 与 None→Lax 降级，失败显性 warn 日志
+                // （静默丢 cookie = 用户掉线，对齐 csrf 写点的 warn 级别）
+                match CookieType::token(&config)
+                    .and_then(|c| build_set_cookie_value(&c, &renewed_token, config.cookie_secure))
+                {
+                    Ok(cookie) => match HeaderValue::from_str(&cookie) {
+                        Ok(value) => {
+                            resp.headers_mut().append(SET_COOKIE, value);
+                        },
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                "续签 token 写入 Set-Cookie 失败：cookie 串含非法字符，已跳过"
+                            );
+                        },
                     },
                     Err(e) => {
-                        tracing::debug!(
+                        tracing::warn!(
                             error = %e,
-                            "续签 token 写入 Set-Cookie 失败：cookie 串含非法字符，已跳过"
+                            "续签 token 写入 Set-Cookie 失败：构建点校验拒绝，已跳过"
                         );
                     },
                 }

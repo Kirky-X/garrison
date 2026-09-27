@@ -319,10 +319,16 @@ async fn middleware_extracts_token_from_cookie() {
     init_manager(&[], &[]).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
+    // 读侧 cookie 名与写侧构建点一致（production + Secure 上下文带 __Host- 前缀）
+    let cookie_value = format!(
+        "{}={}",
+        crate::context::token_cookie_name(&make_config()),
+        token
+    );
     let req = Request::builder()
         .method("GET")
         .uri("/protected")
-        .header("Cookie", format!("garrison_token={}", token))
+        .header("Cookie", cookie_value)
         .body(Body::empty())
         .unwrap();
 
@@ -1388,6 +1394,105 @@ async fn clear_renewed_token_prevents_leak() {
     assert!(
         resp2.headers().get("garrison_token").is_none(),
         "第二次请求不应有续签 header（clear_renewed_token 已清除）"
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 续签 cookie 在 SameSite=None + 非 Secure 上下文下降级为 Lax
+/// （修复原续签写点直发 SameSite=None 的缺陷）。
+#[tokio::test]
+#[serial]
+async fn renewed_cookie_none_insecure_downgrades_to_lax() {
+    init_manager(&[], &[]).await;
+    let mut config = make_config();
+    config.is_write_header = false;
+    config.is_write_cookie = true;
+    config.cookie_secure = false;
+    config.cookie_same_site = "None".to_string();
+
+    let app = GarrisonRouter::new(Arc::new(config))
+        .with_interceptor(RenewingInterceptor {
+            new_token: "none-insecure-tok".to_string(),
+        })
+        .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+        .build();
+
+    let response = app.oneshot(make_request("/test", None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let cookie = response
+        .headers()
+        .get("set-cookie")
+        .expect("is_write_cookie=true 时应有 Set-Cookie");
+    let cookie_str = cookie.to_str().unwrap();
+    assert!(
+        cookie_str.contains("SameSite=Lax"),
+        "非 Secure 上下文应降级为 SameSite=Lax，实际: {}",
+        cookie_str
+    );
+    assert!(
+        !cookie_str.contains("SameSite=None"),
+        "不得输出 SameSite=None，实际: {}",
+        cookie_str
+    );
+    assert!(
+        !cookie_str.contains("Secure"),
+        "非 Secure 上下文不得输出 Secure，实际: {}",
+        cookie_str
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 续签 token 值含注入字符时不得写入 Set-Cookie（构建点注入防护补位）。
+#[tokio::test]
+#[serial]
+async fn renewed_cookie_with_injected_value_not_written() {
+    init_manager(&[], &[]).await;
+    let mut config = make_config();
+    config.is_write_header = false;
+    config.is_write_cookie = true;
+
+    let app = GarrisonRouter::new(Arc::new(config))
+        .with_interceptor(RenewingInterceptor {
+            new_token: "abc; Domain=evil.com".to_string(),
+        })
+        .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+        .build();
+
+    let response = app.oneshot(make_request("/test", None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers().get("set-cookie").is_none(),
+        "续签 token 含注入字符时不应写入 Set-Cookie"
+    );
+
+    GarrisonManager::reset_for_test();
+}
+
+/// 非法 cookie_same_site 时续签不写 Set-Cookie（构建点白名单 fail-fast）。
+#[tokio::test]
+#[serial]
+async fn renewed_cookie_invalid_same_site_not_written() {
+    init_manager(&[], &[]).await;
+    let mut config = make_config();
+    config.is_write_header = false;
+    config.is_write_cookie = true;
+    config.cookie_same_site = "weird".to_string();
+
+    let app = GarrisonRouter::new(Arc::new(config))
+        .with_interceptor(RenewingInterceptor {
+            new_token: "invalid-samesite-tok".to_string(),
+        })
+        .route_protected("/test", || async { "ok" }, Annotation::Ignore)
+        .build();
+
+    let response = app.oneshot(make_request("/test", None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers().get("set-cookie").is_none(),
+        "非法 same_site 时不应写入 Set-Cookie"
     );
 
     GarrisonManager::reset_for_test();

@@ -27,6 +27,7 @@
 //!
 //! 通过 [`CsrfConfig`](crate::web::csrf::CsrfConfig) 控制，集成到 [`crate::config::GarrisonConfig`]。
 
+use crate::context::{build_set_cookie_value, CookiePath, CookieScope, CookieType};
 use crate::error::GarrisonResult;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue};
@@ -191,30 +192,41 @@ fn extract_cookie_value(headers: &HeaderMap, cookie_name: &str) -> Option<String
     None
 }
 
-/// 构建 Set-Cookie 值字符串。
+/// CSRF cookie 的单一构建点输入（SameSite=Lax 固定，Max-Age 为 CSRF token TTL）。
 ///
-/// - `cookie_secure == true`：追加 `; Secure` 标志
-/// - `cookie_domain == Some(d)`：追加 `; Domain=<d>` 属性（C3 修复）
+/// Secure 上下文不进入本构造——前缀在读取名/构建值阶段按 `cookie_secure` 解析。
+fn csrf_cookie_type(cookie_name: &str, cookie_domain: Option<&str>) -> CookieType {
+    CookieType {
+        name: cookie_name.to_string(),
+        scope: CookieScope::LaxHttpOnly,
+        path: CookiePath::Root,
+        domain: cookie_domain.filter(|d| !d.is_empty()).map(str::to_string),
+        max_age: Some(CSRF_TOKEN_TTL_SECS),
+    }
+}
+
+/// 构建 Set-Cookie 值字符串（委托 context 层单一构建点 [`build_set_cookie_value`]）。
+///
+/// 属性顺序、SameSite、`__Host-` / `__Secure-` 前缀决策统一由构建点强制：
+/// production + Secure 上下文下无 Domain 为 `__Host-<name>`，有 Domain 为 `__Secure-<name>`。
 ///
 /// # 安全注意
 ///
 /// `Domain` 属性会扩大 Cookie 作用域到子域。调用方应仅在确需跨子域共享
 /// CSRF token 时传入 `Some`，否则传 `None`（最严格作用域，secure-by-default）。
+///
+/// # 错误
+///
+/// 构建失败（如 name / domain 含注入字符）时返回 [`GarrisonError::Context`]，
+/// 调用方不得产出任何 Set-Cookie 头（fail-fast，与续签路径的 Result 风格一致）。
 fn build_set_cookie(
     cookie_name: &str,
     token: &str,
     cookie_secure: bool,
     cookie_domain: Option<&str>,
-) -> String {
-    let secure_flag = if cookie_secure { "; Secure" } else { "" };
-    let domain_attr = cookie_domain
-        .filter(|d| !d.is_empty())
-        .map(|d| format!("; Domain={}", d))
-        .unwrap_or_default();
-    format!(
-        "{}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={}{}{}",
-        cookie_name, token, CSRF_TOKEN_TTL_SECS, secure_flag, domain_attr
-    )
+) -> GarrisonResult<String> {
+    let cookie = csrf_cookie_type(cookie_name, cookie_domain);
+    build_set_cookie_value(&cookie, token, cookie_secure)
 }
 
 /// 从绝对 URI（Origin/Referer header 值）中提取 `host[:port]`。
@@ -354,6 +366,10 @@ pub async fn garrison_csrf_middleware(
     use axum::response::IntoResponse;
 
     let method = req.method().as_str().to_string();
+    // 写读同名：读侧查找名与 build_set_cookie 走同一前缀解析
+    // （production + Secure 上下文为 __Host-/__Secure- 前缀名）
+    let cookie_name = csrf_cookie_type(&config.cookie_name, config.cookie_domain.as_deref())
+        .resolved_name(config.cookie_secure);
     let is_protected = config
         .protected_methods
         .iter()
@@ -372,7 +388,7 @@ pub async fn garrison_csrf_middleware(
         if !validate_same_origin(req.headers()) {
             return (StatusCode::FORBIDDEN, "CSRF origin validation failed").into_response();
         }
-        let cookie_token = extract_cookie_value(req.headers(), &config.cookie_name);
+        let cookie_token = extract_cookie_value(req.headers(), &cookie_name);
         let header_token = req
             .headers()
             .get(config.header_name.as_str())
@@ -390,19 +406,26 @@ pub async fn garrison_csrf_middleware(
         }
     } else {
         // 安全方法：懒生成 CSRF token
-        let has_cookie = extract_cookie_value(req.headers(), &config.cookie_name).is_some();
+        let has_cookie = extract_cookie_value(req.headers(), &cookie_name).is_some();
         let mut resp = next.run(req).await;
         if !has_cookie {
             if let Ok(token) = generate_csrf_token() {
-                let set_cookie = build_set_cookie(
+                match build_set_cookie(
                     &config.cookie_name,
                     &token,
                     config.cookie_secure,
                     config.cookie_domain.as_deref(),
-                );
-                if let Ok(value) = HeaderValue::from_str(&set_cookie) {
-                    resp.headers_mut()
-                        .append(axum::http::header::SET_COOKIE, value);
+                ) {
+                    Ok(set_cookie) => {
+                        if let Ok(value) = HeaderValue::from_str(&set_cookie) {
+                            resp.headers_mut()
+                                .append(axum::http::header::SET_COOKIE, value);
+                        }
+                    },
+                    // 静默丢 cookie 是可观测事件：构建点拒绝（name/domain 注入等）warn 显性化
+                    Err(e) => {
+                        tracing::warn!(error = %e, "CSRF Set-Cookie 构建失败，已跳过");
+                    },
                 }
             }
         }
@@ -448,6 +471,14 @@ mod tests {
             .unwrap()
     }
 
+    /// 默认配置下 CSRF cookie 的解析名（production 前缀感知，
+    /// 供请求 fixture 与写侧构建点保持写读同名）。
+    fn default_csrf_cookie_name() -> String {
+        let config = CsrfConfig::default();
+        csrf_cookie_type(&config.cookie_name, config.cookie_domain.as_deref())
+            .resolved_name(config.cookie_secure)
+    }
+
     fn make_request_with_csrf(
         method: &str,
         path: &str,
@@ -459,7 +490,10 @@ mod tests {
             .uri(path)
             .header("host", "example.com")
             .header("origin", "https://example.com")
-            .header("cookie", format!("garrison_csrf_token={}", cookie_token))
+            .header(
+                "cookie",
+                format!("{}={}", default_csrf_cookie_name(), cookie_token),
+            )
             .header("X-CSRF-Token", header_token)
             .body(Body::empty())
             .unwrap()
@@ -644,8 +678,9 @@ mod tests {
         let set_cookie = resp.headers().get("set-cookie").expect("应设置 Set-Cookie");
         let cookie_str = set_cookie.to_str().unwrap();
         assert!(
-            cookie_str.starts_with("garrison_csrf_token="),
-            "Set-Cookie 应以 cookie_name 开头"
+            cookie_str.starts_with(&format!("{}=", default_csrf_cookie_name())),
+            "Set-Cookie 应以解析后的 cookie_name 开头（写读同名），实际: {}",
+            cookie_str
         );
         assert!(cookie_str.contains("HttpOnly"));
         assert!(cookie_str.contains("SameSite=Lax"));
@@ -667,7 +702,7 @@ mod tests {
             .oneshot(make_request_with_cookie(
                 "GET",
                 "/api/test",
-                "garrison_csrf_token=existing_token_value",
+                &format!("{}=existing_token_value", default_csrf_cookie_name()),
             ))
             .await
             .unwrap();
@@ -855,7 +890,10 @@ mod tests {
             .uri("/api/test")
             .header("host", "example.com")
             .header("origin", "https://evil.com")
-            .header("cookie", format!("garrison_csrf_token={}", token))
+            .header(
+                "cookie",
+                format!("{}={}", default_csrf_cookie_name(), token),
+            )
             .header("X-CSRF-Token", &token)
             .body(Body::empty())
             .unwrap();
@@ -882,7 +920,10 @@ mod tests {
             .uri("/api/test")
             .header("host", "example.com")
             .header("origin", "https://example.com")
-            .header("cookie", format!("garrison_csrf_token={}", token))
+            .header(
+                "cookie",
+                format!("{}={}", default_csrf_cookie_name(), token),
+            )
             .header("X-CSRF-Token", &token)
             .body(Body::empty())
             .unwrap();
@@ -952,7 +993,10 @@ mod tests {
             .uri("/api/test")
             .header("host", "example.com")
             .header("origin", "https://example.com:443")
-            .header("cookie", format!("garrison_csrf_token={}", token))
+            .header(
+                "cookie",
+                format!("{}={}", default_csrf_cookie_name(), token),
+            )
             .header("X-CSRF-Token", &token)
             .body(Body::empty())
             .unwrap();
@@ -978,7 +1022,10 @@ mod tests {
             .uri("/api/test")
             .header("host", "example.com:443")
             .header("origin", "https://example.com")
-            .header("cookie", format!("garrison_csrf_token={}", token))
+            .header(
+                "cookie",
+                format!("{}={}", default_csrf_cookie_name(), token),
+            )
             .header("X-CSRF-Token", &token)
             .body(Body::empty())
             .unwrap();
@@ -997,7 +1044,7 @@ mod tests {
     /// build_set_cookie 不传 cookie_domain 时不应包含 Domain 属性。
     #[test]
     fn build_set_cookie_without_domain() {
-        let cookie = build_set_cookie("garrison_csrf_token", "abc123", true, None);
+        let cookie = build_set_cookie("garrison_csrf_token", "abc123", true, None).unwrap();
         assert!(
             !cookie.contains("Domain="),
             "C3: cookie_domain=None 时不应包含 Domain 属性，实际: {}",
@@ -1012,7 +1059,8 @@ mod tests {
     /// build_set_cookie 传 Some(domain) 时应包含 `; Domain=<domain>`。
     #[test]
     fn build_set_cookie_with_domain() {
-        let cookie = build_set_cookie("garrison_csrf_token", "abc123", true, Some("example.com"));
+        let cookie =
+            build_set_cookie("garrison_csrf_token", "abc123", true, Some("example.com")).unwrap();
         assert!(
             cookie.contains("; Domain=example.com"),
             "C3: cookie_domain=Some(\"example.com\") 时应包含 `; Domain=example.com`，实际: {}",
@@ -1027,7 +1075,7 @@ mod tests {
     /// build_set_cookie 传 Some("") 时应忽略空 Domain（不输出 Domain 属性）。
     #[test]
     fn build_set_cookie_with_empty_domain_ignored() {
-        let cookie = build_set_cookie("garrison_csrf_token", "abc123", true, Some(""));
+        let cookie = build_set_cookie("garrison_csrf_token", "abc123", true, Some("")).unwrap();
         assert!(
             !cookie.contains("Domain="),
             "C3: 空字符串 Domain 应被忽略，实际: {}",
@@ -1038,7 +1086,7 @@ mod tests {
     /// build_set_cookie 不启用 Secure 且无 Domain 时格式正确。
     #[test]
     fn build_set_cookie_no_secure_no_domain() {
-        let cookie = build_set_cookie("csrf", "tok", false, None);
+        let cookie = build_set_cookie("csrf", "tok", false, None).unwrap();
         assert!(!cookie.contains("Secure"));
         assert!(!cookie.contains("Domain="));
         assert!(cookie.contains("HttpOnly"));
@@ -1049,7 +1097,7 @@ mod tests {
     /// build_set_cookie 同时启用 Secure 与 Domain 时格式正确。
     #[test]
     fn build_set_cookie_secure_and_domain() {
-        let cookie = build_set_cookie("csrf", "tok", true, Some("api.example.com"));
+        let cookie = build_set_cookie("csrf", "tok", true, Some("api.example.com")).unwrap();
         assert!(cookie.contains("Secure"));
         assert!(cookie.contains("; Domain=api.example.com"));
         assert!(cookie.contains("HttpOnly"));
@@ -1112,12 +1160,21 @@ mod tests {
             "C3: 子域场景应正确设置 Domain，实际: {}",
             cookie_str
         );
-        // 已有 cookie 时不重新设置
+        // 已有 cookie 时不重新设置（fixture 名与该配置的写侧解析名一致）
+        let read_config = CsrfConfig {
+            cookie_domain: Some("api.example.com".to_string()),
+            ..Default::default()
+        };
+        let existing_name = csrf_cookie_type(
+            &read_config.cookie_name,
+            read_config.cookie_domain.as_deref(),
+        )
+        .resolved_name(read_config.cookie_secure);
         let resp2 = app
             .oneshot(make_request_with_cookie(
                 "GET",
                 "/api/test",
-                "garrison_csrf_token=existing",
+                &format!("{}=existing", existing_name),
             ))
             .await
             .unwrap();
@@ -1126,4 +1183,27 @@ mod tests {
             "C3: 已有 cookie 时不应重新设置"
         );
     }
+
+    // ========================================================================
+    // 单一构建点：写读同名 roundtrip
+    // ========================================================================
+
+    /// 写读同名：build_set_cookie 产出的名字与读侧解析名一致
+    /// （覆盖 Secure×Domain 组合，production 下含 `__Host-`/`__Secure-` 前缀）。
+    #[test]
+    fn csrf_cookie_write_read_name_roundtrip() {
+        for (secure, domain) in [(true, None), (true, Some("example.com")), (false, None)] {
+            let cookie = build_set_cookie("garrison_csrf_token", "tok", secure, domain).unwrap();
+            let read_name = csrf_cookie_type("garrison_csrf_token", domain).resolved_name(secure);
+            assert!(
+                cookie.starts_with(&format!("{}=", read_name)),
+                "secure={} domain={:?} 写读名字应一致，实际: {}",
+                secure,
+                domain,
+                cookie
+            );
+        }
+    }
+
+    // 同形状 production 前缀断言已由 src/context/cookie.rs 的 production 测试模块在 production 门禁真实执行，csrf 写读 roundtrip 由上方 csrf_cookie_write_read_name_roundtrip 在 full 门禁覆盖（production 不含 web-csrf、full 不含 production，重复断言在两个标准门禁下均不可达）。
 }

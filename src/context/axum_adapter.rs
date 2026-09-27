@@ -163,32 +163,6 @@ impl GarrisonResponse for AxumResponse {
         self.headers.insert(header_name, header_value);
         Ok(())
     }
-
-    fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
-        // 注入防护：name/value 先经合法性校验，
-        // 拒绝控制字符与 `;`、`,` 等分隔符，防止注入 Domain 等恶意 Cookie 属性
-        crate::context::validate_cookie_name_value(name, value)?;
-        // 安全默认：HttpOnly; Secure; SameSite=Lax; Path=/
-        let cookie_value = format!("{}={}; HttpOnly; Secure; SameSite=Lax; Path=/", name, value);
-        self.set_header("Set-Cookie", &cookie_value)
-    }
-
-    fn set_cookie_with_config(
-        &mut self,
-        name: &str,
-        value: &str,
-        config: &crate::config::GarrisonConfig,
-    ) -> GarrisonResult<()> {
-        // 注入防护：同 set_cookie，name/value 校验后再拼接
-        crate::context::validate_cookie_name_value(name, value)?;
-        // 依据 config.cookie_secure / cookie_same_site 构建 Set-Cookie 头部
-        let secure_flag = if config.cookie_secure { "Secure; " } else { "" };
-        let cookie_value = format!(
-            "{}={}; HttpOnly; {}SameSite={}; Path=/",
-            name, value, secure_flag, config.cookie_same_site,
-        );
-        self.set_header("Set-Cookie", &cookie_value)
-    }
 }
 
 // ============================================================================
@@ -513,9 +487,13 @@ mod tests {
     /// 验证从 cookie 提取 token。
     #[test]
     fn get_token_from_cookie() {
-        let req = make_request("/", "GET", &[("Cookie", "garrison_token=cookie_token_789")]);
-        let axum_req = AxumRequest::new(&req);
         let config = GarrisonConfig::default_config();
+        let cookie_value = format!(
+            "{}=cookie_token_789",
+            crate::context::token_cookie_name(&config)
+        );
+        let req = make_request("/", "GET", &[("Cookie", cookie_value.as_str())]);
+        let axum_req = AxumRequest::new(&req);
         let token = axum_req.get_token(&config).unwrap();
         assert_eq!(token, Some("cookie_token_789".to_string()));
     }
@@ -523,16 +501,20 @@ mod tests {
     /// 验证 header 优先级高于 cookie。
     #[test]
     fn get_token_header_priority_over_cookie() {
+        let config = GarrisonConfig::default_config();
+        let cookie_value = format!(
+            "{}=cookie_token",
+            crate::context::token_cookie_name(&config)
+        );
         let req = make_request(
             "/",
             "GET",
             &[
                 ("Authorization", "Bearer header_token"),
-                ("Cookie", "garrison_token=cookie_token"),
+                ("Cookie", cookie_value.as_str()),
             ],
         );
         let axum_req = AxumRequest::new(&req);
-        let config = GarrisonConfig::default_config();
         let token = axum_req.get_token(&config).unwrap();
         assert_eq!(token, Some("header_token".to_string()));
     }
@@ -650,6 +632,38 @@ mod tests {
         assert!(set_cookie.contains("HttpOnly"));
         assert!(!set_cookie.contains("Secure"));
         assert!(set_cookie.contains("SameSite=Strict"));
+    }
+
+    /// set_cookie_with_config 在 SameSite=None + 非 Secure 上下文下降级为 Lax
+    /// （None→Lax 不变式：浏览器拒收不带 Secure 的 SameSite=None）。
+    #[test]
+    fn response_set_cookie_none_insecure_downgrades_to_lax() {
+        let mut resp = AxumResponse::new();
+        let mut config = GarrisonConfig::default_config();
+        config.cookie_secure = false;
+        config.cookie_same_site = "None".to_string();
+        resp.set_cookie_with_config("token", "v", &config).unwrap();
+        let set_cookie = resp
+            .headers
+            .get("Set-Cookie")
+            .and_then(|v| v.to_str().ok())
+            .unwrap();
+        assert!(
+            set_cookie.contains("SameSite=Lax"),
+            "应降级为 SameSite=Lax，实际: {}",
+            set_cookie
+        );
+        assert!(
+            !set_cookie.contains("SameSite=None"),
+            "不得输出 SameSite=None，实际: {}",
+            set_cookie
+        );
+        assert!(!set_cookie.contains("Secure"), "实际: {}", set_cookie);
+        assert!(
+            !set_cookie.contains("__Host-") && !set_cookie.contains("__Secure-"),
+            "http 降级无前缀，实际: {}",
+            set_cookie
+        );
     }
 
     /// 验证 to_response 转换为 axum Response。
@@ -940,10 +954,11 @@ mod tests {
     /// 验证 AxumContext::request() 返回的 wrapper 从 cookie 提取 token。
     #[test]
     fn axum_context_wrapper_get_token_from_cookie() {
-        let req = make_request("/", "GET", &[("Cookie", "garrison_token=cookie_tok")]);
+        let mut config = GarrisonConfig::default_config();
+        let cookie_value = format!("{}=cookie_tok", crate::context::token_cookie_name(&config));
+        let req = make_request("/", "GET", &[("Cookie", cookie_value.as_str())]);
         let ctx = AxumContext::new(&req);
         let request = ctx.request().unwrap();
-        let mut config = GarrisonConfig::default_config();
         // 关闭 header 读取，强制走 cookie 路径以覆盖 wrapper 的 cookie 分支
         config.is_read_header = false;
         config.is_read_cookie = true;

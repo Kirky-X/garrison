@@ -372,6 +372,15 @@ sequenceDiagram
 
 ---
 
+### 6. 为什么 Set-Cookie 收敛单一构建点（`context::cookie`）？
+
+全部 Set-Cookie 写路径（axum / actix / warp 适配器的 `set_cookie*`、axum 续签中间件、CSRF 中间件）统一经 `context::cookie::build_set_cookie_value` 产出，写点不再自行拼接属性串。设计吸收 Keycloak `DefaultCookieProvider.set(CookieType, …)` 的类型化 Cookie 与 Pocket-ID 的 `__Host-` / `__Secure-` 前缀命名，按纯函数自由构建器重设计（无框架依赖，可脱离 HTTP 单测）：
+
+- **不变式集中强制，写点无法绕过**：HttpOnly 恒定（`CookieScope` 封闭枚举）、SameSite 白名单 fail-fast（合法值与 `COOKIE_SAME_SITE_VALUES` 一一对应，跨引用测试锁定漂移）、非 Secure 上下文 `None→Lax` 降级（warn 一次）、`production` + Secure 上下文强制 `__Host-`/`__Secure-` 前缀、name/value 注入校验（复用 `validate_cookie_name_value`）+ path/domain 字符纪律（path 拒 `;` 与控制字符，domain 仅主机名字符）。
+- **写读同名**：读侧统一入口 `token_cookie_name`（及 CSRF / `CookieType::resolved_name`）与写侧经同一前缀解析，杜绝「写带前缀、读裸名」的功能破坏。
+- **名称来自配置**：garrison 的 cookie 名来自配置（`token_name` / CSRF `cookie_name`）而非硬编码枚举，故 `CookieType` 为可构造 pub struct + 便捷构造器（`token(config)` / `session(name, config)`），而非 Keycloak 式硬编码注册表。
+- **确定性信号**：写路径无请求上下文可感知 UA / `X-Forwarded-Proto`，以 `config.cookie_secure=false` 作为「非 Secure 上下文」的确定性信号；协议头探测列为后续独立增强，不混入构建点。
+
 ## 六、扩展点
 
 ### 1. 自定义 GarrisonDao 实现

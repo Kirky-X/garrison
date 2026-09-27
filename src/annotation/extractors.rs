@@ -27,7 +27,8 @@ use std::marker::PhantomData;
 ///    a. `Authorization: Bearer <token>` header（Bearer 大小写不敏感，依据 RFC 7235）
 ///    b. 自定义 `token_name` header（如 `garrison_token: <token>`）
 /// 2. 若 `is_read_cookie=true`：
-///    `Cookie: <token_name>=<token>` cookie
+///    `Cookie: <token cookie 解析名>=<token>`（解析名经 `token_cookie_name`，
+///    production + Secure 上下文为 `__Host-` 前缀名，与写侧同名）
 fn extract_token_from_parts(parts: &Parts, config: &GarrisonConfig) -> Option<String> {
     // 1. 从 header 提取
     if config.is_read_header {
@@ -47,11 +48,11 @@ fn extract_token_from_parts(parts: &Parts, config: &GarrisonConfig) -> Option<St
             }
         }
     }
-    // 2. 从 cookie 提取
+    // 2. 从 cookie 提取（production + Secure 上下文与写侧同为 __Host- 前缀名）
     if config.is_read_cookie {
         if let Some(cookie) = parts.headers.get(header::COOKIE) {
             if let Ok(cookie_str) = cookie.to_str() {
-                let cookie_prefix = format!("{}=", config.token_name);
+                let cookie_prefix = format!("{}=", crate::context::token_cookie_name(config));
                 for c in cookie_str.split(';') {
                     let c = c.trim();
                     if let Some(rest) = c.strip_prefix(&cookie_prefix) {

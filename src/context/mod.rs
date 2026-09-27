@@ -54,6 +54,14 @@ pub use token_extract::{
 };
 
 // ============================================================================
+// Set-Cookie 单一构建点（CookieType + 安全不变式）
+// ============================================================================
+
+pub mod cookie;
+
+pub use cookie::{build_set_cookie_value, token_cookie_name, CookiePath, CookieScope, CookieType};
+
+// ============================================================================
 // 登录主体
 // ============================================================================
 
@@ -172,18 +180,30 @@ pub trait GarrisonResponse {
     /// 需要 per-request 配置时，请使用
     /// `set_cookie_with_frontend_check(name, value, &config)`。
     ///
+    /// # 性能
+    ///
+    /// 默认配置经进程级缓存共享（确定性可复用）；每请求路径请用
+    /// `set_cookie_with_config`（传入业务配置），本方法仅供无配置上下文的
+    /// 调用方兜底。
+    ///
+    /// 写读错配警告：兜底走共享默认配置（`cookie_secure=true`）——若业务配置为
+    /// `cookie_secure=false`，production 构建下本方法按默认配置写入 `__Host-`
+    /// 前缀 cookie 名，而读侧按业务配置解析裸名，写读错配（客户端回传的
+    /// cookie 读不到）。生产代码必须用 `set_cookie_with_config` 传入真实配置，
+    /// 不得依赖本方法兜底。
+    ///
     /// # 参数
     /// - `name`: Cookie 名称。
     /// - `value`: Cookie 值。
     fn set_cookie(&mut self, name: &str, value: &str) -> GarrisonResult<()> {
-        self.set_cookie_with_frontend_check(
-            name,
-            value,
-            &crate::config::GarrisonConfig::default_config(),
-        )
+        self.set_cookie_with_frontend_check(name, value, helpers::shared_default_config())
     }
 
     /// 设置响应 Cookie。
+    ///
+    /// 经 Set-Cookie 单一构建点（[`CookieType::session`] + [`build_set_cookie_value`]）
+    /// 产出：注入防护、SameSite 白名单 fail-fast、None→Lax 降级与 production 前缀
+    /// 全部在构建点强制，实现方无需自行拼接属性串。
     ///
     /// # 参数
     /// - `name`: Cookie 名称。
@@ -194,7 +214,11 @@ pub trait GarrisonResponse {
         name: &str,
         value: &str,
         config: &crate::config::GarrisonConfig,
-    ) -> GarrisonResult<()>;
+    ) -> GarrisonResult<()> {
+        let cookie = CookieType::session(name, config)?;
+        let cookie_value = build_set_cookie_value(&cookie, value, config.cookie_secure)?;
+        self.set_header("Set-Cookie", &cookie_value)
+    }
 
     /// 设置响应 Cookie（受 `frontend_separation` 控制）。
     ///

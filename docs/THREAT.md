@@ -97,6 +97,9 @@
 | API Key 泄露后的横向使用 | sha256 哈希存储 + IP 级失败限速 + namespace 隔离 | 根目录 [SECURITY.md](../SECURITY.md) API Key 安全节 |
 | 定时侧信道（token 比较） | `secure-ct-eq` 常量时间公共原语（subtle） | `tests/constant_time_eq.rs` |
 | XML 注入/畸形 SAML | 长度限制 + 特殊字符拒绝 + 签名 fail-closed + fuzz 回归 | `fuzz/fuzz_targets/fuzz_saml_xml.rs` |
+| Set-Cookie 属性注入（name/value 含 `;`、控制字符注入 `Domain=`/移除 HttpOnly） | `context::validate_cookie_name_value` 注入校验 + 单一构建点 `context::cookie::build_set_cookie_value`（三框架适配器 / 续签 / CSRF 写点统一经构建点产出，拒绝后不产出 Set-Cookie） | `src/context/cookie.rs`、`src/context/axum_adapter.rs` 内嵌测试 |
+| Cookie 子域篡改（恶意子域写同Domain cookie 覆盖会话 token） | 默认不设 `Domain`（host-only）；`production` + Secure 上下文强制 `__Host-`（Path=/ 且无 Domain）/ `__Secure-` 前缀，浏览器层拒绝带 Domain 的 `__Host-` cookie | `src/context/cookie.rs`、`src/web/csrf.rs` 内嵌测试 |
+| 非 Secure 上下文 SameSite=None（跨站携带凭证被浏览器拒收 / 属性不一致） | 构建点 None→Lax 降级不变式（`cookie_secure=false` 时降级 `Lax` 并 warn 一次），续签 / CSRF 写点无法直发 `SameSite=None` | `src/context/cookie.rs`、`src/router/tests.rs` 内嵌测试 |
 
 ## ⛔ 明确不防御的攻击
 

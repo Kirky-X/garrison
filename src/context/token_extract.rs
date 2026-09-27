@@ -171,10 +171,10 @@ pub fn extract_token_from_headers<H: HeaderLookup>(
         }
     }
     if config.is_read_cookie {
-        // 3. Cookie: token_name=<token>
+        // 3. Cookie: <解析名>=<token>（production + Secure 上下文与写侧同为 __Host- 前缀名）
         if let Some(token) = parse_cookie_value(
             headers.get_header("cookie").unwrap_or(""),
-            &config.token_name,
+            &crate::context::token_cookie_name(config),
         ) {
             return Ok(Some(token));
         }
@@ -217,9 +217,9 @@ pub fn extract_token_from_request_parts(
             return Ok(Some(token));
         }
     }
-    // 2. Cookie 提取
+    // 2. Cookie 提取（production + Secure 上下文与写侧同为 __Host- 前缀名）
     if config.is_read_cookie {
-        if let Some(token) = cookie_fn(&config.token_name)? {
+        if let Some(token) = cookie_fn(&crate::context::token_cookie_name(config))? {
             return Ok(Some(token));
         }
     }
@@ -428,12 +428,16 @@ mod tests {
     /// 从 cookie 提取 token。
     #[test]
     fn extract_token_from_cookie() {
+        let config = GarrisonConfig::default_config();
+        let cookie_value = format!(
+            "{}=cookie_tok_456",
+            crate::context::token_cookie_name(&config)
+        );
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("garrison_token=cookie_tok_456"),
+            HeaderValue::from_str(&cookie_value).unwrap(),
         );
-        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("cookie_tok_456".to_string()));
     }
@@ -450,6 +454,8 @@ mod tests {
     /// Authorization Bearer 优先级高于 cookie。
     #[test]
     fn extract_token_bearer_priority_over_cookie() {
+        let config = GarrisonConfig::default_config();
+        let cookie_value = format!("{}=cookie_tok", crate::context::token_cookie_name(&config));
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -457,9 +463,8 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("garrison_token=cookie_tok"),
+            HeaderValue::from_str(&cookie_value).unwrap(),
         );
-        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("header_tok".to_string()));
     }
@@ -467,6 +472,8 @@ mod tests {
     /// 自定义 token_name header 优先级高于 cookie。
     #[test]
     fn extract_token_custom_header_priority_over_cookie() {
+        let config = GarrisonConfig::default_config();
+        let cookie_value = format!("{}=cookie_tok", crate::context::token_cookie_name(&config));
         let mut headers = HeaderMap::new();
         headers.insert(
             "garrison_token",
@@ -474,9 +481,8 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("garrison_token=cookie_tok"),
+            HeaderValue::from_str(&cookie_value).unwrap(),
         );
-        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("custom_header_tok".to_string()));
     }
@@ -484,6 +490,8 @@ mod tests {
     /// is_read_header=false 时不从 header 提取，但仍可从 cookie 提取。
     #[test]
     fn extract_token_skips_header_when_disabled() {
+        let config = GarrisonConfig::default_config();
+        let cookie_value = format!("{}=cookie_tok", crate::context::token_cookie_name(&config));
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -491,9 +499,9 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("garrison_token=cookie_tok"),
+            HeaderValue::from_str(&cookie_value).unwrap(),
         );
-        let mut config = GarrisonConfig::default_config();
+        let mut config = config;
         config.is_read_header = false;
         // header 关闭，应走 cookie 路径
         let token = extract_token_from_headers(&headers, &config).unwrap();
@@ -541,12 +549,16 @@ mod tests {
     /// Cookie 中有多项时正确提取目标 token_name。
     #[test]
     fn extract_token_from_cookie_with_multiple_pairs() {
+        let config = GarrisonConfig::default_config();
+        let cookie_value = format!(
+            "session=abc; {}=target_tok; other=val",
+            crate::context::token_cookie_name(&config)
+        );
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("session=abc; garrison_token=target_tok; other=val"),
+            HeaderValue::from_str(&cookie_value).unwrap(),
         );
-        let config = GarrisonConfig::default_config();
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("target_tok".to_string()));
     }
@@ -554,6 +566,8 @@ mod tests {
     /// Authorization header 存在但无 Bearer 前缀时，回退到自定义 header / cookie。
     #[test]
     fn extract_token_falls_back_when_no_bearer_prefix() {
+        let config = GarrisonConfig::default_config();
+        let cookie_value = format!("{}=cookie_tok", crate::context::token_cookie_name(&config));
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -561,9 +575,8 @@ mod tests {
         );
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("garrison_token=cookie_tok"),
+            HeaderValue::from_str(&cookie_value).unwrap(),
         );
-        let config = GarrisonConfig::default_config();
         // Authorization 无 Bearer 前缀，应回退到 cookie
         let token = extract_token_from_headers(&headers, &config).unwrap();
         assert_eq!(token, Some("cookie_tok".to_string()));
@@ -708,5 +721,48 @@ mod tests {
         )
         .unwrap();
         assert_eq!(token, None, "空前缀 Bearer 应返回 None 而非 Some(\"\")");
+    }
+
+    // ========================================================================
+    // production 前缀：读侧同名命中（写读同名一致性）
+    // ========================================================================
+
+    /// production + Secure 上下文：读侧命中带 `__Host-` 前缀的 token cookie。
+    #[cfg(feature = "production")]
+    #[test]
+    fn extract_token_from_headers_hits_host_prefixed_cookie() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("__Host-garrison_token=host_prefixed_tok"),
+        );
+        let config = GarrisonConfig::default_config();
+        let token = extract_token_from_headers(&headers, &config).unwrap();
+        assert_eq!(token, Some("host_prefixed_tok".to_string()));
+    }
+
+    /// production + Secure 上下文：`extract_token_from_request_parts` 向 cookie_fn
+    /// 传入与写侧一致的 `__Host-` 前缀名。
+    #[cfg(feature = "production")]
+    #[test]
+    fn extract_from_parts_queries_host_prefixed_cookie_name() {
+        let mut config = GarrisonConfig::default_config();
+        config.is_read_header = false;
+        config.is_read_cookie = true;
+        let token = extract_token_from_request_parts(
+            &config,
+            &[],
+            "GET",
+            |_| Ok(None),
+            |name| {
+                assert_eq!(
+                    name, "__Host-garrison_token",
+                    "cookie 查询名应与 production 写侧前缀名一致"
+                );
+                Ok(Some("parts_tok".to_string()))
+            },
+        )
+        .unwrap();
+        assert_eq!(token, Some("parts_tok".to_string()));
     }
 }

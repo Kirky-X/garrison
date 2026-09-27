@@ -32,6 +32,13 @@
 - **哈希格式错误并入统一防枚举**：存量用户 password_hash 解析失败不再返回可区分的 `stp-unsupported-hash-format`（账号存在预言机），改与密码错误统一返回 `stp-invalid-password` 并计入失败计数。
 - **email 验证码错误日志脱敏**：error 日志中的全量邮箱改为掩码输出（对齐 SMS 侧 mask_phone，CWE-532）。
 - **Memory 限流后端部署警示**：`rate_limit_backend=Memory`（进程内计数）时配置校验输出 warn——多实例部署实际限额按实例数放大，须切 Redis。
+- **Set-Cookie 收敛单一构建点（R01）**：全部写路径（axum / actix / warp 适配器、axum 续签中间件、CSRF 中间件）统一经 `context::cookie` 构建点（`CookieType` × `CookieScope` × `CookiePath` → `build_set_cookie_value`）产出，写点不再自行拼接属性串。不变式：① SameSite 白名单 fail-fast（合法值与 `COOKIE_SAME_SITE_VALUES` 一一对应，非法值不产出 Set-Cookie）；② 非 Secure 上下文（`cookie_secure=false` 作为确定性信号）`SameSite=None` 自动降级 `Lax`（warn 一次），修复续签写点原直发 `SameSite=None`（无 Secure 会被浏览器整体拒收）的缺陷；③ 续签 / CSRF 写点补 `validate_cookie_name_value` 注入校验 + path/domain 字符纪律（path 拒 `;` 与控制字符，domain 仅主机名字符）——token 值或 path/domain 含 `;` 等注入字符时不再产出 Set-Cookie（失败记 warn 日志，显性化）；④ `production` feature + Secure 上下文强制 `__Host-` / `__Secure-` 前缀（Path=/ 且无 Domain → `__Host-<name>`，限定路径或跨子域 → `__Secure-<name>`；http 降级无前缀），吸收 Keycloak `DefaultCookieProvider` 与 Pocket-ID 前缀命名。**一次性迁移**：production 构建下 cookie 名带前缀，升级后在线用户旧 cookie 失效需重新登录一次；框架读写两侧（`token_cookie_name` 读侧统一入口 / CSRF 解析名）已同步解析，业务侧自行读取 cookie 的代码需改用同名解析，否则读不到新 cookie。
+
+### Changed
+
+- **Set-Cookie 属性顺序统一**：构建点固定输出 `name=value; HttpOnly; [Secure; ]SameSite=<ss>; Path=<p>[; Domain=<d>][; Max-Age=<n>]`（原 CSRF 写点 Secure 在 Max-Age 之后、续签写点 Path 在 SameSite 之前）。客户端按属性名解析不受影响。
+- **`cookie_same_site` 构建期语义收窄**：构建点按 `["Lax", "Strict", "None"]` 严格校验（合法值与启动期配置校验白名单 `COOKIE_SAME_SITE_VALUES` 一一对应，跨引用测试锁定漂移）——非法值不再被原样拼入 Set-Cookie，而是拒绝写入；`SameSite=None` 仅在 `cookie_secure=true` 时生效。`cookie_same_site` 配置类型保持 `String` 不变。
+- **三适配器 `set_cookie` 由 override 改继承 trait 默认实现**：axum / actix / warp 删除 `set_cookie` / `set_cookie_with_config` override，统一经单一构建点产出。无配置 `set_cookie` 现同样执行 `frontend_separation` 检查（原 override 无条件写入、不查该配置）；检查依据共享默认配置，其 `frontend_separation` 恒为 `false`，故该路径实际行为不变。显式的 `set_cookie_with_frontend_check`（业务配置 `frontend_separation=true` 时跳过写入）语义不受影响。
 
 ### Breaking
 
