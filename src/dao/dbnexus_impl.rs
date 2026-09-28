@@ -812,22 +812,44 @@ mod embedded_migrations_tests {
     // ========================================================================
 
     /// Scenario: run_embedded_postgres 在真实 postgres 上执行迁移。
-    /// WHEN GarrisonMigration::run_embedded_postgres()
-    /// THEN 返回值 > 0（至少一个迁移被应用），且 dbnexus_migrations 表有记录
+    /// WHEN GarrisonMigration::run_embedded_postgres()（无论库此前是否已迁移）
+    /// THEN dbnexus_migrations 恰好记录全部 12 个迁移（终态不变式），
+    ///      且本次调用无错误返回
     #[tokio::test]
+    #[serial_test::serial]
     #[ignore = "requires postgres DATABASE_URL (set SINNAN_TEST_DATABASE_URL to run)"]
     async fn run_embedded_postgres_creates_tables() {
+        use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement};
+
         let db_url = std::env::var("DATABASE_URL")
             .or_else(|_| std::env::var("SINNAN_TEST_DATABASE_URL"))
             .expect("DATABASE_URL 或 SINNAN_TEST_DATABASE_URL 必须设置才能运行此测试");
         let pool = init_dbnexus(&db_url)
             .await
             .expect("init_dbnexus 应成功（数据库可达）");
-        let migration = GarrisonMigration::new(pool);
-        let count = migration
+        let migration = GarrisonMigration::new(pool.clone());
+        migration
             .run_embedded_postgres()
             .await
             .expect("run_embedded_postgres 应成功");
-        assert!(count > 0, "至少应应用一个迁移，实际: {count}");
+
+        // 终态不变式（竞态安全）：迁移器幂等，库里已应用时本次返回 0 属正常，
+        // 有效性质是「运行后全部 12 个迁移均已记录」。不设 count > 0 增量断言——
+        // 与 dbnexus_user_repository_works_with_postgres_backend 并发触同一库时
+        // 本测试可能不是首个应用者。
+        let session = pool.get_session("admin").await.expect("获取 session 失败");
+        let conn = session.connection().expect("获取 connection 失败");
+        let stmt = Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            "SELECT count(*) AS cnt FROM dbnexus_migrations",
+            vec![],
+        );
+        let row = conn
+            .query_one_raw(stmt)
+            .await
+            .expect("查询迁移记录应成功")
+            .expect("应有一行计数");
+        let applied: i64 = row.try_get::<i64>("", "cnt").expect("cnt 列应存在");
+        assert_eq!(applied, 12, "运行后应记录全部 12 个迁移，实际: {applied}");
     }
 }

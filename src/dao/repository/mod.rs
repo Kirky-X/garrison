@@ -1530,6 +1530,7 @@ mod tests {
     /// 如果占位符转换失败（? 未转为 $n），PostgreSQL 会返回语法错误。
     #[cfg(feature = "db-postgres")]
     #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
     #[ignore = "需要真实 PostgreSQL，设置 DATABASE_URL 后 cargo test -- --ignored 运行"]
     async fn dbnexus_user_repository_works_with_postgres_backend() {
         use crate::dao::init_dbnexus;
@@ -1629,5 +1630,16 @@ mod tests {
         repo.delete(tenant_id, &user_id)
             .await
             .expect("清理测试数据失败");
+
+        // 8. 删除手动建的表。本测试不经迁移器建表；若 app_user 残留，
+        //    run_embedded_postgres 的 001_init 将撞「表已存在」。两个 postgres
+        //    集成测试共用 DATABASE_URL（#[serial] 串行，先后顺序均可）。
+        {
+            let session = pool.get_session("admin").await.expect("获取 session 失败");
+            let conn = session.connection().expect("获取 connection 失败");
+            conn.execute_unprepared("DROP TABLE IF EXISTS app_user")
+                .await
+                .expect("清理 app_user 表失败");
+        }
     }
 }
