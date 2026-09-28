@@ -357,7 +357,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     /// 重写默认实现以保留原键 TTL（用 `ttl_sync` 读取剩余 TTL，用 `set_with_ttl_sync` 写入）。
     /// 进程内原子：整体置于 `atomic_mutex` 临界区。
     /// `ttl_sync` 返回 None 时追加 `exists_sync` 甄别永久键 / 已消失键，
-    /// 已消失返回 `Dao("dao-key-missing")` 而非写入永久值。
+    /// 已消失返回 `InvalidParam("dao-key-missing")`（对齐 trait 文档错误契约）而非写入永久值。
     /// 同步迁移 `key_index`：移除旧键条目、插入新键条目（否则 `keys()` 会
     /// 漏报新键且残留旧键陈旧条目）。
     async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
@@ -368,7 +368,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
             .cache
             .get_sync(&actual_old)
             .map_err(|e| GarrisonError::Dao(format!("dao-oxcache-get-sync::{}", e)))?
-            .ok_or_else(|| GarrisonError::Dao(format!("dao-key-missing::{}", old_key)))?;
+            .ok_or_else(|| GarrisonError::InvalidParam(format!("dao-key-missing::{}", old_key)))?;
         let remaining_ttl = self
             .cache
             .ttl_sync(&actual_old)
@@ -380,7 +380,10 @@ impl GarrisonDao for GarrisonDaoOxcache {
                     if !self.cache.exists_sync(&actual_old).map_err(|e| {
                         GarrisonError::Dao(format!("dao-oxcache-exists-sync::{}", e))
                     })? {
-                        return Err(GarrisonError::Dao(format!("dao-key-missing::{}", old_key)));
+                        return Err(GarrisonError::InvalidParam(format!(
+                            "dao-key-missing::{}",
+                            old_key
+                        )));
                     }
                     None
                 },

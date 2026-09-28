@@ -190,7 +190,7 @@ GarrisonManager::builder()
 | `get_with_ttl(key) -> Option<(String, Option<Duration>)>` | 值 + 剩余 TTL |
 | `delete(key)` | 删除 |
 | `keys(pattern) -> Vec<String>` | 按模式列举 |
-| `rename(old_key, new_key)` | 重命名 |
+| `rename(old_key, new_key)` | 重命名（缺键返回 `InvalidParam`，原子保留原 TTL） |
 | `get_and_delete(key) -> Option<String>` | 原子取出并删除 |
 | `incr(key, ttl_seconds) -> u64` / `decr(key) -> u64` | 原子计数 |
 
@@ -212,6 +212,35 @@ GarrisonManager::builder()
 | `GarrisonDaoOxcache` | `cache-memory` / `cache-redis` | L1 内存（per-entry TTL + 写入抖动）+ L2 redis |
 | dbnexus DAO | `db-sqlite` / `db-postgres` / `db-mysql` | SQL 持久化 + Repository 层（见下） |
 | 内存 Mock DAO | — | `src/stp/mock.rs`（测试用） |
+
+### 契约测试套件 `dao::testing`
+
+多后端同一把尺子：组断言函数库按能力分层，`dao_conformance_tests!` 宏对每个
+`GarrisonDao` 实现（内置或自定义）实例化运行。`cfg(test)` 下随单元测试执行；
+`testing` feature 构建面开放给下游复用。
+
+| 组断言函数 | 能力层 | 内容 |
+|-----------|--------|------|
+| `run_basic(&Arc<dyn GarrisonDao>, prefix)` | `basic` | get/set/update/delete/expire、永久键、get_with_ttl 三态、incr/decr 全语义、CAS-if-greater、rename（缺键 `InvalidParam`） |
+| `run_atomic(&Arc<dyn GarrisonDao>, prefix)` | `atomic` | set_if_absent / get_and_delete / compare_and_swap 单线程原子语义 |
+| `run_concurrent(&Arc<dyn GarrisonDao>, prefix)` | `concurrent` | multi_thread 真并发：SETNX 恰一赢家、GETDEL 一次性消费、incr/decr 返回值排列恰一、CAS 单调 |
+| `run_ttl(&Arc<dyn GarrisonDao>, prefix)` | `ttl` | 过期不复活、update/rename/incr 保留原窗口、`expire(k, 0)` 转永久（墙钟，单次 sleep 3s） |
+| `run_keys(&Arc<dyn GarrisonDao>, prefix)` | `keys` | glob `*`/`?` 精确匹配、空 Vec、delete/rename 扫描同步 |
+
+一行接入（自定义后端）：
+
+```rust
+garrison::dao_conformance_tests! {
+    backend: my_dao,
+    make: || async { MyDao::new().await.map(|d| Arc::new(d) as Arc<dyn GarrisonDao>) },
+    caps: [basic, atomic, concurrent],   // 未声明的层不生成测试
+    // serial: true,                      // 可选：#[serial_test::serial]（仅测试构建）
+    // ignore: "requires X",             // 可选：#[ignore = "..."]
+}
+```
+
+`make` 每测试新建空实例（每测试全新存储，兼容共享存储后端）；全部键名以
+`<backend>:` 前缀隔离；构造失败 panic（fail-loud）。
 
 ---
 

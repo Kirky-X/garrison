@@ -296,7 +296,35 @@ fn toml_overrides_multiple_fields() { ... }
 fn env_overrides_toml() { ... }
 ```
 
-### 4.3 覆盖率要求
+### 4.3 新 DAO 后端一行接入契约套件
+
+新增 `GarrisonDao` 实现（内置或 `testing` feature 下的自定义后端）时，用
+`dao_conformance_tests!` 宏运行契约套件，替代手写逐方法漂移断言：
+
+```rust
+garrison::dao_conformance_tests! {
+    backend: my_dao,          // 模块名 + 键名前缀
+    make: || async { MyDao::new().await.map(|d| Arc::new(d) as Arc<dyn GarrisonDao>) },
+    caps: [basic, atomic, concurrent, ttl, keys],  // 按后端能力选择
+    // serial: true,           // 可选：依赖环境变量/全局单例时加 #[serial]
+    // ignore: "requires X",   // 可选：外部依赖型后端（如需 DATABASE_URL）
+}
+```
+
+| 能力层 | 选择条件 |
+|--------|---------|
+| `basic` | 恒选（核心 KV / 计数 / rename 契约） |
+| `atomic` | 恒选（SETNX / GETDEL / CAS 原子原语，编译期必需方法） |
+| `concurrent` | 后端声称进程内原子（锁 / 原子原语）时必选——恰一赢家、无丢失更新、无跨越式递减 |
+| `ttl` | 后端支持 per-entry TTL（真实墙钟，单次 sleep 3s） |
+| `keys` | 后端实现 `keys()`（默认 `NotImplemented` 的不要挂） |
+
+- `make` 每测试新建空实例（兼容共享存储后端），构造失败 panic（fail-loud）
+- 全部键名以 `<backend>:` 前缀隔离；断言消息携带前缀便于定位
+- `ttl` 层为真实墙钟，注意 CI 时长预算；装饰器类实现（如 `AloneCache`）可只挂
+  `basic` + `atomic`，concurrent/ttl 由内层后端证明
+
+### 4.4 覆盖率要求
 
 Garrison 要求测试覆盖率 **≥ 95%**（当前 95%+）：
 

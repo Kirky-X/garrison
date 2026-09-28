@@ -83,6 +83,26 @@ impl GarrisonDao for AloneCache {
         self.inner.get_and_delete(&self.prefixed_key(key)).await
     }
 
+    /// get_timeout 透明委托内部 dao。
+    ///
+    /// 默认实现返回 `NotImplemented`（fail-closed），AloneCache 必须显式 forward：
+    /// TTL 查询经装饰器应与直接访问内部 dao 一致（如 expire 续期判断、
+    /// 会话剩余窗口读取），否则经 AloneCache 部署的 get_timeout 全部失效。
+    async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<std::time::Duration>> {
+        self.inner.get_timeout(&self.prefixed_key(key)).await
+    }
+
+    /// get_with_ttl 透明委托内部 dao（性能优化接口，与 `get_timeout` 对称）。
+    ///
+    /// 默认实现拆成 get + get_timeout 两次往返；内部 dao 单次 lookup 的实现
+    /// （如 `InMemoryDao`）经装饰器后应保持复用。
+    async fn get_with_ttl(
+        &self,
+        key: &str,
+    ) -> GarrisonResult<Option<(String, Option<std::time::Duration>)>> {
+        self.inner.get_with_ttl(&self.prefixed_key(key)).await
+    }
+
     /// set_if_absent 委托内部 dao（原子 SETNX 语义， 收严为必需方法）。
     async fn set_if_absent(
         &self,

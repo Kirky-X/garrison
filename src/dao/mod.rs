@@ -744,6 +744,16 @@ pub mod alone_cache;
 
 pub mod warmup;
 
+// ============================================================================
+// 契约测试套件（多后端同一把尺子，能力分层运行）
+// ============================================================================
+//
+// `cfg(test)` 下随单元测试运行；`feature = "testing"` 构建面开放给下游
+// 自定义后端复用同一把尺子（与 `context::tenant::with_default_tenant` 同惯例）。
+
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
+
 // `InMemoryDao` 在生产代码中也作为进程内原子 DAO 使用
 // （如 `PasswordRateLimiter` / `GarrisonFirewallCheckHookDefault` 的内存模式）。
 mod in_memory;

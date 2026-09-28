@@ -158,7 +158,7 @@ graph TB
 | `session/` | `GarrisonSession` 会话模型（Account + Token 双模） |
 | `config/` | `GarrisonConfig` 全局配置 + 热更新 |
 | `context/` | `GarrisonContext` 请求上下文抽象 + axum 适配器 + task_local |
-| `dao/` | `GarrisonDao` trait + dbnexus 实现 |
+| `dao/` | `GarrisonDao` trait + dbnexus 实现 + 契约测试套件（`dao::testing`，多后端同一把尺子） |
 | `strategy/` | `GarrisonPermissionStrategy` 权限策略 |
 | `manager/` | `GarrisonManager` 全局单例 + inventory 编译期注册 |
 | `annotation/` | 鉴权注解枚举 |
@@ -411,6 +411,19 @@ impl GarrisonDao for MyDao {
 ```
 
 通过 `GarrisonManager::builder().build().await` 注入即可，上层业务代码零改动。
+
+启用 `testing` feature 后，自定义实现可用契约测试套件验证行为契约
+（原子性 / TTL / glob 等，与内置后端同一把尺子）：
+
+```rust
+garrison::dao_conformance_tests! {
+    backend: my_dao,
+    make: || async { MyDao::new().await.map(|d| Arc::new(d) as Arc<dyn GarrisonDao>) },
+    caps: [basic, atomic],
+}
+```
+
+能力层与断言内容见 [API_REFERENCE.md](API_REFERENCE.md) `dao::testing` 节。
 
 ### 2. 自定义 GarrisonLogicFactoryEntry
 
