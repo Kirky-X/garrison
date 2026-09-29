@@ -378,6 +378,11 @@ mod suite {
     #[serial_test::serial]
     async fn t114_fallback_to_garrison_manager_when_not_initialized() {
         reset_backend_for_test();
+        // 本测试的前置条件是 GarrisonManager 未初始化；其他串行测试
+        // （如 stp::parameter 的 init_manager_with_perms）结束后会把全局
+        // manager 留在已初始化状态且 throw_on_not_login=false，此时未知
+        // token 返回 Ok(false) 而非 Err——故这里显式重置以保证顺序无关。
+        crate::manager::GarrisonManager::reset_for_test();
         // 未调用 init_backend，应 fallback 到 GarrisonManager
         // GarrisonManager 未初始化时返回 GarrisonError::Session
         let result = crate::stp::with_current_token("test-token".to_string(), async {
@@ -390,6 +395,7 @@ mod suite {
             "未初始化时应 fallback 到 GarrisonManager 并返回其错误"
         );
         reset_backend_for_test();
+        crate::manager::GarrisonManager::reset_for_test();
     }
 
     /// 验证 check_safe 委托后 bool→Result<()> 适配（is_safe=true → Ok(())）。
