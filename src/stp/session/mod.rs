@@ -424,6 +424,12 @@ impl SessionLogic for GarrisonLogicDefault {
                 #[cfg(feature = "listener")]
                 if let (Some(lm), Some(id)) = (&self.listener_manager, login_id.as_ref()) {
                     // CWE-532: 事件载荷统一携掩码 token
+                    // Back-Channel Logout 入队（backchannel-logout feature）：本路径为
+                    // auto-commit 会话写、无 GarrisonEventTx 事务上下文，Logout 事件按
+                    // Immediately 档广播——入队 listener 在广播时点消费（会话写已持久）。
+                    // 事务内登出的调用方不得走此处，应改经 GarrisonEventTx::on_commit
+                    // 缓冲同一事件（提交后派发入队，回滚不残留队列行）；
+                    // 同一登出禁止既 broadcast 又 on_commit（双重入队）。
                     lm.broadcast(&GarrisonEvent::Logout {
                         login_id: id.clone(),
                         token: crate::listener::mask_token_for_event(&token),

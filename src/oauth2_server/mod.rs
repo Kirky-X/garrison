@@ -31,3 +31,11 @@ pub mod introspect;
 
 /// /oauth2/jwks.json 端点模块（RFC 7517 JWK Set 导出）。
 pub mod jwks;
+
+/// OIDC Back-Channel Logout 持久化投递模块（logout token 签发 / 持久化队列 /
+/// 禁重定向投递器）。
+///
+/// 仅在启用 `backchannel-logout` feature 时编译（该 feature 依赖
+/// `oauth2-server`）；队列与投递部分另需 db 后端 feature。
+#[cfg(feature = "backchannel-logout")]
+pub mod backchannel;

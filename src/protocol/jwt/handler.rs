@@ -7,6 +7,7 @@
 
 use crate::error::{GarrisonError, GarrisonResult};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{GarrisonJwtClaims, JwtHandler};
@@ -475,17 +476,7 @@ impl JwtHandler {
     /// - `Err(GarrisonError::Internal)`: 签发失败。
     pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> GarrisonResult<String> {
         let login_id: String = login_id.into();
-        if matches!(self.key_material, KeyMaterial::Hs) && self.secret.is_empty() {
-            return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
-        }
-        // JWT 密钥最小长度校验（防暴力破解，仅对称路径适用；非对称路径密钥强度由 PEM 位长决定）
-        if matches!(self.key_material, KeyMaterial::Hs) && self.secret.len() < MIN_SECRET_BYTES {
-            return Err(GarrisonError::Config(format!(
-                "jwt-secret-too-short::{}::{}",
-                self.secret.len(),
-                MIN_SECRET_BYTES
-            )));
-        }
+        self.validate_hs_secret()?;
         if timeout < 0 {
             return Err(GarrisonError::Config(format!(
                 "jwt-timeout-negative::{}",
@@ -517,6 +508,43 @@ impl JwtHandler {
         let key = self.encoding_key()?;
         encode(&header, &claims, &key)
             .map_err(|e| GarrisonError::Internal(format!("jwt-sign::{}", e)))
+    }
+
+    /// 对称密钥有效性校验（sign / sign_claims 共用）：空密钥与低于最小长度
+    /// 的密钥 fail-closed（防暴力破解，仅对称路径适用；非对称路径密钥强度由
+    /// PEM 位长决定，不在此检查）。
+    fn validate_hs_secret(&self) -> GarrisonResult<()> {
+        if matches!(self.key_material, KeyMaterial::Hs) && self.secret.is_empty() {
+            return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
+        }
+        if matches!(self.key_material, KeyMaterial::Hs) && self.secret.len() < MIN_SECRET_BYTES {
+            return Err(GarrisonError::Config(format!(
+                "jwt-secret-too-short::{}::{}",
+                self.secret.len(),
+                MIN_SECRET_BYTES
+            )));
+        }
+        Ok(())
+    }
+
+    /// 以本 handler 的密钥材料与算法签发**调用方自定义**的 claims（crate 内部
+    /// 复用通道，不对外导出）。
+    ///
+    /// `sign` 只能签发 [`GarrisonJwtClaims`]；OIDC Back-Channel Logout 等需要
+    /// 不同 claim 集（如 `events` / `aud`、且不得携带 `login_id` 等身份扩展）的
+    /// 签发方经本通道复用同一密钥材料与算法-密钥匹配校验，避免旁路重造
+    /// EncodingKey 构造逻辑。校验与 `sign` 完全一致：对称密钥空/过短 fail-closed、
+    /// 算法-密钥类型匹配校验。
+    ///
+    /// 注意：本方法**不做** exp/iat 等标准时间字段填充——由调用方的 claims
+    /// 结构自行携带，语义由调用方定义。
+    pub(crate) fn sign_claims<T: Serialize>(&self, claims: &T) -> GarrisonResult<String> {
+        self.validate_hs_secret()?;
+        validate_algorithm_match(&self.key_material, self.algorithm)?;
+        let header = Header::new(self.algorithm);
+        let key = self.encoding_key()?;
+        encode(&header, claims, &key)
+            .map_err(|e| GarrisonError::Internal(format!("jwt-sign-claims::{}", e)))
     }
 
     /// 按密钥材料构造签名密钥（sign 路径）。
@@ -556,19 +584,10 @@ impl JwtHandler {
     /// - `Err(GarrisonError::ExpiredToken)`: token 已过期。
     /// - `Err(GarrisonError::InvalidToken)`: 签名/格式/算法校验失败。
     pub fn verify(&self, token: &str) -> GarrisonResult<GarrisonJwtClaims> {
-        // 空密钥检查仅对称路径适用（与 sign 一致）：config 层允许非对称算法下
-        // jwt_secret 留空作占位（密钥强度由 PEM 决定），无条件检查会误拒该合法配置
-        if matches!(self.key_material, KeyMaterial::Hs) && self.secret.is_empty() {
-            return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
-        }
-        // JWT 密钥最小长度校验（防暴力破解，仅对称路径适用）
-        if matches!(self.key_material, KeyMaterial::Hs) && self.secret.len() < MIN_SECRET_BYTES {
-            return Err(GarrisonError::Config(format!(
-                "jwt-secret-too-short::{}::{}",
-                self.secret.len(),
-                MIN_SECRET_BYTES
-            )));
-        }
+        // 空密钥/过短密钥检查仅对称路径适用（与 sign 一致）：config 层允许
+        // 非对称算法下 jwt_secret 留空作占位（密钥强度由 PEM 决定），无条件
+        // 检查会误拒该合法配置
+        self.validate_hs_secret()?;
         // 算法-密钥类型匹配校验（fail-closed）：防字段被直接改写绕过构造器
         validate_algorithm_match(&self.key_material, self.algorithm)?;
         let key = self.decoding_key()?;

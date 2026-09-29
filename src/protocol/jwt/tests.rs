@@ -817,3 +817,64 @@ fn cross_key_type_tokens_always_rejected() {
     assert!(ec.verify(&ec_token).is_ok());
     assert!(hs.verify(&hs_token).is_ok());
 }
+
+// ============================================================================
+// sign_claims 测试（crate 内部自定义 claims 签发通道）
+// ============================================================================
+
+/// sign_claims 以同一密钥签发自定义 claims，且与 GarrisonJwtClaims 签发路径
+/// 共享密钥校验（空密钥 fail-closed）。
+#[test]
+fn sign_claims_signs_custom_claims_verifiable_with_same_secret() {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct Probe {
+        iss: String,
+        aud: String,
+    }
+
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
+    let token = handler
+        .sign_claims(&Probe {
+            iss: "https://op.example.com".to_string(),
+            aud: "client-a".to_string(),
+        })
+        .expect("sign_claims 应成功");
+    let parts: Vec<&str> = token.split('.').collect();
+    assert_eq!(parts.len(), 3, "JWT 应由三段组成");
+
+    // 自定义 claims 不含标准 exp，跳过 exp 校验只验签名
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_exp = false;
+    validation.validate_aud = false;
+    validation.required_spec_claims.clear();
+    let payload = jsonwebtoken::decode::<serde_json::Value>(
+        &token,
+        &jsonwebtoken::DecodingKey::from_secret(b"0123456789abcdef0123456789abcdef"),
+        &validation,
+    )
+    .expect("同密钥解码应成功");
+    assert_eq!(payload.claims["iss"], "https://op.example.com");
+    assert_eq!(payload.claims["aud"], "client-a");
+}
+
+/// sign_claims 空密钥 fail-closed（与 sign 同一校验源）。
+#[test]
+fn sign_claims_rejects_empty_secret() {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct Probe {
+        iss: String,
+    }
+
+    let handler = JwtHandler::new("");
+    let result = handler.sign_claims(&Probe {
+        iss: "https://op.example.com".to_string(),
+    });
+    match result.err() {
+        Some(GarrisonError::Config(msg)) => assert!(msg.contains("secret")),
+        other => panic!("期望 Config 错误，实际: {:?}", other),
+    }
+}

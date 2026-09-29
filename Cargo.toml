@@ -528,7 +528,9 @@ social-alipay = ["protocol-oauth2", "dep:rsa", "dep:base64", "protocol-zeroize"]
 keycloak-oidc = ["protocol-oidc"]
 
 # === OIDC Back-Channel Logout（logout token 签发/持久化投递队列/禁重定向） ===
-backchannel-logout = []
+# 依赖 oauth2-server：logout token 经 protocol-jwt 签发（oauth2-server 透传启用），
+# 触发点挂 oauth2_server 模块与 session 登出事件路径
+backchannel-logout = ["oauth2-server"]
 
 # === 微服务架构 ===
 backend-embedded = []
