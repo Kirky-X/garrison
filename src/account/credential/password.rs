@@ -6,7 +6,8 @@
 //!
 //! ## 设计
 //!
-//! - `PasswordHasher` trait 定义 `hash` / `verify` 抽象
+//! - `PasswordHasher` trait 定义 `hash` / `verify` / `verify_and_rehash` 抽象
+//!   （后者默认 = verify + None，Argon2Hasher 覆写为登录期惰性升级）
 //! - `Argon2Hasher` 使用 argon2 0.5 crate（Argon2id, m=19456, t=2, p=1）
 //! - `BcryptHasher` 使用 bcrypt 0.19 crate（默认 cost=12）
 //! - `PasswordVerifier` 根据 hash 前缀自动选择算法校验
@@ -75,6 +76,21 @@ pub trait PasswordHasher: Send + Sync {
     /// 不超卖；等待中的调用异步排队（不拒绝）。
     fn concurrency_gate(&self) -> Option<&Arc<Semaphore>> {
         None
+    }
+
+    /// 校验密码并按需产出升级哈希（登录期惰性迁移扩展点）。
+    ///
+    /// 默认实现 = [`verify`](Self::verify) + `None`（不迁移），自定义实现零改动。
+    /// 返回 `(verify 结果, Option<升级后新 hash>)`：仅当 verify 通过且实现方
+    /// 检测到存量哈希档位低于当前配置档位时返回 `Some`，且新 hash 必可通过
+    /// 本实现 verify；verify 失败恒为 `(false, None)`。
+    fn verify_and_rehash(
+        &self,
+        password: &str,
+        hash: &str,
+    ) -> GarrisonResult<(bool, Option<String>)> {
+        let matched = self.verify(password, hash)?;
+        Ok((matched, None))
     }
 }
 
@@ -198,6 +214,31 @@ impl PasswordHasher for Argon2Hasher {
         }
         // password_bytes drops here (if zeroize on); Zeroizing<Vec<u8>>::drop zeroes bytes
     }
+
+    fn verify_and_rehash(
+        &self,
+        password: &str,
+        hash: &str,
+    ) -> GarrisonResult<(bool, Option<String>)> {
+        let matched = self.verify(password, hash)?;
+        if !matched {
+            return Ok((false, None));
+        }
+        // verify 通过后解析存量 PHC 自描述参数，与当前配置档位做字典序比较：
+        // 仅当存量 (m, t, p) 整体低于配置时升级——任一维度高于配置即视为档位
+        // 不低于配置（重哈希不得造成安全降级）；全维度相等亦不重哈希。
+        let parsed = PasswordHash::new(hash)
+            .map_err(|e| GarrisonError::InvalidParam(format!("account-argon2-format::{}", e)))?;
+        let stored = Params::try_from(&parsed.params)
+            .map_err(|e| GarrisonError::InvalidParam(format!("account-argon2-params::{}", e)))?;
+        let legacy_tier = (stored.m_cost(), stored.t_cost(), stored.p_cost());
+        let configured_tier = (self.m_cost, self.t_cost, self.p_cost);
+        if legacy_tier >= configured_tier {
+            return Ok((true, None));
+        }
+        let new_hash = self.hash(password)?;
+        Ok((true, Some(new_hash)))
+    }
 }
 
 // ============================================================================
@@ -302,6 +343,28 @@ pub(crate) async fn verify_pooled(
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
         hasher.verify(&password, &hash)
+    })
+    .await
+    .map_err(|e| GarrisonError::Internal(format!("credential-verify-blocking::{}", e)))?
+}
+
+/// 信号量闸门下的异步 verify + 惰性重哈希（[`PasswordHasher::verify_and_rehash`]
+/// 的统一并发出口，permit 占槽语义与 [`verify_pooled`] 同款）。
+///
+/// verify 与重哈希在同一 permit 内顺序执行：并发上界恒等于 permit 数，
+/// 内存上界 = permits × m_cost（旧哈希 verify 与新哈希生成不重叠驻留）。
+pub(crate) async fn verify_and_rehash_pooled(
+    hasher: &Arc<dyn PasswordHasher>,
+    password: &str,
+    hash: &str,
+) -> GarrisonResult<(bool, Option<String>)> {
+    let permit = acquire_permit(hasher.as_ref()).await?;
+    let hasher = Arc::clone(hasher);
+    let password = password.to_string();
+    let hash = hash.to_string();
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        hasher.verify_and_rehash(&password, &hash)
     })
     .await
     .map_err(|e| GarrisonError::Internal(format!("credential-verify-blocking::{}", e)))?
@@ -1191,5 +1254,129 @@ mod tests {
         assert!(hit, "密码匹配应返回 true");
         let miss = verify_pooled(&hasher, "pw", "other").await.expect("应直通");
         assert!(!miss, "密码不匹配应返回 false");
+    }
+
+    // ========================================================================
+    // 登录期惰性重哈希（verify_and_rehash）
+    // ========================================================================
+
+    /// trait 默认实现 = verify + None：未覆写 `verify_and_rehash` 的自定义实现
+    /// （PassthroughHasher 零改动）行为与 `verify` 完全一致——返回 verify 结果
+    /// 且永不产出新 hash。
+    #[test]
+    fn verify_and_rehash_default_impl_returns_verify_result_and_none() {
+        let hasher: Arc<dyn PasswordHasher> = Arc::new(PassthroughHasher);
+        let hit = hasher.verify_and_rehash("pw", "pw").expect("verify 应成功");
+        assert_eq!(hit, (true, None), "密码匹配应返回 (true, None)");
+        let miss = hasher
+            .verify_and_rehash("pw", "other")
+            .expect("verify 应成功");
+        assert_eq!(miss, (false, None), "密码不匹配应返回 (false, None)");
+    }
+
+    /// 存量低档位哈希（m=8MiB < 配置 19MiB）：verify 成功时返回 Some(新 hash)，
+    /// 新 hash 使用当前配置档位且可通过当前配置 hasher verify。
+    #[test]
+    fn verify_and_rehash_low_tier_hash_returns_upgraded_hash() {
+        let legacy = Argon2Hasher::with_params(8192, 2, 1);
+        let stored = legacy.hash("legacy-secret").expect("hash 应成功");
+        assert!(stored.contains("m=8192"), "存量哈希应为低档位 m=8192");
+
+        let hasher = Argon2Hasher::default();
+        let (verified, rehash) = hasher
+            .verify_and_rehash("legacy-secret", &stored)
+            .expect("verify_and_rehash 应成功");
+        assert!(verified, "正确密码应 verify 通过");
+        let new_hash = rehash.expect("低档位存量哈希应产出升级 hash");
+        assert!(
+            hasher
+                .verify("legacy-secret", &new_hash)
+                .expect("verify 应成功"),
+            "升级后的新 hash 应可通过当前配置 verify"
+        );
+        assert!(
+            new_hash.contains("m=19456"),
+            "新 hash 应使用当前配置档位 m=19456，实际: {}",
+            new_hash
+        );
+    }
+
+    /// 存量档位与当前配置持平（default 产出的 hash）：verify 通过且不重哈希。
+    #[test]
+    fn verify_and_rehash_current_tier_returns_none() {
+        let hasher = Argon2Hasher::default();
+        let stored = hasher.hash("same-tier").expect("hash 应成功");
+        let (verified, rehash) = hasher
+            .verify_and_rehash("same-tier", &stored)
+            .expect("verify_and_rehash 应成功");
+        assert!(verified, "正确密码应 verify 通过");
+        assert!(rehash.is_none(), "档位不低于配置时不应重哈希");
+    }
+
+    /// 存量档位高于当前配置：verify 通过但不重哈希——升级不得造成安全降级。
+    #[test]
+    fn verify_and_rehash_stronger_tier_does_not_downgrade() {
+        let strong = Argon2Hasher::with_params(32768, 3, 1);
+        let stored = strong.hash("strong-secret").expect("hash 应成功");
+        let hasher = Argon2Hasher::default();
+        let (verified, rehash) = hasher
+            .verify_and_rehash("strong-secret", &stored)
+            .expect("verify_and_rehash 应成功");
+        assert!(verified, "正确密码应 verify 通过");
+        assert!(rehash.is_none(), "存量档位高于配置时不得重哈希降级");
+    }
+
+    /// verify 失败（密码错误）：返回 (false, None)，不产出任何新 hash。
+    #[test]
+    fn verify_and_rehash_wrong_password_returns_false_and_none() {
+        let legacy = Argon2Hasher::with_params(8192, 2, 1);
+        let stored = legacy.hash("legacy-secret").expect("hash 应成功");
+        let hasher = Argon2Hasher::default();
+        let (verified, rehash) = hasher
+            .verify_and_rehash("wrong-password", &stored)
+            .expect("verify 应成功（返回 false 而非报错）");
+        assert!(!verified, "错误密码应 verify 失败");
+        assert!(rehash.is_none(), "verify 失败不得产出新 hash");
+    }
+
+    /// 池化出口 verify_and_rehash_pooled：低档位存量经池升级（permit 占槽与
+    /// verify_pooled 同款），完成后 permit 归还无泄漏。
+    #[tokio::test]
+    async fn verify_and_rehash_pooled_upgrades_and_returns_permit() {
+        let legacy = Argon2Hasher::with_params(8192, 2, 1);
+        let stored = legacy.hash("legacy-secret").expect("hash 应成功");
+        let hasher = Arc::new(Argon2Hasher::default().with_pool(2));
+        let gate = hasher.concurrency_gate().unwrap().clone();
+
+        let h: Arc<dyn PasswordHasher> = hasher.clone();
+        let (verified, rehash) = verify_and_rehash_pooled(&h, "legacy-secret", &stored)
+            .await
+            .expect("verify_and_rehash 应成功");
+        assert!(verified, "正确密码应 verify 通过");
+        let new_hash = rehash.expect("低档位存量应经池产出升级 hash");
+        assert!(
+            verify_pooled(&h, "legacy-secret", &new_hash)
+                .await
+                .expect("verify 应成功"),
+            "升级后的新 hash 应可通过 verify"
+        );
+        assert_eq!(
+            gate.available_permits(),
+            2,
+            "完成后 permits 应回到初值（无泄漏）"
+        );
+    }
+
+    /// 池化出口不重哈希分支：档位持平返回 (true, None)，与直连行为一致。
+    #[tokio::test]
+    async fn verify_and_rehash_pooled_current_tier_returns_none() {
+        let hasher = Arc::new(Argon2Hasher::default().with_pool(1));
+        let stored = hasher.hash("same-tier").expect("hash 应成功");
+        let h: Arc<dyn PasswordHasher> = hasher.clone();
+        let (verified, rehash) = verify_and_rehash_pooled(&h, "same-tier", &stored)
+            .await
+            .expect("verify_and_rehash 应成功");
+        assert!(verified, "正确密码应 verify 通过");
+        assert!(rehash.is_none(), "档位持平时池化出口同样不重哈希");
     }
 }

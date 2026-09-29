@@ -162,6 +162,17 @@ pub enum GarrisonEvent {
         /// 请求上下文（IP + User-Agent）。
         request_context: Option<RequestContext>,
     },
+    /// 密码哈希惰性升级事件。
+    ///
+    /// 在 `login_with_password` verify 通过且存量哈希档位低于当前配置时广播——
+    /// 登录路径完成重哈希**并落库成功后**才广播（落库失败不广播，不虚报审计）。
+    /// 不携带新旧哈希值（哈希即凭据材料，事件载荷最小化）。
+    PasswordRehashed {
+        /// 登录主体标识。
+        login_id: String,
+        /// 请求上下文（IP + User-Agent）。
+        request_context: Option<RequestContext>,
+    },
     /// Token 刷新事件。
     ///
     /// 在 `refresh_token` 成功路径广播，携带旧 token 与新 token。
@@ -524,6 +535,14 @@ impl std::fmt::Debug for GarrisonEvent {
                 .debug_struct("LoginFailure")
                 .field("login_id", login_id)
                 .field("reason", reason)
+                .field("request_context", request_context)
+                .finish(),
+            GarrisonEvent::PasswordRehashed {
+                login_id,
+                request_context,
+            } => f
+                .debug_struct("PasswordRehashed")
+                .field("login_id", login_id)
                 .field("request_context", request_context)
                 .finish(),
             GarrisonEvent::TokenRefresh {

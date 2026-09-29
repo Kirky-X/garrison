@@ -163,12 +163,15 @@ fn credential_model_clone_preserves_fields() {
 // ========================================================================
 
 /// 辅助函数：构造测试用 CredentialModel。
+///
+/// `secret_data` 默认取过导入校验门的 PHC 形态串（password 类型写入
+/// DaoCredentialRepository 时须通过参数上限门）。
 fn make_model(id: &str, user: &str, cred_type: &str, priority: i32) -> CredentialModel {
     CredentialModel {
         id: id.to_string(),
         user_id: user.to_string(),
         credential_type: cred_type.to_string(),
-        secret_data: "hash".to_string(),
+        secret_data: "$argon2id$m=8,t=1,p=1$x".to_string(),
         label: None,
         created_at: 0,
         enabled: true,
@@ -387,7 +390,7 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
         id: "c1".to_string(),
         user_id: "alice".to_string(),
         credential_type: "password".to_string(),
-        secret_data: "new-hash".to_string(),
+        secret_data: "$argon2id$m=8,t=1,p=1$new".to_string(),
         label: Some("updated".to_string()),
         created_at: 100,
         enabled: false,
@@ -395,7 +398,7 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
     };
     repo.update("alice", updated.clone()).await.unwrap();
     let found = repo.find_by_user("alice", "alice").await.unwrap();
-    assert_eq!(found[0].secret_data, "new-hash");
+    assert_eq!(found[0].secret_data, "$argon2id$m=8,t=1,p=1$new");
     assert_eq!(found[0].label, Some("updated".to_string()));
     assert!(!found[0].enabled);
     assert_eq!(found[0].priority, 5);
@@ -404,6 +407,86 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
     let missing = make_model("nonexistent", "alice", "password", 0);
     let result = repo.update("alice", missing).await;
     assert!(result.is_err(), "更新不存在的凭证应返回错误");
+}
+
+// ========================================================================
+// 导入哈希校验门接线（password 类型凭据写路径）
+// ========================================================================
+
+/// password 类型凭据 `create` 拒绝参数越界的导入哈希（错误显性）。
+#[tokio::test]
+async fn dao_repo_create_rejects_out_of_range_password_hash() {
+    let repo = make_dao_repo();
+    let over = CredentialModel {
+        id: "c-over".to_string(),
+        user_id: "alice".to_string(),
+        credential_type: "password".to_string(),
+        secret_data: "$argon2id$v=19$m=2097152,t=2,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg"
+            .to_string(),
+        label: None,
+        created_at: 0,
+        enabled: true,
+        priority: 0,
+    };
+    match repo.create(over).await {
+        Err(GarrisonError::InvalidParam(msg)) => {
+            assert!(
+                msg.contains("credential-create") && msg.contains("import-hash-argon2-m-cost"),
+                "错误应含入口与越界阶段标识，实际: {}",
+                msg
+            );
+        },
+        other => panic!(
+            "越界导入哈希应被 InvalidParam 拒绝，实际: {:?}",
+            other.map(|_| ())
+        ),
+    }
+}
+
+/// password 类型凭据 `update` 同样拒绝越界导入哈希，存量值保持不变。
+#[tokio::test]
+async fn dao_repo_update_rejects_out_of_range_password_hash() {
+    let repo = make_dao_repo();
+    let original = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg";
+    let mut model = make_model("c-keep", "alice", "password", 0);
+    model.secret_data = original.to_string();
+    repo.create(model).await.unwrap();
+
+    let over = CredentialModel {
+        id: "c-keep".to_string(),
+        user_id: "alice".to_string(),
+        credential_type: "password".to_string(),
+        secret_data: "$argon2id$v=19$m=2097152,t=2,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg"
+            .to_string(),
+        label: None,
+        created_at: 100,
+        enabled: true,
+        priority: 0,
+    };
+    match repo.update("alice", over).await {
+        Err(GarrisonError::InvalidParam(msg)) => {
+            assert!(
+                msg.contains("credential-update") && msg.contains("import-hash-argon2-m-cost"),
+                "错误应含入口与越界阶段标识，实际: {}",
+                msg
+            );
+        },
+        other => panic!(
+            "越界导入哈希应被 InvalidParam 拒绝，实际: {:?}",
+            other.map(|_| ())
+        ),
+    }
+    let found = repo.find_by_user("alice", "alice").await.unwrap();
+    assert_eq!(found[0].secret_data, original, "被拒更新不得改动存量哈希");
+}
+
+/// 非 password 类型（TOTP seed 等）不受导入门约束——门只约束密码哈希。
+#[tokio::test]
+async fn dao_repo_create_skips_gate_for_non_password_types() {
+    let repo = make_dao_repo();
+    let mut seed = make_model("c-totp", "alice", "totp", 0);
+    seed.secret_data = "JBSWY3DPEHPK3PXP".to_string();
+    repo.create(seed).await.expect("TOTP seed 不应被哈希门拒绝");
 }
 
 /// `delete` 删除 + 不存在返回错误。
@@ -679,7 +762,7 @@ async fn dao_delete_succeeds_when_caller_is_owner() {
 /// IDOR: Mock - alice 尝试更新 bob 的凭证应被拒绝。
 ///
 /// forged 使用与原凭证不同的 `secret_data`（"attacker-hash"），
-/// 使事后断言（remaining[0].secret_data == "hash"）具备鉴别力——若 update 意外
+/// 使事后断言（remaining[0].secret_data 保持 make_model 的值）具备鉴别力——若 update 意外
 /// 成功，secret_data 会变成 attacker-hash 而非 hash，断言即可捕获。
 #[tokio::test]
 async fn mock_update_denied_when_caller_not_owner() {
@@ -708,7 +791,7 @@ async fn mock_update_denied_when_caller_not_owner() {
     // 验证 bob 的凭证未被修改：secret_data 仍为原值（与 attacker-hash 可区分）
     let remaining = repo.find_by_user("bob", "bob").await.unwrap();
     assert_eq!(
-        remaining[0].secret_data, "hash",
+        remaining[0].secret_data, "$argon2id$m=8,t=1,p=1$x",
         "凭证 secret_data 应未被攻击者覆盖（若为 attacker-hash 说明更新意外成功）"
     );
 }
@@ -740,7 +823,7 @@ async fn dao_update_denied_when_caller_not_owner() {
     // 验证 bob 的凭证未被修改
     let remaining = repo.find_by_user("bob", "bob").await.unwrap();
     assert_eq!(
-        remaining[0].secret_data, "hash",
+        remaining[0].secret_data, "$argon2id$m=8,t=1,p=1$x",
         "凭证 secret_data 应未被攻击者覆盖"
     );
 }
@@ -822,7 +905,7 @@ async fn dao_update_succeeds_when_caller_is_owner_and_user_id_unchanged() {
         id: "c1".to_string(),
         user_id: "alice".to_string(), // user_id 保持不变
         credential_type: "password".to_string(),
-        secret_data: "new-hash".to_string(),
+        secret_data: "$argon2id$m=8,t=1,p=1$new".to_string(),
         label: Some("updated".to_string()),
         created_at: 100,
         enabled: false,
@@ -831,7 +914,7 @@ async fn dao_update_succeeds_when_caller_is_owner_and_user_id_unchanged() {
     repo.update("alice", updated).await.unwrap();
 
     let found = repo.find_by_user("alice", "alice").await.unwrap();
-    assert_eq!(found[0].secret_data, "new-hash");
+    assert_eq!(found[0].secret_data, "$argon2id$m=8,t=1,p=1$new");
     assert_eq!(found[0].label, Some("updated".to_string()));
     assert!(!found[0].enabled);
     assert_eq!(found[0].priority, 5);

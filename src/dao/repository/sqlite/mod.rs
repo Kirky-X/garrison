@@ -263,7 +263,7 @@ mod tests {
                 42,
                 NewUser {
                     username: "tenant-42-user".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -276,7 +276,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "tenant-1-user".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -338,7 +338,7 @@ mod tests {
                 42,
                 NewUser {
                     username: "uuid-test".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )

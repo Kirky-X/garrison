@@ -220,6 +220,8 @@ impl GarrisonInterface for MockInterfaceWithPerms {
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 pub struct MockUserRepository {
     users: Mutex<HashMap<String, UserRow>>,
+    /// 非空时 `update` 返回该错误（注入持久化失败，测试写路径尽力而为语义）。
+    update_error: Mutex<Option<String>>,
 }
 
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
@@ -227,10 +229,15 @@ impl MockUserRepository {
     pub fn new() -> Self {
         Self {
             users: Mutex::new(HashMap::new()),
+            update_error: Mutex::new(None),
         }
     }
     pub fn insert(&self, user: UserRow) {
         self.users.lock().insert(user.username.clone(), user);
+    }
+    /// 注入 update 持久化失败（此后 `update` 返回 `Internal`，直至再次置空）。
+    pub fn set_update_error(&self, msg: &str) {
+        *self.update_error.lock() = Some(msg.to_string());
     }
 }
 
@@ -252,7 +259,29 @@ impl UserRepository for MockUserRepository {
             "stp-mock-not-implemented::".to_string(),
         ))
     }
-    async fn update(&self, _tenant_id: i64, _id: &str, _user: UpdateUser) -> GarrisonResult<()> {
+    async fn update(&self, _tenant_id: i64, id: &str, user: UpdateUser) -> GarrisonResult<()> {
+        if let Some(msg) = self.update_error.lock().clone() {
+            return Err(GarrisonError::Internal(msg));
+        }
+        let mut users = self.users.lock();
+        let key = users
+            .values()
+            .find(|u| u.id == id)
+            .map(|u| u.username.clone());
+        if let Some(row) = key.as_deref().and_then(|k| users.get_mut(k)) {
+            if let Some(username) = user.username {
+                row.username = username;
+            }
+            if let Some(password_hash) = user.password_hash {
+                row.password_hash = password_hash;
+            }
+            if let Some(status) = user.status {
+                row.status = status;
+            }
+            if let Some(last_login_at) = user.last_login_at {
+                row.last_login_at = Some(last_login_at);
+            }
+        }
         Ok(())
     }
     async fn delete(&self, _tenant_id: i64, _id: &str) -> GarrisonResult<()> {

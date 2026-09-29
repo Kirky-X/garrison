@@ -20,6 +20,7 @@
 //!   （未启用 `dao-key-index`）不支持 `keys()`，见 mod.rs「已知限制」。
 
 use super::*;
+use crate::dao::repository::validate_imported_hash;
 
 impl DaoCredentialRepository {
     /// 创建 `DaoCredentialRepository`。
@@ -51,6 +52,13 @@ impl DaoCredentialRepository {
 #[async_trait]
 impl CredentialRepository for DaoCredentialRepository {
     async fn create(&self, credential: CredentialModel) -> GarrisonResult<()> {
+        // 导入哈希防御门：仅约束 password 类型（TOTP seed / backup code 等
+        // 非 PHC 载荷不受哈希参数约束）。
+        if credential.credential_type == "password" {
+            validate_imported_hash(&credential.secret_data).map_err(|e| {
+                GarrisonError::InvalidParam(format!("credential-create-hash-gate::{}", e))
+            })?;
+        }
         let key = Self::make_key(&credential.user_id, &credential.id);
         let json = Self::serialize_credential(&credential)?;
         // 使用 set_if_absent 原子操作替代 get-then-set，消除 TOCTOU 竞态
@@ -169,6 +177,13 @@ impl CredentialRepository for DaoCredentialRepository {
         }
 
         // user_id 不可变 ⇒ existing_key 与新 key 一致，复用 existing_key 写回
+        // 导入哈希防御门：授权（IDOR）检查全部通过后才校验——未授权调用方
+        // 统一得到 NotPermission，不泄露校验细节；仅 password 类型过门。
+        if credential.credential_type == "password" {
+            validate_imported_hash(&credential.secret_data).map_err(|e| {
+                GarrisonError::InvalidParam(format!("credential-update-hash-gate::{}", e))
+            })?;
+        }
         let json = Self::serialize_credential(&credential)?;
         // 用 CAS（expected = 读取时的值）替代 set_permanent 直写，
         // 消除 keys→get→set TOCTOU 竞态下的静默覆盖：并发修改/删除本凭证时

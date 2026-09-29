@@ -147,7 +147,7 @@ async fn acc_repo_001_user_repository_full_crud() {
             TENANT_A,
             NewUser {
                 username: "alice".to_string(),
-                password_hash: "hashed".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -289,7 +289,7 @@ async fn acc_repo_004_user_role_assign_find_revoke() {
             TENANT_A,
             NewUser {
                 username: "bob".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -417,7 +417,7 @@ async fn acc_repo_006_auth_method_create_find_delete() {
             TENANT_A,
             NewUser {
                 username: "charlie".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -470,7 +470,7 @@ async fn acc_repo_007_session_create_find_update_delete() {
             TENANT_A,
             NewUser {
                 username: "dave".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -536,7 +536,7 @@ async fn acc_repo_008_login_log_create_find() {
             TENANT_A,
             NewUser {
                 username: "eve".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -583,7 +583,7 @@ async fn acc_repo_009_user_ext_upsert_find() {
             TENANT_A,
             NewUser {
                 username: "frank".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -756,7 +756,7 @@ async fn acc_repo_011_migrate_core_idempotent() {
         TENANT_A,
         NewUser {
             username: "idempotent-user".to_string(),
-            password_hash: "h".to_string(),
+            password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
             status: "active".to_string(),
         },
     )
@@ -806,7 +806,7 @@ async fn acc_repo_012_user_delete_cascades_relations() {
             TENANT_A,
             NewUser {
                 username: "cascade-target".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -967,7 +967,7 @@ async fn acc_repo_013_user_repo_table_missing() {
             TENANT_A,
             NewUser {
                 username: "alice".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -1321,7 +1321,7 @@ async fn acc_repo_024_multi_tenant_isolation() {
             TENANT_A,
             NewUser {
                 username: "tenant-a-user".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -1332,7 +1332,7 @@ async fn acc_repo_024_multi_tenant_isolation() {
             TENANT_B,
             NewUser {
                 username: "tenant-b-user".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -1375,7 +1375,7 @@ async fn acc_repo_024_multi_tenant_isolation() {
             TENANT_A,
             NewUser {
                 username: "alice".to_string(),
-                password_hash: "h1".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x1".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -1386,7 +1386,7 @@ async fn acc_repo_024_multi_tenant_isolation() {
             TENANT_B,
             NewUser {
                 username: "alice".to_string(),
-                password_hash: "h2".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x2".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -1479,7 +1479,7 @@ async fn acc_repo_025_rbac_full_chain_user_to_permissions() {
             TENANT_A,
             NewUser {
                 username: "grace".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )

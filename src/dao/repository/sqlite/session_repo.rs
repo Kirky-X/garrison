@@ -182,7 +182,7 @@ mod tests {
                 tenant_id,
                 NewUser {
                     username: format!("sess-user-{}", tenant_id),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )

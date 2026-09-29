@@ -179,6 +179,9 @@ fn extract_request_context(event: &GarrisonEvent) -> Option<&super::RequestConte
         | GarrisonEvent::LoginFailure {
             request_context, ..
         }
+        | GarrisonEvent::PasswordRehashed {
+            request_context, ..
+        }
         | GarrisonEvent::TokenRefresh {
             request_context, ..
         }
@@ -474,6 +477,17 @@ impl AuditLogListener {
                 user_agent: None,
                 metadata: Some(json_metadata(&[("reason", reason)])),
                 success: false,
+                created_at: now,
+            },
+            GarrisonEvent::PasswordRehashed { login_id, .. } => AuditEntry {
+                tenant_id,
+                event_type: "password_rehashed".to_string(),
+                login_id: Some(login_id.clone()),
+                token: None,
+                ip: None,
+                user_agent: None,
+                metadata: None,
+                success: true,
                 created_at: now,
             },
             GarrisonEvent::TokenRefresh {
@@ -1636,6 +1650,13 @@ mod db_sqlite_tests {
                     request_context: None,
                 },
                 "login_failure",
+            ),
+            (
+                GarrisonEvent::PasswordRehashed {
+                    login_id: "1".to_string(),
+                    request_context: None,
+                },
+                "password_rehashed",
             ),
             (
                 GarrisonEvent::RevokeToken {

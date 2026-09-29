@@ -576,7 +576,7 @@ async fn acc_env_006_postgres_user_repository_crud() {
             1,
             NewUser {
                 username: "alice_pg".to_string(),
-                password_hash: "hashed_pg".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$pg".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -762,7 +762,7 @@ async fn acc_env_008_mysql_user_repository_crud() {
             tenant,
             NewUser {
                 username: "alice_mysql".to_string(),
-                password_hash: "hashed_mysql".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$mysql".to_string(),
                 status: "active".to_string(),
             },
         )

@@ -14,9 +14,11 @@ use super::GarrisonLogicDefault;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use super::LoginParams;
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
-use crate::account::credential::password::verify_pooled;
+use crate::account::credential::password::{verify_and_rehash_pooled, verify_pooled};
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use crate::constants::EventReason;
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
+use crate::dao::repository::UpdateUser;
 #[cfg(feature = "firewall-bruteforce")]
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
@@ -39,7 +41,8 @@ use std::sync::Arc;
 /// （未启用 `account-credential` + `db-sqlite` feature）。
 /// 由 `GarrisonLogicDefault` 的 impl 覆写为：
 /// 1) `UserRepository::find_by_username` 查询用户
-/// 2) `PasswordHasher::verify` 校验密码
+/// 2) `PasswordHasher` 校验密码（verify 通过且存量哈希档位低于当前配置时
+///    惰性重哈希落库并广播 [`GarrisonEvent::PasswordRehashed`]，尽力而为）
 /// 3) 调用 [`SessionLogic::login`] 签发 token
 ///
 /// # 安全约束
@@ -252,13 +255,20 @@ impl PasswordLogic for GarrisonLogicDefault {
         };
 
         // 2. 校验密码（哈希数据类错误与密码错误统一返回，防账号存在预言机——T019）
-        // verify_pooled：Argon2/bcrypt 为 50-300ms 级纯 CPU 慢哈希，下沉
+        // verify_and_rehash_pooled：Argon2/bcrypt 为 50-300ms 级纯 CPU 慢哈希，下沉
         // spawn_blocking 避免阻塞 tokio worker；有池时受并发 permit 约束
-        // （登录风暴下 Argon2 内存驻留上界 = permits × m_cost）。
+        // （登录风暴下 Argon2 内存驻留上界 = permits × m_cost），verify 与
+        // 惰性重哈希共用同一 permit 占槽。
         // 基础设施错误（join/池关闭）显性传播；数据类错误（InvalidParam——PHC
         // 解析失败与 verify 期算法未知/参数越界/salt 或 hash 段无效）并入统一
         // 防枚举分支。
-        let verified = match verify_pooled(hasher, password, &user.password_hash).await {
+        let (verified, rehash) = match verify_and_rehash_pooled(
+            hasher,
+            password,
+            &user.password_hash,
+        )
+        .await
+        {
             Ok(v) => v,
             Err(GarrisonError::InvalidParam(hash_err)) => {
                 // 哈希数据类错误（存量数据异常）：统一返回 invalid-password，
@@ -318,6 +328,45 @@ impl PasswordLogic for GarrisonLogicDefault {
         // 密码校验通过：清零失败计数
         #[cfg(feature = "firewall-bruteforce")]
         reset_password_failures(self.session.dao(), login_id).await;
+
+        // 2.5 惰性升级（尽力而为）：存量哈希档位低于当前配置时重哈希落库。
+        // 本路径无事务上下文（登录主流程的各写操作各自独立提交），事件无法经
+        // GarrisonEventTx::on_commit 绑定「提交后派发」，故退 Immediately 档
+        // （listener_manager.broadcast）并以「先落库成功、后广播」的顺序保证
+        // 审计不虚报；落库失败仅记日志不影响登录结果——升级是安全加固，
+        // 不能反过来成为准入条件（存量弱档位账户在存储故障期仍须可登录）。
+        if let Some(new_hash) = rehash {
+            match repo
+                .update(
+                    tenant_id,
+                    &user.id,
+                    UpdateUser {
+                        password_hash: Some(new_hash),
+                        ..UpdateUser::default()
+                    },
+                )
+                .await
+            {
+                Ok(()) =>
+                {
+                    #[cfg(feature = "listener")]
+                    if let Some(lm) = &self.listener_manager {
+                        lm.broadcast(&GarrisonEvent::PasswordRehashed {
+                            login_id: login_id.to_string(),
+                            request_context: None,
+                        })
+                        .await;
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        login_id = login_id,
+                        error = %e,
+                        "password rehash persist failed (does not affect the login result)"
+                    );
+                },
+            }
+        }
 
         // 3. 调用 login 签发 token（触发 plugin/listener auto-wire）
         self.login(login_id, &LoginParams::default()).await
@@ -859,6 +908,186 @@ mod tests {
             );
             let token = result.unwrap();
             assert!(!token.is_empty(), "返回的 token 不应为空字符串");
+        }
+
+        // ====================================================================
+        // 登录期惰性升级（verify_and_rehash 接线）
+        // ====================================================================
+
+        /// 低档位存量哈希（m=8MiB < 配置 19MiB）登录成功：库内 hash 已升级为
+        /// 当前配置档位（可用原密码 verify），并广播 PasswordRehashed 事件。
+        #[tokio::test]
+        async fn login_with_password_rehashes_legacy_hash_and_broadcasts_event() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let legacy = Argon2Hasher::with_params(8192, 2, 1);
+            let stored = legacy.hash("correct-password").expect("hash 应成功");
+            let mock_repo = Arc::new(MockUserRepository::new());
+            mock_repo.insert(make_user_row("2001", &stored));
+            let recorder = Arc::new(RecordingListener::new());
+            let lm = Arc::new(GarrisonListenerManager::new());
+            lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
+
+            let logic = logic
+                .with_password_hasher(hasher.clone())
+                .with_user_repository(Arc::clone(&mock_repo) as Arc<dyn UserRepository>)
+                .with_listener_manager(lm);
+
+            let result = logic.login_with_password("2001", "correct-password").await;
+            assert!(
+                result.is_ok(),
+                "低档位账户正确密码应登录成功，实际: {:?}",
+                result
+            );
+
+            let upgraded = mock_repo
+                .find_by_username(0, "2001")
+                .await
+                .expect("查询应成功")
+                .expect("用户应存在");
+            assert_ne!(
+                upgraded.password_hash, stored,
+                "登录成功后库内 hash 应已被升级重写"
+            );
+            assert!(
+                upgraded.password_hash.contains("m=19456"),
+                "升级后 hash 应为当前配置档位 m=19456，实际: {}",
+                upgraded.password_hash
+            );
+            assert!(
+                hasher
+                    .verify("correct-password", &upgraded.password_hash)
+                    .expect("verify 应成功"),
+                "升级后 hash 应可用原密码 verify 通过"
+            );
+
+            let events = recorder.captured();
+            assert!(
+                events.iter().any(|e| matches!(
+                    e,
+                    GarrisonEvent::PasswordRehashed { login_id, .. } if login_id.as_str() == "2001"
+                )),
+                "登录升级后应广播 PasswordRehashed 事件，实际: {:?}",
+                events
+            );
+        }
+
+        /// 登录失败（密码错误）：不升级、不广播——重哈希只发生在 verify 通过后。
+        #[tokio::test]
+        async fn login_with_password_failure_does_not_rehash() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let legacy = Argon2Hasher::with_params(8192, 2, 1);
+            let stored = legacy.hash("correct-password").expect("hash 应成功");
+            let mock_repo = Arc::new(MockUserRepository::new());
+            mock_repo.insert(make_user_row("2002", &stored));
+            let recorder = Arc::new(RecordingListener::new());
+            let lm = Arc::new(GarrisonListenerManager::new());
+            lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(Arc::clone(&mock_repo) as Arc<dyn UserRepository>)
+                .with_listener_manager(lm);
+
+            let result = logic.login_with_password("2002", "wrong-password").await;
+            assert!(
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+                "错误密码应返回统一 invalid-password，实际: {:?}",
+                result
+            );
+            let row = mock_repo
+                .find_by_username(0, "2002")
+                .await
+                .expect("查询应成功")
+                .expect("用户应存在");
+            assert_eq!(row.password_hash, stored, "登录失败不得升级存量哈希");
+            assert!(
+                recorder
+                    .captured()
+                    .iter()
+                    .all(|e| !matches!(e, GarrisonEvent::PasswordRehashed { .. })),
+                "登录失败不得广播 PasswordRehashed 事件"
+            );
+        }
+
+        /// 存量档位与配置持平：登录成功但 hash 原样保留、不广播升级事件。
+        #[tokio::test]
+        async fn login_with_password_current_tier_keeps_hash_and_skips_event() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let stored = hasher.hash("correct-password").expect("hash 应成功");
+            let mock_repo = Arc::new(MockUserRepository::new());
+            mock_repo.insert(make_user_row("2003", &stored));
+            let recorder = Arc::new(RecordingListener::new());
+            let lm = Arc::new(GarrisonListenerManager::new());
+            lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(Arc::clone(&mock_repo) as Arc<dyn UserRepository>)
+                .with_listener_manager(lm);
+
+            let result = logic.login_with_password("2003", "correct-password").await;
+            assert!(
+                result.is_ok(),
+                "当前档位正确密码应登录成功，实际: {:?}",
+                result
+            );
+            let row = mock_repo
+                .find_by_username(0, "2003")
+                .await
+                .expect("查询应成功")
+                .expect("用户应存在");
+            assert_eq!(row.password_hash, stored, "档位持平时登录不得重写 hash");
+            assert!(
+                recorder
+                    .captured()
+                    .iter()
+                    .all(|e| !matches!(e, GarrisonEvent::PasswordRehashed { .. })),
+                "档位持平时不得广播 PasswordRehashed 事件"
+            );
+        }
+
+        /// 升级落库失败：登录仍成功（升级尽力而为，失败仅记日志），且不广播
+        /// PasswordRehashed 事件（未落库成功不得虚报审计）。
+        #[tokio::test]
+        async fn login_with_password_rehash_persist_failure_does_not_fail_login() {
+            let logic = make_logic_without_creds();
+            let hasher: Arc<dyn PasswordHasher> = Arc::new(Argon2Hasher::default());
+            let legacy = Argon2Hasher::with_params(8192, 2, 1);
+            let stored = legacy.hash("correct-password").expect("hash 应成功");
+            let mock_repo = Arc::new(MockUserRepository::new());
+            mock_repo.insert(make_user_row("2004", &stored));
+            mock_repo.set_update_error("dao-update 模拟故障");
+            let recorder = Arc::new(RecordingListener::new());
+            let lm = Arc::new(GarrisonListenerManager::new());
+            lm.register(recorder.clone() as Arc<dyn GarrisonListener>);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(Arc::clone(&mock_repo) as Arc<dyn UserRepository>)
+                .with_listener_manager(lm);
+
+            let result = logic.login_with_password("2004", "correct-password").await;
+            assert!(
+                result.is_ok(),
+                "升级落库失败不得导致登录失败（尽力而为），实际: {:?}",
+                result
+            );
+            let row = mock_repo
+                .find_by_username(0, "2004")
+                .await
+                .expect("查询应成功")
+                .expect("用户应存在");
+            assert_eq!(row.password_hash, stored, "落库失败时库内 hash 应保持原样");
+            assert!(
+                recorder
+                    .captured()
+                    .iter()
+                    .all(|e| !matches!(e, GarrisonEvent::PasswordRehashed { .. })),
+                "落库失败不得广播 PasswordRehashed 事件（不虚报升级）"
+            );
         }
 
         /// 模拟 UserRepository 查询失败的 mock。

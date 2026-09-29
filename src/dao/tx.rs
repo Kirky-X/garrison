@@ -282,6 +282,7 @@ fn event_kind(event: &GarrisonEvent) -> &'static str {
         GarrisonEvent::RoleCheck { .. } => "RoleCheck",
         GarrisonEvent::TokenExpired { .. } => "TokenExpired",
         GarrisonEvent::LoginFailure { .. } => "LoginFailure",
+        GarrisonEvent::PasswordRehashed { .. } => "PasswordRehashed",
         GarrisonEvent::TokenRefresh { .. } => "TokenRefresh",
         GarrisonEvent::RevokeToken { .. } => "RevokeToken",
         GarrisonEvent::SessionTimeout { .. } => "SessionTimeout",

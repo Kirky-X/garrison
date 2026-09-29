@@ -6,7 +6,8 @@
 use super::{v_i64, v_str, DbnexusUserRepository};
 use crate::dao::dao_session;
 use crate::dao::repository::{
-    make_statement, NewUser, UpdateUser, UserListRow, UserRepository, UserRow,
+    make_statement, validate_imported_hash, NewUser, UpdateUser, UserListRow, UserRepository,
+    UserRow,
 };
 use crate::error::{GarrisonError, GarrisonResult};
 use async_trait::async_trait;
@@ -50,6 +51,11 @@ impl UserRepository for DbnexusUserRepository {
     }
 
     async fn create(&self, tenant_id: i64, user: NewUser) -> GarrisonResult<String> {
+        // 导入哈希防御门：create 即导入入口（用户导入/注册的唯一程序化写路径），
+        // 越界参数在取连接前显性拒绝。
+        validate_imported_hash(&user.password_hash).map_err(|e| {
+            GarrisonError::InvalidParam(format!("dao-app-user-create-hash-gate::{}", e))
+        })?;
         let id = uuid::Uuid::new_v4().to_string();
         dao_session!(self.pool, "dao-app-user-create", session, conn);
         let sql = "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
@@ -72,6 +78,12 @@ impl UserRepository for DbnexusUserRepository {
     }
 
     async fn update(&self, tenant_id: i64, id: &str, user: UpdateUser) -> GarrisonResult<()> {
+        // 导入哈希防御门：update 携带新哈希时同样过门（幂等于 create 的导入约束）。
+        if let Some(password_hash) = &user.password_hash {
+            validate_imported_hash(password_hash).map_err(|e| {
+                GarrisonError::InvalidParam(format!("dao-app-user-update-hash-gate::{}", e))
+            })?;
+        }
         let mut sets = Vec::new();
         let mut params = Vec::new();
         if let Some(username) = user.username {
@@ -220,7 +232,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "alice".to_string(),
-                    password_hash: "$argon2id$hash".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$hash".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -234,7 +246,7 @@ mod tests {
             .expect("用户应存在");
         assert_eq!(row.id, id);
         assert_eq!(row.username, "alice");
-        assert_eq!(row.password_hash, "$argon2id$hash");
+        assert_eq!(row.password_hash, "$argon2id$m=8,t=1,p=1$hash");
         assert_eq!(row.status, "active");
         assert_eq!(row.tenant_id, 1);
         assert!(
@@ -256,6 +268,127 @@ mod tests {
         assert!(result.is_none(), "不存在的 ID 应返回 None");
     }
 
+    // ========================================================================
+    // 导入哈希校验门接线
+    // ========================================================================
+
+    /// create 拒绝参数越界的导入哈希：错误显性（含入口与越界阶段标识），
+    /// 且不留下半成品行。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_rejects_out_of_range_imported_hash() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool);
+
+        let over = "$argon2id$v=19$m=2097152,t=2,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg";
+        let result = repo
+            .create(
+                1,
+                NewUser {
+                    username: "mallory".to_string(),
+                    password_hash: over.to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await;
+        match result {
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("dao-app-user-create")
+                        && msg.contains("import-hash-argon2-m-cost"),
+                    "错误应含入口与越界阶段标识，实际: {}",
+                    msg
+                );
+            },
+            other => panic!(
+                "越界导入哈希应被 InvalidParam 拒绝，实际: {:?}",
+                other.map(|_| ())
+            ),
+        }
+        let leftover = repo
+            .find_by_username(1, "mallory")
+            .await
+            .expect("查询应成功");
+        assert!(leftover.is_none(), "整体被拒后不得留下半成品行");
+    }
+
+    /// create 放行恰好在上限的导入哈希（边界值，防误杀合法迁移来源）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn create_accepts_boundary_imported_hash() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool);
+
+        let at_limit = "$argon2id$v=19$m=1048576,t=10,p=4$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg";
+        let id = repo
+            .create(
+                1,
+                NewUser {
+                    username: "migrated".to_string(),
+                    password_hash: at_limit.to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("边界值导入应放行");
+        let row = repo
+            .find_by_id(1, &id)
+            .await
+            .expect("查询应成功")
+            .expect("用户应存在");
+        assert_eq!(row.password_hash, at_limit, "导入哈希应原样落库");
+    }
+
+    /// update 拒绝参数越界的导入哈希，存量哈希保持不变。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn update_rejects_out_of_range_imported_hash() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserRepository::new(pool);
+
+        let existing = "$argon2id$v=19$m=19456,t=2,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg";
+        let id = repo
+            .create(
+                1,
+                NewUser {
+                    username: "carol".to_string(),
+                    password_hash: existing.to_string(),
+                    status: "active".to_string(),
+                },
+            )
+            .await
+            .expect("create 应成功");
+
+        let over = "$argon2id$v=19$m=2097152,t=2,p=1$c2FsdDEyMzQ1Njc4$MDEyMzQ1Njc4OWFiY2RlZg";
+        let result = repo
+            .update(
+                1,
+                &id,
+                UpdateUser {
+                    password_hash: Some(over.to_string()),
+                    ..UpdateUser::default()
+                },
+            )
+            .await;
+        match result {
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("dao-app-user-update")
+                        && msg.contains("import-hash-argon2-m-cost"),
+                    "错误应含入口与越界阶段标识，实际: {}",
+                    msg
+                );
+            },
+            other => panic!(
+                "越界导入哈希应被 InvalidParam 拒绝，实际: {:?}",
+                other.map(|_| ())
+            ),
+        }
+        let row = repo
+            .find_by_id(1, &id)
+            .await
+            .expect("查询应成功")
+            .expect("用户应存在");
+        assert_eq!(row.password_hash, existing, "被拒更新不得改动存量哈希");
+    }
+
     /// find_by_username 按 username 精确查询。
     #[tokio::test(flavor = "multi_thread")]
     async fn find_by_username_returns_user() {
@@ -266,7 +399,7 @@ mod tests {
             1,
             NewUser {
                 username: "bob".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -305,7 +438,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "old-name".to_string(),
-                    password_hash: "old-hash".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$old".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -323,7 +456,7 @@ mod tests {
             &id,
             UpdateUser {
                 username: Some("new-name".to_string()),
-                password_hash: Some("new-hash".to_string()),
+                password_hash: Some("$argon2id$m=8,t=1,p=1$new".to_string()),
                 status: Some("suspended".to_string()),
                 last_login_at: Some("2026-07-14T00:00:00Z".to_string()),
             },
@@ -337,7 +470,7 @@ mod tests {
             .expect("find_by_id 应成功")
             .expect("用户应存在");
         assert_eq!(row.username, "new-name");
-        assert_eq!(row.password_hash, "new-hash");
+        assert_eq!(row.password_hash, "$argon2id$m=8,t=1,p=1$new");
         assert_eq!(row.status, "suspended");
         assert_eq!(row.last_login_at.as_deref(), Some("2026-07-14T00:00:00Z"));
     }
@@ -353,7 +486,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "partial-user".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -378,7 +511,10 @@ mod tests {
             .expect("用户应存在");
         assert_eq!(row.status, "inactive");
         assert_eq!(row.username, "partial-user", "username 不应变");
-        assert_eq!(row.password_hash, "h", "password_hash 不应变");
+        assert_eq!(
+            row.password_hash, "$argon2id$m=8,t=1,p=1$x",
+            "password_hash 不应变"
+        );
     }
 
     /// update 仅更新 last_login_at。
@@ -392,7 +528,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "login-user".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -429,7 +565,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "temp-user".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -455,7 +591,7 @@ mod tests {
                 1,
                 NewUser {
                     username: format!("user-{}", i),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -484,7 +620,7 @@ mod tests {
             1,
             NewUser {
                 username: "hash-leak-check".to_string(),
-                password_hash: "$argon2id$secret-hash".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$secret".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -516,7 +652,7 @@ mod tests {
             1,
             NewUser {
                 username: "shared-name".to_string(),
-                password_hash: "h1".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x1".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -528,7 +664,7 @@ mod tests {
             2,
             NewUser {
                 username: "shared-name".to_string(),
-                password_hash: "h2".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x2".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -545,8 +681,8 @@ mod tests {
             .await
             .expect("find tenant 2 应成功")
             .expect("tenant 2 应有该用户");
-        assert_eq!(row_1.password_hash, "h1");
-        assert_eq!(row_2.password_hash, "h2");
+        assert_eq!(row_1.password_hash, "$argon2id$m=8,t=1,p=1$x1");
+        assert_eq!(row_2.password_hash, "$argon2id$m=8,t=1,p=1$x2");
         assert_eq!(row_1.tenant_id, 1);
         assert_eq!(row_2.tenant_id, 2);
         assert_ne!(row_1.id, row_2.id, "不同租户的用户 ID 应不同");
@@ -562,7 +698,7 @@ mod tests {
             1,
             NewUser {
                 username: "t1-user".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -573,7 +709,7 @@ mod tests {
             2,
             NewUser {
                 username: "t2-user".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -599,7 +735,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "cross-user".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -621,7 +757,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "del-cross".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -647,7 +783,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "upd-cross".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
@@ -684,7 +820,7 @@ mod tests {
             1,
             NewUser {
                 username: "unique-cross-name".to_string(),
-                password_hash: "h".to_string(),
+                password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                 status: "active".to_string(),
             },
         )
@@ -735,7 +871,7 @@ mod tests {
                 1,
                 NewUser {
                     username: "u1".to_string(),
-                    password_hash: "h".to_string(),
+                    password_hash: "$argon2id$m=8,t=1,p=1$x".to_string(),
                     status: "active".to_string(),
                 },
             )
