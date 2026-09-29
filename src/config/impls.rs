@@ -298,6 +298,22 @@ impl GarrisonConfig {
     ///
     /// 但不对绝对路径做白名单限制，调用方需自行确保路径可信。
     pub fn load(toml_path: Option<&str>) -> GarrisonResult<Self> {
+        Self::load_with_deprecations(
+            toml_path,
+            deprecation::deprecations(),
+            env!("CARGO_PKG_VERSION"),
+        )
+    }
+
+    /// [`load`](Self::load) 的可注入变体：注册表与当前版本参数化。
+    ///
+    /// 生产路径经 `load()`（生产注册表 + 编译期版本号）；测试注入 fixture
+    /// 注册表与版本字符串以驱动两种 1.0 门分支。
+    pub(super) fn load_with_deprecations(
+        toml_path: Option<&str>,
+        registry: &[deprecation::Deprecation],
+        current_version: &'static str,
+    ) -> GarrisonResult<Self> {
         // 环境变量注入（自研库吸收）：confers EnvSource 替代手写
         // collect_env_vars / infer_config_value。
         // separator("__") 与原手写映射一致——仅双下划线折叠为嵌套路径，
@@ -430,7 +446,35 @@ impl GarrisonConfig {
 
         builder = builder.source(Box::new(env_source));
 
+        // 弃用键迁移挂在合并树反序列化前（env/toml 解析后、validate 前），
+        // 保证迁移后的值进入反序列化并通过校验。闭包无法向上传播错误：
+        // 硬错误（≥1.0.0 / map_fn 失败 / 版本不可解析）收集到槽位，build 后
+        // 统一转为 GarrisonError::Config。
+        let deprecation_failures: std::sync::Arc<std::sync::Mutex<Vec<String>>> =
+            std::sync::Arc::default();
+        let failure_slot = std::sync::Arc::clone(&deprecation_failures);
+        let registry: Vec<deprecation::Deprecation> = registry.to_vec();
+        // 新键默认值对照：区分"默认值填充"与"用户显式配置"（序列化一次默认配置）
+        let new_key_defaults =
+            serde_json::to_value(Self::default_config()).unwrap_or(serde_json::Value::Null);
+        builder = builder.map_json(move |tree| {
+            if let Err(msgs) =
+                deprecation::apply_deprecations(tree, &registry, current_version, &new_key_defaults)
+            {
+                *failure_slot.lock().expect("deprecation 槽位锁应可用") = msgs;
+            }
+        });
+
         let config = builder.build().map_err(map_confers_build_error)?;
+
+        // 弃用键硬错误在 validate() 之前显性拦截（错误含键名与迁移指引）。
+        let failures = deprecation_failures
+            .lock()
+            .expect("deprecation 槽位锁应可用")
+            .clone();
+        if !failures.is_empty() {
+            return Err(GarrisonError::Config(failures.join("; ")));
+        }
 
         // 显式环境变量覆盖必须在 `with_watcher()` 之前完成——watch channel
         // 的初值取自 `with_watcher()` 时的配置快照；若先建 watcher 再覆盖字段，

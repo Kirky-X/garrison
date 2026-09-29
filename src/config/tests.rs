@@ -16,7 +16,12 @@ use serial_test::serial;
 ///
 /// 原环境变量测试在测试末尾手动 `remove_var`：一旦断言 panic，清理被跳过，
 /// 变量残留会污染后续（共享进程 env 的）serial 测试。守卫在 Drop（含 unwind）
-/// 时移除变量，保证 panic 路径同样清理。仅限 `#[serial]` 测试中使用。
+/// 时移除变量，保证 panic 路径同样清理。
+///
+/// 互斥规则：`#[serial]` 只让 serial 测试彼此互斥，挡不住并行的非 serial
+/// 测试；而 confers `EnvSource` 读进程级 `std::env`。因此凡设置环境变量的
+/// 测试与凡调用 `load()`（经 EnvSource 读 env）的测试一律 `#[serial]`，
+/// 两组同处一个互斥队列，读侧与写侧才不会交错。
 struct EnvVarGuard {
     keys: Vec<String>,
 }
@@ -25,7 +30,7 @@ impl EnvVarGuard {
     /// set_var 并返回守卫；Drop 时 remove_var。
     fn set(key: impl Into<String>, value: &str) -> Self {
         let key = key.into();
-        // 安全性：config 测试全部 #[serial] 单线程执行，无并发 set_var 竞争
+        // 安全性：set/remove 均发生在 #[serial] 互斥队列内，无并发 set_var 竞争
         std::env::set_var(&key, value);
         Self { keys: vec![key] }
     }
@@ -2156,4 +2161,515 @@ fn build_hasher_bcrypt_has_no_pool() {
         hasher.concurrency_gate().is_none(),
         "bcrypt 不入池：gate 必须为 None"
     );
+}
+
+// ========================================================================
+// 弃用配置键注册表：加载期自动迁移 + 1.0 版本门
+// ========================================================================
+
+/// 进程内日志捕获 writer（fmt Layer 的 MakeWriter，收集格式化行）。
+#[derive(Clone)]
+struct DeprecationLogCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for DeprecationLogCapture {
+    type Writer = DeprecationLogCaptureWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        DeprecationLogCaptureWriter(self.0.clone())
+    }
+}
+
+struct DeprecationLogCaptureWriter(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+impl std::io::Write for DeprecationLogCaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("日志缓冲锁应可用")
+            .push(String::from_utf8_lossy(buf).to_string());
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// 在捕获 tracing 事件的上下文中执行 `f`（守卫覆盖 `f` 全程，返回后恢复）。
+/// 日志行通过回调参数交由断言读取；`DefaultGuard` 在 default-features=false
+/// 构建下无公开类型路径，故以闭包作用域持有。
+fn with_captured_deprecation_logs(f: impl FnOnce(&std::sync::Mutex<Vec<String>>)) {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let logs = DeprecationLogCapture(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(logs.clone()),
+    );
+    let _guard = subscriber.set_default();
+    f(&logs.0);
+}
+
+/// fixture：`timeout_seconds`（分钟）→ `timeout`（秒）×60 自动映射。
+fn fixture_timeout_migration() -> deprecation::Deprecation {
+    deprecation::Deprecation {
+        key: "timeout_seconds",
+        since_version: "0.9.0",
+        new_key: "timeout",
+        auto_map: true,
+        map_fn: Some(|v| match v.as_i64() {
+            Some(mins) if mins > 0 => Ok(serde_json::json!(mins * 60)),
+            _ => Err(format!(
+                "timeout_seconds must be a positive integer, got {v}"
+            )),
+        }),
+    }
+}
+
+/// fixture：同类型改名（值原样搬迁，无 map_fn）。
+fn fixture_verbatim_rename() -> deprecation::Deprecation {
+    deprecation::Deprecation {
+        key: "token_name_legacy",
+        since_version: "0.8.0",
+        new_key: "token_name",
+        auto_map: true,
+        map_fn: None,
+    }
+}
+
+/// 命中可自动映射键：旧值经 map_fn 转换后写入新键，旧键从树中移除。
+#[test]
+fn auto_mapped_key_moves_value_through_map_fn_to_new_key() {
+    let mut tree = serde_json::json!({ "timeout_seconds": 120 });
+    deprecation::apply_deprecations(
+        &mut tree,
+        &[fixture_timeout_migration()],
+        "0.9.0",
+        &serde_json::Value::Null,
+    )
+    .expect("命中可映射键不应报错");
+    assert_eq!(
+        tree["timeout"],
+        serde_json::json!(7200),
+        "新键应携带 map_fn 转换后的值"
+    );
+    assert!(
+        tree.get("timeout_seconds").is_none(),
+        "旧键迁移后应从树中移除"
+    );
+}
+
+/// 命中 auto_map 且无 map_fn：旧值原样搬迁到新键（同类型改名）。
+#[test]
+fn auto_mapped_key_without_map_fn_moves_value_verbatim() {
+    let mut tree = serde_json::json!({ "token_name_legacy": "legacy_token" });
+    deprecation::apply_deprecations(
+        &mut tree,
+        &[fixture_verbatim_rename()],
+        "0.9.0",
+        &serde_json::Value::Null,
+    )
+    .expect("命中可映射键不应报错");
+    assert_eq!(tree["token_name"], serde_json::json!("legacy_token"));
+    assert!(tree.get("token_name_legacy").is_none());
+}
+
+/// 新键已被显式配置时不覆盖（新键优先），旧键仍移除。
+#[test]
+fn auto_map_does_not_overwrite_new_key_already_present() {
+    let mut tree = serde_json::json!({ "token_name_legacy": "legacy", "token_name": "current" });
+    deprecation::apply_deprecations(
+        &mut tree,
+        &[fixture_verbatim_rename()],
+        "0.9.0",
+        &serde_json::Value::Null,
+    )
+    .expect("命中可映射键不应报错");
+    assert_eq!(
+        tree["token_name"],
+        serde_json::json!("current"),
+        "新键已配置时保持用户值"
+    );
+    assert!(tree.get("token_name_legacy").is_none(), "旧键仍应移除");
+}
+
+/// 嵌套段键（点号路径）同样支持自动映射。
+#[test]
+fn nested_section_keys_auto_map_through_map_fn() {
+    let dep = deprecation::Deprecation {
+        key: "password_hasher.bcrypt_cost_legacy",
+        since_version: "0.9.0",
+        new_key: "password_hasher.bcrypt_cost",
+        auto_map: true,
+        map_fn: Some(|v| match v.as_i64() {
+            Some(n) => Ok(serde_json::json!(n)),
+            _ => Err("must be an integer".to_string()),
+        }),
+    };
+    let mut tree = serde_json::json!({ "password_hasher": { "bcrypt_cost_legacy": 12 } });
+    deprecation::apply_deprecations(&mut tree, &[dep], "0.9.0", &serde_json::Value::Null)
+        .expect("嵌套键迁移不应报错");
+    assert_eq!(
+        tree["password_hasher"]["bcrypt_cost"],
+        serde_json::json!(12)
+    );
+    assert!(tree["password_hasher"].get("bcrypt_cost_legacy").is_none());
+}
+
+/// 迁移 warn 日志必须含 since 版本与新键名（R-cfg-dep-001 日志捕获断言）。
+#[test]
+fn warn_log_contains_since_version_and_new_key_name() {
+    with_captured_deprecation_logs(|logs| {
+        let mut tree = serde_json::json!({ "timeout_seconds": 120 });
+        deprecation::apply_deprecations(
+            &mut tree,
+            &[fixture_timeout_migration()],
+            "0.9.0",
+            &serde_json::Value::Null,
+        )
+        .expect("命中可映射键不应报错");
+        let lines = logs.lock().expect("日志缓冲锁应可用").join("\n");
+        assert!(
+            lines.contains("0.9.0"),
+            "warn 日志应含 since 版本，实际日志:\n{lines}"
+        );
+        assert!(
+            lines.contains("timeout"),
+            "warn 日志应含新键名，实际日志:\n{lines}"
+        );
+        assert!(
+            lines.contains("timeout_seconds"),
+            "warn 日志应含弃用键名，实际日志:\n{lines}"
+        );
+    });
+}
+
+/// 无命中时树不变、零告警（热路径零开销的行为面）。
+#[test]
+fn no_deprecated_key_hit_leaves_tree_untouched() {
+    with_captured_deprecation_logs(|logs| {
+        let mut tree = serde_json::json!({ "timeout": 7200 });
+        deprecation::apply_deprecations(
+            &mut tree,
+            &[fixture_timeout_migration()],
+            "0.9.0",
+            &serde_json::Value::Null,
+        )
+        .expect("无命中不应报错");
+        assert_eq!(
+            tree,
+            serde_json::json!({ "timeout": 7200 }),
+            "无命中时树不得被修改"
+        );
+        let lines = logs.lock().expect("日志缓冲锁应可用").join("\n");
+        assert!(lines.is_empty(), "无命中时不得产生告警，实际日志:\n{lines}");
+    });
+}
+
+/// 加载路径接线：toml 中的弃用键在加载后迁移到新配置字段（值经 map_fn 转换）。
+#[test]
+#[serial]
+fn load_auto_migrates_deprecated_toml_key() {
+    let temp = write_temp_toml("timeout_seconds = 120\n");
+    let config = GarrisonConfig::load_with_deprecations(
+        Some(temp.path().to_str().unwrap()),
+        &[fixture_timeout_migration()],
+        "0.9.0",
+    )
+    .expect("弃用键自动迁移后加载应成功");
+    assert_eq!(
+        config.timeout, 7200,
+        "新键字段应携带 map_fn 转换后的值（120 分钟 → 7200 秒）"
+    );
+}
+
+/// 加载路径接线：环境变量中的弃用键同样迁移。
+#[test]
+#[serial]
+fn load_auto_migrates_deprecated_env_key() {
+    let _guard = EnvVarGuard::set("GARRISON_TIMEOUT_SECONDS", "120");
+    let config =
+        GarrisonConfig::load_with_deprecations(None, &[fixture_timeout_migration()], "0.9.0")
+            .expect("弃用键自动迁移后加载应成功");
+    assert_eq!(config.timeout, 7200);
+}
+
+/// 注册表非空但配置无弃用键：加载行为与无注册表完全一致。
+#[test]
+#[serial]
+fn load_without_deprecated_keys_leaves_config_intact() {
+    let temp = write_temp_toml("timeout = 3600\n");
+    let config = GarrisonConfig::load_with_deprecations(
+        Some(temp.path().to_str().unwrap()),
+        &[fixture_timeout_migration()],
+        "0.9.0",
+    )
+    .expect("无弃用键命中时加载应成功");
+    assert_eq!(config.timeout, 3600);
+}
+
+/// 注册表不变式：键唯一且按注册顺序可线性扫描（未来补录条目时防止重复注册）。
+#[test]
+fn deprecation_registry_keys_are_unique() {
+    let registry = deprecation::deprecations();
+    let mut keys: Vec<&str> = registry.iter().map(|d| d.key).collect();
+    let total = keys.len();
+    keys.sort_unstable();
+    keys.dedup();
+    assert_eq!(keys.len(), total, "注册表键必须唯一，发现重复: {keys:?}");
+}
+
+/// fixture：不可自动映射的键（键被彻底移除，无新键）。
+fn fixture_removed_key() -> deprecation::Deprecation {
+    deprecation::Deprecation {
+        key: "legacy_feature_flag",
+        since_version: "0.7.0",
+        new_key: "",
+        auto_map: false,
+        map_fn: None,
+    }
+}
+
+/// 不可映射键在 <1.0.0 命中：warn 后放行（Ok，树不变——旧键保留随 serde 忽略）。
+#[test]
+fn unmappable_key_before_1_0_warns_and_passes() {
+    with_captured_deprecation_logs(|logs| {
+        let mut tree = serde_json::json!({ "legacy_feature_flag": true });
+        deprecation::apply_deprecations(
+            &mut tree,
+            &[fixture_removed_key()],
+            "0.9.0",
+            &serde_json::Value::Null,
+        )
+        .expect("1.0 前不可映射键应放行");
+        assert_eq!(
+            tree,
+            serde_json::json!({ "legacy_feature_flag": true }),
+            "不可映射键放行时树不得被修改"
+        );
+        let lines = logs.lock().expect("日志缓冲锁应可用").join("\n");
+        assert!(
+            lines.contains("legacy_feature_flag") && lines.contains("0.7.0"),
+            "warn 日志应含弃用键名与 since 版本，实际日志:\n{lines}"
+        );
+    });
+}
+
+/// 不可映射键在 ≥1.0.0 命中：GarrisonError 显性报错，消息含键名与迁移指引。
+#[test]
+fn unmappable_key_at_1_0_is_hard_error_with_key_name_and_guidance() {
+    let mut tree = serde_json::json!({ "legacy_feature_flag": true });
+    let err = deprecation::apply_deprecations(
+        &mut tree,
+        &[fixture_removed_key()],
+        "1.0.0",
+        &serde_json::Value::Null,
+    )
+    .expect_err("1.0 起不可映射键必须报错");
+    let joined = err.join("; ");
+    assert!(
+        joined.contains("legacy_feature_flag"),
+        "错误应含弃用键名，实际: {joined}"
+    );
+    assert!(
+        joined.contains("0.7.0") && joined.contains("removed"),
+        "错误应含 since 版本与移除指引，实际: {joined}"
+    );
+}
+
+/// 可自动映射键在 ≥1.0.0 命中：同样报错（1.0 起不再代迁）。
+#[test]
+fn mappable_key_at_1_0_is_hard_error() {
+    let mut tree = serde_json::json!({ "timeout_seconds": 120 });
+    let err = deprecation::apply_deprecations(
+        &mut tree,
+        &[fixture_timeout_migration()],
+        "1.0.0",
+        &serde_json::Value::Null,
+    )
+    .expect_err("1.0 起可映射键不再代迁，必须报错");
+    let joined = err.join("; ");
+    assert!(
+        joined.contains("timeout_seconds") && joined.contains("timeout"),
+        "错误应含弃用键名与新键指引，实际: {joined}"
+    );
+}
+
+/// 1.0.0 的 pre-release（如 1.0.0-rc.1）仍在宽限窗口内（< 1.0.0 本体）。
+#[test]
+fn version_1_0_0_prerelease_is_still_within_grace_window() {
+    let mut tree = serde_json::json!({ "timeout_seconds": 120 });
+    deprecation::apply_deprecations(
+        &mut tree,
+        &[fixture_timeout_migration()],
+        "1.0.0-rc.1",
+        &serde_json::Value::Null,
+    )
+    .expect("1.0.0 pre-release 仍在宽限窗口内");
+    assert_eq!(tree["timeout"], serde_json::json!(7200));
+}
+
+/// 当前版本不可解析且存在命中：fail-closed 报错。
+#[test]
+fn unparsable_current_version_fails_closed() {
+    let mut tree = serde_json::json!({ "timeout_seconds": 120 });
+    let err = deprecation::apply_deprecations(
+        &mut tree,
+        &[fixture_timeout_migration()],
+        "not-a-version",
+        &serde_json::Value::Null,
+    )
+    .expect_err("版本不可解析必须 fail-closed");
+    assert!(
+        err.join("; ").contains("timeout_seconds"),
+        "错误应含弃用键名，实际: {:?}",
+        err
+    );
+}
+
+/// map_fn 拒绝迁移该值：计入错误（静默丢弃即静默失效）。
+#[test]
+fn map_fn_rejection_is_hard_error() {
+    let mut tree = serde_json::json!({ "timeout_seconds": "not-a-number" });
+    let err = deprecation::apply_deprecations(
+        &mut tree,
+        &[fixture_timeout_migration()],
+        "0.9.0",
+        &serde_json::Value::Null,
+    )
+    .expect_err("map_fn 拒绝的值必须报错");
+    let joined = err.join("; ");
+    assert!(
+        joined.contains("timeout_seconds") && joined.contains("cannot be auto-migrated"),
+        "错误应含键名与迁移失败原因，实际: {joined}"
+    );
+}
+
+/// 加载路径：≥1.0.0 时弃用键使 load 整体返回 GarrisonError::Config（错误
+/// 含键名与迁移指引，且发生在 validate 之前）。
+#[test]
+#[serial]
+fn load_rejects_deprecated_key_at_1_0() {
+    let temp = write_temp_toml("timeout_seconds = 120\n");
+    let err = GarrisonConfig::load_with_deprecations(
+        Some(temp.path().to_str().unwrap()),
+        &[fixture_timeout_migration()],
+        "1.0.0",
+    )
+    .expect_err("1.0 起弃用键必须使加载失败");
+    match &err {
+        GarrisonError::Config(msg) => {
+            assert!(
+                msg.contains("timeout_seconds") && msg.contains("timeout"),
+                "错误消息应含键名与迁移指引，实际: {msg}"
+            );
+        },
+        other => panic!("应为 GarrisonError::Config，实际: {other:?}"),
+    }
+}
+
+/// 加载路径：map_fn 拒绝迁移的值使 load 整体失败（错误显性，值不静默丢弃）。
+#[test]
+#[serial]
+fn load_rejects_unmigratable_value() {
+    let temp = write_temp_toml("timeout_seconds = \"not-a-number\"\n");
+    let err = GarrisonConfig::load_with_deprecations(
+        Some(temp.path().to_str().unwrap()),
+        &[fixture_timeout_migration()],
+        "0.9.0",
+    )
+    .expect_err("map_fn 拒绝的值必须使加载失败");
+    match &err {
+        GarrisonError::Config(msg) => {
+            assert!(
+                msg.contains("timeout_seconds"),
+                "错误消息应含弃用键名，实际: {msg}"
+            );
+        },
+        other => panic!("应为 GarrisonError::Config，实际: {other:?}"),
+    }
+}
+
+/// 生产注册表真实条目 `waf_config`（<1.0 命中）：warn 含键名与 since 版本，
+/// 放行且树不变（旧键随 serde 忽略——但不再静默）。
+#[test]
+fn registered_waf_config_passes_with_warn_before_1_0() {
+    with_captured_deprecation_logs(|logs| {
+        let mut tree = serde_json::json!({ "waf_config": { "enabled": true } });
+        deprecation::apply_deprecations(
+            &mut tree,
+            deprecation::deprecations(),
+            "0.9.0",
+            &serde_json::Value::Null,
+        )
+        .expect("1.0 前命中已注册的不可映射键应放行");
+        assert_eq!(
+            tree,
+            serde_json::json!({ "waf_config": { "enabled": true } }),
+            "不可映射键放行时树不得被修改"
+        );
+        let lines = logs.lock().expect("日志缓冲锁应可用").join("\n");
+        assert!(
+            lines.contains("waf_config") && lines.contains("0.9.0"),
+            "warn 日志应含 waf_config 与 since 版本，实际日志:\n{lines}"
+        );
+    });
+}
+
+/// 生产注册表真实条目 `waf_config`（≥1.0 命中）：硬错误，消息含键名与移除指引。
+#[test]
+fn registered_waf_config_is_hard_error_at_1_0() {
+    let mut tree = serde_json::json!({ "waf_config": { "enabled": true } });
+    let err = deprecation::apply_deprecations(
+        &mut tree,
+        deprecation::deprecations(),
+        "1.0.0",
+        &serde_json::Value::Null,
+    )
+    .expect_err("1.0 起命中 waf_config 必须报错");
+    let joined = err.join("; ");
+    assert!(
+        joined.contains("waf_config") && joined.contains("0.9.0") && joined.contains("removed"),
+        "错误应含键名、since 版本与移除指引，实际: {joined}"
+    );
+}
+
+/// 端到端：toml `[waf_config]` 段经生产注册表 + 生产版本（0.9.0-rc.2，<1.0）
+/// 加载——warn 显性化且加载成功（旧行为是无任何提示的静默忽略）。
+#[test]
+#[serial]
+fn load_production_registry_warns_on_waf_config_section() {
+    with_captured_deprecation_logs(|logs| {
+        let temp = write_temp_toml("[waf_config]\nenabled = true\n");
+        let config = GarrisonConfig::load(Some(temp.path().to_str().unwrap()))
+            .expect("waf_config 命中在宽限窗口内应放行");
+        assert_eq!(config.timeout, DEFAULT_TIMEOUT, "waf_config 不影响其余配置");
+        let lines = logs.lock().expect("日志缓冲锁应可用").join("\n");
+        assert!(
+            lines.contains("waf_config") && lines.contains("0.9.0"),
+            "生产加载应输出 waf_config 弃用告警，实际日志:\n{lines}"
+        );
+    });
+}
+
+/// 端到端：同一 toml 在注入 1.0.0 版本时加载整体失败（宽限窗口关闭）。
+#[test]
+#[serial]
+fn load_production_registry_rejects_waf_config_at_1_0() {
+    let temp = write_temp_toml("[waf_config]\nenabled = true\n");
+    let err = GarrisonConfig::load_with_deprecations(
+        Some(temp.path().to_str().unwrap()),
+        deprecation::deprecations(),
+        "1.0.0",
+    )
+    .expect_err("1.0 起含 waf_config 的配置必须加载失败");
+    match &err {
+        GarrisonError::Config(msg) => {
+            assert!(
+                msg.contains("waf_config"),
+                "错误消息应含 waf_config，实际: {msg}"
+            );
+        },
+        other => panic!("应为 GarrisonError::Config，实际: {other:?}"),
+    }
 }

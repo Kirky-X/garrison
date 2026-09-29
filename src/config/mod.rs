@@ -32,6 +32,7 @@ use confers::types::ConfigValue;
 use serde::{Deserialize, Serialize};
 use tokio::sync::watch;
 
+pub mod deprecation;
 pub mod impls;
 /// Token 风格枚举（对应 token 风格）。
 ///
