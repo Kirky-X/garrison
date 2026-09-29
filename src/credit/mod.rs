@@ -7,6 +7,8 @@
 //! - `CreditMeter`：核心计量引擎（consume / query / reset API）
 //! - `CreditCycle`：配额周期模型（Fixed 自然月 / Rolling 滚动窗口）
 //! - `CreditSchedule`：resource → credit_weight 映射
+//! - `ActivityWriteThrottle`：高频活跃度写路径节流聚合（persist_history
+//!   流水落库的去抖窗口，`CreditMeter` 默认启用）
 //! - `CreditConfig` / `CreditAlertConfig`：配置
 //! - `CreditMeteringListener`：可选事件监听器（Login 自动扣减）
 //!
@@ -23,6 +25,10 @@
 //! - `CreditMeterStorage::incr_consumed`：`GarrisonDao` 无 `INCRBY` 语义，
 //! credits > 1 时循环单步 incr——整体非原子且为 N 次串行 DAO 往返（详见
 //! `credit::storage` 模块文档）。
+//! - persist_history 流水落库默认经 `ActivityWriteThrottle` 节流聚合（同
+//! key 窗口内仅首次快照落库、进程退出不持久化），逐笔对账需求用
+//! `CreditMeter::without_activity_throttle` 显式关闭（详见 `credit::throttle`
+//! 模块文档）。
 
 /// Credit 配额周期模型。
 pub mod cycle;
@@ -38,6 +44,9 @@ pub mod error;
 
 /// Credit KV 热数据存储层。
 pub mod storage;
+
+/// 高频活跃度写路径节流聚合器。
+pub mod throttle;
 
 /// Credit 计量引擎。
 pub mod meter;
@@ -59,6 +68,7 @@ pub use meter::CreditMeter;
 pub use metrics::CreditMetrics;
 pub use schedule::CreditSchedule;
 pub use storage::CreditMeterStorage;
+pub use throttle::ActivityWriteThrottle;
 
 #[cfg(feature = "listener")]
 pub use listener::CreditMeteringListener;

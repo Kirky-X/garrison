@@ -12,6 +12,8 @@ use crate::credit::error::{CreditConsumeResult, CreditError, CreditResult, Credi
 use crate::credit::metrics::CreditMetrics;
 use crate::credit::storage::{CreditMeta, CreditMeterStorage};
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+use crate::credit::throttle::ActivityWriteThrottle;
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 use crate::credit::CreditConsumptionRecord;
 use crate::dao::GarrisonDao;
 use chrono::Utc;
@@ -26,25 +28,134 @@ pub struct CreditMeter {
     dao: Arc<dyn GarrisonDao>,
     config: Arc<RwLock<CreditConfig>>,
     storage: CreditMeterStorage,
+    /// 活跃度写路径节流器（persist_history 落库去抖窗口；默认启用，
+    /// [`Self::without_activity_throttle`] 显式关闭后逐次落库）。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    activity_throttle: Option<Arc<ActivityWriteThrottle<PersistContext>>>,
+    /// flush 循环防重复启动标记。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    flush_loop_started: std::sync::atomic::AtomicBool,
     #[cfg(feature = "listener")]
     listener_manager: Option<Arc<crate::listener::GarrisonListenerManager>>,
     #[cfg(feature = "metrics-prometheus")]
     metrics: Option<Arc<CreditMetrics>>,
 }
 
+/// 节流窗口内待落库的流水载荷（窗口内首次消费的快照）。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+pub struct PersistContext {
+    pub(crate) dao: Arc<dyn GarrisonDao>,
+    pub(crate) tenant_id: i64,
+    pub(crate) resource: String,
+    pub(crate) cost: u64,
+    pub(crate) credits: u64,
+    pub(crate) total_consumed: u64,
+    pub(crate) cycle_start: i64,
+}
+
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+impl std::fmt::Display for PersistContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "tenant:{}::resource:{}", self.tenant_id, self.resource)
+    }
+}
+
+/// 节流窗口的落库写方：将窗口内首次消费快照写入 SQL 流水。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+async fn activity_persist_write(
+    _key: String,
+    ctx: PersistContext,
+) -> crate::error::GarrisonResult<()> {
+    ctx.dao
+        .insert_credit_consumption(
+            ctx.tenant_id,
+            &ctx.resource,
+            ctx.cost,
+            ctx.credits,
+            ctx.total_consumed,
+            ctx.cycle_start,
+        )
+        .await
+}
+
 impl CreditMeter {
     /// 创建计量引擎实例。
+    ///
+    /// persist_history 落库默认经活跃度节流（去抖窗口聚合，语义见
+    /// [`ActivityWriteThrottle`]）：同 key 窗口内仅首次落库（窗口内首次消费
+    /// 快照）、容量满丢弃显性化、进程退出不持久化。需逐笔流水时用
+    /// [`Self::without_activity_throttle`] 显式关闭。
     pub fn new(dao: Arc<dyn GarrisonDao>, config: CreditConfig) -> Self {
         let storage = CreditMeterStorage::new(dao.clone());
         Self {
             dao,
             config: Arc::new(RwLock::new(config)),
             storage,
+            #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+            activity_throttle: Some(Arc::new(ActivityWriteThrottle::new())),
+            #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+            flush_loop_started: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "listener")]
             listener_manager: None,
             #[cfg(feature = "metrics-prometheus")]
             metrics: None,
         }
+    }
+
+    /// 替换默认节流器（定制 max_size / debounce / timeout 或跨计量引擎共享）。
+    ///
+    /// 落库 flush 循环在首次节流入队时自动启动（也可用
+    /// [`Self::spawn_activity_flush_loop`] 提前显式启动）。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    pub fn with_activity_throttle(
+        mut self,
+        throttle: Arc<ActivityWriteThrottle<PersistContext>>,
+    ) -> Self {
+        self.activity_throttle = Some(throttle);
+        self
+    }
+
+    /// 显式关闭活跃度节流：persist_history 恢复逐笔异步落库。
+    ///
+    /// 适用于依赖逐笔流水粒度对账、且写入量可控的部署。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    pub fn without_activity_throttle(mut self) -> Self {
+        self.activity_throttle = None;
+        self
+    }
+
+    /// 启动后台 flush 循环（每个去抖周期批量落库到期条目 + 丢弃计数汇总）。
+    ///
+    /// 返回 `false` 表示节流已关闭或循环已在运行（幂等，防重复 spawn）；
+    /// 首次节流入队时亦会自动启动，无需必须调用。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    pub fn spawn_activity_flush_loop(&self) -> bool {
+        let Some(throttle) = &self.activity_throttle else {
+            return false;
+        };
+        use std::sync::atomic::Ordering;
+        if self
+            .flush_loop_started
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return false;
+        }
+        tokio::spawn({
+            let throttle = throttle.clone();
+            async move {
+                throttle.run_flush_loop(activity_persist_write).await;
+            }
+        });
+        true
+    }
+
+    /// 当前待落库条目数（节流关闭时恒为 0；观测/测试用）。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    pub fn activity_pending(&self) -> usize {
+        self.activity_throttle
+            .as_ref()
+            .map_or(0, |t| t.pending_len())
     }
 
     /// 注入监听器管理器（用于广播 CreditConsumed / CreditAlert 事件）。
@@ -75,7 +186,8 @@ impl CreditMeter {
     /// 5. 计算 usage_percent，检查 alert_thresholds
     /// 6. 更新 meta
     /// 7. 广播事件（若 listener 已注入；拒绝路径不广播——无新消耗即无新告警）
-    /// 8. 异步写入 SQL 流水（若 persist_history = true）
+    /// 8. 异步写入 SQL 流水（若 persist_history = true；默认经活跃度节流
+    ///    聚合，语义见 [`Self::new`]）
     ///
     /// # 一致性语义
     ///
@@ -233,32 +345,54 @@ impl CreditMeter {
             }
         }
 
-        // 异步写入 SQL 流水
+        // 异步写入 SQL 流水（节流开启经去抖窗口聚合——同 key 窗口内仅首次
+        // 入队，落库为窗口内首次快照，到期由后台循环批量落库；显式关闭时
+        // 逐笔异步落库）
         #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
         if config.persist_history {
-            let dao = self.dao.clone();
-            let res = resource.to_string();
-            let cycle_start = actual_window_start;
-            tokio::spawn(async move {
-                if let Err(e) = dao
-                    .insert_credit_consumption(
-                        tenant_id,
-                        &res,
-                        cost,
-                        credits,
-                        new_count,
-                        cycle_start,
-                    )
-                    .await
-                {
-                    tracing::warn!(
-                        tenant_id,
-                        resource = %res,
-                        error = %e,
-                        "credit: async persist consumption record failed"
+            match &self.activity_throttle {
+                Some(throttle) => {
+                    let key = format!("{}:{}", tenant_id, resource);
+                    throttle.record(
+                        &key,
+                        PersistContext {
+                            dao: self.dao.clone(),
+                            tenant_id,
+                            resource: resource.to_string(),
+                            cost,
+                            credits,
+                            total_consumed: new_count,
+                            cycle_start: actual_window_start,
+                        },
                     );
-                }
-            });
+                    self.spawn_activity_flush_loop();
+                },
+                None => {
+                    let dao = self.dao.clone();
+                    let res = resource.to_string();
+                    let cycle_start = actual_window_start;
+                    tokio::spawn(async move {
+                        if let Err(e) = dao
+                            .insert_credit_consumption(
+                                tenant_id,
+                                &res,
+                                cost,
+                                credits,
+                                new_count,
+                                cycle_start,
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                tenant_id,
+                                resource = %res,
+                                error = %e,
+                                "credit: async persist consumption record failed"
+                            );
+                        }
+                    });
+                },
+            }
         }
 
         Ok(CreditConsumeResult {
@@ -1093,10 +1227,13 @@ mod tests {
         }
     }
 
-    /// persist_history = true 时消费应异步写入流水记录。
+    /// persist_history = true 且节流默认开启时：窗口到期由后台 flush 循环
+    /// 落库（pause 时钟驱动，flush 循环随首次入队自动启动）。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_consume_persist_history_writes_record() {
+        use std::time::Duration;
+
         let dao = Arc::new(HistoryTestDao::new());
         let config = CreditConfig {
             persist_history: true,
@@ -1106,7 +1243,40 @@ mod tests {
         let result = meter.consume_credit(42, "login", 5).await.unwrap();
         assert_eq!(result.consumed_credits, 5);
 
-        // 落库在 tokio::spawn 中异步执行，轮询等待（上限 2s）
+        // 去抖窗口内不落库；到期后后台 flush 循环批量落库
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let mut written = false;
+        for _ in 0..200 {
+            if !dao.records.lock().is_empty() {
+                written = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert!(written, "persist_history=true 窗口到期后应落库");
+        let records = dao.records.lock();
+        assert_eq!(records.len(), 1, "窗口内单次消费应恰好落库一条");
+        assert_eq!(records[0].0, 42);
+        assert_eq!(records[0].1, "login");
+        assert_eq!(records[0].2, 5, "cost 应为原始 cost");
+        assert_eq!(records[0].3, 5, "credits 应为 cost * weight");
+        assert_eq!(records[0].4, 5, "total_consumed 应为消费后累计");
+    }
+
+    /// 显式关闭节流（without_activity_throttle）时：恢复逐笔异步落库。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[tokio::test]
+    async fn test_consume_persist_history_without_throttle_writes_immediately() {
+        let dao = Arc::new(HistoryTestDao::new());
+        let config = CreditConfig {
+            persist_history: true,
+            ..make_config(100)
+        };
+        let meter = CreditMeter::new(dao.clone(), config).without_activity_throttle();
+        let result = meter.consume_credit(42, "login", 5).await.unwrap();
+        assert_eq!(result.consumed_credits, 5);
+
+        // 逐笔路径在 tokio::spawn 中异步执行，轮询等待（上限 2s 真实时间）
         let mut written = false;
         for _ in 0..40 {
             if !dao.records.lock().is_empty() {
@@ -1115,47 +1285,61 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
-        assert!(written, "persist_history=true 应异步写入流水");
+        assert!(written, "关闭节流后应逐笔异步落库");
         let records = dao.records.lock();
-        assert_eq!(records[0].0, 42);
-        assert_eq!(records[0].1, "login");
         assert_eq!(records[0].2, 5, "cost 应为原始 cost");
-        assert_eq!(records[0].3, 5, "credits 应为 cost * weight");
         assert_eq!(records[0].4, 5, "total_consumed 应为消费后累计");
     }
 
-    /// persist_history = false 时不写流水。
+    /// persist_history = false 时不写流水（节流路径同样不产生条目）。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_consume_persist_history_disabled_skips_record() {
+        use std::time::Duration;
+
         let dao = Arc::new(HistoryTestDao::new());
         let meter = CreditMeter::new(dao.clone(), make_config(100));
         meter.consume_credit(42, "login", 5).await.unwrap();
-        // 留出异步任务执行机会
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // 推进一个完整去抖窗口，确认无延迟落库
+        tokio::time::advance(Duration::from_secs(10)).await;
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
         assert!(
             dao.records.lock().is_empty(),
             "persist_history=false 不应写流水"
         );
     }
 
-    /// persist_history 落库失败不应影响消费结果（仅 tracing::warn 记录）。
+    /// persist_history 落库失败不应影响消费结果：错误在后台 flush 显性化
+    /// （warn），条目清理不重试，消费结果不受影响。
     #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn test_consume_persist_history_insert_error_is_non_blocking() {
+        use std::time::Duration;
+
         let dao = Arc::new(HistoryTestDao::new());
         dao.set_fail_insert(true);
         let config = CreditConfig {
             persist_history: true,
             ..make_config(100)
         };
-        let meter = CreditMeter::new(dao, config);
+        let meter = CreditMeter::new(dao.clone(), config);
         // 落库失败不应向上传播：消费结果仍然正常
         let result = meter.consume_credit(42, "login", 5).await.unwrap();
         assert!(result.allowed);
         assert_eq!(result.total_consumed, 5);
-        // 留出异步任务执行机会（warn 分支在 spawn 内执行）
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // 窗口到期：flush 尝试落库失败 → warn 显性化，条目清理，无 panic
+        tokio::time::advance(Duration::from_secs(10)).await;
+        for _ in 0..200 {
+            if meter.activity_pending() == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert_eq!(meter.activity_pending(), 0, "失败条目应被 flush 清理");
+        assert!(dao.records.lock().is_empty(), "注入失败下不应有流水落库");
     }
 
     /// get_usage_history 将 DAO 元组正确映射为 CreditConsumptionRecord，
@@ -1198,5 +1382,113 @@ mod tests {
             "应包装为 credit-query-history 前缀错误: {}",
             err
         );
+    }
+
+    // ========================================================================
+    // 活跃度写路径节流（persist_history 经 ActivityWriteThrottle 聚合）
+    // ========================================================================
+
+    /// meter 接入节流后：同 key 窗口内仅首次落库（落库为首次消费快照），
+    /// 到期由后台 flush 循环批量落库（pause 时钟驱动，无真实 sleep）。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[tokio::test(start_paused = true)]
+    async fn test_consume_persist_history_throttled_to_first_in_window() {
+        use crate::credit::throttle::ActivityWriteThrottle;
+        use std::time::Duration;
+
+        let dao = Arc::new(HistoryTestDao::new());
+        let throttle = Arc::new(ActivityWriteThrottle::with_limits(
+            100,
+            Duration::from_secs(10),
+            Duration::from_secs(3),
+        ));
+        let config = CreditConfig {
+            persist_history: true,
+            ..make_config(100)
+        };
+        let meter = CreditMeter::new(dao.clone(), config).with_activity_throttle(throttle);
+        assert!(meter.spawn_activity_flush_loop(), "flush 循环应启动");
+        assert!(
+            !meter.spawn_activity_flush_loop(),
+            "重复启动 flush 循环应幂等拒绝"
+        );
+
+        // 窗口内 5 次同 key 消费：首次 cost=7（快照判别用），其余 cost=1
+        meter.consume_credit(42, "login", 7).await.unwrap();
+        for _ in 0..4 {
+            meter.consume_credit(42, "login", 1).await.unwrap();
+        }
+
+        // 未到期不落库
+        tokio::time::advance(Duration::from_secs(1)).await;
+        for _ in 0..8 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(dao.records.lock().len(), 0, "去抖窗口内不得落库");
+
+        // 窗口到期 → 后台循环批量落库 1 条（首次快照）
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let mut written = false;
+        for _ in 0..200 {
+            if !dao.records.lock().is_empty() {
+                written = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert!(written, "窗口到期后应由后台 flush 循环落库");
+        let records = dao.records.lock();
+        assert_eq!(
+            records.len(),
+            1,
+            "窗口内 5 次同 key 消费应仅首次落库（计数=1）"
+        );
+        assert_eq!(
+            records[0].2, 7,
+            "落库应为窗口内首次消费的快照（cost=7），而非末次"
+        );
+        assert_eq!(records[0].4, 7, "total_consumed 亦应为首次快照");
+    }
+
+    /// meter 接入节流后：不同 key（tenant:resource）各自独立窗口。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    #[tokio::test(start_paused = true)]
+    async fn test_consume_persist_history_throttle_keyed_by_tenant_resource() {
+        use crate::credit::throttle::ActivityWriteThrottle;
+        use std::time::Duration;
+
+        let dao = Arc::new(HistoryTestDao::new());
+        let throttle = Arc::new(ActivityWriteThrottle::with_limits(
+            100,
+            Duration::from_secs(10),
+            Duration::from_secs(3),
+        ));
+        let config = CreditConfig {
+            persist_history: true,
+            ..make_config(100)
+        };
+        let meter = CreditMeter::new(dao.clone(), config).with_activity_throttle(throttle);
+        meter.spawn_activity_flush_loop();
+
+        // 同一租户两个资源流各自首次：互不去重
+        meter.consume_credit(42, "login", 1).await.unwrap();
+        meter.consume_credit(42, "sms", 1).await.unwrap();
+        meter.consume_credit(42, "login", 1).await.unwrap();
+
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let mut written = false;
+        for _ in 0..200 {
+            if dao.records.lock().len() >= 2 {
+                written = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert!(written, "两个 key 到期后均应落库");
+        let records = dao.records.lock();
+        assert_eq!(records.len(), 2, "不同 key 各自独立窗口，各落库 1 条");
+        let mut resources: Vec<&str> = records.iter().map(|r| r.1.as_str()).collect();
+        resources.sort_unstable();
+        assert_eq!(resources, vec!["login", "sms"]);
     }
 }
