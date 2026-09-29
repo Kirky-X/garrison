@@ -390,8 +390,11 @@ sms-rate-limit = ["dep:rand"]
 email-verification = ["dep:rand"]
 # 邮箱验证码 SMTP 内置实现（lettre，含 SmtpEmailSender）
 email-verification-smtp = ["email-verification", "dep:lettre"]
-# field-encryption：落库敏感字段 AES-256-GCM 静态加密（CryptoValue 编解码 + AAD 租户/表/键绑定 + 迁移期双读）
-field-encryption = ["dep:aes-gcm"]
+# field-encryption：落库敏感字段 AES-256-GCM 静态加密（CryptoValue 编解码 + AAD 租户/表/键绑定 + 迁移期双读）。
+# dep:getrandom：每值 12 字节 nonce 直读 OS CSPRNG（不启用 aes-gcm/getrandom，避免再引一套 getrandom 版本）；
+# dep:base64：CryptoValue 载荷 `base64(nonce|ciphertext)` 编码（与 spec 格式一致）；
+# dep:sha2：token 类命名空间 key 名摘要化（SHA-256 hex）——裸 bearer token 不得留在落库 key 名
+field-encryption = ["dep:aes-gcm", "dep:getrandom", "dep:base64", "dep:sha2"]
 
 # === 账号安全引擎 ===
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:getrandom", "dep:sha2", "dep:base32"]

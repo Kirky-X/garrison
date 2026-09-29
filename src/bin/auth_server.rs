@@ -16,6 +16,10 @@
 //! - `GARRISON_EXTERNAL_LOGIN_ENABLED`：是否启用外网登录端点（默认 **false**）。
 //!   框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），
 //!   业务方注入凭证校验后才应设为 `true`；默认关闭时 `POST /api/v1/auth/login` 返回 404
+//! - `GARRISON_FIELD_ENCRYPTION_KEYS`：落库敏感字段静态加密密钥表
+//!   （`field-encryption` feature，逗号分隔 `key_id:hex64`，首项为主钥）；
+//!   feature 启用时必填——未配置即拒绝启动（fail-closed）
+//! - `GARRISON_FIELD_ENCRYPTION_TENANT`：字段加密 AAD 租户段（默认 "default"）
 //! - `GARRISON_WORKER_THREADS`：Tokio worker 线程数（默认 = CPU 核数）
 //! - `GARRISON_MAX_BLOCKING_THREADS`：Tokio blocking 线程上限（默认 512）
 //!
@@ -30,7 +34,7 @@ use garrison::backend::embedded::BackendEmbedded;
 use garrison::backend::AuthBackend;
 use garrison::config::GarrisonConfig;
 use garrison::dao::{GarrisonDao, GarrisonDaoOxcache};
-use garrison::error::GarrisonResult;
+use garrison::error::{GarrisonError, GarrisonResult};
 use garrison::manager::GarrisonManager;
 use garrison::server::GarrisonAuthServer;
 use garrison::stp::GarrisonInterface;
@@ -64,7 +68,9 @@ impl GarrisonInterface for SimpleInterface {
 ///
 /// fail-closed 语义：
 /// - `internal_api_key` 无默认值——未配置时 `load_sync` 直接报错，拒绝启动；
-/// - 空串与 `rate_limit=0` 的防御检查保留在加载之后（见 `async_main`）。
+/// - 空串与 `rate_limit=0` 的防御检查保留在加载之后（见 `async_main`）；
+/// - `field-encryption` feature 启用时 `field_encryption_keys` 为空即拒绝启动
+///   （静态加密无钥不运行，见 [`parse_field_encryption_keys`]）。
 ///
 /// 与旧手写解析的行为差异：`GARRISON_EXTERNAL_LOGIN_ENABLED` 仅接受
 /// `true`/`false`（大小写不敏感），不再接受 `1`；非法值将启动失败而非静默忽略。
@@ -81,16 +87,75 @@ struct AuthServerBootstrapConfig {
     internal_api_key: String,
     #[config(default = false)]
     external_login_enabled: bool,
+    /// 字段加密密钥表（`field-encryption` feature）：逗号分隔的
+    /// `key_id:hex64` 表目（hex64 = 32 字节 AES-256 钥材 hex 编码），
+    /// 首项为主钥。feature 启用时必填（fail-closed）。
+    /// Option：confers 派生宏对字符串字面量 default 不支持（"Unknown value"），
+    /// 缺省语义由装配代码按 None 处理。
+    field_encryption_keys: Option<String>,
+    /// 字段加密 AAD 租户段（`field-encryption` feature），缺省 "default"。
+    field_encryption_tenant: Option<String>,
 }
 
-/// 初始化全局 GarrisonManager 单例。
+/// 解析 `key_id:hex64` 逗号分隔密钥表为 (key_id, hex) 表目。
 ///
-/// `BackendEmbedded` 委托全局 `GarrisonManager` 单例（零字段结构，不自初始化），
-/// 未初始化时所有认证操作返回 `manager-not-init` 错误——因此启动流程必须
-/// 先 `GarrisonManager::builder().build().await`（与
-/// `examples/src/infrastructure/auth_server.rs::setup_garrison_manager` 一致）。
-async fn setup_garrison_manager() -> GarrisonResult<()> {
+/// 空串 → 空表目；表目缺 `:` / key_id 或钥材为空 → 显性报错
+/// （钥材 hex 合法性由 `FieldCipher::from_key_entries` 装配期校验）。
+fn parse_field_encryption_keys(spec: &str) -> GarrisonResult<Vec<(String, String)>> {
+    if spec.is_empty() {
+        return Ok(vec![]);
+    }
+    spec.split(',')
+        .map(|entry| {
+            let (key_id, key_hex) = entry.split_once(':').ok_or_else(|| {
+                GarrisonError::Config(format!(
+                    "auth-server-field-encryption::entry-missing-colon::{entry}"
+                ))
+            })?;
+            if key_id.is_empty() || key_hex.is_empty() {
+                return Err(GarrisonError::Config(format!(
+                    "auth-server-field-encryption::entry-empty-part::{entry}"
+                )));
+            }
+            Ok((key_id.to_string(), key_hex.to_string()))
+        })
+        .collect()
+}
+
+/// DAO 装配：`field-encryption` feature 启用时以 `FieldEncryptionDao`
+/// 包装底层 DAO（敏感命名空间静态加密 + key 名摘要化），并在启动期构造
+/// `FieldCipher` 触发 fail-closed——未配密钥拒绝启动。
+async fn setup_garrison_manager(
+    field_encryption_keys: &str,
+    #[allow(unused_variables)] field_encryption_tenant: &str,
+) -> GarrisonResult<()> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
+    #[cfg(feature = "field-encryption")]
+    let dao: Arc<dyn GarrisonDao> = {
+        let entries = parse_field_encryption_keys(field_encryption_keys)?;
+        if entries.is_empty() {
+            return Err(GarrisonError::Config(
+                "auth-server-field-encryption::no-keys-configured::set \
+                 GARRISON_FIELD_ENCRYPTION_KEYS (key_id:hex64,...) or disable \
+                 the field-encryption feature"
+                    .to_string(),
+            ));
+        }
+        let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
+        let wrapped = garrison::secure::encryption::FieldEncryptionDao::new(
+            dao,
+            Arc::new(cipher),
+            field_encryption_tenant,
+        )?;
+        Arc::new(wrapped)
+    };
+    #[cfg(not(feature = "field-encryption"))]
+    if !field_encryption_keys.is_empty() {
+        eprintln!(
+            "WARN: GARRISON_FIELD_ENCRYPTION_KEYS is set but the field-encryption \
+             feature is not enabled; the value is ignored"
+        );
+    }
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(SimpleInterface);
     GarrisonManager::builder()
@@ -201,7 +266,15 @@ async fn async_main() -> GarrisonResult<()> {
     // BackendEmbedded 委托全局 GarrisonManager 单例，
     // 必须先经 GarrisonManager::builder().build().await 初始化，
     // 否则启动后所有认证操作都会报 manager-not-init 错误。
-    if let Err(e) = setup_garrison_manager().await {
+    if let Err(e) = setup_garrison_manager(
+        bootstrap.field_encryption_keys.as_deref().unwrap_or(""),
+        bootstrap
+            .field_encryption_tenant
+            .as_deref()
+            .unwrap_or("default"),
+    )
+    .await
+    {
         tracing::error!(error = %e, "failed to initialize GarrisonManager");
         return Err(e);
     }

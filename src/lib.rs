@@ -369,6 +369,7 @@ pub mod credit;
     feature = "secure-ct-eq",
     feature = "sms-rate-limit",
     feature = "email-verification",
+    feature = "field-encryption",
 ))]
 pub mod secure;
 

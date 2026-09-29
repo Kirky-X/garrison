@@ -197,6 +197,14 @@ pub mod sanitize;
 #[cfg(feature = "secure-ct-eq")]
 pub mod ct_eq;
 
+/// 落库敏感字段静态加密子模块（AES-256-GCM at-rest encryption）。
+///
+/// 提供 [`CryptoValue`](encryption::CryptoValue) 编解码、[`FieldCipher`](encryption::FieldCipher)
+/// 加解密服务（多 key_id 取钥、迁移期双读）与 [`FieldEncryptionDao`](encryption::FieldEncryptionDao)
+/// DAO 透明加解密装饰器。启用 `field-encryption` feature 后编译。
+#[cfg(feature = "field-encryption")]
+pub mod encryption;
+
 #[cfg(test)]
 mod tests {
     use super::*;
