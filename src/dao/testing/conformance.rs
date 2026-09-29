@@ -764,3 +764,203 @@ pub async fn run_keys(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     );
     assert_eq!(got, vec![k4.clone()], "[{prefix}] rename 后扫描应指向新键");
 }
+
+// ---------------------------------------------------------------------------
+// refresh token 轮换层契约（db-sqlite + protocol-jwt）
+// ---------------------------------------------------------------------------
+
+/// RefreshTokenRotation SQL 层契约（同一把尺子，跑 sqlite 实例）。
+///
+/// 覆盖四组新操作的行为属性：
+/// 1. `rotated_at` 写入契约——issue 子代/rotate 子代恒为 NULL，被消费旧记录
+///    在原子消费时写入正值时刻；
+/// 2. 重用三级分类契约——RecentPrev（1 跳）/ OrphanedBranch（>1 跳）/
+///    StaleLineage（无存活血缘）/ 存活与未知 hash 均为 `None`；
+/// 3. 宽限窗口契约——窗口内重放兑现同一新 token，预算耗尽转盗用处置；
+/// 4. 旋转失败补偿契约——INSERT 注入失败后无残留子代、原链仍可用。
+///
+/// 调用方负责先对 `pool` 执行迁移（`GarrisonMigration::migrate_core`）。
+#[cfg(all(feature = "db-sqlite", feature = "protocol-jwt"))]
+pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
+    use crate::protocol::jwt::refresh::{RefreshTokenReuseSubtype, RefreshTokenRotation};
+    use crate::protocol::jwt::JwtHandler;
+    use dbnexus::sea_orm::{ConnectionTrait, DbBackend, Statement, Value};
+    use sha2::{Digest, Sha256};
+    use std::sync::{Arc, RwLock};
+
+    let rotation = Arc::new(
+        RefreshTokenRotation::new(
+            pool.clone(),
+            Arc::new(JwtHandler::new("contract-refresh-secret-0123456789abcdef")),
+            Arc::new(RwLock::new(1)),
+        )
+        .with_grace_window(60, 1),
+    );
+
+    let sha256_hex = |s: &str| {
+        let mut hasher = Sha256::new();
+        hasher.update(s.as_bytes());
+        hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    };
+
+    // 原生错误显性化：统一映射 GarrisonError::Dao 后 fail-loud（透传消息）
+    fn dao_err(e: impl std::fmt::Display) -> crate::error::GarrisonError {
+        crate::error::GarrisonError::Dao(e.to_string())
+    }
+
+    // 单值探测查询（SQL 恒带 1 个 `?` 占位）
+    let query_i64 = |sql: &'static str, param: String| {
+        let pool = pool.clone();
+        async move {
+            let session = pool
+                .get_session("admin")
+                .await
+                .map_err(|e| dao_err(e))
+                .unwrap_or_else(|e| panic!("[{prefix}] get_session 不应失败: {e}"));
+            let conn = session
+                .connection()
+                .map_err(|e| dao_err(e))
+                .unwrap_or_else(|e| panic!("[{prefix}] connection 不应失败: {e}"));
+            let stmt = Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                sql,
+                vec![Value::String(Some(param))],
+            );
+            let row = conn
+                .query_one_raw(stmt)
+                .await
+                .map_err(|e| dao_err(e))
+                .unwrap_or_else(|e| panic!("[{prefix}] 查询不应失败: {e}"))
+                .unwrap_or_else(|| panic!("[{prefix}] 查询应有结果行: {sql}"));
+            row.try_get::<i64>("", "val")
+                .unwrap_or_else(|e| panic!("[{prefix}] val 列读取失败: {e}"))
+        }
+    };
+
+    let executed = |sql: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let session = pool
+                .get_session("admin")
+                .await
+                .map_err(|e| dao_err(e))
+                .unwrap_or_else(|e| panic!("[{prefix}] get_session 不应失败: {e}"));
+            let conn = session
+                .connection()
+                .map_err(|e| dao_err(e))
+                .unwrap_or_else(|e| panic!("[{prefix}] connection 不应失败: {e}"));
+            let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, vec![]);
+            conn.execute_raw(stmt)
+                .await
+                .map_err(|e| dao_err(e))
+                .unwrap_or_else(|e| panic!("[{prefix}] execute 不应失败: {e}"));
+        }
+    };
+
+    // ---- 1. rotated_at 写入契约 ----
+    let t1 = expect_ok(
+        prefix,
+        "issue",
+        rotation.issue("c1", Some(1), &[], None, 1, 0, 9999).await,
+    );
+    let t1_hash = sha256_hex(&t1);
+    let (_, t2) = expect_ok(prefix, "rotate#1", rotation.rotate(&t1).await);
+    let t2_hash = sha256_hex(&t2);
+    let (_, t3) = expect_ok(prefix, "rotate#2", rotation.rotate(&t2).await);
+    let t3_hash = sha256_hex(&t3);
+    // 被消费的旧记录 rotated_at 为正时刻
+    let rotated = query_i64(
+        "SELECT COALESCE(rotated_at, 0) AS val FROM refresh_tokens WHERE token_hash = ?",
+        t1_hash.clone(),
+    )
+    .await;
+    assert!(
+        rotated > 0,
+        "[{prefix}] 被消费旧记录应写入 rotated_at，实际 {rotated}"
+    );
+    // 存活子代记录 rotated_at 为 NULL（以 COALESCE 0 探测）
+    let child_rotated = query_i64(
+        "SELECT COALESCE(rotated_at, 0) AS val FROM refresh_tokens WHERE token_hash = ?",
+        t3_hash.clone(),
+    )
+    .await;
+    assert_eq!(child_rotated, 0, "[{prefix}] 存活子代 rotated_at 应为 NULL");
+
+    // ---- 2. 三级分类契约 ----
+    let subtype = expect_ok(prefix, "detect#t2", rotation.detect_reuse(&t2_hash).await);
+    assert_eq!(
+        subtype,
+        Some(RefreshTokenReuseSubtype::RecentPrev),
+        "[{prefix}] 1 跳祖先应为 RecentPrev"
+    );
+    let subtype = expect_ok(prefix, "detect#t1", rotation.detect_reuse(&t1_hash).await);
+    assert_eq!(
+        subtype,
+        Some(RefreshTokenReuseSubtype::OrphanedBranch),
+        "[{prefix}] 2 跳祖先应为 OrphanedBranch"
+    );
+    let subtype = expect_ok(prefix, "detect#live", rotation.detect_reuse(&t3_hash).await);
+    assert_eq!(subtype, None, "[{prefix}] 存活链头不应检出重用");
+    let subtype = expect_ok(
+        prefix,
+        "detect#unknown",
+        rotation.detect_reuse(&sha256_hex("never-issued")).await,
+    );
+    assert_eq!(subtype, None, "[{prefix}] 未知 hash 不应检出重用");
+
+    // ---- 3. 宽限窗口契约（窗口内兑现同一 token；预算耗尽转盗用） ----
+    let (_, graced) = expect_ok(prefix, "grace-redeem", rotation.rotate(&t2).await);
+    assert_eq!(graced, t3, "[{prefix}] 窗口内重放应兑现胜者的同一新 token");
+    let again = rotation.rotate(&t2).await;
+    assert!(
+        matches!(again, Err(crate::error::GarrisonError::TokenRevoked(_))),
+        "[{prefix}] 预算耗尽后应转盗用处置，实际 {again:?}"
+    );
+
+    // ---- 4. 旋转失败补偿契约 ----
+    // 注入目标须是未消费的存活 token（上方预算耗尽处置已吊销 t3）
+    let t4 = expect_ok(
+        prefix,
+        "issue#t4",
+        rotation.issue("c1", Some(1), &[], None, 1, 0, 9999).await,
+    );
+    let t4_hash = sha256_hex(&t4);
+    // BEFORE INSERT 触发器注入写失败：消费（UPDATE）成功、INSERT 中止
+    let trigger_sql = "CREATE TRIGGER contract_fail_insert BEFORE INSERT ON refresh_tokens \
+                       BEGIN SELECT RAISE(ABORT, 'contract injected insert failure'); END;";
+    executed(trigger_sql).await;
+    let failed = rotation.rotate(&t4).await;
+    executed("DROP TRIGGER contract_fail_insert").await;
+    match failed {
+        Err(crate::error::GarrisonError::Dao(msg)) => {
+            assert!(
+                msg.contains("rolled-back"),
+                "[{prefix}] 补偿成功时错误应标注 rolled-back，实际 {msg}"
+            );
+        },
+        other => panic!("[{prefix}] 注入失败应返回 Dao 错误，实际 {other:?}"),
+    }
+    // 无残留子代 + 原链仍可用（回退后可再次正常轮换）
+    let children = query_i64(
+        "SELECT COUNT(*) AS val FROM refresh_tokens WHERE parent_token_hash = ?",
+        t4_hash.clone(),
+    )
+    .await;
+    assert_eq!(children, 0, "[{prefix}] 补偿后不得残留半成品子代");
+    let (_, retried) = expect_ok(prefix, "retry-rotate", rotation.rotate(&t4).await);
+    let retried_hash = sha256_hex(&retried);
+    assert!(
+        !retried_hash.is_empty(),
+        "[{prefix}] 重试轮换应产出新 token"
+    );
+    let consumed = query_i64(
+        "SELECT revoked AS val FROM refresh_tokens WHERE token_hash = ?",
+        t4_hash,
+    )
+    .await;
+    assert_eq!(consumed, 1, "[{prefix}] 重试轮换应正常消费原 token");
+}

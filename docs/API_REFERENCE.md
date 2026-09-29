@@ -135,6 +135,16 @@ GarrisonManager::builder()
 | `check_access_token()` / `check_client_token()` / `check_temp_token()` | OAuth2 三类 token 校验 | `protocol-oauth2` |
 | `check_api_key(namespace) -> GarrisonResult<()>` | API Key 校验（feature 关闭时 fail-closed 返回 `Config` 错误） | `protocol-apikey` |
 
+**Refresh token 重用检测与宽限窗口**（`RefreshTokenRotation`，`protocol-jwt` + `db-sqlite` feature；SQL 面向 SQLite，服务整体 `db-sqlite` 门控）：旧 token 重放按三级分类处置（`RecentPrev`/`OrphanedBranch` 按配置分派、`StaleLineage` 恒吊销整条 chain），完整处置表见 [THREAT.md](THREAT.md)。相关 `GarrisonConfig` 字段：
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `recent_reuse_behaviour` | `TheftDetected` | `RecentPrev`/`OrphanedBranch` 重用处置：`TheftDetected` 吊销整条 chain + `TokenRevoked`；`Unauthorised` 仅拒绝本次（401）不吊销。非法值启动期 fail-fast |
+| `refresh_grace_period_secs` | `0`（关闭） | 宽限窗口秒数——窗口内已轮换旧 token 再次呈现返回既有新 token（不重旋转，容忍并发双刷；兑现凭据进程内暂存，多实例仅签发实例命中） |
+| `refresh_grace_max_uses` | `1` | 窗口内同一旧 token 最大宽限兑现次数，耗尽后的窗口内重放按 `recent_reuse_behaviour` 处置（默认吊销整条 chain）；仅窗口 >0 时生效 |
+
+对应环境变量：`GARRISON_RECENT_REUSE_BEHAVIOUR` / `GARRISON_REFRESH_GRACE_PERIOD_SECS` / `GARRISON_REFRESH_GRACE_MAX_USES`。**生效前提**：上述字段由注入的 `RefreshTokenRotation` 读取——应用经 `TokenHandler::with_refresh_rotation` 注入轮换服务时须同步以 `with_reuse_behaviour` / `with_grace_window` 装配配置值（框架默认不自动装配，未注入时 refresh 走 DAO 退化路径，配置不生效）。
+
 ### 二次认证与封禁
 
 | 方法 | 说明 |

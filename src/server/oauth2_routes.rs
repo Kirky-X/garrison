@@ -76,6 +76,9 @@ impl OAuth2State {
         // RefreshTokenRotation 未注入 → refresh 走 DAO 退化路径，reuse detection
         // 不可用（盗用 token 重放不会触发链式撤销）。生产部署应通过
         // `TokenHandler::with_refresh_rotation` 注入轮换服务消除本告警。
+        // 注意：GarrisonConfig 的 recent_reuse_behaviour / refresh_grace_* 字段
+        // 仅由注入的轮换服务读取——注入时须以 `with_reuse_behaviour` /
+        // `with_grace_window` 同步装配配置值，否则配置保持默认不生效。
         #[cfg(feature = "db-sqlite")]
         if !token_handler.has_refresh_rotation() {
             tracing::warn!(

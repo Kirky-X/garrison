@@ -169,6 +169,15 @@ pub const DEFAULT_REPLACED_LOGIN_EXIT_MODE: &str = "old_device";
 /// 默认溢出处理策略的 serde 表示（"logout" = 登出最旧会话）。
 pub const DEFAULT_OVERFLOW_LOGOUT_MODE: &str = "logout";
 
+/// 默认 refresh token 重用处置策略的 serde 表示（"theft_detected" = 按盗用处理）。
+pub const DEFAULT_RECENT_REUSE_BEHAVIOUR: &str = "theft_detected";
+
+/// 默认 refresh token 宽限窗口时长秒数（0 = 关闭宽限窗口）。
+pub const DEFAULT_REFRESH_GRACE_PERIOD_SECS: i64 = 0;
+
+/// 默认 refresh token 宽限窗口内同一旧 token 的最大宽限兑现次数。
+pub const DEFAULT_REFRESH_GRACE_MAX_USES: u32 = 1;
+
 /// 默认异常登录分析器扫描间隔秒数（3600 = 1 小时）。
 ///
 /// 仅当 `anomalous-detector-dual` feature 启用时生效。
@@ -231,6 +240,27 @@ pub enum SessionHijackMode {
     AlertOnly,
     /// 广播告警事件并踢出疑似被劫持的会话。
     Kickout,
+}
+
+/// Refresh token 重用处置策略（`recent_reuse_behaviour`）。
+///
+/// 决定「已消费 token 再次呈现且存在存活后代」（RecentPrev / OrphanedBranch
+/// 两级重用分类）时的处置；无存活血缘的 StaleLineage 恒按盗用处理，不受本
+/// 配置影响。
+///
+/// - `TheftDetected`：按 token 盗用处理——吊销整条 chain 并返回
+///   `TokenRevoked`（OAuth2 线上即 RFC 6819 §5.2.2.1 建议的失效响应，默认）
+/// - `Unauthorised`：仅拒绝本次请求（`InvalidToken`，401），不吊销 chain——
+///   供确知自身客户端存在良性并发刷新（多实例/重试风暴）且接受旧 token
+///   泄露窗口的部署做风险取舍
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecentReuseBehaviour {
+    /// 按盗用处理（默认）：吊销整条 chain + `TokenRevoked`。
+    #[default]
+    TheftDetected,
+    /// 仅拒绝本次请求（401），不吊销 chain。
+    Unauthorised,
 }
 
 // ============================================================================
@@ -616,6 +646,31 @@ pub struct GarrisonConfig {
     /// `check_login_stateless` 在 JWT verify 成功后检查黑名单，已撤销的 JWT 返回 `TokenRevoked`。
     /// 仅在 `protocol-jwt` feature 启用且 `token_style="jwt"` 时有实际效果。
     pub enable_jwt_revocation: bool,
+
+    /// Refresh token 重用处置策略（RecentPrev / OrphanedBranch 两级）。默认 `TheftDetected`。
+    ///
+    /// 仅影响存在存活后代的重用分类；无存活血缘的 StaleLineage 恒按盗用吊销
+    /// 整条 chain，不受本字段影响。语义见 [`RecentReuseBehaviour`]。
+    pub recent_reuse_behaviour: RecentReuseBehaviour,
+
+    /// Refresh token 宽限窗口时长秒数（默认 0 = 关闭）。
+    ///
+    /// 窗口内已轮换的旧 token 再次呈现时，返回轮换时签发的既有新 token
+    ///（不重新旋转），容忍 in-flight 并发双刷；窗口外按
+    /// [`recent_reuse_behaviour`](Self::recent_reuse_behaviour) 处置。
+    /// 兑现凭据（新 token 材料）由轮换服务进程内暂存、不落库，多实例部署下
+    /// 仅签发实例可命中兑现，其余实例退化为既有重用处置。
+    pub refresh_grace_period_secs: i64,
+
+    /// Refresh token 宽限窗口内同一旧 token 的最大宽限兑现次数（默认 1）。
+    ///
+    /// 预算耗尽后的窗口内重放按
+    /// [`recent_reuse_behaviour`](Self::recent_reuse_behaviour) 处置（默认
+    /// `TheftDetected` 吊销整条 chain）；仅并发落败方（未抢到消费权且宽限等待
+    /// 未命中兑现）返回 `InvalidToken` 不吊销 chain。仅当
+    /// [`refresh_grace_period_secs`](Self::refresh_grace_period_secs) > 0 时生效。
+    pub refresh_grace_max_uses: u32,
+
     /// 显式风险接受：允许 `token_style=jwt` + `jwt_mode=Stateless` + `enable_jwt_revocation=false`
     /// 的不安全组合（不可吊销的永久 JWT 凭证）。默认 `false`（R-sessiontokenconsistency / 互斥校验）。
     ///

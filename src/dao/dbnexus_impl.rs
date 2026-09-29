@@ -712,13 +712,14 @@ mod embedded_migrations_tests {
     // 单元测试（不需数据库，验证 include_dir! 嵌入与文件写入逻辑）
     // ========================================================================
 
-    /// 验证 POSTGRES_MIGRATIONS 嵌入了 13 个 postgres core SQL 文件。
+    /// 验证 POSTGRES_MIGRATIONS 嵌入了 14 个 postgres core SQL 文件。
     ///
     /// Scenario: 编译时 include_dir!("migrations/postgres") 嵌入成功。
     /// WHEN POSTGRES_MIGRATIONS.get_dir("core")
-    /// THEN core 目录存在且包含 13 个 .sql 文件（001_init ~ 017_oauth2_backchannel_queue）
+    /// THEN core 目录存在且包含 14 个 .sql 文件（001_init ~ 017_oauth2_backchannel_queue，
+    ///      含 013_refresh_tokens_rotated_at；014-016 为并行段预留编号）
     #[test]
-    fn embedded_postgres_migrations_contain_13_core_files() {
+    fn embedded_postgres_migrations_contain_14_core_files() {
         let core_dir = POSTGRES_MIGRATIONS
             .get_dir("core")
             .expect("migrations/postgres/core 必须被嵌入");
@@ -728,8 +729,8 @@ mod embedded_migrations_tests {
             .collect();
         assert_eq!(
             sql_files.len(),
-            13,
-            "postgres core 迁移必须有 13 个 SQL 文件，实际: {sql_files:?}"
+            14,
+            "postgres core 迁移必须有 14 个 SQL 文件，实际: {sql_files:?}"
         );
         // 验证文件名边界（按版本号约定）
         let names: Vec<String> = sql_files
@@ -761,13 +762,19 @@ mod embedded_migrations_tests {
                 .any(|n| n.starts_with("017_oauth2_backchannel_queue")),
             "必须包含 017_oauth2_backchannel_queue.sql，实际: {names:?}"
         );
+        assert!(
+            names
+                .iter()
+                .any(|n| n.starts_with("013_refresh_tokens_rotated_at")),
+            "必须包含 013_refresh_tokens_rotated_at.sql，实际: {names:?}"
+        );
     }
 
     /// 验证 copy_embedded_dir 将嵌入目录正确写入临时目录。
     ///
     /// Scenario: 递归复制 include_dir::Dir 到文件系统。
     /// WHEN copy_embedded_dir(&POSTGRES_MIGRATIONS, tempdir)
-    /// THEN tempdir/core/ 包含 13 个 .sql 文件，内容与嵌入文件一致
+    /// THEN tempdir/core/ 包含 14 个 .sql 文件，内容与嵌入文件一致
     #[test]
     fn copy_embedded_dir_writes_files_to_tempdir() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
@@ -779,7 +786,7 @@ mod embedded_migrations_tests {
         let entries: Vec<_> = std::fs::read_dir(&core_dir)
             .expect("读取 core 目录应成功")
             .collect();
-        assert_eq!(entries.len(), 13, "core 目录必须包含 13 个 SQL 文件");
+        assert_eq!(entries.len(), 14, "core 目录必须包含 14 个 SQL 文件");
 
         // 验证文件内容非空（写入的是真实 SQL，不是空字节）
         for entry in entries {
@@ -799,7 +806,7 @@ mod embedded_migrations_tests {
     ///
     /// Scenario: 多次复制同一嵌入目录到同一目标。
     /// WHEN copy_embedded_dir → copy_embedded_dir（再次）
-    /// THEN 第二次成功，core 目录仍为 13 个文件（覆盖写入）
+    /// THEN 第二次成功，core 目录仍为 14 个文件（覆盖写入）
     #[test]
     fn copy_embedded_dir_is_idempotent() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
@@ -810,7 +817,7 @@ mod embedded_migrations_tests {
         let count = std::fs::read_dir(&core_dir)
             .expect("读取 core 目录应成功")
             .count();
-        assert_eq!(count, 13, "重复写入后仍应为 13 个文件");
+        assert_eq!(count, 14, "重复写入后仍应为 14 个文件");
     }
 
     // ========================================================================
@@ -819,7 +826,7 @@ mod embedded_migrations_tests {
 
     /// Scenario: run_embedded_postgres 在真实 postgres 上执行迁移。
     /// WHEN GarrisonMigration::run_embedded_postgres()（无论库此前是否已迁移）
-    /// THEN dbnexus_migrations 恰好记录全部 13 个迁移（终态不变式），
+    /// THEN dbnexus_migrations 恰好记录全部 14 个迁移（终态不变式），
     ///      且本次调用无错误返回
     #[tokio::test]
     #[serial_test::serial]
@@ -856,6 +863,6 @@ mod embedded_migrations_tests {
             .expect("查询迁移记录应成功")
             .expect("应有一行计数");
         let applied: i64 = row.try_get::<i64>("", "cnt").expect("cnt 列应存在");
-        assert_eq!(applied, 13, "运行后应记录全部 13 个迁移，实际: {applied}");
+        assert_eq!(applied, 14, "运行后应记录全部 14 个迁移，实际: {applied}");
     }
 }

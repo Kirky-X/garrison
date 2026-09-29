@@ -352,21 +352,23 @@ async fn acc_jwt_008_old_refresh_token_reuse_revokes_chain() {
         .expect("issue 应成功");
     let (_access, rt2) = rotation.rotate(&rt1).await.expect("首次 rotate 应成功");
 
-    // detect_reuse：rt1 已 revoked → true；rt2 未 revoked → false
+    // detect_reuse：rt1 已 revoked → Some；rt2 未 revoked → None
     let h1 = sha256_hex(&rt1);
     assert!(
         rotation
             .detect_reuse(&h1)
             .await
-            .expect("detect_reuse 应成功"),
+            .expect("detect_reuse 应成功")
+            .is_some(),
         "已轮换的旧 token 应检测为重用"
     );
     let h2 = sha256_hex(&rt2);
     assert!(
-        !rotation
+        rotation
             .detect_reuse(&h2)
             .await
-            .expect("detect_reuse 应成功"),
+            .expect("detect_reuse 应成功")
+            .is_none(),
         "当前有效的 rt2 不应检测为重用"
     );
 

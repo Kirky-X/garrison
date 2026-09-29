@@ -1624,6 +1624,125 @@ fn env_overrides_overflow_logout_mode() {
 }
 
 // ========================================================================
+// recent_reuse_behaviour / refresh_grace 配置测试
+// ========================================================================
+
+/// `default_config()` 的 `recent_reuse_behaviour` 为 `TheftDetected`。
+#[test]
+fn default_recent_reuse_behaviour_is_theft_detected() {
+    let config = GarrisonConfig::default_config();
+    assert_eq!(
+        config.recent_reuse_behaviour,
+        RecentReuseBehaviour::TheftDetected,
+        "默认 recent_reuse_behaviour 应为 TheftDetected"
+    );
+}
+
+/// `RecentReuseBehaviour` 序列化为 snake_case 字符串。
+#[test]
+fn recent_reuse_behaviour_serde_snake_case() {
+    assert_eq!(
+        serde_json::to_string(&RecentReuseBehaviour::TheftDetected).unwrap(),
+        r#""theft_detected""#
+    );
+    assert_eq!(
+        serde_json::to_string(&RecentReuseBehaviour::Unauthorised).unwrap(),
+        r#""unauthorised""#
+    );
+    assert_eq!(
+        serde_json::from_str::<RecentReuseBehaviour>(r#""theft_detected""#).unwrap(),
+        RecentReuseBehaviour::TheftDetected
+    );
+    assert_eq!(
+        serde_json::from_str::<RecentReuseBehaviour>(r#""unauthorised""#).unwrap(),
+        RecentReuseBehaviour::Unauthorised
+    );
+    // 白名单外的值反序列化失败（fail-closed）
+    assert!(serde_json::from_str::<RecentReuseBehaviour>(r#""permissive""#).is_err());
+}
+
+/// `GARRISON_RECENT_REUSE_BEHAVIOUR=unauthorised` 环境变量覆盖配置。
+#[test]
+#[serial]
+fn env_overrides_recent_reuse_behaviour() {
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_RECENT_REUSE_BEHAVIOUR",
+        "unauthorised",
+    )];
+    let config = GarrisonConfig::load(None).expect("load with env");
+    assert_eq!(
+        config.recent_reuse_behaviour,
+        RecentReuseBehaviour::Unauthorised,
+        "GARRISON_RECENT_REUSE_BEHAVIOUR=unauthorised 应覆盖为 Unauthorised"
+    );
+}
+
+/// `GARRISON_RECENT_REUSE_BEHAVIOUR` 非法值启动期 fail-fast。
+#[test]
+#[serial]
+fn env_invalid_recent_reuse_behaviour_errors() {
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_RECENT_REUSE_BEHAVIOUR",
+        "permissive",
+    )];
+    let result = GarrisonConfig::load(None);
+    assert!(result.is_err(), "非法重用处置策略应导致启动失败");
+    assert!(matches!(result, Err(GarrisonError::Config(_))));
+}
+
+/// `default_config()` 的宽限窗口默认关闭（0 秒 / 1 次）。
+#[test]
+fn default_refresh_grace_window_is_disabled() {
+    let config = GarrisonConfig::default_config();
+    assert_eq!(
+        config.refresh_grace_period_secs, 0,
+        "默认 refresh_grace_period_secs 应为 0（关闭）"
+    );
+    assert_eq!(
+        config.refresh_grace_max_uses, 1,
+        "默认 refresh_grace_max_uses 应为 1"
+    );
+}
+
+/// `refresh_grace_period_secs` 为负数时校验失败。
+#[test]
+fn negative_refresh_grace_period_fails_validation() {
+    let mut config = GarrisonConfig::default_config();
+    config.refresh_grace_period_secs = -1;
+    let result = config.validate();
+    assert!(
+        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("grace-period-negative")),
+        "负宽限窗口应校验失败，实际: {:?}",
+        result
+    );
+}
+
+/// `refresh_grace_max_uses = 0` 时校验失败（关闭窗口应置 period_secs = 0）。
+#[test]
+fn zero_refresh_grace_max_uses_fails_validation() {
+    let mut config = GarrisonConfig::default_config();
+    config.refresh_grace_max_uses = 0;
+    let result = config.validate();
+    assert!(
+        matches!(result, Err(GarrisonError::Config(ref msg)) if msg.contains("grace-max-uses-zero")),
+        "零兑现次数应校验失败，实际: {:?}",
+        result
+    );
+}
+
+/// `GARRISON_REFRESH_GRACE_PERIOD_SECS` 环境变量覆盖配置。
+#[test]
+#[serial]
+fn env_overrides_refresh_grace_period_secs() {
+    let _env_guards = [EnvVarGuard::set("GARRISON_REFRESH_GRACE_PERIOD_SECS", "30")];
+    let config = GarrisonConfig::load(None).expect("load with env");
+    assert_eq!(
+        config.refresh_grace_period_secs, 30,
+        "GARRISON_REFRESH_GRACE_PERIOD_SECS=30 应覆盖宽限窗口"
+    );
+}
+
+// ========================================================================
 // audit_mask_mode 配置测试
 // ========================================================================
 

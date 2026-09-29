@@ -575,6 +575,10 @@ pub use dao::GarrisonEventTx;
 #[cfg(feature = "protocol-jwt")]
 pub use protocol::jwt::refresh::RefreshTokenRecord;
 
+/// Refresh token 重用三级分类（RecentPrev / OrphanedBranch / StaleLineage）。
+#[cfg(feature = "protocol-jwt")]
+pub use protocol::jwt::refresh::RefreshTokenReuseSubtype;
+
 /// RefreshToken Rotation 服务（rotate + detect_reuse + revoke_chain，需 `protocol-jwt` + `db-sqlite`）。
 #[cfg(all(feature = "protocol-jwt", feature = "db-sqlite"))]
 pub use protocol::jwt::refresh::RefreshTokenRotation;

@@ -92,7 +92,7 @@
 | JWT 弱密钥 | `MIN_SECRET_BYTES=32` fail-fast + config 白名单按算法校验长度 | `src/config/tests.rs` |
 | PKCE 降级（plain） | `oauth2_server/authorize.rs` 强制 S256（43 字符长度校验防 DoS） | `tests/acceptance/protocol_oauth2.rs` |
 | redirect_uri 前缀/通配绕过 | client 白名单精确匹配 | `tests/acceptance/protocol_oauth2.rs` |
-| refresh token 重放 | `RefreshTokenRotation` reuse detection + 链式撤销（未注入时 warn 显性告警） | `src/oauth2_server/token.rs` |
+| refresh token 重放 | `RefreshTokenRotation` 三级重用分类（RecentPrev / OrphanedBranch / StaleLineage）+ 链式撤销（未注入时 warn 显性告警），处置见下表 | `src/protocol/jwt/refresh.rs` 内嵌测试 |
 | 状态参数伪造/重放 | OIDC `state` 一次性 + TTL（`protocol/sso/oidc.rs`） | oidc.rs 内嵌测试 |
 | API Key 泄露后的横向使用 | sha256 哈希存储 + IP 级失败限速 + namespace 隔离 | 根目录 [SECURITY.md](../SECURITY.md) API Key 安全节 |
 | 定时侧信道（token 比较） | `secure-ct-eq` 常量时间公共原语（subtle） | `tests/constant_time_eq.rs` |
@@ -101,6 +101,18 @@
 | Cookie 子域篡改（恶意子域写同Domain cookie 覆盖会话 token） | 默认不设 `Domain`（host-only）；`production` + Secure 上下文强制 `__Host-`（Path=/ 且无 Domain）/ `__Secure-` 前缀，浏览器层拒绝带 Domain 的 `__Host-` cookie | `src/context/cookie.rs`、`src/web/csrf.rs` 内嵌测试 |
 | 非 Secure 上下文 SameSite=None（跨站携带凭证被浏览器拒收 / 属性不一致） | 构建点 None→Lax 降级不变式（`cookie_secure=false` 时降级 `Lax` 并 warn 一次），续签 / CSRF 写点无法直发 `SameSite=None` | `src/context/cookie.rs`、`src/router/tests.rs` 内嵌测试 |
 | 登录风暴内存 DoS（并发慢哈希内存驻留叠加：N 并发 × 19 MiB 无上界） | Argon2 并发令牌池：`argon2_pool_size` permit 约束同时执行数（默认 1），permit 移入 `spawn_blocking` 闭包——取消/panic 任何时序下内存上界恒等于 `pool_size × m_cost`，排队不拒绝、池关闭 fail-closed；bcrypt 不入池（决策测试固化） | `src/account/credential/password.rs` 内嵌并发测试、`src/config/tests.rs` 区间校验 |
+
+### Refresh token 重用三级处置表
+
+已轮换 refresh token 再次呈现（重放/被盗）时，`detect_reuse` 按提交 token 与存活链的血缘距离三级分类后分派处置：
+
+| 子类型 | 判定（沿 chain 回溯） | 典型形态 | 处置 |
+|-------|---------------------|---------|------|
+| `RecentPrev` | 命中存活链头记录的 `parent_token_hash`（1 跳） | 并发双发 / 网络重试 | 按 `recent_reuse_behaviour`：`TheftDetected`（默认）吊销整条 chain；`Unauthorised` 仅拒绝本次 |
+| `OrphanedBranch` | 命中更早祖先（>1 跳） | 攻击者持更早泄露副本 | 同 `RecentPrev`（按 `recent_reuse_behaviour` 分派） |
+| `StaleLineage` | 无存活血缘（无子代或后代全部已吊销） | 陈旧副本重放 | **恒按盗用吊销整条 chain**（配置不可改变） |
+
+宽限窗口（`refresh_grace_period_secs`，默认 0=关闭）：窗口内同一旧 token 命中返回既有新 token（不重旋转，容忍 in-flight 并发双刷；兑现预算 `refresh_grace_max_uses` 默认 1，**耗尽后的窗口内重放按上表处置**——默认吊销整条 chain）；并发落败方（CAS 未抢到消费权且宽限等待未命中）返回 `InvalidToken` 不吊销；窗口外按上表处置。旋转中途写失败补偿删除半成品行，原 chain 仍可用（绝不出现新旧 token 同时有效）。
 
 ## ⛔ 明确不防御的攻击
 

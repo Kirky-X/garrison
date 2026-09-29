@@ -221,6 +221,9 @@ impl GarrisonConfig {
             session_hijack_mode: SessionHijackMode::default(),
             enable_jwt_revocation: false,
             allow_stateless_jwt_no_revocation: false,
+            recent_reuse_behaviour: RecentReuseBehaviour::default(),
+            refresh_grace_period_secs: DEFAULT_REFRESH_GRACE_PERIOD_SECS,
+            refresh_grace_max_uses: DEFAULT_REFRESH_GRACE_MAX_USES,
             audit_mask_mode: AuditMaskMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
             password_hasher: PasswordHasherConfig::default(),
@@ -399,7 +402,19 @@ impl GarrisonConfig {
                 "overflow_logout_mode",
                 ConfigValue::string(DEFAULT_OVERFLOW_LOGOUT_MODE),
             )
-            .default("audit_mask_mode", ConfigValue::string("partial"));
+            .default("audit_mask_mode", ConfigValue::string("partial"))
+            .default(
+                "recent_reuse_behaviour",
+                ConfigValue::string(DEFAULT_RECENT_REUSE_BEHAVIOUR),
+            )
+            .default(
+                "refresh_grace_period_secs",
+                ConfigValue::integer(DEFAULT_REFRESH_GRACE_PERIOD_SECS),
+            )
+            .default(
+                "refresh_grace_max_uses",
+                ConfigValue::uint(DEFAULT_REFRESH_GRACE_MAX_USES as u64),
+            );
 
         #[cfg(feature = "session-extra")]
         {
@@ -546,6 +561,7 @@ impl GarrisonConfig {
         self.validate_jwt_secret()?;
         self.validate_session_config()?;
         self.validate_device_binding()?;
+        self.validate_refresh_grace()?;
         self.validate_feature_gated()?;
         // 两个 cfg 互斥定义（rate-limit-redis 启用/未启用）恰存其一，无条件调用
         self.warn_memory_rate_limit_backend();
@@ -578,6 +594,27 @@ impl GarrisonConfig {
                 "rate_limit_backend=Memory: per-process counting only; multi-instance deployments MUST switch to Redis for global limits"
             );
         }
+    }
+
+    /// Refresh token 宽限窗口参数校验（fail-closed）。
+    ///
+    /// - `refresh_grace_period_secs < 0`：负值无语义，拒绝误配
+    /// - `refresh_grace_max_uses = 0`：0 次兑现使窗口形同虚设且与「窗口内返回
+    ///   既有 token」语义矛盾，要求 ≥ 1（关闭窗口应置 `period_secs = 0`）
+    fn validate_refresh_grace(&self) -> GarrisonResult<()> {
+        if self.refresh_grace_period_secs < 0 {
+            return Err(GarrisonError::Config(format!(
+                "config-refresh-grace-period-negative::{}",
+                self.refresh_grace_period_secs
+            )));
+        }
+        if self.refresh_grace_max_uses < 1 {
+            return Err(GarrisonError::Config(format!(
+                "config-refresh-grace-max-uses-zero::{}",
+                self.refresh_grace_max_uses
+            )));
+        }
+        Ok(())
     }
 
     /// 核心字段校验：`token_style` / `timeout` / `cookie_same_site` / `jwt_algorithm`。

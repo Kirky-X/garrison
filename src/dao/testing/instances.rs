@@ -84,6 +84,30 @@ crate::dao_conformance_tests! {
     ignore: "requires DATABASE_URL",
 }
 
+/// refresh token 轮换层契约（dbnexus sqlite 实例）。
+///
+/// RefreshTokenRotation 为 SQL 直连层（非 `GarrisonDao` KV 门面），故不走
+/// `dao_conformance_tests!` 宏，而以独立测试挂同一把尺子
+/// （[`crate::dao::testing::conformance::run_refresh_token_rotation`]）；
+/// 调用方先行迁移，契约组内含失败注入（触发器）与恢复断言。
+#[cfg(all(test, feature = "db-sqlite", feature = "protocol-jwt"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_token_rotation_contract_dbnexus_sqlite() {
+    let pool = crate::dao::init_dbnexus("sqlite::memory:")
+        .await
+        .expect("init_dbnexus 应成功");
+    let migration = crate::dao::GarrisonMigration::with_base_dir(
+        pool.clone(),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations")
+            .join("sqlite"),
+    );
+    let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+    assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+    crate::dao::testing::conformance::run_refresh_token_rotation("refresh_token_sqlite", &pool)
+        .await;
+}
+
 #[cfg(feature = "alone-cache")]
 crate::dao_conformance_tests! {
     backend: alone_cache,
