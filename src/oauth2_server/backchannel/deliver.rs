@@ -231,9 +231,11 @@ impl BackChannelDeliverer {
 
 #[cfg(all(test, feature = "db-sqlite"))]
 mod tests {
-    use super::queue::STATUS_PENDING;
+    // 本模块嵌套在 deliver 内，`super` 指向 deliver 而非 backchannel；
+    // queue 是 backchannel 的子模块，须用 crate 绝对路径。
     use super::*;
     use crate::dao::repository::sqlite::test_support::setup_db;
+    use crate::oauth2_server::backchannel::queue::STATUS_PENDING;
     use wiremock::matchers::{body_string_contains, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
