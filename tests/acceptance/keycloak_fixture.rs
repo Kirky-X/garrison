@@ -4,7 +4,7 @@
 //! 真实 Keycloak 测试夹具（OAuth2/OIDC 协议验收共享）。
 //!
 //! 2026-09 起协议层验收禁止 wiremock 模拟授权服务器（用户裁定：仅单元测试
-//! 可 mock），一律打 docker-compose.e2e.yml 拉起的真实 Keycloak 26。realm
+//! 可 mock），一律打 docker/docker-compose.e2e.yml 拉起的真实 Keycloak 26。realm
 //! 数据由 `scripts/keycloak_provision.py` 幂等供给（realm=garrison，客户端
 //! `garrison-cli`，用户 `alice`）。
 //!

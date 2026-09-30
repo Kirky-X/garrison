@@ -9,7 +9,7 @@
 #   docker compose -f docker-compose.example.yml ps   # STATUS 应为 healthy
 #
 # 镜像变体：默认 debian-slim；改用 distroless 时将 dockerfile 改为
-# Dockerfile.distroless，并把下方 healthcheck 的命令改为绝对路径
+# docker/Dockerfile.distroless，并把下方 healthcheck 的命令改为绝对路径
 # /app/garrison-healthcheck（distroless 无 /usr/local/bin 符号链接）。
 
 name: garrison
@@ -17,8 +17,8 @@ name: garrison
 services:
   auth-server:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..          # 仓库根（.dockerignore 与 Cargo.lock 在根）
+      dockerfile: docker/Dockerfile
       args:
         # 仅落 OCI labels（org.opencontainers.image.version/revision），
         # garrison 无运行时版本端点，不做伪注入

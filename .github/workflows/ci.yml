@@ -435,7 +435,7 @@ jobs:
           files: ./lcov.info
 
   # === 容器镜像构建与冒烟（R03 多阶段容器化交付物） ===
-  # 验证 Dockerfile（debian-slim）与 Dockerfile.distroless 两条产物线：
+  # 验证 docker/Dockerfile（debian-slim）与 docker/Dockerfile.distroless 两条产物线：
   # 构建（cargo-chef 依赖缓存 + --locked）、compose 示例语法、容器内
   # healthcheck 探针闭环（/healthz → garrison-healthcheck → healthy）。
   # push:false + load:true——只构建不推送，发布镜像走 release 流程。
@@ -460,6 +460,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
+          file: ./docker/Dockerfile
           push: false
           load: true
           tags: garrison-auth:ci
@@ -473,7 +474,7 @@ jobs:
             GIT_SHA=${{ github.sha }}
       - name: Validate compose example
         # 与本地校验同口径：API Key 缺失时 compose 的 `:?required` 应直接报错
-        run: GARRISON_INTERNAL_API_KEY=ci docker compose -f docker-compose.example.yml config -q
+        run: GARRISON_INTERNAL_API_KEY=ci docker compose -f docker/docker-compose.example.yml config -q
       - name: Smoke test (debian-slim)
         # HEALTHCHECK --interval=30s --start-period=10s 下 healthy 最早约 t≈10-40s
         # 才出现，探活成功后立即单次断言几乎必读 starting——改为有界轮询
@@ -505,7 +506,7 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
-          file: ./Dockerfile.distroless
+          file: ./docker/Dockerfile.distroless
           push: false
           load: true
           tags: garrison-auth:ci-distroless

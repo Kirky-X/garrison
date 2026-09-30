@@ -10,7 +10,7 @@
 //! 门控的 Postgres 真实服务场景在 `--features full` 下被整体剥离，
 //! 历史上从未在任何 CI/本地面执行过。本 target 以
 //! `--no-default-features --features db-postgres` 单独编译运行，
-//! 配合 `docker-compose.e2e.yml`（15432 端口）或本地 Postgres。
+//! 配合 `docker/docker-compose.e2e.yml`（15432 端口）或本地 Postgres。
 //!
 //! 运行（scripts/e2e_matrix.sh S3 自动执行）：
 //! ```bash

@@ -5,14 +5,14 @@
 # Redis 故障演练脚本（四场景）：容器暂停恢复 / 网络断开重连 / 强制重启 /
 # Sentinel 主从故障切换（chaos profile）。
 #
-# 基于 docker-compose.e2e.yml 的现有 Redis 服务（容器名 garrison-e2e-redis，
+# 基于 docker/docker-compose.e2e.yml 的现有 Redis 服务（容器名 garrison-e2e-redis，
 # 宿主端口 16379）。每场景依次：
 #   1. 注入故障 → 确认不可用（降级行为可观测）
 #   2. 解除故障 → 验证恢复（PING + SET/GET 往返 + 金丝雀值断言）
 # 任何场景失败以 [FAIL] 标注并使脚本退出码为 1。
 #
 # 用法：
-#   docker compose -f docker-compose.e2e.yml up -d redis   # 先拉起 Redis
+#   docker compose -f docker/docker-compose.e2e.yml up -d redis   # 先拉起 Redis
 #   scripts/chaos_redis.sh                                  # 全部三场景
 #   scripts/chaos_redis.sh pause|disconnect|restart|sentinel # 单场景
 #
@@ -78,7 +78,7 @@ wait_healthy() {
 preflight() {
   log "=== Redis 故障演练预检 ==="
   command -v docker >/dev/null || { fail "docker 不可用"; exit 1; }
-  docker inspect "$CONTAINER" >/dev/null 2>&1 || { fail "容器 ${CONTAINER} 不存在（先 docker compose -f docker-compose.e2e.yml up -d redis）"; exit 1; }
+  docker inspect "$CONTAINER" >/dev/null 2>&1 || { fail "容器 ${CONTAINER} 不存在（先 docker compose -f docker/docker-compose.e2e.yml up -d redis）"; exit 1; }
   local state
   state="$(docker inspect -f '{{.State.Status}}' "$CONTAINER")"
   [[ "$state" == "running" ]] || { fail "容器状态 ${state} ≠ running"; exit 1; }
@@ -181,7 +181,7 @@ scenario_restart() {
 scenario_sentinel() {
   log "=== 场景 4/4：Redis Sentinel 主从故障切换（docker compose --profile chaos）==="
   step "拉起演练拓扑（master + replica + sentinel）"
-  docker compose -f docker-compose.e2e.yml --profile chaos up -d \
+  docker compose -f docker/docker-compose.e2e.yml --profile chaos up -d \
     redis-chaos-master redis-chaos-replica redis-chaos-sentinel >/dev/null || {
     fail "chaos profile 拉起失败"
     return

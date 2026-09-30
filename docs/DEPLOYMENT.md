@@ -188,8 +188,8 @@ garrison = { version = "0.9.0-rc.2", features = ["tls", "auth-server"] }
 
 | 变体 | Dockerfile | 运行底座 | 适用场景 |
 |------|-----------|---------|---------|
-| **debian-slim** | `Dockerfile` | `debian:bookworm-slim` | 默认推荐：可 shell 调试，自带 `ca-certificates` |
-| **distroless** | `Dockerfile.distroless` | `gcr.io/distroless/cc-debian12:nonroot` | 最小攻击面：无 shell / 包管理器 |
+| **debian-slim** | `docker/Dockerfile` | `debian:bookworm-slim` | 默认推荐：可 shell 调试，自带 `ca-certificates` |
+| **distroless** | `docker/Dockerfile.distroless` | `gcr.io/distroless/cc-debian12:nonroot` | 最小攻击面：无 shell / 包管理器 |
 
 两个变体一致的行为：
 
@@ -207,7 +207,7 @@ docker build \
   -t garrison-auth:local .
 
 # distroless 变体
-docker build -f Dockerfile.distroless \
+docker build -f docker/Dockerfile.distroless \
   --build-arg VERSION=0.9.0-rc.2 \
   --build-arg GIT_SHA=$(git rev-parse HEAD) \
   -t garrison-auth:local-distroless .
@@ -233,12 +233,12 @@ docker build -f Dockerfile.distroless \
 
 ### Docker Compose 示例
 
-仓库根目录的 `docker-compose.example.yml` 是单机部署的最小可运行示例（本地构建 + fail-loud 的 API Key 校验 + healthcheck + 可选 Redis 注释块）：
+`docker/docker-compose.example.yml` 是单机部署的最小可运行示例（本地构建 + fail-loud 的 API Key 校验 + healthcheck + 可选 Redis 注释块）：
 
 ```bash
 export GARRISON_INTERNAL_API_KEY='<强随机密钥>'
-docker compose -f docker-compose.example.yml up -d
-docker compose -f docker-compose.example.yml ps   # STATUS 应为 healthy
+docker compose -f docker/docker-compose.example.yml up -d
+docker compose -f docker/docker-compose.example.yml ps   # STATUS 应为 healthy
 ```
 
 > ⚠️ 换用 distroless 变体时，compose 的 healthcheck 命令需改为绝对路径 `/app/garrison-healthcheck`（distroless 无 `/usr/local/bin` 符号链接，PATH 亦不含 `/app`）。协议联调用的外部依赖编排见 `docker-compose.e2e.yml`。

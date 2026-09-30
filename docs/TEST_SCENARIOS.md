@@ -329,7 +329,7 @@ bash scripts/e2e_matrix.sh --skip-bench --skip-e2e-http
 
 # 调试：保留中间件环境
 bash scripts/e2e_matrix.sh --keep-env
-docker compose -f docker-compose.e2e.yml down -v --remove-orphans   # 手动清理
+docker compose -f docker/docker-compose.e2e.yml down -v --remove-orphans   # 手动清理
 ```
 
 一键 HTTP E2E（外部 18080 / 内部 18081，auth_server_serve 进程级黑盒冒烟）：

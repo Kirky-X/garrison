@@ -9,7 +9,7 @@
 //!
 //! # 真实授权服务器（2026-09 起，用户裁定：验收层禁止 mock）
 //!
-//! 全部场景打 docker-compose.e2e.yml 拉起的真实 Keycloak 26（realm=garrison，
+//! 全部场景打 docker/docker-compose.e2e.yml 拉起的真实 Keycloak 26（realm=garrison，
 //! scripts/keycloak_provision.py 幂等供给），授权码经 tests/acceptance/
 //! keycloak_fixture.rs 驱动真实登录表单流获取。Keycloak 不可达时按
 //! environment.rs 门控约定 `[SKIP]`。原 wiremock 模拟面（响应体断言 /

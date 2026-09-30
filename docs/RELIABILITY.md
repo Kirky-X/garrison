@@ -24,10 +24,10 @@ docker userland proxy 代答，脚本统一以**协议级 PING 响应**判定可
 
 ### 2.1 前置条件
 
-- Docker 可用，`docker-compose.e2e.yml` 的 Redis 服务已拉起：
+- Docker 可用，`docker/docker-compose.e2e.yml` 的 Redis 服务已拉起：
 
   ```bash
-  docker compose -f docker-compose.e2e.yml up -d redis
+  docker compose -f docker/docker-compose.e2e.yml up -d redis
   ```
 
 - 无宿主 redis-cli 依赖：容器内探测经 `docker exec`，宿主侧探测用 bash
@@ -92,7 +92,7 @@ scripts/chaos_redis.sh sentinel   # 仅场景 4（自动拉起 chaos profile 演
 
 ## 4. 环境适配
 
-脚本默认面向 `docker-compose.e2e.yml` 的单机 Redis。接入客户环境时：
+脚本默认面向 `docker/docker-compose.e2e.yml` 的单机 Redis。接入客户环境时：
 
 1. `GARRISON_CHAOS_*` 环境变量指向目标实例（容器编排环境需将
    `docker exec` / `network` 操作替换为对应编排平台的等价指令）；

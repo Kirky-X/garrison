@@ -32,7 +32,7 @@ export RUST_BACKTRACE=1
 # CI Linux 同款：规避 sqlite 文件库 SQLITE_READONLY 偶发（见 ci.yml test job）
 export GARRISON_TEST_SQLITE_MEMORY=1
 
-COMPOSE="docker compose -f docker-compose.e2e.yml"
+COMPOSE="docker compose -f docker/docker-compose.e2e.yml"
 LOG_DIR="${REPO_ROOT}/logs/e2e_matrix"
 mkdir -p "${LOG_DIR}"
 
