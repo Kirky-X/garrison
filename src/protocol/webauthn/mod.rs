@@ -40,9 +40,10 @@ pub mod credential;
 pub mod service;
 
 // 仪式测试经 sqlite 真实库承载凭据/challenge 持久化，production 组合
-// （无 db-sqlite）下不编译
+// （无 db-sqlite）下不编译；pub(crate) 供 stp/mfa 的 provider 全流程
+// 穿透测试复用同一套录制向量装置（避免向量复制漂移）
 #[cfg(all(test, feature = "db-sqlite"))]
-mod tests;
+pub(crate) mod tests;
 
 use serde::{Deserialize, Serialize};
 

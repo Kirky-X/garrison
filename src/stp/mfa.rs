@@ -743,6 +743,68 @@ mod webauthn_provider_tests {
             "未注册校验函数应 fail-closed，实际: {result:?}"
         );
     }
+
+    /// 全流程穿透：注册 factor（真实 service，注册向量绑定凭据）→
+    /// provider.process 提交真实认证向量 assertion →
+    /// `Verified{webauthn, aal:2}`。
+    ///
+    /// 既有覆盖分摊：fail-closed（无注册表）见上方用例；仪式分支语义
+    /// （重放/克隆/counter 推进/backup flags 落库）见
+    /// protocol::webauthn::tests——本用例补齐「装配注册 → 真实 assertion
+    /// 穿透 process」的单体闭环（T044「WebAuthn factor 全流程」）。
+    #[cfg(all(test, feature = "db-sqlite"))]
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial_test::serial]
+    async fn process_with_real_assertion_completes_full_flow() {
+        use crate::dao::repository::WebauthnCredentialRepository;
+        use crate::protocol::webauthn::tests::{
+            domain_to_credential, seed_authentication, service_with_bound_vector_credential,
+            test_config, AUTH_VECTOR_JSON,
+        };
+
+        // 注册表为进程级共享状态：先重置保证前置条件自管（serial 串行化）
+        webauthn_factor::reset_webauthn_factor_for_tests();
+
+        let (service, repo, store, bound) =
+            service_with_bound_vector_credential(test_config()).await;
+        webauthn_factor::register_webauthn_factor(Arc::new(
+            webauthn_factor::WebauthnFactorVerifier::new(Arc::new(service)),
+        ))
+        .expect("首次注册 factor 应成功");
+
+        // 认证仪式态：植入与认证向量 challenge 一致的 PasskeyAuthentication
+        let stored_cred = repo
+            .find_by_credential_id(0, &bound.credential_id)
+            .await
+            .expect("查询应成功")
+            .expect("凭据应存在");
+        let domain =
+            crate::protocol::webauthn::credential::WebauthnCredential::from_row(stored_cred)
+                .expect("行重建应成功");
+        seed_authentication(&store, 0, "user-1", domain_to_credential(&domain)).await;
+
+        // 仪式锁定的用户绑定 = "user-1"，与会话主体一致（跨主体拒绝分支
+        // 由 subject-mismatch 单测覆盖，此处走放行路径）
+        let provider = WebauthnRequiredActionProvider;
+        let ctx = RequiredActionContext {
+            login_id: "user-1".to_string(),
+            auth_time: None,
+            ledger_max_aal: 1,
+            now: 1_700_000_000,
+        };
+        let outcome = provider
+            .process(&ctx, AUTH_VECTOR_JSON, &crate::dao::InMemoryDao::new())
+            .await
+            .expect("真实 assertion 应穿透 process 全流程");
+        assert_eq!(
+            outcome,
+            ProcessOutcome::Verified {
+                method: "webauthn",
+                aal: 2
+            },
+            "真实 assertion 应产出 Verified{{webauthn, aal:2}}，实际: {outcome:?}"
+        );
+    }
 }
 
 // ============================================================================

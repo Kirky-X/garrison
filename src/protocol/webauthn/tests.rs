@@ -44,7 +44,7 @@ fn test_store() -> ChallengeStore {
 
 /// 构造测试用 WebauthnService（InMemoryDao + sqlite 凭据仓库在仪式测试中
 /// 由 `test_service_with` 注入）。
-fn test_config() -> WebauthnConfig {
+pub(crate) fn test_config() -> WebauthnConfig {
     WebauthnConfig {
         issuer: ISSUER.to_string(),
         challenge_ttl_secs: 120,
@@ -100,8 +100,8 @@ const REG_VECTOR_JSON: &str = r#"{
 }"#;
 
 /// 认证向量（与注册向量同凭据）：flags=0x05 UP|UV，BE/BS=0，counter=1
-/// （注册 0 → 断言 1，单调推进）。
-const AUTH_VECTOR_JSON: &str = r#"{
+/// （注册 0 → 断言 1，单调推进）。pub(crate) 供 stp/mfa 全流程穿透测试复用。
+pub(crate) const AUTH_VECTOR_JSON: &str = r#"{
   "id": "KwlEDOBCBc9P1YU3NWihYLCeY-I9KGMhPap9vwHbVoI",
   "rawId": "KwlEDOBCBc9P1YU3NWihYLCeY-I9KGMhPap9vwHbVoI",
   "response": {
@@ -187,7 +187,7 @@ async fn seed_registration(
 }
 
 /// 以与 start_authentication 相同的 SETNX 路径植入与认证向量匹配的仪式态。
-async fn seed_authentication(
+pub(crate) async fn seed_authentication(
     store: &ChallengeStore,
     tenant_id: i64,
     user_id: &str,
@@ -357,7 +357,7 @@ async fn challenge_store_conflict_is_explicit_error() {
 /// 装置：完成「注册向量 → 凭据落库」的真实路径，返回 (service, repo, store,
 /// 已绑定凭据)。
 #[cfg(feature = "db-sqlite")]
-async fn service_with_bound_vector_credential(
+pub(crate) async fn service_with_bound_vector_credential(
     config: WebauthnConfig,
 ) -> (
     WebauthnService,
@@ -422,7 +422,7 @@ fn test_only_credential_placeholder() -> Credential {
 
 /// 从领域模型取协议态副本（植入认证仪式态用）。
 #[cfg(feature = "db-sqlite")]
-fn domain_to_credential(domain: &WebauthnCredential) -> Credential {
+pub(crate) fn domain_to_credential(domain: &WebauthnCredential) -> Credential {
     domain.protocol_credential().clone()
 }
 
