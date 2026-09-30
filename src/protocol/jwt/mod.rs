@@ -11,6 +11,9 @@
 /// RefreshToken Rotation 子模块。
 pub mod refresh;
 
+/// 多 kid 密钥库子模块（KeyStatus 三态 + JwkSet 三视图）。
+pub mod keystore;
+
 /// JwtHandler 实现（签发/校验/刷新）。
 mod handler;
 
@@ -20,6 +23,9 @@ mod tests;
 use handler::KeyMaterial;
 
 pub use handler::JwkPublicKey;
+pub use keystore::{
+    kid_for, rfc7638_kid, JwkEntryView, JwkSet, KeyRotationOutcome, KeySnapshot, KeyStatus,
+};
 
 use jsonwebtoken::Algorithm;
 use serde::{Deserialize, Serialize};

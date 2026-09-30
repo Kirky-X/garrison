@@ -25,6 +25,7 @@ use serde_json::json;
 
 use crate::context::GarrisonPrincipal;
 use crate::dao::GarrisonDao;
+use crate::error::{GarrisonError, GarrisonResult};
 use crate::oauth2_server::authorize::{AuthorizeHandler, AuthorizeRequest, AuthorizeResponse};
 use crate::oauth2_server::client::OAuth2ClientStore;
 use crate::oauth2_server::introspect::{IntrospectHandler, IntrospectRequest};
@@ -45,9 +46,53 @@ pub struct OAuth2State {
     pub revoke_handler: Arc<RevokeHandler>,
     /// Token 内省 handler（/oauth2/introspect，RFC 7662）。
     pub introspect_handler: Arc<IntrospectHandler>,
-    /// JWKS 导出源：`Some((jwt_algorithm, private_key_pem))` 时
-    /// /oauth2/jwks.json 可用；None 时端点 404（fail-closed，不暴露空集合）。
+    /// 客户端存储（discovery 元数据 `scopes_supported` 派生源）。
+    pub client_store: Arc<dyn OAuth2ClientStore>,
+    /// JWKS 导出源（单钥静态形态）：`Some((jwt_algorithm, private_key_pem))` 时
+    /// /oauth2/jwks.json 可用；None 且未注入密钥库时端点 404（fail-closed）。
     pub jwks_source: Option<(String, String)>,
+    /// 签发者标识（discovery 元数据 `issuer`；未配置时 discovery 端点 404）。
+    pub issuer: Option<String>,
+    /// 多 kid JWKS 密钥库账本（注入后 JWKS 端点优先从库发布，单钥 `jwks_source`
+    /// 退居后备）。
+    pub jwks_keystore: Option<Arc<crate::oauth2_server::jwks::JwksKeystore>>,
+    /// OIDC discovery（`/.well-known/openid-configuration`）开关。
+    ///
+    /// 默认跟随 `protocol-oidc` Cargo feature；可用
+    /// `with_oidc_discovery_enabled` 运行时覆写（部署按需关闭）。
+    pub oidc_discovery_enabled: bool,
+    /// password grant 是否宣告进 discovery 元数据 `grant_types_supported`。
+    ///
+    /// TokenHandler 的 password verifier 为运行时注入（无编译期 feature 可查），
+    /// 由装配方在注入 verifier 时同步置位，保证元数据与实际能力一致。
+    pub password_grant_advertised: bool,
+    /// JWKS 退役保留时长（秒）：Passive 钥超期转 Disabled 并移出 JWKS。
+    ///
+    /// 同时决定 JWKS 端点 `Cache-Control: max-age`（取一半，缩短客户端重取
+    /// 间隔以尽早感知退役；部署应保证 retention ≥ 2× access token TTL，使
+    /// 退役时该钥签发的 token 必已过期）。
+    pub jwks_retention_secs: u64,
+    /// discovery `scopes_supported` 派生缓存：免每请求全客户端 keys 扫描 +
+    /// N 次串行 DAO 读（discovery 未认证，可被放大为服务端 DAO 压力）。
+    /// TTL 300s 与 discovery 响应 Cache-Control 同周期；客户端增删后元数据
+    /// 最迟 300s 刷新（元数据低频变更，短暂陈旧可接受）。
+    #[doc(hidden)]
+    pub scopes_cache:
+        tokio::sync::RwLock<Option<(std::time::Instant, std::sync::Arc<Vec<String>>)>>,
+    /// JWKS 发布文档缓存：键 = (状态文档内容哈希, now/60 时间桶, retention)。
+    /// 状态不变时免每请求 N 次 PEM 解析重建（无界增长面，未认证端点可被
+    /// 放大为 CPU DoS）；60s 时间桶界保证 retention 退役视图最多陈旧 1 分钟。
+    #[doc(hidden)]
+    pub jwks_doc_cache: tokio::sync::Mutex<Option<JwksDocCacheEntry>>,
+}
+
+/// JWKS 发布文档缓存条目（见 [`OAuth2State::jwks_doc_cache`]）。
+#[doc(hidden)]
+pub struct JwksDocCacheEntry {
+    pub state_hash: u64,
+    pub now_bucket: i64,
+    pub retention_secs: u64,
+    pub doc: std::sync::Arc<crate::oauth2_server::jwks::JwkSet>,
 }
 
 impl OAuth2State {
@@ -71,7 +116,8 @@ impl OAuth2State {
             Arc::new(TokenRateLimiter::new()),
         ));
         let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
-        let introspect_handler = Arc::new(IntrospectHandler::new(store, token_handler.clone()));
+        let introspect_handler =
+            Arc::new(IntrospectHandler::new(store.clone(), token_handler.clone()));
         // 退化路径结构性告警（构造完成时检测一次）：refresh grant 可用但
         // RefreshTokenRotation 未注入 → refresh 走 DAO 退化路径，reuse detection
         // 不可用（盗用 token 重放不会触发链式撤销）。生产部署应通过
@@ -90,7 +136,15 @@ impl OAuth2State {
             token_handler,
             revoke_handler,
             introspect_handler,
+            client_store: store,
             jwks_source: None,
+            issuer: None,
+            jwks_keystore: None,
+            oidc_discovery_enabled: cfg!(feature = "protocol-oidc"),
+            password_grant_advertised: false,
+            jwks_retention_secs: crate::config::DEFAULT_JWKS_RETENTION_SECS,
+            scopes_cache: tokio::sync::RwLock::new(None),
+            jwks_doc_cache: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -103,27 +157,310 @@ impl OAuth2State {
         self.jwks_source = Some((jwt_algorithm.to_string(), private_key_pem.to_string()));
         self
     }
+
+    /// 设置 discovery 元数据 `issuer`（同时决定各端点绝对 URL 前缀）。
+    pub fn with_issuer(mut self, issuer: impl Into<String>) -> Self {
+        self.issuer = Some(issuer.into());
+        self
+    }
+
+    /// 注入多 kid JWKS 密钥库账本（轮换 API 见
+    /// [`JwksKeystore`](crate::oauth2_server::jwks::JwksKeystore)）。
+    pub fn with_jwks_keystore(
+        mut self,
+        keystore: Arc<crate::oauth2_server::jwks::JwksKeystore>,
+    ) -> Self {
+        self.jwks_keystore = Some(keystore);
+        self
+    }
+
+    /// 运行时覆写 OIDC discovery 开关（默认跟随 `protocol-oidc` feature）。
+    pub fn with_oidc_discovery_enabled(mut self, enabled: bool) -> Self {
+        self.oidc_discovery_enabled = enabled;
+        self
+    }
+
+    /// 宣告 password grant 进 discovery 元数据（装配方注入 password verifier
+    /// 时同步置位，保持元数据与实际能力一致）。
+    pub fn with_password_grant_advertised(mut self, advertised: bool) -> Self {
+        self.password_grant_advertised = advertised;
+        self
+    }
+
+    /// 覆写 JWKS 退役保留时长（默认 2× access token TTL）。
+    /// # Panics-free 误配防护
+    ///
+    /// `retention_secs = 0` 等价于 Passive 钥即刻退役（发布面清空、验证视图
+    /// 失衡），回退默认值并 warn（配置层 `jwks_retention_secs` 校验同语义）。
+    pub fn with_jwks_retention_secs(mut self, retention_secs: u64) -> Self {
+        if retention_secs == 0 {
+            tracing::warn!(
+                "with_jwks_retention_secs(0) would retire Passive keys immediately; falling back to default {}s",
+                crate::config::DEFAULT_JWKS_RETENTION_SECS
+            );
+            self.jwks_retention_secs = crate::config::DEFAULT_JWKS_RETENTION_SECS;
+            return self;
+        }
+        self.jwks_retention_secs = retention_secs;
+        self
+    }
 }
 
-/// 构建外网 OAuth2 路由（authorize/token/revoke/jwks）。
+/// 构建外网 OAuth2 路由（authorize/token/revoke/jwks/discovery）。
 pub fn oauth2_external_router(state: Arc<OAuth2State>) -> Router {
     Router::new()
         .route("/oauth2/authorize", get(authorize_endpoint))
         .route("/oauth2/token", post(token_endpoint))
         .route("/oauth2/revoke", post(revoke_endpoint))
         .route("/oauth2/jwks.json", get(jwks_endpoint))
+        .route(
+            "/.well-known/openid-configuration",
+            get(openid_configuration_endpoint),
+        )
+        .route(
+            "/.well-known/oauth-authorization-server",
+            get(oauth_authorization_server_endpoint),
+        )
         .with_state(state)
+}
+
+/// discovery 端点响应的 Cache-Control（元数据变更频率低，客户端可缓存 5 分钟）。
+const DISCOVERY_CACHE_CONTROL: &str = "public, max-age=300";
+
+/// GET /.well-known/openid-configuration — OIDC Discovery 1.0 provider metadata。
+///
+/// fail-closed：`protocol-oidc` 关闭（feature 或运行时旗标）或 issuer 未配置时 404。
+async fn openid_configuration_endpoint(State(state): State<Arc<OAuth2State>>) -> Response {
+    if !state.oidc_discovery_enabled {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    discovery_response(&state, DiscoveryFlavor::Oidc).await
+}
+
+/// GET /.well-known/oauth-authorization-server — RFC 8414 authorization server
+/// metadata（OAuth2 面，与 OIDC 开关解耦）。
+///
+/// fail-closed：issuer 未配置时 404。
+async fn oauth_authorization_server_endpoint(State(state): State<Arc<OAuth2State>>) -> Response {
+    discovery_response(&state, DiscoveryFlavor::Rfc8414).await
+}
+
+/// discovery 元数据风味：RFC 8414 基础字段 + OIDC 附加字段。
+enum DiscoveryFlavor {
+    /// RFC 8414 授权服务器元数据。
+    Rfc8414,
+    /// OIDC Discovery 1.0（在 RFC 8414 基础上补 `subject_types_supported`）。
+    Oidc,
+}
+
+/// 构建 discovery 元数据并产出 200 响应；issuer 未配置返回 404（fail-closed）。
+///
+/// 元数据从实际能力派生（非静态模板）：
+/// - `grant_types_supported`：authorization_code/refresh_token/client_credentials
+///   为 token 端点既有能力；password 仅在装配方宣告后出现；
+/// - `scopes_supported`：注册客户端 scope 的并集（运行时查询派生）；
+/// - `jwks_uri` / `jwks_algorithms`：仅在实际发布 JWKS 时出现，算法取发布钥集合
+///   （防死链误导客户端）；
+/// - `code_challenge_methods_supported`：PKCE 强制开启 → 仅 S256。
+async fn discovery_response(state: &OAuth2State, flavor: DiscoveryFlavor) -> Response {
+    let Some(issuer) = state.issuer.as_deref() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let mut grant_types = vec![
+        "authorization_code".to_string(),
+        "refresh_token".to_string(),
+        "client_credentials".to_string(),
+    ];
+    if state.password_grant_advertised {
+        grant_types.push("password".to_string());
+    }
+    // scopes 派生带 300s 进程内缓存：discovery 未认证，list() 是
+    // 全键空间扫描 + 逐客户端串行 DAO 读，放任每请求执行可被放大为
+    // 服务端 DAO 压力。TTL 与 discovery 响应 Cache-Control 同周期。
+    let scopes_arc = {
+        let cached = state.scopes_cache.read().await.clone();
+        match cached {
+            Some((at, scopes)) if at.elapsed() < std::time::Duration::from_secs(300) => scopes,
+            _ => match derive_scopes_supported(state).await {
+                Ok(scopes) => scopes,
+                Err(resp) => return resp,
+            },
+        }
+    };
+    let mut scopes = (*scopes_arc).clone();
+    if scopes.is_empty() {
+        scopes.push("openid".to_string());
+    }
+    let jwks_algorithms = match published_jwk_algorithms(state).await {
+        Ok(algs) => algs,
+        Err(e) => {
+            // 与 scopes 同语义：派生失败不静默降级（错误元数据比无元数据更危险——
+            // 丢失 jwks_uri 的元数据会让 RP 无法解析签名钥）
+            tracing::error!("discovery metadata jwks algorithms derivation failed: {e}");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        },
+    };
+    let mut metadata = serde_json::json!({
+        "issuer": issuer,
+        "authorization_endpoint": format!("{issuer}/oauth2/authorize"),
+        "token_endpoint": format!("{issuer}/oauth2/token"),
+        "revocation_endpoint": format!("{issuer}/oauth2/revoke"),
+        // introspection 端点仅挂内网路由，不进外网 discovery（防死链与内网拓扑泄露）
+        "grant_types_supported": grant_types,
+        "response_types_supported": ["code"],
+        "scopes_supported": scopes,
+        "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"],
+        "code_challenge_methods_supported": ["S256"],
+    });
+    if let Some(algs) = jwks_algorithms {
+        metadata["jwks_uri"] = serde_json::Value::String(format!("{issuer}/oauth2/jwks.json"));
+        metadata["jwks_algorithms"] =
+            serde_json::Value::Array(algs.into_iter().map(serde_json::Value::String).collect());
+    }
+    if matches!(flavor, DiscoveryFlavor::Oidc) {
+        metadata["subject_types_supported"] = serde_json::json!(["public"]);
+    }
+    (
+        StatusCode::OK,
+        [(axum::http::header::CACHE_CONTROL, DISCOVERY_CACHE_CONTROL)],
+        axum::Json(metadata),
+    )
+        .into_response()
+}
+
+/// `scopes_supported` 派生（注册客户端 scope 并集）并写入 300s 进程内缓存。
+async fn derive_scopes_supported(
+    state: &OAuth2State,
+) -> Result<std::sync::Arc<Vec<String>>, Response> {
+    match state.client_store.list().await {
+        Ok(clients) => {
+            let mut scopes: Vec<String> = clients.into_iter().flat_map(|c| c.scopes).collect();
+            scopes.sort();
+            scopes.dedup();
+            let scopes = std::sync::Arc::new(scopes);
+            let mut cache = state.scopes_cache.write().await;
+            *cache = Some((std::time::Instant::now(), std::sync::Arc::clone(&scopes)));
+            Ok(scopes)
+        },
+        Err(e) => {
+            // 派生失败不静默降级：500 显性暴露（错误元数据比无元数据更危险）；
+            // 失败不写缓存，下一请求重试派生
+            tracing::error!("discovery metadata scopes derivation failed: {e}");
+            Err(StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        },
+    }
+}
+
+async fn published_jwk_algorithms(state: &OAuth2State) -> GarrisonResult<Option<Vec<String>>> {
+    if let Some(keystore) = &state.jwks_keystore {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| GarrisonError::Internal(format!("jwks-clock-invalid::{e}")))?;
+        let doc = keystore_jwks_document_cached(state, keystore, now.as_secs() as i64).await?;
+        let Some(doc) = doc else {
+            return Ok(None);
+        };
+        if doc.keys.is_empty() {
+            return Ok(None);
+        }
+        let mut algs: Vec<String> = doc.keys.iter().map(|k| k.alg.clone()).collect();
+        algs.sort();
+        algs.dedup();
+        return Ok(Some(algs));
+    }
+    Ok(state
+        .jwks_source
+        .as_ref()
+        .map(|(algorithm, _)| vec![algorithm.clone()]))
+}
+
+/// 状态文档内容哈希（缓存键材料）。
+fn state_content_hash(raw: Option<&str>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    raw.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// JWKS 发布文档获取（keystore 形态，带 60s 时间桶缓存）。
+///
+/// 缓存键 = (状态文档内容哈希, now/60, retention)：状态不变时免每请求
+/// N 次 PEM 解析重建（Disabled 条目只增不减，重建成本随轮换历史线性
+/// 增长，未认证端点可被放大为 CPU DoS）；时间桶界保证 retention 退役
+/// 视图最多陈旧 1 分钟（配合 retention ≥ 2× access TTL 部署约定，退役
+/// 钥签发的 token 在陈旧窗口内必已过期）。
+async fn keystore_jwks_document_cached(
+    state: &OAuth2State,
+    keystore: &crate::oauth2_server::jwks::JwksKeystore,
+    now: i64,
+) -> GarrisonResult<Option<std::sync::Arc<crate::oauth2_server::jwks::JwkSet>>> {
+    let now_bucket = now.div_euclid(60);
+    let raw = keystore.state_raw().await?;
+    let hash = state_content_hash(raw.as_deref());
+    {
+        let cache = state.jwks_doc_cache.lock().await;
+        if let Some(entry) = cache.as_ref() {
+            if entry.state_hash == hash
+                && entry.now_bucket == now_bucket
+                && entry.retention_secs == state.jwks_retention_secs
+            {
+                return Ok(Some(std::sync::Arc::clone(&entry.doc)));
+            }
+        }
+    }
+    let doc = std::sync::Arc::new(
+        keystore
+            .jwks_document(now, state.jwks_retention_secs)
+            .await?,
+    );
+    {
+        let mut cache = state.jwks_doc_cache.lock().await;
+        *cache = Some(JwksDocCacheEntry {
+            state_hash: hash,
+            now_bucket,
+            retention_secs: state.jwks_retention_secs,
+            doc: std::sync::Arc::clone(&doc),
+        });
+    }
+    Ok(Some(doc))
 }
 
 /// GET /oauth2/jwks.json — 导出非对称签名公钥 JWK Set。
 ///
-/// fail-closed：未配置非对称签名密钥时 404（不暴露空集合/对称密钥信息）。
+/// 密钥库注入时从库发布（多 kid：Active ∪ Passive，retention 到期键即时移出）；
+/// 否则退回单钥 `jwks_source`。fail-closed：两者皆未配置或发布集为空时 404
+/// （不暴露空集合/对称密钥信息）。
+///
+/// `Cache-Control: max-age` 按 `jwks_retention_secs` 动态计算（retention 的一半，
+/// 保证客户端在最早可能退役前重取 JWKS）。
 async fn jwks_endpoint(State(state): State<Arc<OAuth2State>>) -> Response {
+    let max_age = jwks_cache_max_age_secs(state.jwks_retention_secs);
+    let cache_control = format!("public, max-age={max_age}");
+    if let Some(keystore) = &state.jwks_keystore {
+        let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs() as i64,
+            Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        };
+        return match keystore_jwks_document_cached(&state, keystore, now).await {
+            Ok(Some(doc)) if !doc.keys.is_empty() => (
+                StatusCode::OK,
+                [(axum::http::header::CACHE_CONTROL, cache_control)],
+                axum::Json((*doc).clone()),
+            )
+                .into_response(),
+            Ok(_) => StatusCode::NOT_FOUND.into_response(),
+            Err(e) => {
+                // 状态损坏不静默：记日志后按 fail-closed 404（不暴露损坏细节）
+                tracing::error!("jwks keystore document build failed: {e}");
+                StatusCode::NOT_FOUND.into_response()
+            },
+        };
+    }
     match &state.jwks_source {
         Some((algorithm, pem)) => match crate::oauth2_server::jwks::build_jwk_set(algorithm, pem) {
             Ok(jwk_set) => (
                 StatusCode::OK,
-                [(axum::http::header::CACHE_CONTROL, "public, max-age=300")],
+                [(axum::http::header::CACHE_CONTROL, cache_control)],
                 axum::Json(jwk_set),
             )
                 .into_response(),
@@ -131,6 +468,15 @@ async fn jwks_endpoint(State(state): State<Arc<OAuth2State>>) -> Response {
         },
         None => StatusCode::NOT_FOUND.into_response(),
     }
+}
+
+/// JWKS 客户端缓存时长（秒）= retention 的一半（下限 1）。
+///
+/// 取一半是工程折中而非精确安全界：客户端最迟每 retention/2 重取，配合
+/// 部署侧保证 `retention ≥ 2× access token TTL`，退役钥签发的 token 在
+/// 任何缓存窗口内均已过期。
+fn jwks_cache_max_age_secs(retention_secs: u64) -> u64 {
+    (retention_secs / 2).max(1)
 }
 
 /// 构建内网 OAuth2 路由（introspect）。
@@ -904,7 +1250,15 @@ mod tests {
             token_handler,
             revoke_handler,
             introspect_handler,
+            client_store: store.clone(),
             jwks_source: None,
+            issuer: None,
+            jwks_keystore: None,
+            oidc_discovery_enabled: false,
+            password_grant_advertised: false,
+            scopes_cache: tokio::sync::RwLock::new(None),
+            jwks_doc_cache: tokio::sync::Mutex::new(None),
+            jwks_retention_secs: crate::config::DEFAULT_JWKS_RETENTION_SECS,
         });
 
         store.create(make_test_client("rl-429")).await.unwrap();
@@ -1193,6 +1547,37 @@ dzWfBsm+KAfTJuqbV7VnJL3G
 -----END PRIVATE KEY-----
 ";
 
+    // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+    const JWKS_TEST_RSA_PEM_ALT: &str = "-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC751S0Pf/oKnCq
+AvE+iD2TB3fvkUXTiHfGgVHXfuFrVnam2DV9rPAWtzj78N/n4SzwIojGGzPFZtpd
+Kw+VMWOEf0y5kTwOYEIAGJel6MPZBm8r2BqkgiDUw4usrI9BCRy9zRuDighMWoo0
+r23RtOglWjwh6YbEXkg+dlaaFzuwZbtd7zOokVcd7MlXV51PRGT3HHbLekMJqKjM
++L+cN7NSoR6CsWHSqx8HlEJ8VQyNizsO1wKFo6gUSzGPeMH1uNMVxguI2OOzM8NS
+8iEJmvMtVbcUxdYgIgFCol8ibBXYBsRQ02/arulEts3DoNJ/dOqt3uWaHv/+SVpc
+CjdCgxdXAgMBAAECggEABSHWYG3pFXBDT4FxEWIrPF7R2cs/+v0ZOGTD1XzzrzjX
+WMtC+sHEdPpgJhF4LB8sWQq4baDEkzmx8SWB8XM94pqPf+oFl+btJo+FZNSstLrG
+Qo5Oe/vJ5cXJhNfZuc8D5/M4MymL/HnkmHfKKhYk2RBT4CE+uxJQKtSUnPTRfonc
+v74IXU9mgrEWyhRnRLDCQTDS+MiFx+ca+Q2j3A3VXb6mLngi7+MlCTHesOrNi/h4
+Krh6gXQDE3xw4oWlSy59zRXswrThFeNePbtN5suqHrGfhAJqvcVTuJRNPBL1OhYL
+z9Fw+i5ypa0IFiiWmzIdTf6Z8fWAIRa16Gi7HofgYQKBgQDyasNqMmH2SJZ0X5Sk
+RNsrHXlCVHdofP7B/w1mRXdXQN7bEdt+TkgHBOqO+005kHqcpjnm8GfKwaTVo9UK
+cpYYDg11mBTULFn8BFKMH+MEzYTjKrHjA62DlM9PfdmKjPDXqJceWG1bp6Z2d+Rd
+U0TfkTQLKmWihLYTUn2+c/gIWQKBgQDGbqAv9KU/7SKiUNVfSMMw/YYBm2jjEdQb
+++IQuugzg0/cTwm+5sVbdzwqqt0jihO+2KWDbEHLqRndEeRjA5hvk+qp316MaeV8
+x/dySeNG/lCnobiY+9ZjF14Zmaz1jGe+oAwmqGF4beoL5hkF77tFKUQtBRzkZgFC
+A7yXzdQnLwKBgQCUu/Cd7b+xLiQxzpsSlrSqJXFKwyxoTZi5SlXcU+6++CxD2RcE
+zd7ff6Kyi3l8QisYhdys1v+3pUwPUG/b8yYoKCcV6XOOIpArUjObiczuG3LXNlDi
+alVBkEIKEbsxiPwUNXpSwgqG27wEn9bbc8WkLiDyYNbu+eIExO4ltl2OMQKBgHYk
+KTVEGBruab9wFwmq/aOuXdmZGKKQ29NpbRf+3/7DgImveSLyrLAfVnAk2JKvQ8BN
+poWPr8C8xkxLucmFu306+Oz4s4cwCVT4jYe7HBkJkyWq8IgM8ICAyiK9zy9G0AG7
+smBVwep8rms1LNLO/5VW02NmduQ5IyiVpvROtLA7AoGBALycmaxr5wjzgTiw0oyh
+/SSBunDWL23NnXrjjnLZ9BsmglkQUvhtkaA9AquuGJA4RiVxznoQQ6iXgZV80+Ui
+j3MTO7dWRoAlfHi/NMU1BNA7zXLA2xPP/ekmHfb3PwCt5AhZTl43dEL+8V3xNlxp
+HxmxsMlpmvvbydfhRl3OoqMR
+-----END PRIVATE KEY-----
+    ";
+
     fn make_state() -> OAuth2State {
         let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
         let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
@@ -1214,6 +1599,157 @@ dzWfBsm+KAfTJuqbV7VnJL3G
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// 多 kid 密钥库：JWKS 输出含 Active ∪ Passive 两把钥。
+    #[tokio::test]
+    async fn jwks_endpoint_serves_keystore_with_multiple_kids() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let keystore = Arc::new(crate::oauth2_server::jwks::JwksKeystore::new(dao.clone()));
+        // 时间戳取真实时钟相对值（端点按当前时刻应用 retention，合成小时间戳
+        // 会被判超期）。旧钥 5000s 前轮换、retention 10_000 → 仍 Passive 在发布面。
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        keystore
+            .rotate("RS256", JWKS_TEST_RSA_PEM, now - 5_000, 10_000)
+            .await
+            .unwrap();
+        keystore
+            .rotate("RS256", JWKS_TEST_RSA_PEM_ALT, now - 1_000, 10_000)
+            .await
+            .unwrap();
+        let state = make_state()
+            .with_issuer("https://auth.example.com")
+            .with_jwks_keystore(keystore)
+            .with_jwks_retention_secs(10_000);
+        let app = oauth2_external_router(Arc::new(state));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/oauth2/jwks.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = BodyExt::collect(resp.into_body()).await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let keys = json["keys"].as_array().unwrap();
+        assert_eq!(keys.len(), 2, "Active + Passive 两把钥都必须发布");
+        assert_ne!(keys[0]["kid"], keys[1]["kid"]);
+        assert!(!json.to_string().contains("PRIVATE KEY"));
+    }
+
+    /// retention 退役：超期 Passive 从 JWKS 输出移除（服务视图即时生效）。
+    #[tokio::test]
+    async fn jwks_endpoint_excludes_retired_kid() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let keystore = Arc::new(crate::oauth2_server::jwks::JwksKeystore::new(dao.clone()));
+        // retention 计时基准是 Passive 转换时刻（token 签发持续到该时刻）：
+        // kid1 在 30_000s 前激活、15_000s 前被轮换转 Passive，超 retention 10_000
+        // → retire_expired 落库 Disabled，端点按当前时刻将其移出发布面
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let first = keystore
+            .rotate("RS256", JWKS_TEST_RSA_PEM, now - 30_000, 10_000)
+            .await
+            .unwrap();
+        keystore
+            .rotate("RS256", JWKS_TEST_RSA_PEM_ALT, now - 15_000, 10_000)
+            .await
+            .unwrap();
+        let retired = keystore.retire_expired(now, 10_000).await.unwrap();
+        assert_eq!(
+            retired,
+            vec![first.activated_kid.clone()],
+            "超期 Passive 必须落库退役"
+        );
+        let state = make_state()
+            .with_issuer("https://auth.example.com")
+            .with_jwks_keystore(keystore)
+            .with_jwks_retention_secs(10_000);
+        let app = oauth2_external_router(Arc::new(state));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/oauth2/jwks.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = BodyExt::collect(resp.into_body()).await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            json["keys"].as_array().unwrap().len(),
+            1,
+            "退役钥必须移出 JWKS"
+        );
+    }
+
+    /// Cache-Control max-age 按 jwks_retention_secs 动态计算（retention 的一半，
+    /// 保证客户端在最早可能退役前重取 JWKS）。
+    #[tokio::test]
+    async fn jwks_endpoint_cache_control_derives_from_retention() {
+        let build = |retention: u64| async move {
+            let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+            let keystore = Arc::new(crate::oauth2_server::jwks::JwksKeystore::new(dao.clone()));
+            // 空库 404（fail-closed）：先轮换入钥保证发布面非空
+            keystore
+                .rotate("RS256", JWKS_TEST_RSA_PEM, 1_000, retention)
+                .await
+                .unwrap();
+            let state = make_state()
+                .with_issuer("https://auth.example.com")
+                .with_jwks_keystore(keystore)
+                .with_jwks_retention_secs(retention);
+            oauth2_external_router(Arc::new(state))
+        };
+        let app = build(7_200).await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/oauth2/jwks.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("cache-control")
+                .and_then(|v| v.to_str().ok()),
+            Some("public, max-age=3600"),
+            "retention 7200 → max-age 3600"
+        );
+        let app = build(3_600).await;
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/oauth2/jwks.json")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.headers()
+                .get("cache-control")
+                .and_then(|v| v.to_str().ok()),
+            Some("public, max-age=1800"),
+            "retention 3600 → max-age 1800（动态派生非静态值）"
+        );
     }
 
     /// 配置 RS256 签名密钥：200 + 合法 JWK Set JSON（含 kid/n/e，无私钥成分）。
@@ -1242,5 +1778,212 @@ dzWfBsm+KAfTJuqbV7VnJL3G
         assert!(keys[0]["kid"].as_str().unwrap().len() > 20);
         assert!(keys[0]["n"].as_str().is_some() && keys[0]["e"].as_str().is_some());
         assert!(!json.to_string().contains("PRIVATE KEY"));
+    }
+}
+
+#[cfg(test)]
+mod discovery_tests {
+    use super::*;
+    use crate::dao::{GarrisonDao, InMemoryDao};
+    use crate::oauth2_server::client::{
+        DaoOAuth2ClientStore, GrantType, OAuth2Client, OAuth2ClientStore,
+    };
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    /// 创建带 issuer 的测试 state（可选注册客户端派生 scopes_supported）。
+    async fn make_discovery_state(register_client: bool) -> Arc<OAuth2State> {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        if register_client {
+            let client = OAuth2Client::new(
+                "disc-client",
+                "secret-123",
+                vec!["https://app.example.com/cb".into()],
+                vec![GrantType::AuthorizationCode, GrantType::ClientCredentials],
+                vec!["read".into(), "profile".into()],
+            )
+            .unwrap();
+            store.create(client).await.unwrap();
+        }
+        Arc::new(
+            OAuth2State::new(store, dao, "https://auth.example.com/login".to_string())
+                .with_issuer("https://auth.example.com")
+                // 显式开启：默认跟随 protocol-oidc feature，production 门禁
+                // 无该 feature 时默认关闭，测试不依赖 feature 派生默认
+                .with_oidc_discovery_enabled(true),
+        )
+    }
+
+    async fn get(app: Router, uri: &str) -> axum::response::Response {
+        app.oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    }
+
+    /// OIDC discovery：200 + 关键字段正确（issuer/端点/grant_types/response_types/
+    /// scopes 从注册客户端派生）。
+    #[tokio::test]
+    async fn openid_configuration_returns_200_with_derived_metadata() {
+        let app = oauth2_external_router(make_discovery_state(true).await);
+        let resp = get(app, "/.well-known/openid-configuration").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = BodyExt::collect(resp.into_body()).await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["issuer"], "https://auth.example.com");
+        assert_eq!(
+            json["authorization_endpoint"],
+            "https://auth.example.com/oauth2/authorize"
+        );
+        assert_eq!(
+            json["token_endpoint"],
+            "https://auth.example.com/oauth2/token"
+        );
+        assert_eq!(
+            json["revocation_endpoint"],
+            "https://auth.example.com/oauth2/revoke"
+        );
+        // introspection 端点仅内网可达，不进外网 discovery 元数据
+        assert!(json.get("introspection_endpoint").is_none());
+        // grant_types 从实际可用能力派生：password 需显式宣告（未注入 verifier 不宣告）
+        let grants: Vec<&str> = json["grant_types_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(grants.contains(&"authorization_code"));
+        assert!(grants.contains(&"refresh_token"));
+        assert!(grants.contains(&"client_credentials"));
+        assert!(
+            !grants.contains(&"password"),
+            "未宣告的 password grant 不得出现"
+        );
+        assert_eq!(
+            json["response_types_supported"],
+            serde_json::json!(["code"])
+        );
+        // scopes 从注册客户端实际 scope 派生（非静态模板）
+        let scopes: Vec<&str> = json["scopes_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(scopes.contains(&"read") && scopes.contains(&"profile"));
+        // PKCE 强制 → S256 宣告
+        assert_eq!(
+            json["code_challenge_methods_supported"],
+            serde_json::json!(["S256"])
+        );
+        // 无 JWKS 密钥库：不宣告 jwks_uri（避免死链误导客户端）
+        assert!(json.get("jwks_uri").is_none());
+    }
+
+    /// 派生非静态证明：显式宣告 password grant 后元数据才包含它。
+    #[tokio::test]
+    async fn openid_configuration_password_grant_follows_advertised_flag() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let state = Arc::new(
+            OAuth2State::new(store, dao, "https://auth.example.com/login".to_string())
+                .with_issuer("https://auth.example.com")
+                .with_oidc_discovery_enabled(true)
+                .with_password_grant_advertised(true),
+        );
+        let app = oauth2_external_router(state);
+        let resp = get(app, "/.well-known/openid-configuration").await;
+        let body = BodyExt::collect(resp.into_body()).await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let grants: Vec<&str> = json["grant_types_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(
+            grants.contains(&"password"),
+            "宣告后 password grant 必须出现在元数据"
+        );
+    }
+
+    /// protocol-oidc 关闭（运行时旗标关闭）：openid-configuration 404；
+    /// RFC 8414 端点不受 OIDC 旗标影响（属 OAuth2 面）。
+    #[tokio::test]
+    async fn openid_configuration_returns_404_when_oidc_disabled() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let state = Arc::new(
+            OAuth2State::new(store, dao, "https://auth.example.com/login".to_string())
+                .with_issuer("https://auth.example.com")
+                .with_oidc_discovery_enabled(false),
+        );
+        let app = oauth2_external_router(state);
+        let resp = get(app, "/.well-known/openid-configuration").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// issuer 未配置：discovery 404（fail-closed，空 issuer 的元数据无效）。
+    #[tokio::test]
+    async fn discovery_returns_404_without_issuer() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let state = Arc::new(OAuth2State::new(
+            store,
+            dao,
+            "https://auth.example.com/login".to_string(),
+        ));
+        let app = oauth2_external_router(state);
+        let resp = get(app.clone(), "/.well-known/openid-configuration").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        let resp = get(app, "/.well-known/oauth-authorization-server").await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// RFC 8414：/.well-known/oauth-authorization-server 200 + 关键字段；
+    /// 与 OIDC 旗标解耦（oidc 关闭时仍可用）。
+    #[tokio::test]
+    async fn rfc8414_metadata_returns_200_independent_of_oidc_flag() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
+        let store: Arc<dyn OAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let state = Arc::new(
+            OAuth2State::new(store, dao, "https://auth.example.com/login".to_string())
+                .with_issuer("https://auth.example.com")
+                .with_oidc_discovery_enabled(false),
+        );
+        let app = oauth2_external_router(state);
+        let resp = get(app, "/.well-known/oauth-authorization-server").await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = BodyExt::collect(resp.into_body()).await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["issuer"], "https://auth.example.com");
+        assert_eq!(
+            json["response_types_supported"],
+            serde_json::json!(["code"])
+        );
+        let grants: Vec<&str> = json["grant_types_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(grants.contains(&"authorization_code"));
+        // token_endpoint_auth_methods_supported 与 token 端点实际接受的两种认证一致
+        let auth_methods: Vec<&str> = json["token_endpoint_auth_methods_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(auth_methods.contains(&"client_secret_basic"));
+        assert!(auth_methods.contains(&"client_secret_post"));
     }
 }

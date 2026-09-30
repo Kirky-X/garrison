@@ -2792,3 +2792,36 @@ fn load_production_registry_rejects_waf_config_at_1_0() {
         other => panic!("应为 GarrisonError::Config，实际: {other:?}"),
     }
 }
+
+// ========================================================================
+// jwks_retention_secs 配置测试
+// ========================================================================
+
+/// `default_config()` 的 `jwks_retention_secs` 为 7200（2× access token TTL）。
+#[test]
+fn jwks_retention_default_is_two_access_token_ttls() {
+    let config = GarrisonConfig::default_config();
+    assert_eq!(config.jwks_retention_secs, 7200);
+}
+
+/// `jwks_retention_secs = 0` 为误配：validate 显性拒绝（0 等价于轮换瞬间
+/// 退役旧钥，存量 token 验证立即中断）。
+#[test]
+fn jwks_retention_zero_fails_validation() {
+    let mut config = GarrisonConfig::default_config();
+    config.jwks_retention_secs = 0;
+    let err = config.validate().expect_err("retention=0 必须显性拒绝");
+    assert!(
+        err.to_string()
+            .contains("config-jwks-retention-must-positive"),
+        "错误必须显性指明 retention 非法，实际: {err}"
+    );
+}
+
+/// 正值 retention 通过校验。
+#[test]
+fn jwks_retention_positive_passes_validation() {
+    let mut config = GarrisonConfig::default_config();
+    config.jwks_retention_secs = 600;
+    config.validate().expect("正值 retention 必须通过校验");
+}

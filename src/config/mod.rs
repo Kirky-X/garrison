@@ -98,6 +98,12 @@ pub const DEFAULT_SIGN_WINDOW_SECONDS: i64 = 300;
 /// 默认 SSO ticket TTL 秒数（60 秒）。
 pub const DEFAULT_SSO_TICKET_TTL_SECONDS: u64 = 60;
 
+/// 默认 JWKS 退役保留时长秒数（7200 = 2× access token TTL 3600）。
+///
+/// Passive 签名钥在轮换后保留验证至超期，期间对 RP 仍发布于 JWKS；
+/// 2× token TTL 保证所有存量 access token 过期前旧钥不退役。
+pub const DEFAULT_JWKS_RETENTION_SECS: u64 = 7200;
+
 /// 默认 remember-me 超时秒数（90 天，必须 > DEFAULT_TIMEOUT 30 天）。
 pub const REMEMBER_ME_DEFAULT_TIMEOUT: i64 = 7_776_000;
 
@@ -517,6 +523,17 @@ pub struct GarrisonConfig {
 
     /// SSO ticket TTL 秒数（默认 60 秒）。
     pub sso_ticket_ttl_seconds: u64,
+
+    /// JWKS 退役保留时长秒数（默认 7200 = 2× access token TTL，必须 > 0）。
+    ///
+    /// 生效前提：由嵌入方桥接——注入 `OAuth2State` 时经
+    /// `with_jwks_retention_secs(config.jwks_retention_secs)` 装配（框架不自动
+    /// 桥接，未装配时 OAuth2State 使用同值默认，行为恰好一致但不随配置联动）。
+    ///
+    /// 多 kid 轮换后 Passive 签名钥的保留验证时长：超期转 Disabled 并移出
+    /// JWKS 发布面（仍持有的旧 token 验证显性失效）。同时决定 JWKS 端点
+    /// `Cache-Control: max-age`（取一半）。
+    pub jwks_retention_secs: u64,
 
     /// 是否启用 remember-me 扩展会话超时（默认 false）。
     ///

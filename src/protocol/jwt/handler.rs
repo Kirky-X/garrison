@@ -59,6 +59,7 @@ impl std::fmt::Debug for KeyMaterial {
 }
 
 /// JWT 公钥参数（JWKS 导出用，无私钥成分）。
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JwkPublicKey {
     /// RSA：模数 n 与指数 e（base64url，JWK 口径）。
     Rsa {
@@ -475,6 +476,24 @@ impl JwtHandler {
     /// - `Err(GarrisonError::InvalidParam)`: `now + timeout` 溢出（timeout 过大）。
     /// - `Err(GarrisonError::Internal)`: 签发失败。
     pub fn sign(&self, login_id: impl Into<String>, timeout: i64) -> GarrisonResult<String> {
+        self.sign_with_kid(login_id, timeout, None)
+    }
+
+    /// 签发 JWT 并在 header 写入指定 `kid`（多 kid 密钥库签发路径）。
+    ///
+    /// `kid=None` 时与 [`sign`](Self::sign) 输出完全一致（既有签发格式不变）；
+    /// `kid=Some` 时 header 携带密钥 ID，供验证方按 kid 路由选择验签钥。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `timeout`: 有效期（秒），不可为负数。
+    /// - `kid`: 写入 JWT header 的密钥 ID（RFC 7515 §4.1.4）。
+    pub fn sign_with_kid(
+        &self,
+        login_id: impl Into<String>,
+        timeout: i64,
+        kid: Option<String>,
+    ) -> GarrisonResult<String> {
         let login_id: String = login_id.into();
         self.validate_hs_secret()?;
         if timeout < 0 {
@@ -504,7 +523,10 @@ impl JwtHandler {
             jti: Some(uuid::Uuid::new_v4().to_string()),
             nbf: Some(now), // 签发时设置 nbf，verify 时强制校验
         };
-        let header = Header::new(self.algorithm);
+        let header = Header {
+            kid,
+            ..Header::new(self.algorithm)
+        };
         let key = self.encoding_key()?;
         encode(&header, &claims, &key)
             .map_err(|e| GarrisonError::Internal(format!("jwt-sign::{}", e)))
@@ -570,6 +592,19 @@ impl JwtHandler {
             KeyMaterial::RsaPkcs1Pem(pem) => rsa_decoding_key(pem),
             KeyMaterial::EcPem(pem) => ec_decoding_key(pem),
             KeyMaterial::EdPem(pem) => ed_decoding_key(pem),
+        }
+    }
+
+    /// 私钥 PEM 访问器（crate 内快照导出用）。
+    ///
+    /// 对称钥（Hs）无私钥 PEM，返回 `None`。返回值为敏感材料，
+    /// 调用方不得写入日志或调试输出。
+    pub(crate) fn private_pem(&self) -> Option<&str> {
+        match &self.key_material {
+            KeyMaterial::Hs => None,
+            KeyMaterial::RsaPkcs1Pem(pem) => Some(pem),
+            KeyMaterial::EcPem(pem) => Some(pem),
+            KeyMaterial::EdPem(pem) => Some(pem),
         }
     }
 

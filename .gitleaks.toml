@@ -48,6 +48,15 @@ regexes = [
     '''0123456789abcdef0123456789abcdef''',
     # 测试断言中的固定 UUID 后缀 token（src/core/token 测试）
     '''550e8400-e29b-41d4-a716-446655440000''',
+    # JWKS 多 kid 测试假 RSA 钥（src/protocol/jwt/keystore.rs、src/oauth2_server/jwks.rs、
+    # src/server/oauth2_routes.rs 内联测试常量——每条为对应假钥 body 的独特片段，
+    # 已逐条核实为测试生成值，非真实凭证）
+    '''CmK4V2KvAgMBAAECggEAP8RlokCUpPvS2/n6jn624XQuvLskzLOQ0BBLsyifqInk''',
+    '''CjdCgxdXAgMBAAECggEABSHWYG3pFXBDT4FxEWIrPF7R2cs/\+v0ZOGTD1XzzrzjX''',
+    '''L8G/mIIRAgMBAAECggEAY2vnzIOEbceRtN4cuC8fr1GpElXWCfELWclRfI7O\+tGP''',
+    '''AvE\+iD2TB3fvkUXTiHfGgVHXfuFrVnam2DV9rPAWtzj78N/n4SzwIojGGzPFZtpd''',
+    '''WMtC\+sHEdPpgJhF4LB8sWQq4baDEkzmx8SWB8XM94pqPf\+oFl\+btJo\+FZNSstLrG''',
+    '''9YlpnAmxnsn9ZTuAMIcphoL4QqI\+4Kw5LeMtgV/7AikuyncGG9ywV1\+819ocVqlP''',
 ]
 
 # nosemgrep/nosecret 显式标注行的通用降噪由上方 paths 覆盖（测试/示例目录）。

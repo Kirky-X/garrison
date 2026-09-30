@@ -999,14 +999,22 @@ async fn acc_srv_016_token_password_grant() {
     );
     let revoke_handler = Arc::new(RevokeHandler::new(store.clone(), token_handler.clone()));
     let store_for_register = store.clone();
-    let introspect_handler = Arc::new(IntrospectHandler::new(store, token_handler.clone()));
+    let introspect_handler = Arc::new(IntrospectHandler::new(store.clone(), token_handler.clone()));
     let state = Arc::new(OAuth2State {
         authorize_handler,
         token_handler,
         revoke_handler,
         introspect_handler,
+        client_store: store.clone(),
         // 本测试不配置非对称签名密钥，JWKS 端点 fail-closed 返回 404
         jwks_source: None,
+        issuer: None,
+        jwks_keystore: None,
+        oidc_discovery_enabled: false,
+        password_grant_advertised: false,
+        jwks_retention_secs: garrison::config::DEFAULT_JWKS_RETENTION_SECS,
+        scopes_cache: tokio::sync::RwLock::new(None),
+        jwks_doc_cache: tokio::sync::Mutex::new(None),
     });
 
     let (external_url, _internal_url, _handle) =

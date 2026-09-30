@@ -109,6 +109,18 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 
 > 仅影响**新哈希**；存量哈希参数自 PHC 字符串自描述解析（无需迁移即可 verify），参数升级采用"新密码/重登录时重哈希"自然演进。
 
+### 2.6 JWKS 密钥轮换配置
+
+驱动多 kid JWKS 密钥库（`oauth2_server::jwks::JwksKeystore`，注入 `OAuth2State::jwks_keystore` 后生效；单钥静态形态 `jwks_source` 不受本节影响）。钥状态三态：`Active`（签名）/ `Passive`（轮换退役保留验证，仍发布于 JWKS）/ `Disabled`（退役移出发布与验证面）。
+
+| 字段名 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `jwks_retention_secs` | `u64` | `7200` | Passive 钥退役保留时长（秒）：轮换后旧钥转 Passive，超此时长转 `Disabled` 并移出 JWKS 发布面（存量旧 token 验证自此失败，需重新认证）。默认 7200 = 2 × access token TTL（1h），保证轮换前签发的 access token 在整个有效期内仍可验证。同时决定 JWKS 端点 `Cache-Control: max-age`（取 retention 的一半，工程折中非精确安全界） |
+
+**校验规则（`validate`，fail-closed）**：`0` 拒绝（等价于轮换瞬间退役旧钥，存量 token 验证立即中断）。
+
+**调优**：retention 必须 ≥ access token 有效期（否则旧钥退役早于其签发 token 过期，出现验证失败窗口）；放宽验证需求（超长 TTL token）按 `2 × 最大 access TTL` 取值。
+
 ---
 
 ## 📝 配置文件示例

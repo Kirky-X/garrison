@@ -195,6 +195,7 @@ impl GarrisonConfig {
             jwt_ed_private_key_pem: None,
             sign_window_seconds: DEFAULT_SIGN_WINDOW_SECONDS,
             sso_ticket_ttl_seconds: DEFAULT_SSO_TICKET_TTL_SECONDS,
+            jwks_retention_secs: DEFAULT_JWKS_RETENTION_SECS,
             remember_me_enabled: false,
             remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
@@ -362,6 +363,10 @@ impl GarrisonConfig {
             .default(
                 "sso_ticket_ttl_seconds",
                 ConfigValue::uint(DEFAULT_SSO_TICKET_TTL_SECONDS),
+            )
+            .default(
+                "jwks_retention_secs",
+                ConfigValue::uint(DEFAULT_JWKS_RETENTION_SECS),
             )
             .default("remember_me_enabled", ConfigValue::bool(false))
             .default(
@@ -685,6 +690,13 @@ impl GarrisonConfig {
         // 风险接受位，放行时 warn 不静默）；bcrypt cost 限 [10, 15]（OWASP ≥10；
         // >15 单次哈希秒级耗多为误配）。
         self.validate_password_hasher()?;
+        // JWKS 退役保留时长必须为正：0 等价于轮换瞬间退役旧钥（存量 token 验证
+        // 立即中断，违背 Passive 保留语义），属误配 fail-fast。
+        if self.jwks_retention_secs == 0 {
+            return Err(GarrisonError::Config(
+                "config-jwks-retention-must-positive::".to_string(),
+            ));
+        }
         Ok(())
     }
 

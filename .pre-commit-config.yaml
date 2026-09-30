@@ -23,7 +23,7 @@ repos:
       # JWKS/非对称 JWT 测试夹具 PEM（假钥，cargo test 全量验证），显式豁免。
       # 真实密钥检出由 gitleaks 钩子（staged）与 CI history 扫描承担。
       - id: detect-private-key
-        exclude: '^src/(protocol/jwt/tests|config/tests|oauth2_server/jwks|protocol/jwt/handler|server/oauth2_routes)\.rs$'
+        exclude: '^src/(protocol/jwt/tests|config/tests|oauth2_server/jwks|protocol/jwt/handler|protocol/jwt/keystore|server/oauth2_routes)\.rs$'
       - id: mixed-line-ending
         args: [--fix=lf]
       - id: check-executables-have-shebangs

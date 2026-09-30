@@ -145,6 +145,22 @@ GarrisonManager::builder()
 
 对应环境变量：`GARRISON_RECENT_REUSE_BEHAVIOUR` / `GARRISON_REFRESH_GRACE_PERIOD_SECS` / `GARRISON_REFRESH_GRACE_MAX_USES`。**生效前提**：上述字段由注入的 `RefreshTokenRotation` 读取——应用经 `TokenHandler::with_refresh_rotation` 注入轮换服务时须同步以 `with_reuse_behaviour` / `with_grace_window` 装配配置值（框架默认不自动装配，未注入时 refresh 走 DAO 退化路径，配置不生效）。
 
+### OAuth2 discovery 与 JWKS 多 kid 轮换（`oauth2-server`）
+
+**Discovery 端点**（`OAuth2State::oidc_discovery_enabled`，默认跟随 `protocol-oidc` feature，可运行时覆写）：`GET /.well-known/openid-configuration`（OIDC Discovery 1.0）与 `GET /.well-known/oauth-authorization-server`（RFC 8414）。issuer 未配置或开关关闭 → 404（fail-closed）。元数据从实际能力派生（非静态模板）：
+
+| 字段 | 派生来源 |
+|------|---------|
+| `issuer` / `authorization_endpoint` / `token_endpoint` 等端点路径 | `OAuth2State::issuer` + 固定路由 |
+| `grant_types_supported` | token 端点既有能力（authorization_code/refresh_token/client_credentials）；`password` 仅在装配方注入 password verifier 并置位 `password_grant_advertised` 后宣告 |
+| `scopes_supported` | 注册客户端 scope 并集（运行时查询派生；派生失败 500 显性暴露，空集回退 `openid`） |
+| `jwks_uri` / `jwks_algorithms`（id_token 签名算法） | 仅在实际发布 JWKS 时出现（防死链误导客户端） |
+| `code_challenge_methods_supported` | PKCE 强制开启 → 仅 `S256` |
+
+响应带 `Cache-Control: public, max-age=300`。
+
+**JWKS 多 kid 轮换**（`oauth2_server::jwks::JwksKeystore`，注入 `OAuth2State::jwks_keystore` 后 JWKS 端点优先从库发布）：钥三态 `Active`（签名）/ `Passive`（退役保留验证，仍发布）/ `Disabled`（移出发布与验证面）。三视图语义：签名取 Active、验证取 Active∪Passive（`kid` 命中 Passive 旧钥验证成功；缺失回退 Active；未知 kid 显性报错）、JWKS 输出取 Active∪Passive。轮换经 DAO `compare_and_swap` 账本提交（防多实例竞态：并发轮换恰一成功，失败方读到胜者后的一致状态）；Passive 超 `jwks_retention_secs`（默认 7200 = 2× access token TTL，见 [CONFIGURATION.md](CONFIGURATION.md)）转 Disabled 并移出 JWKS。JWKS 端点 `Cache-Control: max-age` 按 retention 的一半动态计算。
+
 ### 二次认证与封禁
 
 | 方法 | 说明 |
