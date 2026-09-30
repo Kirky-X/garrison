@@ -9,12 +9,12 @@ Garrison 是一个面向 Rust 生态的身份认证鉴权框架，目标是提�
 
 - 仓库：<https://github.com/Kirky-X/garrison>
 - License：Apache-2.0
-- 当前版本：0.8.1（2026-07-24 发布）
+- 当前版本：0.9.0-rc.2（2026-08-26 发布）
 - MSRV：Rust 1.85+（部分依赖如 `inventory 0.3` 要求 edition 2024）
 
 ## 框架定位
 
-Garrison 是一个 **库（crate）**，不直接产出可执行二进制。业务方将其作为依赖集成到 axum / actix-web / warp 服务中，通过 `GarrisonManager::builder().build().await` 注入依赖即可获得完整的认证鉴权能力。核心模块（core / stp / config / dao / session 等）总是编译，协议层与安全模块通过 Cargo feature 按需启用。
+Garrison 以 **库（crate）** 为核心交付形态，同时附带独立二进制：`auth_server` 认证服务器与 `garrison-cli` 运维工具（`Cargo.toml` `[[bin]]` 显式声明，按 `required-features` 门控启用），以及零依赖的 `garrison-healthcheck` 健康探针（`src/bin/` 目录自动发现）。业务方将其作为依赖集成到 axum / actix-web / warp 服务中，通过 `GarrisonManager::builder().build().await` 注入依赖即可获得完整的认证鉴权能力。核心模块（core / stp / config / dao / session 等）总是编译，协议层与安全模块通过 Cargo feature 按需启用。
 
 ## 核心特性（13 个功能域）
 
@@ -25,7 +25,7 @@ Garrison 是一个 **库（crate）**，不直接产出可执行二进制。业�
 3. **Session 会话** — 会话生命周期管理
 4. **OAuth2** — 第三方授权（Authorization Code / Client Credentials / Password）
 5. **单点登录 (SSO)** — ticket 一次性 60s 短时票据
-6. **JWT** — HS256 / HS512 签发与验证
+6. **JWT** — HS256 / HS384 / HS512 签发与验证，另支持 RS256 / ES256 / EdDSA 等非对称算法（RSA/EC/Ed25519 私钥 PEM 注入）
 7. **微服务网关鉴权** — HMAC-SHA256 签名 + 防重放
 8. **API 接口鉴权** — API Key 生成 / 校验 / 吊销 / 轮换
 9. **临时凭证** — TempCredential issue / consume / revoke
@@ -47,7 +47,7 @@ Garrison 采用 **双抽象层 + 全局单例** 的架构：
 
 ## 版本演进
 
-Garrison 自 0.1.0 起逐步演进至当前 0.8.1，主要能力域落地节奏如下：
+Garrison 自 0.1.0 起逐步演进至当前 0.9.0-rc.2，主要能力域落地节奏如下：
 
 - **0.2.0**：协议层（JWT / OAuth2 / SSO / Sign / APIKey / Temp）与安全模块（TOTP / HMAC / HTTP Basic / HTTP Digest）
 - **0.3.0**：可观测性（Prometheus 指标 + 结构化 JSON 日志 + OpenTelemetry OTLP）、gRPC 鉴权拦截器（`GarrisonGrpcInterceptor` 实现 `tonic::Interceptor`）、异常消息 i18n（fluent-rs 中英文切换）、防火墙安全钩子（`GarrisonFirewallCheckHook` 5 个登录流程检查点）、多框架适配（`web-actix` / `web-warp` feature 与 axum 对齐）
@@ -60,6 +60,7 @@ Garrison 自 0.1.0 起逐步演进至当前 0.8.1，主要能力域落地节奏�
 - **0.7.1**：安全修复 + crate 重命名 bulwark → garrison（21 项安全漏洞修复）
 - **0.7.2~0.7.3**：Windows CI 修复 + 配置文件安全加固 + `#[check_disable]` 过程宏 + `dao_session!` 宏
 - **0.8.0~0.8.1**：安全加固（常量时间比较原语 + JWT 弱密钥拒绝 + API Key 安全迁移 + 审计日志 token 泄漏修复）
+- **0.9.0-rc.1~rc.2**：安全 fail-closed 加固（`#[check_api_key]` / `check_abac_with_policy` 缺 feature 不再静默放行）+ 防火墙自动装配 + `policy-hibp` 泄露密码检查 + `IpWhitelist` CIDR 白名单 + `MockDao` 正名 `InMemoryDao`
 
 详细演进历史与里程碑意义见 [版本路线图](./roadmap.md)。
 

@@ -1,6 +1,6 @@
 # 权限与角色（RBAC）
 
-Garrison 提供 RBAC 权限模型，通过 `GarrisonStrategy` 与 `GarrisonPermissionStrategy` 编排权限/角色校验。
+Garrison 提供 RBAC 权限模型，通过 `GarrisonPermissionStrategy` trait 与默认实现 `GarrisonPermissionStrategyDefault` 编排权限/角色校验。
 
 ## 核心 API
 
@@ -41,13 +41,12 @@ impl GarrisonInterface for MyInterface {
 }
 ```
 
-## GarrisonStrategy 与 GarrisonPermissionStrategy
+## GarrisonPermissionStrategy 与 GarrisonPermissionStrategyDefault
 
 | 类型 | 职责 |
 |:---|:---|
-| `GarrisonStrategy` | 权限/角色校验的顶层策略抽象 |
-| `GarrisonPermissionStrategy` | 默认实现，编排 interface 查询、缓存、插件钩子 |
-| `GarrisonPermissionStrategyDefault` | 0.2.0 扩展，支持 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao` / `with_firewall_hook` / `with_listener_manager` |
+| `GarrisonPermissionStrategy` | 权限/角色校验的顶层策略抽象（trait） |
+| `GarrisonPermissionStrategyDefault` | 默认实现，编排 interface 查询、缓存、插件钩子；0.2.0 扩展，支持 `with_permission_checker` / `with_role_hierarchy` / `with_plugin_manager` / `with_dao` / `with_firewall_hook` / `with_listener_manager` |
 
 `GarrisonPermissionStrategyDefault` 通过 builder 注入依赖：
 
@@ -57,7 +56,7 @@ let strategy = GarrisonPermissionStrategyDefault::new(interface.clone())
     .with_role_hierarchy(hierarchy)
     .with_plugin_manager(plugin_mgr)
     .with_dao(dao.clone())               // 启用权限缓存
-    .with_firewall_hook(fw_hook)         // 启用登录前 5 项防火墙检查（需 firewall feature）
+    .with_firewall_hook(fw_hook)         // 启用登录前 5 项防火墙检查（防火墙相关 feature 任一即可：sms-rate-limit / firewall-ratelimit / firewall-bruteforce / firewall-ddos / firewall / oauth2-server）
     .with_listener_manager(lm);          // 启用 FirewallBlock 事件广播（需 listener feature）
 ```
 
@@ -65,11 +64,11 @@ let strategy = GarrisonPermissionStrategyDefault::new(interface.clone())
 
 `with_role_hierarchy` 注入角色层级映射，支持"继承"语义：拥有高级角色自动拥有低级角色的权限。例如 `admin` > `manager` > `user`，校验 `check_role("manager")` 时，`admin` 用户也通过。
 
-> 角色层级为 0.4.0 重点完善项，0.3.0 提供基础映射支持。
+> 角色层级基础映射自 0.2.0 起支持（`with_role_hierarchy` 注入）；0.5.0 新增 `role_hierarchy` 表（`parents`/`indirect_ancestors` + TC 预计算），登录时缓存权限并集。
 
 ## 权限缓存
 
-启用 `with_dao` 后，`GarrisonPermissionStrategyDefault` 会将权限/角色列表缓存到 oxcache，避免每次校验都查询 `GarrisonInterface`。缓存 TTL 与会话一致，登出时自动失效。
+启用 `with_dao` 后，`GarrisonPermissionStrategyDefault` 会将权限校验结果（布尔值，而非权限/角色列表）缓存到注入的 `GarrisonDao`（如 oxcache），键为 `garrison:perm:cache:<tenant>:<login_id>:<permission>`（未配置 `with_tenant_id` 时租户位为占位符 `_`），避免每次校验都回源查询 `GarrisonInterface` 或委托 `PermissionChecker`。缓存 TTL 固定 300 秒，并非与会话一致；登出/踢出时会经 `invalidate_login_cache` 尽力失效（失败仅 warn，由 TTL 兜底），不经过登出的权限/角色变更需业务方显式调用 `invalidate_permission_cache`。角色校验（`check_role` 等）不读写该缓存。
 
 ## ABAC（属性级访问控制）
 
@@ -77,8 +76,10 @@ let strategy = GarrisonPermissionStrategyDefault::new(interface.clone())
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["abac"] }
+garrison = { version = "0.9.0-rc.2", features = ["abac"] }
 ```
+
+> 注：当前版本为 pre-release（0.9.0-rc.2），`version = "0.8"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 核心类型：
 
@@ -87,15 +88,15 @@ garrison = { version = "0.8", features = ["abac"] }
 - `init_abac_engine`：初始化全局 AbacEngine
 - `check_abac_with_policy`：宏入口，用于在 RBAC 通过后调用 ABAC 求值
 
-`abac` feature 关闭时 `check_abac_with_policy` 提供 no-op stub，确保宏生成的代码在任意 feature 组合下均可编译。详见 `src/abac/`。
+`abac` feature 关闭时 `check_abac_with_policy` 降级为 fail-closed stub：端点声明了 `abac` 策略时默认返回 `Err(GarrisonError::Config)`，未声明策略（空 `abac_expr`）时为 no-op；可通过 `set_abac_missing_feature_policy(true)` 显式 opt-in 为放行 + warn。函数始终存在，确保宏生成的代码在任意 feature 组合下均可编译。详见 `src/abac/`。
 
 ## 校验流程
 
-1. `check_login` 确认已登录（否则抛 `NotLogin`）
-2. 调用 `GarrisonInterface::get_permission_list` 获取权限（命中缓存则跳过）
-3. 检查权限码是否在列表中（考虑角色层级展开）
-4. 触发 `GarrisonPlugin::on_permission_check` 钩子（失败仅 warn）
-5. 通过 metrics 记录 `garrison_permission_query_total{result=allow|deny}`
+1. `get_login_id` 确认已登录（未登录时按 `throw_on_not_login` 抛 `NotLogin`，为 false 时降级抛 `NotPermission`）
+2. 触发 `GarrisonPluginManager::on_permission_check` 插件钩子（权限判定前调用，缓存命中路径亦然；失败仅 warn）
+3. 查询权限（命中 `with_dao` 权限缓存则跳过 `GarrisonInterface` 查询）
+4. 权限码做精确字符串匹配，或委托注入的 `PermissionChecker`（角色层级展开仅用于角色校验，不参与权限匹配）
+5. 通过 metrics 记录 `garrison_permission_query_total{result=allow|deny}`（需 `metrics-prometheus` feature）
 
 ## 相关章节
 

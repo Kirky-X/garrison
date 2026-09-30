@@ -6,11 +6,11 @@
 
 ## 部署模型
 
-Garrison 是库（crate），不产出二进制。业务方将其作为依赖集成到 axum / actix-web / warp 服务中：
+Garrison 本体是库（crate），业务方将其作为依赖集成到 axum / actix-web / warp 服务中。crate 另附三个可选二进制：`auth_server` 与 `garrison-cli` 按 feature 门控（`required-features`，默认不编译），`garrison-healthcheck` 为零 feature 的容器健康检查探针；三者均不参与库集成，仅供本仓库 Docker 交付物与运维场景使用。库集成步骤：
 
 1. 添加依赖并选择 feature
 2. 服务启动时调用 `GarrisonManager::builder().dao(dao).config(config).interface(interface).build().await`（async 函数）
-3. 调用 `GarrisonMigration::new(pool).run_all()` 自动建表
+3. 调用 `GarrisonMigration::new(pool).run_all()` 自动建表（默认加载 `migrations/sqlite/`；PostgreSQL 改用 `GarrisonMigration::with_base_dir(pool, "migrations/postgres".into()).run_all()` 或 `run_embedded_postgres()`，MySQL 同理指定 `migrations/mysql/`）
 4. 注册路由中间件（如 `GarrisonLayer`）
 5. `cargo build --release --features production` 构建产物
 6. 通过环境变量注入配置，启动服务
@@ -21,7 +21,7 @@ Garrison 是库（crate），不产出二进制。业务方将其作为依赖集
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["production"] }
+garrison = { version = "0.9.0-rc.2", features = ["production"] }
 ```
 
 `production` 等价于：
@@ -30,13 +30,22 @@ garrison = { version = "0.8", features = ["production"] }
 production = [
     "cache-redis", "db-postgres", "web-axum",
     "protocol-jwt", "protocol-sign", "secure-sign",
+    "protocol-webauthn", "backchannel-logout", "field-encryption", "mfa-recovery", "account-password-reset",
     "listener", "tracing-log", "metrics-prometheus",
-    "audit-inklog", "tenant-isolation",
-    "security-alert", "device-binding",
-    "core-advanced", "firewall-waf",
-    "three-tier-cache", "sms-rate-limit",
+    "audit-inklog",
+    "tenant-isolation",
+    "security-alert", "session-hijack-detection", "security-extra", "device-binding",
+    "core-advanced",
+    "firewall-waf",
+    "three-tier-cache",
+    "sms-rate-limit",
     "backend-embedded", "backend-kit", "auth-server", "auth-server-sdforge", "abac",
-    "api-docs", "db-retry", "cache-lock",
+    "api-docs",
+    # 自研库特性吸收（生产环境）
+    "config-yaml", "config-distributed", "config-audit",
+    "db-sharding", "db-replica",
+    "firewall-gcra", "firewall-tower", "firewall-monitoring", "firewall-parallel",
+    "cache-batch", "cache-audit",
 ]
 ```
 
@@ -50,7 +59,7 @@ features = ["production", "otlp", "grpc", "i18n-icu", "web-actix"]
 |:---|:---|
 | 单实例开发 | `development`（`cache-memory` + `db-sqlite` + `web-axum`） |
 | 多实例生产 | `production`（`cache-redis` + `db-postgres` + `auth-server` + `abac` 等） |
-| 全量能力评估 | `full`（启用全部 feature） |
+| 全量能力评估 | `full`（聚合大多数 feature；数据库仅含 `db-sqlite`，`db-postgres` / `db-mysql` 需按需追加） |
 | gRPC 微服务 | `production` + `grpc` |
 
 ## Redis 配置（L2 缓存）
@@ -82,28 +91,30 @@ GARRISON_REDIS_URL=rediss://:password@redis-host:6379/0
 use garrison::dao::{init_dbnexus, GarrisonMigration};
 
 // 1. 初始化连接池
-let pool = init_dbnexus("sqlite:///var/lib/garrison/garrison.db?mode=rwc").await?;
+let pool = init_dbnexus("sqlite:///var/lib/garrison/garrison.db").await?;
 
 // 2. 幂等迁移：首次启动建表，后续启动跳过
 GarrisonMigration::new(pool).run_all().await?;
 ```
 
 ```bash
-# 通过 GARRISON_DB_URL 指定数据库连接（dbnexus 0.6 config-env）
-GARRISON_DB_URL=sqlite:///var/lib/garrison/garrison.db?mode=rwc
+# 部署前预创建空库文件（sqlite 视 0 字节文件为空库）
+mkdir -p /var/lib/garrison && touch /var/lib/garrison/garrison.db
 
-# PostgreSQL（需启用 db-postgres feature）
-GARRISON_DB_URL=postgres://user:password@localhost:5432/garrison
-
-# MySQL（需启用 db-mysql feature）
-GARRISON_DB_URL=mysql://user:password@localhost:3306/garrison
+# Garrison 不从环境变量读取数据库连接，URL 一律由 init_dbnexus 参数显式传入（见上）
+# 各后端 URL 格式参考（需启用对应 feature）：
+# SQLite:      sqlite:///var/lib/garrison/garrison.db
+# PostgreSQL:  postgres://user:password@localhost:5432/garrison
+# MySQL:       mysql://user:password@localhost:3306/garrison
 ```
 
 要点：
 
 - 迁移幂等，可安全重复执行
 - 生产环境建议将 db 文件放在持久化卷
+- 部署前预创建空库文件（`touch /var/lib/garrison/garrison.db`）；不要在 URL 追加 `?mode=rwc`——部分 sqlx 版本会把 query 并入路径解析导致只读打开（attempt to write a readonly database）
 - dbnexus 0.6 已支持 SQLite / PostgreSQL / MySQL 三种后端；大规模或多写场景建议使用 `db-postgres`（`production` 聚合特性默认启用）
+- `GarrisonMigration::new()` 默认基目录为 `migrations/sqlite/`；PostgreSQL / MySQL 迁移分别位于 `migrations/postgres/`、`migrations/mysql/`，需经 `with_base_dir` 指定；PostgreSQL 也可使用 `run_embedded_postgres()`（`db-postgres` 默认启用 `embedded-migrations`，编译期嵌入，无需访问 garrison 源码目录）
 
 ## 环境变量
 
@@ -138,7 +149,7 @@ use std::sync::Arc;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 数据库迁移（幂等）
-    let pool = init_dbnexus("sqlite:///data/garrison.db?mode=rwc").await?;
+    let pool = init_dbnexus("sqlite:///data/garrison.db").await?;
     GarrisonMigration::new(pool).run_all().await?;
 
     // 2. 准备依赖

@@ -40,19 +40,22 @@ Garrison 采用 **双抽象层 + 全局单例** 架构，采用双抽象层设�
 
 | 层 | 角色 | 职责 |
 |:---|:---|:---|
-| `GarrisonCore` + 5 子 trait | 接口抽象 | `SessionLogic`（login / logout / check_login）、`PermissionLogic`（check_permission / check_role）、`TokenLogic`（token 生成/校验/续期）、`MfaLogic`（二级认证）、`PasswordLogic`（密码校验） |
+| `GarrisonCore` + 5 子 trait | 接口抽象 | `SessionLogic`（login / logout / check_login）、`PermissionLogic`（check_permission / check_role）、`TokenLogic`（check_access_token / verify_token / refresh_token）、`MfaLogic`（二级认证）、`PasswordLogic`（密码校验） |
 | `GarrisonLogicDefault` | 默认实现 | 编排 dao / interface / plugin / listener / metrics / firewall，实现全部 5 个子 trait，提供 `with_*` builder |
-| `GarrisonInterface` | 业务回调 | 业务方实现，提供 `get_permission_list` / `get_role_list` / `get_device_info` 等 |
+| `GarrisonInterface` | 业务回调 | 业务方实现，提供 `get_permission_list` / `get_role_list`（及 `get_permission_list_with_type` / `get_role_list_with_type` 变体）等 |
 | `GarrisonUtil` | 静态 API | 面向使用者的便捷入口，委托到 `GarrisonManager` 全局单例 |
 
 ## inventory 编译期注册
 
-`GarrisonLogicFactory` 通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取。这样框架无需显式构造即可在 `init` 时找到默认 factory，业务方也可注册自定义 factory 覆盖默认实现。
+`GarrisonLogicFactoryEntry`（含 `name` 与工厂函数指针）通过 `inventory::submit!` 在编译期注册，运行时由 `inventory::iter` 选取第一个 entry，框架默认注册的工厂函数为 `garrison_logic_factory_default`。这样框架无需显式构造即可在 `init` 时找到默认 factory。业务方如需自定义 factory，应通过 `GarrisonManagerBuilder::with_factory(&'static GarrisonLogicFactoryEntry)` 注入以覆盖默认实现——仅向 `inventory` 追加自定义 entry 并不能保证覆盖默认（运行时 selector 只取第一个 entry）。
 
 ```rust
 // 框架内部注册默认 factory
 inventory::submit! {
-    GarrisonLogicFactory { /* 构造 GarrisonLogicDefault */ }
+    GarrisonLogicFactoryEntry {
+        name: "default",
+        factory: garrison_logic_factory_default,
+    }
 }
 ```
 
@@ -66,11 +69,11 @@ inventory::submit! {
 - **业务能力**：`account` / `abac`
 - **公共入口**：`prelude`
 
-协议层、安全模块、Web 适配、可观测性、缓存三层架构、监听器等通过 feature 按需启用。
+协议层顶层模块始终编译，其中 oauth2 / sso / jwt / sign / apikey / temp 等重依赖子模块在 `protocol/mod.rs` 内按 feature 门控；安全模块、Web 适配、可观测性、缓存三层架构、监听器等通过 feature 按需启用。
 
 ## 上下文传播
 
-请求上下文通过 `GarrisonContext` + `task_local` 在异步任务间传播，承载当前 token、请求头、IP 等信息。web 中间件（如 `GarrisonLayer`）负责在请求进入时设置 task_local，`GarrisonUtil` 读取它来定位当前会话。
+请求上下文通过 `task_local` 在异步任务间传播，stp 核心 task_local 共 4 个：`CURRENT_TOKEN`（当前 token）、`CURRENT_IP`（客户端 IP）、`CURRENT_RENEWED_TOKEN`（续签结果）与 `CURRENT_LOGIN_ID`（请求级登录身份缓存）。task_local 不承载请求头：请求头读取走 `context::GarrisonContext` trait（`request()` 返回 `GarrisonRequest`，经 `header()` 访问）；`stp::GarrisonContext` 结构体仅持有 token，用于跨 `tokio::spawn` 捕获/恢复 `CURRENT_TOKEN`（与 `context::GarrisonContext` trait 同名但职责不同）。此外还有模块级 task_local，如 `TENANT`（租户上下文）、`REQUEST_ID`（request id）及 `session-hijack-detection` feature 下的 `CLIENT_IP` / `CLIENT_USER_AGENT`。web 中间件（如 `GarrisonLayer`）负责在请求进入时设置 task_local，`GarrisonUtil` 读取 `CURRENT_TOKEN` 定位当前会话。
 
 ## 相关章节
 

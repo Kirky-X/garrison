@@ -6,9 +6,11 @@ warp 适配在 0.3.0 新增，采用 Filter 组合模型，通过 `web-warp` fea
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["web-warp"] }
+garrison = { version = "0.9.0-rc.2", features = ["web-warp"] }
 warp = "0.4"
 ```
+
+> 注：当前版本为 pre-release（0.9.0-rc.2），`version = "0.8"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 `web-warp` 启用 `warp`（default-features = false）。
 
@@ -74,22 +76,24 @@ Filter 在 `and()` 链中组合，通过即继续下游 handler，失败则短�
 ## 错误响应
 
 ```rust
-use garrison::web_warp::GarrisonRejection;
+use garrison::web_warp::garrison_recover;
 
-// 全局 reject 处理：将 GarrisonRejection 转为 HTTP 响应
-let routes = routes.recover(|rejection: warp::reject::Rejection| async move {
-    if let Some(e) = rejection.find::<GarrisonRejection>() {
-        return Ok::<_, warp::Reply>(e.0.clone()); // impl Reply for GarrisonError
-    }
-    Err(rejection)
-});
+// 全局 reject 处理：将 GarrisonRejection 转为与 axum/actix 一致的统一 JSON 错误响应
+let routes = routes.recover(garrison_recover);
 ```
+
+> **注**：`GarrisonError` 未实现 `Clone`，框架已内置 `garrison_recover`（借用 `GarrisonRejection` 内的 `GarrisonError` 渲染），无需手写闭包；warp 拒绝链不会自动调用 `impl Reply`，须显式挂 `.recover(garrison_recover)`，非 `GarrisonRejection` 的拒绝会原样透传。
 
 `GarrisonError` 实现 `Reply`，`response_parts()` 与 axum/actix 共用同一逻辑，保证三框架错误格式一致：
 
-- `NotLogin` / `InvalidToken` / `ExpiredToken` → 401
-- `NotPermission` / `NotRole` → 403
-- 其他 → 500
+- `NotLogin` / `InvalidToken` / `TokenRevoked` / `ExpiredToken` → 401
+- `NotPermission` / `NotRole` / `DisableService` / `FirewallBlocked` / `SmsChannelRecycled` / `EmailChannelRecycled` → 403
+- `InvalidParam` / `NotSafe` / `SmsVerifyMaxAttempts` / `SmsCodeNotFound` / `EmailVerifyMaxAttempts` / `EmailCodeNotFound` → 400
+- `RateLimited` / `SmsRateLimitExceeded` / `EmailRateLimitExceeded` → 429（仅 `RateLimited` 附 `Retry-After` 头）
+- `CreditInsufficient` → 402，`NotImplemented` → 501，`Network` / `InvalidResponse` → 502
+- 其余变体（`Dao` / `Config` / `Internal` 等）→ 500
+
+（Email 系变体需 `email-verification` feature，`CreditInsufficient` 需 `credit-metering` feature）
 
 ## 与 axum/actix 的对齐
 
@@ -99,7 +103,7 @@ let routes = routes.recover(|rejection: warp::reject::Rejection| async move {
 |:---|:---|:---|:---|
 | 错误响应 | `IntoResponse` | `ResponseError` | `Reply` + `Reject` |
 | 鉴权 | extractor | `FromRequest` | Filter 函数 |
-| 中间件 | `GarrisonLayer` | `GarrisonMiddleware` | Filter 组合 |
+| 中间件 | `garrison_middleware`（`GarrisonRouter::build()` 内置） | `GarrisonMiddleware` | Filter 组合 |
 
 ## 注意事项
 

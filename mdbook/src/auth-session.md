@@ -12,7 +12,7 @@ use garrison::stp::LoginParams;
 // 完整签名接收 LoginParams（device / ip / user_agent / remember_me / require_mfa）
 let token = GarrisonUtil::login("1001", &LoginParams::default()).await?;
 
-// 便捷登录：使用默认 LoginParams（向后兼容 0.6.2 前的单参数 login）
+// 便捷登录：使用默认 LoginParams（向后兼容 0.6.3 前的单参数 login）
 let token = GarrisonUtil::login_simple("1001").await?;
 
 // 校验登录状态：依赖 task_local 中的当前 token（由 web 中间件设置）
@@ -21,11 +21,11 @@ let logged_in = GarrisonUtil::check_login().await?;  // 返回 bool
 // 登出：销毁当前 token 对应的会话
 GarrisonUtil::logout().await?;
 
-// 获取当前登录 login_id（返回 Option<String>，未登录时取决于 throw_on_not_login）
+// 获取当前登录 login_id（返回 Option<String>，未登录或会话不存在时返回 None，不依赖 throw_on_not_login）
 let login_id: Option<String> = GarrisonUtil::get_login_id().await?;
 ```
 
-`check_login` 行为受 `throw_on_not_login` 配置影响：`true`（默认）未登录抛出 `GarrisonError::NotLogin`；`false` 则返回 `false`。
+`check_login` 行为受 `throw_on_not_login` 配置影响：`true`（默认）未登录抛出 `GarrisonError::Session`（消息前缀 `stp-not-login::`）；`false` 则返回 `false`。
 
 ## 双向映射：Token-Session + Account-Session
 
@@ -37,7 +37,7 @@ Garrison 维护两个方向的会话映射，承载于 oxcache：
 | Account-Session | `account:session:{login_id}` → `AccountSession` | 通过账号定位其所有 token（踢人、多端登录管理） |
 
 - 登录时同时写入两个映射
-- 登出时同时删除两个映射
+- 登出时删除 Token-Session，并从 Account-Session 的 token 列表移除该 token 条目（Account-Session key 保留，列表为空也不删除；仅 `kickout(login_id)` / `logout_by_login_id` 删除整个 Account-Session）
 - `kickout(login_id)` 可踢出某账号全部会话
 
 ## TokenSession
@@ -51,8 +51,11 @@ Garrison 维护两个方向的会话映射，承载于 oxcache：
 - `device`：登录设备标识（由 `LoginParams.device` 写入，`kickout_by_device` 按此过滤）
 - `ip` / `user_agent`：客户端 IP 与 User-Agent（由 `LoginParams.ip` / `LoginParams.user_agent` 写入）
 - `safe_services`：二级认证（Safe Auth）瞬态标记（`HashMap<String, i64>`，key 为 service 名，value 为过期时间戳）
-- `dynamic_active_timeout`：动态活跃超时（启用 `dynamic-active-timeout` feature 时存在）
-- `is_anon`：是否为匿名 Session（启用 `anonymous-session` feature 时存在）
+- `dynamic_active_timeout`：动态活跃超时（启用 `session-extra` feature 时存在；为 `None` 时回退全局 `active_timeout`，为 `Some(secs)` 时该 token 使用自定义活跃超时）
+- `is_anon`：是否为匿名 Session（启用 `session-extra` feature 时存在；匿名 Session 存于独立 key 空间 `token:session:anon:{token}`）
+- `effective_timeout`：remember-me 生效时的权威 token TTL（秒；`remember_me=true` 且 `remember_me_enabled` 配置启用时写入 `remember_me_timeout`，否则为 `None` 使用全局 `timeout`）
+- `amr_ledger`：因子账本（`Vec<AmrEntry>`），按完成顺序记录认证步骤（MFA 编排基座，签发 token 时映射为 RFC 8176 `amr` claim）
+- `auth_time`：主认证完成时刻（Unix 秒，OIDC `auth_time` claim 的权威来源）
 
 ## 会话超时
 
@@ -62,7 +65,11 @@ Garrison 维护两个方向的会话映射，承载于 oxcache：
 
 ## 会话续期
 
-访问会话（如 `check_login`）会刷新 Token-Session 的 TTL（滑动过期），实现"活跃续期"。具体续期策略由 `GarrisonLogicDefault` 编排，可通过 `GarrisonInterface` 自定义。
+会话校验（如 `check_login`）本身为只读操作，不刷新 Token-Session 的 TTL，不存在滑动过期。
+
+- 活跃续期需显式调用 `GarrisonSession::touch` / `renew`（更新 `last_active_at` 并重置 Token-Session 与 Account-Session 的 TTL）；`is_share=true` 时复用已有 token 的登录会自动 `touch`
+- `check_login` 路径仅当 `config.auto_renewal_threshold > 0` 且剩余 TTL 占总 timeout 的百分比低于阈值时触发自动续签（由 `GarrisonLogicDefault` 私有编排，签发新 token 替换旧 token，非滑动延期）
+- `GarrisonInterface` 仅为权限/角色数据回调 trait，与续期无关、无法自定义续期策略
 
 ## 多端登录与踢人
 

@@ -7,13 +7,13 @@
 | 模块 | Feature | 核心类型 | 依赖 |
 |:---|:---|:---|:---|
 | TOTP | `secure-totp` | `TotpHandler` | `totp-rs` + `base32` |
-| Sign | `secure-sign` | `Signer` / `SignVerifier` trait | `sha2` + `hmac` + `base64` + `md5` |
+| Sign | `secure-sign` | `Signer` / `SignVerifier` trait | `sha2` + `hmac` + `base64` + `subtle` |
 | HTTP Basic | `protocol-httpbasic` | `HttpBasicAuth` | `base64` |
-| HTTP Digest | `protocol-httpdigest` | `HttpDigestAuth` | `sha2` + `base64` + `md5` |
+| HTTP Digest | `protocol-httpdigest` | `HttpDigestAuth` | `sha2` + `base64` + `md5` + `subtle` + `hkdf` + `hmac` |
 | Unicode 同形字 | `secure-confusable` | `check_confusable` 函数 | `unicode-security` |
-| 敏感数据脱敏 | `secure-masking` | `SensitiveDataMasker` | `serde_json` |
+| 敏感数据脱敏 | `secure-masking` | `SensitiveDataMasker` | `regex` |
 | XSS 防护 | `secure-xss` | `XssProtector` | 零外部依赖 |
-| SMS 验证码 | `sms-rate-limit` | `SmsVerificationService` | `sha2` + `base64` |
+| SMS 验证码 | `sms-rate-limit` | `SmsVerificationService` | `rand` |
 | 输入消毒 | `secure-sanitize` | `sanitize_input` 函数 | 零外部依赖 |
 
 ## TOTP（RFC 6238）
@@ -25,16 +25,16 @@ use garrison::secure::totp::TotpHandler;
 
 let secret = b"12345678901234567890".to_vec();
 let handler = TotpHandler::new(secret, 30, 6)?;  // (密钥字节, step, digits)
-let code = handler.generate(1700000000);          // 生成当前 6 位验证码（传入 Unix 时间戳）
-let ok = handler.validate(&code, 1700000000);     // 校验（±1 时间窗口偏差），返回 bool
+let code = handler.generate(1700000000)?;         // 生成当前 6 位验证码（传入 Unix 时间戳）
+let ok = handler.validate(&code, 1700000000)?;    // 校验（±1 时间窗口偏差），返回 Ok(bool)
 ```
 
 要点：
 
 - **构造参数**：`new(secret: Vec<u8>, step: u64, digits: u32)` —— 接收原始密钥字节、时间步长、位数
-- **`generate(now: i64) -> String`**：传入 Unix 时间戳（秒），返回指定位数的验证码
-- **`validate(code: &str, now: i64) -> bool`**：校验验证码，允许 ±1 时间窗口偏差
-- **`validate_and_consume(login_id, code, now, dao)`**：在 `validate` 基础上通过 DAO 原子 `incr` 防重放
+- **`generate(now: i64) -> GarrisonResult<String>`**：传入 Unix 时间戳（秒），返回指定位数的验证码（`now` 为负值时返回 `InvalidParam` 错误）
+- **`validate(code: &str, now: i64) -> GarrisonResult<bool>`**：校验验证码，允许 ±1 时间窗口偏差（`now` 为负值时返回 `InvalidParam` 错误）
+- **`validate_and_consume(login_id, code, now, dao) -> GarrisonResult<bool>`**（async，需 `.await`）：在 `validate` 基础上通过 DAO 原子 `incr` 防重放，`Ok(true)` 为首次使用，`Ok(false)` 为校验失败或重放
 - **`secret_from_base32(s: &str)`**：将 Base32 编码的密钥解码为原始字节
 - 使用 SHA1 算法（RFC 6238 默认，兼容主流 Authenticator App）
 - 适用于二步验证（2FA）、MFA 场景
@@ -81,7 +81,7 @@ let challenge = auth.challenge();                        // 生成质询（返�
 assert!(challenge.starts_with("Digest "));
 ```
 
-- **构造参数**：`new(realm: &str, algorithm_str: &str)` —— 接收 realm 与算法字符串（`"MD5"` / `"SHA-256"`）
+- **构造参数**：`new(realm: &str, algorithm_str: &str)` —— 接收 realm 与算法字符串（`"MD5"` / `"SHA256"`，大小写不敏感；传 `"SHA-256"` 等其他写法返回 `Err(GarrisonError::Internal)`，构造失败）
 - **nonce 格式**：`base64(timestamp:random_uuid)`，`validate` 时校验时间戳防过期
 - **`qop=auth` 与 `qop=auth-int`**：后者需通过 `validate_with_body` 传入请求体
 - **nc 重放检测**：注入 DAO 后启用，key 格式 `digest:nc:{nonce}`，TTL 与 `nonce_ttl` 一致
@@ -99,8 +99,9 @@ let ok = Signer::verify_hmac_sha256(b"secret", b"data", &sig);  // 常量时间�
 
 - `Signer::hmac_sha256(secret, data) -> String`：HMAC-SHA256 签名（小写十六进制）
 - `Signer::verify_hmac_sha256(secret, data, expected_sig) -> bool`：常量时间校验（防时序侧信道）
-- `Signer` 还提供 SHA-512 / Base64 / MD5 等关联函数
+- `Signer` 还提供 HMAC-SHA512 签名（`hmac_sha512`）与 Base64 编解码（`base64_encode` / `base64_decode`）关联函数
 - `SignVerifier` trait：抽象签名校验逻辑（`verify_sign` / `create_sign`），供业务方实现非 HMAC 方案
+- **注意**：`SignVerifier` 定义在 `garrison::secure` 模块根（`use garrison::secure::SignVerifier;`），与 `sign::Signer` 不在同一子模块；二者是独立抽象、参数类型不兼容——trait 面向 `&str` 文本协议（如 HTTP 网关签名），`Signer` 面向 `&[u8]` 字节流，且 crate 中不存在 `impl SignVerifier for Signer`（如需桥接须自行做 `as_bytes()` 适配）
 
 ## 其他子模块
 

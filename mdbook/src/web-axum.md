@@ -6,8 +6,10 @@ axum 是 Garrison 的首选 Web 框架适配（0.1.0 起支持），通过 `web-
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["web-axum"] }
+garrison = { version = "0.9.0-rc.2", features = ["web-axum"] }
 ```
+
+> 注：当前版本为 pre-release（0.9.0-rc.2），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 `web-axum` 启用 `axum`（`tokio` + `http1` feature），不引入 default features 以减少依赖。
 
@@ -100,10 +102,15 @@ async fn handler(
 | `NotLogin` | 401 Unauthorized |
 | `NotPermission` / `NotRole` | 403 Forbidden |
 | `InvalidToken` / `ExpiredToken` | 401 Unauthorized |
-| 其他 | 500 Internal Server Error |
+| `Dao` / `Config` / `Internal` / `Session` 等内部错误 | 500 Internal Server Error |
+| `Network` / `InvalidResponse` | 502 Bad Gateway |
+| `InvalidParam` / `NotSafe` | 400 Bad Request |
+| `NotImplemented` | 501 Not Implemented |
+| `RateLimited` / `SmsRateLimitExceeded` 等限流错误 | 429 Too Many Requests（仅 `RateLimited` 附 `Retry-After` header） |
+| `CreditInsufficient`（`credit-metering` feature） | 402 Payment Required |
 
 ## 关键说明
 
 - `GarrisonRouter::build()` 内置的 `garrison_middleware` 负责设置 task_local 上下文，`GarrisonUtil` 静态方法依赖此上下文
 - 未注册中间件的路由调用 `GarrisonUtil` 会因 task_local 缺失失败
-- 当前已知限制：`route_protected` 仅支持 GET 方法（其他 HTTP 方法请直接使用 `axum::Router::route` 注册并通过 `Annotation` 在 `GarrisonRouter` 中同步规则）
+- 当前已知限制：`route_protected` 仅支持 GET 方法（内部注册的是 `axum::routing::get`），且 `GarrisonRouter` 无公开 API 可为已注册路由补充注解规则（规则列表为私有字段，公开方法仅有 `new` / `with_interceptor` / `route_protected` / `group` / `build`）——直接用 `axum::Router::route` 注册的非 GET 路由不会命中任何规则，middleware 会跳过 `pre_handle` 直接放行（等于未鉴权）。此类路由的鉴权需自行编写 middleware（通过 prelude 的 `with_current_token` 设置 task_local 后校验，`CheckLogin` / `CheckRole` / `CheckPermission` extractor 也依赖该上下文），或扩展 `GarrisonRouter` 支持任意 HTTP 方法后使用

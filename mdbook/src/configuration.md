@@ -7,7 +7,7 @@ Garrison 通过 `GarrisonConfig` 定义框架运行参数，支持三源合并�
 优先级（高 → 低）：**环境变量 > toml 文件 > 代码默认值**
 
 1. **代码默认值**：`GarrisonConfig::default_config()` 返回符合 spec 的默认配置
-2. **toml 文件**：通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.6）
+2. **toml 文件**：通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.6.0-rc.5）
 3. **环境变量**：`GARRISON_` 前缀自动收集并覆盖（`GARRISON_TOKEN_NAME` → `token_name`，`__` 转嵌套路径如 `TENANT_ISOLATION__ENABLED`）
 
 ```rust
@@ -19,7 +19,7 @@ let config = GarrisonConfig::load(Some("config.toml"))?;
 let config = GarrisonConfig::load(None)?;
 ```
 
-> `GarrisonConfig::load` 内部完成「默认值 → toml → 环境变量」三源合并与 `validate()` 校验，无需手动调用 `apply_env_overrides()`。
+> `GarrisonConfig::load` 内部完成「默认值 → toml → 环境变量」三源合并与 `validate()` 校验，环境变量收集由 confers `EnvSource` 自动完成，无需手动处理。
 
 ## GarrisonConfig 字段说明
 
@@ -40,8 +40,8 @@ let config = GarrisonConfig::load(None)?;
 | `cookie_secure` | bool | `true` | Cookie 是否标记 `Secure`（仅 HTTPS） |
 | `cookie_same_site` | String | `Lax` | Cookie SameSite 策略（`Lax` / `Strict` / `None`） |
 | `frontend_separation` | bool | `false` | 是否启用前后端分离模式 |
-| `jwt_algorithm` | String | `HS256` | JWT 签名算法（`HS256` / `HS512`） |
-| `jwt_secret` | String | 空 | JWT 签名密钥（使用 JWT 时必须配置非空） |
+| `jwt_algorithm` | String | `HS256` | JWT 签名算法（`HS256` / `HS384` / `HS512` / `RS256` / `ES256` / `EdDSA`，非对称算法需配套对应私钥 PEM） |
+| `jwt_secret` | String | 空 | JWT 签名密钥（`token_style = jwt` 时 HS 系算法必须非空且达到最小长度；`RS256` / `ES256` / `EdDSA` 可留空，强度由私钥 PEM 决定） |
 | `sign_window_seconds` | i64 | `300` | 签名校验时间窗口秒数（防重放） |
 | `sso_ticket_ttl_seconds` | u64 | `60` | SSO ticket TTL 秒数 |
 | `remember_me_enabled` | bool | `false` | 是否启用 remember-me 扩展会话超时 |
@@ -51,7 +51,7 @@ let config = GarrisonConfig::load(None)?;
 | `auto_renewal_threshold` | i64 | `-1` | 自动续签阈值百分比（-1 不启用） |
 | `session_hover_timeout` | i64 | `-1` | 会话悬停超时秒数（-1 不启用） |
 
-> 完整配置项列表（含 feature-gated 配置）详见 [docs/CONFIGURATION.md](../docs/CONFIGURATION.md)。
+> 完整配置项列表（含 feature-gated 配置）详见项目根目录 `docs/CONFIGURATION.md`；其中尚未收录 JWT 撤销与 refresh token 重用处置相关字段（`enable_jwt_revocation` / `recent_reuse_behaviour` / `refresh_grace_period_secs` / `refresh_grace_max_uses` / `allow_stateless_jwt_no_revocation`，默认分别为 `false` / `theft_detected` / `0` / `1` / `false`）。
 
 ## 环境变量覆盖
 
@@ -87,7 +87,7 @@ let config = GarrisonConfig::load(None)?;
 | `GARRISON_TENANT_ISOLATION__ENABLED` | `true` | 覆盖 tenant_isolation.enabled |
 | `GARRISON_TENANT_ISOLATION__RESOLVER` | `header` | 覆盖 tenant_isolation.resolver |
 
-布尔值仅支持 `true` / `false`（大小写不敏感）。整数按 `i64`/`u64` 解析；其他值视为字符串。非法数值或非合法枚举值会返回 `GarrisonError::Config`。
+布尔值仅支持 `true` / `false`（大小写不敏感）。数值按 `i64`/`u64` 解析，含小数点或科学计数法的值按 `f64` 解析（`GarrisonConfig` 无浮点字段，此类值会反序列化失败），其余视为字符串。类型不匹配或非合法枚举值会返回 `GarrisonError::Config`。
 
 ## 配置校验
 
@@ -96,7 +96,9 @@ let config = GarrisonConfig::load(None)?;
 - `token_style` 必须是 `uuid` / `random_64` / `simple` / `jwt` 之一（否则 "unknown token_style"）
 - `timeout` 必须 > 0（否则 "timeout must be positive"）
 - `cookie_same_site` 必须是 `Lax` / `Strict` / `None` 之一
-- `token_style = jwt` 时 `jwt_secret` 必须非空
+- `jwt_algorithm` 必须是 `HS256` / `HS384` / `HS512` / `RS256` / `ES256` / `EdDSA` 之一（否则 "config-jwt-algorithm-unsupported"）
+- 非对称算法（`RS256` / `ES256` / `EdDSA`）必须配套同类型私钥 PEM（`jwt_rsa_private_key_pem` / `jwt_ec_private_key_pem` / `jwt_ed_private_key_pem`，否则 "config-jwt-key-missing"），且不得同时配置两类以上私钥（否则 "config-jwt-key-multiple-types"）；HS 系算法不得配置任何非对称私钥（否则 "config-jwt-key-unexpected-for-hs"）
+- `token_style = jwt` 时：HS 系算法要求 `jwt_secret` 非空且达到最小长度（`HS256` ≥ 32 字节 / `HS384` ≥ 48 / `HS512` ≥ 64，否则 "config-jwt-secret-empty" / "config-jwt-secret-too-short"）；`RS256` / `ES256` / `EdDSA` 时 `jwt_secret` 可留空，密钥强度由私钥 PEM 决定
 - `remember_me_enabled = true` 时 `remember_me_timeout` 必须 > `timeout`
 - `auto_renewal_threshold` 必须为 `-1` 或 `0..=100`
 - `is_share = true` 要求 `is_concurrent = true`

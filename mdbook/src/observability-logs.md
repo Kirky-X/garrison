@@ -8,12 +8,12 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["tracing-log"] }
+garrison = { version = "0.9.0-rc.2", features = ["tracing-log"] }
 # 或包含在 production 聚合 feature 中：
-# garrison = { version = "0.8", features = ["production"] }
+# garrison = { version = "0.9.0-rc.2", features = ["production"] }
 ```
 
-- `tracing-log`：启用 `tracing/log` feature，桥接 `log` crate 的日志到 `tracing`
+- `tracing-log`：启用 `tracing/log` feature 并引入 `tracing-subscriber`，使 `tracing` 的 span/event 在无激活 `Subscriber` 时发出 `log` 记录（tracing → log 方向）；`log` → `tracing` 的桥接不在其中，如需可自行引入 `tracing-log` crate 的 `LogTracer`
 - `metrics-prometheus`：聚合 `tracing-subscriber`（含 `fmt` / `json` / `env-filter` feature）
 
 ## JSON 日志初始化
@@ -23,7 +23,7 @@ garrison = { version = "0.8", features = ["tracing-log"] }
 
 ### 方式一：启用 `audit-inklog` feature（推荐）
 
-inklog 提供多输出 / 轮转 / 脱敏 / 健康监控等增强能力，初始化失败时自动降级到 `tracing_subscriber` JSON：
+inklog 提供多输出 / 轮转 / 脱敏 / 健康监控等增强能力，初始化失败时自动降级——已启用 `tracing-log` 或 `metrics-prometheus` 时降级到 `tracing_subscriber` JSON，否则仅打印 stderr 警告（该路径下日志将丢失）：
 
 ```rust
 use garrison::observability::init_inklog_logging_with_fallback;
@@ -57,7 +57,7 @@ tracing_subscriber::fmt()
 行为要点：
 
 - 解析 `RUST_LOG` 环境变量（默认 `info`）
-- 输出 JSON 格式日志，包含 `timestamp` / `level` / `target` / `message` / `span` 字段
+- 输出 JSON 格式日志，顶层包含 `timestamp` / `level` / `fields`（`message` 位于其中）/ `target` 字段，存在当前 span 时另有 `span` 字段
 - **幂等**：`try_init().ok()` 使全局 subscriber 已设置时静默跳过（多次调用安全）
 - `with_current_span(true)` + `with_span_list(false)`：附加当前 span 但不输出完整 span 列表
 
@@ -73,10 +73,8 @@ tracing_subscriber::fmt()
     "login_id": 1001
   },
   "span": {
-    "name": "login",
-    "attributes": {
-      "login_id": 1001
-    }
+    "login_id": 1001,
+    "name": "login"
   }
 }
 ```
@@ -103,9 +101,9 @@ tracing_subscriber::fmt()
 use tracing::{info, warn, error, instrument};
 
 #[instrument(fields(login_id = %login_id))]
-async fn login(login_id: i64) -> GarrisonResult<String> {
+async fn login(login_id: &str) -> GarrisonResult<String> {
     info!("开始登录流程");
-    let token = GarrisonUtil::login(login_id).await?;
+    let token = GarrisonUtil::login_simple(login_id).await?;
     info!(token = %token, "登录成功");
     Ok(token)
 }
@@ -123,4 +121,4 @@ RUST_LOG=garrison::core=trace,info  # 细粒度
 
 ## 与 OpenTelemetry 协同
 
-启用 `otlp` 时，OTLP span 通过全局 tracer provider 导出，JSON 日志与分布式追踪共用同一 span 上下文，便于关联查询。
+启用 `otlp` 并调用 `init_otlp_tracing(endpoint)` 后，tracer provider 注册为全局 provider，业务侧经 OpenTelemetry API 创建的 span 由此经 OTLP gRPC 导出。注意：garrison 内置初始化不含 `tracing` → OpenTelemetry 桥接层，`tracing` JSON 日志与 OTLP span 属于独立体系，不共用同一 span 上下文；如需日志与追踪自动关联，请自行接入 `tracing-opentelemetry`。

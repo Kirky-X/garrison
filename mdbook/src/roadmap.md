@@ -18,9 +18,9 @@
 | 0.5.0 | ✅ 已完成 | 2026-07-06 | 生产刚需版（多租户 / 社交登录 / 审计日志 / Token Rotation / 安全防护 / 角色层级 / 决策溯源 / Keycloak OIDC RP / PostgreSQL / actix+warp 完整适配） |
 | 0.5.1 | ✅ 已合入 | 2026-07-07 | 工程优化版（RBAC 实体 / UserDevice / 权限注册表 / 请求对象 API / miette 富错误 / 显式 Manager API / confusable string 检测，功能直接合入 0.5.2+ 发布） |
 | 0.5.2 | ✅ 已完成 | 2026-07-08 | 架构重构版（GarrisonLogic trait 拆分 / LoginId newtype 删除 / oxcache _sync 评估 / keys 性能 / stp 模块拆分） |
-| 0.5.3 | ✅ 已完成 | 2026-07-09 | 功能补全版（oxcache 升级 / stp 完整拆分 / MySQL 后端 / Firewall MaxMindDb 生产后端） |
+| 0.5.3 | ✅ 已完成 | 2026-07-09 | 功能补全版（oxcache 升级 / stp 完整拆分 / MySQL 后端 / Firewall MaxMindDb 生产后端，现经 limiteron GeoMatcher 提供） |
 | 0.6.0 | ✅ 已完成 | 2026-07-09 | 账号安全引擎版（account/ 模块 + Credential SPI + PasswordPolicyEngine + UserLockoutStrategy + AuthenticationFlow DSL + i18n 社交登录异常 + AccountMetrics） |
-| 0.6.1 | ✅ 已完成 | 2026-07-10 | gap-closure-remaining（remember_me / Redis 部署模式 / switch_to / Token 置换 / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel — 11 项全部补齐） |
+| 0.6.1 | ✅ 已完成 | 2026-07-10 | gap-closure-remaining 10 项全部补齐（remember_me / Redis 部署模式 / switch_to / Token 置换 / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 / OIDC RP / Redis pub/sub SsoChannel） |
 | 0.6.7 | ✅ 已完成 | 2026-07-13 | 安全与性能增强（forbid 优先语义 / WAF 级防火墙 / 三层缓存架构 / SMS 验证码渐进式限速 / AnomalousLoginDetector 双引擎） |
 | 0.7.0 | ✅ 已完成 | 2026-07-17 | 微服务架构 + ABAC/Cedar + OAuth2 Server + 依赖优化 + 架构加固（7 个能力域 / 252 TDD 任务 / 2968 测试通过） |
 | 0.7.1 | ✅ 已完成 | 2026-07-21 | 安全修复 + crate 重命名 bulwark → garrison（21 项安全漏洞修复） |
@@ -28,6 +28,7 @@
 | 0.7.3 | ✅ 已完成 | 2026-07-22 | `#[check_disable]` 过程宏 + `dao_session!` 宏 + garrison-macros 版本对齐 |
 | 0.8.0 | ✅ 已完成 | 2026-07-24 | 安全加固：常量时间比较原语 + JWT 弱密钥拒绝 + API Key 安全迁移 + tech-review 修复批次 |
 | 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |
+| 0.9.0 | 🚧 进行中（rc.2） | rc.1：2026-09-07 | 自研库特性吸收 + 依赖批量升级 + 配置/数据库/防火墙增强 + 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ feature 整合改名（safe-defaults / decision-trace / permission-registry 合并为 core-advanced） |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ## v0.1.0 核心基础设施（已完成）
@@ -84,16 +85,16 @@
 
 - ✅ 多租户隔离（`tenant-isolation`）：`tenant_id` 字段 + `task_local!` TenantContext + Repository 强制过滤
 - ✅ 社交登录（`social-wechat` / `social-alipay`）：`SocialLoginProvider` trait + 微信扫码 / 支付宝 Provider
-- ✅ 审计日志（`audit-log`）：`audit_logs` 表 + 14 个 listener 事件订阅 + 复合条件查询 + 自动脱敏
+- ✅ 审计日志（`audit-log`）：`audit_logs` 表 + listener 事件订阅（0.5.0 时覆盖 14 种事件；现 `GarrisonEvent` 已扩展至 31 个变体，audit 监听器对全部变体穷尽匹配、无 `_ =>` 兜底）+ 复合条件查询 + 自动脱敏
 - ✅ Token Rotation（`protocol-jwt` 扩展）：`refresh_tokens` 表 + tokenHash + parentTokenHash 链 + 重用检测
-- ✅ 安全防护套件：5 个 FirewallStrategy 实现 + MaxMindDb 生产后端
+- ✅ 安全防护套件：5 个 FirewallStrategy 实现 + MaxMindDb 生产后端（现经 limiteron GeoMatcher 提供，feature 名 `firewall-maxminddb` 保留）
 - ✅ 角色层级：`role_hierarchy` 表 + parents/indirect_ancestors + TC 预计算
-- ✅ 决策溯源（`decision-trace`）：`Decision{allowed, reason, errors}` + 新增 `authorize()` API
+- ✅ 决策溯源（`decision-trace`，v0.9.0 并入 `core-advanced`）：`Decision`（allowed / reason / errors 等溯源字段）+ 新增 `authorize()` API
 - ✅ Keycloak OIDC RP（`keycloak-oidc`）：discovery + JWKS 验签 + ID Token 验证
 - ✅ PostgreSQL 后端：dbnexus 0.3+ 集成
 - ✅ actix-web / warp 完整 Extractor 适配
-- ✅ SSO TOCTU 原子化：`validate_ticket` 改用 `GarrisonDao::get_and_delete`
-- ✅ 注解系统：`@CheckPermission` / `@CheckRole` 过程宏
+- ✅ SSO TOCTOU 原子化：`validate_ticket` 改用 `GarrisonDao::get_and_delete`
+- ✅ 注解系统：`#[check_permission]` / `#[check_role]` 过程宏（连同 `#[check_login]`，由 garrison-macros 提供）
 
 **里程碑**：从"协议完整"走向"生产可用"。
 
@@ -101,12 +102,12 @@
 
 - ✅ **0.5.1**：RBAC 实体 / UserDevice / 权限注册表 / 请求对象 API / miette 富错误 / JSON 测试 / 显式 Manager API / confusable string 检测（合入 0.5.2+ 发布）
 - ✅ **0.5.2**：`GarrisonLogic` 上帝 trait 拆分为 6 个子 trait（GarrisonCore / SessionLogic / PermissionLogic / TokenLogic / MfaLogic / PasswordLogic），删除 `GarrisonLogic` 与 `LoginId` newtype，stp 模块拆分
-- ✅ **0.5.3**：oxcache 升级到 0.3.3 + stp 完整拆分 + MySQL 后端 + Firewall MaxMindDb 生产后端
+- ✅ **0.5.3**：oxcache 升级到 0.3.3 + stp 完整拆分 + MySQL 后端 + Firewall MaxMindDb 生产后端（现经 limiteron GeoMatcher 提供）
 
 ## v0.6.0 / v0.6.1 账号安全引擎（已完成）
 
-- ✅ **0.6.0**：account/ 模块 + Credential SPI（`Credential` trait + `PasswordCredential` + `TotpCredential`）+ PasswordPolicyEngine（12+ 规则）+ UserLockoutStrategy + AuthenticationFlow DSL（FlowBuilder + FlowRegistry + AuthExecutor）+ i18n 社交登录异常（38 个 ftl key）+ AccountMetrics Prometheus 指标
-- ✅ **0.6.1**：gap-closure-remaining 11 项 — remember_me / Redis 部署模式 / switch_to / renew_to_equivalent / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 骨干 / OIDC RP 骨干 / Redis pub/sub SsoChannel
+- ✅ **0.6.0**：account/ 模块 + Credential SPI（`Credential` trait + `PasswordCredential` + `TotpCredential`）+ PasswordPolicyEngine（10 条规则：9 条可插拔规则 + NIST 合规规则）+ UserLockoutStrategy + AuthenticationFlow DSL（FlowBuilder + FlowRegistry + AuthExecutor）+ i18n 社交登录异常（38 个 ftl key）+ AccountMetrics Prometheus 指标
+- ✅ **0.6.1**：gap-closure-remaining 10 项 — remember_me / Redis 部署模式 / switch_to / renew_to_equivalent / OAuth2 注解 / group() / SessionExpiryListener / SAML 2.0 骨干 / OIDC RP 骨干 / Redis pub/sub SsoChannel
 
 ## v0.6.7 安全与性能增强（已完成）
 
@@ -118,12 +119,12 @@
 
 ## v0.7.0 微服务架构 + ABAC/Cedar + OAuth2 Server（已完成）
 
-通过 specmark change `v0.7.0-microservice-abac-oauth2-hardening` 完成 7 个能力域，252 个 TDD 任务，2968 测试通过：
+通过 specmark change `v0.7.0-microservice-abac-oauth2-hardening`（该 change 归档未随仓库保留——specmark/ 已 gitignore，历史记录见 docs/CHANGELOG.md [0.7.0] 节）完成 7 个能力域，252 个 TDD 任务，2968 测试通过：
 
 - ✅ **D1 架构加固**：错误类型统一 + mod.rs 加固（Mock 迁移 + impl 块拆分）+ `secure-sanitize` 输入消毒
 - ✅ **D2 依赖优化**：clippy / cargo doc 零告警 + 10 种特性组合测试通过
-- ✅ **D3 微服务架构**：`backend-remote` 远程后端 + `server/external.rs` + `server/internal.rs` + `src/bin/auth_server.rs` 独立认证服务器
-- ✅ **D4 ABAC/Cedar DSL**（`abac` feature）：基于 Cedar 的属性访问控制引擎 + `src/abac/engine.rs` + `src/abac/policy.rs`
+- ✅ **D3 微服务架构**：`backend-remote` 远程后端 + `src/bin/auth_server.rs` 独立认证服务器（当时的 `server/external.rs` / `server/internal.rs` 双端口手写路由已在后续重构中移除，由 sdforge 声明式路由 `server/sdforge_routes.rs` + path-filter 中间件替代）
+- ✅ **D4 ABAC/Cedar DSL**（`abac` feature）：基于 Cedar 的属性访问控制引擎 + `src/abac/engine.rs`（AbacEngine，`Arc<RwLock<PolicySet>>` 热加载）+ `src/abac/loader.rs`（EntityLoader 实体数据源）
 - ✅ **D5 OAuth2 Server**（`oauth2-server` feature）：4 端点（authorize / token / revoke / introspect）+ 4 种 grant type + PKCE 强制（S256）+ redirect_uri 白名单 + state CSRF 防护
 - ✅ **D6 质量提升**：特性组合测试 + clippy/doc 告警清理 + cargo-audit
 - ✅ **D7 安全审查**：tiangang SAST 0 CRITICAL + diting 88/100（0 CRITICAL + 0 HIGH）+ security.md 10 维度安全检查全部通过

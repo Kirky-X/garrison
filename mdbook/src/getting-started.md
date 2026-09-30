@@ -14,9 +14,11 @@ Garrison 默认启用 `backend-embedded` feature（嵌入式后端模式），�
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["web-axum", "cache-memory", "db-sqlite"] }
+garrison = { version = "0.9.0-rc.2", features = ["web-axum", "cache-memory", "db-sqlite"] }
 tokio = { version = "1", features = ["full"] }
 ```
+
+> 注：当前版本为 pre-release（0.9.0-rc.2），`version = "0.9"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 ## Feature flags 说明
 
@@ -31,7 +33,7 @@ tokio = { version = "1", features = ["full"] }
 | 生态 | `grpc` / `i18n-icu` | gRPC 拦截器 / ICU4X 增强层（复数 + 日期/数字本地化） |
 | 聚合 | `full` / `production` / `development` | 一键启用一组特性 |
 
-`development` = `cache-memory` + `db-sqlite` + `web-axum`（替代已移除的 `all-defaults`）；`full` 启用全部能力。
+`development` = `cache-memory` + `db-sqlite` + `web-axum`（替代已移除的 `all-defaults`）；`full` 启用绝大多数能力但并非全部——数据库后端仅含 `db-sqlite`，也不含 `tracing-log`、`audit-log`、`policy-hibp`、`manager-explicit`、`tls`、`keycloak-oidc` 等十余个 feature（生产组合见 `production`）。
 
 ## 最小示例
 
@@ -58,7 +60,7 @@ impl GarrisonInterface for MyInterface {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 1. 数据库迁移（幂等，首次启动建表）
+    // 1. 数据库迁移（幂等，首次启动建表；迁移脚本目录来源与注意事项见下方「关键约束」）
     let pool = init_dbnexus("sqlite::memory:").await?;
     GarrisonMigration::new(pool).run_all().await?;
 
@@ -76,14 +78,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .build()
     .await?;
 
-    // 4. 在 task_local 上下文中执行登录
-    //    login / check_login 依赖 task_local 中的当前 token
-    let token = garrison::stp::with_current_token(
-        String::new(),
-        GarrisonUtil::login("1001", &LoginParams::default()),
-    ).await?;
+    // 4. 执行登录：login 接收 login_id 生成并返回新 token，
+    //    不读取 task_local 当前 token，无需 with_current_token 包装
+    let token = GarrisonUtil::login("1001", &LoginParams::default()).await?;
 
     // 5. 校验登录状态
+    //    check_login / logout 依赖 task_local 中的当前 token，
+    //    直连调用（测试/脚本）时用 with_current_token 注入
     let logged_in = garrison::stp::with_current_token(
         token.clone(),
         GarrisonUtil::check_login(),
@@ -103,8 +104,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 ## 关键约束
 
 - `GarrisonManager::builder().build().await` 是 async 函数，必须在所有 `GarrisonUtil` API 调用前完成，否则返回未初始化错误。
-- `login` / `check_login` 依赖 `task_local` 中的当前 token，需通过 web 中间件（如 `garrison_middleware`）或在测试中通过 `with_current_token()` 包装注入。
-- 首次启动需调用 `GarrisonMigration::new(pool).run_all()` 完成数据库建表（幂等）。
+- `logout` / `check_login`（以及 `get_login_id` 等）依赖 `task_local` 中的当前 token，需通过 web 中间件（如 `garrison_middleware`）注入，或在测试/脚本中用 `with_current_token()` 包装；`login` 接收 `login_id` 生成并返回新 token，不读取当前 token，无需包装。
+- 首次启动需调用 `GarrisonMigration::new(pool).run_all()` 完成数据库建表（幂等）。注意：`GarrisonMigration::new` 默认从**当前工作目录**下的 `migrations/sqlite/` 读取迁移脚本，目录不存在时静默跳过（返回 0，不报错），后续业务 SQL 才会报缺表。仓库外（crates.io 消费者）请将 garrison 仓库 `migrations/` 下对应后端的 SQL 复制到自己项目，并改用 `GarrisonMigration::with_base_dir(pool, 脚本目录)` 指定位置；PostgreSQL 后端可启用 `db-postgres` feature（已透传 `embedded-migrations`）后调用 `run_embedded_postgres()`，无需访问迁移文件目录（MySQL 无嵌入式迁移支持，只能 `with_base_dir`）。
 
 ## 下一步
 
