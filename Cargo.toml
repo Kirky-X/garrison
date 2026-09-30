@@ -727,6 +727,21 @@ path = "src/bin/auth_server.rs"
 # 缺失会导致 --features auth-server 单独面编译失败（E0432）
 required-features = ["auth-server", "cache-memory"]
 
+# garrison-cli 独立运维 bin：不进默认容器镜像（两个 Dockerfile 的 build 目标
+# 只有 auth_server 与 garrison-healthcheck）。「主镜像零依赖」决策限定的是
+# auth_server 与 healthcheck 探针，运维 bin 门控在独立 feature 后不受其约束。
+# required-features 即四个子命令的运行时依赖并集：
+# - cli-ops              clap 派生 API（命令行解析）
+# - account-credential   user-hash 子命令的 Argon2Hasher（with_pool 令牌池复用）
+# - protocol-zeroize     key-rotate 子命令生成密钥的 Zeroizing 包裹
+# - db-sqlite            one-time-access-token 子命令的用户查询与凭据落库路径
+# - protocol-jwt         one-time-access-token 子命令的自包含 JWT 签发/验签
+# - config-yaml          user-hash 的 YAML 片段经 confers yaml 转换器加载
+[[bin]]
+name = "garrison-cli"
+path = "src/bin/garrison-cli.rs"
+required-features = ["cli-ops", "account-credential", "protocol-zeroize", "db-sqlite", "protocol-jwt", "config-yaml", "field-encryption"]
+
 # === 基准测试目标 ===
 [[bench]]
 name = "garrison_benchmark"

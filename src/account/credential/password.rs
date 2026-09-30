@@ -1346,6 +1346,8 @@ mod tests {
 
     /// 池化出口 verify_and_rehash_pooled：低档位存量经池升级（permit 占槽与
     /// verify_pooled 同款），完成后 permit 归还无泄漏。
+    /// （函数本体随唯一调用方 stp::password 门控在 db-sqlite 组合，本测试同门控）
+    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     #[tokio::test]
     async fn verify_and_rehash_pooled_upgrades_and_returns_permit() {
         let legacy = Argon2Hasher::with_params(8192, 2, 1);
@@ -1373,6 +1375,7 @@ mod tests {
     }
 
     /// 池化出口不重哈希分支：档位持平返回 (true, None)，与直连行为一致。
+    #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     #[tokio::test]
     async fn verify_and_rehash_pooled_current_tier_returns_none() {
         let hasher = Arc::new(Argon2Hasher::default().with_pool(1));

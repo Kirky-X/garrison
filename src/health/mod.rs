@@ -121,6 +121,8 @@ pub struct DbHealthCheck {
 
 /// 内置 `HealthCheck` 实现子模块（ConfigHealthCheck / CacheHealthCheck / DbHealthCheck）。
 pub mod checks;
+/// 容器探针与 CLI 共用的 liveness 探测逻辑（纯 std，零外部依赖）。
+pub mod probe;
 /// `HealthRegistry` impl 块子模块。
 pub mod registry;
 /// `HealthReport` impl 块子模块。
