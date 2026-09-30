@@ -67,6 +67,20 @@ pub struct GarrisonJwtClaims {
     /// 本身为可选 claim）；`nbf` 缺失时 jsonwebtoken 跳过 nbf 校验。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub nbf: Option<i64>,
+
+    /// 认证方法引用（RFC 8176 `amr` claim）。
+    ///
+    /// 来自会话因子账本（如 `["pwd","otp"]`）。字段为 `Option` 以兼容
+    /// 不携带账本映射的签发路径——`None` 时整体跳过序列化，载荷与
+    /// 历史格式保持一致。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub amr: Option<Vec<String>>,
+
+    /// 主认证时刻（OIDC Core `auth_time` claim，Unix 秒）。
+    ///
+    /// 来自会话 `auth_time`；为 `None` 时整体跳过序列化。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub auth_time: Option<i64>,
 }
 
 /// JWT 处理器，封装密钥与签名算法以供复用。
@@ -88,6 +102,10 @@ pub struct JwtHandler {
     pub algorithm: Algorithm,
     /// 可选设备标识（签发时写入 claims）。
     pub device: Option<String>,
+    /// 可选 `amr` claim（RFC 8176 认证方法引用，builder [`with_amr`](JwtHandler::with_amr) 设置）。
+    pub amr: Option<Vec<String>>,
+    /// 可选 `auth_time` claim（OIDC 主认证时刻，builder [`with_auth_time`](JwtHandler::with_auth_time) 设置）。
+    pub auth_time: Option<i64>,
     /// 密钥材料（crate 内私有）：决定 sign/verify 的密钥来源与算法白名单。
     ///
     /// `new()` 默认 [`KeyMaterial::Hs`](crate::protocol::jwt::KeyMaterial)；非对称

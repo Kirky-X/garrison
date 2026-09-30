@@ -298,6 +298,8 @@ impl JwtHandler {
             algorithm: Algorithm::HS256,
             device: None,
             key_material: KeyMaterial::Hs,
+            amr: None,
+            auth_time: None,
         }
     }
 
@@ -464,6 +466,51 @@ impl JwtHandler {
         Ok(self)
     }
 
+    /// 签发携带 `amr` / `auth_time` claim 的 JWT（MFA 因子账本映射入口）。
+    ///
+    /// 与 [`sign`](Self::sign) 同一口径，额外写入账本映射结果：
+    /// `amr` 空切片或 `auth_time` 为 `None` 时对应 claim 不序列化（载荷与
+    /// 既有签发格式一致）。签发路径统一经由本方法或
+    /// `Token::generate_with_amr` 传入账本映射，禁止硬编码 claim。
+    ///
+    /// # 参数
+    /// - `login_id`: 登录主体标识。
+    /// - `timeout`: 有效期（秒），不可为负数。
+    /// - `amr`: RFC 8176 认证方法引用（见 `crate::stp::mfa::amr_claim`）。
+    /// - `auth_time`: 主认证时刻（Unix 秒）；`None` 不写 claim。
+    ///
+    /// # 返回
+    /// - `Ok(String)`: JWT 字符串（三段 Base64URL 通过 `.` 连接）。
+    /// - `Err(GarrisonError::Config)`: 密钥为空、过短或 timeout 为负。
+    /// - `Err(GarrisonError::InvalidParam)`: `now + timeout` 溢出（timeout 过大）。
+    /// - `Err(GarrisonError::Internal)`: 签发失败。
+    pub fn sign_with_amr(
+        &self,
+        login_id: impl Into<String>,
+        timeout: i64,
+        amr: &[String],
+        auth_time: Option<i64>,
+    ) -> GarrisonResult<String> {
+        let handler = JwtHandler {
+            secret: self.secret.clone(),
+            algorithm: self.algorithm,
+            device: self.device.clone(),
+            key_material: match &self.key_material {
+                KeyMaterial::Hs => KeyMaterial::Hs,
+                KeyMaterial::RsaPkcs1Pem(pem) => KeyMaterial::RsaPkcs1Pem(pem.clone()),
+                KeyMaterial::EcPem(pem) => KeyMaterial::EcPem(pem.clone()),
+                KeyMaterial::EdPem(pem) => KeyMaterial::EdPem(pem.clone()),
+            },
+            amr: if amr.is_empty() {
+                None
+            } else {
+                Some(amr.to_vec())
+            },
+            auth_time,
+        };
+        handler.sign(login_id, timeout)
+    }
+
     /// 签发 JWT。
     ///
     /// # 参数
@@ -522,6 +569,8 @@ impl JwtHandler {
             device: self.device.clone(),
             jti: Some(uuid::Uuid::new_v4().to_string()),
             nbf: Some(now), // 签发时设置 nbf，verify 时强制校验
+            amr: self.amr.clone(),
+            auth_time: self.auth_time,
         };
         let header = Header {
             kid,

@@ -1393,6 +1393,8 @@ mod tests {
                     #[cfg(feature = "session-extra")]
                     is_anon: false,
                     effective_timeout: None,
+                    amr_ledger: Vec::new(),
+                    auth_time: None,
                 })
             } else {
                 Err(crate::error::GarrisonError::InvalidToken(

@@ -201,6 +201,47 @@ async fn switch_to_updates_login_id_and_stores_switched_from() {
     assert_eq!(switched_from, Some("1001".to_string()));
 }
 
+/// switch_to 清空因子账本与 auth_time（fail-closed）：
+/// 原主体已完成的 step-up 成果不得让目标身份免认证通过 MFA gate。
+#[tokio::test]
+async fn switch_to_resets_amr_ledger_and_auth_time() {
+    let auth = make_auth_logic_allow_switch(3600, 86400);
+    let token = auth.login("1001", None).await.unwrap();
+    let _ = auth.login("2002", None).await.unwrap();
+
+    // 原主体完成一次 otp step-up（账本升级到 aal 2）
+    auth.session
+        .append_amr_entry(&token, "otp", 2, chrono::Utc::now().timestamp())
+        .await
+        .unwrap();
+    let before = auth
+        .session
+        .get_token_session(&token)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(before.amr_ledger.len(), 2, "前置：账本应含 pwd + otp");
+    assert!(before.auth_time.is_some(), "前置：auth_time 应已播种");
+
+    auth.switch_to(&token, "2002").await.unwrap();
+
+    let after = auth
+        .session
+        .get_token_session(&token)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        after.amr_ledger.is_empty(),
+        "身份切换后因子账本应清空（原主体 step-up 不得继承），实际: {:?}",
+        after.amr_ledger
+    );
+    assert_eq!(
+        after.auth_time, None,
+        "身份切换后 auth_time 应置 None（freshness 判 Stale 强制重新 step-up）"
+    );
+}
+
 /// switch_to 后 token 仍然有效（is_login 返回 true）。
 #[tokio::test]
 async fn switch_to_preserves_token_validity() {
@@ -1429,4 +1470,84 @@ async fn renew_old_token_cleanup_failure_still_returns_new_token() {
         auth.is_login(&new_token).await.unwrap(),
         "新 token 必须有效（A9：新 token 已完全建立后才失效旧 token）"
     );
+}
+
+// ========================================================================
+// amr / auth_time claim 签发收口（jwt 风格）
+// ========================================================================
+
+#[cfg(feature = "protocol-jwt")]
+mod amr_claim_issuance {
+    use super::mock::MockDao;
+    use super::*;
+    use crate::core::token::JwtTokenStyle;
+
+    /// 构造 jwt 风格 AuthLogicDefault（共享 make 逻辑，密钥固定）。
+    /// 返回 (auth, session) 供测试直接操作会话账本。
+    fn make_jwt_auth_logic() -> (AuthLogicDefault, Arc<GarrisonSession>) {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+        let token_handler: Arc<dyn Token> =
+            Arc::new(JwtTokenStyle::new("0123456789abcdef0123456789abcdef"));
+        (
+            AuthLogicDefault::new(Arc::clone(&session), token_handler, 3600),
+            session,
+        )
+    }
+
+    fn verify_claims(token: &str) -> crate::protocol::jwt::GarrisonJwtClaims {
+        crate::protocol::jwt::JwtHandler::new("0123456789abcdef0123456789abcdef")
+            .verify(token)
+            .unwrap()
+    }
+
+    /// AuthLogic login（jwt 风格）签发携带主因子 amr=["pwd"] 与 auth_time。
+    #[tokio::test]
+    async fn jwt_login_carries_primary_amr_and_auth_time() {
+        let (auth, _session) = make_jwt_auth_logic();
+        let token = auth.login("1001", None).await.unwrap();
+        let claims = verify_claims(&token);
+        assert_eq!(
+            claims.amr,
+            Some(vec![crate::stp::mfa::PRIMARY_FACTOR_AMR.to_string()]),
+            "主登录签发应带主因子 amr"
+        );
+        assert!(claims.auth_time.is_some(), "主登录签发应带 auth_time");
+    }
+
+    /// renew 后新 token 的 amr/auth_time 与会话账本一致：
+    /// step-up 追加 otp 后 renew，claim 应从账本映射出 ["pwd","otp"]，
+    /// auth_time 延续旧会话（凭空消失即为本回归锚点）。
+    #[tokio::test]
+    async fn renew_to_equivalent_preserves_ledger_claims() {
+        let (auth, session) = make_jwt_auth_logic();
+        let old_token = auth.login("1001", None).await.unwrap();
+
+        // 会话内 step-up：追加 otp（经公共账本 API，与 renew 读同一份账本）
+        let ts_auth_time = {
+            let ts = session
+                .get_token_session(&old_token)
+                .await
+                .unwrap()
+                .unwrap();
+            ts.auth_time.unwrap()
+        };
+        session
+            .append_amr_entry(&old_token, "otp", 2, ts_auth_time + 30)
+            .await
+            .unwrap();
+
+        let new_token = auth.renew_to_equivalent(&old_token).await.unwrap();
+        let claims = verify_claims(&new_token);
+        assert_eq!(
+            claims.amr,
+            Some(vec!["pwd".to_string(), "otp".to_string()]),
+            "renew 后 amr 应从账本映射（含 step-up 因子）"
+        );
+        assert_eq!(
+            claims.auth_time,
+            Some(ts_auth_time),
+            "renew 后 auth_time 应延续会话 auth_time"
+        );
+    }
 }

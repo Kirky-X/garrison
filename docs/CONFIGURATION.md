@@ -154,7 +154,27 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 `protocol::webauthn::WebauthnConfig`（构造后不可变；经 `WebauthnService::new` 注入）。RP 配置不自立配置项，从 issuer 派生：`rp_id` = issuer URL host、`origins` = [issuer]（issuer 变更后 rp_id 跟随）。
 
 | 字段 | 类型 | 默认值 | 说明 |
+|### 2.11 MFA/step-up 编排配置（mfa，R09）
+
+`GarrisonConfig.mfa`（`MfaConfig`）。chain factor 词汇表：`otp` / `webauthn`（`pwd` 为主因子不进 chain）；引用未知 factor 启动期 fail-closed 报错。
+
+```toml
+[mfa]
+global_chain = ["otp"]              # 全局默认链（空 = 不强制 MFA）
+recovery_misuse_tolerance = 0       # 恢复码误用豁免额度（默认 0，超限锁定）
+
+[mfa.per_client_chains]
+"legacy-client" = []                # 空数组 = 显式禁用（即使全局有默认链）
+"admin-console" = ["webauthn"]      # 非空 = 强制该集合
+```
+
+| 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
+| `mfa.global_chain` | `Vec<String>` | `[]` | 全局默认强制链；空 = 不强制 |
+| `mfa.per_client_chains` | `HashMap<String, Vec<String>>` | `{}` | per-client 覆盖（三态语义见上） |
+| `mfa.recovery_misuse_tolerance` | `u32` | `0` | 恢复码连续无效 verify 的豁免次数，超过即锁定（fail-closed，正确码也拒绝） |
+
+------|------|--------|------|
 | `issuer` | `String` | 无（必填） | RP 派生源（如 `https://sso.example.com`）；非法 URL 显性拒绝 |
 | `challenge_ttl_secs` | `u64` | `120` | 仪式 challenge 暂存 TTL（秒）；过期后消费显性拒绝（与重放同错误面） |
 | `passwordless.enabled` | `bool` | `false` | Passwordless 用途准入；关闭时该用途的注册/认证显性拒绝 |

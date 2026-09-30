@@ -142,6 +142,8 @@ impl AuthBackend for MockAuthBackend {
             #[cfg(feature = "session-extra")]
             is_anon: false,
             effective_timeout: None,
+            amr_ledger: Vec::new(),
+            auth_time: None,
         })
     }
 

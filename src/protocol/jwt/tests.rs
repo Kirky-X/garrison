@@ -21,6 +21,8 @@ fn claims_serializes_full_fields() {
         device: Some("web".to_string()),
         jti: Some("test-jti".to_string()),
         nbf: Some(1700000000),
+        amr: None,
+        auth_time: None,
     };
     let json = serde_json::to_string(&claims).unwrap();
     assert!(json.contains("\"sub\":\"1001\""));
@@ -43,6 +45,8 @@ fn claims_device_none_serializes_as_null() {
         device: None,
         jti: None,
         nbf: None,
+        amr: None,
+        auth_time: None,
     };
     let json = serde_json::to_string(&claims).unwrap();
     assert!(json.contains("\"device\":null"));
@@ -63,6 +67,8 @@ fn claims_jti_none_skipped_in_json() {
         device: None,
         jti: None,
         nbf: None,
+        amr: None,
+        auth_time: None,
     };
     let json = serde_json::to_string(&claims).unwrap();
     assert!(!json.contains("jti"));
@@ -270,6 +276,8 @@ fn verify_future_nbf_returns_invalid_token() {
         device: None,
         jti: Some(uuid::Uuid::new_v4().to_string()),
         nbf: Some(now + 10), // 未来 10 秒生效
+        amr: None,
+        auth_time: None,
     };
     let header = jsonwebtoken::Header::new(Algorithm::HS256);
     let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
@@ -317,6 +325,8 @@ fn verify_past_nbf_returns_ok() {
         device: None,
         jti: Some(uuid::Uuid::new_v4().to_string()),
         nbf: Some(now - 10), // 过去 10 秒已生效
+        amr: None,
+        auth_time: None,
     };
     let header = jsonwebtoken::Header::new(Algorithm::HS256);
     let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
@@ -877,4 +887,119 @@ fn sign_claims_rejects_empty_secret() {
         Some(GarrisonError::Config(msg)) => assert!(msg.contains("secret")),
         other => panic!("期望 Config 错误，实际: {:?}", other),
     }
+}
+
+// ============================================================================
+// amr / auth_time claim 映射（MFA 因子账本 → RFC 8176）
+// ============================================================================
+
+/// claims 含 amr/auth_time 时序列化输出对应字段，且可反序列化往返。
+#[test]
+fn claims_amr_auth_time_serialize_and_deserialize() {
+    let claims = GarrisonJwtClaims {
+        sub: "1001".to_string(),
+        iat: 1700000000,
+        exp: 1700003600,
+        login_id: "1001".to_string(),
+        device: None,
+        jti: None,
+        nbf: None,
+        amr: Some(vec!["pwd".to_string(), "otp".to_string()]),
+        auth_time: Some(1700000000),
+    };
+    let json = serde_json::to_string(&claims).unwrap();
+    assert!(
+        json.contains(r#""amr":["pwd","otp"]"#),
+        "amr 应按 RFC 8176 输出字符串数组，实际: {}",
+        json
+    );
+    assert!(
+        json.contains(r#""auth_time":1700000000"#),
+        "auth_time 应输出 Unix 秒，实际: {}",
+        json
+    );
+    let parsed: GarrisonJwtClaims = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.amr, Some(vec!["pwd".to_string(), "otp".to_string()]));
+    assert_eq!(parsed.auth_time, Some(1700000000));
+}
+
+/// amr/auth_time 为 None 时跳过序列化（签发路径未接线时载荷与历史格式一致）。
+#[test]
+fn claims_amr_none_skipped_in_json() {
+    let claims = GarrisonJwtClaims {
+        sub: "1001".to_string(),
+        iat: 1700000000,
+        exp: 1700003600,
+        login_id: "1001".to_string(),
+        device: None,
+        jti: None,
+        nbf: None,
+        amr: None,
+        auth_time: None,
+    };
+    let json = serde_json::to_string(&claims).unwrap();
+    assert!(!json.contains("amr"), "amr=None 不应序列化，实际: {}", json);
+    assert!(
+        !json.contains("auth_time"),
+        "auth_time=None 不应序列化，实际: {}",
+        json
+    );
+}
+
+/// 不含 amr/auth_time 字段的历史载荷仍可反序列化（serde default 兼容）。
+#[test]
+fn claims_without_amr_fields_deserialize_as_none() {
+    let json =
+        r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":"1001","device":"web"}"#;
+    let claims: GarrisonJwtClaims = serde_json::from_str(json).unwrap();
+    assert_eq!(claims.amr, None, "无 amr 字段应反序列化为 None");
+    assert_eq!(claims.auth_time, None, "无 auth_time 字段应反序列化为 None");
+}
+
+/// sign_with_amr 签发后 verify 读回的 claim 内容一致（单一签发路径）。
+#[test]
+fn sign_with_amr_and_auth_time_maps_claims() {
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
+    let token = handler
+        .sign_with_amr(
+            "1001",
+            3600,
+            &["pwd".to_string(), "otp".to_string(), "webauthn".to_string()],
+            Some(1700000000),
+        )
+        .unwrap();
+    let claims = handler.verify(&token).unwrap();
+    assert_eq!(
+        claims.amr,
+        Some(vec![
+            "pwd".to_string(),
+            "otp".to_string(),
+            "webauthn".to_string()
+        ])
+    );
+    assert_eq!(claims.auth_time, Some(1700000000));
+}
+
+/// 未设置 amr/auth_time 的签发路径：载荷不含对应字段，verify 读回 None
+/// （与历史签发格式字节兼容——载荷即旧格式 token）。
+#[test]
+fn sign_without_amr_omits_claims_and_still_verifies() {
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
+    let token = handler.sign("1001", 3600).unwrap();
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    let payload = token.split('.').nth(1).unwrap();
+    let json = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map(|b| String::from_utf8(b).unwrap())
+        .unwrap();
+    assert!(
+        !json.contains("\"amr\""),
+        "未接线时载荷不应含 amr，实际: {}",
+        json
+    );
+    assert!(!json.contains("\"auth_time\""));
+    let claims = handler.verify(&token).unwrap();
+    assert_eq!(claims.amr, None);
+    assert_eq!(claims.auth_time, None);
 }

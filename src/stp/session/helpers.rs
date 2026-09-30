@@ -494,9 +494,12 @@ impl GarrisonLogicDefault {
                 // 委托 JwtHandler::sign
                 #[cfg(feature = "protocol-jwt")]
                 {
-                    let handler =
-                        crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
-                    handler.sign(login_id, self.config.timeout)
+                    // 主登录即密码认证：claim 映射取统一口径（与会话账本播种
+                    // 同源），不经各签发点自行硬编码。
+                    let now = chrono::Utc::now().timestamp();
+                    let (amr, auth_time) = crate::stp::mfa::primary_issuance_claims(now);
+                    crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str())
+                        .sign_with_amr(login_id, self.config.timeout, &amr, auth_time)
                 }
                 #[cfg(not(feature = "protocol-jwt"))]
                 {

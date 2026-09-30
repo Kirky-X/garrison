@@ -416,6 +416,7 @@ mod tests {
 
     /// 容量丢弃必须输出结构性 warn（含 key 与累计丢弃数），显性化不静默。
     #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
     async fn capacity_drop_emits_structured_warning() {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;
@@ -483,6 +484,7 @@ mod tests {
 
     /// 后台循环对窗口内丢弃做 tracing 汇总（累计丢弃数可从日志检索）。
     #[tokio::test(start_paused = true)]
+    #[serial_test::serial]
     async fn flush_loop_summarizes_dropped_count() {
         use tracing_subscriber::layer::SubscriberExt;
         use tracing_subscriber::util::SubscriberInitExt;

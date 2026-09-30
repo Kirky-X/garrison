@@ -35,6 +35,28 @@ pub trait Token: Send + Sync {
     /// - `timeout`: 有效期（秒）。
     fn generate(&self, login_id: &str, timeout: i64) -> GarrisonResult<String>;
 
+    /// 生成携带认证方法引用的 token（MFA 因子账本 → amr / auth_time claim）。
+    ///
+    /// 仅 JWT 风格有 claim 载体：JwtTokenStyle 将 `amr` / `auth_time` 写入
+    /// JWT 载荷；其余风格（uuid / random_64 / simple）无载体，默认实现忽略
+    /// 二者并委托 [`Token::generate`]（既有签发格式不变，账本仍以会话记录
+    /// 为权威来源）。签发路径应统一经由本方法传入账本映射结果
+    /// （`crate::stp::mfa::amr_claim`），禁止各路径自行硬编码 claim。
+    ///
+    /// # 参数
+    /// - `amr`: RFC 8176 认证方法引用；空切片不写 claim。
+    /// - `auth_time`: 主认证时刻（Unix 秒）；`None` 不写 claim。
+    fn generate_with_amr(
+        &self,
+        login_id: &str,
+        timeout: i64,
+        amr: &[String],
+        auth_time: Option<i64>,
+    ) -> GarrisonResult<String> {
+        let _ = (amr, auth_time);
+        self.generate(login_id, timeout)
+    }
+
     /// 校验 token，返回关联的 login_id（如果 token 有效且可解析）。
     ///
     /// # 返回

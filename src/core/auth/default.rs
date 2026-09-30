@@ -152,7 +152,12 @@ impl AuthLogic for AuthLogicDefault {
         } else {
             self.timeout
         };
-        let token = self.token_handler.generate(id, effective_timeout)?;
+        // 主登录即密码认证：签发 claim 与会话账本播种取统一口径
+        let now = Utc::now().timestamp();
+        let (amr, auth_time) = crate::stp::mfa::primary_issuance_claims(now);
+        let token = self
+            .token_handler
+            .generate_with_amr(id, effective_timeout, &amr, auth_time)?;
         self.session.create(id, &token).await?;
         // remember_me 扩展 Token-Session TTL
         if effective_timeout != self.timeout {
@@ -254,6 +259,12 @@ impl AuthLogic for AuthLogicDefault {
         // 更新 login_id 为 target_login_id
         ts.login_id = target_login_id.to_string();
         ts.last_active_at = Utc::now().timestamp();
+        // 身份切换后认证事实归零（fail-closed）：因子账本与 auth_time 是
+        // 「当前主体已完成认证」的权威记录，原主体的 step-up 成果不得让
+        // 目标身份免认证通过 MFA gate——置空后 freshness 判 Stale，目标
+        // 身份须重新完成自己的 step-up
+        ts.amr_ledger.clear();
+        ts.auth_time = None;
 
         // 保存更新后的 session 到 DAO（保留原 TTL）
         self.session.save_token_session(token, &ts).await?;
@@ -431,10 +442,15 @@ impl AuthLogic for AuthLogicDefault {
                 })?;
             let ttl_secs = remaining_ttl.map(|d| d.as_secs()).unwrap_or(0);
 
-            // 2. 生成新 token（同 token_style + 同 login_id）
-            let new_token = self
-                .token_handler
-                .generate(&old_ts.login_id, self.timeout)?;
+            // 2. 生成新 token（同 token_style + 同 login_id）：
+            //    amr/auth_time 从旧会话账本映射（同一认证延续），jwt 风格下
+            //    新 token 的 claim 与账本保持一致
+            let new_token = self.token_handler.generate_with_amr(
+                &old_ts.login_id,
+                self.timeout,
+                &crate::stp::mfa::amr_claim(&old_ts.amr_ledger),
+                old_ts.auth_time,
+            )?;
 
             // 3. 构建新 TokenSession（复制 attrs + device + ip + user_agent + safe_services）
             let now = Utc::now().timestamp();
@@ -456,6 +472,9 @@ impl AuthLogic for AuthLogicDefault {
                 is_anon: false,
                 // renew 复制旧会话的 TTL 权威来源
                 effective_timeout: old_ts.effective_timeout,
+                // renew 承接旧会话的因子账本与 auth_time（同一认证延续，非重新认证）
+                amr_ledger: old_ts.amr_ledger.clone(),
+                auth_time: old_ts.auth_time,
             };
 
             // 4. 保存新 Token-Session with remaining TTL

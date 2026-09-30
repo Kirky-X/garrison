@@ -475,6 +475,8 @@ mod tests {
             #[cfg(feature = "session-extra")]
             is_anon: false,
             effective_timeout: None,
+            amr_ledger: Vec::new(),
+            auth_time: None,
         };
         let json = serde_json::to_string(&ts).unwrap();
         dao.set(&key, &json, 3600).await.unwrap();
@@ -708,6 +710,8 @@ mod tests {
             #[cfg(feature = "session-extra")]
             is_anon: true,
             effective_timeout: None,
+            amr_ledger: Vec::new(),
+            auth_time: None,
         };
         let json = serde_json::to_string(&anon_ts).unwrap();
         dao.set(&anon_key, &json, 3600).await.unwrap();

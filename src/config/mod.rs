@@ -30,6 +30,7 @@ use crate::web::cors::CorsConfig;
 use crate::web::csrf::CsrfConfig;
 use confers::types::ConfigValue;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tokio::sync::watch;
 
 pub mod deprecation;
@@ -324,6 +325,38 @@ pub struct TenantIsolationConfig {
     pub enabled: bool,
     /// 租户解析器类型。
     pub resolver: TenantResolverKind,
+}
+
+/// MFA/step-up 编排配置段（`mfa`）。
+///
+/// 承载 per-client MFA chain 三态与全局默认链；factor 词汇表校验
+/// （fail-closed）见 [`crate::stp::mfa::validate_mfa_chains`]。
+///
+/// # 三态语义（per_client_chains）
+///
+/// - 键缺失 → 回退 `global_chain`（全局默认）；
+/// - 值为空数组 → 显式禁用（即使全局有默认链也不强制）；
+/// - 值为非空数组 → 强制该集合。
+///
+/// # 配置示例
+///
+/// ```toml
+/// [mfa]
+/// global_chain = ["otp"]
+///
+/// [mfa.per_client_chains]
+/// "legacy-client" = []
+/// "admin-console" = ["webauthn"]
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MfaConfig {
+    /// 全局默认 chain（factor 列表；空 = 不强制 MFA）。
+    pub global_chain: Vec<String>,
+    /// per-client chain 覆盖表（键 = client 标识；语义见结构体文档三态）。
+    pub per_client_chains: HashMap<String, Vec<String>>,
+    /// 恢复码误用豁免额度（默认 0）：连续无效 verify 超过该次数即锁定。
+    pub recovery_misuse_tolerance: u32,
 }
 
 /// 密码哈希配置段（`password_hasher`）。
@@ -712,6 +745,9 @@ pub struct GarrisonConfig {
     /// `config.password_hasher.build_hasher()` 构造 hasher 后注入
     /// `with_password_hasher`（verify 路径按哈希前缀自动识别算法，不受本节影响）。
     pub password_hasher: PasswordHasherConfig,
+
+    /// MFA/step-up 编排配置段（per-client chain 三态 + 全局默认链）。
+    pub mfa: MfaConfig,
 
     /// CORS 跨域资源共享配置段。
     ///

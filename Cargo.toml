@@ -345,7 +345,7 @@ protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "dep:hmac", "dep:bas
 # dep:p256/p384/sec1：ES 系验证路径从私钥标量计算 SEC1 公钥点（jsonwebtoken 验证端
 # 仅接受公钥）。p256/p384 为 jsonwebtoken rust_crypto 传递依赖，零新增体积；
 # 五者均无 RustSec 通告（advisory-db 全库检索 2026-09-21）。
-protocol-jwt = ["dep:jsonwebtoken", "dep:sha2", "dep:pkcs1", "dep:pkcs8", "dep:base64", "dep:p256", "dep:p384", "dep:sec1", "dep:ed25519-dalek"]
+protocol-jwt = ["dep:jsonwebtoken", "dep:sha2", "dep:hkdf", "dep:pkcs1", "dep:pkcs8", "dep:base64", "dep:p256", "dep:p384", "dep:sec1", "dep:ed25519-dalek"]
 protocol-sign = ["dep:sha2", "dep:hmac", "dep:base64", "dep:hkdf"]
 # protocol-apikey：API Key 生成/校验/吊销/轮换。
 # dep:sha2 + secure-ct-eq：secret 以 sha256 哈希存储（CWE-916）+ 复用公共常量时间比较原语（消除本地副本）。
@@ -398,11 +398,14 @@ sms-rate-limit = ["dep:rand"]
 email-verification = ["dep:rand"]
 # 邮箱验证码 SMTP 内置实现（lettre，含 SmtpEmailSender）
 email-verification-smtp = ["email-verification", "dep:lettre"]
-# field-encryption：落库敏感字段 AES-256-GCM 静态加密（CryptoValue 编解码 + AAD 租户/表/键绑定 + 迁移期双读）。
+# field-encryption：落库敏感字段 AES-256-GCM 静态加密（CryptoValue 编解码 + AAD 租户/表/键绑定 + 迁移期双读）
+# mfa-recovery：MFA 恢复码管理器（SHA-256 哈希落库；编排基座的可选能力，
+# 独立 feature 门控使 default 组合不拉入 sha2——与 protocol-qrlogin 对 sha2 的先例一致）。
 # dep:getrandom：每值 12 字节 nonce 直读 OS CSPRNG（不启用 aes-gcm/getrandom，避免再引一套 getrandom 版本）；
 # dep:base64：CryptoValue 载荷 `base64(nonce|ciphertext)` 编码（与 spec 格式一致）；
 # dep:sha2：token 类命名空间 key 名摘要化（SHA-256 hex）——裸 bearer token 不得留在落库 key 名
 field-encryption = ["dep:aes-gcm", "dep:getrandom", "dep:base64", "dep:sha2"]
+mfa-recovery = ["dep:sha2"]
 
 # === 账号安全引擎 ===
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:getrandom", "dep:sha2", "dep:base32"]
@@ -610,6 +613,7 @@ full = [
     "secure-totp", "secure-sign", "protocol-httpbasic", "protocol-httpdigest", "secure-masking",
     "secure-xss", "secure-sanitize", "sms-rate-limit", "email-verification", "email-verification-smtp",
     "field-encryption",
+    "mfa-recovery",
     "account-credential", "credential-zeroize", "account-policy", "account-lockout", "account-authflow",
     "account-password-reset",
     "web-axum", "web-actix", "web-warp",
@@ -647,7 +651,7 @@ full = [
 production = [
     "cache-redis", "db-postgres", "web-axum",
     "protocol-jwt", "protocol-sign", "secure-sign",
-    "protocol-webauthn", "backchannel-logout", "field-encryption", "account-password-reset",
+    "protocol-webauthn", "backchannel-logout", "field-encryption", "mfa-recovery", "account-password-reset",
     "listener", "tracing-log", "metrics-prometheus",
     "audit-inklog",
     "tenant-isolation",
@@ -736,5 +740,5 @@ required-features = ["full"]
 # 将 unexpected_cfgs 保持为 warn 级别（而非 allow）以便发现真正的意外 cfg。
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-password-reset", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backchannel-logout", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-invalidation", "cache-memory", "cache-redis", "cli", "cli-ops", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "field-encryption", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-qrlogin", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-webauthn", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-warp"))',
+    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-password-reset", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backchannel-logout", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-invalidation", "cache-memory", "cache-redis", "cli", "cli-ops", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "field-encryption", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "mfa-recovery", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-qrlogin", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-webauthn", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-warp"))',
 ] }

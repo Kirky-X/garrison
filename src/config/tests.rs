@@ -2825,3 +2825,68 @@ fn jwks_retention_positive_passes_validation() {
     config.jwks_retention_secs = 600;
     config.validate().expect("正值 retention 必须通过校验");
 }
+
+// ============================================================================
+// MFA 编排基座：per-client chain 三态与 fail-closed 校验
+// ============================================================================
+
+/// default_config() 的 mfa 段：全局链为空、无 per-client 覆盖（不强制 MFA）。
+#[test]
+fn mfa_config_defaults_empty() {
+    let config = GarrisonConfig::default_config();
+    assert!(config.mfa.global_chain.is_empty(), "全局链默认空");
+    assert!(
+        config.mfa.per_client_chains.is_empty(),
+        "per-client 覆盖默认空"
+    );
+    assert_eq!(
+        config.mfa.recovery_misuse_tolerance, 0,
+        "恢复码误用豁免默认 0（首次误用即锁定）"
+    );
+    assert!(config.validate().is_ok(), "默认 mfa 配置应通过校验");
+}
+
+/// 全局链引用未知 factor → validate 返回 Config 错误（fail-closed）。
+#[test]
+fn mfa_global_chain_unknown_factor_fails_validation() {
+    let mut config = GarrisonConfig::default_config();
+    config.mfa.global_chain = vec!["otp".to_string(), "sms".to_string()];
+    let result = config.validate();
+    assert!(
+        matches!(result, Err(GarrisonError::Config(ref m)) if m.contains("mfa-chain-factor-unknown") && m.contains("sms")),
+        "全局链引用未知 factor 应 fail-closed，实际: {:?}",
+        result
+    );
+}
+
+/// per-client 链引用未知 factor → validate 返回 Config 错误（fail-closed）。
+#[test]
+fn mfa_per_client_chain_unknown_factor_fails_validation() {
+    let mut config = GarrisonConfig::default_config();
+    config
+        .mfa
+        .per_client_chains
+        .insert("client-a".to_string(), vec!["push".to_string()]);
+    let result = config.validate();
+    assert!(
+        matches!(result, Err(GarrisonError::Config(ref m)) if m.contains("mfa-chain-factor-unknown") && m.contains("push")),
+        "per-client 链引用未知 factor 应 fail-closed，实际: {:?}",
+        result
+    );
+}
+
+/// 已知 factor（otp / webauthn）的全局与 per-client 链均通过校验。
+#[test]
+fn mfa_known_factors_pass_validation() {
+    let mut config = GarrisonConfig::default_config();
+    config.mfa.global_chain = vec!["otp".to_string()];
+    config
+        .mfa
+        .per_client_chains
+        .insert("client-a".to_string(), vec!["webauthn".to_string()]);
+    config
+        .mfa
+        .per_client_chains
+        .insert("client-b".to_string(), vec![]);
+    assert!(config.validate().is_ok(), "已知 factor 应通过校验");
+}

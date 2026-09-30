@@ -46,6 +46,8 @@ pub enum DaoKeyPrefix {
     /// 授权码被原子消费（删除）后，其签发的 access/refresh token 记录在此，
     /// 供重放/双花检测时吊销。
     OAuth2CodeUsed,
+    /// MFA 编排相关 key 前缀：`mfa:`（恢复码 / 误用计数等）。
+    Mfa,
 }
 
 impl DaoKeyPrefix {
@@ -68,6 +70,7 @@ impl DaoKeyPrefix {
             Self::OAuth2AuthCode => "oauth2:authcode:",
             Self::OAuth2AccessToken => "oauth2:atoken:",
             Self::OAuth2CodeUsed => "oauth2:codeused:",
+            Self::Mfa => "mfa:",
         }
     }
 

@@ -182,6 +182,21 @@ pub struct TokenSession {
     /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
     #[serde(default)]
     pub effective_timeout: Option<i64>,
+    /// 因子账本：按完成顺序记录的认证步骤（MFA 编排基座）。
+    ///
+    /// 主登录时播种主因子条目（pwd / AAL 1），step-up 经
+    /// [`GarrisonSession::append_amr_entry`](crate::session::GarrisonSession::append_amr_entry)
+    /// 追加次因子。签发 token 时映射为 RFC 8176 `amr` claim。
+    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为空列表。
+    #[serde(default)]
+    pub amr_ledger: Vec<crate::stp::mfa::AmrEntry>,
+    /// 主认证完成时刻（Unix 秒）——OIDC `auth_time` claim 的权威来源。
+    ///
+    /// 登录播种时写入；后续 step-up 不移动（`auth_time` 表达主认证时刻，
+    /// step-up 只升级账本 AAL）。
+    /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
+    #[serde(default)]
+    pub auth_time: Option<i64>,
 }
 
 /// 会话过期监听器 trait。
@@ -2334,5 +2349,117 @@ mod tests {
             "logout 后内存 login_token_map 不应包含 T1，实际: {:?}",
             mem_tokens
         );
+    }
+    // ============================================================================
+    // 因子账本（amr ledger）—— MFA 编排基座
+    // ============================================================================
+
+    /// create 时账本播种主因子 pwd（aal 1）并写入 auth_time（主登录即认证时刻）。
+    #[tokio::test]
+    async fn create_seeds_pwd_ledger_and_auth_time() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(ts.amr_ledger.len(), 1, "登录会话应播种 1 条主因子账本");
+        assert_eq!(ts.amr_ledger[0].method, "pwd");
+        assert_eq!(ts.amr_ledger[0].aal, 1);
+        assert_eq!(ts.amr_ledger[0].completed_at, ts.created_at);
+        assert_eq!(
+            ts.auth_time,
+            Some(ts.created_at),
+            "auth_time 应等于登录时刻"
+        );
+    }
+
+    /// append_amr_entry 追加次因子（otp）后账本按完成顺序扩展，auth_time 不随 step-up 移动。
+    #[tokio::test]
+    async fn append_amr_entry_extends_ledger_keeps_auth_time() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+        let seeded_auth_time = session
+            .get_token_session("T1")
+            .await
+            .unwrap()
+            .unwrap()
+            .auth_time
+            .unwrap();
+
+        let later = Utc::now().timestamp() + 30;
+        session
+            .append_amr_entry("T1", "otp", 2, later)
+            .await
+            .unwrap();
+
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(ts.amr_ledger.len(), 2);
+        assert_eq!(ts.amr_ledger[1].method, "otp");
+        assert_eq!(ts.amr_ledger[1].aal, 2);
+        assert_eq!(ts.amr_ledger[1].completed_at, later);
+        assert_eq!(
+            ts.auth_time,
+            Some(seeded_auth_time),
+            "step-up 不应移动 auth_time"
+        );
+    }
+
+    /// append_amr_entry 拒绝词汇表之外的 method（显性化，不静默入账）。
+    #[tokio::test]
+    async fn append_amr_entry_rejects_unknown_method() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        let result = session.append_amr_entry("T1", "sms", 2, 0).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("amr-method")),
+            "未知 amr method 应返回 InvalidParam，实际: {:?}",
+            result
+        );
+        let ts = session.get_token_session("T1").await.unwrap().unwrap();
+        assert_eq!(ts.amr_ledger.len(), 1, "非法条目不得入账");
+    }
+
+    /// append_amr_entry 拒绝越界 AAL（0 与 4）。
+    #[tokio::test]
+    async fn append_amr_entry_rejects_out_of_range_aal() {
+        let (_dao, session) = make_session(3600, 86400);
+        session.create("1001", "T1").await.unwrap();
+
+        for aal in [0u8, 4] {
+            let result = session.append_amr_entry("T1", "otp", aal, 0).await;
+            assert!(
+                matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("aal")),
+                "aal={} 应返回 InvalidParam，实际: {:?}",
+                aal,
+                result
+            );
+        }
+    }
+
+    /// append_amr_entry 对不存在的 token 返回 InvalidToken。
+    #[tokio::test]
+    async fn append_amr_entry_nonexistent_token_errors() {
+        let (_dao, session) = make_session(3600, 86400);
+        let result = session.append_amr_entry("nonexistent", "otp", 2, 0).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidToken(_))),
+            "不存在的 token 应返回 InvalidToken，实际: {:?}",
+            result
+        );
+    }
+
+    /// 历史序列化记录（无账本字段）反序列化后账本为空、auth_time 为 None（serde default 兼容）。
+    #[test]
+    fn token_session_without_ledger_fields_deserializes_with_defaults() {
+        let json = serde_json::json!({
+            "token": "T1",
+            "login_id": "1001",
+            "created_at": 1700000000i64,
+            "last_active_at": 1700000000i64,
+            "attrs": {}
+        });
+        let ts: TokenSession = serde_json::from_value(json).unwrap();
+        assert!(ts.amr_ledger.is_empty(), "缺失账本字段应默认为空");
+        assert_eq!(ts.auth_time, None, "缺失 auth_time 应默认为 None");
     }
 }

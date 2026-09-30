@@ -315,6 +315,17 @@ impl Token for JwtTokenStyle {
         self.handler.sign(login_id, timeout)
     }
 
+    fn generate_with_amr(
+        &self,
+        login_id: &str,
+        timeout: i64,
+        amr: &[String],
+        auth_time: Option<i64>,
+    ) -> GarrisonResult<String> {
+        self.handler
+            .sign_with_amr(login_id, timeout, amr, auth_time)
+    }
+
     fn verify(&self, token: &str) -> GarrisonResult<Option<String>> {
         match self.handler.verify(token) {
             Ok(claims) => Ok(Some(claims.login_id)),

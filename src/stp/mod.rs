@@ -65,6 +65,12 @@ pub use self::context::{
 pub use self::core::GarrisonCore;
 pub use self::interface::GarrisonInterface;
 pub use self::mfa::MfaLogic;
+pub use self::mfa::{
+    AmrEntry, MfaChainDecision, RequiredActionChallenge, RequiredActionContext,
+    RequiredActionProvider,
+};
+#[cfg(feature = "mfa-recovery")]
+pub use self::mfa::{RecoveryCodeManager, RecoveryVerify};
 pub use self::password::PasswordLogic;
 pub use self::permission::PermissionLogic;
 pub use self::session::SessionLogic;

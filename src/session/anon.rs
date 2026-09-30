@@ -94,6 +94,8 @@ pub async fn get_anon_token_session(
                 dynamic_active_timeout: None,
                 is_anon: true,
                 effective_timeout: None,
+                amr_ledger: Vec::new(),
+                auth_time: None,
             };
 
             let json = serde_json::to_string(&ts).map_err(|e| {

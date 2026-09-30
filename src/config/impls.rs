@@ -228,6 +228,7 @@ impl GarrisonConfig {
             audit_mask_mode: AuditMaskMode::default(),
             tenant_isolation: TenantIsolationConfig::default(),
             password_hasher: PasswordHasherConfig::default(),
+            mfa: MfaConfig::default(),
             #[cfg(feature = "web-cors")]
             cors_config: CorsConfig::default(),
             #[cfg(feature = "web-csrf")]
@@ -563,6 +564,7 @@ impl GarrisonConfig {
     /// - `GarrisonError::Config`：各字段校验失败时返回对应错误消息。
     pub fn validate(&self) -> GarrisonResult<()> {
         self.validate_core()?;
+        self.validate_mfa()?;
         self.validate_jwt_secret()?;
         self.validate_session_config()?;
         self.validate_device_binding()?;
@@ -698,6 +700,11 @@ impl GarrisonConfig {
             ));
         }
         Ok(())
+    }
+
+    /// `mfa` 配置段校验：chain factor 词汇表 fail-closed（启动期拒绝）。
+    fn validate_mfa(&self) -> GarrisonResult<()> {
+        crate::stp::mfa::validate_mfa_chains(&self.mfa.global_chain, &self.mfa.per_client_chains)
     }
 
     /// `password_hasher` 配置段校验（见 `PasswordHasherConfig` 文档）。

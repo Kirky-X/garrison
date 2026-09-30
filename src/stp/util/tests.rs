@@ -283,6 +283,8 @@ mod suite {
                 #[cfg(feature = "session-extra")]
                 is_anon: false,
                 effective_timeout: None,
+                amr_ledger: Vec::new(),
+                auth_time: None,
             })
         }
         async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {

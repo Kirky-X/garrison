@@ -321,6 +321,21 @@ impl GarrisonSession {
         };
 
         // 创建 Token-Session
+        //
+        // 因子账本播种主因子（pwd / AAL 1）：本框架 `login` 即主认证，
+        // 认证时刻 = 会话创建时刻，为 amr / auth_time claim 的权威起点。
+        //
+        // 已知限制（审查记录）：非密码主认证路径（qrlogin confirm / SSO 回调
+        // 经 login_with_token 复用本 create）也播种 `pwd`——amr claim 与实际
+        // 认证方式不符（不影响 AAL 判定与 MFA gate：基线同为 AAL 1）。参数化
+        // 主因子需波及全部 create 调用方，留待后续 change 承接；RP 风控不
+        // 应将本框架的 amr 视为认证方式的排他断言。
+        let primary_entry = crate::stp::mfa::AmrEntry::new(
+            crate::stp::mfa::PRIMARY_FACTOR_AMR,
+            crate::stp::mfa::PRIMARY_FACTOR_AAL,
+            now,
+        )
+        .map_err(|e| GarrisonError::Session(format!("session-sim-primary-amr::{:?}", e)))?;
         let token_session = TokenSession {
             token: token.to_string(),
             login_id: login_id.to_string(),
@@ -336,6 +351,8 @@ impl GarrisonSession {
             #[cfg(feature = "session-extra")]
             is_anon: false,
             effective_timeout,
+            amr_ledger: vec![primary_entry],
+            auth_time: Some(now),
         };
         let token_json = serde_json::to_string(&token_session)
             .map_err(|e| GarrisonError::Session(format!("session-sim-token-serialize::{}", e)))?;
@@ -896,6 +913,53 @@ impl GarrisonSession {
             .map_err(|e| GarrisonError::Session(format!("session-sim-token-serialize::{}", e)))?;
         self.dao.update(&token_key(token), &json).await?;
         Ok(())
+    }
+
+    /// 追加因子账本条目（MFA step-up 完成路径）。
+    ///
+    /// 校验 method / aal 后按完成顺序入账；`auth_time` 仅在尚未写入时补写
+    /// （step-up 不移动主认证时刻）。历史会话（无 `auth_time`）首次 step-up
+    /// 时以账本首条目的 `completed_at` 兜底。
+    ///
+    /// # 参数
+    /// - `token`: token 字符串。
+    /// - `method`: RFC 8176 amr 值（词汇表见
+    ///   [`crate::stp::mfa::AMR_METHODS`]）。
+    /// - `aal`: 本步骤授予的认证保证等级（1..=3）。
+    /// - `completed_at`: 完成时刻（Unix 秒）。
+    ///
+    /// # 错误
+    /// - token 不存在：`GarrisonError::InvalidToken`
+    /// - method / aal 越界：`GarrisonError::InvalidParam`
+    pub async fn append_amr_entry(
+        &self,
+        token: &str,
+        method: &str,
+        aal: u8,
+        completed_at: i64,
+    ) -> GarrisonResult<()> {
+        let entry = crate::stp::mfa::AmrEntry::new(method, aal, completed_at)?;
+        self.with_token_session_lock(token, async {
+            let mut ts = self.get_token_session(token).await?.ok_or_else(|| {
+                GarrisonError::InvalidToken("session-token-not-found::".to_string())
+            })?;
+            ts.amr_ledger.push(entry);
+            if ts.auth_time.is_none() {
+                ts.auth_time = Some(
+                    ts.amr_ledger
+                        .first()
+                        .map(|e| e.completed_at)
+                        .unwrap_or_default(),
+                );
+            }
+            let json = serde_json::to_string(&ts).map_err(|e| {
+                GarrisonError::Session(format!("session-sim-token-serialize::{}", e))
+            })?;
+            // 用 update 保留原 TTL（不重置过期时间）
+            self.dao.update(&token_key(token), &json).await?;
+            Ok(())
+        })
+        .await
     }
 
     /// 确保 token 存在于指定 login_id 的 Account-Session 中。
@@ -1955,6 +2019,8 @@ mod tests {
             #[cfg(feature = "session-extra")]
             is_anon: false,
             effective_timeout: None,
+            amr_ledger: Vec::new(),
+            auth_time: None,
         };
         session
             .create_token_session_with_ttl("T2", &new_ts, 600)

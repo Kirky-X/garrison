@@ -208,6 +208,16 @@ graph TB
 
 ---
 
+### MFA/step-up 编排基座（stp::mfa）
+
+MFA 编排的核心抽象与数据流：
+
+- **因子账本**：会话内嵌 `AmrEntry{method, aal, completed_at}` 列表 + `auth_time`（主认证时刻）。登录播种 `pwd`/aal 1；step-up 完成 Required Action 后按 `(method, aal)` 升级。签发 token 时账本映射 RFC 8176 `amr` claim（完成顺序去重）与 OIDC `auth_time` claim。
+- **chain 三态**：`mfa.global_chain` 全局默认；`per_client_chains` 键缺失回退全局、空数组显式禁用、非空强制集合。chain 引用未知 factor 启动期 fail-closed。
+- **Required Action 三段式**：`evaluate`（新鲜度断言：`auth_time`/账本 AAL 过期 → 触发）→ `challenge`（产出客户端动作载荷）→ `process`（验证后升级账本）。TOTP 与 WebAuthn（经 R07 仪式 + 注册表）各一实现。
+- **恢复码**：verify 与 consume 分离；consume 经 DAO `compare_and_swap` 原子置已用（防 verify-consume 间竞态双花）；误用豁免计数 `recovery_misuse_tolerance`（默认 0）超限锁定 fail-closed。
+- **MFA remember cookie**：HMAC 绑定（stage + credential_id + exp），经 R01 cookie 单一构建点产出；有效 cookie 跳过重复 challenge，跨 credential 不通用。
+
 ### Back-Channel Logout 投递链路（backchannel-logout）
 
 登出→RP 通知的完整链路（对齐 OIDC Back-Channel Logout 1.0）：
