@@ -38,6 +38,40 @@ pub fn to_api_response<T>(result: Result<T, GarrisonError>) -> ApiResponse<T> {
     }
 }
 
+/// OAuth2 启动期维护：reconcile 引用已删 client 的孤儿 consent 行。
+///
+/// `listen()` 在监听端口前调用（R18 / R-consent-004「启动 reconcile 清理
+/// 已删 client 的 consent 行」）。内联 await 而非后台 spawn：清理在首个
+/// authorize 请求前完成（确定性语义），代价是启动耗时受 consent 键数量
+/// 约束（keys 扫描 + 逐键比对，低频启动路径可接受）。
+///
+/// 维护性操作 fail-open：失败仅告警不阻断启动——孤儿行只是垃圾数据
+/// （已删 client 的 authorize 过不了 client 存活校验，残留行不影响鉴权
+/// 正确性），下次启动或运维显式调用 `AuthorizeHandler::reconcile_consents`
+/// 可重试。
+#[cfg(feature = "oauth2-server")]
+async fn oauth2_consent_startup_reconcile(state: &oauth2_routes::OAuth2State) {
+    match state.authorize_handler.reconcile_consents().await {
+        Ok((removed, kept)) if removed > 0 => {
+            tracing::info!(
+                removed,
+                kept,
+                "oauth2 consent startup reconcile: removed orphan consent rows of deleted clients"
+            );
+        },
+        Ok((_, kept)) => {
+            tracing::debug!(kept, "oauth2 consent startup reconcile: no orphan rows");
+        },
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "oauth2 consent startup reconcile failed (fail-open); orphan rows \
+                 (if any) remain — retry on next restart or via reconcile_consents"
+            );
+        },
+    }
+}
+
 impl GarrisonAuthServer {
     /// 创建 Auth Server 实例。
     ///
@@ -487,6 +521,13 @@ impl GarrisonAuthServer {
         // 启动前校验配置合法性
         self.config.validate().map_err(GarrisonError::Config)?;
 
+        // 启动期维护（R18 R-consent-004）：清理引用已删 client 的孤儿 consent 行。
+        // fail-open：维护失败仅告警，不阻断启动（见函数文档）。
+        #[cfg(feature = "oauth2-server")]
+        if let Some(state) = &self.oauth2_state {
+            oauth2_consent_startup_reconcile(state).await;
+        }
+
         // 信号监听 → Notify 广播给两个端口 serve future
         #[cfg(feature = "server-graceful-shutdown")]
         let shutdown_notify = {
@@ -767,5 +808,108 @@ mod graceful_shutdown_tests {
             new_conn.is_err() || new_conn.unwrap().is_err(),
             "shutdown 后新请求应失败（监听已停止）"
         );
+    }
+}
+
+#[cfg(all(test, feature = "oauth2-server"))]
+mod oauth2_startup_reconcile_tests {
+    use super::*;
+    use crate::dao::{GarrisonDao, InMemoryDao};
+    use crate::oauth2_server::client::{
+        DaoOAuth2ClientStore, GrantType, OAuth2Client, OAuth2ClientStore,
+    };
+
+    fn make_client(id: &str) -> OAuth2Client {
+        OAuth2Client::new(
+            id,
+            "secret-123",
+            vec!["https://app.example.com/cb".into()],
+            vec![GrantType::AuthorizationCode],
+            vec!["read".into()],
+        )
+        .unwrap()
+    }
+
+    /// listen() 启动接线的实测：删除 client 后启动清理对应 consent 行，
+    /// 存活 client 的记录原样保留（R-consent-004「删除 client 后启动清理
+    /// 对应行」的启动路径用例；reconcile 本体的分支语义见
+    /// authorize.rs `reconcile_removes_orphan_consent_and_keeps_live`）。
+    #[tokio::test]
+    async fn startup_reconcile_removes_orphan_and_keeps_live() {
+        let dao = Arc::new(InMemoryDao::new());
+        let store: Arc<DaoOAuth2ClientStore> = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let state = oauth2_routes::OAuth2State::new(
+            store.clone(),
+            dao.clone(),
+            "https://auth.example.com/login".into(),
+        );
+        store.create(make_client("reconcile-live")).await.unwrap();
+        store.create(make_client("reconcile-dead")).await.unwrap();
+        let handler = &state.authorize_handler;
+        handler
+            .grant_consent(0, 9101, "reconcile-live", &["read".into()], &[])
+            .await
+            .unwrap();
+        handler
+            .grant_consent(0, 9102, "reconcile-dead", &["read".into()], &[])
+            .await
+            .unwrap();
+        store.delete("reconcile-dead").await.unwrap();
+
+        // listen() 启动路径调用的正是本函数（见 listen() 的 oauth2-server 分支）
+        oauth2_consent_startup_reconcile(&state).await;
+
+        assert!(
+            dao.get("oauth2:consent:0:9102:reconcile-dead")
+                .await
+                .unwrap()
+                .is_none(),
+            "启动 reconcile 应清理已删 client 的孤儿 consent 行"
+        );
+        assert!(
+            dao.get("oauth2:consent:0:9101:reconcile-live")
+                .await
+                .unwrap()
+                .is_some(),
+            "存活 client 的 consent 行应保留"
+        );
+    }
+
+    /// keys() 直接报错的 DAO：不实现 `keys()` 即命中默认 NotImplemented
+    /// Err，恰好充当 reconcile 首步（client list 扫描）的故障注入。
+    struct ReconcileFailingDao;
+
+    #[async_trait::async_trait]
+    impl crate::dao::GarrisonDao for ReconcileFailingDao {
+        async fn get(&self, _key: &str) -> GarrisonResult<Option<String>> {
+            Ok(None)
+        }
+        async fn set(&self, _key: &str, _value: &str, _ttl_seconds: u64) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn update(&self, _key: &str, _value: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn expire(&self, _key: &str, _seconds: u64) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn delete(&self, _key: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+
+        crate::atomic_test_fallback!();
+    }
+
+    /// reconcile 失败 fail-open：DAO 故障（keys() Err）不向启动路径传播
+    /// 错误、不 panic——listen() 不因维护性清理失败而拒绝启动。
+    #[tokio::test]
+    async fn startup_reconcile_failure_is_fail_open() {
+        let dao: Arc<dyn crate::dao::GarrisonDao> = Arc::new(ReconcileFailingDao);
+        let store = Arc::new(DaoOAuth2ClientStore::new(dao.clone()));
+        let state =
+            oauth2_routes::OAuth2State::new(store, dao, "https://auth.example.com/login".into());
+
+        // 不 panic、不 Err——错误仅记录告警（fail-open 语义，见函数文档）
+        oauth2_consent_startup_reconcile(&state).await;
     }
 }

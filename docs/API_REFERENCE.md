@@ -167,7 +167,7 @@ GarrisonManager::builder()
 
 **prompt 语义**（OIDC Core §3.1.2.1，`AuthorizeRequest.prompt` 字段显式出现时生效）：`none` → 未登录或 consent 不足一律 `interaction_required`（不弹任何交互页）；`login` → 已登录也强制重走登录往返。
 
-**consent 记忆**：键 `oauth2:consent:{tenant}:{user}:{client}` 持久化已授 scope 集合 + 属性快照双粒度哈希（ATTRIBUTE_NAME / ATTRIBUTE_VALUE，SHA-512，`with_attribute_granularity` 可配）。再次授权：请求 scope ⊆ 已授且属性快照未变 → 免征询直接放行；新增 scope → 合并为超集；快照不可解析 → fail-safe 重新征询。`reconcile_consents`（启动/运维调用）清理已删 client 的孤儿行，幂等。
+**consent 记忆**：键 `oauth2:consent:{tenant}:{user}:{client}` 持久化已授 scope 集合 + 属性快照双粒度哈希（ATTRIBUTE_NAME / ATTRIBUTE_VALUE，SHA-512，`with_attribute_granularity` 可配）。再次授权：请求 scope ⊆ 已授且属性快照未变 → 免征询直接放行；新增 scope → 合并为超集；快照不可解析 → fail-safe 重新征询。`reconcile_consents` 清理已删 client 的孤儿行，幂等；框架 `listen()` 启动时自动执行（fail-open：失败仅告警不阻断启动，下次启动或运维显式调用重试）。
 
 **装配契约**：prompt=none 静默续期以空属性视图比对快照——经征询页批准（非空属性视图）的用户需部署方传入一致属性视图，否则重新触发 `interaction_required`（fail-safe，文档见 `with_consent_url`）。
 
