@@ -101,6 +101,8 @@
 | Cookie 子域篡改（恶意子域写同Domain cookie 覆盖会话 token） | 默认不设 `Domain`（host-only）；`production` + Secure 上下文强制 `__Host-`（Path=/ 且无 Domain）/ `__Secure-` 前缀，浏览器层拒绝带 Domain 的 `__Host-` cookie | `src/context/cookie.rs`、`src/web/csrf.rs` 内嵌测试 |
 | 非 Secure 上下文 SameSite=None（跨站携带凭证被浏览器拒收 / 属性不一致） | 构建点 None→Lax 降级不变式（`cookie_secure=false` 时降级 `Lax` 并 warn 一次），续签 / CSRF 写点无法直发 `SameSite=None` | `src/context/cookie.rs`、`src/router/tests.rs` 内嵌测试 |
 | 登录风暴内存 DoS（并发慢哈希内存驻留叠加：N 并发 × 19 MiB 无上界） | Argon2 并发令牌池：`argon2_pool_size` permit 约束同时执行数（默认 1），permit 移入 `spawn_blocking` 闭包——取消/panic 任何时序下内存上界恒等于 `pool_size × m_cost`，排队不拒绝、池关闭 fail-closed；bcrypt 不入池（决策测试固化） | `src/account/credential/password.rs` 内嵌并发测试、`src/config/tests.rs` 区间校验 |
+| 导入弱参数哈希（攻击者注入 m=1GiB 哈希 → 单次登录 CPU/内存 DoS） | 导入校验门 `validate_imported_hash`：格式白名单（argon2id/bcrypt 变体）+ 参数上限（m ≤ 1 GiB、t ≤ 10、p ≤ 4、bcrypt ≤ 15），越界整体拒绝；存量低档位哈希登录期惰性升级到当前档位（走并发令牌池） | `src/dao/repository/mod.rs` 上限常量、`src/account/credential/password.rs` 内嵌测试 |
+| 数据库/备份泄露直接读取敏感凭据（OAuth2 token、授权码、TOTP seed） | `field-encryption` 静态加密：AES-256-GCM + AAD 绑定 `garrison:{tenant}:{table}:{key}`（密文挪行解密失败，防挪用重放）；写路径全加密、读路径双读兼容明文遗留行；密钥经 config-encryption 注入、未配密钥启动 fail-closed | `src/secure/encryption/`（crypto_value/dao/rekey 内嵌测试） |
 
 ### Refresh token 重用三级处置表
 

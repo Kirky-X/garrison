@@ -208,6 +208,16 @@ graph TB
 
 ---
 
+### Back-Channel Logout 投递链路（backchannel-logout）
+
+登出→RP 通知的完整链路（对齐 OIDC Back-Channel Logout 1.0）：
+
+1. **签发**（`backchannel::token`）：logout token 复用 protocol/jwt 密钥材料，仅含 `sub`/可选 `sid` 与 `events` 声明（`http://schemas.openid.net/event/backchannel-logout`），不携带身份资料。
+2. **入队**（`backchannel::listener`）：`GarrisonEvent::Logout` 触发，逐 RP 写入 `oauth2_backchannel_queue`。两档派发语义——事务内登出经 `GarrisonEventTx::on_commit` 缓冲（与业务写同生共死，回滚不入队）；auto-commit 登出路径走 Immediately 档。
+3. **投递**（`backchannel::deliver`）：后台任务按 `next_attempt_at` 批量 drain（batch 32），向 RP 端点 POST `logout_token`；单 RP 超时 5s、禁止跟随重定向（防 POST 降 GET 丢 token）；失败重试计数递增 + 指数退避，超 MaxTtl（24h）置 `failed` 并 warn 显性化。
+
+架构取舍：RP 端点由部署方按 client 配置（不做 RP discovery fetch，不做推送订阅管理面）——投递保障的边界是「持久化 + 有界重试 + 显性失败」，非「必达」。
+
 ## 🔗 关键 trait 关系图
 
 Garrison 的核心抽象通过 trait 解耦，业务方实现 trait 即可接入：

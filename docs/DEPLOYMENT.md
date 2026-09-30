@@ -169,8 +169,18 @@ garrison = { version = "0.9.0-rc.2", features = ["tls", "auth-server"] }
 | `cargo deny check` 通过 | ✅ | 许可证与依赖安全 |
 | 日志级别设为 `info` 或 `warn` | ⚠️ | 避免 `debug`/`trace` 输出敏感信息 |
 | 环境变量中的敏感值使用密钥管理 | ⚠️ | 建议使用 Vault / K8s Secret |
+| Back-Channel Logout 队列表已随迁移创建 | ⚠️ | `backchannel-logout` feature 下 `017_oauth2_backchannel_queue.sql` 随 migrate_core 自动执行 |
+| RP back-channel 端点已按 client 配置 | ⚠️ | 启用 `backchannel-logout` 时逐 client 配置通知端点；框架不做 RP discovery fetch |
+| `field-encryption` 密钥已配置 | ⚠️ | 启用该 feature 未配密钥启动 fail-closed；密钥轮换用 change_key/check_key 运维接口 |
 
 ---
+
+### Back-Channel Logout 运维提示（backchannel-logout）
+
+- 队列积压观测：`SELECT status, COUNT(*) FROM oauth2_backchannel_queue GROUP BY status`——`pending` 持续增长说明 RP 端点不可达或投递吞吐不足；`failed` 行为超 MaxTtl（默认 24h）放弃的投递（warn 日志显性化，不静默丢）。
+- 失败行处理：`failed` 行不自动删除（审计可见）；确认无需后由运维按 `id` 清理。重试不重复投递（drain 幂等）。
+- RP 端点要求：必须接受 `application/x-www-form-urlencoded` 的 `logout_token` POST；重定向会被视为投递失败（禁跟随重定向，防 POST 降 GET 丢 token）。
+- 多实例：队列行按 `next_attempt_at` 抢占消费，多实例安全；RP 退避窗口内不重复进批。
 
 ## 🐳 Docker 部署
 

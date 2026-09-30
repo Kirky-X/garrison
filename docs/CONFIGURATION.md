@@ -121,6 +121,34 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 
 **调优**：retention 必须 ≥ access token 有效期（否则旧钥退役早于其签发 token 过期，出现验证失败窗口）；放宽验证需求（超长 TTL token）按 `2 × 最大 access TTL` 取值。
 
+### 2.7 密码哈希导入约束（R11）
+
+批量导入 / 凭据写入路径的密码哈希校验门 `validate_imported_hash`（白名单 + 参数上限，越界整体拒绝、错误显性）。防止单次登录 OOM / CPU DoS（对齐 zitadel passwap `ValidateEncodedHash` 防御意图）。
+
+| 约束 | 允许值 | 说明 |
+|------|--------|------|
+| 格式白名单 | `$argon2id$` / `$2b$` / `$2a$` / `$2y$` 前缀 | 白名单外前缀拒绝（`$argon2i$` 等不再接受导入） |
+| `ARGON2_IMPORT_MAX_M_COST` | ≤ 1 GiB（`1_048_576` KiB） | Argon2 内存成本上限 |
+| `ARGON2_IMPORT_MAX_T` | ≤ 10 | Argon2 迭代次数上限 |
+| `ARGON2_IMPORT_MAX_P` | ≤ 4 | Argon2 并行度上限 |
+| bcrypt cost | ≤ 15 | 登录期单次 verify 成本上界 |
+
+**登录期惰性升级**：存量低档位哈希在登录 verify 成功后自动重哈希到当前配置档位（走 Argon2 并发令牌池，失败不阻塞登录）——导入约束只把守入口，存量演进靠惰性升级自然收敛。
+
+### 2.8 弃用配置键（R12）
+
+`src/config/deprecation.rs` 注册表（加载期处置：可映射键自动迁移 + warn；不可映射键 0.x warn 放行、**1.0 起一律报错**）：
+
+| 弃用键 | since | 迁移目标 | 处置 |
+|--------|-------|---------|------|
+| `waf_config` | 0.9.0 | （无——能力移除） | 0.x warn 指引；1.0 起加载报错 |
+
+新弃用键随 Breaking 变更逐键登记（每键一条映射/报错测试）；不注册虚构键。
+
+### 2.9 字段静态加密（field-encryption，R17）
+
+启用 `field-encryption` feature 后，选定敏感列（`oauth2:atoken:` / `oauth2:rtoken:` / `oauth2:codeused:` / `totp:seed:`）落库自动加密为 `enc:v1:<key_id>:<base64(nonce|ciphertext)>`（AES-256-GCM，AAD 绑定 `garrison:{tenant}:{table}:{key}`）。密钥复用 config-encryption 既有设施（支持多 key_id）；**启用 feature 未配密钥 → 启动 fail-closed Err**。读路径兼容明文遗留行（双读迁移期语义），写路径全加密。密钥轮换用 `change_key` / `check_key` 运维接口（garrison-cli 接线见 R16）。
+
 ---
 
 ## 📝 配置文件示例
