@@ -943,7 +943,20 @@ impl GarrisonSession {
             let mut ts = self.get_token_session(token).await?.ok_or_else(|| {
                 GarrisonError::InvalidToken("session-token-not-found::".to_string())
             })?;
-            ts.amr_ledger.push(entry);
+            // 同 (method, aal) 条目合并（completed_at 原地更新）：全部消费方
+            // （amr_claim 去重 / ledger_max_aal 取 max / chain 存在性检查）只
+            // 依赖 per-(method, aal) 的存在性——无界 push 会让 session JSON
+            // 随 step-up 次数线性膨胀（反序列化成本 16×@100 条），合并后
+            // 账本上界 = method 数 × aal 档数（≤9 条）
+            if let Some(existing) = ts
+                .amr_ledger
+                .iter_mut()
+                .find(|e| e.method == entry.method && e.aal == entry.aal)
+            {
+                existing.completed_at = entry.completed_at;
+            } else {
+                ts.amr_ledger.push(entry);
+            }
             if ts.auth_time.is_none() {
                 ts.auth_time = Some(
                     ts.amr_ledger

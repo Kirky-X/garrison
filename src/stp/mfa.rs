@@ -544,7 +544,7 @@ pub fn amr_claim(entries: &[AmrEntry]) -> Vec<String> {
     let mut seen = std::collections::HashSet::new();
     entries
         .iter()
-        .filter(|e| seen.insert(e.method.clone()))
+        .filter(|e| seen.insert(e.method.as_str()))
         .map(|e| e.method.clone())
         .collect()
 }
@@ -820,7 +820,12 @@ impl RecoveryCodeManager {
         let mut hasher = Sha256::new();
         hasher.update(code.as_bytes());
         let result = hasher.finalize();
-        result.iter().map(|b| format!("{b:02x}")).collect()
+        use std::fmt::Write as _;
+        let mut hex = String::with_capacity(result.len() * 2);
+        for b in result {
+            let _ = write!(hex, "{b:02x}");
+        }
+        hex
     }
 
     fn misuse_key(&self, login_id: &str) -> String {
