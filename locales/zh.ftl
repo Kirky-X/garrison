@@ -1331,3 +1331,7 @@ social-provider-name-invalid = 非法的社交登录 provider 名称：{$provide
 social-provider-not-registered = 社交登录 provider 未注册：{$provider}
 caller-login-id-mismatch = caller_login_id 与 session.login_id 不匹配
 metrics-encode-failed = Prometheus 指标编码失败
+
+# Password reset（account-password-reset）
+pwdreset-mail-subject = 密码重置请求
+pwdreset-mail-body = 您请求了密码重置。请在 {$minutes} 分钟内使用以下一次性令牌完成重置：/reset-password?token={$token}

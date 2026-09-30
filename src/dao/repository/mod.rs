@@ -962,6 +962,34 @@ pub trait WebauthnCredentialRepository: Send + Sync {
 }
 
 // ============================================================================
+// 密码历史（app_password_history）
+// ============================================================================
+
+/// 密码历史 Repository trait。
+///
+/// 记录用户历史密码 hash（`PasswordHasher::hash` 产物，PHC 字符串），
+/// 供 `account-policy` 的 `HistoryRule` 拒绝重用最近 N 条历史密码。
+/// 追加时机：找回密码重置成功、常规改密与注册路径（host 责任）。
+#[async_trait::async_trait]
+pub trait PasswordHistoryRepository: Send + Sync {
+    /// 追加一条历史 hash（created_at 取当前 epoch 秒）。
+    async fn append(
+        &self,
+        tenant_id: i64,
+        user_id: &str,
+        password_hash: &str,
+    ) -> GarrisonResult<()>;
+
+    /// 取最近 `limit` 条历史 hash（按 created_at 倒序，新在前）。
+    async fn recent(
+        &self,
+        tenant_id: i64,
+        user_id: &str,
+        limit: u32,
+    ) -> GarrisonResult<Vec<String>>;
+}
+
+// ============================================================================
 // Dbnexus Repository 实现子模块。
 // 启用 db-sqlite 或 db-postgres feature 时编译，基于 dbnexus DbPool + sea-orm
 // Statement 参数化查询，通过 make_statement 运行时占位符转换支持两种后端。

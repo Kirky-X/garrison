@@ -135,6 +135,11 @@ impl Credential for EmailCodeCredential {
 /// 仅在 `account-authflow` feature 启用时编译（避免 feature 链穿透，
 /// 见 `executor.rs` SocialProviderResolver 同款设计约束）。
 pub struct EmailCodeCredentialBuilder {
+    /// 字段仅在 `account-authflow` 下被 `CredentialBuilder::build` 读取；
+    /// 无 authflow 的组合（如 production 的 account-password-reset 链拉入
+    /// account-credential）下为构造保持完整性而保留（`#[allow(dead_code)]`
+    /// 消除组合差告警）。
+    #[cfg_attr(not(feature = "account-authflow"), allow(dead_code))]
     service: Arc<EmailVerificationService>,
 }
 

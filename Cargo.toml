@@ -415,7 +415,10 @@ account-policy = ["account-credential", "dep:regex"]
 account-lockout = ["firewall"]
 account-authflow = ["account-credential", "account-policy", "account-lockout", "dep:ipnetwork"]
 # account-password-reset：找回密码流程（ActionToken 一次性消费/防枚举/防竞态，挂 authflow DSL）
-account-password-reset = []
+# 依赖均为 crate 内既有 feature：ActionToken 复用 protocol-jwt、凭据更新复用
+# account-credential、历史密码校验复用 account-policy、邮件通道复用 email-verification，
+# 不引入新外部依赖。
+account-password-reset = ["protocol-jwt", "account-credential", "account-policy", "email-verification"]
 # HIBP 泄露密码检查（k-anonymity range search，网络调用；关闭时返回显性错误）
 policy-hibp = ["dep:reqwest", "dep:sha1"]
 

@@ -154,7 +154,15 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 `protocol::webauthn::WebauthnConfig`（构造后不可变；经 `WebauthnService::new` 注入）。RP 配置不自立配置项，从 issuer 派生：`rp_id` = issuer URL host、`origins` = [issuer]（issuer 变更后 rp_id 跟随）。
 
 | 字段 | 类型 | 默认值 | 说明 |
-|### 2.11 MFA/step-up 编排配置（mfa，R09）
+|------|------|--------|------|
+| `issuer` | `String` | 无（必填） | RP 派生源（如 `https://sso.example.com`）；非法 URL 显性拒绝 |
+| `challenge_ttl_secs` | `u64` | `120` | 仪式 challenge 暂存 TTL（秒）；过期后消费显性拒绝（与重放同错误面） |
+| `passwordless.enabled` | `bool` | `false` | Passwordless 用途准入；关闭时该用途的注册/认证显性拒绝 |
+| `second_factor.enabled` | `bool` | `false` | 2FA 二次认证用途准入（完整 MFA 编排归 R09）；2FA 接线点经 `stp::mfa::webauthn_factor::register_webauthn_factor` 注册 |
+
+**Cargo feature**：`protocol-webauthn`（依赖 webauthn-rs 0.5，构建需 rustc ≥ 1.88）。
+
+### 2.11 MFA/step-up 编排配置（mfa，R09）
 
 `GarrisonConfig.mfa`（`MfaConfig`）。chain factor 词汇表：`otp` / `webauthn`（`pwd` 为主因子不进 chain）；引用未知 factor 启动期 fail-closed 报错。
 
@@ -174,13 +182,18 @@ recovery_misuse_tolerance = 0       # 恢复码误用豁免额度（默认 0，�
 | `mfa.per_client_chains` | `HashMap<String, Vec<String>>` | `{}` | per-client 覆盖（三态语义见上） |
 | `mfa.recovery_misuse_tolerance` | `u32` | `0` | 恢复码连续无效 verify 的豁免次数，超过即锁定（fail-closed，正确码也拒绝） |
 
-------|------|--------|------|
-| `issuer` | `String` | 无（必填） | RP 派生源（如 `https://sso.example.com`）；非法 URL 显性拒绝 |
-| `challenge_ttl_secs` | `u64` | `120` | 仪式 challenge 暂存 TTL（秒）；过期后消费显性拒绝（与重放同错误面） |
-| `passwordless.enabled` | `bool` | `false` | Passwordless 用途准入；关闭时该用途的注册/认证显性拒绝 |
-| `second_factor.enabled` | `bool` | `false` | 2FA 二次认证用途准入（完整 MFA 编排归 R09）；2FA 接线点经 `stp::mfa::webauthn_factor::register_webauthn_factor` 注册 |
+### 2.12 找回密码配置（account-password-reset，R14）
 
-**Cargo feature**：`protocol-webauthn`（依赖 webauthn-rs 0.5，构建需 rustc ≥ 1.88）。
+`account::password_reset` 模块（feature `account-password-reset`，依赖 protocol-jwt + account-credential + account-policy + email-verification）。行为常量与安全不变式：
+
+| 项 | 默认值 | 说明 |
+|----|--------|------|
+| 防枚举限流窗口 | 3600 秒 | 每标识的请求计数窗口（与 email-verification 小时窗口同口径）；未知标识同路径 dummy 签发，响应外形不可区分 |
+| ActionToken TTL | 短时效（构造参数） | `purpose=password_reset` 的自包含 JWT；jti 一次性消费（DAO set_if_absent + 原子消费，并发恰一成功） |
+| 密码历史比对 | 与 HistoryRule 硬上限对齐（24 条） | 重置成功追加 `app_password_history`；重用历史密码被拒且 token 不消费 |
+| restricted 会话 | `pwdreset_restricted` 标记 | 恢复会话仅可达改密端点（其余 403） |
+
+**运维提示**：`app_password_history` 表随 `016_password_history.sql` 迁移创建；注册/常规改密路径的追加由 host 责任接入（保证「上一代密码」在历史中可查）。
 
 ---
 

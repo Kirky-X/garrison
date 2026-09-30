@@ -14,6 +14,7 @@
 //! | `policy` | `account-policy` | 密码策略套件（12+ PasswordPolicyRule） |
 //! | `lockout` | `account-lockout` | 用户级双态账号锁定（temporary + permanent） |
 //! | `authflow` | `account-authflow` | AuthenticationFlow DSL（全认证流程编排） |
+//! | `password_reset` | `account-password-reset` | 找回密码流程（ActionToken 一次性消费/防枚举/防竞态） |
 //!
 //! # 与现有模块的关系
 //!
@@ -48,6 +49,14 @@ pub mod lockout;
 /// 覆盖登录 + MFA + 社交登录 + SSO 全认证流程。
 #[cfg(feature = "account-authflow")]
 pub mod authflow;
+
+/// 找回密码/可恢复流程子模块（`account-password-reset` feature）。
+///
+/// 提供 ActionToken 签发/校验（自包含 JWT，复用 `protocol::jwt`）、jti 一次性
+/// 消费登记（DAO `set_if_absent` 原子语义）、两段式防竞态、防枚举 dummy token
+/// 路径与 restricted 会话端点约束。
+#[cfg(feature = "account-password-reset")]
+pub mod password_reset;
 
 /// 账号安全能力 Prometheus 指标子模块（`metrics-prometheus` feature）。
 ///
@@ -90,5 +99,12 @@ mod tests {
     #[test]
     fn authflow_module_compiles() {
         let _ = std::any::TypeId::of::<crate::account::authflow::AuthenticationFlow>();
+    }
+
+    /// 验证 account 模块在启用 account-password-reset feature 时可编译。
+    #[cfg(feature = "account-password-reset")]
+    #[test]
+    fn password_reset_module_compiles() {
+        let _ = std::any::TypeId::of::<crate::account::password_reset::ActionTokenService>();
     }
 }

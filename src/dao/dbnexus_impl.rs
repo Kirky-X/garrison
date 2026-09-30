@@ -598,6 +598,7 @@ mod tests {
             "app_user_device",
             "app_user_ext",
             "app_user_role",
+            "app_password_history",
         ];
         for expected in &expected_tables {
             assert!(
@@ -609,8 +610,8 @@ mod tests {
         }
         assert_eq!(
             expected_tables.len(),
-            10,
-            "应有 10 张核心表（8 核心 + app_user_ext + app_user_device）"
+            11,
+            "应有 11 张核心表（8 核心 + app_user_ext + app_user_device + app_password_history）"
         );
     }
 
@@ -652,8 +653,8 @@ mod tests {
         )
         .await;
         assert_eq!(
-            count, 12,
-            "应有 12 张 app_ 前缀的表（012 新增 app_user_identifier，014 新增 app_webauthn_credential）"
+            count, 13,
+            "应有 13 张 app_ 前缀的表（012 新增 app_user_identifier，014 新增 app_webauthn_credential，016 新增 app_password_history）"
         );
     }
 
@@ -712,12 +713,12 @@ mod embedded_migrations_tests {
     // 单元测试（不需数据库，验证 include_dir! 嵌入与文件写入逻辑）
     // ========================================================================
 
-    /// 验证 POSTGRES_MIGRATIONS 嵌入了 15 个 postgres core SQL 文件。
+    /// 验证 POSTGRES_MIGRATIONS 嵌入了 16 个 postgres core SQL 文件。
     ///
     /// Scenario: 编译时 include_dir!("migrations/postgres") 嵌入成功。
     /// WHEN POSTGRES_MIGRATIONS.get_dir("core")
-    /// THEN core 目录存在且包含 15 个 .sql 文件（001_init ~ 017_oauth2_backchannel_queue，
-    ///      含 013_refresh_tokens_rotated_at；015-016 为并行段预留编号）
+    /// THEN core 目录存在且包含 16 个 .sql 文件（001_init ~ 017_oauth2_backchannel_queue，
+    ///      含 013_refresh_tokens_rotated_at 与 016_password_history；015 为并行段预留编号）
     #[test]
     fn embedded_postgres_migrations_contain_15_core_files() {
         let core_dir = POSTGRES_MIGRATIONS
@@ -729,8 +730,8 @@ mod embedded_migrations_tests {
             .collect();
         assert_eq!(
             sql_files.len(),
-            15,
-            "postgres core 迁移必须有 15 个 SQL 文件，实际: {sql_files:?}"
+            16,
+            "postgres core 迁移必须有 16 个 SQL 文件，实际: {sql_files:?}"
         );
         // 验证文件名边界（按版本号约定）
         let names: Vec<String> = sql_files
@@ -768,13 +769,17 @@ mod embedded_migrations_tests {
                 .any(|n| n.starts_with("013_refresh_tokens_rotated_at")),
             "必须包含 013_refresh_tokens_rotated_at.sql，实际: {names:?}"
         );
+        assert!(
+            names.iter().any(|n| n.starts_with("016_password_history")),
+            "必须包含 016_password_history.sql，实际: {names:?}"
+        );
     }
 
     /// 验证 copy_embedded_dir 将嵌入目录正确写入临时目录。
     ///
     /// Scenario: 递归复制 include_dir::Dir 到文件系统。
     /// WHEN copy_embedded_dir(&POSTGRES_MIGRATIONS, tempdir)
-    /// THEN tempdir/core/ 包含 15 个 .sql 文件，内容与嵌入文件一致
+    /// THEN tempdir/core/ 包含 16 个 .sql 文件，内容与嵌入文件一致
     #[test]
     fn copy_embedded_dir_writes_files_to_tempdir() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
@@ -786,8 +791,7 @@ mod embedded_migrations_tests {
         let entries: Vec<_> = std::fs::read_dir(&core_dir)
             .expect("读取 core 目录应成功")
             .collect();
-        assert_eq!(entries.len(), 15, "core 目录必须包含 15 个 SQL 文件");
-        // 验证文件内容非空（写入的是真实 SQL，不是空字节）
+        assert_eq!(entries.len(), 16, "core 目录必须包含 16 个 SQL 文件"); // 验证文件内容非空（写入的是真实 SQL，不是空字节）
         for entry in entries {
             let entry = entry.expect("读取目录项应成功");
             let path = entry.path();
@@ -805,7 +809,7 @@ mod embedded_migrations_tests {
     ///
     /// Scenario: 多次复制同一嵌入目录到同一目标。
     /// WHEN copy_embedded_dir → copy_embedded_dir（再次）
-    /// THEN 第二次成功，core 目录仍为 15 个文件（覆盖写入）
+    /// THEN 第二次成功，core 目录仍为 16 个文件（覆盖写入）
     #[test]
     fn copy_embedded_dir_is_idempotent() {
         let temp_dir = tempfile::tempdir().expect("创建临时目录应成功");
@@ -816,7 +820,7 @@ mod embedded_migrations_tests {
         let count = std::fs::read_dir(&core_dir)
             .expect("读取 core 目录应成功")
             .count();
-        assert_eq!(count, 15, "重复写入后仍应为 15 个文件");
+        assert_eq!(count, 16, "重复写入后仍应为 16 个文件");
     }
 
     // ========================================================================
@@ -825,8 +829,7 @@ mod embedded_migrations_tests {
 
     /// Scenario: run_embedded_postgres 在真实 postgres 上执行迁移。
     /// WHEN GarrisonMigration::run_embedded_postgres()（无论库此前是否已迁移）
-    /// THEN dbnexus_migrations 恰好记录全部 15 个迁移（终态不变式），    ///      且本次调用无错误返回
-    #[tokio::test]
+    /// THEN dbnexus_migrations 恰好记录全部 16 个迁移（终态不变式），    ///      且本次调用无错误返回    #[tokio::test]
     #[serial_test::serial]
     #[ignore = "requires postgres DATABASE_URL (set SINNAN_TEST_DATABASE_URL to run)"]
     async fn run_embedded_postgres_creates_tables() {
@@ -845,8 +848,7 @@ mod embedded_migrations_tests {
             .expect("run_embedded_postgres 应成功");
 
         // 终态不变式（竞态安全）：迁移器幂等，库里已应用时本次返回 0 属正常，
-        // 有效性质是「运行后全部 15 个迁移均已记录」。不设 count > 0 增量断言——
-        // 与 dbnexus_user_repository_works_with_postgres_backend 并发触同一库时
+        // 有效性质是「运行后全部 16 个迁移均已记录」。不设 count > 0 增量断言——        // 与 dbnexus_user_repository_works_with_postgres_backend 并发触同一库时
         // 本测试可能不是首个应用者。
         let session = pool.get_session("admin").await.expect("获取 session 失败");
         let conn = session.connection().expect("获取 connection 失败");
@@ -861,6 +863,6 @@ mod embedded_migrations_tests {
             .expect("查询迁移记录应成功")
             .expect("应有一行计数");
         let applied: i64 = row.try_get::<i64>("", "cnt").expect("cnt 列应存在");
-        assert_eq!(applied, 15, "运行后应记录全部 15 个迁移，实际: {applied}");
+        assert_eq!(applied, 16, "运行后应记录全部 16 个迁移，实际: {applied}");
     }
 }

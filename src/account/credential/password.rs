@@ -353,6 +353,11 @@ pub(crate) async fn verify_pooled(
 ///
 /// verify 与重哈希在同一 permit 内顺序执行：并发上界恒等于 permit 数，
 /// 内存上界 = permits × m_cost（旧哈希 verify 与新哈希生成不重叠驻留）。
+/// 门控：唯一调用方 `stp::password::login_with_password` 要求
+/// `account-credential + db-sqlite`；其余组合（如 production 的
+/// account-password-reset 链拉入 account-credential 但无 db-sqlite）下
+/// 该函数为死代码。
+#[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 pub(crate) async fn verify_and_rehash_pooled(
     hasher: &Arc<dyn PasswordHasher>,
     password: &str,

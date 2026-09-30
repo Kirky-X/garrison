@@ -1332,3 +1332,7 @@ social-provider-name-invalid = invalid social login provider name: {$provider}
 social-provider-not-registered = social login provider not registered: {$provider}
 caller-login-id-mismatch = caller_login_id does not match session.login_id
 metrics-encode-failed = Prometheus metrics encoding failed
+
+# Password reset (account-password-reset)
+pwdreset-mail-subject = Password Reset Request
+pwdreset-mail-body = You requested a password reset. Use the one-time token below within {$minutes} minutes: /reset-password?token={$token}

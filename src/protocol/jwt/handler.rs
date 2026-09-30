@@ -7,6 +7,7 @@
 
 use crate::error::{GarrisonError, GarrisonResult};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -697,6 +698,64 @@ impl JwtHandler {
     pub fn refresh(&self, token: &str, new_timeout: i64) -> GarrisonResult<String> {
         let claims = self.verify(token)?;
         self.sign(claims.login_id, new_timeout)
+    }
+
+    /// 签发携带自定义 claims 的 JWT（复用同一密钥材料与算法配置）。
+    ///
+    /// [`Self::sign`] 固定签发 [`GarrisonJwtClaims`]；需要扩展 claim 集
+    /// （如找回密码 ActionToken 的 `purpose` claim）的模块经本方法以同一
+    /// 密钥/算法签发。空密钥与最小密钥长度检查、算法-密钥类型匹配校验
+    /// 与 `sign` 完全一致（fail-closed）。
+    ///
+    /// # 参数
+    /// - `claims`: 自定义 claims（`exp` 等时效字段由调用方负责写入）。
+    pub fn sign_custom<T: serde::Serialize>(&self, claims: &T) -> GarrisonResult<String> {
+        self.ensure_symmetric_secret_usable()?;
+        validate_algorithm_match(&self.key_material, self.algorithm)?;
+        let header = Header::new(self.algorithm);
+        let key = self.encoding_key()?;
+        encode(&header, claims, &key)
+            .map_err(|e| GarrisonError::Internal(format!("jwt-sign::{}", e)))
+    }
+
+    /// 校验携带自定义 claims 的 JWT。
+    ///
+    /// 校验语义与 [`Self::verify`] 一致：`validate_exp = true`、`leeway = 0`
+    /// （过期立即拒绝，不容忍时钟偏差）、算法-密钥类型匹配校验。
+    /// 过期返回 [`GarrisonError::ExpiredToken`]，签名/格式非法返回
+    /// [`GarrisonError::InvalidToken`]。
+    pub fn verify_custom<T: DeserializeOwned>(&self, token: &str) -> GarrisonResult<T> {
+        self.ensure_symmetric_secret_usable()?;
+        validate_algorithm_match(&self.key_material, self.algorithm)?;
+        let key = self.decoding_key()?;
+        let mut validation = Validation::new(self.algorithm);
+        validation.validate_exp = true;
+        // 与 verify 一致：leeway=0，过期立即拒绝（安全框架默认严格）
+        validation.leeway = 0;
+        let decoded: jsonwebtoken::TokenData<T> =
+            decode(token, &key, &validation).map_err(map_verify_error)?;
+        Ok(decoded.claims)
+    }
+
+    /// 对称路径密钥可用性检查（空密钥/短密钥拒绝），`sign` / `verify` /
+    /// `sign_custom` / `verify_custom` 四入口共用。
+    ///
+    /// 空密钥检查仅对称路径适用：config 层允许非对称算法下 `jwt_secret` 留空
+    /// 作占位（密钥强度由 PEM 决定），无条件检查会误拒该合法配置。
+    fn ensure_symmetric_secret_usable(&self) -> GarrisonResult<()> {
+        if matches!(self.key_material, KeyMaterial::Hs) {
+            if self.secret.is_empty() {
+                return Err(GarrisonError::Config("jwt-secret-empty::".to_string()));
+            }
+            if self.secret.len() < MIN_SECRET_BYTES {
+                return Err(GarrisonError::Config(format!(
+                    "jwt-secret-too-short::{}::{}",
+                    self.secret.len(),
+                    MIN_SECRET_BYTES
+                )));
+            }
+        }
+        Ok(())
     }
 }
 

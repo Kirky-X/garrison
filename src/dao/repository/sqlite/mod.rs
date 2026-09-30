@@ -28,6 +28,7 @@ use dbnexus::DbPool;
 
 mod auth_method_repo;
 mod login_log_repo;
+mod password_history_repo;
 mod permission_repo;
 mod role_permission_repo;
 mod role_repo;
@@ -147,6 +148,11 @@ pub struct DbnexusUserDeviceRepository {
 
 /// SQLite WebAuthn 凭据表 Repository 实现（app_webauthn_credential）。
 pub struct DbnexusWebauthnCredentialRepository {
+    pool: DbPool,
+}
+
+/// SQLite 密码历史表 Repository 实现（app_password_history）。
+pub struct DbnexusPasswordHistoryRepository {
     pool: DbPool,
 }
 

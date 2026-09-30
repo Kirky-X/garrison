@@ -48,6 +48,12 @@ pub enum DaoKeyPrefix {
     OAuth2CodeUsed,
     /// MFA 编排相关 key 前缀：`mfa:`（恢复码 / 误用计数等）。
     Mfa,
+    /// 找回密码流程 key 前缀：`pwdreset:`
+    ///
+    /// 找回密码 flow 会话状态（`pwdreset:bind:{jti}` code-subject 绑定）、
+    /// 一次性消费登记（`pwdreset:jti:{jti}`）与防枚举限流计数
+    /// （`pwdreset:rate:{identifier}`）的独立键空间。
+    PasswordReset,
 }
 
 impl DaoKeyPrefix {
@@ -71,6 +77,7 @@ impl DaoKeyPrefix {
             Self::OAuth2AccessToken => "oauth2:atoken:",
             Self::OAuth2CodeUsed => "oauth2:codeused:",
             Self::Mfa => "mfa:",
+            Self::PasswordReset => "pwdreset:",
         }
     }
 

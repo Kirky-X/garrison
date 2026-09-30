@@ -81,6 +81,10 @@ pub struct GarrisonJwtClaims {
     /// 来自会话 `auth_time`；为 `None` 时整体跳过序列化。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub auth_time: Option<i64>,
+    // 找回密码扩展 claim（password_owner/password_token_type/password_purpose）
+    // 审查后移除：ActionToken 自有 claims 结构承载流程语义，GarrisonJwtClaims
+    // 上的同名扩展从未被写入非 None 值（无校验死代码，诱导未来无 enforcement
+    // 的写入）；登录 token 与动作令牌的互串由必填字段结构性阻断。
 }
 
 /// JWT 处理器，封装密钥与签名算法以供复用。
