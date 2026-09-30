@@ -20,7 +20,7 @@
 //! # 用法
 //!
 //! ```sh
-//! cargo build --bins --features cli-ops,account-credential,db-sqlite
+//! cargo build --bins --features cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption
 //! ./target/debug/garrison-cli --help
 //! ```
 use clap::{Parser, Subcommand};
@@ -79,13 +79,17 @@ enum Command {
         /// 租户 ID（0 = 默认租户）
         #[arg(long, default_value_t = 0)]
         tenant_id: i64,
-        /// 凭据有效期秒数（必须 > 0）
+        /// 凭据有效期秒数（0 < ttl ≤ 86400）
         #[arg(long, default_value_t = 300)]
         ttl_seconds: u64,
         /// 签名密钥（缺省读 GARRISON_JWT_SECRET；两处都未设置则显性报错）
         #[arg(long)]
         secret: Option<String>,
-        /// 迁移脚本基目录（幂等执行 core 迁移，保证空库可直接签发）
+        /// 对目标库执行 core 迁移（默认关闭——对生产库是写副作用，须显式
+        /// 开启；库未初始化时签发显性失败）
+        #[arg(long, default_value_t = false)]
+        migrate: bool,
+        /// 迁移脚本基目录（仅 --migrate 时使用）
         #[arg(long, default_value = "migrations/sqlite")]
         migrations_dir: String,
     },
@@ -147,10 +151,19 @@ async fn dispatch(command: Command) -> GarrisonResult<()> {
             tenant_id,
             ttl_seconds,
             secret,
+            migrate,
             migrations_dir,
         } => {
-            run_one_time_access_token(db_url, user, tenant_id, ttl_seconds, secret, migrations_dir)
-                .await
+            run_one_time_access_token(
+                db_url,
+                user,
+                tenant_id,
+                ttl_seconds,
+                secret,
+                migrate,
+                migrations_dir,
+            )
+            .await
         },
         Command::ChangeKey {
             db_url,
@@ -203,11 +216,9 @@ async fn run_change_key(
     key_specs: Vec<String>,
     batch_size: usize,
 ) -> GarrisonResult<()> {
-    // StaticFieldKeyProvider/from_key_entries 语义：首把即主钥（新写入用它
-    // 加密）——--key 按「新钥集」传参，新主钥放第一位
-    let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&parse_key_entries(
-        &key_specs,
-    )?)?;
+    let entries = resolve_key_entries(key_specs)?;
+    // from_key_entries 语义：首把即主钥（新写入用它加密）
+    let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
     let pool = garrison::dao::init_dbnexus(&db_url).await?;
     let inner: std::sync::Arc<dyn garrison::dao::GarrisonDao> =
         std::sync::Arc::new(garrison::dao::GarrisonDaoDbnexus::new(
@@ -219,17 +230,35 @@ async fn run_change_key(
         std::sync::Arc::new(cipher.clone()),
         &tenant,
     )?;
-    let new_cipher = garrison::secure::encryption::FieldCipher::from_key_entries(
-        &parse_key_entries(&key_specs)?,
-    )?;
+    let new_cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
     let report = dao.change_key(new_cipher, batch_size).await?;
     println!(
-        "change-key complete (tenant={tenant}, batch={batch_size}):\n  scanned: {}\n  reencrypted: {}\n  legacy_plaintext_reencrypted: {}\n  legacy_key_migrated: {}",
+        "change-key report (tenant={tenant}, batch={batch_size}, non-transactional: row-level atomic, re-run with old keys to converge after interruption):\n  scanned: {}\n  reencrypted: {}\n  legacy_plaintext_reencrypted: {}\n  legacy_key_migrated: {}\n  skipped_current_key: {}\n  failed: {}",
         report.scanned,
         report.reencrypted,
         report.legacy_plaintext_reencrypted,
-        report.legacy_key_migrated
+        report.legacy_key_migrated,
+        report.skipped_current_key,
+        report.failed.len()
     );
+    for line in &report.failed {
+        println!("  failed-row: {line:?}");
+    }
+    if report.scanned == 0 {
+        println!(
+            "\nWARNING: scanned = 0. The sensitive-key namespace of this deployment is likely\nNOT addressable via --db-url (production default stores KV in process-local oxcache,\ninvisible to an external process). Do NOT remove old keys based on this run."
+        );
+        return Err(GarrisonError::Config(
+            "cli-change-key-empty-scan::data-addressing-likely-unavailable::refusing-to-report-success"
+                .to_string(),
+        ));
+    }
+    if !report.failed.is_empty() {
+        return Err(GarrisonError::Dao(format!(
+            "cli-change-key-rows-failed::{}-rows-need-attention",
+            report.failed.len()
+        )));
+    }
     Ok(())
 }
 
@@ -239,9 +268,8 @@ async fn run_check_key(
     key_specs: Vec<String>,
     pattern: String,
 ) -> GarrisonResult<()> {
-    let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&parse_key_entries(
-        &key_specs,
-    )?)?;
+    let entries = resolve_key_entries(key_specs)?;
+    let cipher = garrison::secure::encryption::FieldCipher::from_key_entries(&entries)?;
     let pool = garrison::dao::init_dbnexus(&db_url).await?;
     let inner: std::sync::Arc<dyn garrison::dao::GarrisonDao> =
         std::sync::Arc::new(garrison::dao::GarrisonDaoDbnexus::new(
@@ -255,13 +283,45 @@ async fn run_check_key(
     )?;
     let report = dao.check_key(&pattern).await?;
     println!(
-        "check-key report (tenant={tenant}, pattern={pattern}):\n  scanned: {}\n  encrypted_ok: {}\n  legacy_plaintext: {}\n  legacy_raw_key: {}\n\n  non-zero legacy counts mean migration is incomplete; run change-key to converge.",
+        "check-key report (tenant={tenant}, pattern={pattern}):\n  scanned: {}\n  encrypted_ok: {}\n  legacy_plaintext: {}\n  legacy_raw_key: {}\n  corrupt: {}\n\n  non-zero legacy counts mean migration is incomplete; run change-key to converge.\n  scanned = 0 likely means this deployment's KV data is not addressable via --db-url\n  (production default keeps KV in process-local oxcache); see module docs.",
         report.scanned,
         report.encrypted_ok,
         report.legacy_plaintext,
-        report.legacy_raw_key
+        report.legacy_raw_key,
+        report.corrupt.len()
     );
+    for line in &report.corrupt {
+        println!("  corrupt-row: {line:?}");
+    }
+    if report.scanned == 0 {
+        return Err(GarrisonError::Config(
+            "cli-check-key-empty-scan::data-addressing-likely-unavailable::see-module-docs"
+                .to_string(),
+        ));
+    }
+    if !report.corrupt.is_empty() {
+        return Err(GarrisonError::Dao(format!(
+            "cli-check-key-corrupt-rows::{}-rows-need-attention",
+            report.corrupt.len()
+        )));
+    }
     Ok(())
+}
+
+/// 密钥来源解析：`--key` 显式传参优先；否则回退 GARRISON_FIELD_ENCRYPTION_KEYS
+/// 环境变量（与服务端同格式：逗号分隔的 `key_id:hex64`）——主钥不应走 argv
+/// （CWE-214：shell history / /proc cmdline 泄露面），argv 仅留低敏场景。
+fn resolve_key_entries(explicit: Vec<String>) -> GarrisonResult<Vec<(String, String)>> {
+    if !explicit.is_empty() {
+        return parse_key_entries(&explicit);
+    }
+    let spec = std::env::var("GARRISON_FIELD_ENCRYPTION_KEYS").map_err(|_| {
+        GarrisonError::InvalidParam(
+            "cli-key-source-missing::pass --key or set GARRISON_FIELD_ENCRYPTION_KEYS".to_string(),
+        )
+    })?;
+    let specs: Vec<String> = spec.split(',').map(str::to_string).collect();
+    parse_key_entries(&specs)
 }
 
 /// 生成 256-bit 签名密钥：直接读 OS CSPRNG（`getrandom::fill`，无用户态 DRBG
@@ -345,10 +405,10 @@ async fn run_healthcheck(port_override: Option<u16>) -> GarrisonResult<()> {
             println!("healthy: /healthz on 127.0.0.1:{port} returned {code}");
             Ok(())
         },
-        Ok(code) => Err(GarrisonError::InvalidParam(format!(
+        Ok(code) => Err(GarrisonError::Internal(format!(
             "cli-healthcheck-status::/healthz on 127.0.0.1:{port} returned non-2xx status {code}"
         ))),
-        Err(reason) => Err(GarrisonError::InvalidParam(format!(
+        Err(reason) => Err(GarrisonError::Internal(format!(
             "cli-healthcheck-failed::{reason}"
         ))),
     }
@@ -422,7 +482,7 @@ fn user_hash_report(
     Ok(format!(
         "Created Argon2id hash for user '{user}' (pool={pool_size}; pool_size=0 is clamped to 1).\n\n\
          env:\nexport GARRISON_BOOTSTRAP_USERS={env_value}\n\n\
-         cli:\n--bootstrap-users {credential}\n\n\
+         cli:\n--bootstrap-users '{credential}'\n\n\
          yaml:\nbootstrap_users: \"{credential}\"\n\n\
          note: for docker-compose env interpolation use --escape-dollar;\n\
          wire the credential into your bootstrap seeding (app_user.username /\n\
@@ -542,8 +602,16 @@ async fn run_one_time_access_token(
     tenant_id: i64,
     ttl_seconds: u64,
     secret: Option<String>,
+    migrate: bool,
     migrations_dir: String,
 ) -> GarrisonResult<()> {
+    // L-1：上界防「短时效」名不副实的超长凭据（≤ 1 天）
+    const MAX_TTL_SECS: u64 = 86_400;
+    if ttl_seconds == 0 || ttl_seconds > MAX_TTL_SECS {
+        return Err(GarrisonError::InvalidParam(format!(
+            "cli-one-time-ttl-invalid::{ttl_seconds}::allowed=1..={MAX_TTL_SECS}"
+        )));
+    }
     let signing_secret = match secret {
         Some(s) => s,
         None => std::env::var("GARRISON_JWT_SECRET").map_err(|_| {
@@ -553,12 +621,14 @@ async fn run_one_time_access_token(
         })?,
     };
     let pool = garrison::dao::init_dbnexus(&db_url).await?;
-    let migration =
-        garrison::dao::GarrisonMigration::with_base_dir(pool.clone(), migrations_dir.into());
-    migration
-        .migrate_core()
-        .await
-        .map_err(|e| GarrisonError::Config(format!("cli-one-time-migrate::{e}")))?;
+    if migrate {
+        let migration =
+            garrison::dao::GarrisonMigration::with_base_dir(pool.clone(), migrations_dir.into());
+        migration
+            .migrate_core()
+            .await
+            .map_err(|e| GarrisonError::Config(format!("cli-one-time-migrate::{e}")))?;
+    }
     let users = garrison::dao::repository::sqlite::DbnexusUserRepository::new(pool.clone());
     let ext = garrison::dao::repository::sqlite::DbnexusUserExtRepository::new(pool);
     let issued =
@@ -572,10 +642,13 @@ async fn run_one_time_access_token(
          token:\n{}\n\n\
          expires at: {} (unix {})\n\
          one-time registry: app_user_ext field_key = {}\n\n\
-         consumption: server verifies the token with the same signing secret,\n\
-         then deletes the registry row (find_by_user_and_key + delete) before\n\
-         creating the session - a second use finds no row and must be rejected.\n\
-         Re-issuing for the same user replaces the registry row.\n",
+         SINGLE-USE SEMANTICS REQUIRE SERVER-SIDE WIRING: this framework\n\
+         does not consume the registry row automatically. Your login path must\n\
+         verify the token with the same signing secret AND atomically delete the\n\
+         registry row (find_by_user_and_key + delete) before creating a session;\n\
+         without that wiring the token is a short-lived bearer credential\n\
+         replayable within its TTL. Re-issuing for the same user replaces the\n\
+         registry row.\n",
         issued.username,
         issued.tenant_id,
         issued.token,
@@ -941,11 +1014,11 @@ mod tests {
             escaped_cred.replace('$', "$$"),
             "escape_dollar 开启时仅 env 片段将 $ 转义为 $$"
         );
-        // CLI/YAML 片段保持原值（YAML 与命令行参数无变量插值）
+        // CLI/YAML 片段保持原值（YAML 与单引号包裹的命令行参数无变量插值）
         assert!(!escaped_cred.contains("$$"), "YAML 片段不应转义");
         assert!(
-            escaped.contains(&format!("--bootstrap-users {escaped_cred}")),
-            "CLI 片段不应转义"
+            escaped.contains(&format!("--bootstrap-users '{escaped_cred}'")),
+            "CLI 片段应单引号包裹（PHC 以 $ 开头，防 shell 变量展开）且不转义"
         );
     }
 

@@ -510,7 +510,7 @@ cargo doc --no-deps --features full --open
 | `healthcheck` | 对本机 auth_server `/healthz` 存活探测（与 `garrison-healthcheck` 探针共用同一纯 std 判定函数，见 `src/health/probe.rs`） | `--port`（缺省读 `GARRISON_EXTERNAL_PORT`，回退 8080） |
 | `key-rotate` | 生成新签名密钥（OS CSPRNG 256-bit）并输出可直接粘贴的 env/CLI 配置片段；`--session-key` 额外独立生成会话密钥 | — |
 | `user-hash` | 生成 Argon2id 密码哈希（`Argon2Hasher::with_pool`，复用 R02 并发令牌池），输出 env/CLI/YAML 三种配置片段（对齐 tinyauth `create_user.go:85-128`） | `--user` `--password`（或 `GARRISON_CLI_PASSWORD`） `--pool-size` `--escape-dollar` |
-| `one-time-access-token` | 为指定用户签发短时效一次性登录凭据（写入 `app_user_ext` 登记行，消费即删） | `--db-url` `--user` `--tenant-id` `--ttl-seconds` `--secret` `--migrations-dir` |
+| `one-time-access-token` | 为指定用户签发短时效登录凭据（写入 `app_user_ext` 登记行；**一次性消费语义需业务方在登录路径接线登记行原子删除**，未接线时为 TTL 内可重放的 bearer 凭据） | `--db-url` `--user` `--tenant-id` `--ttl-seconds`（≤ 86400） `--secret` `--migrate` `--migrations-dir` |
 | `change-key` | 字段静态加密（R17）全量重加密到新主钥：事务批处理，报告 scanned/reencrypted/legacy 计数 | `--db-url` `--tenant` `--key key_id:hex`（首把为主钥，可重复） `--batch-size` |
 | `check-key` | 字段静态加密可解密性校验（不改动任何行）；非零 legacy 计数 = 迁移未收敛，跑 change-key 收敛 | `--db-url` `--tenant` `--key` `--pattern` |
 

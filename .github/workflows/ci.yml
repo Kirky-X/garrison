@@ -167,6 +167,8 @@ jobs:
         run: cargo test --no-default-features --features "default" --lib --locked
       - name: Test (full)
         run: cargo test --features "full" --lib --locked
+      - name: garrison-cli bin tests (cli-ops combo)
+        run: cargo test --features "cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption" --bin garrison-cli --locked
       # === 盲区补齐（2026-09-14 审计）===
       # 以下 feature 面此前不在任何 job 的「运行」维度：问题潜伏数月才被发现
       # （i18n 断言漂移 39 例、keycloak OsRng E0432、macros trybuild 自 8 月损坏、
