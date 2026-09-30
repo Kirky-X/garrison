@@ -1867,6 +1867,45 @@ Garrison 0.4.0 聚焦于 0.2.0 协议层遗留 gap 的补齐。通过 openspec c
   时理论上可重放。60 秒 TTL 窗口内影响有限，安全敏感场景应通过外层加锁或单点校验保证。
   待 0.5.0+ 设计原子 get-and-delete 后统一修复
 
+## [0.3.0] - 2026-07-02
+
+### 概述
+
+Garrison 0.3.0（发布时 crate 名为 `bulwark`，类型前缀 `Bulwark*`，0.7.1 起更名
+`garrison`）聚焦生态完善与可观测性：可观测性三件套（Prometheus 指标 / 结构化 JSON 日志 /
+OTLP 分布式追踪）、gRPC 鉴权拦截器、异常消息 fluent i18n、防火墙策略钩子、actix-web /
+warp 框架适配，并启动 mdbook 文档站与 CI 质量门禁建设。
+
+> 注：本节为补录——原 CHANGELOG 缺失 0.3.0 章节，内容由发布提交 `e9580a4f` 重建。
+
+### 新增
+
+- **可观测性三件套**：
+  - `metrics-prometheus` feature + `BulwarkMetrics`（现 `GarrisonMetrics`）：
+    `record_login` / `observe_token_validation` / `record_permission_query` /
+    `record_role_query`
+  - 结构化 JSON 日志：`init_json_logging()`（tracing-subscriber JSON 格式）
+  - `observability-otlp` feature（现名 `otlp`）：`init_otlp_tracing(endpoint)` OTLP
+    分布式追踪导出（当时含 tracing-opentelemetry 桥接，后续版本移除）
+- **gRPC 鉴权拦截器**：`grpc` feature + `BulwarkGrpcInterceptor`（现
+  `GarrisonGrpcInterceptor`，`tonic::Interceptor` 实现）：Bearer token 提取与格式校验，
+  通过后注入 request extensions 供 handler 使用
+- **异常消息 i18n 国际化**：`i18n` feature（fluent + unic-langid）+
+  `locales/{zh,en}.ftl` 中英双语资源，`translate_error` / `current_locale` /
+  `set_locale`（`BulwarkLocale`，现 `GarrisonLocale`）
+- **防火墙策略钩子**：`BulwarkFirewallCheckHookDefault`（现
+  `GarrisonFirewallCheckHookDefault`）登录前 5 项检查：登录频率 / 暴力破解 / 异地登录 /
+  Token 复用 / 设备异常检测
+- **actix-web / warp 框架适配**：`web-actix` / `web-warp` feature +
+  `BulwarkRouter`（现 `GarrisonRouter`）+ extractor + `BulwarkMiddleware`（actix）+
+  `BulwarkRejection` 统一错误响应
+- **mdbook 文档站**：新建 `mdbook/` 文档站点
+- **CI 质量门禁增强**：codeql 代码扫描 + docs workflow + deny.toml 供应链检查
+
+### 测试覆盖率
+
+- 单元测试 748 个通过，覆盖率 95.41%，clippy + doc 零警告（发布提交统计）
+
 ## [0.2.1] - 2026-07-01
 
 ### 概述
