@@ -119,3 +119,26 @@ crate::dao_conformance_tests! {
     },
     caps: [basic, atomic],
 }
+
+/// WebAuthn 凭据 repository 契约（dbnexus sqlite 实例）。
+///
+/// 与 refresh_token_rotation 契约同模式：repository 为 SQL 直连层，不走
+/// `dao_conformance_tests!` 宏，以独立测试挂契约组
+/// （[`crate::dao::testing::conformance::run_webauthn_credential_repository`]）。
+#[cfg(all(test, feature = "db-sqlite", feature = "protocol-webauthn"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn webauthn_credential_repository_contract_dbnexus_sqlite() {
+    let pool = crate::dao::init_dbnexus("sqlite::memory:")
+        .await
+        .expect("init_dbnexus 应成功");
+    let migration = crate::dao::GarrisonMigration::with_base_dir(
+        pool.clone(),
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("migrations")
+            .join("sqlite"),
+    );
+    let applied = migration.migrate_core().await.expect("migrate_core 应成功");
+    assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");
+    crate::dao::testing::conformance::run_webauthn_credential_repository("webauthn_sqlite", &pool)
+        .await;
+}

@@ -149,6 +149,19 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 
 启用 `field-encryption` feature 后，选定敏感列（`oauth2:atoken:` / `oauth2:rtoken:` / `oauth2:codeused:` / `totp:seed:`）落库自动加密为 `enc:v1:<key_id>:<base64(nonce|ciphertext)>`（AES-256-GCM，AAD 绑定 `garrison:{tenant}:{table}:{key}`）。密钥复用 config-encryption 既有设施（支持多 key_id）；**启用 feature 未配密钥 → 启动 fail-closed Err**。读路径兼容明文遗留行（双读迁移期语义），写路径全加密。密钥轮换用 `change_key` / `check_key` 运维接口（garrison-cli 接线见 R16）。
 
+### 2.10 WebAuthn/Passkey 配置（protocol-webauthn，R07）
+
+`protocol::webauthn::WebauthnConfig`（构造后不可变；经 `WebauthnService::new` 注入）。RP 配置不自立配置项，从 issuer 派生：`rp_id` = issuer URL host、`origins` = [issuer]（issuer 变更后 rp_id 跟随）。
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `issuer` | `String` | 无（必填） | RP 派生源（如 `https://sso.example.com`）；非法 URL 显性拒绝 |
+| `challenge_ttl_secs` | `u64` | `120` | 仪式 challenge 暂存 TTL（秒）；过期后消费显性拒绝（与重放同错误面） |
+| `passwordless.enabled` | `bool` | `false` | Passwordless 用途准入；关闭时该用途的注册/认证显性拒绝 |
+| `second_factor.enabled` | `bool` | `false` | 2FA 二次认证用途准入（完整 MFA 编排归 R09）；2FA 接线点经 `stp::mfa::webauthn_factor::register_webauthn_factor` 注册 |
+
+**Cargo feature**：`protocol-webauthn`（依赖 webauthn-rs 0.5，构建需 rustc ≥ 1.88）。
+
 ---
 
 ## 📝 配置文件示例

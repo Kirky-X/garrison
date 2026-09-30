@@ -44,6 +44,10 @@ pub mod invitation;
 #[cfg(feature = "protocol-qrlogin")]
 pub mod qrlogin;
 
+/// WebAuthn/Passkey 凭据 SPI 与注册/认证仪式模块。
+#[cfg(feature = "protocol-webauthn")]
+pub mod webauthn;
+
 /// 社交登录协议插件模块。
 ///
 /// 核心类型（`SocialLoginProvider` trait / `SocialUserInfo` / `SocialLoginService` 注册中心 /

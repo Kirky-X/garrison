@@ -37,6 +37,7 @@ mod user_ext_repo;
 mod user_identifier_repo;
 mod user_repo;
 mod user_role_repo;
+mod webauthn_credential_repo;
 
 // ============================================================================
 // 内部辅助函数
@@ -141,6 +142,11 @@ pub struct DbnexusUserIdentifierRepository {
 /// UA 解析当前用简单字符串启发式（提取 Browser/OS 关键字）。
 /// 完整 `ua-parser` regex 集需启用 `ua-parser-precompiled` feature（设计决策延后）。
 pub struct DbnexusUserDeviceRepository {
+    pool: DbPool,
+}
+
+/// SQLite WebAuthn 凭据表 Repository 实现（app_webauthn_credential）。
+pub struct DbnexusWebauthnCredentialRepository {
     pool: DbPool,
 }
 

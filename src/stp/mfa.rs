@@ -243,6 +243,141 @@ impl MfaLogic for GarrisonLogicDefault {
     }
 }
 
+// ============================================================================
+// WebAuthn factor 接线点（protocol-webauthn feature）
+// ============================================================================
+
+/// WebAuthn 二次认证因子的凭据校验函数接线点。
+///
+/// 完整 MFA 编排（因子账本 / Required Action / 新鲜度断言）归 stp/mfa 的
+/// MFA 编排基座交付；本接线点只暴露「给 MFA 层一个可调用的 WebAuthn
+/// assertion 校验函数」这一最小缝：
+///
+/// - [`WebauthnFactorVerifier`]：包装 [`WebauthnService`] 的校验入口，
+///   把模块自有错误词汇表映射为 [`GarrisonError`]（`InvalidParam` 携带
+///   显性 detail，不静默吞错）；
+/// - [`register_webauthn_factor`] / [`webauthn_factor`]：进程级注册表，
+///   装配方注入一次，MFA 编排层按 `webauthn` 方法名取用（未注册返回
+///   `None`——编排层据此走「因子未配置」分支，不视为错误）。
+#[cfg(feature = "protocol-webauthn")]
+pub mod webauthn_factor {
+    use super::*;
+    use crate::protocol::webauthn::service::WebauthnService;
+
+    use std::sync::{Arc, RwLock};
+
+    static WEBAUTHN_FACTOR: RwLock<Option<Arc<WebauthnFactorVerifier>>> = RwLock::new(None);
+
+    /// WebAuthn 二次认证校验函数（包装 [`WebauthnService`] 认证仪式）。
+    pub struct WebauthnFactorVerifier {
+        service: Arc<WebauthnService>,
+    }
+
+    impl WebauthnFactorVerifier {
+        /// 包装既有 service（仪式/challenge/凭据存取均由 service 承载）。
+        pub fn new(service: Arc<WebauthnService>) -> Self {
+            Self { service }
+        }
+
+        /// 校验二次认证 assertion：走认证仪式全流程（challenge 一次性消费、
+        /// sign_count 单调性克隆检测、backup flags 更新落库）。
+        pub async fn verify_second_factor(
+            &self,
+            assertion: &webauthn_rs::prelude::PublicKeyCredential,
+        ) -> GarrisonResult<()> {
+            self.service
+                .finish_authentication(assertion)
+                .await
+                .map(|_| ())
+                .map_err(GarrisonError::from)
+        }
+
+        /// 底层 service（MFA 编排层需要发起 challenge 时使用）。
+        pub fn service(&self) -> &Arc<WebauthnService> {
+            &self.service
+        }
+    }
+
+    /// 注册 WebAuthn factor 校验函数（进程级，重复注册显性拒绝——
+    /// 静默覆盖会让「后注册者改变全库校验行为」变得不可见）。
+    pub fn register_webauthn_factor(verifier: Arc<WebauthnFactorVerifier>) -> GarrisonResult<()> {
+        let mut guard = WEBAUTHN_FACTOR
+            .write()
+            .expect("mfa webauthn factor 注册表锁不应中毒");
+        if guard.is_some() {
+            return Err(GarrisonError::Config(
+                "mfa-webauthn-factor-already-registered::".to_string(),
+            ));
+        }
+        *guard = Some(verifier);
+        Ok(())
+    }
+
+    /// 取已注册的 WebAuthn factor 校验函数；未注册返回 `None`（编排层
+    /// 据此判定「因子未配置」，不视为错误）。
+    pub fn webauthn_factor() -> Option<Arc<WebauthnFactorVerifier>> {
+        WEBAUTHN_FACTOR
+            .read()
+            .expect("mfa webauthn factor 注册表锁不应中毒")
+            .clone()
+    }
+
+    /// 重置注册表（仅供测试用，业务代码不应调用）。
+    #[cfg(test)]
+    pub fn reset_webauthn_factor_for_tests() {
+        *WEBAUTHN_FACTOR
+            .write()
+            .expect("mfa webauthn factor 注册表锁不应中毒") = None;
+    }
+
+    // 测试经 sqlite 内存库构造 service 依赖（repository 需 DbPool），
+    // 无 db-sqlite 的组合（如 production 门禁）不编译
+    #[cfg(all(test, feature = "db-sqlite"))]
+    mod tests {
+        use super::*;
+        use crate::dao::InMemoryDao;
+        use crate::protocol::webauthn::WebauthnConfig;
+
+        #[tokio::test(flavor = "multi_thread")]
+        async fn register_then_get_and_duplicate_rejected() {
+            let pool = crate::dao::init_dbnexus("sqlite::memory:")
+                .await
+                .expect("init_dbnexus 应成功");
+            // 本测试只验证注册表语义（register/get/重复注册拒绝），不触达
+            // 凭据存取——repository 仅在构造时被 service 持有
+            let service = Arc::new(WebauthnService::new(
+                Arc::new(InMemoryDao::new()),
+                Arc::new(
+                    crate::dao::repository::sqlite::DbnexusWebauthnCredentialRepository::new(pool),
+                ),
+                WebauthnConfig {
+                    issuer: "https://auth.example.com".to_string(),
+                    challenge_ttl_secs: 120,
+                    passwordless: crate::protocol::webauthn::FactorPolicy { enabled: false },
+                    second_factor: crate::protocol::webauthn::FactorPolicy { enabled: true },
+                },
+            ));
+            let verifier = Arc::new(WebauthnFactorVerifier::new(service));
+            // 注册表为进程级：先重置保证本测试自管前置条件（顺序无关）
+            reset_webauthn_factor_for_tests();
+            register_webauthn_factor(verifier.clone()).expect("首次注册应成功");
+            let got = webauthn_factor();
+            assert!(got.is_some(), "注册后应可取回 factor");
+            let dup = register_webauthn_factor(verifier);
+            assert!(
+                matches!(dup, Err(GarrisonError::Config(_))),
+                "重复注册应显性拒绝，实际: {dup:?}"
+            );
+            if let Err(GarrisonError::Config(m)) = &dup {
+                assert!(
+                    m.contains("already-registered"),
+                    "重复注册错误应含 already-registered 指引，实际: {m}"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

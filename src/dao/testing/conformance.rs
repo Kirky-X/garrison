@@ -964,3 +964,169 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
     .await;
     assert_eq!(consumed, 1, "[{prefix}] 重试轮换应正常消费原 token");
 }
+
+/// WebAuthn 凭据 repository 契约组（dbnexus sqlite 实例；postgres 方言
+/// 经 make_statement 复用同实现，集成回归由真实 PG E2E 承接）。
+///
+/// WebauthnCredentialRepository 为 SQL 直连层（非 `GarrisonDao` KV 门面），
+/// 与 [`run_refresh_token_rotation`] 同模式挂同一把尺子。断言按行为属性：
+/// create 唯一约束兜底并发绑定（重复绑定 `AlreadyBound` 且不泄露他人行）、
+/// find/list 全字段 roundtrip、update 持久化（缺失显性 `InvalidParam`）、
+/// delete 幂等。
+#[cfg(all(feature = "db-sqlite", feature = "protocol-webauthn"))]
+pub async fn run_webauthn_credential_repository(prefix: &str, pool: &dbnexus::DbPool) {
+    use crate::dao::repository::sqlite::DbnexusWebauthnCredentialRepository;
+    use crate::dao::repository::WebauthnCredentialRepository;
+    use crate::dao::repository::{WebauthnBindOutcome, WebauthnCredentialRow};
+
+    let repo = DbnexusWebauthnCredentialRepository::new(pool.clone());
+    let tenant = 7_i64;
+
+    let row = |user: &str, cred: &str| WebauthnCredentialRow {
+        tenant_id: tenant,
+        user_id: user.to_string(),
+        credential_id: cred.to_string(),
+        public_key: r#"{"kty":2,"alg":-7,"crv":1,"x":"aa","y":"bb"}"#.to_string(),
+        sign_count: 0,
+        backup_eligible: false,
+        backup_state: false,
+        attestation: Some("none".to_string()),
+        created_at: 1_700_000_000,
+        updated_at: 1_700_000_000,
+    };
+
+    // create：首次 Bound；同凭据再次 create → AlreadyBound（携原占用者）
+    let first = repo.create(&row("user-wn-a", "cred-wn-1")).await;
+    assert!(
+        matches!(first, Ok(WebauthnBindOutcome::Bound)),
+        "[{prefix}] 首次绑定应为 Bound，实际: {first:?}"
+    );
+    let dup = repo.create(&row("user-wn-b", "cred-wn-1")).await;
+    match dup {
+        Ok(WebauthnBindOutcome::AlreadyBound { by_user_id }) => {
+            assert_eq!(
+                by_user_id, "user-wn-a",
+                "[{prefix}] AlreadyBound 应携带当前占用者，不泄露其他行内容"
+            );
+        },
+        other => panic!("[{prefix}] 重复绑定应返回 AlreadyBound，实际: {other:?}"),
+    }
+
+    // find：全字段 roundtrip；缺失 → None
+    let found = repo.find_by_credential_id(tenant, "cred-wn-1").await;
+    match found {
+        Ok(Some(r)) => {
+            assert_eq!(r.user_id, "user-wn-a", "[{prefix}] roundtrip user_id");
+            assert_eq!(r.sign_count, 0, "[{prefix}] roundtrip sign_count");
+            assert_eq!(
+                r.attestation.as_deref(),
+                Some("none"),
+                "[{prefix}] roundtrip attestation"
+            );
+        },
+        other => panic!("[{prefix}] 已绑定凭据应可查得，实际: {other:?}"),
+    }
+    assert!(
+        repo.find_by_credential_id(tenant, "cred-wn-missing")
+            .await
+            .expect("[{prefix}] 查询不应失败")
+            .is_none(),
+        "[{prefix}] 未绑定凭据应返回 None"
+    );
+
+    // list_by_user：按租户 + 用户过滤
+    let listed = repo.list_by_user(tenant, "user-wn-a").await;
+    assert_eq!(
+        listed.as_ref().map(Vec::len).unwrap_or_default(),
+        1,
+        "[{prefix}] user-wn-a 应恰好列出 1 条"
+    );
+    let empty = repo.list_by_user(tenant, "user-wn-b").await;
+    assert!(
+        empty.as_ref().map(Vec::len).unwrap_or_default() == 0,
+        "[{prefix}] 被拒绑定者不应列出任何凭据"
+    );
+
+    // update：持久化 sign_count/backup flags；缺失显性 InvalidParam
+    repo.update_authenticator_state(tenant, "cred-wn-1", 5, true, true)
+        .await
+        .expect("[{prefix}] 更新既有凭据应成功");
+    let updated = repo
+        .find_by_credential_id(tenant, "cred-wn-1")
+        .await
+        .ok()
+        .flatten()
+        .expect("[{prefix}] 更新后凭据应仍存在");
+    assert_eq!(updated.sign_count, 5, "[{prefix}] sign_count 应持久化");
+    assert!(
+        updated.backup_eligible,
+        "[{prefix}] backup_eligible 应持久化"
+    );
+    assert!(updated.backup_state, "[{prefix}] backup_state 应持久化");
+    assert!(
+        updated.updated_at >= updated.created_at,
+        "[{prefix}] updated_at 应随更新刷新"
+    );
+    let missing_update = repo
+        .update_authenticator_state(tenant, "cred-wn-missing", 1, false, false)
+        .await;
+    assert!(
+        matches!(
+            missing_update,
+            Err(crate::error::GarrisonError::InvalidParam(_))
+        ),
+        "[{prefix}] 更新缺失凭据应 InvalidParam 显性拒绝，实际: {missing_update:?}"
+    );
+
+    // 单调 CAS：sign_count 回退显性拒绝（克隆检测的落库基准不被倒退破坏）
+    let regressed = repo
+        .update_authenticator_state(tenant, "cred-wn-1", 3, false, false)
+        .await;
+    assert!(
+        matches!(
+            regressed,
+            Err(crate::error::GarrisonError::Dao(ref m))
+                if m.contains("sign-count-regression")
+        ),
+        "[{prefix}] 计数回退应显性拒绝，实际: {regressed:?}"
+    );
+    // 回退被拒后落库值保持不变
+    let after_regression = repo
+        .find_by_credential_id(tenant, "cred-wn-1")
+        .await
+        .ok()
+        .flatten()
+        .expect("[{prefix}] 回退拒绝后凭据应仍存在");
+    assert_eq!(
+        after_regression.sign_count, 5,
+        "[{prefix}] 回退拒绝后落库计数不应变化"
+    );
+    // 同值重写（并发 finish 双方读到相同落库值）同样拒绝——计数器只进不退
+    let same_value = repo
+        .update_authenticator_state(tenant, "cred-wn-1", 5, true, true)
+        .await;
+    assert!(
+        matches!(
+            same_value,
+            Err(crate::error::GarrisonError::Dao(ref m))
+                if m.contains("sign-count-regression")
+        ),
+        "[{prefix}] 同值重写应显性拒绝（并发写保护），实际: {same_value:?}"
+    );
+
+    // delete：幂等（删除后 find None，重复 delete Ok）
+    repo.delete(tenant, "cred-wn-1")
+        .await
+        .expect("[{prefix}] 解绑应成功");
+    assert!(
+        repo.find_by_credential_id(tenant, "cred-wn-1")
+            .await
+            .ok()
+            .flatten()
+            .is_none(),
+        "[{prefix}] 解绑后不可再查得"
+    );
+    repo.delete(tenant, "cred-wn-1")
+        .await
+        .expect("[{prefix}] 重复解绑应幂等 Ok");
+}

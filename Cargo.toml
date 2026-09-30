@@ -195,7 +195,15 @@ lettre = { version = "0.11", optional = true, default-features = false, features
 # cargo MSRV-aware 解析器未降选 0.5.4（1.85 兼容），启用 protocol-webauthn 的构建需 rustc ≥ 1.88；
 # 下游若须严守 1.85 可 `cargo update -p webauthn-rs --precise 0.5.4` 降级。
 # attestation：attestation 对象解析（默认 feature）；conditional-ui：passkey 条件式 UI（浏览器自动填充中介）。
-webauthn-rs = { version = "0.5", optional = true, default-features = false, features = ["attestation", "conditional-ui"] }
+# danger-allow-state-serialisation：PasskeyRegistration/PasskeyAuthentication 仪式态可序列化——
+# 仅用于服务端 DAO/SQL 暂存（challenge TTL 存储），upstream 文档认可的安全场景；
+# 严禁将仪式态写入 cookie 等客户端可读位置（否则重放防御失效）。
+# danger-credential-internals：Passkey ↔ Credential 互转，用于凭据字段（公钥/sign_count/
+# backup flags/attestation）与 SQL 行互相映射；不改动 Credential 内部字段值。
+webauthn-rs = { version = "0.5", optional = true, default-features = false, features = ["attestation", "conditional-ui", "danger-allow-state-serialisation", "danger-credential-internals"] }
+# webauthn-rs-core：webauthn-rs 的同版本核心（UserVerificationPolicy/RegisteredExtensions
+# 等协议类型经此引用）；锁定 =0.5.5 与 wrapper 严格同版。
+webauthn-rs-core = { version = "=0.5.5", optional = true, default-features = false }
 # garrison-cli 运维子命令（cli-ops feature）：derive API + 人类可读输出（help/usage/error-context/suggestions）。
 # 独立运维 bin 门控，不进 auth_server/healthcheck（R03 零依赖决策不变）
 clap = { version = "4.6", optional = true, default-features = false, features = ["std", "help", "usage", "error-context", "suggestions", "derive"] }
@@ -370,7 +378,7 @@ protocol-sso-server = ["protocol-sso"]
 # dep:subtle：DigestValue 比对使用常量时间比较
 protocol-saml = ["protocol-sso", "dep:rsa", "dep:base64", "dep:subtle"]
 # protocol-webauthn：WebAuthn/Passkey 凭据 SPI 与注册/认证仪式（challenge 防重放/sign_count 克隆检测/backup flags）
-protocol-webauthn = ["dep:webauthn-rs"]
+protocol-webauthn = ["dep:webauthn-rs", "dep:webauthn-rs-core"]
 
 # === 安全模块 ===
 secure-totp = ["dep:totp-rs", "dep:base32"]

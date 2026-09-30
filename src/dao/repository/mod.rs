@@ -870,6 +870,97 @@ pub trait UserDeviceRepository: Send + Sync {
     async fn count_user_devices(&self, tenant_id: i64, login_id: &str) -> GarrisonResult<usize>;
 }
 
+/// WebAuthn 凭据绑定结果。
+///
+/// `(tenant_id, credential_id)` 为主键，数据库唯一约束兜底并发绑定；
+/// `create` 冲突时回查归属返回 `AlreadyBound`（与登录标识注册同款语义），
+/// 供业务方决定处置（拒绝注册 / 引导登录）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebauthnBindOutcome {
+    /// 绑定成功（该凭据此前未被占用）。
+    Bound,
+    /// 凭据已被绑定（携带占用者 user_id；不泄露其他行内容）。
+    AlreadyBound {
+        /// 当前占用该凭据的用户 ID。
+        by_user_id: String,
+    },
+}
+
+/// WebAuthn 凭据行（app_webauthn_credential）。
+///
+/// 承载凭据模型核心字段：`credential_id` 唯一（主键成分）、公钥（COSEKey
+/// JSON）、sign_count（克隆检测依据）、backup flags（BE 只升不降 / BS 跟随
+/// 最新断言）、attestation（注册期格式标识，可空）。
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct WebauthnCredentialRow {
+    /// 租户 ID。
+    pub tenant_id: i64,
+    /// 绑定用户 ID。
+    pub user_id: String,
+    /// 凭据 ID（base64url，与 COSE credentialId 一致；主键成分）。
+    pub credential_id: String,
+    /// 公钥（JSON 序列化的 COSEKey，含算法与坐标）。
+    pub public_key: String,
+    /// 签名计数器（sign_count；业务层拒绝 count ≤ 上次值的断言——克隆嫌疑）。
+    pub sign_count: u32,
+    /// 备份资格（backup eligible；只升不降）。
+    pub backup_eligible: bool,
+    /// 备份状态（backup state；跟随最新断言）。
+    pub backup_state: bool,
+    /// attestation 格式标识（如 "none" / "packed"；可空）。
+    pub attestation: Option<String>,
+    /// 创建时间（epoch seconds）。
+    pub created_at: i64,
+    /// 更新时间（epoch seconds）。
+    pub updated_at: i64,
+}
+
+/// WebAuthn 凭据 Repository trait。
+///
+/// 提供 Passkey 凭据的持久化能力：绑定（数据库级原子防重）/ 按凭据查询 /
+/// 按用户列举 / 认证器状态更新（sign_count + backup flags）/ 解绑（幂等）。
+///
+/// 业务不变式（DAO 层不裁决，由 protocol/webauthn service 执行）：
+/// - sign_count 单调性（count ≤ 上次 → 克隆嫌疑拒绝）；
+/// - backup_eligible 只升不降（BE 升级单向）。
+#[async_trait::async_trait]
+pub trait WebauthnCredentialRepository: Send + Sync {
+    /// 绑定凭据。
+    ///
+    /// `(tenant_id, credential_id)` 冲突时回查归属返回
+    /// [`WebauthnBindOutcome::AlreadyBound`]（数据库唯一约束兜底并发）。
+    async fn create(&self, row: &WebauthnCredentialRow) -> GarrisonResult<WebauthnBindOutcome>;
+
+    /// 按凭据 ID 查询（未绑定返回 `Ok(None)`）。
+    async fn find_by_credential_id(
+        &self,
+        tenant_id: i64,
+        credential_id: &str,
+    ) -> GarrisonResult<Option<WebauthnCredentialRow>>;
+
+    /// 列出用户全部凭据（按 tenant_id + user_id 过滤）。
+    async fn list_by_user(
+        &self,
+        tenant_id: i64,
+        user_id: &str,
+    ) -> GarrisonResult<Vec<WebauthnCredentialRow>>;
+
+    /// 更新认证器状态（sign_count / backup flags），updated_at 同步刷新。
+    ///
+    /// 凭据不存在时返回 `GarrisonError::InvalidParam`（不静默吞错）。
+    async fn update_authenticator_state(
+        &self,
+        tenant_id: i64,
+        credential_id: &str,
+        sign_count: u32,
+        backup_eligible: bool,
+        backup_state: bool,
+    ) -> GarrisonResult<()>;
+
+    /// 解绑凭据（幂等：不存在返回 `Ok(())`）。
+    async fn delete(&self, tenant_id: i64, credential_id: &str) -> GarrisonResult<()>;
+}
+
 // ============================================================================
 // Dbnexus Repository 实现子模块。
 // 启用 db-sqlite 或 db-postgres feature 时编译，基于 dbnexus DbPool + sea-orm
