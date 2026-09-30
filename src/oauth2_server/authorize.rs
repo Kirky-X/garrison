@@ -18,7 +18,6 @@
 //! 5. 签发授权码（10 分钟 TTL，一次性使用）并重定向 redirect_uri?code=xxx&state=xxx
 
 use crate::constants::DaoKeyPrefix;
-use crate::context::tenant::current_tenant_id_strict;
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::oauth2_server::client::OAuth2ClientStore;
@@ -87,6 +86,20 @@ fn ticket_invalid_error() -> GarrisonError {
 }
 
 /// 「需要用户交互但 prompt=none 禁止交互」错误（OIDC Core §3.1.2.6）。
+/// prompt/consent 判定的租户解析：缺上下文时回退默认租户 0 并告警
+/// （审查 LOW：静默降级违背 strict 语义；写入与判定同键，方向一致但归属失真须可见）。
+fn current_tenant_id_with_warn() -> i64 {
+    match crate::context::tenant::current_tenant_id_strict() {
+        Some(t) => t,
+        None => {
+            tracing::warn!(
+                "oauth2 authorize: tenant context missing, falling back to default tenant 0 (consent memory keyed to default tenant)"
+            );
+            0
+        },
+    }
+}
+
 fn interaction_required_error() -> GarrisonError {
     GarrisonError::OAuth2("oauth2-server-authorize-interaction-required".into())
 }
@@ -172,6 +185,22 @@ pub struct AuthorizeRequest {
     pub code_challenge: String,
     /// PKCE code_challenge_method（必须为 "S256"）。
     pub code_challenge_method: String,
+    /// OIDC Core §3.1.2.1 prompt 值（`none` / `login`；空格分隔多值取首个
+    /// 已知值）。缺省（None）= 默认流程。
+    #[serde(default)]
+    pub prompt: Option<String>,
+}
+
+impl AuthorizeRequest {
+    /// 解析 prompt 参数为枚举（`none` → NoInteraction、`login` → ForceLogin；
+    /// 未知值/缺省 → 默认流程）。多值取首个已知值。
+    pub fn prompt_hint(&self) -> AuthorizePrompt {
+        match self.prompt.as_deref().map(str::trim) {
+            Some("none") => AuthorizePrompt::NoInteraction,
+            Some("login") => AuthorizePrompt::ForceLogin,
+            _ => AuthorizePrompt::None,
+        }
+    }
 }
 
 /// /oauth2/authorize 响应。
@@ -316,6 +345,12 @@ impl AuthorizeHandler {
     /// 配置 consent 征询页 URL（consent 记忆不足时的升级重定向目标）。
     ///
     /// 未配置时，征询需求以 `interaction_required` 显性失败（不静默放行）。
+    ///
+    /// **prompt=none 属性视图约束（审查记录）**：prompt=none 静默续期判定
+    /// 以空属性视图比对快照——经征询页批准（非空属性视图写入快照）的用户，
+    /// 其 prompt=none 请求会因属性视图变化重新触发 interaction_required
+    /// （fail-safe 方向）。需要 prompt=none 对此类用户生效的部署，须以
+    /// `attributes` 参数传入与征询时一致的属性视图。
     pub fn with_consent_url(mut self, consent_url: String) -> Self {
         self.consent_url = Some(consent_url);
         self
@@ -392,7 +427,7 @@ impl AuthorizeHandler {
 
         // 7. prompt=none：仅当 consent 记忆完整覆盖时直接放行
         if prompt == AuthorizePrompt::NoInteraction {
-            let tenant_id = current_tenant_id_strict().unwrap_or(0);
+            let tenant_id = current_tenant_id_with_warn();
             if self
                 .consent_decision(tenant_id, user_id, &req.client_id, &scopes, &[])
                 .await?
@@ -496,7 +531,7 @@ impl AuthorizeHandler {
         user_id: i64,
         attributes: &[ConsentAttributes],
     ) -> GarrisonResult<AuthorizeResponse> {
-        let tenant_id = current_tenant_id_strict().unwrap_or(0);
+        let tenant_id = current_tenant_id_with_warn();
         match self
             .consent_decision(tenant_id, user_id, &req.client_id, scopes, attributes)
             .await?
@@ -661,7 +696,7 @@ impl AuthorizeHandler {
         }
 
         let scopes = self.revalidate_staged(&req).await?;
-        let tenant_id = current_tenant_id_strict().unwrap_or(0);
+        let tenant_id = current_tenant_id_with_warn();
         self.grant_consent(tenant_id, user_id, &req.client_id, &scopes, attributes)
             .await?;
         self.issue_authorization_code(&req, &scopes, user_id).await
@@ -893,9 +928,10 @@ impl AuthorizeHandler {
             let Some(rest) = key.strip_prefix(OAUTH2_CONSENT_KEY_PREFIX) else {
                 continue;
             };
-            // rest = `{tenant}:{user}:{client_id}`（client_id 不含 ':'，
-            // 与 consent_key 构造一致）；取最后一段为 client_id
-            let Some((_, client_id)) = rest.rsplit_once(':') else {
+            // rest = `{tenant}:{user}:{client_id}`；splitn(3) 保留末段完整
+            // （与 consent_key 文档一致）
+            let mut parts = rest.splitn(3, ':');
+            let Some(client_id) = parts.nth(2) else {
                 continue;
             };
             if alive.contains(client_id) {
@@ -1029,6 +1065,7 @@ mod tests {
             state: Some("xyz".into()),
             code_challenge: code_challenge.into(),
             code_challenge_method: "S256".into(),
+            prompt: None,
         }
     }
 
@@ -1247,6 +1284,7 @@ mod tests {
             state: Some("state&with&amps".into()),
             code_challenge: challenge,
             code_challenge_method: "S256".into(),
+            prompt: None,
         };
 
         let resp = handler
@@ -2336,6 +2374,7 @@ mod tests {
             state: Some("xyz".into()),
             code_challenge: challenge,
             code_challenge_method: "S256".into(),
+            prompt: None,
         };
 
         let resp = handler.authorize(&req, Some(1001)).await.expect("授权");
@@ -2373,6 +2412,7 @@ mod tests {
             state: Some("state&with=special#chars".into()),
             code_challenge: challenge,
             code_challenge_method: "S256".into(),
+            prompt: None,
         };
 
         let resp = handler.authorize(&req, Some(1001)).await.expect("授权");

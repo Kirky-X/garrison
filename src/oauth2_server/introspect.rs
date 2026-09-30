@@ -266,6 +266,7 @@ mod tests {
             state: None,
             code_challenge: challenge,
             code_challenge_method: "S256".into(),
+            prompt: None,
         };
         let resp = match authorize_handler
             .authorize(&auth_req, Some(1001))

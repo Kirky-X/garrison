@@ -903,6 +903,7 @@ async fn acc_oauth2_017_redirect_uri_exact_match_adversarial() {
         state: Some("acc-017-state".into()),
         code_challenge: challenge,
         code_challenge_method: "S256".into(),
+        prompt: None,
     };
 
     // 白名单含 query string 的既有行为保持：精确相等 → 放行（Redirect）

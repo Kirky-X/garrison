@@ -1314,6 +1314,7 @@ mod tests {
             state: Some("xyz".into()),
             code_challenge: challenge,
             code_challenge_method: "S256".into(),
+            prompt: None,
         };
         let resp = handler
             .authorize_handler
@@ -2941,6 +2942,7 @@ mod refresh_rotation_tests {
             state: Some("xyz".into()),
             code_challenge: challenge,
             code_challenge_method: "S256".into(),
+            prompt: None,
         };
         let resp = handler
             .authorize_handler

@@ -210,6 +210,7 @@ impl OAuth2State {
 pub fn oauth2_external_router(state: Arc<OAuth2State>) -> Router {
     Router::new()
         .route("/oauth2/authorize", get(authorize_endpoint))
+        .route("/oauth2/authorize/resume", get(authorize_resume_endpoint))
         .route("/oauth2/token", post(token_endpoint))
         .route("/oauth2/revoke", post(revoke_endpoint))
         .route("/oauth2/jwks.json", get(jwks_endpoint))
@@ -640,7 +641,58 @@ async fn authorize_endpoint(
 ) -> Response {
     // 从 GarrisonPrincipal Extension 提取 user_id（无 principal 或 login_id 解析失败 → None → LoginRequired）
     let user_id: Option<i64> = principal.and_then(|ext| ext.0.login_id.parse::<i64>().ok());
-    match state.authorize_handler.authorize(&req, user_id).await {
+    // prompt 参数（OIDC Core §3.1.2.1）：none/login 语义仅在显式出现时生效
+    let response = if req.prompt.is_some() {
+        state
+            .authorize_handler
+            .authorize_with_prompt(&req, user_id, req.prompt_hint())
+            .await
+    } else {
+        state.authorize_handler.authorize(&req, user_id).await
+    };
+    match response {
+        Ok(AuthorizeResponse::Redirect { location }) => {
+            (StatusCode::FOUND, [("Location", location)]).into_response()
+        },
+        Ok(AuthorizeResponse::LoginRequired { login_url }) => {
+            (StatusCode::FOUND, [("Location", login_url)]).into_response()
+        },
+        Err(e) => {
+            let (_, error_code, message, _) = e.response_parts_i18n();
+            with_retry_after(
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({ "error": error_code, "message": message })),
+                )
+                    .into_response(),
+                &e,
+            )
+        },
+    }
+}
+
+/// GET /oauth2/authorize/resume — 登录后凭票据续流（R18 两段式）。
+///
+/// user_id 取自 GarrisonPrincipal 会话（登录往返建立），不经 query 传入——
+/// 票据本身不绑定主体，续流主体以会话为准；未登录 → LoginRequired 重发新
+/// 票据（resumable 循环防护：resume 消费旧票据后签发新票据）。
+async fn authorize_resume_endpoint(
+    State(state): State<Arc<OAuth2State>>,
+    Query(params): Query<std::collections::HashMap<String, String>>,
+    principal: Option<Extension<GarrisonPrincipal>>,
+) -> Response {
+    let Some(ticket) = params.get("ticket").cloned() else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "invalid_request",
+                "message": "missing ticket"
+            })),
+        )
+            .into_response();
+    };
+    let user_id: Option<i64> = principal.and_then(|ext| ext.0.login_id.parse::<i64>().ok());
+    match state.authorize_handler.resume(&ticket, user_id, &[]).await {
         Ok(AuthorizeResponse::Redirect { location }) => {
             (StatusCode::FOUND, [("Location", location)]).into_response()
         },

@@ -161,6 +161,16 @@ GarrisonManager::builder()
 
 **JWKS 多 kid 轮换**（`oauth2_server::jwks::JwksKeystore`，注入 `OAuth2State::jwks_keystore` 后 JWKS 端点优先从库发布）：钥三态 `Active`（签名）/ `Passive`（退役保留验证，仍发布）/ `Disabled`（移出发布与验证面）。三视图语义：签名取 Active、验证取 Active∪Passive（`kid` 命中 Passive 旧钥验证成功；缺失回退 Active；未知 kid 显性报错）、JWKS 输出取 Active∪Passive。轮换经 DAO `compare_and_swap` 账本提交（防多实例竞态：并发轮换恰一成功，失败方读到胜者后的一致状态）；Passive 超 `jwks_retention_secs`（默认 7200 = 2× access token TTL，见 [CONFIGURATION.md](CONFIGURATION.md)）转 Disabled 并移出 JWKS。JWKS 端点 `Cache-Control: max-age` 按 retention 的一半动态计算。
 
+### authorize 两段式票据与 consent 记忆（`oauth2-server`，R18）
+
+**两段式流程**：`GET /oauth2/authorize` 校验通过（response_type/PKCE S256/redirect 白名单）→ 签发 32 字符随机票据暂存完整请求（TTL 600s）→ `LoginRequired` 重定向登录页（`return_to=/oauth2/authorize/resume?ticket=...`）→ 登录成功后 `GET /oauth2/authorize/resume?ticket=...` 凭会话身份原子消费票据续流签发授权码。票据不绑定主体（续流主体以会话为准）；消费一次性（二次消费/过期/未知统一 `invalid_ticket` 显性拒绝，无状态泄露）。
+
+**prompt 语义**（OIDC Core §3.1.2.1，`AuthorizeRequest.prompt` 字段显式出现时生效）：`none` → 未登录或 consent 不足一律 `interaction_required`（不弹任何交互页）；`login` → 已登录也强制重走登录往返。
+
+**consent 记忆**：键 `oauth2:consent:{tenant}:{user}:{client}` 持久化已授 scope 集合 + 属性快照双粒度哈希（ATTRIBUTE_NAME / ATTRIBUTE_VALUE，SHA-512，`with_attribute_granularity` 可配）。再次授权：请求 scope ⊆ 已授且属性快照未变 → 免征询直接放行；新增 scope → 合并为超集；快照不可解析 → fail-safe 重新征询。`reconcile_consents`（启动/运维调用）清理已删 client 的孤儿行，幂等。
+
+**装配契约**：prompt=none 静默续期以空属性视图比对快照——经征询页批准（非空属性视图）的用户需部署方传入一致属性视图，否则重新触发 `interaction_required`（fail-safe，文档见 `with_consent_url`）。
+
 ### 二次认证与封禁
 
 | 方法 | 说明 |
