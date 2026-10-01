@@ -44,6 +44,7 @@
 | 0.8.0 | ✅ 已完成 | 2026-07-24 | 安全加固版：常量时间比较公共原语 + JWT 弱密钥拒绝 + CSPRNG 统一 + API Key 安全迁移（CWE-916 哈希存储 + IP 级暴力破解防护 + IDOR 多租户隔离）+ tech-review 修复批次（健康检查真实探测 / singleflight 锁清理 / SQL 占位符转换）+ CodeQL 误报清理 |
 | 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532）：6 类事件 live token 截断 + TokenRefresh 内置黑名单 + TempCredential 仅记 value_len + SAML 64KB 输入上限 |
 | 0.9.0-rc.1 | ✅ 已完成 | 2026-09-07 | 自研库特性吸收 + 依赖批量升级（oxcache 0.5 / dbnexus 0.6 / sdforge 0.5 / trait-kit 0.5 / confers 0.6 / limiteron 0.3）+ 配置增强特性（config-yaml/audit/consul/etcd/distributed/schema）+ 数据库增强（db-sharding/replica/saga）+ 防火墙增强（gcra/tower/quota/admission/event/monitoring/parallel）+ 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ i18n 硬编码修复 + 函数覆盖率 89.87% → 92.77% |
+| 0.9.0-rc.2 | ✅ 已完成 | 2026-08-26 | fail-closed 安全加固：`check_api_key` / `check_abac_with_policy` 缺依赖时拒绝放行而非默认放行；防火墙自动装配；`session::dao` crate 内可见性扩展；`firewall_hook_injected` 标记 |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ---
@@ -234,7 +235,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 | H3 | `audit-log` | 审计日志持久化：`audit_logs` 表 + 14 个 listener 事件订阅 + 复合条件查询 + 自动脱敏 | QIdentity |
 | H4 | `protocol-jwt`（扩展） | RefreshToken Rotation：`refresh_tokens` 表 + tokenHash(SHA-256) + parentTokenHash 链 + keyVersion + 重用检测 | QIdentity |
 | H5 | `firewall-bruteforce` / `firewall-ratelimit` / `firewall-anomalous` / `firewall-ddos` / `firewall-geoip` / `firewall-maxminddb` | 安全防护套件：5 个 FirewallStrategy 实现 + MaxMindDb 生产后端（v0.5.3 补齐 `MaxMindDbGeoLookup` / `MaxMindDbCountryLookup`），复用 oxcache 作为计数后端 | QIdentity |
-| H6 | `repository-layer`（扩展） | 角色层级：`role_hierarchy` 表 + parents/indirect_ancestors + TC 预计算 + 登录时缓存权限并集 | cedar |
+| H6 | `repository-layer`（扩展） | 角色层级：`role_hierarchy` 表（child_role/parent_role/tenant_id）+ 间接祖先闭包 + TC 预计算 + 登录时缓存权限并集 | cedar |
 | H7 | `decision-trace` | 决策溯源：`Decision{allowed, reason, errors}` + 新增 `authorize()` API + 保留 `check_permission()` 旧 API | cedar |
 
 #### 新增（Keycloak 集成，用户要求）
@@ -308,10 +309,10 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 | # | 内容 | 核心变更 | 状态 | Commit |
 |---|------|---------|------|--------|
-| A-002 | GarrisonLogic trait 拆分 | 21 方法上帝 trait 拆分为 6 个子 trait（GarrisonCore/SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic），**直接删除 GarrisonLogic**（无 deprecated 过渡） | ✅ 已完成 | `cbcedcb` `7c86a99` `bc63645` |
+| A-002 | GarrisonLogic trait 拆分 | 21 方法上帝 trait 拆分为 5 个业务子 trait（SessionLogic/PermissionLogic/TokenLogic/MfaLogic/PasswordLogic，super-trait 为 `GarrisonCore`），**直接删除 GarrisonLogic**（无 deprecated 过渡） | ✅ 已完成 | `cbcedcb` `7c86a99` `bc63645` |
 | A-004 | LoginId 迁移 | **删除 LoginId newtype**，全栈使用 `String`/`&str`（对象安全，可作 `dyn`） | ✅ 已完成 | `a52f8e0` |
-| A-009 | oxcache _sync API 阻塞评估 | 评估结论：保留 `_sync` API（in-memory backend 下 <1μs vs spawn_blocking 10-50μs），文档化性能约束 | ✅ 已完成 | 见 `docs/decisions/A-009-oxcache-sync-api-evaluation.md` |
-| A-010 | keys 全表扫描性能评估 | 评估结论：defer 到 oxcache 0.5+（`Cache.backend` 为 `pub(crate)`），文档化已知限制 | ✅ 已完成 | 见 `docs/decisions/A-010-dao-keys-performance-evaluation.md` |
+| A-009 | oxcache _sync API 阻塞评估 | 评估结论：保留 `_sync` API（in-memory backend 下 <1μs vs spawn_blocking 10-50μs），文档化性能约束 | ✅ 已完成 | 评估文档已随 `docs/decisions/` 目录一并移除（提交 `65917514`） |
+| A-010 | keys 全表扫描性能评估 | 评估结论：defer 到 oxcache 0.5+（`Cache.backend` 为 `pub(crate)`），文档化已知限制 | ✅ 已完成 | 评估文档已随 `docs/decisions/` 目录一并移除（提交 `65917514`） |
 | A-011 | src/stp/mod.rs 拆分 | 164KB 单文件拆分为 10 个职责文件（随 A-002 一起做） | ✅ 已完成 | `cbcedcb` `a52f8e0` `bc63645` |
 
 #### 兼容性策略
@@ -515,7 +516,7 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 #### 质量指标
 
 - 函数覆盖率：89.87% → 92.77%
-- lib 测试数量：4374+
+- lib 测试数量：4374+（本小节为 0.9.0-rc.1 里程碑的历史快照，非现行值；现行 lib 测试数以 [🧪 测试场景矩阵 · 测试规模统计](TEST_SCENARIOS.md#-测试规模统计) 为准）
 - 0 失败测试
 
 **里程碑意义**：自研库特性全面吸收，依赖版本统一升级至 rc.2 系列，配置/数据库/防火墙能力大幅增强，协议域命名统一，i18n 硬编码问题全面修复。
@@ -528,9 +529,9 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 - **Web 适配层 Cookie safe-by-default**：`cookie_same_site` / HttpOnly / Secure 提供更完整的安全默认组合（OWASP ASVS 自评 V3.4 待增强项，见 `docs/SECURITY_ASVS.md`）。
 - **MFA 编排基座抽象**：TOTP 原语已备（`secure-totp`），多因子编排流程抽象（ASVS 自评 V2.7 待增强项）。
-- **FIDO2/WebAuthn（Passkey）**：基于 0.6 Credential SPI 扩展独立协议栈（企业采购高频问项；正式认证需 FIDO Alliance 认可实验室）。
-- **OIDC discovery 端点**：`/oauth2/jwks.json` 已就绪（本变更），`well-known/openid-configuration` 元数据端点与其互链独立交付。
-- **JWKS 多 kid 轮换**：首版单密钥（kid 为 RFC 7638 thumbprint），密钥轮换多 kid 支持待后续变更。
+- **FIDO2/WebAuthn（Passkey）正式认证**：`protocol-webauthn` 已合入（`src/protocol/webauthn/`，challenge / credential / service 齐备）；剩余工作是 FIDO Alliance 认可实验室的正式认证（企业采购高频问项）。
+- **OIDC discovery 端点**：已交付——`/oauth2/jwks.json` 与 `/.well-known/openid-configuration` 元数据端点均已注册路由（`src/server/oauth2_routes.rs`，后者由 `enable_openid_configuration` 开关控制）。
+- **JWKS 多 kid 轮换**：已交付——`JwksKeystore`（`src/oauth2_server/jwks.rs`）提供多 kid 密钥库账本，注入后 JWKS 端点优先从库发布（单密钥 `jwks_source` 为退化路径）。
 - **loom 竞态验证扩展**：一次性凭证消费路径已验证（`loom-test` feature），扩展至 RefreshTokenRotation 竞态。
 
 ### v1.0.0 稳定版（待规划）

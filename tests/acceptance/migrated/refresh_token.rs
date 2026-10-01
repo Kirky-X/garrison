@@ -100,17 +100,14 @@ mod refresh_token_e2e {
 
         insert_refresh_token(&pool, &t1_hash, None, 1001, 0, 1, expires, 0).await;
 
-        // Step 1: 首次 rotate(t1) → 得到 t2
         let (access_1, t2) = rotation.rotate(t1).await.expect("首次 rotate 应成功");
         assert!(!access_1.is_empty(), "access_token 应非空");
         assert!(!t2.is_empty(), "新 refresh_token 应非空");
         assert_ne!(t1, t2, "新 token 不应与旧 token 相同");
 
-        // 验证 t1 已 revoked
         let t1_revoked = query_revoked(&pool, &t1_hash).await;
         assert_eq!(t1_revoked, 1, "旧 token t1 应标记为 revoked");
 
-        // 验证 t2 已插入且未 revoked
         let t2_hash = sha256_hex(&t2);
         let t2_revoked = query_revoked(&pool, &t2_hash).await;
         assert_eq!(t2_revoked, 0, "新 token t2 应未 revoked");
@@ -125,7 +122,6 @@ mod refresh_token_e2e {
             err_msg
         );
 
-        // 验证 t1 仍 revoked
         let t1_revoked_after = query_revoked(&pool, &t1_hash).await;
         assert_eq!(t1_revoked_after, 1, "重用后 t1 应仍 revoked");
 

@@ -297,9 +297,9 @@ garrison::dao_conformance_tests! {
 
 | 类型 | 说明 |
 |------|------|
-| `GarrisonSession`（`src/session/`） | 会话操作面；`session::dao()` 在 `firewall-bruteforce` 面下对 crate 内开放 |
-| `TokenState`（`src/state/`，prelude 导出） | token 状态机 |
-| `UserStatus` | 用户状态枚举 |
+| `GarrisonSession`（`src/session/`） | 会话操作面；`session::dao()` 无 feature 门控，对 crate 内 `pub(crate)` 开放（调用方含 `protocol-apikey` / `db-postgres` / `db-mysql` / `cache-redis` / `protocol-jwt`） |
+| `TokenState`（`src/state/`，crate 根 re-export） | token 状态机 |
+| `UserStatus` | 用户状态枚举（同样经 crate 根 re-export） |
 | `GarrisonPrincipal` / `TenantContext` / `TENANT`（`src/context/`） | 请求主体与租户上下文（`tenant-isolation`）；`TENANT.scope(tenant, fut)` 进入租户作用域 |
 | `ClaimTenantResolver` | 从 claim 解析租户的 resolver |
 
@@ -339,7 +339,7 @@ garrison::dao_conformance_tests! {
 
 ### 注解宏（`annotation-macros` feature，过程宏 crate `garrison-macros`）
 
-10 个属性宏（wrapper 生成 axum `Response`），另有 3 个 sdforge `#[forge]` 路由变体：
+13 个属性宏（wrapper 生成 axum `Response`）：10 个 axum wrapper 宏 + 3 个 sdforge `#[forge]` 路由变体。
 
 | 宏 | 对应校验 |
 |----|----------|
@@ -359,20 +359,24 @@ garrison::dao_conformance_tests! {
 | trait | 注册方式 | 说明 |
 |-------|----------|------|
 | `GarrisonPlugin`（`src/plugin/`） | `inventory::submit!` 编译期注册 | 生命周期钩子注入 |
-| `GarrisonListener`（`src/listener/`） | `inventory::submit!` 编译期注册 | 15 个事件变体（Login / Logout / Kickout / Replaced / TokenExpired / TokenRefresh / CreditConsumed / CreditAlert 等）；事件载荷 token 已统一掩码 |
+| `GarrisonListener`（`src/listener/`） | `inventory::submit!` 编译期注册 | 31 个事件变体（Login / Logout / Kickout / PermissionCheck / RoleCheck / TokenExpired / LoginFailure / PasswordRehashed / TokenRefresh / RevokeToken / SessionTimeout / AccountLocked / FirewallBlock / TokenRotate / TempCredentialConsumed / SocialLogin / TenantSwitch / DeviceBlock / DeviceUnblock / ConfigReload / AnomalousLoginDetected / Replaced / CreditConsumed / CreditAlert / InvitationCreated / InvitationRevoked / InvitationRedeemed / QrLoginCreated / QrLoginScanned / QrLoginConfirmed / QrLoginCancelled）；trait 侧为单一 `async fn on_event` 回调（非逐事件钩子），事件载荷 token 已统一掩码 |
 | `AuditLogListener` / `AuditConfig` / `AuditEntry` / `AuditQuery`（`listener::audit`，`audit-log`） | — | 审计日志监听与查询 |
 
 ---
 
 ## 🗃️ Repository 层
 
-`db-*` feature 下经 `src/dao/repository/` 提供类型化仓储（10 trait），lib.rs 顶层 re-export SQLite 实现：
+`db-*` feature 下经 `src/dao/repository/` 提供类型化仓储（13 trait），lib.rs 顶层 re-export 其中 9 个 SQLite 实现：
 
 | Re-export | 说明 |
 |-----------|------|
 | `DbnexusUserRepository` / `DbnexusRoleRepository` / `DbnexusPermissionRepository` | 用户 / 角色 / 权限 |
 | `DbnexusUserRoleRepository` / `DbnexusRolePermissionRepository` | 关联表 |
 | `DbnexusAuthMethodRepository` / `DbnexusSessionRepository` / `DbnexusLoginLogRepository` / `DbnexusUserExtRepository` | 认证方式 / 会话 / 登录日志 / 扩展字段 |
+| `UserIdentifierRepository`（`app_user_identifier`） | 登录标识（phone / email）原子防重注册 |
+| `UserDeviceRepository`（`app_user_device`） | 设备注册与 `MAX_DEVICES` 上限 |
+| `WebauthnCredentialRepository`（`app_webauthn_credential`） | WebAuthn 凭据绑定与查询 |
+| `PasswordHistoryRepository`（`app_password_history`） | 历史密码 hash（`account-policy` 重用拒绝） |
 | `RoleHierarchyService` / `RoleHierarchyRecord` | 角色层级（SQL 占位符按后端自适应） |
 | `init_dbnexus_with_pool_config(url, PoolConfig)` | 经 dbnexus `DbPoolBuilder` 透传连接池参数（max/min connections、超时） |
 
@@ -502,6 +506,7 @@ Display 行为：未启用 `i18n` 时硬编码中文；启用 `i18n` 后按线�
 | `account`（`account-*`） | 账号安全引擎 |
 | `protocol`（`protocol-*`） | 认证协议层 |
 | `abac`（`abac`） | Cedar 属性访问控制 |
+| `compliance`（`data-erasure`） | 数据擦除服务与擦除报告 |
 | `web` / `web_actix` / `web_warp`（`web-*`） | Web 框架适配 |
 | `server`（`auth-server`） | 独立认证服务器 |
 | `oauth2_server`（`oauth2-server`） | OAuth2 Server |

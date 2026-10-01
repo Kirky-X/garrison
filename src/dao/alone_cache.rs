@@ -237,7 +237,6 @@ mod tests {
         let mock = Arc::new(MockDao::new());
         let cache = AloneCache::new(mock.clone(), "perm:");
         cache.set("user:1001", "value", 3600).await.unwrap();
-        // 内部 mock 应在 "perm:user:1001" 上收到值
         let got = mock.get("perm:user:1001").await.unwrap();
         assert_eq!(got, Some("value".to_string()));
         // 原始无 prefix 的 key 不应存在
@@ -267,7 +266,6 @@ mod tests {
         mock.set("perm:k", "v", 3600).await.unwrap();
         let cache = AloneCache::new(mock.clone(), "perm:");
         cache.delete("k").await.unwrap();
-        // 内部 mock 的 "perm:k" 应被删除
         let got = mock.get("perm:k").await.unwrap();
         assert!(got.is_none(), "delete 应删除带 prefix 的 key");
     }
@@ -279,7 +277,6 @@ mod tests {
         mock.set("perm:k", "v1", 3600).await.unwrap();
         let cache = AloneCache::new(mock.clone(), "perm:");
         cache.update("k", "v2").await.unwrap();
-        // 内部 mock 的 "perm:k" 值应已更新
         let got = mock.get("perm:k").await.unwrap();
         assert_eq!(got, Some("v2".to_string()));
     }
@@ -288,15 +285,11 @@ mod tests {
     #[tokio::test]
     async fn alone_cache_expire_adds_prefix() {
         let mock = Arc::new(MockDao::new());
-        // 设置短 TTL（1 秒）
         mock.set("perm:k", "v", 1).await.unwrap();
         let cache = AloneCache::new(mock.clone(), "perm:");
-        // 通过 cache.expire("k", 3600) 重置 TTL
         // （若未加 prefix，mock 上 "k" 不存在，会返回 Err）
         cache.expire("k", 3600).await.unwrap();
-        // 等待原 TTL 过期
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-        // expire 重置后应仍存在
         let got = cache.get("k").await.unwrap();
         assert_eq!(
             got,
@@ -372,7 +365,6 @@ mod tests {
         perm_cache.set("user:1", "p", 3600).await.unwrap();
         biz_cache.set("user:1", "b", 3600).await.unwrap();
 
-        // 验证写入不同的内部 dao
         let p = redis1.get("perm:user:1").await.unwrap();
         let b = redis2.get("biz:user:1").await.unwrap();
         assert_eq!(p, Some("p".to_string()));
@@ -442,16 +434,13 @@ mod tests {
         let mock = Arc::new(MockDao::new());
         let cache = AloneCache::new(mock.clone(), "perm:");
 
-        // 初始化计数器值为 3（TTL=3600s）
         mock.set("perm:counter", "3", 3600).await.unwrap();
 
-        // 第一次 decr：3 → 2
         let r1 = cache.decr("counter").await.unwrap();
         assert_eq!(r1, 2, "第一次 decr 应返回 2");
         let v1 = mock.get("perm:counter").await.unwrap();
         assert_eq!(v1.as_deref(), Some("2"), "decr 后内部 dao 应为 '2'");
 
-        // 第二次 decr：2 → 1
         let r2 = cache.decr("counter").await.unwrap();
         assert_eq!(r2, 1, "第二次 decr 应返回 1");
 
@@ -474,7 +463,6 @@ mod tests {
         let mock = Arc::new(MockDao::new());
         let cache = AloneCache::new(mock.clone(), "perm:");
 
-        // 不存在的 key（mock 上无 "perm:never"）
         let r = cache.decr("never").await.unwrap();
         assert_eq!(r, 0, "不存在的 key decr 应返回 0");
 
@@ -506,7 +494,6 @@ mod tests {
         let mock = Arc::new(MockDao::new());
         let cache = Arc::new(AloneCache::new(mock.clone(), "perm:"));
 
-        // 初始化计数器值为 5
         mock.set("perm:counter", "5", 3600).await.unwrap();
 
         // 并发 10 个 task 同时 decr 同一 key
@@ -547,7 +534,6 @@ mod tests {
             nonzero_vals
         );
 
-        // 验证 key 最终被删除
         let v = mock.get("perm:counter").await.unwrap();
         assert!(v.is_none(), "并发 decr 后 key 应被删除");
     }

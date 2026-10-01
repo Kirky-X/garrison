@@ -43,17 +43,14 @@ pub fn run() -> GarrisonResult<()> {
     println!("[1] 模板解析成功");
     println!("    原始 value = {}", template.value());
 
-    // 准备占位符参数
     let mut params = HashMap::new();
     params.insert("msg".to_string(), "ok".to_string());
     params.insert("token".to_string(), "T1-abc-123".to_string());
     params.insert("user".to_string(), "alice".to_string());
 
-    // render 递归替换嵌套对象中的占位符
     let rendered = template.render(&params)?;
     println!("    渲染结果   = {}\n", rendered);
 
-    // 验证渲染后可被 serde_json 再次解析
     let reparsed: serde_json::Value =
         serde_json::from_str(&rendered).expect("渲染结果应为合法 JSON");
     assert_eq!(reparsed["data"]["token"], "T1-abc-123");

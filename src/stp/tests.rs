@@ -120,6 +120,35 @@ fn make_logic_with_dao(
     (dao, logic)
 }
 
+/// 将某 login_id 的 Account-Session 中各 token 的 `last_active_at` 按顺序覆写为给定值。
+///
+/// 用途：`enforce_max_login_count` 系列测试需要"t1 比 t2 比 t3 旧"的确定性排序。
+/// 真实登录的时间戳来自墙钟（`Utc::now()`，Unix 秒），而 WSL2/容器宿主的 NTP
+/// 校时会整秒回跳（本机实测单次 -1.37s），`sleep(1s)` 无法保证先登录者时间戳
+/// 更小，"最旧"判定随环境抖动——这正是 unit 门禁间歇性失败的根因。登录后直接
+/// 向 DAO 注入确定递增的时间戳，使断言与墙钟单调性解耦：
+/// `enforce_max_login_count_inner` 只比较 tokens 之间的相对顺序，不与当前时刻比较。
+async fn set_account_token_stamps(dao: &Arc<MockDao>, login_id: &str, stamps: &[i64]) {
+    let key = crate::session::account_key(login_id);
+    let json = dao
+        .get(&key)
+        .await
+        .unwrap()
+        .expect("account session 应已由登录创建");
+    let mut account: crate::session::AccountSession = serde_json::from_str(&json).unwrap();
+    assert_eq!(
+        account.tokens.len(),
+        stamps.len(),
+        "token 条数与注入时间戳条数应一致（前置登录次数与测试设计不符）"
+    );
+    for (ti, stamp) in account.tokens.iter_mut().zip(stamps) {
+        ti.last_active_at = *stamp;
+    }
+    let json = serde_json::to_string(&account).unwrap();
+    // TTL 与 create_token_session_inner 写 Account-Session 一致（active_timeout=86400）
+    dao.set(&key, &json, 86400).await.unwrap();
+}
+
 /// 辅助函数：在当前 task_local 设置 token 后执行 future。
 async fn with_token<R>(token: &str, f: impl std::future::Future<Output = R>) -> R {
     with_current_token(token.to_string(), f).await
@@ -201,7 +230,6 @@ async fn login_creates_session_and_returns_token() {
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
     assert!(!token.is_empty(), "login 应返回非空 token");
 
-    // 验证会话创建
     let ts = logic
         .session
         .get_token_session(&token)
@@ -319,7 +347,6 @@ async fn logout_destroys_current_token() {
     })
     .await;
 
-    // Token-Session 已删除
     let ts = logic.session.get_token_session(&token).await.unwrap();
     assert!(ts.is_none(), "logout 后 Token-Session 应删除");
 }
@@ -426,7 +453,6 @@ async fn invalidate_sessions_after_password_change_destroys_all_sessions() {
         .await
         .unwrap();
 
-    // 确认会话已创建
     assert!(logic
         .session
         .get_token_session(&t1)
@@ -440,7 +466,6 @@ async fn invalidate_sessions_after_password_change_destroys_all_sessions() {
         .unwrap()
         .is_some());
 
-    // 调用密码修改联动失效
     GarrisonUtil::invalidate_sessions_after_password_change("pwd-change-user")
         .await
         .unwrap();
@@ -534,7 +559,6 @@ async fn check_login_returns_false_for_expired_token() {
     let logic = Arc::new(make_logic(1, 86400, false, "uuid", true, true));
     let token = logic.login("1001", &LoginParams::default()).await.unwrap();
 
-    // 等待 token 过期（1 秒 TTL）
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     with_current_token(token, async {
@@ -1216,7 +1240,6 @@ async fn util_logout_by_login_id_succeeds() {
 
     GarrisonUtil::logout_by_login_id("1001").await.unwrap();
 
-    // logout 后 check_login 应返回 false
     let valid = with_token(&token, async { GarrisonUtil::check_login().await })
         .await
         .unwrap();
@@ -1587,9 +1610,7 @@ async fn logout_with_managers_triggers_hooks() {
     #[cfg(feature = "listener")]
     let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
-    // 先 login 获取 token
     let token = logic.login("2002", &LoginParams::default()).await.unwrap();
-    // 在 token 上下文中 logout
     with_current_token(token.clone(), async { logic.logout().await })
         .await
         .unwrap();
@@ -1620,7 +1641,6 @@ async fn revoke_token_destroys_session() {
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let token = logic.login("4004", &LoginParams::default()).await.unwrap();
 
-    // revoke 前存在
     assert!(logic
         .session
         .get_token_session(&token)
@@ -1650,7 +1670,6 @@ async fn revoke_token_with_listener_manager_broadcasts_event() {
         let token = logic.login("4005", &LoginParams::default()).await.unwrap();
         // revoke 应成功，RevokeToken 事件作为副作用被广播
         logic.revoke_token(&token).await.unwrap();
-        // Token-Session 已删除
         assert!(logic
             .session
             .get_token_session(&token)
@@ -1683,22 +1702,18 @@ async fn without_managers_login_logout_kickout_still_work() {
     // make_logic 不注入任何 manager，所有 Option 都是 None
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
 
-    // login 成功
     let token = logic.login("5005", &LoginParams::default()).await.unwrap();
     assert!(!token.is_empty());
 
-    // check_login 成功
     let is_valid = with_current_token(token.clone(), async { logic.check_login().await })
         .await
         .unwrap();
     assert!(is_valid);
 
-    // logout 成功（在 token 上下文中）
     with_current_token(token.clone(), async { logic.logout().await })
         .await
         .unwrap();
 
-    // kickout 成功
     logic.kickout("5005").await.unwrap();
 }
 
@@ -1714,17 +1729,14 @@ async fn login_by_token_with_auth_logic_delegates_to_auth() {
     let auth_logic: Arc<dyn AuthLogic> =
         Arc::new(AuthLogicDefault::new(session.clone(), token_handler, 3600));
 
-    // 先通过 auth_logic login 生成一个有效 token
     let valid_token = auth_logic.login("6006", None).await.unwrap();
 
-    // 构造 logic 注入 auth_logic
     let logic = make_logic(3600, 86400, false, "uuid", true, true);
     let logic = logic.with_auth_logic(auth_logic);
 
     // login_by_token 应委托 auth_logic.verify_token 并建立会话
     logic.login_by_token(&valid_token).await.unwrap();
 
-    // 验证会话已建立
     let ts = logic.session.get_token_session(&valid_token).await.unwrap();
     assert!(ts.is_some(), "login_by_token 后应建立会话");
     assert_eq!(ts.unwrap().login_id, "6006".to_string());
@@ -1792,7 +1804,6 @@ async fn refresh_token_valid_jwt_returns_new_token() {
     #[cfg(feature = "listener")]
     let logic = logic.with_listener_manager(Arc::new(GarrisonListenerManager::new()));
 
-    // 先生成一个有效 JWT token
     let handler = crate::protocol::jwt::JwtHandler::new("refresh-test-secret-aaaabbbbccccdddd");
     let original_token = handler.sign("7007", 3600).unwrap();
 
@@ -1800,7 +1811,6 @@ async fn refresh_token_valid_jwt_returns_new_token() {
     let new_token = logic.refresh_token(&original_token).await.unwrap();
     assert!(!new_token.is_empty(), "refresh_token 应返回非空 token");
 
-    // 验证新 token 有效且 login_id 一致
     let new_claims = handler.verify(&new_token).unwrap();
     assert_eq!(new_claims.login_id, "7007".to_string());
 }
@@ -1950,7 +1960,6 @@ async fn minimal_logic_returns_not_implemented() {
         config: Arc::new(GarrisonConfig::default_config()),
     };
 
-    // 1. login
     assert!(
         matches!(
             logic.login("1", &LoginParams::default()).await,
@@ -1966,7 +1975,6 @@ async fn minimal_logic_returns_not_implemented() {
         ),
         "MinimalLogic::login_with_token 应返回 NotImplemented"
     );
-    // 3. logout
     assert!(
         matches!(logic.logout().await, Err(GarrisonError::NotImplemented(_))),
         "MinimalLogic::logout 应返回 NotImplemented"
@@ -1979,7 +1987,6 @@ async fn minimal_logic_returns_not_implemented() {
         ),
         "MinimalLogic::logout_by_login_id 应返回 NotImplemented"
     );
-    // 5. kickout
     assert!(
         matches!(
             logic.kickout("1").await,
@@ -1995,7 +2002,6 @@ async fn minimal_logic_returns_not_implemented() {
         ),
         "MinimalLogic::kickout_by_token 应返回 NotImplemented"
     );
-    // 7. revoke_token
     assert!(
         matches!(
             logic.revoke_token("t").await,
@@ -2003,7 +2009,6 @@ async fn minimal_logic_returns_not_implemented() {
         ),
         "MinimalLogic::revoke_token 应返回 NotImplemented"
     );
-    // 8. check_login
     assert!(
         matches!(
             logic.check_login().await,
@@ -2011,7 +2016,6 @@ async fn minimal_logic_returns_not_implemented() {
         ),
         "MinimalLogic::check_login 应返回 NotImplemented"
     );
-    // 9. get_login_id
     assert!(
         matches!(
             logic.get_login_id().await,
@@ -2027,7 +2031,6 @@ async fn minimal_logic_returns_not_implemented() {
         ),
         "MinimalLogic::check_permission 应返回 NotImplemented"
     );
-    // 11. check_role
     assert!(
         matches!(
             logic.check_role("r").await,
@@ -2060,7 +2063,6 @@ async fn login_by_token_with_managers_triggers_hooks() {
     // login_by_token 应成功（plugin/listener 失败仅 warn 不中断）
     logic.login_by_token(&token).await.unwrap();
 
-    // 验证会话已建立
     let ts = logic.session.get_token_session(&token).await.unwrap();
     assert!(ts.is_some(), "login_by_token 后应建立会话");
     assert_eq!(ts.unwrap().login_id, "8008".to_string());
@@ -2204,7 +2206,6 @@ async fn login_with_metrics_records_success() {
 
     let _token = logic.login("1001", &LoginParams::default()).await.unwrap();
 
-    // 验证 login_total{result="success"} = 1
     let output = prometheus::TextEncoder::new()
         .encode_to_string(&registry.gather())
         .unwrap();
@@ -2594,7 +2595,6 @@ async fn check_permission_not_logged_in_emits_deny_metric() {
     let result = logic.check_permission("user:read").await;
     assert!(matches!(result, Err(GarrisonError::NotPermission(_))));
 
-    // 验证 metrics 记录了 deny
     let output = prometheus::TextEncoder::new()
         .encode_to_string(&registry.gather())
         .expect("encode 失败");
@@ -2729,10 +2729,8 @@ async fn util_revoke_token_destroys_session() {
     init_global_manager(false).await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    // revoke_token 应成功
     GarrisonUtil::revoke_token(&token).await.unwrap();
 
-    // 验证 token session 已销毁
     let valid = with_token(&token, async { GarrisonUtil::check_login().await })
         .await
         .unwrap();
@@ -3242,11 +3240,9 @@ mod check_api_key_tests {
             .await
             .unwrap();
 
-        // ns1 的 key 在 ns1 校验通过
         let result_ns1 = with_token(&key_ns1, GarrisonUtil::check_api_key("ns1")).await;
         assert!(result_ns1.is_ok(), "ns1 key + ns1 namespace 应通过");
 
-        // ns1 的 key 在 ns2 校验失败（namespace 不匹配）
         let result_ns2 = with_token(&key_ns1, GarrisonUtil::check_api_key("ns2")).await;
         assert!(
             result_ns2.is_err(),
@@ -3381,10 +3377,8 @@ async fn check_and_renew_renews_non_jwt_when_threshold_reached() {
     assert!(result.is_some(), "remaining_pct < threshold 时应触发续签");
     let new_token = result.unwrap();
     assert_ne!(new_token, token, "续签后应生成新 token");
-    // 旧 token 应已失效
     let old_valid = logic.session.is_valid(&token).await.unwrap();
     assert!(!old_valid, "旧 token 续签后应失效");
-    // 新 token 应有效
     let new_valid = logic.session.is_valid(&new_token).await.unwrap();
     assert!(new_valid, "新 token 应有效");
 }
@@ -3445,7 +3439,6 @@ async fn check_login_renews_token_when_threshold_reached() {
     // 手动将 TTL 缩短到 1 秒（remaining_pct = 10% < 90%）
     let key = format!("token:session:{}", token);
     dao.expire(&key, 1).await.unwrap();
-    // check_login 应触发续签
     let renewed = with_current_token(token.clone(), async {
         with_renewed_token_scope(async {
             let valid = logic.check_login().await.unwrap();
@@ -3501,7 +3494,6 @@ async fn login_with_is_share_reuses_existing_token() {
     let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
     Arc::make_mut(&mut logic.config).is_share = true;
 
-    // 首次登录
     let t1 = logic
         .login("share-user-001", &LoginParams::default())
         .await
@@ -3529,7 +3521,6 @@ async fn login_with_is_share_creates_new_when_no_existing() {
         .unwrap();
     assert!(!token.is_empty());
 
-    // 验证会话创建
     let ts = logic
         .session
         .get_token_session(&token)
@@ -3550,7 +3541,6 @@ async fn login_with_is_concurrent_false_kickouts_existing() {
     // is_concurrent=false, is_share=false
     Arc::make_mut(&mut logic.config).is_concurrent = false;
 
-    // 首次登录
     let t1 = logic
         .login("concurrent-user-001", &LoginParams::default())
         .await
@@ -3564,7 +3554,6 @@ async fn login_with_is_concurrent_false_kickouts_existing() {
 
     assert_ne!(t1, t2, "is_concurrent=false 应创建新 token");
 
-    // t1 应已被踢出（Token-Session 不存在）
     let ts1 = logic.session.get_token_session(&t1).await.unwrap();
     assert!(ts1.is_none(), "is_concurrent=false 登录后旧 token 应被踢出");
 }
@@ -3580,7 +3569,6 @@ async fn login_new_device_mode_rejects_new_login() {
     Arc::make_mut(&mut logic.config).is_concurrent = false;
     Arc::make_mut(&mut logic.config).replaced_login_exit_mode = ReplacedLoginExitMode::NewDevice;
 
-    // 首次登录应成功（无旧会话）
     let token1 = logic
         .login("new-device-user-001", &LoginParams::default())
         .await
@@ -3619,7 +3607,6 @@ async fn login_new_device_mode_allows_when_old_session_expired() {
     Arc::make_mut(&mut logic.config).is_concurrent = false;
     Arc::make_mut(&mut logic.config).replaced_login_exit_mode = ReplacedLoginExitMode::NewDevice;
 
-    // 首次登录
     let token1 = logic
         .login("expired-user-001", &LoginParams::default())
         .await
@@ -3658,25 +3645,21 @@ async fn login_old_device_mode_kickout_old_session() {
     Arc::make_mut(&mut logic.config).is_concurrent = false;
     Arc::make_mut(&mut logic.config).replaced_login_exit_mode = ReplacedLoginExitMode::OldDevice;
 
-    // 首次登录
     let token1 = logic
         .login("old-device-user-001", &LoginParams::default())
         .await
         .unwrap();
     assert!(!token1.is_empty(), "首次登录应成功");
 
-    // 第二次登录应成功且踢出旧会话
     let token2 = logic
         .login("old-device-user-001", &LoginParams::default())
         .await
         .unwrap();
     assert_ne!(token1, token2, "第二次登录应生成新 token");
 
-    // 旧 token 应已被踢出
     let ts1 = logic.session.get_token_session(&token1).await.unwrap();
     assert!(ts1.is_none(), "OldDevice 模式下旧会话应被踢出");
 
-    // 新 token 应有效
     let ts2 = logic.session.get_token_session(&token2).await.unwrap();
     assert!(ts2.is_some(), "OldDevice 模式下新会话应有效");
 }
@@ -3702,7 +3685,6 @@ async fn login_with_is_concurrent_true_preserves_existing() {
         "is_concurrent=true + is_share=false 应创建不同 token"
     );
 
-    // t1 应仍然有效
     let ts1 = logic.session.get_token_session(&t1).await.unwrap();
     assert!(ts1.is_some(), "is_concurrent=true 应保留旧 token");
 }
@@ -3711,27 +3693,33 @@ async fn login_with_is_concurrent_true_preserves_existing() {
 
 /// enforce_max_login_count 应踢出最旧的 token，保留较新的。
 ///
-/// 创建 3 个会话（sleep 1 秒确保 last_active_at 不同），
+/// 创建 3 个会话后向 DAO 注入严格递增的 last_active_at（t1 < t2 < t3），
 /// max=2 时应踢出最早的 t1，保留 t2 和 t3。
+///
+/// 确定性说明（替代旧版 sleep(1s) 方案）：last_active_at 取 `Utc::now()` 的
+/// Unix 秒，墙钟会被 NTP 校时整秒回跳（WSL2 宿主实测单次 -1.37s），sleep 无法
+/// 保证先登录者时间戳更小，"最旧"判定随环境抖动。注入确定性时间戳后断言与
+/// 墙钟单调性解耦，见 [`set_account_token_stamps`]。
 #[tokio::test]
 async fn enforce_max_login_count_evicts_oldest() {
-    let logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let (dao, logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
 
-    // 创建 3 个会话，sleep 确保 last_active_at 递增（Unix 秒级时间戳）
     let t1 = logic
         .login("max-user-001", &LoginParams::default())
         .await
         .unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     let t2 = logic
         .login("max-user-001", &LoginParams::default())
         .await
         .unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     let t3 = logic
         .login("max-user-001", &LoginParams::default())
         .await
         .unwrap();
+
+    // 注入确定性时间戳：t1 最旧（回退幅度比观测到的极端 NTP 回跳大一个量级）
+    let base = chrono::Utc::now().timestamp();
+    set_account_token_stamps(&dao, "max-user-001", &[base - 10, base - 5, base]).await;
 
     // max=2，应踢出最旧的 t1
     logic
@@ -3739,11 +3727,9 @@ async fn enforce_max_login_count_evicts_oldest() {
         .await
         .unwrap();
 
-    // t1 应被踢出
     let ts1 = logic.session.get_token_session(&t1).await.unwrap();
     assert!(ts1.is_none(), "最旧的 token 应被踢出");
 
-    // t2 和 t3 应保留
     let ts2 = logic.session.get_token_session(&t2).await.unwrap();
     let ts3 = logic.session.get_token_session(&t3).await.unwrap();
     assert!(ts2.is_some(), "较新的 token 应保留");
@@ -3788,39 +3774,39 @@ async fn enforce_max_login_count_no_op_when_under_limit() {
 
 /// login 在 max_login_count > 0 时应自动踢出最旧的会话。
 ///
-/// max_login_count=2 时创建 3 个会话（sleep 1 秒确保 last_active_at 不同），
-/// 第 3 次登录应触发 enforce_max_login_count 踢出最早的 t1，保留 t2 和 t3。
+/// max_login_count=2：先登录 2 个会话并向 DAO 注入确定递增的 last_active_at
+/// （t1 < t2），第 3 次登录触发的 enforce_max_login_count 应踢出 t1，保留 t2/t3。
+///
+/// 确定性说明（替代旧版 sleep(1s) 方案）：墙钟（Unix 秒）会被 NTP 校时整秒
+/// 回跳（WSL2 宿主实测单次 -1.37s），sleep 无法保证排序确定，旧注释声称
+/// "sleep(1s) 是确定性断言"在该环境下不成立。改为对前两个会话注入确定性
+/// 时间戳（见 [`set_account_token_stamps`]）；注入幅度（-10s/-5s）远大于
+/// 观测到的极端回跳，第 3 次登录即使落在回跳后的时刻，其时间戳仍严格大于前两者。
 #[tokio::test]
 async fn login_with_max_login_count_evicts_oldest_session() {
-    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let (dao, mut logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
     // max_login_count=2：最多 2 个并发会话
     Arc::make_mut(&mut logic.config).max_login_count = 2;
 
-    // 创建 3 个会话，sleep 确保 last_active_at 递增（Unix 秒级时间戳）。
-    //
-    // LOW 时序断言说明（fix-refresh-race-and-test-contracts）：
-    // - last_active_at 用 `Utc::now().timestamp()`（秒级精度），同一秒内创建的
-    // token 时间戳相同，enforce_max_login_count 排序结果不确定
-    // - sleep(1s) 确保下次 login 的 last_active_at 至少比上次大 1，排序确定
-    // - 这是确定性断言（非 flaky）：sleep(1s) >> Unix 秒精度 1s，且 tokio::time::sleep
-    // 保证至少 sleep 指定时长
-    // - 替代方案（已否决）：mock 时间——项目未引入 mock 时间库，引入会增加依赖
     let t1 = logic
         .login("max-login-user-001", &LoginParams::default())
         .await
         .unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
     let t2 = logic
         .login("max-login-user-001", &LoginParams::default())
         .await
         .unwrap();
-    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+
+    // 注入确定性时间戳后再第 3 次登录：login 内部的 enforce 按 DAO 中
+    // Account-Session 的 last_active_at 排序，t1 最旧应被踢出
+    let base = chrono::Utc::now().timestamp();
+    set_account_token_stamps(&dao, "max-login-user-001", &[base - 10, base - 5]).await;
+
     let t3 = logic
         .login("max-login-user-001", &LoginParams::default())
         .await
         .unwrap();
 
-    // t1 应被踢出（最旧），t2 和 t3 保留
     let ts1 = logic.session.get_token_session(&t1).await.unwrap();
     let ts2 = logic.session.get_token_session(&t2).await.unwrap();
     let ts3 = logic.session.get_token_session(&t3).await.unwrap();
@@ -3858,7 +3844,7 @@ impl crate::listener::GarrisonListener for RecordingListener {
 /// 并广播 `Logout` 事件（验证现有行为不回归）。
 #[tokio::test]
 async fn enforce_max_login_count_overflow_logout_mode_logout() {
-    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let (dao, mut logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
     Arc::make_mut(&mut logic.config).max_login_count = 2;
     Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Logout;
 
@@ -3871,29 +3857,33 @@ async fn enforce_max_login_count_overflow_logout_mode_logout() {
         lm.register(Arc::new(RecordingListener {
             events: captured_events.clone(),
         }));
-        let logic = logic.with_listener_manager(lm);
+        logic = logic.with_listener_manager(lm);
+    }
 
-        // 创建 3 个会话，sleep 确保 last_active_at 递增
-        let t1 = logic
-            .login("overflow-logout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t2 = logic
-            .login("overflow-logout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t3 = logic
-            .login("overflow-logout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
+    // 创建 3 个会话：第 3 次登录（max_login_count=2）触发 enforce 踢出最旧者。
+    // 前两个会话先注入确定递增的 last_active_at——墙钟 NTP 回跳会使旧版
+    // sleep(1s) 方案的排序不确定（见 set_account_token_stamps）。
+    let t1 = logic
+        .login("overflow-logout-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    let _t2 = logic
+        .login("overflow-logout-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    let base = chrono::Utc::now().timestamp();
+    set_account_token_stamps(&dao, "overflow-logout-user-001", &[base - 10, base - 5]).await;
+    let _t3 = logic
+        .login("overflow-logout-user-001", &LoginParams::default())
+        .await
+        .unwrap();
 
-        // t1 应被踢出（最旧）
-        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
-        assert!(ts1.is_none(), "Logout 模式：最旧 token 应被踢出");
+    let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+    assert!(ts1.is_none(), "Logout 模式：最旧 token 应被踢出");
 
-        // 验证广播了 Logout 事件（至少 1 个，含被踢出 token）
+    // 验证广播了 Logout 事件（至少 1 个，含被踢出 token）
+    #[cfg(feature = "listener")]
+    {
         let events = captured_events.lock();
         let has_logout = events.iter().any(|e| match e {
             crate::listener::GarrisonEvent::Logout { token, .. } => {
@@ -3910,27 +3900,6 @@ async fn enforce_max_login_count_overflow_logout_mode_logout() {
                 .collect::<Vec<_>>()
         );
     }
-    #[cfg(not(feature = "listener"))]
-    {
-        // 无 listener feature 时仅验证踢出行为
-        let t1 = logic
-            .login("overflow-logout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t2 = logic
-            .login("overflow-logout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t3 = logic
-            .login("overflow-logout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-
-        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
-        assert!(ts1.is_none(), "Logout 模式：最旧 token 应被踢出");
-    }
 }
 
 /// `overflow_logout_mode = Kickout` 时，超过 max_login_count 应踢出最早 token
@@ -3939,7 +3908,7 @@ async fn enforce_max_login_count_overflow_logout_mode_logout() {
 async fn enforce_max_login_count_overflow_logout_mode_kickout() {
     // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
     let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
-    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let (dao, mut logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
     Arc::make_mut(&mut logic.config).max_login_count = 2;
     Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Kickout;
 
@@ -3952,29 +3921,33 @@ async fn enforce_max_login_count_overflow_logout_mode_kickout() {
         lm.register(Arc::new(RecordingListener {
             events: captured_events.clone(),
         }));
-        let logic = logic.with_listener_manager(lm);
+        logic = logic.with_listener_manager(lm);
+    }
 
-        // 创建 3 个会话，sleep 确保 last_active_at 递增
-        let t1 = logic
-            .login("overflow-kickout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t2 = logic
-            .login("overflow-kickout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t3 = logic
-            .login("overflow-kickout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
+    // 创建 3 个会话：第 3 次登录（max_login_count=2）触发 enforce 踢出最旧者。
+    // 前两个会话先注入确定递增的 last_active_at——墙钟 NTP 回跳会使旧版
+    // sleep(1s) 方案的排序不确定（见 set_account_token_stamps）。
+    let t1 = logic
+        .login("overflow-kickout-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    let _t2 = logic
+        .login("overflow-kickout-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    let base = chrono::Utc::now().timestamp();
+    set_account_token_stamps(&dao, "overflow-kickout-user-001", &[base - 10, base - 5]).await;
+    let _t3 = logic
+        .login("overflow-kickout-user-001", &LoginParams::default())
+        .await
+        .unwrap();
 
-        // t1 应被踢出（最旧）
-        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
-        assert!(ts1.is_none(), "Kickout 模式：最旧 token 应被踢出");
+    let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+    assert!(ts1.is_none(), "Kickout 模式：最旧 token 应被踢出");
 
-        // 验证广播了 Kickout 事件（含被踢出 token 和正确 reason）
+    // 验证广播了 Kickout 事件（含被踢出 token 和正确 reason）
+    #[cfg(feature = "listener")]
+    {
         let events = captured_events.lock();
         let has_kickout = events.iter().any(|e| match e {
             crate::listener::GarrisonEvent::Kickout { token, reason, .. } => {
@@ -3992,27 +3965,6 @@ async fn enforce_max_login_count_overflow_logout_mode_kickout() {
                 .collect::<Vec<_>>()
         );
     }
-    #[cfg(not(feature = "listener"))]
-    {
-        // 无 listener feature 时仅验证踢出行为
-        let t1 = logic
-            .login("overflow-kickout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t2 = logic
-            .login("overflow-kickout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t3 = logic
-            .login("overflow-kickout-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-
-        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
-        assert!(ts1.is_none(), "Kickout 模式：最旧 token 应被踢出");
-    }
 }
 
 /// `overflow_logout_mode = Replaced` 时，超过 max_login_count 应踢出最早 token
@@ -4021,7 +3973,7 @@ async fn enforce_max_login_count_overflow_logout_mode_kickout() {
 async fn enforce_max_login_count_overflow_logout_mode_replaced() {
     // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
     let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
-    let mut logic = make_logic(3600, 86400, false, "uuid", true, true);
+    let (dao, mut logic) = make_logic_with_dao(3600, 86400, false, "uuid", true, true);
     Arc::make_mut(&mut logic.config).max_login_count = 2;
     Arc::make_mut(&mut logic.config).overflow_logout_mode = OverflowLogoutMode::Replaced;
 
@@ -4034,29 +3986,33 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
         lm.register(Arc::new(RecordingListener {
             events: captured_events.clone(),
         }));
-        let logic = logic.with_listener_manager(lm);
+        logic = logic.with_listener_manager(lm);
+    }
 
-        // 创建 3 个会话，sleep 确保 last_active_at 递增
-        let t1 = logic
-            .login("overflow-replaced-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t2 = logic
-            .login("overflow-replaced-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t3 = logic
-            .login("overflow-replaced-user-001", &LoginParams::default())
-            .await
-            .unwrap();
+    // 创建 3 个会话：第 3 次登录（max_login_count=2）触发 enforce 踢出最旧者。
+    // 前两个会话先注入确定递增的 last_active_at——墙钟 NTP 回跳会使旧版
+    // sleep(1s) 方案的排序不确定（见 set_account_token_stamps）。
+    let t1 = logic
+        .login("overflow-replaced-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    let _t2 = logic
+        .login("overflow-replaced-user-001", &LoginParams::default())
+        .await
+        .unwrap();
+    let base = chrono::Utc::now().timestamp();
+    set_account_token_stamps(&dao, "overflow-replaced-user-001", &[base - 10, base - 5]).await;
+    let _t3 = logic
+        .login("overflow-replaced-user-001", &LoginParams::default())
+        .await
+        .unwrap();
 
-        // t1 应被踢出（最旧）
-        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
-        assert!(ts1.is_none(), "Replaced 模式：最旧 token 应被踢出");
+    let ts1 = logic.session.get_token_session(&t1).await.unwrap();
+    assert!(ts1.is_none(), "Replaced 模式：最旧 token 应被踢出");
 
-        // 验证广播了 Replaced 事件（含被顶替的 login_id/token/reason）
+    // 验证广播了 Replaced 事件（含被顶替的 login_id/token/reason）
+    #[cfg(feature = "listener")]
+    {
         let events = captured_events.lock();
         let has_replaced = events.iter().any(|e| match e {
             crate::listener::GarrisonEvent::Replaced {
@@ -4079,27 +4035,6 @@ async fn enforce_max_login_count_overflow_logout_mode_replaced() {
                 .map(|e| format!("{:?}", e))
                 .collect::<Vec<_>>()
         );
-    }
-    #[cfg(not(feature = "listener"))]
-    {
-        // 无 listener feature 时仅验证踢出行为
-        let t1 = logic
-            .login("overflow-replaced-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t2 = logic
-            .login("overflow-replaced-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let _t3 = logic
-            .login("overflow-replaced-user-001", &LoginParams::default())
-            .await
-            .unwrap();
-
-        let ts1 = logic.session.get_token_session(&t1).await.unwrap();
-        assert!(ts1.is_none(), "Replaced 模式：最旧 token 应被踢出");
     }
 }
 
@@ -4203,7 +4138,6 @@ async fn login_auto_generates_device_fingerprint() {
         "指纹应为 32 字符（16 字节 hex）"
     );
 
-    // 验证 ip 和 user_agent 也正确存储
     assert_eq!(ts.ip.as_deref(), Some("192.168.1.100"));
     assert_eq!(ts.user_agent.as_deref(), Some("Mozilla/5.0 Chrome"));
 }
@@ -4232,7 +4166,6 @@ async fn check_and_renew_returns_none_for_old_token_after_renewal() {
     let key = format!("token:session:{}", token);
     dao.expire(&key, 1).await.unwrap();
 
-    // 首次续签应成功
     let result1 = logic.check_and_renew(&token).await.unwrap();
     assert!(result1.is_some(), "首次续签应返回新 token");
     let new_token = result1.unwrap();
@@ -4249,7 +4182,6 @@ async fn check_and_renew_returns_none_for_old_token_after_renewal() {
         "旧 token 已被续签删除，应返回 None"
     );
 
-    // 新 token 应仍然有效
     assert!(
         logic.session.is_valid(&new_token).await.unwrap(),
         "新 token 应有效"
@@ -4410,7 +4342,6 @@ async fn login_rolls_back_session_when_enforce_fails() {
         tokens
     );
 
-    // 首次登录的 token 应仍然有效
     assert!(
         logic.session.is_valid(&t1).await.unwrap(),
         "回滚不应影响首次登录的 token"
@@ -4446,7 +4377,6 @@ async fn per_token_active_timeout_takes_effect() {
     // 等待 2 秒（超过 per-token timeout=1，但未超过全局 active_timeout=3600）
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // 验证 token 已过期
     let valid = with_token(&token, async { logic.check_login().await.unwrap() }).await;
     assert!(
         !valid,
@@ -4570,7 +4500,6 @@ async fn get_active_sessions_returns_valid_tokens() {
     assert!(active.contains(&t1), "应包含 t1");
     assert!(active.contains(&t2), "应包含 t2");
 
-    // 登出 t1 后再查询
     logic.session.logout(&t1).await.unwrap();
     let active_after = logic.get_active_sessions("1001").await.unwrap();
     assert_eq!(

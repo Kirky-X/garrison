@@ -448,7 +448,6 @@ impl RateLimitStrategy {
             })
             .collect();
 
-        // 滑出窗口的时间戳清理
         timestamps.retain(|&t| t > window_start);
 
         // 剩余数量 >= 当前阈值 → 拦截
@@ -555,12 +554,10 @@ mod tests {
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
 
-        // 前 10 次通过
         for i in 1..=10 {
             assert!(strategy.check(&ctx).await.is_ok(), "第 {} 次应通过", i);
         }
 
-        // 第 11 次被拦截
         let result = strategy.check(&ctx).await;
         assert!(
             matches!(result, Err(GarrisonError::FirewallBlocked(_))),
@@ -584,10 +581,8 @@ mod tests {
         let ctx_a = FirewallContext::new("192.168.1.1").with_login_id("1001");
         let ctx_b = FirewallContext::new("192.168.1.2").with_login_id("1002");
 
-        // 用户 A 用完 2 次额度
         assert!(strategy.check(&ctx_a).await.is_ok());
         assert!(strategy.check(&ctx_a).await.is_ok());
-        // 用户 A 第 3 次应被拦截
         assert!(matches!(
             strategy.check(&ctx_a).await,
             Err(GarrisonError::FirewallBlocked(_))
@@ -681,13 +676,11 @@ mod tests {
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
 
-        // 设置期望答案
         strategy
             .set_expected_answer(&ctx, "abc123")
             .await
             .expect("set_expected_answer 不应报错");
 
-        // 正确答案应通过
         let ok = strategy
             .verify_challenge(&ctx, "abc123")
             .await
@@ -708,7 +701,6 @@ mod tests {
             .await
             .expect("set_expected_answer 不应报错");
 
-        // 错误答案应失败
         let ok = strategy
             .verify_challenge(&ctx, "wrong-answer")
             .await
@@ -729,7 +721,6 @@ mod tests {
             .await
             .expect("set_expected_answer 不应报错");
 
-        // 第一次正确答案应通过
         let first = strategy
             .verify_challenge(&ctx, "abc123")
             .await

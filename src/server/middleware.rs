@@ -251,46 +251,41 @@ pub struct ApiKeyState {
 /// 常量时间比较循环的固定工作量（字节）。
 ///
 /// 合法 API Key 长度远小于此值；双方不足处以 0 填充对齐到固定长度，
-/// 保证循环执行次数与输入长度无关（不泄露 API Key 长度）。
+/// 保证比较循环执行次数与输入长度无关（不泄露 API Key 长度）。
 const CT_EQ_FIXED_WORKLOAD: usize = 256;
 
-/// 常量时间字节比较，防止 timing attack。
+/// API Key 常量时间比较（固定工作量），防止 timing attack。
 ///
-/// 用 `subtle::ConstantTimeEq` 做常量时间比较，既不在第一个不匹配字节处短路返回，
-/// 也不按输入长度决定循环次数，避免攻击者通过测量响应时间逐字节推断 API Key 内容，
-/// 或通过长度差异的时间差推断 API Key 长度。
+/// 字节比较统一委托公共原语 [`crate::secure::ct_eq::constant_time_eq`]
+/// （ADR-0003 决策 2：消除本地第二实现）；为保留「比较工作量与输入长度无关、
+/// 不泄露 API Key 长度」的强化语义，双方先按 `CT_EQ_FIXED_WORKLOAD` 定长
+/// 0 填充，再走公共原语（原语在定长缓冲上循环，次数与实际输入长度无关）。
 ///
 /// # 安全性
 ///
-/// - 长度比较用 `u64::ct_eq`（常量时间），不 early return
 /// - 字节比较执行**固定工作量**（`CT_EQ_FIXED_WORKLOAD` 次迭代，与输入长度无关），
-///   短的一方用 0 padding 对齐
+///   既不在第一个不匹配字节处短路返回，也不按输入长度决定循环次数，
+///   避免攻击者通过测量响应时间逐字节推断 API Key 内容或长度
 /// - 任一输入超过固定工作量上限时返回 false：仅泄露"长度 > 256"这一粗粒度信息，
 ///   不再泄露精确长度（合法 API Key 不会达到该长度）
-fn constant_time_eq(a: &str, b: &str) -> bool {
-    use subtle::ConstantTimeEq;
-
+fn api_key_ct_eq(a: &str, b: &str) -> bool {
     let a_bytes = a.as_bytes();
     let b_bytes = b.as_bytes();
 
-    // 长度比较用常量时间，不 early return
-    let len_eq = (a_bytes.len() as u64).ct_eq(&(b_bytes.len() as u64));
+    // 超过固定工作量上限的输入不可能匹配真实 key，判不相等
+    //（非短路 & 聚合；仅暴露 "> 上限" 这一 coarse 事实）
+    let len_ok = (a_bytes.len() <= CT_EQ_FIXED_WORKLOAD) & (b_bytes.len() <= CT_EQ_FIXED_WORKLOAD);
 
-    // 超过固定工作量上限的输入不可能匹配真实 key，直接判不相等
-    //（避免为超长输入做无界 CPU 工作；时间差异仅暴露 "> 上限" 这一 coarse 事实）
-    if a_bytes.len() > CT_EQ_FIXED_WORKLOAD || b_bytes.len() > CT_EQ_FIXED_WORKLOAD {
-        return false;
-    }
+    // 双方按定长 0 填充（超长截断，超长输入由 len_ok 判 false 兜底），
+    // 公共原语在定长缓冲上循环 CT_EQ_FIXED_WORKLOAD 次，与输入长度无关
+    let mut a_padded = [0u8; CT_EQ_FIXED_WORKLOAD];
+    let mut b_padded = [0u8; CT_EQ_FIXED_WORKLOAD];
+    let a_len = a_bytes.len().min(CT_EQ_FIXED_WORKLOAD);
+    let b_len = b_bytes.len().min(CT_EQ_FIXED_WORKLOAD);
+    a_padded[..a_len].copy_from_slice(&a_bytes[..a_len]);
+    b_padded[..b_len].copy_from_slice(&b_bytes[..b_len]);
 
-    // 字节比较：固定 CT_EQ_FIXED_WORKLOAD 次迭代，短的一方用 0 padding
-    let mut byte_eq = subtle::Choice::from(1);
-    for i in 0..CT_EQ_FIXED_WORKLOAD {
-        let x = a_bytes.get(i).copied().unwrap_or(0);
-        let y = b_bytes.get(i).copied().unwrap_or(0);
-        byte_eq &= x.ct_eq(&y);
-    }
-
-    (len_eq & byte_eq).unwrap_u8() == 1
+    len_ok & crate::secure::ct_eq::constant_time_eq(&a_padded, &b_padded)
 }
 
 /// API Key 认证中间件 — 验证 X-API-Key 头。
@@ -321,7 +316,7 @@ pub async fn api_key_auth_middleware(
         .headers()
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
-        .map(|k| constant_time_eq(k, &state.api_key))
+        .map(|k| api_key_ct_eq(k, &state.api_key))
         .unwrap_or(false);
 
     if !valid {
@@ -664,7 +659,6 @@ mod tests {
             rate_limit_middleware,
         ));
 
-        // 发送 5 个请求，都应成功
         for _ in 0..5 {
             let resp = app
                 .clone()
@@ -683,7 +677,6 @@ mod tests {
             rate_limit_middleware,
         ));
 
-        // 前 2 个请求成功
         for _ in 0..2 {
             let resp = app
                 .clone()
@@ -693,7 +686,6 @@ mod tests {
             assert_eq!(resp.status(), StatusCode::OK);
         }
 
-        // 第 3 个请求被限速
         let resp = app
             .oneshot(Request::builder().uri("/ping").body(Body::empty()).unwrap())
             .await
@@ -1045,74 +1037,65 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 
-    /// 常量时间比较函数正确性验证。
+    /// 常量时间比较函数正确性验证（ADR-0003：字节比较统一委托公共原语，
+    /// 本函数保留固定工作量定长填充策略，防 API Key 长度泄露）。
     #[test]
-    fn test_constant_time_eq() {
-        assert!(constant_time_eq("abc", "abc"));
-        assert!(!constant_time_eq("abc", "abx"));
-        assert!(!constant_time_eq("abc", "ab"));
-        assert!(!constant_time_eq("abc", "abcd"));
-        assert!(constant_time_eq("", ""));
-        assert!(!constant_time_eq("", "a"));
+    fn test_api_key_ct_eq() {
+        assert!(api_key_ct_eq("abc", "abc"));
+        assert!(!api_key_ct_eq("abc", "abx"));
+        assert!(!api_key_ct_eq("abc", "ab"));
+        assert!(!api_key_ct_eq("abc", "abcd"));
+        assert!(api_key_ct_eq("", ""));
+        assert!(!api_key_ct_eq("", "a"));
         // 确保所有字节都被比较（非短路）
-        assert!(!constant_time_eq("abcdefgh", "abcdefgx"));
+        assert!(!api_key_ct_eq("abcdefgh", "abcdefgx"));
     }
 
     // ========================================================================
-    // constant_time_eq 长度泄露修复测试
+    // api_key_ct_eq 长度泄露修复测试
     // ========================================================================
 
     /// 不同长度返回 false（多种长度组合）。
     #[test]
-    fn constant_time_eq_different_lengths_returns_false() {
-        // 短 vs 长
-        assert!(!constant_time_eq("a", "ab"));
-        assert!(!constant_time_eq("ab", "a"));
-        // 空 vs 非空
-        assert!(!constant_time_eq("", "x"));
-        assert!(!constant_time_eq("x", ""));
-        // 长度差 1 / 多
-        assert!(!constant_time_eq("abc", "abcd"));
-        assert!(!constant_time_eq("abcd", "abc"));
-        assert!(!constant_time_eq("hello", "hello world"));
-        // 长输入
-        assert!(!constant_time_eq("0123456789abcdef", "0123456789abcdef0"));
+    fn api_key_ct_eq_different_lengths_returns_false() {
+        assert!(!api_key_ct_eq("a", "ab"));
+        assert!(!api_key_ct_eq("ab", "a"));
+        assert!(!api_key_ct_eq("", "x"));
+        assert!(!api_key_ct_eq("x", ""));
+        assert!(!api_key_ct_eq("abc", "abcd"));
+        assert!(!api_key_ct_eq("abcd", "abc"));
+        assert!(!api_key_ct_eq("hello", "hello world"));
+        assert!(!api_key_ct_eq("0123456789abcdef", "0123456789abcdef0"));
     }
 
     /// 相同值返回 true（多种内容）。
     #[test]
-    fn constant_time_eq_same_value_returns_true() {
-        assert!(constant_time_eq("", ""));
-        assert!(constant_time_eq("a", "a"));
-        assert!(constant_time_eq("abc", "abc"));
-        assert!(constant_time_eq("hello", "hello"));
+    fn api_key_ct_eq_same_value_returns_true() {
+        assert!(api_key_ct_eq("", ""));
+        assert!(api_key_ct_eq("a", "a"));
+        assert!(api_key_ct_eq("abc", "abc"));
+        assert!(api_key_ct_eq("hello", "hello"));
         // 长 key（模拟真实 API key 长度）
-        assert!(constant_time_eq(
+        assert!(api_key_ct_eq(
             "sk-garrison-0123456789abcdef0123456789abcdef",
             "sk-garrison-0123456789abcdef0123456789abcdef"
         ));
-        // 含特殊字符
-        assert!(constant_time_eq("p@ssw0rd!#$%", "p@ssw0rd!#$%"));
+        assert!(api_key_ct_eq("p@ssw0rd!#$%", "p@ssw0rd!#$%"));
     }
 
     /// 相同长度不同值返回 false（确保不短路）。
     #[test]
-    fn constant_time_eq_different_value_returns_false() {
-        // 首字节不同
-        assert!(!constant_time_eq("abc", "xbc"));
-        // 末字节不同
-        assert!(!constant_time_eq("abc", "abx"));
-        // 中间字节不同
-        assert!(!constant_time_eq("abc", "axc"));
-        // 单字节
-        assert!(!constant_time_eq("a", "b"));
-        // 长 key 全部不同
-        assert!(!constant_time_eq(
+    fn api_key_ct_eq_different_value_returns_false() {
+        assert!(!api_key_ct_eq("abc", "xbc"));
+        assert!(!api_key_ct_eq("abc", "abx"));
+        assert!(!api_key_ct_eq("abc", "axc"));
+        assert!(!api_key_ct_eq("a", "b"));
+        assert!(!api_key_ct_eq(
             "sk-garrison-aaaaaaaaaaaaaaaaaaaaaaaa",
             "sk-garrison-bbbbbbbbbbbbbbbbbbbbbbbb"
         ));
         // 长 key 仅末字节不同（验证非常量时间提前返回）
-        assert!(!constant_time_eq(
+        assert!(!api_key_ct_eq(
             "sk-garrison-0123456789abcdef0123456789abcdef",
             "sk-garrison-0123456789abcdef0123456789abcdeg"
         ));
@@ -1120,11 +1103,11 @@ mod tests {
 
     /// 空字符串返回 true。
     #[test]
-    fn constant_time_eq_empty_strings_returns_true() {
-        assert!(constant_time_eq("", ""));
+    fn api_key_ct_eq_empty_strings_returns_true() {
+        assert!(api_key_ct_eq("", ""));
         // 双重确认：空 vs 非空仍为 false
-        assert!(!constant_time_eq("", " "));
-        assert!(!constant_time_eq(" ", ""));
+        assert!(!api_key_ct_eq("", " "));
+        assert!(!api_key_ct_eq(" ", ""));
     }
 
     // ========================================================================

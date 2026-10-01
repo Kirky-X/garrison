@@ -292,23 +292,17 @@ fn from_garrison_error_exception_variant() {
 /// 验证 `From<GarrisonError>` 对非 Exception 变体根据语义映射 code。
 #[test]
 fn from_garrison_error_other_variants_map_code() {
-    // NotLogin → code=-1
     let ex: GarrisonException = GarrisonError::NotLogin("请先登录".to_string()).into();
     assert_eq!(ex.code, -1);
     assert_eq!(ex.message, "请先登录");
-    // InvalidToken → code=-1
     let ex: GarrisonException = GarrisonError::InvalidToken("bad token".to_string()).into();
     assert_eq!(ex.code, -1);
-    // ExpiredToken → code=-1
     let ex: GarrisonException = GarrisonError::ExpiredToken("expired".to_string()).into();
     assert_eq!(ex.code, -1);
-    // NotPermission → code=-2
     let ex: GarrisonException = GarrisonError::NotPermission("无权限".to_string()).into();
     assert_eq!(ex.code, -2);
-    // NotRole → code=-2
     let ex: GarrisonException = GarrisonError::NotRole("无角色".to_string()).into();
     assert_eq!(ex.code, -2);
-    // 其他 → code=500
     let ex: GarrisonException = GarrisonError::Dao("db down".to_string()).into();
     assert_eq!(ex.code, 500);
 }

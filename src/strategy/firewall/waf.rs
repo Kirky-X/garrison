@@ -443,12 +443,10 @@ mod tests {
     async fn register_appends_hook() {
         let log = Arc::new(Mutex::new(Vec::new()));
         let mut chain = WafHookChain::new();
-        // 注册第一个 Hook
         chain.register(Box::new(RecordingHook {
             hook_name: "first",
             log: log.clone(),
         }));
-        // 注册第二个 Hook
         chain.register(Box::new(RecordingHook {
             hook_name: "second",
             log: log.clone(),

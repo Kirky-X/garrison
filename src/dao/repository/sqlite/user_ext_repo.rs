@@ -303,7 +303,6 @@ mod tests {
         let repo = DbnexusUserExtRepository::new(pool.clone());
         let user_id = setup_user(&pool, 1).await;
 
-        // 插入多个字段
         repo.upsert(1, &user_id, "email", Some("a@b.com".to_string()), "string")
             .await
             .expect("upsert email 应成功");

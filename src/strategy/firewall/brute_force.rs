@@ -278,12 +278,10 @@ mod tests {
         let strategy = BruteForceStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
 
-        // 前 5 次通过
         for i in 1..=5 {
             assert!(strategy.check(&ctx).await.is_ok(), "第 {} 次应通过", i);
         }
 
-        // 第 6 次被拦截
         let result = strategy.check(&ctx).await;
         assert!(
             matches!(result, Err(GarrisonError::FirewallBlocked(_))),
@@ -334,7 +332,6 @@ mod tests {
         };
         let strategy = BruteForceStrategy::new(config, dao);
 
-        // IP-A 触发锁定
         let ctx_a = FirewallContext::new("192.168.1.100");
         for _ in 0..4 {
             let _ = strategy.check(&ctx_a).await;

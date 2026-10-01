@@ -23,7 +23,7 @@ Inject your dependencies into `GarrisonManager` once at startup — from login t
 
 <table style="width:100%; border-collapse: collapse">
 <tr>
-<td align="center" width="25%">🧩<br><b>Annotation-Driven</b><br><span style="color:#64748B">10 attribute macros · declarative wiring</span></td>
+<td align="center" width="25%">🧩<br><b>Annotation-Driven</b><br><span style="color:#64748B">13 attribute macros · declarative wiring</span></td>
 <td align="center" width="25%">🔀<br><b>Dual-Mode Sessions</b><br><span style="color:#64748B">Account-level · Token-level · Multi-device</span></td>
 <td align="center" width="25%">🌐<br><b>Web Integration</b><br><span style="color:#64748B">axum · actix · warp</span></td>
 <td align="center" width="25%">⚙️<br><b>Feature Gating</b><br><span style="color:#64748B">100+ flags · compile only what you need</span></td>
@@ -71,7 +71,7 @@ Inject your dependencies into `GarrisonManager` once at startup — from login t
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>High Observability</b><br><span style="color:#64748B"><code>tracing</code> logging + <code>listener</code> event subscriptions + <code>prometheus</code> metrics (optional)</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">5300+ tests (≈4800 lib + ≈530 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">5600+ tests (≈5100 lib + ≈520 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web Framework Adapters</b><br><span style="color:#64748B">axum/actix/warp annotation-style extractors + proc macros</span></td>
 </tr>
 </table>
@@ -196,8 +196,8 @@ The table below mirrors the `[features]` section of `Cargo.toml`, where `default
 <tr><td><code>web-axum</code></td><td align="center">❌</td><td>axum Web framework adapter</td></tr>
 <tr><td><code>web-actix</code></td><td align="center">❌</td><td>actix-web framework adapter</td></tr>
 <tr><td><code>web-warp</code></td><td align="center">❌</td><td>warp framework adapter</td></tr>
-<tr><td><code>web-waf</code> / <code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td>WAF / CORS / CSRF middleware</td></tr>
-<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td>JWT issuance &amp; validation (HS256/HS512 + refresh)</td></tr>
+<tr><td><code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td>CORS / CSRF middleware (WAF merged into <code>firewall-waf</code>)</td></tr>
+<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td>JWT issuance &amp; validation (HS256 / HS384 / HS512, plus RS / ES / EdDSA asymmetric algorithms + refresh)</td></tr>
 <tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td>OAuth2 four modes</td></tr>
 <tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td>SSO ticket / SSO Server abstraction</td></tr>
 <tr><td><code>protocol-sign</code></td><td align="center">❌</td><td>API signing + nonce anti-replay</td></tr>
@@ -213,9 +213,9 @@ The table below mirrors the `[features]` section of `Cargo.toml`, where `default
 <tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td>Signing / constant-time comparison</td></tr>
 <tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td>Account security engine</td></tr>
 <tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td>Security suite (brute-force / rate-limit / anomalous / GeoIP / DDoS / WAF)</td></tr>
-<tr><td><code>listener</code></td><td align="center">❌</td><td>Event listeners (15 event variants)</td></tr>
+<tr><td><code>listener</code></td><td align="center">❌</td><td>Event listeners (31 event variants)</td></tr>
 <tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td>Observability</td></tr>
-<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td>10 attribute macros</td></tr>
+<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td>13 attribute macros</td></tr>
 <tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td>Multi-tenant logical isolation</td></tr>
 <tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td>Social login</td></tr>
 <tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td>Core enhancements / Session enhancements merged</td></tr>
@@ -309,7 +309,7 @@ cargo test --test acceptance --features "full testing" perf_ -- \
     --nocapture --test-threads=1 --ignored
 
 # Doc tests (CI Linux/MSRV leg)
-cargo test --features "full,audit-log" --doc --locked
+cargo test --features "full" --doc --locked
 
 # One-shot E2E (auth_server_serve smoke + full acceptance + perf baseline + report aggregation)
 bash scripts/e2e_run.sh
@@ -335,7 +335,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 Test Scale
 
-About 5330 tests (≈4800 unit + ≈406 acceptance / integration / UI + ≈116 example-level + 8 proc macros) and 4 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (currently about 95.8%). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
+About 5645 tests (5117 lib unit + 404 acceptance / integration / UI + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute) and 4 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (currently about 95.8%). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
 
 ---
 
@@ -425,9 +425,9 @@ For the full version history, see the [📋 Changelog](docs/CHANGELOG.md) (follo
 
 | Version | Date | Highlights |
 |---------|------|------------|
-| 0.9.0-rc.2 | 2026-08-26 | Fail-closed security hardening (check_api_key / check_abac); self-hosted crate rc.4 upgrade |
+| 0.9.0-rc.2 | 2026-08-26 | Fail-closed security hardening (check_api_key / check_abac) |
 | 0.9.0-rc.1 | 2026-08-25 | Acceptance test system + DAO atomic contract + gRPC async auth layer |
-| 0.8.1 | 2026-07-25 | Documentation consistency + dependency version alignment |
+| 0.8.1 | 2026-07-24 | Audit log token leakage fix (CWE-532) |
 
 ---
 

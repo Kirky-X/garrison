@@ -437,7 +437,6 @@ mod tests {
         dao.set("k1", "v1", 60).await.unwrap();
         dao.expire("k1", 0).await.unwrap();
         assert_eq!(dao.get("k1").await.unwrap().as_deref(), Some("v1"));
-        // get_timeout 应返回 None（无 deadline）
         let t = dao.get_timeout("k1").await.unwrap();
         assert!(
             t.is_none(),
@@ -496,9 +495,7 @@ mod tests {
         dao.set("expiring", "v", 1).await.unwrap();
         // 确认立即读取有值
         assert_eq!(dao.get("expiring").await.unwrap().as_deref(), Some("v"));
-        // 等待过期
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-        // 过期后应返回 None 并清理
         assert!(
             dao.get("expiring").await.unwrap().is_none(),
             "过期 key 应返回 None"
@@ -510,7 +507,6 @@ mod tests {
     async fn mock_dao_get_timeout_expired_returns_none() {
         let dao = MockDao::new();
         dao.set("k1", "v1", 1).await.unwrap();
-        // 等待过期
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
         // deadline <= now 时应返回 None
         let t = dao.get_timeout("k1").await.unwrap();
@@ -526,11 +522,8 @@ mod tests {
     async fn mock_dao_expire_extends_ttl() {
         let dao = MockDao::new();
         dao.set("k1", "v1", 1).await.unwrap();
-        // 续期到 3600 秒
         dao.expire("k1", 3600).await.unwrap();
-        // 等待原 TTL 过期
         tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
-        // 续期后应仍可读
         assert_eq!(
             dao.get("k1").await.unwrap().as_deref(),
             Some("v1"),
@@ -657,7 +650,6 @@ mod tests {
             perms,
             roles: HashMap::new(),
         };
-        // admin login_type
         assert_eq!(
             iface
                 .get_permission_list_with_type("u1", "admin")
@@ -665,7 +657,6 @@ mod tests {
                 .unwrap(),
             vec!["admin:read".to_string(), "admin:write".to_string()]
         );
-        // user login_type
         assert_eq!(
             iface
                 .get_permission_list_with_type("u1", "user")

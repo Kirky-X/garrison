@@ -588,17 +588,14 @@ mod tests {
     #[test]
     fn response_set_cookie_rejects_injection() {
         let mut resp = AxumResponse::new();
-        // value 注入额外属性
         let result = resp.set_cookie("token", "abc; Domain=evil.com");
         assert!(
             matches!(result, Err(GarrisonError::Context(_))),
             "value 含 ';' 应返回错误，实际: {:?}",
             result.map(|_| ())
         );
-        // name 注入
         let result = resp.set_cookie("to;ken", "v");
         assert!(matches!(result, Err(GarrisonError::Context(_))));
-        // 控制字符
         let result = resp.set_cookie("token", "bad\nvalue");
         assert!(matches!(result, Err(GarrisonError::Context(_))));
         // 空格与逗号
@@ -776,7 +773,6 @@ mod tests {
         let token = request.get_token(&config).unwrap();
         assert_eq!(token, Some("abc".to_string()));
 
-        // 验证 raw_response_mut() 可写入 status / header
         let mut ctx = ctx;
         ctx.raw_response_mut().set_status(403).unwrap();
         ctx.raw_response_mut().set_header("X-Trace", "v").unwrap();
@@ -1007,14 +1003,11 @@ mod tests {
     fn axum_context_raw_response_mut_writable() {
         let req = make_request("/", "GET", &[]);
         let mut ctx = AxumContext::new(&req);
-        // 通过 raw_response_mut 设置状态码与 header
         ctx.raw_response_mut().set_status(404).unwrap();
         ctx.raw_response_mut()
             .set_header("X-Trace", "trace-123")
             .unwrap();
-        // 通过 raw_response() 不可变引用读取已设置的状态码
         assert_eq!(ctx.raw_response().status, StatusCode::NOT_FOUND);
-        // 通过 into_response 消费 context 并验证设置生效
         let resp = ctx.into_response();
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         assert_eq!(

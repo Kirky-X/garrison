@@ -72,7 +72,6 @@ async fn demo_builtin_checks() -> GarrisonResult<()> {
     registry.register(Box::new(CacheHealthCheck::new()));
     registry.register(Box::new(DbHealthCheck::new()));
 
-    // 并发执行所有检查
     let report = registry.check_all().await;
 
     println!("[1] 健康检查报告：");

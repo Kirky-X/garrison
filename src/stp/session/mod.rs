@@ -739,3 +739,7 @@ mod helpers;
 
 #[cfg(test)]
 mod tests;
+
+/// 登录时角色层级 TC 预计算 + 权限并集缓存 接线测试（需 db-sqlite 跑内存库迁移）。
+#[cfg(all(test, feature = "db-sqlite"))]
+mod role_union_tests;

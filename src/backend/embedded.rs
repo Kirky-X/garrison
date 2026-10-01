@@ -364,9 +364,7 @@ mod tests {
             .unwrap();
         let new_token = backend.renew_to_equivalent(&old_token).await.unwrap();
         assert_ne!(old_token, new_token);
-        // 旧 token 应失效
         assert!(!backend.check_login(&old_token).await.unwrap());
-        // 新 token 应有效
         assert!(backend.check_login(&new_token).await.unwrap());
     }
 

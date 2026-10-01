@@ -98,7 +98,6 @@ mod tests {
     /// 验证带属性的实体集合能被正确加载，且多次调用返回一致结果。
     #[tokio::test]
     async fn test_static_entity_loader_loads_entities() {
-        // 构造带属性的实体：User "alice" 带 id 属性，Resource "doc1" 带 owner 属性。
         // Cedar 4.x Entities JSON 格式要求 uid 为对象形式 `{"__entity": {"type", "id"}}`。
         let entities_json = r#"[
             {"uid": {"__entity": {"type": "User", "id": "alice"}}, "attrs": {"id": "alice"}, "parents": []},

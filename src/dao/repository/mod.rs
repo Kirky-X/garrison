@@ -1811,7 +1811,6 @@ mod tests {
             let _ = conn
                 .execute_unprepared("DROP TABLE IF EXISTS app_user")
                 .await;
-            // 创建 app_user 表
             conn.execute_unprepared(
                 "CREATE TABLE app_user (
                     id              TEXT    PRIMARY KEY,
@@ -1828,10 +1827,8 @@ mod tests {
             .expect("创建 app_user 表失败");
         }
 
-        // 3. 构造 Repository
         let repo = DbnexusUserRepository::new(pool.clone());
 
-        // 4. 插入测试用户
         let tenant_id: i64 = 42;
         let user_id = repo
             .create(
@@ -1852,14 +1849,12 @@ mod tests {
             .expect("find_by_id 查询失败")
             .expect("测试用户未找到");
 
-        // 6. 断言返回数据正确
         assert_eq!(found.id, user_id);
         assert_eq!(found.username, "pg-test-user");
         assert_eq!(found.password_hash, "$argon2id$m=8,t=1,p=1$fake-hash");
         assert_eq!(found.status, "active");
         assert_eq!(found.tenant_id, tenant_id);
 
-        // 7. 清理
         repo.delete(tenant_id, &user_id)
             .await
             .expect("清理测试数据失败");

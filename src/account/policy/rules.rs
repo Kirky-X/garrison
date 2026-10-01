@@ -437,7 +437,6 @@ impl PasswordPolicyRule for NotEmailRule {
         let Some(email) = &ctx.email else {
             return Ok(());
         };
-        // 提取 @ 前部分
         let local_part = match email.split_once('@') {
             Some((local, _)) => local,
             None => return Ok(()), // 无 @ → 无法提取，通过
@@ -1061,7 +1060,6 @@ mod tests {
     fn max_age_rule_boundary_exactly_expired_fails() {
         let rule = MaxAgeRule::new(90);
         let mut ctx = make_ctx(None, vec![]);
-        // 密码创建于 90 天 + 1 秒前
         ctx.password_created_at = Some(chrono::Utc::now().timestamp() - 90 * 86_400 - 1);
         let result = rule.validate(&ctx, "any-password");
         assert!(result.is_err());

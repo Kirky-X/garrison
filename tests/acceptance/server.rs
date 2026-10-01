@@ -449,7 +449,6 @@ async fn acc_srv_008_internal_kickout_invalidates_all_tokens() {
     let (external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
     let client = reqwest::Client::new();
 
-    // 同一账号登录两个 token
     let t1 = http_login(&client, &external_url, "user1").await;
     let t2 = http_login(&client, &external_url, "user1").await;
 
@@ -523,7 +522,6 @@ async fn acc_srv_010_external_rate_limit_returns_429() {
         "params": LoginParams::default()
     });
 
-    // 前 2 个请求成功
     for _ in 0..2 {
         let resp = client
             .post(format!("{}/api/v1/auth/login", external_url))
@@ -534,7 +532,6 @@ async fn acc_srv_010_external_rate_limit_returns_429() {
         assert_eq!(resp.status(), 200, "限速窗口内请求应成功");
     }
 
-    // 第 3 个请求被限速
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&body)
@@ -1277,6 +1274,16 @@ fn probe_free_port() -> u16 {
         .port()
 }
 
+/// 测试占位字段加密密钥（非真实钥材）：bin 在 `field-encryption` feature 下
+/// 启动期 fail-closed 校验 `GARRISON_FIELD_ENCRYPTION_KEYS`（`key_id:hex64`，
+/// hex64 = 32 字节 AES-256 钥材 hex 编码，key_id 非空且不含冒号），缺失即
+/// exit 1（src/bin/auth_server.rs `setup_garrison_manager`）。
+/// acc_srv_019（成功路径烟测）与 acc_srv_022（要求失败仅来自端口冲突）
+/// 必须注入使语义成立；acc_srv_020/021 在该校验之前即被 API Key gate 拒绝，无需注入。
+#[cfg(feature = "auth-server")]
+const TEST_FIELD_ENCRYPTION_KEYS: &str =
+    "test-only-field-key-0:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
 /// 以给定 env 覆盖 / 移除项启动 auth_server 子进程（stdout/stderr 置空，
 /// 避免污染测试输出；其余环境继承自测试进程）。
 #[cfg(feature = "auth-server")]
@@ -1336,6 +1343,8 @@ async fn acc_srv_019_auth_server_bin_startup_smoke() {
             ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
             ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
             ("GARRISON_INTERNAL_API_KEY", test_api_key),
+            // field-encryption feature 下 bin 启动期 fail-closed，缺失即 exit 1
+            ("GARRISON_FIELD_ENCRYPTION_KEYS", TEST_FIELD_ENCRYPTION_KEYS),
         ],
         &[],
     );
@@ -1457,13 +1466,15 @@ async fn acc_srv_022_auth_server_bin_port_conflict_exits_nonzero() {
     let internal_port = probe_free_port().to_string();
     let external_port = external_port.to_string();
 
-    // 2. 启动子进程并注入被占端口；API Key 为明显测试占位串（非真实凭据），
-    // 确保 env 校验通过、失败仅来自端口冲突
+    // 2. 启动子进程并注入被占端口；API Key 与字段加密钥均为明显测试占位串
+    //（非真实凭据），确保 env 校验全部通过、失败仅来自端口冲突
     let mut child = spawn_auth_server_process(
         &[
             ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
             ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
             ("GARRISON_INTERNAL_API_KEY", "test-only-not-a-real-key"),
+            // field-encryption fail-closed 校验先于 bind，缺失会掩盖端口冲突失败源
+            ("GARRISON_FIELD_ENCRYPTION_KEYS", TEST_FIELD_ENCRYPTION_KEYS),
         ],
         &[],
     );

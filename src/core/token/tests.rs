@@ -284,7 +284,6 @@ fn a11_simple_style_verify_rejects_forged_hmac() {
 fn a11_simple_style_verify_rejects_token_from_different_secret() {
     let style_a = SimpleTokenStyle::new("secret-A-0123456789abcdefghijklmnop".to_string());
     let style_b = SimpleTokenStyle::new("secret-B-0123456789abcdefghijklmnop".to_string());
-    // 用 secret-A 生成 token
     let token = style_a.generate("victim", 3600).unwrap();
     // 用 secret-B 验证 → 应失败
     let result = style_b.verify(&token).unwrap();
@@ -331,7 +330,6 @@ fn a11_simple_style_roundtrip() {
         style.verify(&token).unwrap(),
         Some("roundtrip_user".to_string())
     );
-    // parse 返回正确 TokenClaims
     let claims = style.parse(&token).unwrap();
     assert_eq!(claims.login_id, "roundtrip_user");
     assert!(
@@ -387,7 +385,6 @@ fn h2_simple_style_supports_dashed_login_id_email() {
         "verify 应返回完整 login_id（含 `-`），实际 token: {}",
         token
     );
-    // parse 返回完整 login_id
     let claims = style.parse(&token).unwrap();
     assert_eq!(
         claims.login_id, login_id,
@@ -461,7 +458,6 @@ fn a11_simple_style_without_feature_generate_errors() {
 #[test]
 fn boundary_login_id_containing_unit_separator_rejected() {
     let style = make_simple_style();
-    // generate 直接拒绝
     let result = style.generate("user\x1fadmin", 3600);
     assert!(
         matches!(result, Err(GarrisonError::InvalidParam(_))),
@@ -626,7 +622,6 @@ fn simple_style_verify_no_separator_returns_none() {
 #[test]
 fn simple_style_verify_non_numeric_returns_ok() {
     let style = make_simple_style();
-    // 用 generate 生成合法 token（含非数字 login_id + HMAC）
     let token = style.generate("abc", 3600).unwrap();
     let result = style.verify(&token);
     assert!(result.is_ok(), "verify 应返回 Ok，实际: {:?}", result);

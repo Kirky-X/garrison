@@ -54,7 +54,6 @@ fn render_preserves_unprovided_placeholders() {
     let template = GarrisonJsonTemplate::new(r#"{"msg":"${missing}"}"#).unwrap();
     let params = HashMap::new();
     let rendered = template.render(&params).unwrap();
-    // 未提供的 ${missing} 保留原样
     assert!(rendered.contains("${missing}"));
 }
 
@@ -65,7 +64,6 @@ fn render_outputs_valid_json() {
     let mut params = HashMap::new();
     params.insert("msg".to_string(), "ok".to_string());
     let rendered = template.render(&params).unwrap();
-    // 可被 serde_json::from_str 再次解析
     let reparsed: serde_json::Value = serde_json::from_str(&rendered).unwrap();
     assert_eq!(reparsed["code"], 0);
     assert_eq!(reparsed["msg"], "ok");

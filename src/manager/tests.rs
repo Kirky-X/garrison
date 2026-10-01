@@ -152,17 +152,14 @@ async fn end_to_end_login_check_logout() {
         .unwrap();
     assert!(GarrisonManager::is_initialized());
 
-    // login
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
-    // check_login
     let is_logged_in = with_token(token.clone(), async { GarrisonUtil::check_login().await })
         .await
         .unwrap();
     assert!(is_logged_in, "登录后 check_login 应返回 true");
 
-    // logout
     let logout_result = with_token(token.clone(), async { GarrisonUtil::logout().await }).await;
     assert!(
         logout_result.is_ok(),
@@ -170,7 +167,6 @@ async fn end_to_end_login_check_logout() {
         logout_result.map(|_| ())
     );
 
-    // logout 后 check_login 应返回 false
     let is_still_logged_in = with_token(token.clone(), async { GarrisonUtil::check_login().await })
         .await
         .unwrap();
@@ -406,7 +402,6 @@ async fn init_with_positive_active_timeout() {
     );
     assert!(GarrisonManager::is_initialized());
 
-    // 验证 login 仍可正常工作
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
@@ -486,7 +481,6 @@ async fn builder_build_succeeds_and_login_works() {
     let config = Arc::new(make_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MockInterface::new());
 
-    // 通过 builder 链构建
     let result = GarrisonManager::builder()
         .dao(dao)
         .config(config)
@@ -500,7 +494,6 @@ async fn builder_build_succeeds_and_login_works() {
     );
     assert!(GarrisonManager::is_initialized());
 
-    // 验证 login 仍可正常工作
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
@@ -519,12 +512,10 @@ async fn mock_dao_expire_and_delete_work() {
     let dao = MockDao::new();
     dao.set("key1", "value1", 3600).await.unwrap();
 
-    // 测试 expire
     dao.expire("key1", 7200).await.unwrap();
     let got = dao.get("key1").await.unwrap();
     assert_eq!(got, Some("value1".to_string()));
 
-    // 测试 expire 不存在的键
     let result = dao.expire("missing", 3600).await;
     assert!(
         matches!(result, Err(GarrisonError::Dao(ref msg)) if msg.contains("dao-key-missing")),
@@ -532,7 +523,6 @@ async fn mock_dao_expire_and_delete_work() {
         result
     );
 
-    // 测试 delete
     dao.delete("key1").await.unwrap();
     let got = dao.get("key1").await.unwrap();
     assert!(got.is_none());
@@ -593,7 +583,6 @@ async fn singleton_arc_identity_preserved() {
         .await
         .unwrap();
 
-    // 多次调用返回同一实例
     let a = GarrisonManager::logic().unwrap();
     let b = GarrisonManager::logic().unwrap();
     assert!(Arc::ptr_eq(&a, &b), "logic() 应返回同一 Arc 实例");
@@ -630,11 +619,9 @@ async fn with_strategy_replaces_registry() {
         .await
         .unwrap();
 
-    // 获取原 logic 并构造自定义 Strategy
     let logic = GarrisonManager::logic().unwrap();
     let custom_strategy = Arc::new(RwLock::new(Strategy::new(logic)));
 
-    // 注入自定义 LoginHandler
     struct CustomLogin;
     #[async_trait]
     impl LoginHandler for CustomLogin {
@@ -646,7 +633,6 @@ async fn with_strategy_replaces_registry() {
         .write()
         .register_login_handler(Arc::new(CustomLogin));
 
-    // with_strategy 替换
     GarrisonManager::with_strategy(custom_strategy).unwrap();
 
     // 验证替换后使用自定义策略
@@ -682,7 +668,6 @@ async fn runtime_strategy_replacement_takes_effect_immediately() {
     let default_token = default_handler.handle_login("1001").await.unwrap();
     assert!(!default_token.is_empty());
 
-    // 运行时替换
     struct CustomLogin;
     #[async_trait]
     impl LoginHandler for CustomLogin {
@@ -717,7 +702,6 @@ async fn runtime_strategy_replacement_takes_effect_immediately() {
 async fn test_manager_registers_disable_repository() {
     GarrisonManager::reset_for_test();
 
-    // 未注册时返回 None
     assert!(
         GarrisonManager::disable_repository().is_none(),
         "未 init 时 disable_repository() 应返回 None"
@@ -734,7 +718,6 @@ async fn test_manager_registers_disable_repository() {
         .await
         .unwrap();
 
-    // init 后返回 Some
     let repo = GarrisonManager::disable_repository();
     assert!(repo.is_some(), "init 后 disable_repository() 应返回 Some");
 
@@ -757,17 +740,14 @@ async fn test_disable_then_check_disable_errors() {
         .await
         .unwrap();
 
-    // login 获取 token
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    // 通过 disable_repository 封禁用户
     let repo = GarrisonManager::disable_repository().expect("init 后应返回 Some");
     let until = chrono::Utc::now() + chrono::Duration::seconds(3600);
     repo.disable("1001", "default", Some(until), 0, 3600)
         .await
         .unwrap();
 
-    // 在 token 上下文中调用 check_disable 应返回错误
     let result = with_token(token, async { GarrisonUtil::check_disable().await }).await;
     match result {
         Err(GarrisonError::DisableService { service, .. }) => {
@@ -800,14 +780,11 @@ async fn test_untie_disable_then_check_disable_ok() {
 
     let token = GarrisonUtil::login_simple("1002").await.unwrap();
 
-    // 封禁
     let repo = GarrisonManager::disable_repository().expect("init 后应返回 Some");
     repo.disable("1002", "default", None, 0, 0).await.unwrap();
 
-    // 解封
     repo.untie_disable("1002", "default").await.unwrap();
 
-    // check_disable 应返回 Ok
     let result = with_token(token, async { GarrisonUtil::check_disable().await }).await;
     assert!(
         result.is_ok(),
@@ -933,11 +910,9 @@ async fn manager_init_cleanup_task_runs_after_init() {
         .await
         .unwrap();
 
-    // login 创建 token
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
-    // 验证 token 存在于 login_token_map
     let logic = GarrisonManager::logic().unwrap();
     assert!(
         logic.session.get_token_by_login_id("1001").is_some(),
@@ -1005,10 +980,8 @@ async fn manager_drop_cancels_cleanup_task() {
     // 添加 token 到 login_token_map，确保 cleanup 有内容可遍历
     session.add_login_token("user1", "token1");
 
-    // 启动 cleanup task
     let handle = spawn_cleanup_task(session, 1).unwrap();
 
-    // 创建局部 manager 并存入 handle
     let manager = GarrisonManager::new();
     *manager.cleanup_task_handle.write() = Some(Arc::new(handle));
 

@@ -6,9 +6,11 @@ actix-web 适配在 0.3.0 新增，与 axum 适配对齐，通过 `web-actix` fe
 
 ```toml
 [dependencies]
-garrison = { version = "0.8", features = ["web-actix"] }
+garrison = { version = "0.9.0-rc.2", features = ["web-actix"] }
 actix-web = "4"
 ```
+
+> 注：当前版本为 pre-release（0.9.0-rc.2），`version = "0.8"` 不会匹配它——Cargo 要求显式写出完整 pre-release 版本号；待 0.9.0 正式发布后可再改为 `"0.9"`。
 
 `web-actix` 启用 `actix-web`（default-features = false），不引入额外默认依赖。
 
@@ -110,7 +112,7 @@ extractor 实现 `FromRequest`，从请求提取 token 并调用 `GarrisonUtil` 
 
 - `NotLogin` / `InvalidToken` / `ExpiredToken` / `TokenRevoked` → 401
 - `NotPermission` / `NotRole` / `FirewallBlocked` / `DisableService` 等 → 403
-- `RateLimited` 等限流变体 → 429（携带 `Retry-After` 头）
+- `RateLimited` / `SmsRateLimitExceeded` 等限流错误 → 429 Too Many Requests（仅 `RateLimited` 附 `Retry-After` 头）
 - `InvalidParam` / `NotSafe` 等参数与校验错误 → 400，`CreditInsufficient` → 402（`credit-metering` feature），`NotImplemented` → 501，`Network` / `InvalidResponse` → 502
 - `Dao` / `Config` / `Internal` / `Session` 等内部错误 → 500
 

@@ -479,7 +479,6 @@ mod tests {
         let token = handler
             .sign_id_token("1001", "nonce", "openid", 3600)
             .unwrap();
-        // 解码 header 检查算法
         let parts: Vec<&str> = token.split('.').collect();
         let header_bytes = base64_url_decode(parts[0]);
         let header: serde_json::Value = serde_json::from_slice(&header_bytes).unwrap();
@@ -845,14 +844,12 @@ mod tests {
     /// - `Multi` 序列化为 JSON 数组，反序列化回 `Multi`
     #[test]
     fn oidc_audience_serde_roundtrip() {
-        // Single 形式 round-trip
         let single = OidcAudience::Single("client-a".to_string());
         let json = serde_json::to_string(&single).unwrap();
         assert_eq!(json, r#""client-a""#, "Single 应序列化为 JSON 字符串");
         let de: OidcAudience = serde_json::from_str(&json).unwrap();
         assert_eq!(de, single);
 
-        // Multi 形式 round-trip
         let multi = OidcAudience::Multi(vec!["client-a".to_string(), "client-b".to_string()]);
         let json = serde_json::to_string(&multi).unwrap();
         assert_eq!(
@@ -877,7 +874,6 @@ mod tests {
         assert!(multi.contains("client-b"));
         assert!(!multi.contains("client-c"));
 
-        // 空数组
         let empty = OidcAudience::Multi(vec![]);
         assert!(!empty.contains("client-a"));
     }

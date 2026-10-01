@@ -136,7 +136,6 @@ pub fn validate_abac_expr(expr: &str) -> GarrisonResult<()> {
             "abac_expr contains illegal characters `};` (possible policy injection)"
         )));
     }
-    // 拒绝显式 permit/forbid 策略声明
     if expr.contains("permit(") || expr.contains("forbid(") {
         return Err(GarrisonError::InvalidParam(loc!(
             "abac-expr-policy-forbidden",

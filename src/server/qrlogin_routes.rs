@@ -270,7 +270,10 @@ async fn confirm_endpoint(
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(json!({ "error": "action must be \"confirm\" or \"cancel\"" })),
+                Json(json!({ "error": loc!(
+                    "qrlogin-action-invalid",
+                    "action must be \"confirm\" or \"cancel\"".to_string()
+                ) })),
             )
                 .into_response()
         },
@@ -621,6 +624,28 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    /// 非法 action 的 400 错误消息走 Fluent i18n：zh locale 下返回
+    /// `qrlogin-action-invalid` 的中文翻译（与英文 fallback 文案可区分，
+    /// 命中即证明响应体未硬编码英文）。
+    #[tokio::test]
+    async fn confirm_invalid_action_message_is_localized() {
+        let app = make_app();
+        let _guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
+        let (status, json) = post_json(
+            app,
+            "/qrlogin/confirm",
+            json!({ "confirm_token": "whatever", "action": "hack" }),
+            Some("valid-app-token"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            json["error"].as_str().unwrap().contains("必须为"),
+            "zh locale 应返回 Fluent 翻译，实际: {}",
+            json["error"]
+        );
     }
 
     /// 身份绑定：Bearer 用户 B（user-2）确认 A（user-1）的扫码 → 400。

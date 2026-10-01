@@ -335,7 +335,6 @@ mod tests {
             names
         );
 
-        // 验证 item1 的 required_roles 正确解析
         let item1 = all
             .iter()
             .find(|s| s.name == "test:from_inventory:item1")
@@ -346,7 +345,6 @@ mod tests {
             "item1 required_roles 应正确解析逗号分隔字符串"
         );
 
-        // 验证 item2 的 required_roles 为空
         let item2 = all
             .iter()
             .find(|s| s.name == "test:from_inventory:item2")

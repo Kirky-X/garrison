@@ -103,7 +103,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    // 验证关键指标存在
     assert!(
         output.contains("garrison_login_total"),
         "应包含 login_total 指标"

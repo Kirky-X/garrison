@@ -231,7 +231,6 @@ impl SocialLoginProvider for AlipayProvider {
         let mut form_body = params;
         form_body.push(("sign".into(), sign));
 
-        // POST 到支付宝网关
         let resp = self
             .http
             .post(&self.gateway_url)
@@ -262,7 +261,6 @@ impl SocialLoginProvider for AlipayProvider {
             ))
         })?;
 
-        // 检查错误响应
         if let Some(err_resp) = raw.get("error_response").filter(|v| !v.is_null()) {
             let code = err_resp
                 .get("code")
@@ -366,7 +364,6 @@ impl SocialLoginProvider for AlipayProvider {
             ))
         })?;
 
-        // 检查错误响应
         if let Some(err_resp) = raw.get("error_response").filter(|v| !v.is_null()) {
             let code = err_resp
                 .get("code")
@@ -715,13 +712,11 @@ mod tests {
     fn sign_request_sorts_params_before_signing() {
         let pem = generate_test_rsa_pem();
         let provider = AlipayProvider::new("app_id", &pem).expect("PEM 应解析成功");
-        // 逆序参数
         let params_reverse = vec![
             ("z_param".to_string(), "z".to_string()),
             ("a_param".to_string(), "a".to_string()),
             ("m_param".to_string(), "m".to_string()),
         ];
-        // 正序参数
         let params_sorted = vec![
             ("a_param".to_string(), "a".to_string()),
             ("m_param".to_string(), "m".to_string()),

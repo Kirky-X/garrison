@@ -621,14 +621,12 @@ mod tests {
             .await
             .unwrap();
 
-        // 两个 service 都开启
         with_current_token(token.clone(), async {
             logic.open_safe("default", 3600).await.unwrap();
             logic.open_safe("payment", 7200).await.unwrap();
         })
         .await;
 
-        // 两者都应处于有效期内
         let (safe_default, safe_payment) = with_current_token(token.clone(), async {
             (
                 logic.is_safe("default").await.unwrap(),
@@ -924,18 +922,13 @@ mod tests {
             .await
             .unwrap();
 
-        // 验证 3 个 inherent methods 均可调用且行为正确
         with_current_token(token, async {
-            // open_safe: 开启二级认证
             logic.open_safe("default", 3600).await.unwrap();
-            // is_safe: 验证已开启
             assert!(
                 logic.is_safe("default").await.unwrap(),
                 "open_safe 后 is_safe 应返回 true（inherent method 可访问）"
             );
-            // close_safe: 关闭二级认证
             logic.close_safe("default").await.unwrap();
-            // is_safe: 验证已关闭
             assert!(
                 !logic.is_safe("default").await.unwrap(),
                 "close_safe 后 is_safe 应返回 false（inherent method 可访问）"
@@ -1148,7 +1141,6 @@ mod tests {
             .await
             .unwrap();
 
-        // 写入一个已过期的条目
         let now = chrono::Utc::now().timestamp();
         let mut ts = logic
             .session
@@ -1169,7 +1161,6 @@ mod tests {
         .await;
         assert!(!result, "过期条目 is_safe 应返回 false");
 
-        // 验证过期条目已从 safe_services 中删除
         let ts_after = logic
             .session
             .get_token_session(&token)

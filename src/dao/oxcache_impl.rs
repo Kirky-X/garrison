@@ -879,14 +879,12 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn boundary_keys_roundtrip_without_panic() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
-        // 空 key
         dao.set("", "empty", 60).await.unwrap();
         assert_eq!(dao.get("").await.unwrap().as_deref(), Some("empty"));
         // 特殊字符（冒号 / 换行 / 引号 / emoji——协议注入类输入）
         let weird = "a:b\nc\"d'e\u{1f4af}";
         dao.set(weird, "v", 60).await.unwrap();
         assert_eq!(dao.get(weird).await.unwrap().as_deref(), Some("v"));
-        // 超长 key（4096 字符）
         let long = "k".repeat(4096);
         dao.set(&long, "lv", 60).await.unwrap();
         assert_eq!(dao.get(&long).await.unwrap().as_deref(), Some("lv"));
@@ -1138,7 +1136,6 @@ mod tests {
     async fn cas_mismatch_and_absent_branches_return_false() {
         let dao = GarrisonDaoOxcache::new().await.unwrap();
         dao.set("cs_m", "actual", 60).await.unwrap();
-        // 值不匹配
         let ok = dao
             .compare_and_swap("cs_m", Some("expected"), "new", 60)
             .await

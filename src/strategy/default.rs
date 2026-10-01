@@ -395,7 +395,6 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
             ));
         }
         let roles = self.get_role_list(login_id).await?;
-        // 层级角色展开
         if !self.role_hierarchy.is_empty() {
             let expanded = self.expand_roles(&roles);
             Ok(expanded.contains(role))
@@ -406,7 +405,6 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
 
     async fn check_role_any(&self, login_id: &str, roles: &[&str]) -> GarrisonResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
-        // 层级角色展开
         if !self.role_hierarchy.is_empty() {
             let expanded = self.expand_roles(&user_roles);
             Ok(roles.iter().any(|r| expanded.contains(*r)))
@@ -417,7 +415,6 @@ impl GarrisonPermissionStrategy for GarrisonPermissionStrategyDefault {
 
     async fn check_role_all(&self, login_id: &str, roles: &[&str]) -> GarrisonResult<bool> {
         let user_roles = self.get_role_list(login_id).await?;
-        // 层级角色展开
         if !self.role_hierarchy.is_empty() {
             let expanded = self.expand_roles(&user_roles);
             Ok(roles.iter().all(|r| expanded.contains(*r)))

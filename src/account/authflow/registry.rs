@@ -126,7 +126,6 @@ mod tests {
     fn register_overrides_existing() {
         let mut registry = FlowRegistry::from_inventory();
 
-        // 首次注册
         let original = FlowBuilder::new("override-target")
             .login("password")
             .build();

@@ -213,10 +213,8 @@ impl CreditMeter {
             ))
         })?;
 
-        // 检查并执行周期重置
         self.check_and_reset_cycle(tenant_id).await?;
 
-        // 计算 TTL
         let now = Utc::now().naive_utc();
         let window_start = self.storage.get_window_start(tenant_id).await?;
         let cycle_end = config.cycle.cycle_end(window_start, now);
@@ -277,7 +275,6 @@ impl CreditMeter {
             (new_count as f64 / credit_limit as f64) * 100.0
         };
 
-        // 检查告警阈值
         let alerts_triggered: Vec<u8> = config
             .alert_thresholds
             .iter()
@@ -285,7 +282,6 @@ impl CreditMeter {
             .copied()
             .collect();
 
-        // 获取/初始化 window_start（Rolling 模式）
         let actual_window_start = match &config.cycle {
             crate::credit::cycle::CreditCycle::Rolling { .. } => {
                 match self.storage.get_window_start(tenant_id).await? {
@@ -308,7 +304,6 @@ impl CreditMeter {
             now,
         );
 
-        // 更新 meta
         let meta = CreditMeta {
             consumed: new_count,
             limit: credit_limit,
@@ -623,12 +618,10 @@ mod tests {
     #[tokio::test]
     async fn test_consume_exceeds_limit_denied() {
         let meter = CreditMeter::new(make_dao(), make_config(10));
-        // 消费 10 次
         for _ in 0..10 {
             let r = meter.consume_credit(42, "login", 1).await.unwrap();
             assert!(r.allowed);
         }
-        // 第 11 次超限
         let result = meter.consume_credit(42, "login", 1).await.unwrap();
         assert!(!result.allowed);
         assert_eq!(result.remaining, 0);
@@ -743,7 +736,6 @@ mod tests {
     #[tokio::test]
     async fn test_consume_denied_does_not_consume_quota() {
         let meter = CreditMeter::new(make_dao(), make_config(10));
-        // 消费 8/10
         let r1 = meter.consume_credit(42, "login", 8).await.unwrap();
         assert!(r1.allowed);
 

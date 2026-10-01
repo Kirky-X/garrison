@@ -37,9 +37,11 @@ impl Signer {
     ///
     /// # 安全性
     ///
-    /// 使用 `subtle::ConstantTimeEq` + `subtle::Choice`，编译器无法优化为短路比较。
-    /// `secure-sign` feature 强制启用 `dep:subtle`，故不存在无 subtle 的 fallback
-    /// 分支（DEEP-02 修复：移除永远不可达的 `constant_time_eq_manual` 死代码）。
+    /// 比较统一委托公共原语 [`crate::secure::ct_eq::constant_time_eq`]
+    /// （ADR-0003 决策 2：消除本地第二实现；`secure-sign` feature 依赖
+    /// `secure-ct-eq`）。原语基于 `subtle::ConstantTimeEq`，长度比较不 early
+    /// return，字节比较遍历到 `max_len`（短方 0 padding），编译器无法优化为
+    /// 短路比较（DEEP-02 修复：移除永远不可达的 `constant_time_eq_manual` 死代码）。
     ///
     /// # 参数
     /// - `secret`: 签名密钥。
@@ -55,20 +57,7 @@ impl Signer {
         mac.update(data);
         let computed_hex = hex_encode(&mac.finalize().into_bytes());
 
-        use subtle::ConstantTimeEq;
-        let a = computed_hex.as_bytes();
-        let b = expected_sig.as_bytes();
-        // 长度比较用常量时间，不 early return
-        let len_eq = (a.len() as u64).ct_eq(&(b.len() as u64));
-        // 字节比较：遍历到 max_len，短的一方用 0 padding
-        let max_len = a.len().max(b.len());
-        let mut byte_eq = subtle::Choice::from(1);
-        for i in 0..max_len {
-            let x = a.get(i).copied().unwrap_or(0);
-            let y = b.get(i).copied().unwrap_or(0);
-            byte_eq &= x.ct_eq(&y);
-        }
-        (len_eq & byte_eq).unwrap_u8() == 1
+        crate::secure::ct_eq::constant_time_eq(computed_hex.as_bytes(), expected_sig.as_bytes())
     }
 
     /// 计算 HMAC-SHA512 签名，输出小写十六进制字符串。

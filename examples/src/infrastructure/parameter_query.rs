@@ -252,7 +252,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    with_token(&token).check_role(\"admin\") → Ok(()) ✓");
     assert!(result.is_ok(), "持有角色应返回 Ok，实际: {:?}", result);
 
-    // 未持有角色 → NotRole
     let denied_role = TENANT
         .scope(tenant_ctx.clone(), async {
             ParameterQueryBuilder::new()

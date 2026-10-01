@@ -242,7 +242,6 @@ mod tests {
         let ctx_first = FirewallContext::new("1.1.1.1").with_login_id("1001");
         let ctx_second = FirewallContext::new("2.2.2.2").with_login_id("1001");
 
-        // 首次登录：无历史，放行
         assert!(
             strategy.check(&ctx_first).await.is_ok(),
             "首次登录应放行（无历史记录）"
@@ -271,10 +270,8 @@ mod tests {
 
         let ctx = FirewallContext::new("1.1.1.1").with_login_id("1001");
 
-        // 首次登录应放行
         assert!(strategy.check(&ctx).await.is_ok());
 
-        // 验证历史 geo 已写入 oxcache
         let stored = dao.get("anom:user:1001").await.unwrap();
         assert!(stored.is_some(), "首次登录后应写入历史 geo");
         let coord = GeoCoord::from_csv(&stored.unwrap()).unwrap();
@@ -299,9 +296,7 @@ mod tests {
         let ctx_first = FirewallContext::new("1.1.1.1").with_login_id("1001");
         let ctx_second = FirewallContext::new("1.1.1.2").with_login_id("1001");
 
-        // 首次登录
         assert!(strategy.check(&ctx_first).await.is_ok());
-        // 第二次同城登录应放行
         assert!(
             strategy.check(&ctx_second).await.is_ok(),
             "同城登录（距离 < 阈值）应放行"
@@ -344,7 +339,6 @@ mod tests {
 
         let ctx = FirewallContext::new("1.1.1.1").with_login_id("1001");
 
-        // 首次登录：无历史坐标 → 应放行
         assert!(
             strategy.check(&ctx).await.is_ok(),
             "首次登录应放行（无历史记录）"

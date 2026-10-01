@@ -118,7 +118,6 @@ async fn registry_with_unhealthy_returns_unhealthy() {
     let report = registry.check_all().await;
     assert_eq!(report.overall, HealthStatus::Unhealthy);
     assert_eq!(report.checks.len(), 2);
-    // 找到 unhealthy 的检查项
     let unhealthy_check = report
         .checks
         .iter()

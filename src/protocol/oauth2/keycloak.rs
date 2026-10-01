@@ -576,7 +576,6 @@ impl KeycloakProvider {
             },
         };
 
-        // 4. 构造 DecodingKey 并验签
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|e| {
             GarrisonError::InvalidToken(loc!(
                 "keycloak-rsa-public-key-build-failed",
@@ -910,7 +909,6 @@ mod tests {
 
         let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
 
-        // 4. mock JWKS endpoint
         Mock::given(method("GET"))
             .and(path("/protocol/openid-connect/certs"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -1078,7 +1076,6 @@ mod tests {
 
         let id_token = encode(&header, &claims, &encoding_key).expect("签发 JWT 应成功");
 
-        // 2. mock JWKS endpoint
         Mock::given(method("GET"))
             .and(path("/protocol/openid-connect/certs"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({

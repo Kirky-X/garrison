@@ -1161,7 +1161,6 @@ mod tests {
     async fn analyze_max_scan_limit() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let now = 1700000000i64;
-        // 插入 20 条记录
         let records: Vec<AnomalousLoginRecord> = (0..20)
             .map(|i| AnomalousLoginRecord {
                 login_id: "1001".to_string(),
@@ -1212,7 +1211,6 @@ mod tests {
             })
             .collect();
         insert_records(&dao, &records).await;
-        // 插入 2 条损坏记录
         dao.set("anomalous:login:1001:bad1", "not-json", RECORD_TTL_SECS)
             .await
             .unwrap();

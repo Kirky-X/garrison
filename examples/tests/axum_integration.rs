@@ -39,6 +39,5 @@ async fn test_setup_idempotent_reinit() {
     let (_app2, token2) = axum_integration::setup().await.unwrap();
     assert!(!token1.is_empty());
     assert!(!token2.is_empty());
-    // 两次 login 生成不同 token（UUID 风格）
     assert_ne!(token1, token2, "两次 login 应生成不同 token");
 }

@@ -205,7 +205,6 @@ impl BanStorage for GarrisonDaoBanStorage {
                 let record = deserialize_ban_record(target, &val);
                 if let Some(ref r) = record {
                     if r.expires_at <= Utc::now() {
-                        // 已过期，返回 None
                         return Ok(None);
                     }
                 }
@@ -412,10 +411,8 @@ mod tests {
         let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("192.168.1.1".to_string());
 
-        // 未封禁
         assert!(storage.is_banned(&target).await.unwrap().is_none());
 
-        // 封禁
         let record = BanRecord {
             target: target.clone(),
             ban_times: 1,
@@ -427,7 +424,6 @@ mod tests {
         };
         storage.save(&record).await.unwrap();
 
-        // 已封禁
         let banned = storage.is_banned(&target).await.unwrap();
         assert!(banned.is_some());
         assert_eq!(banned.unwrap().ban_times, 1);
@@ -452,7 +448,6 @@ mod tests {
         let val = serialize_ban_record(&record);
         storage.dao.set(&key, &val, 0).await.unwrap();
 
-        // is_banned 应返回 None（已过期）
         assert!(storage.is_banned(&target).await.unwrap().is_none());
     }
 
@@ -698,7 +693,6 @@ mod tests {
         let storage = GarrisonDaoBanStorage::new(make_dao());
         let target = BanTarget::Ip("5.6.7.8".to_string());
         let key = ban_history_key(&target);
-        // ban_times 字段是非数字
         storage.dao.set(&key, "not-number|1000", 0).await.unwrap();
         let result = storage.get_history(&target).await;
         assert!(result.is_err(), "脏数据应返回错误，实际: {:?}", result);
@@ -809,9 +803,7 @@ mod tests {
         assert!(deserialize_ban_record(&target, "100|5").is_none());
         // 只有 4 段（应为 5 段）
         assert!(deserialize_ban_record(&target, "100|5|true|reason").is_none());
-        // 只有 1 段
         assert!(deserialize_ban_record(&target, "100").is_none());
-        // 空字符串
         assert!(deserialize_ban_record(&target, "").is_none());
     }
 

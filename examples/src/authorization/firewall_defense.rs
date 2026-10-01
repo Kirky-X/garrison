@@ -105,13 +105,11 @@ async fn demo_bruteforce(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
         println!("    第 {} 次请求 → 拦截（FirewallBlocked）", i);
     }
 
-    // 4. 不同 IP 不受影响
     println!("[4] 不同 IP 隔离验证...");
     let other_ctx = FirewallContext::new("10.0.0.1");
     strategy.check(&other_ctx).await?;
     println!("    ✓ IP 10.0.0.1 正常放行（不受 192.168.1.100 锁定影响）");
 
-    // 5. is_blocked 只读检查（不递增计数）
     println!("[5] is_blocked 只读检查...");
     let is_blocked = strategy.is_blocked(&other_ctx).await?;
     assert!(!is_blocked, "未失败的 IP 不应被封锁");
@@ -147,13 +145,11 @@ async fn demo_rate_limit(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
         println!("    第 {} 次 → 放行", i);
     }
 
-    // 2. 第 6 次超限
     println!("[2] 第 6 次请求 → 超限额...");
     let result = strategy.check(&ctx).await;
     assert!(result.is_err(), "超限后应返回 FirewallBlocked");
     println!("    ✓ user_1001 已被限流（60s 窗口内超 5 次）");
 
-    // 3. 不同 login_id 独立计数
     println!("[3] 不同 login_id 隔离验证...");
     let other_ctx = FirewallContext::new("192.168.2.50").with_login_id("user_1002");
     strategy.check(&other_ctx).await?;
@@ -190,7 +186,6 @@ async fn demo_ddos(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<()> {
     }
     println!("    ✓ 单 IP 配额已耗尽");
 
-    // 2. 第 6 次：单 IP 配额耗尽 → 拦截
     println!("[2] 第 6 次请求 → 单 IP 配额耗尽...");
     let result = strategy.check(&ctx).await;
     assert!(result.is_err(), "配额耗尽后应返回 FirewallBlocked");
@@ -224,7 +219,6 @@ async fn demo_composed_strategies(dao: Arc<dyn GarrisonDao>) -> GarrisonResult<(
 
     let ctx = FirewallContext::new("172.16.0.100").with_login_id("admin");
 
-    // 模拟请求通过所有策略
     println!("[1] 正常请求通过策略链...");
     let strategies: Vec<&dyn GarrisonFirewallStrategy> = vec![&bf_strategy, &rl_strategy];
     for strategy in &strategies {

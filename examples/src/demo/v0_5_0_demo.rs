@@ -157,7 +157,6 @@ async fn demo_tenant_isolation(
         .await?;
     println!("    ✓ 登录成功，token 长度: {}", token.len());
 
-    // 在 TENANT(42) + current_token 上下文中校验权限
     let check_result = TENANT
         .scope(
             tenant_ctx.clone(),

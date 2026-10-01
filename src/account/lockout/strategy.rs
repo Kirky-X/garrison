@@ -183,7 +183,6 @@ impl UserLockoutStrategy {
                     // 窗口内：继续累积计数，不更新 first_failure_at
                 },
                 None => {
-                    // 首次失败：记录时间戳
                     state.first_failure_at = Some(now);
                 },
             }
@@ -203,14 +202,12 @@ impl UserLockoutStrategy {
                     && state.temporary_lockout_count.saturating_add(1)
                         > self.config.max_temporary_lockouts
                 {
-                    // 永久锁定
                     state.permanent_locked = true;
                     #[cfg(feature = "metrics-prometheus")]
                     {
                         locked_permanent = true;
                     }
                 } else {
-                    // 临时锁定
                     state.temporary_lockout_count = state.temporary_lockout_count.saturating_add(1);
                     let lock_seconds = calculate_lock_seconds(
                         &self.config.wait_strategy,

@@ -289,7 +289,6 @@ impl GarrisonManagerBuilder {
             .interface
             .ok_or_else(|| GarrisonError::Config("builder-interface-missing".to_string()))?;
 
-        // 2. 校验配置
         config.validate()?;
 
         // 3. 构造 session（处理 active_timeout = -1 的兜底语义）
@@ -454,7 +453,6 @@ impl GarrisonManagerBuilder {
         // 12. 启动异常登录分析器 task（anomalous-detector-dual feature）
         #[cfg(feature = "anomalous-detector-dual")]
         let (anomalous_handle, anomalous_shutdown) = {
-            // 创建 shutdown channel
             let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
             // 从 GarrisonConfig 构造 analyzer config
@@ -464,7 +462,6 @@ impl GarrisonManagerBuilder {
                 ..AnomalousAnalyzerConfig::default()
             };
 
-            // 构造 analyzer 并 spawn task
             let analyzer = AnomalousLoginAnalyzer::new(
                 analyzer_dao,
                 analyzer_config,

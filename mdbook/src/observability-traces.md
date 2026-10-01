@@ -13,9 +13,9 @@ garrison = { version = "0.9.0-rc.2", features = ["otlp"] }
 
 `otlp` 独立门控以隔离重依赖（opentelemetry / opentelemetry_sdk / opentelemetry-otlp / tracing-subscriber）：
 
-- `opentelemetry` 0.32（`trace` feature）
-- `opentelemetry_sdk` 0.32（`trace` + `rt-tokio`）
-- `opentelemetry-otlp` 0.32（`trace` + `grpc-tonic`，OTLP gRPC 导出）
+- `opentelemetry` 0.33（`trace` feature）
+- `opentelemetry_sdk` 0.33（`trace` + `rt-tokio`）
+- `opentelemetry-otlp` 0.33（`trace` + `grpc-tonic`，OTLP gRPC 导出）
 
 ## init_otlp_tracing
 

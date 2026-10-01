@@ -17,8 +17,10 @@ pub mod keystore;
 /// JwtHandler 实现（签发/校验/刷新）。
 mod handler;
 
+// pub(crate)：`verify_ok` 墙钟回跳容错包装被其他模块的单测复用
+// （同 `dao::tests::MockDao` 的仓库先例）。
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use handler::KeyMaterial;
 

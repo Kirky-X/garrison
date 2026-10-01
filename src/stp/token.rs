@@ -656,7 +656,6 @@ mod tests {
                 )),
             );
 
-            // 签发 JWT token
             let handler =
                 crate::protocol::jwt::JwtHandler::new("verify-jwt-secret-0000000000000000");
             let jwt_token = handler.sign("jwt-verify-user", 3600).unwrap();
@@ -748,7 +747,6 @@ mod tests {
                 )),
             );
 
-            // 签发 JWT token
             let handler =
                 crate::protocol::jwt::JwtHandler::new("refresh-jwt-secret-0000000000000000");
             let old_token = handler.sign("refresh-user", 3600).unwrap();

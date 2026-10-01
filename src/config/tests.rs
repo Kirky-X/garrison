@@ -1545,7 +1545,6 @@ fn config_default_overflow_logout_mode_is_logout() {
 /// `ReplacedLoginExitMode` 序列化为 snake_case 字符串 "old_device"/"new_device"。
 #[test]
 fn replaced_login_exit_mode_serde_snake_case() {
-    // 序列化
     let old_json =
         serde_json::to_string(&ReplacedLoginExitMode::OldDevice).expect("序列化 OldDevice 应成功");
     assert_eq!(old_json, r#""old_device""#);
@@ -1553,7 +1552,6 @@ fn replaced_login_exit_mode_serde_snake_case() {
         serde_json::to_string(&ReplacedLoginExitMode::NewDevice).expect("序列化 NewDevice 应成功");
     assert_eq!(new_json, r#""new_device""#);
 
-    // 反序列化（往返一致）
     let old: ReplacedLoginExitMode =
         serde_json::from_str(r#""old_device""#).expect("反序列化 old_device 应成功");
     assert_eq!(old, ReplacedLoginExitMode::OldDevice);
@@ -1565,7 +1563,6 @@ fn replaced_login_exit_mode_serde_snake_case() {
 /// `OverflowLogoutMode` 序列化为 snake_case 字符串 "logout"/"kickout"/"replaced"。
 #[test]
 fn overflow_logout_mode_serde_snake_case() {
-    // 序列化
     assert_eq!(
         serde_json::to_string(&OverflowLogoutMode::Logout).unwrap(),
         r#""logout""#
@@ -1579,7 +1576,6 @@ fn overflow_logout_mode_serde_snake_case() {
         r#""replaced""#
     );
 
-    // 反序列化（往返一致）
     assert_eq!(
         serde_json::from_str::<OverflowLogoutMode>(r#""logout""#).unwrap(),
         OverflowLogoutMode::Logout

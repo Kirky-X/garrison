@@ -230,7 +230,6 @@ mod tests {
         let role_repo = DbnexusRoleRepository::new(pool.clone());
         let perm_repo = DbnexusPermissionRepository::new(pool.clone());
 
-        // 创建 1 个权限 + 2 个角色，分配到同一权限
         let perm_id = perm_repo
             .create(NewPermission {
                 code: "shared:perm".to_string(),

@@ -7,6 +7,60 @@ use super::*;
 use crate::error::GarrisonError;
 
 // ============================================================================
+// 测试确定性工具：墙钟 NTP 回跳容错
+// ============================================================================
+
+/// 宿主墙钟 NTP 校时会整秒回跳（本仓库门禁宿主为 WSL2，实测每 ~31s 回跳
+/// ~1.35s）。`verify` 的 leeway=0（严格安全默认，见 handler.rs `verify`）下，
+/// `sign` 盖戳 nbf=now 后若墙钟在 sign 与 verify 之间回跳，紧随的 verify 会
+/// 读到 now < nbf 而误报 `jwt-not-yet-valid`——token 本身有效，属环境噪声。
+/// 下面两个包装仅对该误报做有限重试（每 35s 一次、至多 2 次；墙钟以
+/// ~+1.35s/31s 的速率漂移回 nbf 之上，一个校正周期即可恢复）；其余错误
+/// （签名不符/过期/算法不匹配等）原样立即 panic，不掩盖任何真实缺陷。
+const NBF_RETRY_WAIT_SECS: u64 = 35;
+const NBF_RETRY_ATTEMPTS: usize = 3;
+
+/// verify 成功路径：nbf 回跳误报时有限重试，其余错误立即 panic。
+///
+/// `pub(crate)`：stp/mfa 与 stp/session 的 JWT 单测（login 后立即 verify）
+/// 复用本包装，见顶部说明。
+pub(crate) fn verify_ok(handler: &JwtHandler, token: &str) -> GarrisonJwtClaims {
+    for attempt in 0..NBF_RETRY_ATTEMPTS {
+        match handler.verify(token) {
+            Ok(claims) => return claims,
+            Err(GarrisonError::InvalidToken(msg)) if msg.contains("jwt-not-yet-valid") => {
+                if attempt + 1 < NBF_RETRY_ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_secs(NBF_RETRY_WAIT_SECS));
+                } else {
+                    panic!("verify 在墙钟回跳重试后仍 nbf 未生效: {msg}");
+                }
+            },
+            Err(e) => panic!("verify 失败（非 nbf 回跳场景，不重试）: {e:?}"),
+        }
+    }
+    unreachable!("重试循环内必然 return 或 panic")
+}
+
+/// refresh 成功路径：对旧 token 的 nbf 回跳误报有限重试（新 token 由调用方
+/// 经 [`verify_ok`] 断言）。
+fn refresh_ok(handler: &JwtHandler, token: &str, timeout: i64) -> String {
+    for attempt in 0..NBF_RETRY_ATTEMPTS {
+        match handler.refresh(token, timeout) {
+            Ok(new_token) => return new_token,
+            Err(GarrisonError::InvalidToken(msg)) if msg.contains("jwt-not-yet-valid") => {
+                if attempt + 1 < NBF_RETRY_ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_secs(NBF_RETRY_WAIT_SECS));
+                } else {
+                    panic!("refresh 在墙钟回跳重试后仍 nbf 未生效: {msg}");
+                }
+            },
+            Err(e) => panic!("refresh 失败（非 nbf 回跳场景，不重试）: {e:?}"),
+        }
+    }
+    unreachable!("重试循环内必然 return 或 panic")
+}
+
+// ============================================================================
 // GarrisonJwtClaims 测试
 // ============================================================================
 
@@ -83,8 +137,8 @@ fn sign_generates_unique_jti() {
     let t2 = handler.sign("1001", 3600).unwrap();
     // 同一秒内同一用户的 token 应不同（jti 保证唯一性）
     assert_ne!(t1, t2, "jti 应保证同一秒内签发的 token 唯一");
-    let c1 = handler.verify(&t1).unwrap();
-    let c2 = handler.verify(&t2).unwrap();
+    let c1 = verify_ok(&handler, &t1);
+    let c2 = verify_ok(&handler, &t2);
     assert!(c1.jti.is_some(), "sign 生成的 token 应包含 jti");
     assert!(c2.jti.is_some());
     assert_ne!(c1.jti, c2.jti, "两个 token 的 jti 应不同");
@@ -186,8 +240,7 @@ fn sign_rejects_negative_timeout() {
 fn sign_with_device_includes_device_in_claims() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef").with_device("ios-app");
     let token = handler.sign("1001", 3600).unwrap();
-    // verify 后检查 device
-    let claims = handler.verify(&token).unwrap();
+    let claims = verify_ok(&handler, &token);
     assert_eq!(claims.device, Some("ios-app".to_string()));
 }
 
@@ -200,7 +253,7 @@ fn sign_with_device_includes_device_in_claims() {
 fn verify_valid_token_returns_claims() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = handler.sign("1001", 3600).unwrap();
-    let claims = handler.verify(&token).unwrap();
+    let claims = verify_ok(&handler, &token);
     assert_eq!(claims.sub, "1001");
     assert_eq!(claims.login_id, "1001");
     assert!(claims.exp > claims.iat);
@@ -232,10 +285,28 @@ fn verify_wrong_secret_fails() {
 #[test]
 fn verify_expired_token_returns_expired_error() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
-    // sign timeout=1 秒，sleep 3 秒后 verify 应触发 ExpiredSignature
-    // （leeway=0，不容忍时钟偏差；3 秒容差避免高负载下时序敏感失败）
-    let token = handler.sign("1001", 1).unwrap();
-    std::thread::sleep(std::time::Duration::from_secs(3));
+    // 手动构造 exp 已过期的 token（leeway=0，过期立即拒绝）。
+    // 旧版 sign(timeout=1)+sleep(3) 依赖墙钟推进：宿主 NTP 整秒回跳
+    // （实测每 ~31s 一次、单次 ~1.35s）下，回跳可使 verify 时刻仍早于
+    // exp 而漏判。改为注入确定性过期时间，断言与墙钟推进速度解耦。
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    let claims = GarrisonJwtClaims {
+        sub: "1001".to_string(),
+        iat: now - 20,
+        exp: now - 10, // 已过期 10 秒
+        login_id: "1001".to_string(),
+        device: None,
+        jti: Some(uuid::Uuid::new_v4().to_string()),
+        nbf: Some(now - 20),
+        amr: None,
+        auth_time: None,
+    };
+    let header = jsonwebtoken::Header::new(Algorithm::HS256);
+    let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
+    let token = jsonwebtoken::encode(&header, &claims, &key).unwrap();
     let result = handler.verify(&token);
     assert!(result.is_err());
     match result.err() {
@@ -301,11 +372,9 @@ fn verify_future_nbf_returns_invalid_token() {
 #[test]
 fn verify_present_nbf_returns_ok() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
-    // sign 自动设置 nbf = now，verify 应通过
+    // sign 自动设置 nbf = now，verify 应通过（墙钟回跳误报经 verify_ok 容错）
     let token = handler.sign("1001", 3600).unwrap();
-    let result = handler.verify(&token);
-    assert!(result.is_ok(), "nbf = now 应通过校验: {:?}", result.err());
-    let claims = result.unwrap();
+    let claims = verify_ok(&handler, &token);
     assert!(claims.nbf.is_some(), "sign 应设置 nbf");
 }
 
@@ -370,9 +439,9 @@ fn verify_token_without_nbf_field_returns_ok() {
 fn refresh_issues_new_valid_token() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = handler.sign("1001", 3600).unwrap();
-    let new_token = handler.refresh(&token, 7200).unwrap();
+    let new_token = refresh_ok(&handler, &token, 7200);
     assert_ne!(token, new_token);
-    let claims = handler.verify(&new_token).unwrap();
+    let claims = verify_ok(&handler, &new_token);
     assert_eq!(claims.login_id, "1001");
 }
 
@@ -393,7 +462,7 @@ fn refresh_invalid_token_fails() {
 fn sign_accepts_login_id_numeric() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
     let token = handler.sign("1001".to_string(), 3600).unwrap();
-    let claims = handler.verify(&token).unwrap();
+    let claims = verify_ok(&handler, &token);
     assert_eq!(claims.login_id, "1001");
 }
 
@@ -442,7 +511,7 @@ fn verify_rejects_short_secret() {
 fn sign_accepts_exactly_32_byte_secret() {
     let handler = JwtHandler::new("0123456789abcdef0123456789abcdef"); // exactly 32 bytes
     let token = handler.sign("1001", 3600).unwrap();
-    let claims = handler.verify(&token).unwrap();
+    let claims = verify_ok(&handler, &token);
     assert_eq!(claims.login_id, "1001");
 }
 
@@ -510,7 +579,7 @@ fn verify_rejects_tampered_payload() {
     let result = handler.verify(&tampered);
     assert!(result.is_err(), "篡改 payload 后的 token 必须被拒绝");
     // 原始 token 仍须可验证（排除测试自身构造错误）
-    assert!(handler.verify(&token).is_ok());
+    let _ = verify_ok(&handler, &token);
 }
 
 /// URL-safe Base64 解码（无 padding）。
@@ -573,7 +642,7 @@ fn rsa_pem_rs256_sign_verify_roundtrip() {
         .unwrap();
 
     let token = handler.sign("user123", 3600).unwrap();
-    let claims = handler.verify(&token).unwrap();
+    let claims = verify_ok(&handler, &token);
     assert_eq!(claims.login_id, "user123");
 }
 
@@ -587,7 +656,7 @@ fn rsa_pem_rs384_rs512_sign_verify_roundtrip() {
             .try_with_algorithm(alg)
             .unwrap();
         let token = handler.sign("user123", 3600).unwrap();
-        let claims = handler.verify(&token).unwrap();
+        let claims = verify_ok(&handler, &token);
         assert_eq!(claims.login_id, "user123");
     }
 }

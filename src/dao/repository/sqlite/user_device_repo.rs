@@ -274,7 +274,6 @@ mod tests {
             .await
             .expect("register_device 应成功");
 
-        // 验证返回的是合法 UUID
         let parsed = uuid::Uuid::parse_str(&device_id).expect("返回的 device_id 应为合法 UUID");
         assert_eq!(
             parsed.get_version(),
@@ -282,7 +281,6 @@ mod tests {
             "应为 UUID v4"
         );
 
-        // list 中应能查到
         let devices = repo
             .list_user_devices(1, "login-001")
             .await
@@ -345,7 +343,6 @@ mod tests {
             .expect("count 应成功");
         assert_eq!(count, MAX_DEVICES, "应有 MAX_DEVICES 个设备");
 
-        // 第 6 个设备应被拒绝
         let result = repo
             .register_device(1, "login-max", "fp-overflow", "Chrome/120.0")
             .await;
@@ -376,14 +373,12 @@ mod tests {
             .await
             .expect("register 应成功");
 
-        // 初始状态未阻断
         let devices = repo
             .list_user_devices(1, "login-block")
             .await
             .expect("list 应成功");
         assert!(!devices[0].is_blocked, "初始状态应未阻断");
 
-        // 阻断
         repo.block_device(&device_id)
             .await
             .expect("block_device 应成功");
@@ -393,7 +388,6 @@ mod tests {
             .expect("list 应成功");
         assert!(devices[0].is_blocked, "阻断后 is_blocked 应为 true");
 
-        // 解除阻断
         repo.unblock_device(&device_id)
             .await
             .expect("unblock_device 应成功");
@@ -448,7 +442,6 @@ mod tests {
             .expect("count 应成功");
         assert_eq!(count, 0, "空用户设备数应为 0");
 
-        // 注册 1 个后
         repo.register_device(1, "login-count", "fp-1", "Chrome/120.0")
             .await
             .expect("register 应成功");

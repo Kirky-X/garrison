@@ -664,7 +664,6 @@ impl TokenHandler {
                 ))
             })?;
 
-        // 校验 client_id 一致性
         if auth_code.client_id != client.client_id {
             return Err(GarrisonError::OAuth2(loc!(
                 "oauth2-code-client-mismatch",
@@ -672,7 +671,6 @@ impl TokenHandler {
             )));
         }
 
-        // 校验 redirect_uri 一致性
         if auth_code.redirect_uri != *redirect_uri {
             return Err(GarrisonError::OAuth2(loc!(
                 "oauth2-redirect-uri-mismatch",
@@ -680,7 +678,6 @@ impl TokenHandler {
             )));
         }
 
-        // PKCE 验证
         if !crate::oauth2_server::authorize::verify_pkce(code_verifier, &auth_code.code_challenge)?
         {
             return Err(GarrisonError::OAuth2(loc!(
@@ -689,7 +686,6 @@ impl TokenHandler {
             )));
         }
 
-        // 签发 token
         let scopes = auth_code.scopes.clone();
         // 校验授权码中的 scope 是否在客户端 allowed_scopes 内（纵深防御）
         client.validate_scopes(&scopes)?;
@@ -761,7 +757,6 @@ impl TokenHandler {
                         "validation failed for rotated refresh_token"
                     ))
                 })?;
-                // 校验 client_id 一致性
                 let record_client_id = record.client_id.as_deref().unwrap_or("");
                 if record_client_id != client.client_id {
                     return Err(GarrisonError::OAuth2(loc!(
@@ -819,7 +814,6 @@ impl TokenHandler {
             ))
         })?;
 
-        // 校验 client_id 一致性
         if record.client_id != client.client_id {
             return Err(GarrisonError::OAuth2(loc!(
                 "oauth2-refresh-token-client-mismatch",
@@ -880,7 +874,6 @@ impl TokenHandler {
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
 
-        // 校验请求的 scope 是否在客户端 allowed_scopes 内
         client.validate_scopes(&scopes)?;
 
         // 无 user_id，无 refresh_token
@@ -943,7 +936,6 @@ impl TokenHandler {
         let user_id = match verifier.verify(username, password).await? {
             Some(uid) => uid,
             None => {
-                // 验证失败后增加失败计数
                 self.password_rate_limiter.record_failure(username).await;
                 return Err(GarrisonError::OAuth2(loc!(
                     "oauth2-invalid-credentials",
@@ -952,7 +944,6 @@ impl TokenHandler {
             },
         };
 
-        // 验证成功后重置失败计数
         self.password_rate_limiter.reset(username).await;
 
         let scopes: Vec<String> = req
@@ -961,7 +952,6 @@ impl TokenHandler {
             .map(|s| s.split_whitespace().map(|x| x.to_string()).collect())
             .unwrap_or_default();
 
-        // 校验请求的 scope 是否在客户端 allowed_scopes 内
         client.validate_scopes(&scopes)?;
 
         self.issue_tokens(
@@ -1202,7 +1192,6 @@ impl TokenHandler {
     ///   存 SQLite `refresh_tokens` 表，DAO 删除对其无效，需经
     ///   `rotation.revoke_chain` 撤销（fail-safe：连带撤销该链子代）
     pub async fn revoke_token(&self, token: &str) -> GarrisonResult<()> {
-        // 尝试删除 access_token
         let at_key = DaoKeyPrefix::OAuth2AccessToken.build_key(token);
         self.dao.delete(&at_key).await?;
         // 尝试删除 refresh_token（DAO fallback 路径；同一 token 值不会同时是两种类型）
@@ -1523,7 +1512,6 @@ mod tests {
             .await
             .unwrap();
 
-        // Basic Auth 头：正确凭证
         let credentials = STANDARD.encode("override-cid:secret-123");
         let auth_header = format!("Basic {}", credentials);
 
@@ -1570,7 +1558,6 @@ mod tests {
             password: None,
         };
 
-        // 不传 Authorization 头
         let resp = handler
             .handle_with_authorization(&req, None)
             .await
@@ -1588,7 +1575,6 @@ mod tests {
             .await
             .unwrap();
 
-        // 错误密钥
         let credentials = STANDARD.encode("wrong-secret-cid:WRONG");
         let auth_header = format!("Basic {}", credentials);
 
@@ -1752,9 +1738,7 @@ mod tests {
             username: None,
             password: None,
         };
-        // 第一次：成功
         handler.handle(&req).await.expect("首次签发");
-        // 第二次：授权码已被消费
         let err = handler.handle(&req).await.unwrap_err();
         assert!(err.to_string().contains("invalid_grant"));
     }
@@ -1788,7 +1772,6 @@ mod tests {
         let first_resp = handler.handle(&req).await.unwrap();
         let refresh_token = first_resp.refresh_token.clone().unwrap();
 
-        // 使用 refresh_token 刷新
         let refresh_req = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rt-001".into(),
@@ -1914,7 +1897,6 @@ mod tests {
             .await
             .unwrap();
 
-        // 签发初始 refresh_token
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let code = get_auth_code(&handler, "rt-conc-001", verifier).await;
         let issue_req = TokenRequest {
@@ -2186,7 +2168,6 @@ mod tests {
             let _ = handler.handle(&wrong_req).await.unwrap_err();
         }
 
-        // 2. 1 次成功：重置计数
         let resp = handler.handle(&right_req).await.expect("成功登录");
         assert_eq!(resp.token_type, "Bearer");
 
@@ -2218,7 +2199,6 @@ mod tests {
     #[tokio::test]
     async fn password_rate_limiter_record_failure_increments_count() {
         let limiter = PasswordRateLimiter::new(5, 300);
-        // 首次失败：count 应为 1
         limiter.record_failure("alice").await;
         assert!(
             limiter.check("alice").await,
@@ -2268,7 +2248,6 @@ mod tests {
         limiter.record_failure("carol").await;
         limiter.record_failure("carol").await;
         assert_eq!(limiter.entry_count().await, 1, "失败 2 次后应有 1 个 entry");
-        // 验证成功后 reset
         limiter.reset("carol").await;
         assert_eq!(limiter.entry_count().await, 0, "reset 后应无 entry");
         // reset 后再次失败应从 1 开始（而非继续累加）
@@ -2529,7 +2508,6 @@ mod tests {
             .unwrap()
             .is_some());
 
-        // 撤销
         handler.revoke_token(&resp.access_token).await.unwrap();
 
         // 撤销后：不存在
@@ -2715,7 +2693,6 @@ mod tests {
             password: None,
         };
 
-        // 前 2 次成功
         for i in 0..2 {
             let resp = handler.handle(&req).await;
             assert!(resp.is_ok(), "第 {} 次应成功，实际: {:?}", i + 1, resp);
@@ -2759,7 +2736,6 @@ mod tests {
             password: None,
         };
 
-        // 第 1 次成功
         let _ = handler
             .handle_with_authorization(&req, Some(&auth_header))
             .await
@@ -2805,7 +2781,6 @@ mod tests {
             password: Some("wonderland".into()),
         };
 
-        // 前 2 次成功
         for i in 0..2 {
             let resp = handler.handle(&req).await;
             assert!(resp.is_ok(), "第 {} 次应成功，实际: {:?}", i + 1, resp);
@@ -2977,7 +2952,6 @@ mod refresh_rotation_tests {
     async fn issue_tokens_with_rotation_uses_issue_method() {
         let handler = make_handler_with_rotation().await;
         let client = make_full_client("rot-auth-001");
-        // 先注册客户端
         handler
             .store
             .create(client.clone())
@@ -3002,7 +2976,6 @@ mod refresh_rotation_tests {
         let resp = handler.handle(&req).await.expect("token 签发应成功");
         assert!(resp.refresh_token.is_some(), "应返回 refresh_token");
 
-        // 验证 refresh_token 存在于 refresh_tokens 表
         let rotation = handler.refresh_rotation.as_ref().unwrap();
         let record = rotation
             .validate(resp.refresh_token.as_ref().unwrap())
@@ -3023,7 +2996,6 @@ mod refresh_rotation_tests {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let code = get_auth_code(&handler, "rot-refresh-001", verifier).await;
 
-        // 签发初始 token
         let issue_req = TokenRequest {
             grant_type: "authorization_code".into(),
             client_id: "rot-refresh-001".into(),
@@ -3039,7 +3011,6 @@ mod refresh_rotation_tests {
         let issue_resp = handler.handle(&issue_req).await.unwrap();
         let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
 
-        // 使用 refresh_token 刷新
         let refresh_req = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rot-refresh-001".into(),
@@ -3074,7 +3045,6 @@ mod refresh_rotation_tests {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let code = get_auth_code(&handler, "rot-reuse-001", verifier).await;
 
-        // 签发初始 token
         let issue_req = TokenRequest {
             grant_type: "authorization_code".into(),
             client_id: "rot-reuse-001".into(),
@@ -3090,7 +3060,6 @@ mod refresh_rotation_tests {
         let issue_resp = handler.handle(&issue_req).await.unwrap();
         let old_refresh = issue_resp.refresh_token.expect("应有 refresh_token");
 
-        // 第一次 refresh：成功
         let refresh_req = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rot-reuse-001".into(),
@@ -3143,19 +3112,15 @@ mod refresh_rotation_tests {
         let issue_resp = handler.handle(&issue_req).await.unwrap();
         let refresh_token = issue_resp.refresh_token.expect("应有 refresh_token");
 
-        // 撤销前：rotation.validate 应查到
         let rotation = handler.refresh_rotation.as_ref().unwrap();
         assert!(rotation.validate(&refresh_token).await.unwrap().is_some());
 
-        // 撤销
         handler.revoke_token(&refresh_token).await.unwrap();
 
-        // 撤销后：rotation 记录应已 revoked（validate 返回 None）
         assert!(
             rotation.validate(&refresh_token).await.unwrap().is_none(),
             "revoke_token 应撤销 rotation 路径签发的 refresh token"
         );
-        // 撤销后再 refresh → invalid_grant
         let refresh_req = TokenRequest {
             grant_type: "refresh_token".into(),
             client_id: "rot-revoke-001".into(),
@@ -3186,7 +3151,6 @@ mod refresh_rotation_tests {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let code = get_auth_code(&handler, "rot-fallback-001", verifier).await;
 
-        // 签发初始 token
         let issue_req = TokenRequest {
             grant_type: "authorization_code".into(),
             client_id: "rot-fallback-001".into(),

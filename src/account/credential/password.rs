@@ -562,7 +562,6 @@ mod tests {
         assert_eq!(hasher.m_cost, 8192);
         assert_eq!(hasher.t_cost, 1);
         assert_eq!(hasher.p_cost, 1);
-        // 验证自定义参数下仍能正常 hash + verify
         let hash = hasher.hash("test").unwrap();
         assert!(hash.starts_with("$argon2id$"));
         assert!(hasher.verify("test", &hash).unwrap());
@@ -932,12 +931,10 @@ mod tests {
         };
         let cred = PasswordCredential::new(model, Arc::new(hasher));
 
-        // 正确密码
         assert!(
             cred.verify("bcrypt-secret").await.expect("verify 应成功"),
             "Bcrypt 正确密码应校验通过"
         );
-        // 错误密码
         assert!(
             !cred.verify("wrong").await.expect("verify 应成功"),
             "Bcrypt 错误密码应校验失败"
@@ -1008,7 +1005,6 @@ mod tests {
         // verify 在 zeroize feature 启用时仍正确工作
         let result = cred.verify(&password).await.expect("verify 应成功");
         assert!(result, "zeroize feature 启用时正确密码应校验通过");
-        // 错误密码
         let wrong = cred.verify("wrong").await.expect("verify 应成功");
         assert!(!wrong, "zeroize feature 启用时错误密码应校验失败");
     }

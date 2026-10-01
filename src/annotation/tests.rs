@@ -415,10 +415,8 @@ fn annotation_name_returns_variant_string() {
         .name(),
         "CheckApiKey"
     );
-    // Mode— And / Or 均返回 "Mode"
     assert_eq!(Annotation::Mode(AnnotationMode::And).name(), "Mode");
     assert_eq!(Annotation::Mode(AnnotationMode::Or).name(), "Mode");
-    // 新增：CheckAccessToken / CheckClientToken
     assert_eq!(Annotation::CheckAccessToken.name(), "CheckAccessToken");
     assert_eq!(Annotation::CheckClientToken.name(), "CheckClientToken");
 }
@@ -795,7 +793,6 @@ async fn garrison_principal_returns_err_when_token_logout() {
     let login_id = "1001";
     let token = GarrisonUtil::login_simple(login_id).await.unwrap();
 
-    // 注销 token，使 get_login_id_by_token 返回 Ok(None)
     with_current_token(token.clone(), async {
         GarrisonUtil::logout().await.unwrap();
     })

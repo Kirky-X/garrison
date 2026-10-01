@@ -285,7 +285,6 @@ async fn bw_ac_007_dbnexus_sqlite_backend_works() {
         .await
         .expect("INSERT app_permission 应成功");
 
-    // Then: 验证数据可读
     let stmt = Statement::from_sql_and_values(
         DbBackend::Sqlite,
         "SELECT username FROM app_user WHERE id = ?",

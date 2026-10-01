@@ -35,7 +35,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    token_url:      https://auth.example.com/oauth2/token");
     println!("    introspect_url: https://auth.example.com/oauth2/introspect\n");
 
-    // 2. URL 推导规则演示（未设置 introspect_url 时）
     println!("[2] URL 推导规则（未设置 introspect_url 时）");
     let client_default = OAuth2Client::new(
         "cid",
@@ -61,7 +60,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "      introspect_url: https://auth.example.com/oauth2/issues/introspect（自动推导）\n"
     );
 
-    // 3. 展示 introspect_token 调用方式
     println!("[3] introspect_token 调用方式");
     println!("    // 查询 access_token 或 refresh_token 的当前状态");
     println!("    let response: TokenIntrospectionResponse = client");
@@ -83,7 +81,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    //   jti      — 可选，token ID");
     println!();
 
-    // 4. 演示 TokenIntrospectionResponse 的反序列化
     println!("[4] TokenIntrospectionResponse 反序列化示例");
     let active_json = r#"{
         "active": true,
@@ -120,7 +117,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(resp_inactive.scope.is_none());
     println!("    ✓ 反序列化正确\n");
 
-    // 5. 业务决策示例
     println!("[5] 业务决策示例");
     println!("    // 根据 active 字段决定是否允许访问资源");
     println!("    match client.introspect_token(&token).await {{");
@@ -138,12 +134,10 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    }}");
     println!();
 
-    // 6. 不缓存说明
     println!("[6] 不缓存约束（依据 spec Constraints）");
     println!("    introspect_token 每次调用都请求授权服务器，不缓存结果。");
     println!("    业务方如需缓存可自行封装（注意 TTL 不应超过 token 剩余有效期）。\n");
 
-    // 7. 客户端演示（使用推导 URL）
     println!("[7] 使用推导 URL 的客户端");
     println!("    // 场景：授权服务器 token_url 末尾为 /token");
     println!("    //       introspect_url 自动推导为 /introspect");

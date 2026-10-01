@@ -94,7 +94,6 @@ async fn validate_ticket_deletes_after_success() {
     let client = make_client();
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     let _ = client.validate_ticket(&ticket, 2001).await.unwrap();
-    // 第二次校验应失败
     let result = client.validate_ticket(&ticket, 2001).await;
     assert!(
         matches!(result, Err(GarrisonError::InvalidToken(_))),
@@ -154,7 +153,6 @@ async fn destroy_ticket_existing() {
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     let result = client.destroy_ticket(&ticket).await;
     assert_eq!(result.unwrap(), (), "销毁存在的票据应返回 Ok(())");
-    // 验证已删除
     let validate_result = client.validate_ticket(&ticket, 2001).await;
     assert!(
         matches!(validate_result, Err(GarrisonError::InvalidToken(_))),
@@ -194,7 +192,6 @@ fn with_ticket_ttl_sets_ttl() {
 async fn issue_ticket_accepts_login_id_numeric() {
     let client = make_client();
     let ticket = client.issue_ticket("1001".to_string(), 2001).await.unwrap();
-    // 验证 ticket 可校验
     let login_id = client.validate_ticket(&ticket, 2001).await.unwrap();
     assert_eq!(login_id, "1001");
 }

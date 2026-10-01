@@ -129,7 +129,6 @@ mod tests {
         let dao = MockDao::new();
         dao.set("k1", "v1", 0).await.unwrap();
         dao.expire("k1", 120).await.unwrap();
-        // 未到期仍可读
         assert_eq!(dao.get("k1").await.unwrap(), Some("v1".to_string()));
     }
 

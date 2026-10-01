@@ -122,9 +122,9 @@ dbnexus = { optional = true, default-features = false, workspace = true }
 loom = { version = "0.7", features = ["futures"], optional = true }
 prometheus = { version = "0.14", optional = true, default-features = false }
 tracing-subscriber = { optional = true, default-features = false, features = ["fmt", "json", "env-filter"], workspace = true }
-opentelemetry = { version = "0.32", optional = true, default-features = false, features = ["trace"] }
-opentelemetry_sdk = { version = "0.32", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
-opentelemetry-otlp = { version = "0.32", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
+opentelemetry = { version = "0.33", optional = true, default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33", optional = true, default-features = false, features = ["trace", "rt-tokio"] }
+opentelemetry-otlp = { version = "0.33", optional = true, default-features = false, features = ["trace", "grpc-tonic"] }
 tonic = { optional = true, default-features = false, features = ["transport"], workspace = true }
 tonic-health = { version = "0.14", optional = true, default-features = false }
 # grpc feature：GarrisonGrpcAuthLayer 的 tower Layer/Service（核心 trait，无 util）
@@ -164,7 +164,7 @@ limiteron = { version = "0.3.0-rc.5", default-features = false, features = ["dis
 # default 构建不再白编译 axum/tower 栈，也不再要求 sdforge build.rs 的 protoc。
 sdforge = { version = "0.5.0-rc.5", default-features = false, features = ["http"], optional = true }
 trait-kit = { version = "0.5.0-rc.6", default-features = false, features = ["async"] }
-cedar-policy = { version = "4.12", default-features = false, optional = true }
+cedar-policy = { version = "4.13", default-features = false, optional = true }
 icu_plurals = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
 icu_datetime = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
 icu_decimal = { version = "2.3", default-features = false, features = ["compiled_data", "alloc"], optional = true }
@@ -234,7 +234,7 @@ warp = { default-features = false, features = ["test"], workspace = true }
 # keycloak-oidc 等未启用可选 rsa 的测试面也能解析 OsRng
 rsa = { version = "0.9", features = ["getrandom"] }
 rand = { workspace = true }
-testcontainers = "0.27"
+testcontainers = "0.28"
 criterion = { version = "0.8", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
@@ -382,20 +382,23 @@ protocol-webauthn = ["dep:webauthn-rs", "dep:webauthn-rs-core"]
 
 # === 安全模块 ===
 secure-totp = ["dep:totp-rs", "dep:base32"]
-secure-sign = ["dep:sha2", "dep:hmac", "dep:base64", "dep:subtle"]
+# secure-ct-eq：签名校验常量时间比较统一走公共原语（ADR-0003 决策 2）
+secure-sign = ["dep:sha2", "dep:hmac", "dep:base64", "secure-ct-eq"]
 # secure-httpbasic → protocol-httpbasic（域统一到协议层）
 protocol-httpbasic = ["dep:base64"]
 # secure-httpdigest → protocol-httpdigest（域统一到协议层）
-protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "dep:subtle", "dep:hkdf", "dep:hmac"]
+# secure-ct-eq：Digest response/uri/nonce-mac 校验常量时间比较统一走公共原语（ADR-0003 决策 2/3）
+protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "secure-ct-eq", "dep:hkdf", "dep:hmac"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
 # 依赖 regex：Custom mask 真实脱敏（原 placeholder 实现静默泄露敏感数据）
 secure-masking = ["dep:regex"]
 secure-xss = []
 secure-sanitize = []
-sms-rate-limit = ["dep:rand"]
+sms-rate-limit = ["dep:rand", "secure-ct-eq"]
 # 邮箱验证码（基础 trait + service + rate_limiter，业务方自行实现 EmailSender）
-email-verification = ["dep:rand"]
+# secure-ct-eq：验证码比对统一走公共常量时间比较原语（ADR-0003 决策 2，消除 cfg fallback 第二实现）
+email-verification = ["dep:rand", "secure-ct-eq"]
 # 邮箱验证码 SMTP 内置实现（lettre，含 SmtpEmailSender）
 email-verification-smtp = ["email-verification", "dep:lettre"]
 # field-encryption：落库敏感字段 AES-256-GCM 静态加密（CryptoValue 编解码 + AAD 租户/表/键绑定 + 迁移期双读）
@@ -444,7 +447,7 @@ server-graceful-shutdown = []
 # === Web 安全中间件 ===
 # web-waf 已废弃（与 firewall-waf 功能 100% 重叠），统一使用 firewall-waf
 web-cors = ["web-axum"]
-web-csrf = ["web-axum", "dep:rand", "dep:getrandom", "dep:base64", "dep:subtle"]
+web-csrf = ["web-axum", "dep:rand", "dep:getrandom", "dep:base64", "secure-ct-eq"]
 # HTTP 安全响应头中间件（X-Content-Type-Options / X-Frame-Options / HSTS / Cache-Control）
 web-security-headers = ["web-axum"]
 # Web 安全中间件聚合（CORS + CSRF + 安全响应头）
@@ -470,8 +473,9 @@ audit-log = ["listener", "dep:sha2", "dep:hmac", "dep:getrandom", "secure-maskin
 
 # === 常量时间比较原语（CWE-208 防御）===
 # 提供 `secure::ct_eq::constant_time_eq` 公共函数，基于 subtle::ConstantTimeEq。
-# 所有需要常量时间比较的 feature（如 audit-log / oauth2-server）应依赖此 feature，
-# 避免在各模块重复实现。
+# 所有需要常量时间比较的 feature（audit-log / oauth2-server / protocol-apikey /
+# protocol-httpdigest / secure-simple-token / secure-sign / web-csrf）应依赖此 feature，
+# 禁止各模块复制本地实现或直连 dep:subtle（ADR-0003 决策 2：消除第二实现）。
 secure-ct-eq = ["dep:subtle"]
 
 # === 安全防护套件 ===
@@ -555,8 +559,9 @@ backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallbac
 # secure-simple-token：为 SimpleTokenStyle 启用 HMAC-SHA256 签名
 # 格式：<login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
-secure-simple-token = ["dep:sha2", "dep:hmac", "dep:subtle"]
-auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "dep:subtle", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown"]
+# secure-ct-eq：HMAC 签名校验常量时间比较统一走公共原语（ADR-0003 决策 2/3）
+secure-simple-token = ["dep:sha2", "dep:hmac", "secure-ct-eq"]
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "secure-ct-eq", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown"]
 # dep:sha2：决策缓存 key 的 context_json 摘要成分（SHA-256 前 16 字节）
 abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
@@ -680,7 +685,15 @@ development = [
 
 [profile.dev]
 opt-level = 0
-debug = true
+# 只保留行号表（-Cdebuginfo=1），不再生成完整 DWARF（原 debug = true）：
+# 全量 debuginfo 使单个 libgarrison-*.rlib 达 ~300MB、target/debug/deps 超 100GB；
+# `cargo test --no-run --features full` 需并发链接数十个 ~180 rlib 的测试二进制，
+# 多核机器默认 -j 下多个 rust-lld 峰值内存轻易吃满 RAM+swap，被内核 OOM kill
+# （collect2: fatal error: ld terminated with signal 9 [Killed]）。
+# 行号表保留 backtrace 的 file:line 定位能力（符号名来自 symtab，不受影响），
+# rlib 体积与链接峰值内存下降一个数量级。需要调试器完整 DWARF 时临时覆盖：
+# `cargo build --config 'profile.dev.debug=true' ...`
+debug = "line-tables-only"
 
 [profile.release]
 opt-level = 3

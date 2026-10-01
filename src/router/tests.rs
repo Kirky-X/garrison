@@ -904,7 +904,6 @@ async fn check_api_key_namespace_mismatch_returns_401() {
 
     let dao = init_manager_with_dao().await;
     let handler = ApiKeyHandler::new(dao.clone() as Arc<dyn GarrisonDao>);
-    // 为 ns1 生成 key
     let key = handler
         .generate_with_namespace("user1", "ns1", vec![], 3600)
         .await

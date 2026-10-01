@@ -198,7 +198,6 @@ mod tests {
         let repo = DbnexusAuthMethodRepository::new(pool.clone());
         let user_id = setup_user(&pool, 1).await;
 
-        // 为同一用户创建 2 种认证方式
         repo.create(
             1,
             NewAuthMethod {
@@ -267,7 +266,6 @@ mod tests {
         let pool = setup_db().await;
         let repo = DbnexusAuthMethodRepository::new(pool.clone());
 
-        // tenant 1
         let user_1 = setup_user(&pool, 1).await;
         repo.create(
             1,
@@ -281,7 +279,6 @@ mod tests {
         .await
         .expect("create tenant 1 应成功");
 
-        // tenant 2
         let user_2 = setup_user(&pool, 2).await;
         repo.create(
             2,

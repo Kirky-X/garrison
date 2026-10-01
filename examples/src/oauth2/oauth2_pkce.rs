@@ -23,7 +23,6 @@ use garrison::protocol::oauth2::OAuth2Client;
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison OAuth 2.1 PKCE 示例 ===\n");
 
-    // 1. 构造 OAuth2Client
     let client = OAuth2Client::new(
         "my-client-id",
         "my-client-secret",
@@ -92,7 +91,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("    端到端测试见 tests/protocol_oauth2_integration.rs\n");
 
-    // 6. 演示 code_verifier 校验失败
     println!("[6] code_verifier 校验失败（预期）");
     let short_verifier = "too-short";
     let result = OAuth2Client::generate_pkce_challenge(short_verifier);

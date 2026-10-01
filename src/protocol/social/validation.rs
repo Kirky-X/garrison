@@ -99,14 +99,11 @@ mod tests {
     /// 非法 provider 名称应返回 false。
     #[test]
     fn is_valid_provider_name_rejects_invalid_names() {
-        // 空字符串
         assert!(!is_valid_provider_name(""), "空字符串应拒绝");
-        // 首字符非小写字母
         assert!(!is_valid_provider_name("A"), "大写字母开头应拒绝");
         assert!(!is_valid_provider_name("1abc"), "数字开头应拒绝");
         assert!(!is_valid_provider_name("_abc"), "下划线开头应拒绝");
         assert!(!is_valid_provider_name("-abc"), "连字符开头应拒绝");
-        // 含大写字母
         assert!(!is_valid_provider_name("weChat"), "含大写字母应拒绝");
         assert!(!is_valid_provider_name("Wechat"), "首字母大写应拒绝");
         // 含特殊字符（日志注入/DAO key 注入风险）

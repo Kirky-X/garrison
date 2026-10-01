@@ -603,7 +603,6 @@ async fn e3_replay_key_isolated_per_code() {
         "E3: code2（不同窗口）首次应通过，replay_key 按 (login_id, code) 隔离"
     );
 
-    // 验证两个 replay_key 都存在
     let key1 = format!("totp:used:user-multi-code:{}", code1);
     let key2 = format!("totp:used:user-multi-code:{}", code2);
     let t1 = dao.get_timeout(&key1).await.unwrap();

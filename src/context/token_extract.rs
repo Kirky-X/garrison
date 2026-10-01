@@ -616,12 +616,10 @@ mod tests {
     /// C7: 方法判断应大小写不敏感；空字符串与未知方法应拒绝。
     #[test]
     fn c7_is_body_token_allowed_method_case_insensitive_and_edge() {
-        // 大小写不敏感
         assert!(is_body_token_allowed_method("post"));
         assert!(is_body_token_allowed_method("Put"));
         assert!(is_body_token_allowed_method("pAtCh"));
         assert!(is_body_token_allowed_method("PoSt"));
-        // 边界
         assert!(!is_body_token_allowed_method(""));
         assert!(!is_body_token_allowed_method("unknown"));
         assert!(!is_body_token_allowed_method("POST ")); // 带空格

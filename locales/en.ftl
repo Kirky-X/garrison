@@ -79,6 +79,7 @@ qrlogin-confirm-token-invalid = QR login confirm token is invalid or has expired
 qrlogin-domain-not-allowed = QR login ticket domain is not allowed
 qrlogin-issuer-failed = QR login session issuance failed: {$detail}
 qrlogin-app-unauthorized = QR login requires a valid app session token
+qrlogin-action-invalid = action must be "confirm" or "cancel"
 
 # --- WeChat Mini App (wechat mini-app) ---
 wechat-mini-app-get-authorization-url-not-supported = WechatMiniAppProvider does not support get_authorization_url (mini app uses wx.login() to get js_code directly)
@@ -1336,3 +1337,6 @@ metrics-encode-failed = Prometheus metrics encoding failed
 # Password reset (account-password-reset)
 pwdreset-mail-subject = Password Reset Request
 pwdreset-mail-body = You requested a password reset. Use the one-time token below within {$minutes} minutes: /reset-password?token={$token}
+
+# OAuth2 authorize/resume endpoint (0.9.0 i18n sweep)
+oauth2-resume-ticket-missing = missing ticket

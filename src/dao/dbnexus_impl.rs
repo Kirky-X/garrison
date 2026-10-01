@@ -450,38 +450,32 @@ mod tests {
             .await
             .expect("CREATE TABLE 应成功");
 
-        // INSERT
         let result = session
             .execute_raw("INSERT INTO test_crud (id, name) VALUES (1, 'alice')")
             .await
             .expect("INSERT 应成功");
         assert_eq!(result.rows_affected(), 1, "INSERT 应影响 1 行");
 
-        // SELECT 验证
         let name =
             query_one_string(&session, "SELECT name AS val FROM test_crud WHERE id = 1").await;
         assert_eq!(name, "alice", "INSERT 后应查到 alice");
 
-        // UPDATE
         let result = session
             .execute_raw("UPDATE test_crud SET name = 'bob' WHERE id = 1")
             .await
             .expect("UPDATE 应成功");
         assert_eq!(result.rows_affected(), 1, "UPDATE 应影响 1 行");
 
-        // 验证 UPDATE
         let name =
             query_one_string(&session, "SELECT name AS val FROM test_crud WHERE id = 1").await;
         assert_eq!(name, "bob", "UPDATE 后应查到 bob");
 
-        // DELETE
         let result = session
             .execute_raw("DELETE FROM test_crud WHERE id = 1")
             .await
             .expect("DELETE 应成功");
         assert_eq!(result.rows_affected(), 1, "DELETE 应影响 1 行");
 
-        // 验证 DELETE
         let count = query_count(&session, "SELECT count(*) AS cnt FROM test_crud").await;
         assert_eq!(count, 0, "DELETE 后表应为空");
     }
@@ -503,10 +497,8 @@ mod tests {
             .await
             .unwrap();
 
-        // 开始事务
         session.begin_transaction().await.expect("begin 应成功");
 
-        // 在事务中 INSERT
         session
             .execute_raw("INSERT INTO test_txn (id, name) VALUES (1, 'temp')")
             .await
@@ -515,7 +507,6 @@ mod tests {
         // 回滚
         session.rollback().await.expect("rollback 应成功");
 
-        // 验证表为空
         let count = query_count(&session, "SELECT count(*) AS cnt FROM test_txn").await;
         assert_eq!(count, 0, "回滚后表应为空");
     }
@@ -570,7 +561,6 @@ mod tests {
             applied
         );
 
-        // 查询 sqlite_master 验证 10 张表存在
         let pool = migration.pool();
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();
@@ -673,7 +663,6 @@ mod tests {
         let pool = migration.pool();
         let session = pool.get_session("admin").await.unwrap();
 
-        // INSERT
         session
             .execute_raw(
                 "INSERT INTO app_user (id, username, password_hash, status, tenant_id) \
@@ -682,7 +671,6 @@ mod tests {
             .await
             .expect("INSERT app_user 应成功");
 
-        // SELECT 验证
         let username = query_one_string(
             &session,
             "SELECT username AS val FROM app_user WHERE id = 'u-001'",

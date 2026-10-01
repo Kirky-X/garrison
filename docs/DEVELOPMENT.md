@@ -77,7 +77,7 @@ cargo build --features full
 # 全量编译
 cargo build --features full
 
-# 全量测试（4374+ 个 lib 测试应全部通过）
+# 全量测试（5100+ 个 lib 测试应全部通过）
 cargo test --features full
 
 # Lint（零警告）
@@ -101,13 +101,13 @@ garrison/
 │   ├── stp/                  # StpUtil 风格门面（v0.5.3 拆分为多文件）
 │   │   ├── mod.rs            # re-exports
 │   │   ├── core.rs           # GarrisonCore trait
-│   │   ├── session.rs        # SessionLogic trait
+│   │   ├── session/          # SessionLogic trait（mod.rs + helpers.rs + tests.rs）
 │   │   ├── permission.rs     # PermissionLogic trait
 │   │   ├── token.rs          # TokenLogic trait
 │   │   ├── mfa.rs            # MfaLogic trait
 │   │   ├── password.rs       # PasswordLogic trait
 │   │   ├── interface.rs      # GarrisonInterface trait
-│   │   ├── util.rs           # GarrisonUtil 静态门面
+│   │   ├── util/             # GarrisonUtil 静态门面（mod.rs + tests.rs）
 │   │   ├── parameter.rs      # ParameterQuery
 │   │   └── tests.rs          # 集成测试
 │   ├── session/mod.rs        # 会话管理（GarrisonSession + SessionExpiryListener）
@@ -139,7 +139,7 @@ garrison/
 │   │   ├── mod.rs            # GarrisonDao trait + RedisDeploymentMode + RedisConfig
 │   │   ├── oxcache_impl.rs   # oxcache 实现
 │   │   ├── dbnexus_impl.rs   # dbnexus 初始化 + GarrisonMigration
-│   │   └── repository/       # Repository 层（9 trait + Sqlite/Mysql/Postgres Repository）
+│   │   └── repository/       # Repository 层（13 trait + Dbnexus*Repository 实现）
 │   ├── context/              # 请求上下文抽象
 │   │   ├── mod.rs
 │   │   ├── axum_adapter.rs   # axum 适配器
@@ -153,7 +153,7 @@ garrison/
 │   │   ├── mod.rs
 │   │   └── registry.rs       # Strategy 注册表（6 个策略 trait）
 │   ├── exception/mod.rs      # 异常系统
-│   ├── listener/mod.rs       # 事件监听（feature 门控，15 个事件变体）
+│   ├── listener/mod.rs       # 事件监听（feature 门控，31 个事件变体）
 │   ├── plugin/mod.rs         # 插件系统
 │   ├── manager/mod.rs        # GarrisonManager 全局管理器
 │   ├── json/mod.rs           # JSON 模板
@@ -171,7 +171,7 @@ garrison/
 │   ├── postgres/core/        # PostgreSQL 迁移
 │   └── duckdb/core/          # DuckDB 迁移
 ├── benches/                  # 基准测试（criterion）
-├── garrison-macros/           # 过程宏 crate（#[check_login] 等）
+├── macros/                    # 过程宏 crate garrison-macros（#[check_login] 等）
 ├── locales/                  # i18n 资源文件（zh.ftl / en.ftl）
 ├── docs/                     # 文档
 ├── Cargo.toml
@@ -334,7 +334,7 @@ Garrison 要求测试覆盖率 **≥ 95%**（当前 95%+）：
 | 协议/安全插件 | ≥ 90% |
 | Web 适配层 | 集成测试覆盖主要中间件路径即可 |
 
-- 3967+ 个测试通过（3899 lib + 68 E2E）+ doc-tests
+- 5500+ 个测试通过（5117 lib + 404 验收 E2E，合计 5521）+ doc-tests（`cargo test --list` 实测）
 - 不追求 100% 覆盖率，但每个分支必须有对应测试用例
 - 禁止通过「不写测试」来提高覆盖率的行为
 
@@ -584,7 +584,7 @@ Garrison 支持 4 个数据库后端（PostgreSQL、MySQL、SQLite、DuckDB）�
 
 ## E2E / 性能 / 渗透测试
 
-Garrison 在 `tests/e2e/` 下提供完整的端到端（E2E）测试矩阵，覆盖 API 接口测试、性能基线测试、渗透测试三大维度。所有 E2E 测试基于 `RecordingClient` 抓包 + `RemoteContext` 远程模式 + in-process 模式双轨架构，可重复、可观测、可分析。
+Garrison 在 `tests/acceptance/` 下提供完整的端到端（E2E）测试矩阵（test target 为 `--test acceptance`），覆盖 API 接口测试、性能基线测试、渗透测试三大维度。所有 E2E 测试基于 `RemoteContext` 远程模式 + in-process 模式双轨架构，可重复、可观测、可分析。
 
 ### 整体架构
 
@@ -593,11 +593,10 @@ flowchart TD
     Start["bash scripts/e2e_run.sh"] --> Env["export env (API Key / Port / RateLimit)"]
     Env --> Spawn["spawn auth_server_serve (background)"]
     Spawn --> Health["curl health check (30 次重试)"]
-    Health -->|OK| E2E["cargo test --test e2e (in-process + remote + 4 类 API)"]
+    Health -->|OK| E2E["cargo test --test acceptance (in-process + remote)"]
     Health -->|Fail| Exit["exit 1"]
-    E2E --> Perf["cargo test --test e2e -- --ignored perf_"]
-    Perf --> Pentest["cargo test --test e2e pentest::"]
-    Pentest --> Analyze["python3 scripts/e2e_analyze.py"]
+    E2E --> Perf["cargo test --test acceptance -- --ignored perf_"]
+    Perf --> Analyze["python3 scripts/e2e_analyze.py"]
     Analyze --> Report["logs/e2e_final_report.md"]
     Report --> Done["✅ 全部完成"]
 ```
@@ -624,7 +623,7 @@ bash scripts/e2e_run.sh
 
 | 变量名 | 默认值 | 说明 |
 |--------|--------|------|
-| `EXAMPLE_INTERNAL_API_KEY` | `e2e-test-key-12345` | 内网 API Key（必须设置，否则 `serve()` fail-closed 退出） |
+| `EXAMPLE_INTERNAL_API_KEY` | **无默认，必须显式设置** | 内网 API Key。脚本 fail-closed：未设置即退出码 1（不再硬编码默认 key，避免生产环境误用 e2e 测试 key）。例：`EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh` |
 | `GARRISON_EXTERNAL_PORT` | `8080` | 外网端口（登录 / 刷新 / 登出端点） |
 | `GARRISON_INTERNAL_PORT` | `8081` | 内网端口（check-login / check-permission / check-role 端点，需 `x-api-key`） |
 | `GARRISON_RATE_LIMIT` | `100000` | 限速阈值（性能测试需 RPS≥1000/5000，必须远高于默认 100） |
@@ -635,13 +634,12 @@ bash scripts/e2e_run.sh
 
 | 文件 | 格式 | 写入者 | 内容 |
 |------|------|--------|------|
-| `logs/e2e_http.jsonl` | JSONL（每行 1 个 JSON） | `RecordingClient::send()` | 所有 HTTP 交互（请求/响应/耗时） |
-| `logs/perf.jsonl` | JSONL（每行 1 个 LoadReport） | `perf.rs::append_perf_report` | 性能基线测试报告（P50/P95/P99/RPS） |
-| `logs/pentest_report.json` | JSONL（每行 1 个 PentestFinding） | `pentest::write_finding` | 渗透测试发现（攻击类型/payload/严重级别） |
-| `logs/e2e_summary.json` | JSON | `log_analyzer::analyze_http_log` | HTTP 交互统计聚合（状态码分布/百分位/异常列表） |
-| `logs/e2e_final_report.md` | Markdown | `scripts/e2e_analyze.py` | 综合报告（4 节：HTTP 统计 / 性能基线 / 渗透矩阵 / 异常列表） |
+| `logs/perf.jsonl` | JSONL（每行 1 个 LoadReport） | `tests/acceptance/concurrency.rs` 的 `perf_util::append_perf_report` | 性能基线测试报告（P50/P95/P99/RPS） |
+| `logs/e2e_final_report.md` | Markdown | `scripts/e2e_analyze.py` | 综合报告（HTTP 统计 / 性能基线 / 渗透矩阵 / 异常列表） |
 
-### 性能基线测试（`tests/e2e/perf.rs`）
+> `scripts/e2e_analyze.py` 还会尝试读取 `logs/e2e_http.jsonl` 与 `logs/pentest_report.json`，但当前测试套件已不产生这两个文件——缺失时报告相应章节显性标注「不存在」。
+
+### 性能基线测试（`tests/acceptance/concurrency.rs`，`perf_util` 模块）
 
 性能测试使用自实现的 `LoadRunner`（约 100 行 Rust，无外部依赖），覆盖 3 个端点：
 
@@ -657,7 +655,7 @@ bash scripts/e2e_run.sh
 
 ```bash
 # 单独跑性能测试（建议 release 模式）
-cargo test --test e2e --features "full testing" --release -- --ignored perf_ --test-threads=1 --nocapture
+cargo test --test acceptance --features "full testing" --release -- --ignored perf_ --test-threads=1 --nocapture
 
 # 或通过 e2e_run.sh 一键执行（debug 模式可能不达标，仅记录数据）
 bash scripts/e2e_run.sh
@@ -665,51 +663,47 @@ bash scripts/e2e_run.sh
 
 > **Debug vs Release 差异**：debug 模式下 P99/RPS 可能不达标（审计日志同步 stderr 写入 + 无优化 + 子进程开销）。性能基线建议在 `--release` 模式下验证。spec 已预判此偏差：性能测试失败时记录实际数值并分析瓶颈，但不阻塞任务完成。
 
-### 渗透测试 7 类覆盖（`tests/e2e/pentest/`）
+### 渗透测试 7 类覆盖（`tests/acceptance/security.rs`，`acc_sec_021`–`acc_sec_030`）
 
-渗透测试覆盖 OWASP Top 10 主要攻击向量，7 类攻击 × N payload 矩阵：
+渗透测试覆盖 OWASP Top 10 主要攻击向量，7 类攻击 × N payload 矩阵。原独立的 `tests/e2e/pentest/` 套件已并入 `security.rs` 的验收场景，payload 集合原样保留：
 
-| 攻击类型 | 子模块 | Payload 数 | 说明 |
-|---------|--------|-----------|------|
-| SQL 注入 | `sql_injection.rs` | 8 | 布尔盲注 / 报错注入 / 数据破坏 / 命令执行 / 时间盲注 |
-| XSS 跨站脚本 | `xss.rs` | 10 | `<script>` / onerror / onload / `javascript:` 伪协议 / `data:` URI |
-| CSRF 跨站请求伪造 | `csrf.rs` | 2 | Origin/Referer 校验（API 模式天然免疫 Cookie CSRF） |
-| 认证绕过 | `auth_bypass.rs` | 10 | 空值 / `"null"` / `"admin"` / JWT alg:none / Bearer 混淆 |
-| 权限提升 | `privilege_escalation.rs` | 2 | 跨租户隔离 + 越权访问（`admin:*`） |
-| 会话劫持 | `session_hijack.rs` | 1 | 并发登录互踢（`is_concurrent=false`） |
-| 暴力破解 | `brute_force.rs` | 13 | 100 次同 login_id 锁定 + 100 字典 login_id 攻击 |
+| 攻击类型 | 验收场景 | Payload 数 | 说明 |
+|---------|---------|-----------|------|
+| SQL 注入 | `acc_sec_022_sql_injection_login_id_no_crash_no_leak` | 8 | 布尔盲注 / 报错注入 / 数据破坏 / 注释绕过 / 命令执行 / 时间盲注；另断言响应体不含 SQL 错误关键字 |
+| XSS 跨站脚本 | `acc_sec_023_xss_login_id_not_reflected` | 10 | `<script>` / onerror / svg onload / `javascript:` 伪协议 / `data:` URI |
+| CSRF 跨站请求伪造 | `acc_sec_024_csrf_api_mode_origin_behavior` | — | Origin/Referer 校验（API 模式天然免疫 Cookie CSRF） |
+| 认证绕过 | `acc_sec_021_forged_tokens_authentication_bypass_rejected` | 10 | 空值 / `"null"` / `"admin"` / JWT alg:none / Bearer 混淆 |
+| 权限提升 | `acc_sec_026_normal_user_admin_privilege_denied`、`acc_sec_030_unknown_token_cannot_access_protected_admin` | — | 跨租户隔离 + 越权访问（`admin:*`） |
+| 会话劫持 | `acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device` | — | 并发登录互踢（`is_concurrent=false`） |
+| 暴力破解 | `acc_sec_027_brute_force_same_login_100_attempts_429`、`acc_sec_028_dictionary_100_logins_no_crash` | — | 100 次同 login_id 锁定 + 100 字典 login_id 攻击 |
 
-每条攻击 payload 执行后调用 `pentest::write_finding` 记录 finding（含 `attack_type` / `payload` / `endpoint` / `status` / `bypassed` / `severity` / `recommendation`），即使断言通过（未发现漏洞）也写入 `logs/pentest_report.json` 便于事后审计与回归基线对比。
+另有 `acc_sec_025_cross_tenant_token_isolation` 覆盖跨租户 token 隔离。所有场景以 `is_denied` 统一判定「拒绝语义」（`data=false` / `error_code` 非空 / 4xx），不做 finding 文件落盘——断言直接体现在测试结果中。
 
 #### 触发渗透测试
 
 ```bash
-# 单独跑渗透测试
-cargo test --test e2e --features "full testing" pentest:: -- --nocapture --test-threads=1
+# 单独跑渗透测试场景
+cargo test --test acceptance --features "full testing" acc_sec_02 -- --nocapture --test-threads=1
 ```
 
-### E2E 测试矩阵（`tests/e2e/api_*.rs`）
+### E2E 测试矩阵（`tests/acceptance/`）
 
-API 接口测试覆盖 4 类边界：
+API 接口验收场景按域拆分，target 为 `acceptance`（子模块由 `tests/acceptance.rs` 以 `#[path]` 注册）：
 
-| 类别 | 文件 | 测试数 | 覆盖场景 |
-|------|------|--------|---------|
-| Happy path | `api_happy.rs` | 5 | login/logout/refresh/check-permission/check-role/switch-to/kickout |
-| Errors | `api_errors.rs` | 3 | 8 种无效 token + 6 种坏 body + oversized field |
-| Boundary | `api_boundary.rs` | 3 | login_id 长度边界 + 并发 refresh + 50 次 refresh 链 |
-| Authz boundary | `api_authz_boundary.rs` | 7 | 401 / kickout / 跨租户 / refresh 后旧 token / 角色不足 / disabled token / 匿名 token |
+| 域 | 文件 | 覆盖场景 |
+|----|------|---------|
+| 认证 / 协议 | `authentication.rs`、`protocol_jwt.rs`、`protocol_mixed.rs`、`protocol_oauth2.rs` | login/logout/refresh/check-permission/check-role/kickout，多协议混跑 |
+| 授权 | `rbac.rs` | 角色 / 权限矩阵与越权边界 |
+| 会话 | `session.rs` | 生命周期、并发、失效 |
+| 安全 | `security.rs` | TOTP / HTTP Basic & Digest / 口令策略 / HIBP / 掩码 / XSS 清洗 / 常量时间比较 + 渗透场景 |
+| 存储 / 仓储 | `storage.rs`、`repository.rs` | 三层缓存与 Repository 契约 |
+| 韧性 | `resilience.rs` | 故障注入与恢复 |
+| Web | `web_axum.rs`、`web_actix.rs`、`web_warp.rs`、`web_smoke.rs` | 三框架适配与中间件路径 |
+| 扫码登录 | `qrlogin.rs` | Web 扫码 + App 确认，两票分离 |
+
+各域的测试数见 [🧪 测试场景矩阵](TEST_SCENARIOS.md)。
 
 ### 日志分析与报告生成
-
-#### Rust 端：`tests/e2e/log_analyzer.rs`
-
-`analyze_http_log(input, output)` 逐行读取 `logs/e2e_http.jsonl`，聚合统计后写入 `logs/e2e_summary.json`：
-
-```rust
-pub fn analyze_http_log(input: &Path, output: &Path) -> std::io::Result<Summary>
-```
-
-`Summary` 字段：`total` / `status_distribution` / `avg_latency_ms` / `p95_latency_ms` / `p99_latency_ms` / `failed_requests` / `oversized_responses`。
 
 #### Python 端：`scripts/e2e_analyze.py`
 
@@ -731,19 +725,16 @@ python3 scripts/e2e_analyze.py --log-dir /path/to/logs
 ### 手动触发各类测试
 
 ```bash
-# 1. 全量 E2E 测试（含 in-process + remote + 4 类 API + 渗透，不含 #[ignore] 性能）
-cargo test --test e2e --features "full testing" -- --nocapture
+# 1. 全量验收测试（含 in-process + remote，不含 #[ignore] 性能）
+cargo test --test acceptance --features "full testing" -- --nocapture
 
-# 2. 仅运行 log_analyzer 单元测试
-cargo test --test e2e --features "full testing" log_analyzer:: -- --nocapture
+# 2. 仅运行性能测试（#[ignore]）
+cargo test --test acceptance --features "full testing" -- --ignored perf_ --test-threads=1 --nocapture
 
-# 3. 仅运行性能测试（#[ignore]）
-cargo test --test e2e --features "full testing" -- --ignored perf_ --test-threads=1 --nocapture
+# 3. 仅运行渗透测试场景
+cargo test --test acceptance --features "full testing" acc_sec_02 -- --nocapture --test-threads=1
 
-# 4. 仅运行渗透测试
-cargo test --test e2e --features "full testing" pentest:: -- --nocapture --test-threads=1
-
-# 5. 仅生成 Markdown 综合报告（不跑测试，基于已有 logs/）
+# 4. 仅生成 Markdown 综合报告（不跑测试，基于已有 logs/）
 python3 scripts/e2e_analyze.py --log-dir logs
 ```
 

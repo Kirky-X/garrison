@@ -426,7 +426,6 @@ async fn acc_sec_010_policy_length_rule_rejects_short() {
     // 边界：== min 通过，min-1 拒绝
     assert!(rule.validate(&ctx, "12345678").is_ok(), "== min 应通过");
     assert!(rule.validate(&ctx, "1234567").is_err(), "min-1 应拒绝");
-    // 超长拒绝
     assert!(
         LengthRule::new(4, 10)
             .validate(&ctx, "12345678901")
@@ -512,7 +511,6 @@ async fn acc_sec_012_policy_common_weak_password_rejected() {
         "精确匹配不应命中子串"
     );
 
-    // 黑名单
     let blacklist = BlacklistRule::new(vec!["password".to_string()]);
     assert_eq!(
         blacklist.validate(&ctx, "password").unwrap_err().rule_name,
@@ -520,7 +518,6 @@ async fn acc_sec_012_policy_common_weak_password_rejected() {
     );
     assert!(blacklist.validate(&ctx, "secure-pw").is_ok());
 
-    // 字典单词
     let dict = DictionaryRule::new(vec!["hello".to_string()]);
     assert_eq!(
         dict.validate(&ctx, "hello").unwrap_err().rule_name,
@@ -789,12 +786,9 @@ async fn acc_sec_019_sanitize_strips_attack_chars_and_limits_length() {
 async fn acc_sec_020_ct_eq_constant_time_semantics() {
     use garrison::secure::ct_eq::constant_time_eq;
 
-    // 相等
     assert!(constant_time_eq(b"secret-key", b"secret-key"));
     assert!(constant_time_eq(b"", b""), "空串相等应为 true");
-    // 不相等（等长）
     assert!(!constant_time_eq(b"secret-key", b"secret-kez"));
-    // 长度不同
     assert!(!constant_time_eq(b"abc", b"abcd"));
     assert!(!constant_time_eq(b"abcd", b"abc"));
     // 长输入不 panic（隐蔽长度差异）
@@ -1376,7 +1370,6 @@ async fn acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device()
         start_garrison_server(100, "test-key", config).await;
     let client = tenant_client();
 
-    // deviceA 登录
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({

@@ -544,7 +544,6 @@ impl AuthExecutor {
                 if let Some(t) = step_token {
                     *token = Some(t);
                 }
-                // 检查 pause_after_step 标记
                 if let Some(pause_str) = ctx.extras.get("pause_after_step") {
                     if pause_str.parse::<usize>().ok() == Some(index) && index + 1 < steps.len() {
                         let challenge = self.step_challenge(&steps[index + 1]);
@@ -670,7 +669,6 @@ impl AuthExecutor {
         #[cfg(not(feature = "metrics-prometheus"))]
         let _ = metrics;
 
-        // 锁定检查
         if let Some(result) = self.check_login_lockout(ctx).await? {
             return Ok(result);
         }
@@ -686,7 +684,6 @@ impl AuthExecutor {
             },
         };
 
-        // 需要 user_id
         let user_id = match &ctx.user_id {
             Some(id) => id.clone(),
             None => {
@@ -697,7 +694,6 @@ impl AuthExecutor {
             },
         };
 
-        // 查询凭证
         let creds = self
             .credential_repo
             .find_by_user_and_type(&user_id, credential_type)
@@ -710,7 +706,6 @@ impl AuthExecutor {
             )));
         }
 
-        // 构造 Credential 并校验
         let cred = builder.build(creds[0].clone())?;
         #[cfg(feature = "metrics-prometheus")]
         let verify_start = std::time::Instant::now();
@@ -810,7 +805,6 @@ impl AuthExecutor {
                     },
                 };
 
-                // 需要 user_id
                 let user_id = match &ctx.user_id {
                     Some(id) => id.clone(),
                     None => {
@@ -818,7 +812,6 @@ impl AuthExecutor {
                     },
                 };
 
-                // 查询凭证
                 let creds = self
                     .credential_repo
                     .find_by_user_and_type(&user_id, cred_type)
@@ -831,7 +824,6 @@ impl AuthExecutor {
                     )));
                 }
 
-                // 构造 Credential 并校验
                 let cred = builder.build(creds[0].clone())?;
                 #[cfg(feature = "metrics-prometheus")]
                 let verify_start = std::time::Instant::now();
@@ -984,7 +976,6 @@ impl AuthExecutor {
             },
         };
 
-        // 用 login_id 建立本地会话
         let token = self.logic.login(&login_id, &LoginParams::default()).await?;
 
         // 写回 ctx.user_id（供后续步骤如 Mfa 使用）
@@ -1054,7 +1045,6 @@ impl AuthExecutor {
             },
         };
 
-        // 用 login_id 建立本地会话
         let token = self.logic.login(&login_id, &LoginParams::default()).await?;
 
         // 写回 ctx.user_id（供后续步骤使用）
@@ -1829,7 +1819,6 @@ mod tests {
             dao,
         ));
 
-        // 记录 2 次失败触发临时锁定
         lockout.record_failure("alice").await.unwrap();
         lockout.record_failure("alice").await.unwrap();
 
@@ -2220,7 +2209,6 @@ mod tests {
             password_verify_result: true,
             totp_verify_result: false,
         };
-        // 单步流程：仅一个 Login 步骤
         let flow = FlowBuilder::new("single").login("password").build();
         let mut ctx = make_context("alice", "correct-password");
         // pause_after_step = 0 = 最后一步索引，无 next_step，不应触发 Pending
@@ -2265,7 +2253,6 @@ mod tests {
                 AuthStep::Login {
                     credential_type: "password".to_string(),
                 },
-                // else_step=Some(Login verify=false → Failed)
                 Some(AuthStep::Login {
                     credential_type: "password".to_string(),
                 }),
@@ -2429,7 +2416,6 @@ mod tests {
                 AuthStep::RequiredAction {
                     action: "verify_email".to_string(),
                 },
-                // else_step: None（条件为真时不执行）
                 None,
             )
             .build();
@@ -2666,7 +2652,6 @@ mod tests {
         assert!(wl.contains("172.16.5.7"));
         assert!(!wl.contains("172.16.5.8"));
         assert!(!wl.contains("not-an-ip"));
-        // 非法 CIDR 解析返回显性错误
         let err = IpWhitelist::parse(&["10.0.0.0/99".to_string()]).unwrap_err();
         match err {
             GarrisonError::InvalidParam(msg) => assert!(msg.contains("10.0.0.0/99")),
@@ -2690,7 +2675,6 @@ mod tests {
             password_verify_result: true,
             totp_verify_result: false,
         };
-        // 两步流程：Login + Login
         let flow = FlowBuilder::new("two-login")
             .login("password")
             .login("totp")
@@ -2760,21 +2744,18 @@ mod tests {
             totp_verify_result: false,
         };
 
-        // Step 1: wrong → record_failure (count=1)
         let mut ctx1 = make_context("alice", "wrong");
         let _ = executor
             .execute_with_builder(&flow, &mut ctx1, &builder_fail)
             .await
             .unwrap();
 
-        // Step 2: correct → record_success (count=0)
         let mut ctx2 = make_context("alice", "correct");
         let _ = executor
             .execute_with_builder(&flow, &mut ctx2, &builder_ok)
             .await
             .unwrap();
 
-        // Step 3: wrong → record_failure (count=1)
         let mut ctx3 = make_context("alice", "wrong");
         let _ = executor
             .execute_with_builder(&flow, &mut ctx3, &builder_fail)
@@ -2839,7 +2820,6 @@ mod tests {
             totp_verify_result: false,
         };
 
-        // Step 1: wrong → record_failure (count=1 >= max_failure_factor=1 → 已锁定)
         let mut ctx1 = make_context("alice", "wrong");
         let r1 = executor
             .execute_with_builder(&flow, &mut ctx1, &builder_fail)
@@ -2851,7 +2831,6 @@ mod tests {
             r1
         );
 
-        // Step 2: correct → lockout.check 拦截（record_failure 已在 step 1 调用）
         let mut ctx2 = make_context("alice", "correct");
         let r2 = executor
             .execute_with_builder(&flow, &mut ctx2, &builder_ok)
@@ -3008,7 +2987,6 @@ mod tests {
 
         match result {
             AuthResult::Success { login_id, .. } => {
-                // user_id=None → unwrap_or_default() → ""
                 assert_eq!(login_id, "", "user_id=None 时 login_id 应为空串");
             },
             other => panic!(
@@ -3886,7 +3864,6 @@ mod tests {
                 },
                 other => panic!("应为 Success，实际: {:?}", other),
             }
-            // 验证 resolver 内部确实调用了 exchange_token
             assert_eq!(wechat.exchange_count(), 1, "exchange_token 应被调用 1 次");
         }
 
@@ -3976,7 +3953,6 @@ mod tests {
             let builder = dummy_builder();
             let sso_resolver = MockSsoServerResolver::new();
 
-            // 测试 wechat → login_id = "wx_openid"
             let flow_w = FlowBuilder::new("w").social("wechat").build();
             let mut ctx_w = make_context("", "code_w");
             ctx_w.extras.insert("state".to_string(), "s".to_string());
@@ -3995,7 +3971,6 @@ mod tests {
                 other => panic!("wechat 应返回 Success，实际: {:?}", other),
             }
 
-            // 测试 alipay → login_id = "alipay_uid"
             let flow_a = FlowBuilder::new("a").social("alipay").build();
             let mut ctx_a = make_context("", "code_a");
             ctx_a.extras.insert("state".to_string(), "s".to_string());
@@ -4160,7 +4135,6 @@ mod tests {
                 .sso("keycloak")
                 .build();
 
-            // 第一步：社交登录（ctx.input = auth code）
             let mut ctx = make_context("", "auth_code");
             ctx.extras.insert("state".to_string(), "s".to_string());
             ctx.extras
@@ -4465,7 +4439,6 @@ mod tests {
     #[tokio::test]
     async fn mock_methods_coverage_credential_repo_interface_credential() {
         let repo = MockCredentialRepository::default();
-        // create + update + delete
         repo.create(make_credential_model("c1", "u1", "password"))
             .await
             .unwrap();

@@ -237,7 +237,6 @@ impl SmsRateLimiter {
             first_err.get_or_insert(e);
         }
 
-        // 递减天窗口计数
         let day_key = format!("sms:rate:{}:day:{}", phone, windows.date);
         if let Err(e) = Self::decrement_counter(&*self.dao, &day_key).await {
             tracing::warn!(error = %e, key = %day_key, "rollback daily window counter failed");

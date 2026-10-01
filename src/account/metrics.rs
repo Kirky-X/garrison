@@ -333,7 +333,6 @@ mod tests {
             "missing totp label: {}",
             output
         );
-        // password 标签应观测 2 次
         assert!(
             output.contains(
                 "garrison_credential_verify_duration_seconds_count{credential_type=\"password\"} 2"

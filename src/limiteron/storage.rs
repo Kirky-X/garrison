@@ -65,17 +65,14 @@ mod tests {
     async fn storage_get_set_delete() {
         let storage = GarrisonDaoStorage::new(make_dao());
 
-        // 初始 get 返回 None
         assert!(storage.get("key1").await.unwrap().is_none());
 
-        // set + get
         storage.set("key1", "value1", Some(60)).await.unwrap();
         assert_eq!(
             storage.get("key1").await.unwrap(),
             Some("value1".to_string())
         );
 
-        // delete + get
         storage.delete("key1").await.unwrap();
         assert!(storage.get("key1").await.unwrap().is_none());
     }

@@ -20,7 +20,7 @@ flowchart TD
     subgraph Stage1["阶段 1: 前置检查（并行，任一失败阻断）"]
       Lint["lint-check<br/>fmt + clippy"]
       Test["test-check<br/>lib + E2E"]
-      Sec["security-check<br/>cargo audit + deny"]
+      Sec["security-check<br/>cargo deny"]
       Doc["doc-check<br/>cargo doc 零警告"]
     end
     Stage1 --> Stage2["阶段 2: version-consistency<br/>Cargo.toml == CHANGELOG == tag<br/>提取 CHANGELOG body"]
@@ -38,7 +38,7 @@ flowchart TD
 - **Cargo.toml `[package].version` 字段**：`{Major}.{Minor}.{Patch}`（如 `0.7.1`）
 - **docs/CHANGELOG.md**：每次发布新增 `## [{version}] - {YYYY-MM-DD}` 章节
 - **规则 29 例外**：Cargo.toml 的 `[dependencies]` 版本用 `x.x` 格式（无 patch 段），但 `[package].version` 仍用 `x.x.x`（与 crates.io / git tag 一致）
-- **Workspace 成员**：`bump-version` 子命令只更新主包 `Cargo.toml`。如需同步 `garrison-macros` / `examples` 版本，需手动修改对应 `Cargo.toml`
+- **Workspace 成员**：`macros/Cargo.toml` 与 `examples/Cargo.toml` 均为 `version.workspace = true`，无独立 version 字段。`bump-version` 子命令的 sed 只替换首个 `^version = ".+"` 行（即主包 `[package].version`），**不会**触及主 `Cargo.toml` 的 `[workspace.package].version`——后者需手动同步，否则 workspace 成员版本与主包脱节
 
 ## ✅ 发布前检查清单
 
@@ -157,7 +157,7 @@ tag push 会自动触发 `.github/workflows/release.yml`，包含 5 个阶段 8 
 
 1. **lint-check**（阶段 1 并行）：fmt + clippy
 2. **test-check**（阶段 1 并行）：lib + E2E 测试
-3. **security-check**（阶段 1 并行）：cargo audit + cargo deny
+3. **security-check**（阶段 1 并行）：cargo deny（advisory/license/ban/source；独立 cargo-audit job 已删除——cargo-deny 已覆盖漏洞检查，避免维护两份忽略列表。`cargo audit` 仍作为本地 precheck 步骤，见下方检查清单）
 4. **doc-check**（阶段 1 并行）：cargo doc 零警告
 5. **version-consistency**（阶段 2）：Cargo.toml == CHANGELOG == tag，提取 CHANGELOG body
 6. **publish-crates-io**（阶段 3）：`cargo publish` 发布到 crates.io

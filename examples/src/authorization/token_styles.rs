@@ -61,11 +61,9 @@ pub fn run() -> GarrisonResult<()> {
     let token = simple_style.generate("2002", 3600)?;
     println!("[3] SimpleTokenStyle:");
     println!("    token = {}", token);
-    // verify 解析出 login_id
     let login_id = simple_style.verify(&token)?;
     assert_eq!(login_id, Some("2002".to_string()));
     println!("    verify 解析 login_id = {:?}", login_id);
-    // parse 返回 TokenClaims
     let claims = simple_style.parse(&token)?;
     assert_eq!(claims.login_id, "2002");
     println!(
@@ -98,7 +96,6 @@ pub fn run() -> GarrisonResult<()> {
         )?;
         let jwt_token = jwt_handler.generate("3003", 3600)?;
         println!("\n    jwt → {}", jwt_token);
-        // verify 解析 login_id
         assert_eq!(jwt_handler.verify(&jwt_token)?, Some("3003".to_string()));
         println!("    jwt verify 解析 login_id = Some(3003) ✓");
     }

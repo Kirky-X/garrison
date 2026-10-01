@@ -13,6 +13,9 @@ use super::current_token;
 use super::GarrisonLogicDefault;
 #[cfg(feature = "protocol-jwt")]
 use crate::config::GarrisonConfig;
+// 仅 mfa-recovery 的 key 构造（code_key/misuse_key）使用；不门控会在
+// 关闭 mfa-recovery 的 feature 组合下产生 unused_imports 告警。
+#[cfg(feature = "mfa-recovery")]
 use crate::constants::DaoKeyPrefix;
 #[cfg(feature = "protocol-jwt")]
 use crate::context::{build_set_cookie_value, CookieType};
@@ -20,6 +23,9 @@ use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
+// 仅 protocol-webauthn（RequiredActionProvider 注册）与 mfa-recovery
+// （RecoveryCodeManager）使用；两者全关的 feature 组合下为 unused_imports。
+#[cfg(any(feature = "protocol-webauthn", feature = "mfa-recovery"))]
 use std::sync::Arc;
 
 /// MFA 逻辑 trait，定义二级认证与账号禁用校验契约。
@@ -832,6 +838,9 @@ pub enum RecoveryVerify {
 /// 并发竞态（verify 与 consume 之间、并发 consume 之间）由
 /// [`GarrisonDao::compare_and_swap`] 的 CAS 语义消除：置已用只在当前值为
 /// `"unused"` 时成功，双花不可能发生。
+// 与下方 impl 块同门控：struct 若独立于 feature 存在，关闭 mfa-recovery 时
+// 字段无任何读取点，会产生 dead_code 告警（clippy -D warnings 下为 error）。
+#[cfg(feature = "mfa-recovery")]
 pub struct RecoveryCodeManager {
     dao: Arc<dyn GarrisonDao>,
     /// 误用豁免额度（默认 0）：连续无效 verify 超过该次数即锁定。
@@ -1247,7 +1256,6 @@ impl MfaLogic for GarrisonLogicDefault {
                 return Ok(());
             },
         };
-        // 检查封禁状态
         if self
             .disable_repository
             .is_disable(&ts.login_id, "default")
@@ -2005,7 +2013,9 @@ mod tests {
             .await
             .unwrap();
         let handler = crate::protocol::jwt::JwtHandler::new("0123456789abcdef0123456789abcdef");
-        let claims = handler.verify(&token).unwrap();
+        // login 的 JWT token 盖戳 nbf=now，宿主墙钟 NTP 回跳会使紧随的 verify
+        // 误报 jwt-not-yet-valid，经 tests::verify_ok 容错（说明见该函数）。
+        let claims = crate::protocol::jwt::tests::verify_ok(&handler, &token);
         assert_eq!(
             claims.amr,
             Some(vec![PRIMARY_FACTOR_AMR.to_string()]),
@@ -2189,7 +2199,6 @@ mod tests {
             let (logic, repo, _dao) = make_logic_with_repo();
             let token = logic.login("1001", &LoginParams::default()).await.unwrap();
 
-            // 封禁该用户（定时封禁）
             let until = Utc::now() + chrono::Duration::seconds(3600);
             repo.disable("1001", "default", Some(until), 0, 3600)
                 .await
@@ -2244,7 +2253,6 @@ mod tests {
             let (logic, repo, _dao) = make_logic_with_repo();
             let token = logic.login("1003", &LoginParams::default()).await.unwrap();
 
-            // 定时封禁（until=Some(future), duration_secs=7200）
             let until = Utc::now() + chrono::Duration::seconds(7200);
             repo.disable("1003", "default", Some(until), 0, 7200)
                 .await
@@ -2710,7 +2718,6 @@ mod tests {
             provider.evaluate(&ctx, &threshold).await.unwrap(),
             "过期会话应触发 Required Action"
         );
-        // challenge：产出非空挑战
         let challenge = provider.challenge(&ctx).await.unwrap();
         assert_eq!(challenge.action, "otp");
         assert!(!challenge.payload.is_empty());
@@ -2801,6 +2808,9 @@ mod tests {
     // 恢复码：批量一次性生成 / verify-consume 分离 / CAS 原子消费 / 误用容忍
     // ========================================================================
 
+    // 仅恢复码测试（cfg(mfa-recovery)）使用；不门控会在关闭该 feature 的
+    // 单测编译下产生 unused_imports 告警。
+    #[cfg(feature = "mfa-recovery")]
     use crate::dao::tests::MockDao;
     #[cfg(feature = "mfa-recovery")]
     use crate::stp::mfa::{RecoveryCodeManager, RecoveryVerify};

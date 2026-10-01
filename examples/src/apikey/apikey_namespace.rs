@@ -119,7 +119,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let handler = ApiKeyHandler::new(dao);
 
-    // 1. 在 tenant-A namespace 下生成两个 key
     println!("[1] 在 tenant-A namespace 下生成 key");
     let key_a1 = handler
         .generate_with_namespace("1001", "tenant-A", vec!["read".into()], 3600)
@@ -132,7 +131,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(key_a1.contains('.'), "key 应为 key_id.key_secret 双段格式");
     assert_ne!(key_a1, key_a2);
 
-    // 2. 在 tenant-B namespace 下生成一个 key
     println!("\n[2] 在 tenant-B namespace 下生成 key");
     let key_b1 = handler
         .generate_with_namespace("2001", "tenant-B", vec!["admin".into()], 3600)
@@ -187,7 +185,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "吊销后 tenant-A 应剩 1 个未吊销 key"
     );
 
-    // 7. namespace 校验规则
     println!("\n[7] namespace 校验规则（长度 1-64，仅 [a-zA-Z0-9_-]）");
     let invalid_ns = handler
         .generate_with_namespace("3001", "invalid namespace!", vec![], 3600)

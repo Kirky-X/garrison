@@ -51,10 +51,8 @@ impl GarrisonLogicDefault {
             return Ok(token);
         }
 
-        // 3. 自动生成设备指纹
         let params = self.prepare_device_fingerprint(params);
 
-        // 4. 设备绑定策略检测
         self.check_device_binding(login_id, &params).await?;
 
         // 5. 创建会话 + 强制最大登录数（含并发策略，同一 login 锁区内，消除 TOCTOU）
@@ -70,9 +68,124 @@ impl GarrisonLogicDefault {
         )
         .await?;
 
+        // 5.5 角色层级 TC 预计算 + 权限并集缓存（0.5.0 `role_hierarchy` 表接线，
+        //     见 `cache_role_union_on_login`；fail-open，不阻断登录）
+        #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+        self.cache_role_union_on_login(login_id).await;
+
         // 6. 事件通知（锁外执行，避免持锁跨 broadcast）
         self.notify_login_event(login_id, &token, &params).await;
         Ok(token)
+    }
+
+    /// 登录时角色层级 TC 预计算 + 权限并集缓存（0.5.0 `role_hierarchy` 表接线）。
+    ///
+    /// 文档意图（mdbook/src/permission-rbac.md「角色层级 hierarchy」、
+    /// docs/ROADMAP.md H6、docs/CHANGELOG.md 0.5.0「角色层级」、
+    /// `role_hierarchy.rs` 模块注释）：登录时经 `RoleHierarchyService` 预计算
+    /// `role_hierarchy` 表的传递闭包（TC）并缓存，得到「直接角色 ∪ 间接祖先」
+    /// 的权限并集，避免每次角色校验都做 DFS。
+    ///
+    /// # 流程（`login_inner` 会话创建成功后调用）
+    ///
+    /// 1. 经 firewall 策略取直接角色列表（最终来自 `GarrisonInterface::get_role_list`）
+    /// 2. 租户维度取 `TENANT` task_local（无上下文时租户 0 = 单租户默认）
+    /// 3. 逐角色 `RoleHierarchyService::get_ancestors`——未命中时 `compute_closure`
+    ///    并缓存整个租户闭包到 `tenant:{tid}:role_closure`（TTL 3600 秒）
+    /// 4. 并集写缓存 `role:cache:{login_id}`（`DaoKeyPrefix::RoleCache`，
+    ///    TTL 3600 秒，与闭包缓存一致；`dao/warmup` 的 `role:*` 预热可复用）
+    ///
+    /// # fail-open 语义
+    ///
+    /// 本步骤是缓存预热，任何失败都不阻断登录、不影响返回的 token：
+    /// - 角色列表为空：无事可做，直接返回（不触发 TC 查询、不写缓存）
+    /// - DAO 无 SQL 后端（`query_role_hierarchy_edges` trait 默认
+    ///   `NotImplemented`，如 MockDao / oxcache-only 部署）：debug 日志跳过
+    /// - 其他错误（SQL 查询 / 缓存读写失败）：warn 日志跳过
+    ///
+    /// # 调用位置
+    ///
+    /// 仅接在 `login_inner`（会话新建路径）；`login_with_token`（外部 token
+    /// 导入）与 `try_reuse_session` 复用路径不触发——复用路径下首次登录已
+    /// 写入缓存。运行时角色校验（`GarrisonPermissionStrategyDefault::expand_roles`）
+    /// 仍走 builder 注入的 `role_hierarchy` 映射，与本缓存互补、互不依赖。
+    ///
+    /// # Feature gate
+    ///
+    /// `RoleHierarchyService` 依赖 SQL 查询，门控
+    /// `any(db-sqlite, db-postgres, db-mysql)`，与本方法一致。
+    #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+    pub(super) async fn cache_role_union_on_login(&self, login_id: &str) {
+        // 1. 直接角色列表（fail-open：取角色失败跳过预热，不影响登录）
+        let roles = match self.firewall.get_role_list(login_id).await {
+            Ok(roles) => roles,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    login_id = %login_id,
+                    "role union cache: get_role_list failed, skip (fail-open)"
+                );
+                return;
+            },
+        };
+        if roles.is_empty() {
+            return;
+        }
+
+        // 2. 租户维度（与 permission.rs firewall 回退路径同口径：无上下文视为租户 0）
+        let tenant_id = crate::context::tenant::TENANT
+            .try_get()
+            .map(|ctx| ctx.tenant_id)
+            .unwrap_or(0);
+
+        // 3. TC 预计算：get_ancestors 未命中时 compute_closure 并缓存租户闭包
+        let service = crate::dao::repository::role_hierarchy::RoleHierarchyService::new(
+            self.session.dao().clone(),
+        );
+        let mut union: std::collections::HashSet<String> = roles.iter().cloned().collect();
+        for role in &roles {
+            match service.get_ancestors(role, tenant_id).await {
+                Ok(ancestors) => union.extend(ancestors),
+                Err(GarrisonError::NotImplemented(_)) => {
+                    // DAO 无 SQL 后端（MockDao / oxcache-only 部署）：
+                    // 常规能力缺失而非故障，debug 级跳过，避免每次登录 warn 刷屏
+                    tracing::debug!(
+                        login_id = %login_id,
+                        "role union cache: dao has no SQL backend, skip"
+                    );
+                    return;
+                },
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        login_id = %login_id,
+                        "role union cache precompute failed, skip (fail-open)"
+                    );
+                    return;
+                },
+            }
+        }
+
+        // 4. 缓存权限并集（直接角色 ∪ TC 祖先），TTL 与闭包缓存一致 3600 秒
+        let key = crate::constants::DaoKeyPrefix::RoleCache.build_key(login_id);
+        match serde_json::to_string(&union) {
+            Ok(json) => {
+                if let Err(e) = self.session.dao().set(&key, &json, 3600).await {
+                    tracing::warn!(
+                        error = %e,
+                        login_id = %login_id,
+                        "role union cache write failed (fail-open)"
+                    );
+                }
+            },
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    login_id = %login_id,
+                    "role union cache serialize failed (fail-open)"
+                );
+            },
+        }
     }
 
     /// 锁内公共序列：并发策略检查 + 创建会话 + 强制最大登录数。

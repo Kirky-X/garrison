@@ -170,7 +170,6 @@ mod tests {
             "应至少有 2 个警告（Cyrillic 'а' 与 Cyrillic 'о'），实际: {}",
             warnings.len()
         );
-        // 验证两个 Cyrillic 字符都被检测到
         let chars: Vec<char> = warnings.iter().map(|w| w.char).collect();
         assert!(chars.contains(&'\u{0430}'), "应检测到 Cyrillic 'а'");
         assert!(chars.contains(&'\u{043E}'), "应检测到 Cyrillic 'о'");

@@ -882,7 +882,6 @@ dzWfBsm+KAfTJuqbV7VnJL3G
         assert!(jwk.crv.is_none() && jwk.x.is_none() && jwk.y.is_none());
         assert_eq!(jwk.kid, set2.keys[0].kid, "同密钥多次导出 kid 必须一致");
         assert!(!jwk.kid.is_empty());
-        // 序列化无私钥字段
         let json = serde_json::to_string(jwk).unwrap();
         assert!(!json.contains("private"), "JWK 不得含私钥字段");
         assert!(json.contains("\"use\":\"sig\"") && json.contains("\"kid\":"));

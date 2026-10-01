@@ -487,10 +487,8 @@ mod tests {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let server =
             DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
-        // 销毁不存在的票据
         let result = server.destroy_ticket("nonexistent-ticket").await;
         assert_eq!(result.unwrap(), (), "销毁不存在的票据应返回 Ok(())（幂等）");
-        // 销毁存在的票据
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let result1 = server.destroy_ticket(&ticket).await;
         let result2 = server.destroy_ticket(&ticket).await;

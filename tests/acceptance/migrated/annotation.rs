@@ -192,7 +192,6 @@ async fn protected_without_token_returns_401() {
     let response = app.oneshot(make_request("/protected", None)).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
-    // 验证响应体包含错误信息
     let body = response.into_body().collect().await.unwrap().to_bytes();
     let body_str = String::from_utf8(body.to_vec()).unwrap();
     assert!(

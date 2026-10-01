@@ -140,7 +140,6 @@ async fn verify_expired_returns_error() {
     let handler = make_handler();
     // 生成一个 1 秒过期的 key
     let key = handler.generate("1001", vec![], 1).await.unwrap();
-    // 等待 2 秒
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     let result = handler.verify(&key).await;
     assert!(result.is_err());
@@ -161,7 +160,6 @@ async fn revoke_success() {
     let key = handler.generate("1001", vec![], 3600).await.unwrap();
     let result = handler.revoke(&key).await;
     assert_eq!(result.unwrap(), (), "撤销存在的 API key 应返回 Ok(())");
-    // 再次 verify 应失败
     let verify_result = handler.verify(&key).await;
     assert!(
         matches!(verify_result, Err(GarrisonError::InvalidToken(_))),
@@ -200,10 +198,8 @@ async fn rotate_success() {
         new_key.contains('.'),
         "新 key 应为 key_id.key_secret 双段格式"
     );
-    // old_key 应被吊销
     let old_result = handler.verify(&old_key).await;
     assert!(old_result.is_err());
-    // new_key 应有效，且保留 login_id 和 scopes
     let info = handler.verify(&new_key).await.unwrap();
     assert_eq!(info.login_id, "1001");
     assert_eq!(info.scopes, vec!["read".to_string()]);
@@ -229,12 +225,10 @@ async fn mock_dao_expire_and_delete_covered() {
     let dao = MockDao::new();
     dao.set("k", "v", 3600).await.unwrap();
 
-    // expire 正常键
     dao.expire("k", 7200).await.unwrap();
     let got = dao.get("k").await.unwrap();
     assert_eq!(got, Some("v".to_string()));
 
-    // delete 正常键
     dao.delete("k").await.unwrap();
     let got = dao.get("k").await.unwrap();
     assert!(got.is_none());
@@ -260,7 +254,6 @@ async fn rotate_revoked_key_returns_error() {
         .generate("1001", vec!["read".into()], 3600)
         .await
         .unwrap();
-    // 先吊销
     handler.revoke(&key).await.unwrap();
     // 再 rotate 应失败（verify 会因 revoked 返回 InvalidToken）
     let result = handler.rotate(&key).await;
@@ -342,16 +335,13 @@ async fn list_by_namespace_returns_only_matching_namespace() {
         .generate_with_namespace("2002", "partner", vec!["write".into()], 3600)
         .await
         .unwrap();
-    // 列出 internal namespace
     let internal_keys = handler.list_by_namespace("internal").await.unwrap();
     assert_eq!(internal_keys.len(), 1, "internal namespace 应有 1 个 key");
     assert_eq!(internal_keys[0].login_id, "1001");
     assert_eq!(internal_keys[0].namespace, "internal");
-    // 列出 partner namespace
     let partner_keys = handler.list_by_namespace("partner").await.unwrap();
     assert_eq!(partner_keys.len(), 1, "partner namespace 应有 1 个 key");
     assert_eq!(partner_keys[0].login_id, "2002");
-    // 不存在的 namespace 返回空
     let empty = handler.list_by_namespace("nonexistent").await.unwrap();
     assert!(empty.is_empty(), "不存在的 namespace 应返回空 Vec");
 }
@@ -370,7 +360,6 @@ async fn list_by_namespace_filters_revoked_keys() {
         .generate_with_namespace("1002", "internal", vec![], 3600)
         .await
         .unwrap();
-    // 吊销 k1
     handler.revoke(&k1).await.unwrap();
     let keys = handler.list_by_namespace("internal").await.unwrap();
     assert_eq!(keys.len(), 1, "吊销后应只剩 1 个未吊销 key");
@@ -383,7 +372,6 @@ async fn list_by_namespace_filters_revoked_keys() {
 async fn verify_with_namespace_enforces_isolation() {
     let dao = Arc::new(MockDao::new());
     let handler = ApiKeyHandler::new(dao.clone()).with_allow_global_verify(true);
-    // 在 internal namespace 生成 key
     let key = handler
         .generate_with_namespace("1001", "internal", vec!["read".into()], 3600)
         .await
@@ -423,7 +411,6 @@ async fn verify_without_namespace_scans_all_namespaces() {
 #[tokio::test]
 async fn generate_with_namespace_validates_namespace() {
     let handler = make_handler();
-    // 空字符串
     let r = handler.generate_with_namespace("1", "", vec![], 3600).await;
     assert!(
         matches!(r, Err(GarrisonError::InvalidParam(_))),
@@ -727,7 +714,6 @@ async fn e4_revoke_uses_reverse_index() {
 
     handler.revoke(&key).await.unwrap();
 
-    // verify 应失败（已吊销）
     let result = handler.verify(&key).await;
     assert!(
         matches!(result, Err(GarrisonError::InvalidToken(_))),
@@ -801,15 +787,12 @@ async fn e4_rotate_writes_index_for_new_key() {
     let new_key = handler.rotate(&old_key).await.unwrap();
     assert_ne!(old_key, new_key);
 
-    // old_key 应被吊销
     let old_result = handler.verify(&old_key).await;
     assert!(old_result.is_err(), "old_key 应被吊销");
 
-    // new_key 应有效
     let info = handler.verify(&new_key).await.unwrap();
     assert_eq!(info.login_id, "1001");
 
-    // new_key 的反向索引应存在
     let new_idx_key = format!("garrison:apikey:idx:{}", key_id_of(&new_key));
     let idx_value = dao.get(&new_idx_key).await.unwrap();
     assert!(idx_value.is_some(), "E4: rotate 后新 key 的反向索引应存在");
@@ -835,7 +818,6 @@ async fn e4_multiple_namespaces_all_indexed() {
         .await
         .unwrap();
 
-    // 三个 key 的反向索引都应存在
     for (key, ns) in &[(&k1, "internal"), (&k2, "partner"), (&k3, "default")] {
         let idx_key = format!("garrison:apikey:idx:{}", key_id_of(key));
         let idx_value = dao.get(&idx_key).await.unwrap();
@@ -854,7 +836,6 @@ async fn e4_multiple_namespaces_all_indexed() {
         );
     }
 
-    // verify 三个 key 都能通过反向索引找到
     assert_eq!(handler.verify(&k1).await.unwrap().login_id, "1001");
     assert_eq!(handler.verify(&k2).await.unwrap().login_id, "2002");
     assert_eq!(handler.verify(&k3).await.unwrap().login_id, "3003");
@@ -902,7 +883,6 @@ async fn e4_verify_falls_through_when_dao_key_deleted() {
     let dao_key = format!("garrison:apikey:internal:{}", key_id_of(&key));
     dao.delete(&dao_key).await.unwrap();
 
-    // verify 应返回 InvalidToken
     let result = handler.verify(&key).await;
     assert!(
         matches!(result, Err(GarrisonError::InvalidToken(_))),
@@ -1008,12 +988,10 @@ async fn generate_rejects_disallowed_scope() {
         ApiKeyScope::Read.as_str().to_string(),
         ApiKeyScope::Write.as_str().to_string(),
     ]);
-    // 允许的 scope 通过
     let ok = handler
         .generate("1001", vec!["read".into(), "write".into()], 3600)
         .await;
     assert!(ok.is_ok(), "允许列表内的 scope 应通过");
-    // 未知 scope 被拒
     let bad = handler.generate("1001", vec!["delete".into()], 3600).await;
     assert!(
         matches!(bad, Err(GarrisonError::InvalidParam(ref m)) if m.starts_with("apikey-scope-not-allowed::")),

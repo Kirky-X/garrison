@@ -672,7 +672,6 @@ impl DefaultOidcProvider {
             },
         };
 
-        // 4. 构造 DecodingKey 并验签
         let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e)
             .map_err(|e| GarrisonError::InvalidToken(format!("sso-oidc-rsa-build::{}", e)))?;
         let mut validation = Validation::new(Algorithm::RS256);
@@ -1226,7 +1225,6 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        // 先注册 state
         provider
             .get_authorization_url(
                 "https://sp.example.com/callback",
@@ -1273,7 +1271,6 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        // 先注册 state
         provider
             .get_authorization_url(
                 "https://sp.example.com/callback",
@@ -1847,7 +1844,6 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "secret")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        // 先注册 state
         provider
             .get_authorization_url(
                 "https://sp.example.com/callback",
@@ -1961,12 +1957,10 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        // 注册 state "abc"
         provider
             .get_authorization_url("https://sp.example.com/cb", "abc", &["openid"])
             .await
             .unwrap();
-        // 传入不匹配的 state "xyz"
         let result = provider
             .exchange_code("code", "https://sp.example.com/cb", "xyz")
             .await;
@@ -2027,17 +2021,14 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        // 注册 state
         provider
             .get_authorization_url("https://sp.example.com/cb", "one-time-state", &["openid"])
             .await
             .unwrap();
-        // 第一次：成功
         let first = provider
             .exchange_code("code", "https://sp.example.com/cb", "one-time-state")
             .await;
         assert!(first.is_ok(), "首次使用 state 应成功");
-        // 第二次：失败（state 已被消费）
         let second = provider
             .exchange_code("code", "https://sp.example.com/cb", "one-time-state")
             .await;
@@ -2124,7 +2115,6 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(dao.clone());
-        // 连续注册 3 个 state 均应成功
         for state in ["state-1", "state-2", "state-3"] {
             provider
                 .get_authorization_url("https://cb.com/cb", state, &["openid"])
@@ -2386,7 +2376,6 @@ mod tests {
         let provider = DefaultOidcProvider::new(config, "cid", "cs")
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
-        // 先注册 state
         provider
             .get_authorization_url("https://sp.example.com/cb", "state-e2", &["openid"])
             .await
@@ -2490,13 +2479,11 @@ mod tests {
             .with_dao(Arc::new(InMemoryDao::new()))
             .with_state_ttl(Duration::from_millis(50));
 
-        // 注册 state
         provider
             .get_authorization_url("https://sp.example.com/cb", "state-ttl-test", &["openid"])
             .await
             .unwrap();
 
-        // 等待过期
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // exchange_code 应因 state 过期失败
@@ -2518,10 +2505,8 @@ mod tests {
             .unwrap()
             .with_dao(Arc::new(InMemoryDao::new()));
 
-        // 注册 state
         provider.register_state("test-state-001").await.unwrap();
 
-        // 消费 state（应成功）
         provider
             .validate_and_consume_state("test-state-001")
             .await

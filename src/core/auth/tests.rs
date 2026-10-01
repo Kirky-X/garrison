@@ -41,7 +41,6 @@ async fn login_generates_token_and_session() {
     let auth = make_auth_logic(3600, 86400);
     let token = auth.login("1001", None).await.unwrap();
     assert!(!token.is_empty());
-    // is_login 应返回 true
     assert!(auth.is_login(&token).await.unwrap());
 }
 
@@ -81,7 +80,6 @@ async fn logout_destroys_session() {
 #[tokio::test]
 async fn logout_idempotent_for_invalid_token() {
     let auth = make_auth_logic(3600, 86400);
-    // 不存在的 token 应返回 Ok(())
     let result = auth.logout("non-existent-token").await;
     assert_eq!(
         result.unwrap(),
@@ -97,7 +95,6 @@ async fn logout_preserves_other_tokens() {
     let t1 = auth.login("1001", None).await.unwrap();
     let t2 = auth.login("1001", None).await.unwrap();
     auth.logout(&t1).await.unwrap();
-    // t2 仍应有效
     assert!(auth.is_login(&t2).await.unwrap());
     assert!(!auth.is_login(&t1).await.unwrap());
 }
@@ -196,7 +193,6 @@ async fn switch_to_updates_login_id_and_stores_switched_from() {
         auth.get_login_id(&token).await.unwrap(),
         Some("2002".to_string())
     );
-    // attrs["switched_from"] 应存储原始 login_id
     let switched_from = auth.session.get(&token, "switched_from").await.unwrap();
     assert_eq!(switched_from, Some("1001".to_string()));
 }
@@ -297,13 +293,11 @@ async fn switch_to_multiple_times_updates_switched_from() {
     // 需预先创建 target Account-Session（2002 + 3003）。
     let _ = auth.login("2002", None).await.unwrap();
     let _ = auth.login("3003", None).await.unwrap();
-    // 第一次切换：1001 -> 2002
     auth.switch_to(&token, "2002").await.unwrap();
     assert_eq!(
         auth.session.get(&token, "switched_from").await.unwrap(),
         Some("1001".to_string())
     );
-    // 第二次切换：2002 -> 3003
     auth.switch_to(&token, "3003").await.unwrap();
     assert_eq!(
         auth.get_login_id(&token).await.unwrap(),
@@ -323,14 +317,10 @@ async fn switch_to_preserves_existing_attrs() {
     let token = auth.login("1001", None).await.unwrap();
     // 需预先创建 target Account-Session。
     let _ = auth.login("2002", None).await.unwrap();
-    // 设置一个自定义 attr
     auth.session.set(&token, "device", "web").await.unwrap();
-    // 执行 switch_to
     auth.switch_to(&token, "2002").await.unwrap();
-    // 原有 attr 应保留
     let device = auth.session.get(&token, "device").await.unwrap();
     assert_eq!(device, Some("web".to_string()));
-    // switched_from 应也存在
     let switched_from = auth.session.get(&token, "switched_from").await.unwrap();
     assert_eq!(switched_from, Some("1001".to_string()));
 }
@@ -364,7 +354,6 @@ async fn switch_to_removes_token_from_original_account_session() {
         "切换前 original AccountSession 应包含该 token"
     );
 
-    // 执行 switch_to
     auth.switch_to(&token, "2002").await.unwrap();
 
     // 切换后：original AccountSession 不应再包含 token
@@ -484,7 +473,6 @@ async fn switch_to_default_guard_denies_all_switches() {
         "默认 guard 应拒绝切换并返回 NotPermission，实际: {:?}",
         result
     );
-    // 验证 session 未被修改（login_id 仍为原值）
     assert_eq!(
         auth.get_login_id(&token).await.unwrap(),
         Some("1001".to_string())
@@ -514,20 +502,17 @@ async fn switch_to_custom_guard_denies_preserves_session() {
     // admin 也需预先创建 Account-Session，否则 target_account_exists 校验先返回 InvalidParam
     let _ = auth.login("admin", None).await.unwrap();
 
-    // 切换到 admin 应被拒绝
     let result = auth.switch_to(&token, "admin").await;
     assert!(
         matches!(result, Err(GarrisonError::NotPermission(ref msg)) if msg.contains("禁止切换")),
         "切换到 admin 应被拒绝，实际: {:?}",
         result
     );
-    // session 未被修改
     assert_eq!(
         auth.get_login_id(&token).await.unwrap(),
         Some("1001".to_string())
     );
 
-    // 切换到 普通用户 应成功
     auth.switch_to(&token, "user-2002").await.unwrap();
     assert_eq!(
         auth.get_login_id(&token).await.unwrap(),
@@ -555,7 +540,6 @@ async fn switch_to_nonexistent_target_returns_invalid_param() {
         "切换到不存在的 target 应返回统一的模糊 NotPermission（issue 2663 反枚举），实际: {:?}",
         result
     );
-    // session 未被修改
     assert_eq!(
         auth.get_login_id(&token).await.unwrap(),
         Some("1001".to_string())
@@ -589,11 +573,8 @@ async fn renew_to_equivalent_returns_new_valid_token_with_same_login_id() {
     let auth = make_auth_logic(3600, 86400);
     let old_token = auth.login("1001", None).await.unwrap();
     let new_token = auth.renew_to_equivalent(&old_token).await.unwrap();
-    // 新 token 非空
     assert!(!new_token.is_empty());
-    // 新 token 有效
     assert!(auth.is_login(&new_token).await.unwrap());
-    // login_id 相同
     assert_eq!(
         auth.get_login_id(&new_token).await.unwrap(),
         Some("1001".to_string())
@@ -616,7 +597,6 @@ async fn renew_to_equivalent_invalidates_old_token() {
     let old_token = auth.login("1001", None).await.unwrap();
     assert!(auth.is_login(&old_token).await.unwrap());
     let _new_token = auth.renew_to_equivalent(&old_token).await.unwrap();
-    // 旧 token 应已失效
     assert!(!auth.is_login(&old_token).await.unwrap());
 }
 
@@ -625,15 +605,12 @@ async fn renew_to_equivalent_invalidates_old_token() {
 async fn renew_to_equivalent_preserves_attrs() {
     let auth = make_auth_logic(3600, 86400);
     let old_token = auth.login("1001", None).await.unwrap();
-    // 设置自定义 attr
     auth.session
         .set(&old_token, "device", "web-chrome")
         .await
         .unwrap();
     auth.session.set(&old_token, "role", "admin").await.unwrap();
-    // 置换
     let new_token = auth.renew_to_equivalent(&old_token).await.unwrap();
-    // 新 token 应保留 attrs
     let device = auth.session.get(&new_token, "device").await.unwrap();
     assert_eq!(device, Some("web-chrome".to_string()));
     let role = auth.session.get(&new_token, "role").await.unwrap();
@@ -645,14 +622,11 @@ async fn renew_to_equivalent_preserves_attrs() {
 async fn renew_to_equivalent_preserves_device() {
     let auth = make_auth_logic(3600, 86400);
     let old_token = auth.login("1001", None).await.unwrap();
-    // 设置 device
     auth.session
         .set_device(&old_token, "mobile-ios")
         .await
         .unwrap();
-    // 置换
     let new_token = auth.renew_to_equivalent(&old_token).await.unwrap();
-    // 新 token 应保留 device
     let ts = auth.session.get_token_session(&new_token).await.unwrap();
     assert!(ts.is_some(), "新 token session 应存在");
     assert_eq!(ts.unwrap().device, Some("mobile-ios".to_string()));
@@ -685,13 +659,11 @@ async fn renew_to_equivalent_preserves_remaining_ttl() {
     let token_session_key = format!("token:session:{}", old_token);
     dao.expire(&token_session_key, 100).await.unwrap();
 
-    // 验证旧 token 剩余 TTL ≈ 100s
     let old_ttl = auth.session.get_token_timeout(&old_token).await.unwrap();
     assert!(old_ttl.is_some(), "旧 token 应有 TTL");
     let old_secs = old_ttl.unwrap().as_secs();
     assert!(old_secs <= 100, "旧 TTL 应 ≤ 100s，实际: {}", old_secs);
 
-    // 置换
     let new_token = auth.renew_to_equivalent(&old_token).await.unwrap();
 
     // 新 token 的 TTL 应继承剩余 TTL（≈100s），而非重置为 3600s
@@ -910,7 +882,6 @@ async fn a9_renew_to_equivalent_creates_new_before_deleting_old() {
     // 开始追踪 renew 操作的顺序
     tracking_dao.start_tracking(old_token.clone());
 
-    // renew_to_equivalent 应成功
     let new_token = auth.renew_to_equivalent(&old_token).await;
     assert!(
         new_token.is_ok(),
@@ -951,10 +922,8 @@ async fn a9_renew_to_equivalent_old_token_valid_until_new_created() {
     let old_token = auth.login("1002", None).await.unwrap();
     tracking_dao.start_tracking(old_token.clone());
 
-    // 执行 renew
     let new_token = auth.renew_to_equivalent(&old_token).await.unwrap();
 
-    // 验证：renew 成功后旧 token 失效，新 token 有效
     assert!(
         !auth.is_login(&old_token).await.unwrap(),
         "renew 后旧 token 应失效"
@@ -999,9 +968,7 @@ fn make_auth_logic_with_remember_me(
 async fn login_with_remember_me_true_uses_extended_timeout() {
     let auth = make_auth_logic_with_remember_me(3600, 86400, true, 7_776_000);
     let token = auth.login("1001", Some("remember_me=true")).await.unwrap();
-    // token 有效
     assert!(auth.is_login(&token).await.unwrap());
-    // TTL 应接近 7776000s
     let ttl = auth.session.get_token_timeout(&token).await.unwrap();
     assert!(ttl.is_some(), "Token-Session 应有 TTL");
     let secs = ttl.unwrap().as_secs();
@@ -1189,7 +1156,6 @@ async fn renew_locks_entry_cleaned_after_successful_renew() {
         auth.renew_locks.len()
     );
 
-    // 执行单次 renew
     let new_token = auth
         .renew_to_equivalent(&old_token)
         .await
@@ -1202,7 +1168,6 @@ async fn renew_locks_entry_cleaned_after_successful_renew() {
         auth.renew_locks.len()
     );
 
-    // 验证 renew 本身成功：旧 token 失效，新 token 有效
     assert!(
         !auth.is_login(&old_token).await.unwrap(),
         "旧 token 应已失效"
@@ -1253,7 +1218,6 @@ async fn renew_locks_entry_cleaned_after_concurrent_renew() {
     let h2 = tokio::spawn(async move { auth2.renew_to_equivalent(&old2).await });
     let h3 = tokio::spawn(async move { auth3.renew_to_equivalent(&old3).await });
 
-    // 等所有 task 完成
     let _ = h1.await.expect("h1 join failed");
     let _ = h2.await.expect("h2 join failed");
     let _ = h3.await.expect("h3 join failed");
@@ -1428,7 +1392,6 @@ async fn renew_add_to_account_session_fails_rolls_back_new_token() {
         "加入 Account-Session 失败应返回 Internal，实际: {:?}",
         result
     );
-    // 旧 token 仍有效
     assert!(
         auth.is_login(&old_token).await.unwrap(),
         "步骤 5 失败回滚后旧 token 必须仍有效"

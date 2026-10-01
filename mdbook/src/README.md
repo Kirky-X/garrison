@@ -23,7 +23,7 @@ Garrison 以 **库（crate）** 为核心交付形态，同时附带独立二进
 1. **登录认证** — 基于 Token 的会话管理
 2. **权限认证** — RBAC 权限模型
 3. **Session 会话** — 会话生命周期管理
-4. **OAuth2** — 第三方授权（Authorization Code / Client Credentials / Password）
+4. **OAuth2** — 第三方授权（Authorization Code / Client Credentials / Password / Refresh Token）
 5. **单点登录 (SSO)** — ticket 一次性 60s 短时票据
 6. **JWT** — HS256 / HS384 / HS512 签发与验证，另支持 RS256 / ES256 / EdDSA 等非对称算法（RSA/EC/Ed25519 私钥 PEM 注入）
 7. **微服务网关鉴权** — HMAC-SHA256 签名 + 防重放
@@ -40,7 +40,7 @@ Garrison 采用 **双抽象层 + 全局单例** 的架构：
 
 - **dbnexus**：数据库抽象层（SQLite / PostgreSQL / MySQL），由 `GarrisonDao` trait 屏蔽后端差异
 - **oxcache**：缓存抽象层（L1 内存 + L2 redis），承载 Token-Session 与 Account-Session 双向映射
-- **GarrisonManager**：全局单例，持有 `Arc<GarrisonLogicDefault>`（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持重复 init）；自 0.5.2 起 `GarrisonLogic` 上帝 trait 已拆分为 6 个职责子 trait（GarrisonCore / SessionLogic / PermissionLogic / TokenLogic / MfaLogic / PasswordLogic），Manager 持有具体类型而非 trait 对象
+- **GarrisonManager**：全局单例，持有 `Arc<GarrisonLogicDefault>`（基于 `arc_swap::ArcSwapOption`，读路径无锁、支持重复 init）；自 0.5.2 起 `GarrisonLogic` 上帝 trait 已拆分为 5 个职责子 trait（SessionLogic / PermissionLogic / TokenLogic / MfaLogic / PasswordLogic），super-trait 为 `GarrisonCore`，Manager 持有具体类型而非 trait 对象
 - **inventory 编译期注册**：`PermissionRegistration`（权限注册表）/ `StrategyRegistration`（Firewall 策略）等通过 `inventory::submit!` 注册，运行时由 `inventory::iter` 收集
 
 逻辑层分为三层：`GarrisonLogicDefault`（默认实现，组合 6 个子 trait）/ `GarrisonInterface`（业务方实现的回调）/ `GarrisonUtil`（面向使用者的静态 API）。

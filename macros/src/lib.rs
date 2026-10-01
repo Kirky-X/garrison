@@ -3,7 +3,7 @@
 
 //! Garrison 过程宏 crate，提供鉴权注解属性宏。
 //!
-//! 提供 10 个 `#[proc_macro_attribute]`：
+//! 提供 13 个 `#[proc_macro_attribute]`：
 //!
 //! - [`macro@check_login`]：登录校验，未登录返回 401
 //! - [`macro@check_permission`]：权限校验（AND 语义），无权限返回 403
@@ -16,7 +16,11 @@
 //!
 //! # 覆盖矩阵
 //!
-//! 10 个宏对 13 个特性域（见 `src/lib.rs` 特性域段落）的覆盖情况：
+//! 其中 10 个为 axum wrapper 校验宏（下表「已有宏」列），另 3 个为 sdforge `#[forge]`
+//! 动态路由变体 [`macro@check_login_forge`] / [`macro@check_permission_forge`] /
+//! [`macro@check_role_forge`]——二者均无 feature 门控，`annotation-macros` 一开即全可用。
+//!
+//! 13 个宏对 13 个特性域（见 `src/lib.rs` 特性域段落）的覆盖情况：
 //!
 //! | 特性域 | 已有宏 | 缺失宏 | 备注 |
 //! |--------|--------|--------|------|
@@ -1214,7 +1218,6 @@ mod tests {
             !code.contains("__garrison_inner_"),
             "forge 变体不应生成 wrapper/inner 函数"
         );
-        // 应保留原函数名
         assert!(code.contains("list_feedback"));
     }
 
@@ -1246,7 +1249,6 @@ mod tests {
             expand_check_with_args_forge("check_permission", &["admin".to_string()], item_fn);
         let ts: proc_macro2::TokenStream = tokens.into();
         let code = ts.to_string();
-        // 应保留 Result<i32, MyError> 返回类型，不应改为 Response
         assert!(code.contains("Result"), "应保留 Result 返回类型");
         assert!(
             !code.contains("-> :: axum :: response :: Response"),
@@ -1262,9 +1264,7 @@ mod tests {
         let tokens = expand_check_login_forge(item_fn);
         let ts: proc_macro2::TokenStream = tokens.into();
         let code = ts.to_string();
-        // 应包含 check_login 调用
         assert!(code.contains("check_login"), "应插入 check_login 调用");
-        // 应包含 Ok(true) / Ok(false) / Err 三路 match
         assert!(code.contains("Ok (true)"), "应处理 Ok(true) 分支");
         assert!(code.contains("Ok (false)"), "应处理 Ok(false) 分支");
     }

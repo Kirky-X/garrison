@@ -509,7 +509,6 @@ async fn exchange_code_with_pkce_includes_code_verifier_in_body() {
         .expect("exchange_code_with_pkce 应成功");
     assert_eq!(token.access_token, "pkce-token");
 
-    // 验证请求体包含 code_verifier 字段
     let received = server.received_requests().await.expect("应收到请求");
     assert_eq!(received.len(), 1, "应只收到 1 个请求");
     let body = std::str::from_utf8(&received[0].body).expect("body 应为 UTF-8");
@@ -836,7 +835,6 @@ async fn introspect_token_sends_token_and_client_credentials_in_body() {
     let received = server.received_requests().await.expect("应收到请求");
     assert_eq!(received.len(), 1);
     let req = &received[0];
-    // 验证 Content-Type 为 application/x-www-form-urlencoded
     let content_type = req
         .headers
         .get("content-type")
@@ -848,7 +846,6 @@ async fn introspect_token_sends_token_and_client_credentials_in_body() {
         "Content-Type 应为 application/x-www-form-urlencoded，实际: {}",
         content_type
     );
-    // 验证请求体字段
     let body = std::str::from_utf8(&req.body).expect("body 应为 UTF-8");
     assert!(
         body.contains("token=my-token"),
@@ -922,13 +919,10 @@ fn token_introspection_response_derives_debug_clone_serde() {
 
     // Debug
     let _debug_str = format!("{:?}", resp);
-    // Clone
     let cloned = resp.clone();
     assert_eq!(cloned.active, resp.active);
-    // Serialize
     let json = serde_json::to_string(&resp).expect("Serialize 应成功");
     assert!(json.contains("\"active\":true"));
-    // Deserialize
     let parsed: TokenIntrospectionResponse =
         serde_json::from_str(&json).expect("Deserialize 应成功");
     assert_eq!(parsed.active, resp.active);

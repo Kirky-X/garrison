@@ -65,12 +65,10 @@ pub async fn run() -> GarrisonResult<()> {
 fn demo_token_lifecycle() -> GarrisonResult<()> {
     println!("--- 场景一：Token 完整生命周期 ---");
 
-    // 1. Token 签发
     let state = TokenState::Issued;
     println!("[1] Token 签发 → {}", state);
     assert_eq!(state, TokenState::Issued);
 
-    // 2. 客户端首次携带使用 → Active
     let state = state.transition_to(TokenState::Active)?;
     println!("[2] 首次使用 → {}（客户端首次携带 Token 访问 API）", state);
     assert_eq!(state, TokenState::Active);
@@ -79,7 +77,6 @@ fn demo_token_lifecycle() -> GarrisonResult<()> {
     let state = state.transition_to(TokenState::Active)?;
     println!("[3] 续期 → {}（访问续期，TTL +30min）", state);
 
-    // 4. Refresh Token → 旧 Token 变为 Refreshed
     let state = state.transition_to(TokenState::Refreshed)?;
     println!(
         "[4] Refresh → {}（新 Token 已签发，旧 Token 标记为 Refreshed）",
@@ -134,7 +131,6 @@ fn demo_token_invalid_transitions() -> GarrisonResult<()> {
     println!("[5] Refreshed → Revoked：✓（唯一合法路径）");
     println!("[6] Refreshed → Active/Expired：✗（旧 Token 立即作废）");
 
-    // 5. transition_to 返回正确错误
     let result = TokenState::Expired.transition_to(TokenState::Active);
     assert!(result.is_err());
     let err = result.unwrap_err();
@@ -151,27 +147,21 @@ fn demo_token_invalid_transitions() -> GarrisonResult<()> {
 fn demo_user_lifecycle() -> GarrisonResult<()> {
     println!("--- 场景三：User 完整生命周期 ---");
 
-    // 1. 注册 → Pending
     let status = UserStatus::Pending;
     println!("[1] 用户注册 → {}（待激活）", status);
 
-    // 2. 邮箱验证 → Active
     let status = status.transition_to(UserStatus::Active)?;
     println!("[2] 邮箱验证通过 → {}（活跃）", status);
 
-    // 3. 违规 → Suspended
     let status = status.transition_to(UserStatus::Suspended)?;
     println!("[3] 违规行为 → {}（管理员封禁）", status);
 
-    // 4. 申诉成功 → Active
     let status = status.transition_to(UserStatus::Active)?;
     println!("[4] 申诉成功 → {}（管理员解封）", status);
 
-    // 5. 长期未登录 → Inactive
     let status = status.transition_to(UserStatus::Inactive)?;
     println!("[5] 90天未登录 → {}（休眠）", status);
 
-    // 6. 用户注销 → Deleted
     let status = status.transition_to(UserStatus::Deleted)?;
     println!("[6] 用户注销 → {}（终态）", status);
     assert_eq!(status, UserStatus::Deleted);
@@ -208,7 +198,6 @@ fn demo_user_invalid_transitions() -> GarrisonResult<()> {
     assert!(!deleted.can_transition_to(UserStatus::Pending));
     println!("[5] Deleted → *：✗（终态，不可恢复）");
 
-    // 5. transition_to 返回正确错误
     let result = UserStatus::Deleted.transition_to(UserStatus::Active);
     assert!(result.is_err());
     println!("    ✓ transition_to 非法路径返回: {}", result.unwrap_err());
@@ -230,15 +219,12 @@ fn demo_business_scenario() -> GarrisonResult<()> {
     let mut user_status = UserStatus::Active;
     let mut token_state = TokenState::Issued;
 
-    // Token 激活
     token_state = token_state.transition_to(TokenState::Active)?;
     println!("    User={}, Token={}", user_status, token_state);
 
-    // Token 续期
     token_state = token_state.transition_to(TokenState::Active)?;
     println!("    Token 续期 → {}", token_state);
 
-    // 用户被封禁
     println!("\n[2] 用户违规，管理员封禁...");
     user_status = user_status.transition_to(UserStatus::Suspended)?;
     println!("    User → {}", user_status);
@@ -262,7 +248,6 @@ fn demo_business_scenario() -> GarrisonResult<()> {
     user_status = user_status.transition_to(UserStatus::Active)?;
     println!("    User: Inactive → {}（重新登录激活）", user_status);
 
-    // 签发新 Token
     let mut token_state = TokenState::Issued;
     token_state = token_state.transition_to(TokenState::Active)?;
     println!("    新 Token 签发 → {}", token_state);

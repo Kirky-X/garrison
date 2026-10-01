@@ -24,7 +24,6 @@ mod tests_metrics {
         metrics.observe_token_validation(Duration::from_millis(1));
         metrics.record_permission_query(true);
         metrics.record_role_query(true);
-        // 验证四个指标都已注册
         let gathered = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
@@ -61,7 +60,6 @@ mod tests_metrics {
         let output = prometheus::TextEncoder::new()
             .encode_to_string(&registry.gather())
             .expect("encode 失败");
-        // Counter 应为 2
         assert!(output.contains("garrison_login_total{result=\"success\"} 2"));
     }
 

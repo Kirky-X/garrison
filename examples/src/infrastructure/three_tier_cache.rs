@@ -48,7 +48,6 @@ fn demo_cache_config() {
     println!("      • l1_cache_capacity:     {}", capacity);
     println!();
 
-    // 校验约束
     println!("    校验约束（GarrisonConfig::validate 强制）:");
     println!("      • l1_cache_ttl_secs > 0（= 0 时 Err）");
     println!("      • l2_cache_ttl_secs > 0（= 0 时 Err）");

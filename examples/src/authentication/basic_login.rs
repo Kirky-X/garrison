@@ -133,7 +133,6 @@ pub async fn run() -> GarrisonResult<()> {
     let ctx_result: Result<(), GarrisonError> = TENANT
         .scope(tenant_for_closure, async {
             with_current_token(token_for_closure, async {
-                // 4. 校验登录状态
                 let logged_in = GarrisonUtil::check_login().await?;
                 println!("[3] check_login 返回: {}", logged_in);
                 assert!(logged_in, "登录后 check_login 应返回 true");
@@ -142,14 +141,12 @@ pub async fn run() -> GarrisonResult<()> {
                 println!("[4] get_login_id 返回: {:?}", login_id);
                 assert_eq!(login_id, Some("1001".to_string()));
 
-                // 5. 权限/角色校验
                 GarrisonUtil::check_permission("user:read").await?;
                 println!("[5] check_permission(\"user:read\") 通过");
 
                 GarrisonUtil::check_role("admin").await?;
                 println!("[6] check_role(\"admin\") 通过\n");
 
-                // 6. 执行登出
                 GarrisonUtil::logout().await?;
                 println!("[7] logout 完成");
 

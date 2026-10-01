@@ -941,7 +941,6 @@ impl AuditLogListener {
                     );
                 }
             }
-            // 递归处理嵌套对象
             for (_, child) in obj.iter_mut() {
                 self.mask_value_recursive(child);
             }
@@ -973,7 +972,6 @@ impl AuditLogListener {
                     }
                 }
             }
-            // 递归处理嵌套对象
             for (_, child) in obj.iter_mut() {
                 self.mask_value_partial(child);
             }
@@ -1511,7 +1509,6 @@ mod db_sqlite_tests {
         };
         let listener = AuditLogListener::new(pool.clone(), config);
 
-        // 构造 Login 事件
         let event = GarrisonEvent::Login {
             login_id: "1".to_string(),
             token: "tok".to_string(),
@@ -1522,7 +1519,6 @@ mod db_sqlite_tests {
         // 调用 on_event（async，依据 spec：.await）
         listener.on_event(&event).await.expect("on_event 应成功");
 
-        // 断言 audit_logs 表新增 1 行，event_type="login"，login_id=1
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();
         let stmt = Statement::from_sql_and_values(
@@ -1570,11 +1566,9 @@ mod db_sqlite_tests {
         };
         let listener = AuditLogListener::new(pool, config);
 
-        // 构造含 password 的 metadata JSON
         let input_metadata = r#"{"password":"secret123"}"#;
         let masked = listener.mask_metadata(input_metadata);
 
-        // 断言 password 字段值被替换为 "***"
         let parsed: serde_json::Value =
             serde_json::from_str(&masked).expect("masked 应是有效 JSON");
         assert_eq!(
@@ -1801,12 +1795,10 @@ mod db_sqlite_tests {
 
         let expected_count = events.len() as i64;
 
-        // 对每个变体调用 on_event
         for (event, _expected_type) in &events {
             listener.on_event(event).await.expect("on_event 应返回 Ok");
         }
 
-        // 查询 audit_logs 表总行数
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();
         let count_stmt = Statement::from_sql_and_values(
@@ -1926,7 +1918,6 @@ mod db_sqlite_tests {
                 .expect("listener.insert 应成功");
         }
 
-        // 查询 1: tenant_id=Some(0), event_type=Some("login"), from=None, to=None
         // 期望返回 A + D（2 行）
         let q1 = AuditQuery {
             tenant_id: Some(0),
@@ -1948,7 +1939,6 @@ mod db_sqlite_tests {
         ts1.sort();
         assert_eq!(ts1, vec![1000, 5000], "查询1 应含 A(1000) + D(5000)");
 
-        // 查询 2: tenant_id=Some(0), event_type=Some("login"), to=Some(4000)
         // 期望仅 A（1 行，D 的 created_at=5000 > 4000 被过滤）
         let q2 = AuditQuery {
             tenant_id: Some(0),
@@ -1968,7 +1958,6 @@ mod db_sqlite_tests {
         );
         assert_eq!(rows2[0].created_at, 1000, "查询2 应仅含 A(1000)");
 
-        // 查询 3: tenant_id=Some(0), event_type=Some("login"), from=Some(3000)
         // 期望仅 D（1 行，A 的 created_at=1000 < 3000 被过滤）
         let q3 = AuditQuery {
             tenant_id: Some(0),
@@ -1988,7 +1977,6 @@ mod db_sqlite_tests {
         );
         assert_eq!(rows3[0].created_at, 5000, "查询3 应仅含 D(5000)");
 
-        // 查询 4: 全 None（返回全部 4 行）
         let q4 = AuditQuery::default();
         let rows4 = listener
             .query_audit_logs(q4)
@@ -2094,7 +2082,6 @@ mod db_sqlite_tests {
             lines.len()
         );
 
-        // 验证 header
         let header_fields: Vec<&str> = lines[0].split(',').collect();
         assert_eq!(
             header_fields,
@@ -2108,7 +2095,6 @@ mod db_sqlite_tests {
             "CSV header 应为 5 列"
         );
 
-        // 验证数据行
         let data_fields: Vec<&str> = lines[1].split(',').collect();
         assert_eq!(data_fields.len(), 5, "数据行应有 5 个字段");
         assert_eq!(data_fields[0], "1700000000", "timestamp 应为 1700000000");
@@ -2313,7 +2299,6 @@ mod db_sqlite_tests {
             .expect("sigB' 应为字符串")
             .to_string();
 
-        // 断言：第一行签名变化（A 内容变了）
         assert_ne!(sig_a1, sig_a2, "第一行签名应因 A 内容变化而不同");
 
         // 断言：第二行签名也变化（链式依赖：B 的签名依赖 A 的签名）
@@ -2365,7 +2350,6 @@ mod db_sqlite_tests {
             created_at: 2000,
         };
 
-        // 导出获取签名
         let json_str = listener
             .export_json(&[entry_a.clone(), entry_b.clone()])
             .expect("export_json 应成功");

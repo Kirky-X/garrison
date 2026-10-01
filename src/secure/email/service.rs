@@ -79,7 +79,6 @@ impl EmailVerificationService {
         let unverified_key = format!("email:unverified:{}", normalized);
         let unverified_count = self.dao.incr(&unverified_key, 86400).await?;
 
-        // 检查异常发送
         if unverified_count > self.unverified_threshold as u64 {
             // 回滚限速计数器
             if let Err(e) = self
@@ -138,7 +137,8 @@ impl EmailVerificationService {
         let stored = self.dao.get(&code_key).await?;
         let stored = stored.ok_or(GarrisonError::EmailCodeNotFound)?;
 
-        if constant_time_eq(&stored, code) {
+        // 验证码比对统一走公共常量时间原语（ADR-0003 决策 2，email-verification 依赖 secure-ct-eq）
+        if crate::secure::ct_eq::constant_time_eq(stored.as_bytes(), code.as_bytes()) {
             // 验证成功：删除验证码 + 清零未验证计数 + 清零尝试次数
             self.dao.delete(&code_key).await?;
             let unverified_key = format!("email:unverified:{}", normalized);
@@ -147,7 +147,6 @@ impl EmailVerificationService {
             self.dao.delete(&attempts_key).await?;
             Ok(())
         } else {
-            // 验证失败：递增尝试次数
             let attempts_key = format!("email:attempts:{}", normalized);
             let attempts = self.dao.incr(&attempts_key, self.code_ttl).await?;
             if attempts > self.max_verify_attempts as u64 {
@@ -173,28 +172,6 @@ pub(super) fn generate_code() -> GarrisonResult<String> {
     use rand::RngExt;
     let code: u32 = rand::rng().random_range(100000..1000000);
     Ok(format!("{:06}", code))
-}
-
-/// 常量时间字符串比较（防止时序攻击）。
-///
-/// 当 `secure-ct-eq` feature 启用时，优先使用框架统一实现。
-/// 未启用时 fallback 到模块内私有实现（与 SMS 模块当前实现相同）。
-#[cfg(feature = "secure-ct-eq")]
-pub(super) fn constant_time_eq(a: &str, b: &str) -> bool {
-    crate::secure::ct_eq::constant_time_eq(a.as_bytes(), b.as_bytes())
-}
-
-/// 常量时间字符串比较（fallback，未启用 secure-ct-eq 时使用）。
-#[cfg(not(feature = "secure-ct-eq"))]
-pub(super) fn constant_time_eq(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut result: u8 = 0;
-    for (x, y) in a.bytes().zip(b.bytes()) {
-        result |= x ^ y;
-    }
-    result == 0
 }
 
 /// 邮箱脱敏：保留首字符 + `***` + `@` + 域名；无 `@` 时整体以 `*` 屏蔽。

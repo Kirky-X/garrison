@@ -837,7 +837,6 @@ mod tests {
             .await
             .expect("evaluate");
         assert!(!alice.allowed, "alice 应被拒绝（p1 已被替换）");
-        // p2 匹配 bob
         let bob = engine
             .evaluate(
                 r#"User::"bob""#,
@@ -889,7 +888,6 @@ mod tests {
             .load_policy("p1", r#"permit(principal, action, resource);"#)
             .await
             .expect("load");
-        // 并发 10 个求值
         let mut handles = Vec::new();
         for i in 0..10 {
             let e = engine.clone();
@@ -995,7 +993,6 @@ mod tests {
             .expect("evaluate");
         assert!(!before.allowed, "共享策略集为空时应 Deny");
 
-        // 临时策略求值
         let temp_policy = r#"permit(principal, action == Action::"access", resource);"#;
         let temp_decision = engine
             .evaluate_with_temp_policy(
@@ -1250,7 +1247,6 @@ mod tests {
             "reload 后缓存应清空"
         );
 
-        // alice 应被拒绝（p1 已替换为 p2）
         let alice = engine
             .evaluate(
                 r#"User::"alice""#,
@@ -1454,7 +1450,6 @@ mod tests {
     /// 通过 EntityLoader 注入带属性实体，策略能正确求值。
     #[tokio::test]
     async fn test_evaluate_with_static_entity_loader_attribute_based_policy() {
-        // 构造带属性的实体：User "alice" {id: "alice"}, Resource "doc1" {owner: "alice"}。
         // Cedar 4.x Entities JSON 格式要求 uid 为对象形式 `{"__entity": {"type", "id"}}`。
         let entities_json = r#"[
             {"uid": {"__entity": {"type": "User", "id": "alice"}}, "attrs": {"id": "alice"}, "parents": []},

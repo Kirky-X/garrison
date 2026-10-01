@@ -140,11 +140,8 @@ fn wait_strategy_multiple_formula() {
 #[test]
 fn wait_strategy_linear_formula() {
     let base = 30u64;
-    // 第 1 次：30 × 1 = 30
     assert_eq!(base, 30);
-    // 第 2 次：30 × 2 = 60
     assert_eq!(base * 2, 60);
-    // 第 3 次：30 × 3 = 90
     assert_eq!(base * 3, 90);
 }
 
@@ -362,7 +359,6 @@ async fn record_success_resets_failure_count() {
         "前置条件：临时锁定次数应为 1"
     );
 
-    // 登录成功 → 清零 failure_count + 临时锁定状态
     strategy.record_success("user1").await.unwrap();
     let state = strategy.get_state("user1").await.unwrap();
     assert_eq!(
@@ -379,7 +375,6 @@ async fn record_success_resets_failure_count() {
         "record_success 不得解除 permanent_locked"
     );
 
-    // 清除后 check 应放行
     let ctx = FirewallContext::new("1.1.1.1").with_login_id("user1");
     assert!(
         strategy.check(&ctx).await.is_ok(),
@@ -489,7 +484,6 @@ fn config_validate_rejects_degenerate_values() {
     };
     assert!(config.validate().is_err(), "multiplier=0 应被拒绝");
 
-    // 合法配置应通过
     assert!(UserLockoutConfig::default().validate().is_ok());
 }
 

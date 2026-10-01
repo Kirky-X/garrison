@@ -256,7 +256,6 @@ async fn validate_nonce_replay_rejected() {
     let handler = make_handler();
     let ts = now_ts();
     let sig = handler.sign("POST", "/api", ts, "nonce-replay", "body");
-    // 第一次校验成功
     let first = handler
         .validate("POST", "/api", ts, "nonce-replay", "body", &sig)
         .await;
@@ -322,7 +321,6 @@ async fn validate_nonce_isolated_by_app_key() {
     let ts = now_ts();
     let sig1 = h1.sign("POST", "/api", ts, "shared-nonce", "body");
     let sig2 = h2.sign("POST", "/api", ts, "shared-nonce", "body");
-    // app-a 使用 shared-nonce 成功
     h1.validate("POST", "/api", ts, "shared-nonce", "body", &sig1)
         .await
         .unwrap();

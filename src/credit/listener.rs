@@ -86,7 +86,6 @@ mod tests {
             token: "tok".to_string(),
             request_context: None,
         };
-        // 不应 panic 或返回 Err
         let result = listener.on_event(&event).await;
         assert!(result.is_ok());
     }

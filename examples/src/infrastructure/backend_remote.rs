@@ -56,7 +56,6 @@ pub async fn run() -> GarrisonResult<()> {
     );
     println!("    timeout  = 10s\n");
 
-    // 3. 构造外网 BackendRemote（连接外网端口 8080）
     let external = BackendRemote::new(
         "http://127.0.0.1:8080",
         &external_api_key,

@@ -5,7 +5,7 @@
 > - 版本：0.9.0-rc.2（发布候选：验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
-> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate）+ Repository 层（10 trait + SqliteRepository，tenant_id 隔离）
+> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate）+ Repository 层（13 trait + `Dbnexus*Repository` 实现，tenant_id 隔离）
 > - 缓存：oxcache 0.5（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [⚙️ 配置指南](./CONFIGURATION.md)；开发规范详见 [🛠️ 开发规范](./DEVELOPMENT.md)。
@@ -273,7 +273,7 @@ graph LR
 | `SessionLogic` | 会话逻辑：登录、登出、校验、kickout（13 方法，继承 GarrisonCore） | `GarrisonLogicDefault` |
 | `PermissionLogic` | 权限逻辑：check_permission / check_role / has_permission / has_role / get_permission_list / get_role_list（6 方法，继承 SessionLogic） | `GarrisonLogicDefault` |
 | `TokenLogic` | Token 逻辑：check_access_token / check_client_token / check_temp_token / verify_token / refresh_token（5 方法，继承 SessionLogic） | `GarrisonLogicDefault` |
-| `MfaLogic` | MFA 逻辑：二级认证与账号禁用校验（5 async 方法 + 2 关联函数，继承 SessionLogic） | `GarrisonLogicDefault` |
+| `MfaLogic` | MFA 逻辑：二级认证与账号禁用校验（6 async 方法 + 2 关联函数，继承 SessionLogic） | `GarrisonLogicDefault` |
 | `PasswordLogic` | 密码逻辑：login_with_password（1 方法，继承 SessionLogic） | `GarrisonLogicDefault` |
 | `GarrisonInterface` | 业务数据源接入点：查询用户权限、角色等 | 业务方必须实现 |
 | `GarrisonDao` | 持久化抽象：session CRUD、token 映射 + `RedisDeploymentMode` 配置 | dbnexus + oxcache 实现 |
@@ -412,7 +412,7 @@ sequenceDiagram
 - **事务 guard 生命周期**：`commit` / `rollback` 消耗 `self`（「提交后不可再用」在类型层面表达）；rollback、未 commit 即 drop、commit 失败、或 commit 成功后派发中途被取消（tokio 超时 / 任务中止）时缓冲事件（或剩余事件）均不派发（`Drop` 兜底 warn 丢弃条数与事件类型摘要，按 uncommitted / commit-failed / dispatch-cancelled 丢弃原因区分，显性化，取消场景携带已派发/总数；打开事务依赖 dbnexus 级联回滚）。
 - **事务路由边界**：经 guard `execute` 的 SQL **加入本事务**；既有 DAO / Repository 经 `session.connection()` 的 SQL **不加入**（auto-commit），混用时由调用方保证顺序。`execute` 走 admin 特权直通通道（dbnexus 对 admin 角色跳过全部表级权限检查、SQL 解析失败同样放行），SQL 内容即权限边界——禁止拼接不可信输入。
 
-「登录日志 SQL 写 + `Login` 事件」是两档机制的典型装配目标（后续接线），当前仅交付机制，不强切既有 33 处 `broadcast` 调用点。
+「登录日志 SQL 写 + `Login` 事件」是两档机制的典型装配目标（后续接线），当前仅交付机制，不强切既有 37 处 `broadcast` 调用点。
 
 ## 六、扩展点
 
@@ -465,8 +465,9 @@ inventory::submit! {
 ```rust
 #[async_trait]
 impl GarrisonPermissionStrategy for MyStrategy {
-    async fn check_permission(&self, login_id: &str, permission: &str) -> bool {
+    async fn check_permission(&self, login_id: &str, permission: &str) -> GarrisonResult<bool> {
         // 自定义权限判定
+        Ok(/* ... */ true)
     }
 }
 ```

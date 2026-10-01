@@ -138,7 +138,7 @@ garrison = { version = "0.9.0-rc.2", features = ["tls", "auth-server"] }
 `Cargo.toml` 的 `[profile.release]` 设置了 `panic = "unwind"`（v0.9.0-rc.1 起从 `abort` 恢复）。其语义：
 
 - 进程遇到 `panic` 会展开栈，`catch_unwind` 可隔离单个任务 panic。
-- `src/channel.rs` 与 `src/stp/context.rs` 中的 `catch_unwind` 实现"隔离单个任务 panic、避免污染全局状态"语义，在 `unwind` 模式下正常工作。
+- `src/stp/context.rs`、`src/listener/mod.rs`、`src/listener/manager_impl.rs`、`src/plugin/manager_impl.rs`、`src/health/registry.rs` 中的 `catch_unwind` 实现"隔离单个任务 panic、避免污染全局状态"语义，在 `unwind` 模式下正常工作。
 - listener 广播 / SSO channel 中单个 listener panic 不会终止整个认证节点。
 
 ### 生产环境建议

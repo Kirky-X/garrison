@@ -170,7 +170,6 @@ impl GarrisonDao for InMemoryDao {
         let now = Instant::now();
         let store = self.store.lock();
         for (key, (_, expire_at)) in store.iter() {
-            // 跳过已过期的 key
             if let Some(deadline) = expire_at {
                 if *deadline <= now {
                     continue;
@@ -230,7 +229,6 @@ impl GarrisonDao for InMemoryDao {
         // 检查 key 是否存在（含过期清理）
         let exists = match store.get(key) {
             Some((_, Some(deadline))) if *deadline <= now => {
-                // 已过期，视为不存在
                 store.remove(key);
                 false
             },
@@ -303,7 +301,6 @@ impl GarrisonDao for InMemoryDao {
         let (cur_val, expire_at) = match store.get(key) {
             Some((v, Some(deadline))) => {
                 if *deadline <= now {
-                    // 已过期：清理并视为不存在
                     store.remove(key);
                     return Ok(0);
                 }
@@ -363,7 +360,6 @@ impl GarrisonDao for InMemoryDao {
                 })?,
                 None,
             ),
-            // 已过期或不存在
             _ => (0, None),
         };
         if new_value > current_val {
@@ -601,7 +597,6 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
         }
     }
 
-    // 跳过 pattern 末尾的 '*'
     while p < pattern.len() && pattern[p] == '*' {
         p += 1;
     }

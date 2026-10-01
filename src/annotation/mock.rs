@@ -163,7 +163,6 @@ mod mock_dao_coverage_tests {
         // ---- atomic_test_fallback! 方法（组合回退语义）----
         // key 不存在 → 写入成功
         assert!(dao.set_if_absent("a1", "v1", 60).await.unwrap());
-        // 读取并删除 → 取回刚写入的值
         assert_eq!(
             dao.get_and_delete("a1").await.unwrap().as_deref(),
             Some("v1")
@@ -184,7 +183,6 @@ mod mock_dao_coverage_tests {
         // ---- trait 默认方法 ----
         dao.set_permanent("p1", "val").await.unwrap();
         assert_eq!(dao.get("p1").await.unwrap().as_deref(), Some("val"));
-        // k1 已 rename 到 k2 → Ok(None)
         assert!(dao.get_with_ttl("k1").await.unwrap().is_none());
         // MockDao 未重写 get_timeout → fail-closed NotImplemented
         assert!(matches!(

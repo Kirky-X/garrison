@@ -191,7 +191,6 @@ async fn test_handle_rejection_returns_json() {
         .reply(&routes)
         .await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
-    // 验证返回 JSON 错误体
     let body = String::from_utf8_lossy(resp.body());
     assert!(body.contains("error"), "响应体应包含 error 字段: {}", body);
 }

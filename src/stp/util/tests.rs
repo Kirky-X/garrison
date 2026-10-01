@@ -63,7 +63,6 @@ mod suite {
             "清理前 token 应存在于 login_token_map"
         );
 
-        // 启动清理 task，间隔 1 秒
         let handle = spawn_cleanup_task(session.clone(), 1);
         assert!(handle.is_some(), "interval=1 应返回 Some");
 
@@ -76,7 +75,6 @@ mod suite {
             "清理后 token 应从 login_token_map 移除"
         );
 
-        // 清理 task
         if let Some(h) = handle {
             h.abort();
         }
@@ -185,7 +183,6 @@ mod suite {
         // 添加 token 到内存索引（不经过 DAO，确保 cleanup 有内容可遍历）
         session.add_login_token("user1", "token1");
 
-        // 启动清理 task，间隔 1 秒
         let handle = spawn_cleanup_task(session.clone(), 1).unwrap();
 
         // 等待 2 个周期（tokio::time::interval 首次 tick 立即返回，第二次在 1 秒后）
@@ -202,7 +199,6 @@ mod suite {
         // 验证 task 仍存活（未因 panic 或错误退出）
         assert!(!handle.is_finished(), "清理失败不应导致 task 终止");
 
-        // 清理 task
         handle.abort();
     }
 
@@ -452,7 +448,6 @@ mod suite {
     #[serial_test::serial]
     async fn t116_embedded_mode_delegates_to_garrison_manager() {
         reset_backend_for_test();
-        // 初始化 BackendEmbedded
         init_backend(Arc::new(crate::backend::BackendEmbedded::new())).unwrap();
 
         // 调用 GarrisonUtil::check_login，应委托 BackendEmbedded → GarrisonManager
@@ -639,7 +634,6 @@ mod suite {
         assert_ne!(JwtMode::Stateless, JwtMode::Mixin);
         assert_ne!(JwtMode::Mixin, JwtMode::Simple);
         assert_ne!(JwtMode::Stateless, JwtMode::Simple);
-        // 自身相等
         assert_eq!(JwtMode::Stateless, JwtMode::Stateless);
         assert_eq!(JwtMode::Mixin, JwtMode::Mixin);
         assert_eq!(JwtMode::Simple, JwtMode::Simple);

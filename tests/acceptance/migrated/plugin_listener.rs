@@ -413,7 +413,6 @@ async fn auto_wire_login_triggers_plugin_on_login() {
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
     assert!(!token.is_empty());
 
-    // 验证 plugin on_login 被触发
     let calls = PLUGIN_LOGIN_CALLS.load(Ordering::SeqCst);
     assert!(
         calls >= 1,
@@ -459,7 +458,6 @@ async fn auto_wire_login_broadcasts_listener_login_event() {
     let token = GarrisonUtil::login_simple("2002").await.unwrap();
     assert!(!token.is_empty());
 
-    // 验证 listener Login 事件被广播
     let events = LISTENER_LOGIN_EVENTS.load(Ordering::SeqCst);
     assert!(
         events >= 1,
@@ -512,17 +510,14 @@ async fn auto_wire_logout_triggers_hooks() {
     })
     .await;
 
-    // 验证 plugin on_logout 被触发
     let logout_calls = PLUGIN_LOGOUT_CALLS.load(Ordering::SeqCst);
     assert!(
         logout_calls >= 1,
         "auto-wire: GarrisonUtil::logout 应触发 plugin on_logout，实际调用次数: {}",
         logout_calls
     );
-    // login 钩子也应至少触发一次（login 阶段）
     assert!(login_before >= 1, "login 钩子应已触发");
 
-    // 验证 listener Logout 事件被广播
     let logout_events = LISTENER_LOGOUT_EVENTS.load(Ordering::SeqCst);
     assert!(
         logout_events >= 1,

@@ -467,7 +467,6 @@ impl BackendRemoteBuilder {
             builder = builder.add_root_certificate(cert);
         }
 
-        // 加载 mTLS 客户端证书
         if let (Some(cert_pem), Some(key_pem)) = (self.client_cert, self.client_key) {
             // reqwest::Identity::from_pem 接受包含证书+私钥的 PEM
             let mut combined = cert_pem;

@@ -125,7 +125,7 @@ Garrison 不把 token 串进每个函数签名，而是用 task_local 上下文�
 
 ### 🗄️ 双抽象层存储
 
-- **`dbnexus` 数据库抽象层**：SQLite / PostgreSQL / MySQL（`db-sqlite` / `db-postgres` / `db-mysql` feature），auto-migrate + Repository 层（10 trait）。
+- **`dbnexus` 数据库抽象层**：SQLite / PostgreSQL / MySQL（`db-sqlite` / `db-postgres` / `db-mysql` feature），auto-migrate + Repository 层（13 trait）。
 - **`oxcache` 缓存抽象层**：L1 内存 + L2 redis（`cache-memory` / `cache-redis` feature）。
 - 两者由 `GarrisonDao` trait 统一屏蔽，切换存储后端零业务代码改动。注意 dbnexus 约束：embedded（sqlite）与 server-side（postgres/mysql）驱动不可同时编译。
 
@@ -167,7 +167,7 @@ Garrison 不把 token 串进每个函数签名，而是用 task_local 上下文�
 
 三个框架适配独立可共存（`web-axum` / `web-actix` / `web-warp`）：
 
-**axum + 注解宏**（`annotation-macros` feature，10 个属性宏）：
+**axum + 注解宏**（`annotation-macros` feature，13 个属性宏）：
 
 ```rust
 use garrison::annotation::*;
@@ -185,7 +185,7 @@ async fn admin_write() -> &'static str { "ok" }
 
 **统一路由抽象**：`GarrisonRouter` 汇聚路由 → `GarrisonInterceptor` 拦截器 → `GarrisonUtil` 静态 API，三个框架共享同一条链路。
 
-完整可运行示例：[`axum_integration.rs`](../examples/src/bin/axum_integration.rs)（253 行完整 Web 应用）、[`macro_annotations.rs`](../examples/src/bin/macro_annotations.rs)、[`web_actix_example.rs`](../examples/src/bin/web_actix_example.rs)、[`web_warp_example.rs`](../examples/src/bin/web_warp_example.rs)。
+完整可运行示例：[`axum_integration.rs`](../examples/src/web/axum_integration.rs)（258 行完整 Web 应用；`examples/src/bin/axum_integration.rs` 是调用它的 9 行 shim）、[`macro_annotations.rs`](../examples/src/bin/macro_annotations.rs)、[`web_actix_example.rs`](../examples/src/bin/web_actix_example.rs)、[`web_warp_example.rs`](../examples/src/bin/web_warp_example.rs)。
 
 ---
 
@@ -243,7 +243,7 @@ async fn admin_write() -> &'static str { "ok" }
 
 ## 📡 可观测性与扩展
 
-- **事件监听**（`listener`，15 个事件变体）：实现 `GarrisonListener` trait 并经 `inventory::submit!` 编译期注册，登录 / 登出 / 踢出 / 替换 / 过期 / 刷新等事件实时回调。示例：[`event_listener.rs`](../examples/src/bin/event_listener.rs)、[`custom_plugin.rs`](../examples/src/bin/custom_plugin.rs)。
+- **事件监听**（`listener`，31 个事件变体）：实现 `GarrisonListener` trait（单一 `async fn on_event` 回调，按 `GarrisonEvent` 变体分支）并经 `inventory::submit!` 编译期注册，登录 / 登出 / 踢出 / 替换 / 过期 / 刷新等事件实时回调。示例：[`event_listener.rs`](../examples/src/bin/event_listener.rs)、[`custom_plugin.rs`](../examples/src/bin/custom_plugin.rs)。
 - **插件**：`GarrisonPlugin` trait + inventory 注册，可在生命周期钩子注入逻辑。
 - **tracing 日志**（`tracing-log`）、**Prometheus 指标**（`metrics-prometheus`）、**OTLP**（`otlp`）：示例 [`observability_setup.rs`](../examples/src/bin/observability_setup.rs)。
 - **gRPC 拦截器**（`grpc`）：tonic auth layer。示例 [`grpc_interceptor.rs`](../examples/src/bin/grpc_interceptor.rs)。

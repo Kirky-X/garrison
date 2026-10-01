@@ -797,7 +797,6 @@ mod tests {
     #[test]
     fn validate_after_setting_fields() {
         let mut config = CorsConfig::default();
-        // 初始 valid
         assert!(config.validate().is_ok());
         // 设置通配符 + credentials 后应失败
         config.allowed_origins = vec!["*".to_string()];

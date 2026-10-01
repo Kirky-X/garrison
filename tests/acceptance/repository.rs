@@ -611,7 +611,6 @@ async fn acc_repo_009_user_ext_upsert_find() {
         Some("frank@example.com")
     );
 
-    // upsert 更新同一 key
     ext_repo
         .upsert(
             TENANT_A,
@@ -668,13 +667,11 @@ async fn acc_repo_010_user_device_register_list_block_unblock_count() {
         .expect("重复注册应幂等");
     assert_eq!(device_id, id_dup, "重复注册同一 identifier 应返回相同 ID");
 
-    // list + 初始未阻断
     let devices = repo.list_user_devices(TENANT_A, login_id).await.unwrap();
     assert_eq!(devices.len(), 1);
     assert_eq!(devices[0].device_identifier, "block-fp");
     assert!(!devices[0].is_blocked, "新设备默认未阻断");
 
-    // block → unblock
     repo.block_device(&device_id).await.expect("block 应成功");
     let devices = repo.list_user_devices(TENANT_A, login_id).await.unwrap();
     assert!(devices[0].is_blocked, "block 后 is_blocked 应为 true");
@@ -684,7 +681,6 @@ async fn acc_repo_010_user_device_register_list_block_unblock_count() {
     let devices = repo.list_user_devices(TENANT_A, login_id).await.unwrap();
     assert!(!devices[0].is_blocked, "unblock 后 is_blocked 应为 false");
 
-    // count
     let count = repo.count_user_devices(TENANT_A, login_id).await.unwrap();
     assert_eq!(count, 1);
 
@@ -800,7 +796,6 @@ async fn acc_repo_012_user_delete_cascades_relations() {
     let log_repo = DbnexusLoginLogRepository::new(pool.clone());
     let ext_repo = DbnexusUserExtRepository::new(pool);
 
-    // 准备用户 + 各关联
     let user_id = user_repo
         .create(
             TENANT_A,
@@ -879,7 +874,6 @@ async fn acc_repo_012_user_delete_cascades_relations() {
         .await
         .unwrap();
 
-    // 删除用户
     user_repo.delete(TENANT_A, &user_id).await.unwrap();
 
     // CASCADE：user_role / auth_method / session / user_ext 关联清除
@@ -1258,8 +1252,10 @@ async fn acc_repo_022_user_device_repo_table_missing() {
 // ------------------------------------------------------------------------
 
 /// （正常）：迁移产物精确断言——`migrate_core` 后 sqlite_master
-/// 恰含 10 张 `app_%` 核心表（全名单）且索引 ≥ 15 个
+/// 恰含 13 张 `app_%` 核心表（全名单）且索引 ≥ 15 个
 ///（`idx_app_%` / `uk_app_%` 前缀）。
+/// 名单随迁移集递增：012 新增 app_user_identifier，
+/// 014 新增 app_webauthn_credential，016 新增 app_password_history。
 /// 迁自 tests/repository/dbnexus_integration.rs::integration_migrate_creates_all_tables
 #[tokio::test(flavor = "multi_thread")]
 async fn acc_repo_023_migrate_creates_all_ten_core_tables() {
@@ -1276,6 +1272,7 @@ async fn acc_repo_023_migrate_creates_all_ten_core_tables() {
         vec![
             "app_auth_method",
             "app_login_log",
+            "app_password_history",
             "app_permission",
             "app_role",
             "app_role_permission",
@@ -1285,8 +1282,9 @@ async fn acc_repo_023_migrate_creates_all_ten_core_tables() {
             "app_user_ext",
             "app_user_identifier",
             "app_user_role",
+            "app_webauthn_credential",
         ],
-        "应创建 11 张 app_ 前缀核心表（012 新增 app_user_identifier），实际: {:?}",
+        "应创建 13 张 app_ 前缀核心表（014 webauthn_credential / 016 password_history 递增），实际: {:?}",
         tables
     );
 

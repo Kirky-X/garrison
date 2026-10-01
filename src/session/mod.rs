@@ -371,14 +371,12 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // Token-Session 存在
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
         assert_eq!(ts.login_id, "1001");
         assert_eq!(ts.token, "T1");
         assert!(ts.created_at > 0);
         assert_eq!(ts.created_at, ts.last_active_at);
 
-        // Account-Session 存在，包含 T1
         let as_ = session.get_account_session("1001").await.unwrap().unwrap();
         assert_eq!(as_.login_id, "1001");
         assert_eq!(as_.tokens.len(), 1);
@@ -603,10 +601,8 @@ mod tests {
 
         session.logout_by_login_id("1001").await.unwrap();
 
-        // 两个 token 都删除
         assert!(session.get_token_session("T1").await.unwrap().is_none());
         assert!(session.get_token_session("T2").await.unwrap().is_none());
-        // Account-Session 也删除
         assert!(session.get_account_session("1001").await.unwrap().is_none());
     }
 
@@ -614,7 +610,6 @@ mod tests {
     #[tokio::test]
     async fn logout_nonexistent_token_is_noop() {
         let (_dao, session) = make_session(3600, 86400);
-        // logout 不存在的 token 不应报错
         let result = session.logout("nonexistent").await;
         assert!(result.is_ok());
     }
@@ -850,28 +845,23 @@ mod tests {
         let (dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // 在 dao 中预置 SSO ticket
         let sso_key = "garrison:sso:ticket:ticket-abc-123";
         dao.set(sso_key, r#"{"login_id":1001,"client_id":1}"#, 60)
             .await
             .unwrap();
-        // 关联 ticket 到 token
         session
             .link_sso_ticket("T1", "ticket-abc-123")
             .await
             .unwrap();
-        // 确认 ticket 存在
         assert!(dao.get(sso_key).await.unwrap().is_some());
 
         // logout 应联动删除 SSO ticket
         session.logout("T1").await.unwrap();
 
-        // SSO ticket 应已被删除
         assert!(
             dao.get(sso_key).await.unwrap().is_none(),
             "logout 后关联的 SSO ticket 应被删除"
         );
-        // Token-Session 也应被删除
         assert!(session.get_token_session("T1").await.unwrap().is_none());
     }
 
@@ -907,10 +897,8 @@ mod tests {
         let (dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // 在 dao 中预置临时凭证
         let temp_key = "garrison:temp:order:abc123";
         dao.set(temp_key, "secret-value", 300).await.unwrap();
-        // 关联临时凭证到 token
         session.link_temp_credential("T1", temp_key).await.unwrap();
 
         // 临时凭证仍存在，token 应有效
@@ -1014,7 +1002,6 @@ mod tests {
     #[tokio::test]
     async fn kickout_by_device_removes_matching_tokens() {
         let (_dao, session) = make_session(3600, 86400);
-        // 用户 1001 在 3 个设备上登录
         session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
         session.create("1001", "T2").await.unwrap();
@@ -1022,16 +1009,13 @@ mod tests {
         session.create("1001", "T3").await.unwrap();
         session.set_device("T3", "web-chrome").await.unwrap();
 
-        // 踢出 web-chrome 设备
         session
             .kickout_by_device("1001", "web-chrome")
             .await
             .unwrap();
 
-        // T1 和 T3 应被踢出（web-chrome）
         assert!(session.get_token_session("T1").await.unwrap().is_none());
         assert!(session.get_token_session("T3").await.unwrap().is_none());
-        // T2 应仍存在（mobile-ios）
         assert!(session.get_token_session("T2").await.unwrap().is_some());
     }
 
@@ -1051,7 +1035,6 @@ mod tests {
             .await
             .unwrap();
 
-        // T2 应仍有效
         assert!(session.is_valid("T2").await.unwrap());
     }
 
@@ -1064,12 +1047,10 @@ mod tests {
         session.create("1001", "T1").await.unwrap();
         session.set_device("T1", "web-chrome").await.unwrap();
 
-        // 踢出不存在的设备
         let result = session
             .kickout_by_device("1001", "nonexistent-device")
             .await;
         assert!(result.is_ok());
-        // T1 应仍存在
         assert!(session.get_token_session("T1").await.unwrap().is_some());
     }
 
@@ -1158,7 +1139,6 @@ mod tests {
         // kickout 应正常执行（不因 listener_manager 注入而失败）
         let result = session.kickout_by_device("1001", "web-chrome").await;
         assert!(result.is_ok());
-        // T1 应被踢出
         assert!(session.get_token_session("T1").await.unwrap().is_none());
     }
 
@@ -1262,7 +1242,6 @@ mod tests {
             result
         );
 
-        // Token-Session 应已删除
         let ts = session.get_token_session("T1").await.unwrap();
         assert!(ts.is_none(), "logout 后 Token-Session 应已删除");
     }
@@ -1559,7 +1538,6 @@ mod tests {
             "并发 create 后 Account-Session 应包含 2 个 token（修复前 lost update 导致只剩 1 个）"
         );
 
-        // 验证两个 token 都能通过 is_valid 检查
         assert!(
             session.is_valid("T1").await.expect("is_valid T1 应成功"),
             "T1 应有效"
@@ -1798,7 +1776,6 @@ mod tests {
         // token 仍在 login_token_map 中
         let tokens = session.get_tokens_by_login_id("1001");
         assert_eq!(tokens, vec!["T1".to_string()], "有效 token 应保留");
-        // token session 仍可访问
         assert!(session.get_token_session("T1").await.unwrap().is_some());
     }
 
@@ -1818,7 +1795,6 @@ mod tests {
             session.get_token_by_login_id("1001").is_none(),
             "1001 的 entry 应被移除"
         );
-        // 2002 的 token 应保留
         let tokens = session.get_tokens_by_login_id("2002");
         assert_eq!(tokens, vec!["T2".to_string()], "2002 的有效 token 应保留");
     }
@@ -2055,14 +2031,11 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // 初始应为 None
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
         assert!(ts.dynamic_active_timeout.is_none());
 
-        // 设置动态活跃超时为 600 秒
         session.set_active_timeout("T1", 600).await.unwrap();
 
-        // 验证已写入
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
         assert_eq!(
             ts.dynamic_active_timeout,
@@ -2161,7 +2134,6 @@ mod tests {
         session.login_token_map.clear();
         assert!(session.login_token_map.is_empty());
 
-        // 从 DAO 重建内存索引
         session.rebuild_login_token_map().await.unwrap();
 
         // 验证：3 个 login_id，各 2 个 token，共 6 个
@@ -2202,7 +2174,6 @@ mod tests {
         // 先创建 AccountSession（通过 create，DAO 和内存都含 T1）
         session.create("user1", "T1").await.unwrap();
 
-        // 调用 add_login_token_persistent 添加 T2
         session
             .add_login_token_persistent("user1", "T2")
             .await
@@ -2234,11 +2205,9 @@ mod tests {
     #[tokio::test]
     async fn remove_login_token_persistent_removes_from_both_layers() {
         let (_dao, session) = make_session(3600, 86400);
-        // 创建 2 个 token
         session.create("user1", "T1").await.unwrap();
         session.create("user1", "T2").await.unwrap();
 
-        // 调用 remove_login_token_persistent 移除 T1
         session
             .remove_login_token_persistent("user1", "T1")
             .await
@@ -2278,7 +2247,6 @@ mod tests {
 
         // 先创建 AccountSession（create 用 set，不受 FailingUpdateDao 影响）
         session.create("user1", "T1").await.unwrap();
-        // 清空内存 map
         session.login_token_map.clear();
 
         // 调用 add_login_token_persistent → DAO update 失败 → 返回 Err
@@ -2312,7 +2280,6 @@ mod tests {
     async fn login_logout_persistent_consistency() {
         let (_dao, session) = make_session(3600, 86400);
 
-        // 1. create(user1, T1)
         session.create("user1", "T1").await.unwrap();
 
         // 验证 DAO AccountSession.tokens 包含 T1
@@ -2330,7 +2297,6 @@ mod tests {
         assert_eq!(mem_tokens.len(), 1, "内存 login_token_map 应有 1 个 token");
         assert!(mem_tokens.contains(&"T1".to_string()));
 
-        // 2. logout(T1)
         session.logout("T1").await.unwrap();
 
         // 验证 DAO AccountSession.tokens 为空（AccountSession 保留历史，不删除）

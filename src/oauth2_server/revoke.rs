@@ -189,7 +189,6 @@ mod tests {
         handler.store.create(make_client("rev-001")).await.unwrap();
         let token = issue_token(&token_handler, "rev-001").await;
 
-        // 撤销前：存在
         assert!(token_handler
             .get_access_token_record(&token)
             .await
@@ -204,7 +203,6 @@ mod tests {
         };
         handler.handle(&req).await.expect("撤销");
 
-        // 撤销后：不存在
         assert!(token_handler
             .get_access_token_record(&token)
             .await

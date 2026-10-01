@@ -13,7 +13,7 @@
 | 会话（Account-Session 索引） | `account:session:{login_id}` | login_id、设备绑定信息 | `timeout` 配置（默认 30 天） | `logout_by_login_id` / 擦除服务 |
 | 会话（Token 明细） | `token:session:{token}` | login_id（记录内）、设备 | 同上，随索引级联 | `logout_by_login_id` 级联删除 |
 | OAuth2 access/refresh token | `oauth2:atoken:` / `oauth2:rtoken:`（DAO 路径）或 `refresh_tokens` 表（db-sqlite，仅 SHA-256 哈希） | client_id / user_id | `ACCESS/REFRESH_TOKEN_TTL` | revoke 端点（RFC 7009）/ TTL |
-| API Key | DAO `cred:` 命名空间（secret 仅 SHA-256 哈希） | key_id、owner_id、IP 限速计数 | 至吊销 | `ApiKeyRepository` 吊销 API |
+| API Key | DAO 键 `garrison:apikey:{namespace}:{key_id}`，索引 `garrison:apikey:idx:{key_id}`（secret 仅 SHA-256 哈希） | key_id、owner_id、IP 限速计数 | 生成时强制 `timeout > 0`，以该值为 TTL 落库 | `ApiKeyHandler::revoke` / `rotate` / `list_by_namespace` |
 | 账户锁定状态 | `lockout:{login_id}` | login_id、失败模式画像 | TTL（锁定窗口） | 擦除服务 / TTL |
 | 暴力破解失败计数 | `bf:{ip}:count` | **客户端 IP**（GDPR Recital 30 属个人数据） | TTL（计数窗口） | 擦除服务 `erase_ip_artifacts` |
 | 验证码 / 邮箱验证 | `captcha:` 等前缀（手机号/邮箱为键） | 手机号 / 邮箱 | ≤ 1 小时 | TTL 自然过期 |
@@ -46,7 +46,7 @@ let ip_report = eraser.erase_ip_artifacts("203.0.113.7").await?;
 
 | 残留数据 | 处置方式 |
 |---------|---------|
-| API Key | 经 `ApiKeyRepository` 按 owner 查询后吊销（含业务授权语义，框架不代删） |
+| API Key | 经 `ApiKeyHandler` 查询后吊销（含业务授权语义，框架不代删）。框架侧查询入口为 `list_by_namespace` / `get_keys_older_than`，无按 `owner_id` 查询的 API——owner 维度筛选需业务方自行在 `ApiKeyInfo` 上完成 |
 | 业务用户资料 / 业务副本 | 业务方自有存储，框架不可达 |
 | 审计日志 | 见 §3 保留期例外 |
 | 已签发的无状态 JWT | 到期前技术不可撤回；需即时撤回能力请启用 `enable_jwt_revocation` |
@@ -58,13 +58,13 @@ let ip_report = eraser.erase_ip_artifacts("203.0.113.7").await?;
 
 ## 3. 数据本地化部署
 
-- **存储后端全可指定**：会话/令牌/限速/审计的存储经 `GarrisonDao` 抽象与 `GARRISON_DB_URL` / `GARRISON_REDIS_URL` 指定，可将全部框架数据限定在特定司法辖区的基础设施内（自建 / 区域云 region）。
+- **存储后端全可指定**：会话/令牌/限速/审计的存储经 `GarrisonDao` 抽象；缓存与限速后端由 `GARRISON_REDIS_URL` 指定，数据库 URL 则由宿主编程式传入（CLI `--db-url` → `garrison::dao::init_dbnexus(&db_url)`，框架不读取 `GARRISON_DB_URL` 环境变量），可将全部框架数据限定在特定司法辖区的基础设施内（自建 / 区域云 region）。
 - **无跨境外呼**：框架运行时不存在向第三方服务发送主体数据的行为（`policy-hibp` 的 HIBP k-anonymity 查询是唯一可选出站，仅发送 5 字符哈希前缀、不含明文密码；不启用 `policy-hibp` 则零出站）。
 - **依赖供应链可审计**：SBOM + 依赖清单公开（见 [SECURITY.md 供应链与门禁](../SECURITY.md)），可核验无隐蔽数据通道。
 
 ## 4. 数据保护默认值
 
 - 密码：Argon2id（OWASP 建议档）哈希存储，明文不落库；`credential-zeroize` feature 下哈希输入副本用后即清零。
-- API Key secret：仅存 SHA-256 哈希（生成期 244-bit 高熵锁定），校验常量时间比较。
+- API Key secret：仅存 SHA-256 哈希（生成期 secret 为单个 UUIDv4，122-bit 随机；`key_id` + `key_secret` 两段合计 244-bit），校验常量时间比较。
 - 日志/事件：token 类字段统一掩码（前 8 字符 + `***`）。
 - 审计链：链式哈希防篡改，链首盐取 OS CSPRNG。

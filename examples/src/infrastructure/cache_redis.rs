@@ -66,7 +66,6 @@ pub async fn create_tiered_cache(
 pub async fn demo_dao_operations(
     dao: &GarrisonDaoOxcache,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // set + get
     dao.set("user:1001", "alice", 3600).await?;
     let value = dao.get("user:1001").await?;
     assert_eq!(value.as_deref(), Some("alice"));
@@ -76,10 +75,8 @@ pub async fn demo_dao_operations(
     let updated = dao.get("user:1001").await?;
     assert_eq!(updated.as_deref(), Some("bob"));
 
-    // expire（更新 TTL 为 60 秒）
     dao.expire("user:1001", 60).await?;
 
-    // delete
     dao.delete("user:1001").await?;
     let deleted = dao.get("user:1001").await?;
     assert!(deleted.is_none());

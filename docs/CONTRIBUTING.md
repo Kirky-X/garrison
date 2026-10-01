@@ -4,7 +4,7 @@
 
 首先，感谢你对 Garrison 项目的关注与支持！本文档将引导你完成从环境搭建到提交 Pull Request 的完整贡献流程。
 
-Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：4374+ 个测试通过 + doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
+Garrison 是一个面向 Rust 生态的身份认证鉴权框架。项目采用 TDD（测试驱动开发）工作流，对代码质量有严格要求：5100+ 个 lib 测试通过 + doc-tests、95%+ 覆盖率、clippy 零警告、所有 public API 均带 `///` 文档注释。
 
 > 相关文档：[🛠️ 开发规范](./DEVELOPMENT.md) | [🏗️ 架构设计](./ARCHITECTURE.md) | [⚙️ 配置指南](./CONFIGURATION.md)
 
@@ -85,7 +85,7 @@ cargo build --features full
 cargo test --features full
 ```
 
-预期输出：4374+ 个测试通过 + doc-tests 全部通过。
+预期输出：5100+ 个测试通过 + doc-tests 全部通过。
 
 ---
 
@@ -144,7 +144,7 @@ cargo doc --no-deps --features full
 
 ### 全局单例测试串行化
 
-修改全局 `GarrisonManager` 单例（位于 `once_cell::sync::Lazy`）的测试必须标注 `#[serial_test::serial]`，避免并发污染：
+修改全局 `GarrisonManager` 单例（位于 `std::sync::LazyLock`）的测试必须标注 `#[serial_test::serial]`，避免并发污染：
 
 ```rust
 #[cfg(test)]
@@ -297,7 +297,7 @@ cargo doc --no-deps --features full
 
 ## 📊 测试覆盖率要求
 
-Garrison 要求测试覆盖率 **≥ 95%**（当前 95%+）。新增代码不得使总覆盖率下降。
+Garrison 要求测试覆盖率 **≥ 85% 行覆盖率**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 85`；当前约 95.8%）。新增代码不得使总覆盖率下降。分模块的期望值见下表。
 
 使用 `cargo-tarpaulin` 生成覆盖率报告：
 

@@ -369,7 +369,6 @@ impl GarrisonSession {
                 last_active_at: now,
             });
 
-        // 添加 token 信息
         account.tokens.push(TokenInfo {
             token: token.to_string(),
             created_at: now,
@@ -744,7 +743,6 @@ impl GarrisonSession {
                         continue;
                     },
                 };
-                // 5. 提取 tokens 字段中的 token 字符串列表，写入内存 map
                 let tokens: Vec<String> = session.tokens.into_iter().map(|ti| ti.token).collect();
                 self.login_token_map.insert(login_id.to_string(), tokens);
             }
@@ -1469,7 +1467,6 @@ impl GarrisonSession {
     /// read-modify-write 序列的原子性。`logout` 方法已内部封装了获取锁 + 调用本方法的流程，
     /// 外部调用方应优先使用 `logout`，仅在已持锁场景下使用本方法。
     pub(crate) async fn logout_inner(&self, token: &str, ts: &TokenSession) -> GarrisonResult<()> {
-        // 删除 Token-Session
         self.dao.delete(&token_key(token)).await?;
 
         // SSO ticket 销毁联动。
@@ -1486,7 +1483,6 @@ impl GarrisonSession {
             }
         }
 
-        // 从 Account-Session 移除该 token
         if let Some(mut account) = self.get_account_session(&ts.login_id).await? {
             account.tokens.retain(|ti| ti.token != token);
             // 若列表为空，Account-Session 标记为空（但不删除，保留历史）
@@ -1984,7 +1980,6 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // 读取并修改 TokenSession
         let mut ts = session.get_token_session("T1").await.unwrap().unwrap();
         ts.attrs
             .insert("custom_key".to_string(), "custom_value".to_string());
@@ -1992,7 +1987,6 @@ mod tests {
         // save_token_session 用 update（保留原 TTL）
         session.save_token_session("T1", &ts).await.unwrap();
 
-        // 验证修改已持久化
         let reloaded = session.get_token_session("T1").await.unwrap().unwrap();
         assert_eq!(
             reloaded.attrs.get("custom_key").map(|s| s.as_str()),
@@ -2040,7 +2034,6 @@ mod tests {
             .await
             .unwrap();
 
-        // get_token_timeout 应返回 Some（键存在且设置了 TTL）
         let ttl = session.get_token_timeout("T2").await.unwrap();
         assert!(
             ttl.is_some(),
@@ -2054,7 +2047,6 @@ mod tests {
             ttl_secs
         );
 
-        // set_token_session_ttl 重置为 1200 秒
         session.set_token_session_ttl("T2", 1200).await.unwrap();
         let ttl_after = session
             .get_token_timeout("T2")
@@ -2195,7 +2187,6 @@ mod tests {
     #[test]
     fn check_hover_timeout_returns_true_when_within_timeout() {
         let (_dao, session) = make_session(3600, 86400);
-        // 设置当前时间为最近活跃
         let now = chrono::Utc::now().timestamp_millis();
         session.update_last_active_at("active_user", now);
 
@@ -2309,7 +2300,6 @@ mod tests {
         session.add_login_token("user1", "first_token");
         session.add_login_token("user1", "second_token");
 
-        // 返回第一个 token
         assert_eq!(
             session.get_token_by_login_id("user1"),
             Some("first_token".to_string()),
@@ -2356,21 +2346,17 @@ mod tests {
         let (_dao, session) = make_session(3600, 86400);
         session.create("1001", "T1").await.unwrap();
 
-        // set 属性
         session
             .set("T1", "custom_key", "custom_value")
             .await
             .unwrap();
 
-        // get 属性
         let val = session.get("T1", "custom_key").await.unwrap();
         assert_eq!(val.as_deref(), Some("custom_value"), "应读取已设置的属性");
 
-        // get 不存在的属性
         let missing = session.get("T1", "missing_key").await.unwrap();
         assert!(missing.is_none(), "不存在的属性应返回 None");
 
-        // get 不存在的 token 的属性
         let missing_token = session.get("no_token", "key").await.unwrap();
         assert!(missing_token.is_none(), "不存在的 token 应返回 None");
     }
@@ -2628,7 +2614,6 @@ mod tests {
         h1.await.unwrap();
         h2.await.unwrap();
 
-        // 验证 device 和 attr 都存在
         let ts = session.get_token_session("T1").await.unwrap().unwrap();
         assert_eq!(ts.device, Some("device-A".to_string()));
         assert_eq!(ts.attrs.get("attr1"), Some(&"val1".to_string()));
@@ -2655,7 +2640,6 @@ mod tests {
             h.await.unwrap();
         }
 
-        // 验证 session 仍然存在
         let ts = session.get_token_session("T1").await.unwrap();
         assert!(ts.is_some(), "touch 并发后 session 应仍然存在");
     }
@@ -2675,7 +2659,6 @@ mod tests {
             session.token_session_locks.is_empty(),
             "调用前 token_session_locks 应为空"
         );
-        // 调用 with_token_session_lock 执行任意操作
         let _ = session
             .with_token_session_lock("test-token-cleanup", async { 42 })
             .await;
@@ -2818,7 +2801,6 @@ mod tests {
     #[tokio::test]
     async fn check_hover_timeout_expired_returns_false() {
         let (_dao, session) = make_session(3600, 86400);
-        // 设置活跃时间为 2 分钟前
         session.update_last_active_at("user1", chrono::Utc::now().timestamp_millis() - 120_000);
         assert!(
             !session.check_hover_timeout("user1", 60),

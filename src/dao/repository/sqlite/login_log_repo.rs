@@ -257,7 +257,6 @@ mod tests {
             .expect("create 应成功");
         }
 
-        // 查询全部
         let all = repo
             .find_by_user_id(1, &user_id, 0, 100)
             .await
@@ -285,7 +284,6 @@ mod tests {
         let pool = setup_db().await;
         let repo = DbnexusLoginLogRepository::new(pool.clone());
 
-        // tenant 1
         let user_1 = setup_user(&pool, 1).await;
         repo.create(
             1,
@@ -301,7 +299,6 @@ mod tests {
         .await
         .expect("create tenant 1 应成功");
 
-        // tenant 2
         let user_2 = setup_user(&pool, 2).await;
         repo.create(
             2,
@@ -337,7 +334,6 @@ mod tests {
         let pool = setup_db().await;
         let repo = DbnexusLoginLogRepository::new(pool.clone());
 
-        // 先删除表
         {
             let session = pool.get_session("admin").await.expect("获取 session 失败");
             let conn = session.connection().expect("获取 connection 失败");

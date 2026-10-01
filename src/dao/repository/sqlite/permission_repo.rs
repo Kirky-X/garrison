@@ -310,7 +310,6 @@ mod tests {
             .expect("create 应成功");
         }
 
-        // 查询全部 3 条
         let all = repo.list(0, 100).await.expect("list 应成功");
         assert_eq!(all.len(), 3, "应有 3 条记录");
 

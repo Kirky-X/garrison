@@ -109,7 +109,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     .with_password_hasher(hasher)
     .with_user_repository(user_repo);
 
-    // 5. 正确密码登录
     let token = logic
         .login_with_password("1001", "my-secret-password")
         .await?;

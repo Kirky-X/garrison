@@ -748,7 +748,6 @@ mod tests {
                 result
             );
 
-            // 验证广播了 LoginFailure 事件
             let events = recorder.captured();
             let failure_count = events
                 .iter()
@@ -801,7 +800,6 @@ mod tests {
                 result
             );
 
-            // 验证广播了 LoginFailure 事件，reason 为 "invalid_credentials"
             let events = recorder.captured();
             if let Some(GarrisonEvent::LoginFailure {
                 login_id, reason, ..

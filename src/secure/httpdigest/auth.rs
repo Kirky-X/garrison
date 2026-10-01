@@ -6,12 +6,12 @@
 use super::algorithm::hex_encode;
 use super::{DigestAlgorithm, HttpDigestAuth};
 use crate::error::{GarrisonError, GarrisonResult};
+use crate::secure::ct_eq::constant_time_eq;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
-use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 /// nonce 服务端签名 HKDF info（域分隔，避免与其他 HKDF 派生密钥域混用）。
@@ -176,7 +176,8 @@ impl HttpDigestAuth {
     /// nonce 格式（无 `server_key`，无签名）：`base64("{timestamp}:{random}")`
     /// nonce 格式（注入 `server_key`）：`base64("{timestamp}:{random}:{mac}")`
     ///
-    /// 注入 `server_key` 时：先验 HMAC 签名（`constant_time_eq`），再校验时间戳，
+    /// 注入 `server_key` 时：先验 HMAC 签名（公共常量时间比较原语
+    /// `crate::secure::ct_eq::constant_time_eq`，ADR-0003），再校验时间戳，
     /// 任一步失败即拒绝。未注入 `server_key` 时无签名校验（仅时间戳 TTL 防护）。
     pub(super) fn is_nonce_valid(&self, nonce: &str) -> bool {
         let decoded = match STANDARD.decode(nonce) {
@@ -207,7 +208,6 @@ impl HttpDigestAuth {
                 if timestamp > now + 5 {
                     return false;
                 }
-                // 检查是否过期
                 if timestamp + self.nonce_ttl < now {
                     return false;
                 }
@@ -452,7 +452,6 @@ impl HttpDigestAuth {
                     return false;
                 }
                 let qop = resp.qop.as_deref();
-                // 根据 qop 计算 HA2
                 let ha2 = match qop {
                     Some("auth") => {
                         let ha2_input = format!("{}:{}", method, uri);
@@ -653,18 +652,6 @@ fn parse_unquoted_value(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) ->
         value.push(chars.next().unwrap());
     }
     value
-}
-
-/// 常量时间字符串比较，避免时序攻击。
-///
-/// 使用 `subtle::ConstantTimeEq` trait 的 `ct_eq` 方法，全程常量时间：
-/// - 长度不等时返回 0（subtle 库内部处理，不提前 return，避免长度泄漏）
-/// - 长度相等时按字节异或累积，最后一次性比较
-///
-/// 替代原手写的 `if a.len() != b.len() { return false; }` 实现，
-/// 原实现虽然循环部分常量时间，但长度检查的提前 return 会泄漏长度信息。
-pub(super) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    a.ct_eq(b).into()
 }
 
 /// 获取当前 Unix 时间戳（秒）。

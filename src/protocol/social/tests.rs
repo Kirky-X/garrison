@@ -15,14 +15,12 @@ async fn social_login_provider_trait_defines_three_methods() {
 
     let provider = MockSocialProvider;
 
-    // 验证 get_authorization_url 可调用且返回非空 URL
     let auth_url = provider
         .get_authorization_url("state123", "https://example.com/cb")
         .await
         .expect("get_authorization_url 应返回 Ok");
     assert!(!auth_url.is_empty(), "授权 URL 不应为空");
 
-    // 验证 exchange_token 可调用且返回 SocialUserInfo
     let user_info = provider
         .exchange_token("code456", "state123")
         .await
@@ -31,7 +29,6 @@ async fn social_login_provider_trait_defines_three_methods() {
     assert_eq!(user_info.provider_user_id, "mock_openid");
     assert_eq!(user_info.union_id.as_deref(), Some("mock_unionid"));
 
-    // 验证 get_user_info 可调用且返回 SocialUserInfo
     let user_info = provider
         .get_user_info("access_token789")
         .await
@@ -50,7 +47,6 @@ fn provider_names_constants_match_expected_strings() {
     assert_eq!(provider_names::ALIPAY, "alipay");
     assert_eq!(provider_names::WECHAT_MINI_APP, "wechat_mini_app");
 
-    // 验证三个常量互不相等
     assert_ne!(provider_names::WECHAT, provider_names::ALIPAY);
     assert_ne!(provider_names::WECHAT, provider_names::WECHAT_MINI_APP);
     assert_ne!(provider_names::ALIPAY, provider_names::WECHAT_MINI_APP);

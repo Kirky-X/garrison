@@ -154,14 +154,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(!default_token.is_empty());
 
-    // 3. 运行时替换 LoginHandler
     println!("\n[3] 运行时替换 LoginHandler");
     strategy.register_login_handler(Arc::new(CustomLoginHandler));
     let custom_token = strategy.login_handler().handle_login("1001").await?;
     println!("    自定义 token: {}", custom_token);
     assert_eq!(custom_token, "custom-login-token-1001");
 
-    // 4. 替换一个不影响其他（LogoutHandler 仍是默认）
     println!("\n[4] 替换 LoginHandler 不影响 LogoutHandler");
     let logout_result = strategy
         .logout_handler()
@@ -173,7 +171,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(logout_result.is_ok(), "LogoutHandler 应仍是默认实现");
 
-    // 5. 同时替换多个策略
     println!("\n[5] 同时替换多个策略");
     strategy.register_token_generator(Arc::new(UuidTokenGenerator));
     strategy.register_logout_handler(Arc::new(LoggingLogoutHandler));
@@ -199,7 +196,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         firewall_result.is_ok()
     );
 
-    // 6. remove 恢复默认
     println!("\n[6] remove_login_handler 恢复默认");
     strategy.remove_login_handler();
     let restored_token = strategy.login_handler().handle_login("1001").await?;
@@ -212,14 +208,12 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "remove 后应恢复默认"
     );
 
-    // 7. 全部恢复默认
     println!("\n[7] 全部恢复默认");
     strategy.remove_logout_handler();
     strategy.remove_token_generator();
     strategy.remove_firewall_strategy();
     println!("    6 个策略全部恢复默认实现");
 
-    // 验证恢复后仍可正常工作
     let final_token = strategy.login_handler().handle_login("3003").await?;
     assert!(!final_token.is_empty());
     println!("    验证：login(3003) → token 生成成功");

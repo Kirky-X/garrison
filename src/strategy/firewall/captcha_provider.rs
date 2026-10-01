@@ -205,7 +205,6 @@ mod tests {
         let provider = MathCaptchaProvider::new(dao);
         let (id, question) = provider.generate().await.expect("generate 不应报错");
 
-        // 从题目解析出正确答案
         let parts: Vec<&str> = question.split(' ').collect();
         assert_eq!(parts.len(), 5, "题目应为 'a op b = ?' 格式");
         let a: i32 = parts[0].parse().expect("a 应为整数");
@@ -255,13 +254,11 @@ mod tests {
         let provider = MathCaptchaProvider::new(dao);
         let (id, question) = provider.generate().await.expect("generate 不应报错");
 
-        // 解析正确答案
         let parts: Vec<&str> = question.split(' ').collect();
         let a: i32 = parts[0].parse().unwrap();
         let b: i32 = parts[2].parse().unwrap();
         let expected = if parts[1] == "+" { a + b } else { a - b };
 
-        // 第一次正确答案通过
         let first = provider
             .verify(&id, &expected.to_string())
             .await
@@ -295,7 +292,6 @@ mod tests {
                 "题目应为 5 段 'a op b = ?'，实际: {:?}",
                 question
             );
-            // 第 2 段是运算符
             assert!(
                 parts[1] == "+" || parts[1] == "-",
                 "运算符应为 + 或 -，实际: {:?}",
@@ -376,7 +372,6 @@ mod tests {
         let provider = MathCaptchaProvider::new(dao);
         let (id, _question) = provider.generate().await.expect("generate 不应报错");
 
-        // 5 次错误答案触发废弃
         for _ in 0..5 {
             let ok = provider.verify(&id, "999").await.expect("verify 不应报错");
             assert!(!ok);
@@ -399,7 +394,6 @@ mod tests {
             provider.verify(&id, "999").await.expect("verify 不应报错");
         }
 
-        // 解析正确答案
         let parts: Vec<&str> = question.split(' ').collect();
         let a: i32 = parts[0].parse().unwrap();
         let b: i32 = parts[2].parse().unwrap();

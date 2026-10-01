@@ -119,7 +119,6 @@ impl EmailRateLimiter {
             date: chrono::Utc::now().format("%Y-%m-%d").to_string(),
         };
 
-        // 小时窗口
         let hour_key = format!("email:rate:{}:hour:{}", normalized, windows.hour_bucket);
         let hour_count = self
             .limiter
@@ -135,7 +134,6 @@ impl EmailRateLimiter {
             });
         }
 
-        // 天窗口
         let day_key = format!("email:rate:{}:day:{}", normalized, windows.date);
         let day_count = self
             .limiter

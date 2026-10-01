@@ -56,7 +56,6 @@ impl CredentialRepository for MockCredentialRepository {
             .filter(|c| c.user_id == user_id)
             .cloned()
             .collect();
-        // 按 priority 升序排序
         creds.sort_by_key(|c| c.priority);
         Ok(creds)
     }

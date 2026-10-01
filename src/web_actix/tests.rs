@@ -419,7 +419,6 @@ async fn middleware_allows_ignore_path_without_token() {
 async fn new_transform_returns_service() {
     init_manager(&[], &[]).await;
     let service = make_middleware_service(&[("/x", Annotation::CheckLogin)]).await;
-    // 验证 service 持有规则（rules 非空）
     assert_eq!(service.rules.len(), 1);
 
     GarrisonManager::reset_for_test();

@@ -659,7 +659,6 @@ mod db_sqlite_tests {
         // A 的祖先应含 B（但不应含 A 自身，因 visited 防止环）
         let a_ancestors = closure.get("A").expect("closure 应包含 A");
         assert!(a_ancestors.contains("B"));
-        // B 的祖先应含 A
         let b_ancestors = closure.get("B").expect("closure 应包含 B");
         assert!(b_ancestors.contains("A"));
     }
@@ -766,7 +765,6 @@ mod db_sqlite_tests {
         assert!(ancestors1.contains("admin"));
         assert!(!ancestors1.contains("super_admin"));
 
-        // 添加新边 user -> super_admin
         svc.add_edge("user", "super_admin", 0)
             .await
             .expect("add_edge 应成功");
@@ -805,7 +803,6 @@ mod db_sqlite_tests {
             .expect("get_ancestors 应成功");
         assert!(ancestors1.contains("admin"));
 
-        // 删除 role_hierarchy 表所有数据
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();
         conn.execute_raw(Statement::from_sql_and_values(
@@ -839,7 +836,6 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "user", "admin").await;
         let svc = RoleHierarchyService::new(dao.clone());
 
-        // 向 oxcache 注入损坏的闭包 JSON
         dao.set("tenant:0:role_closure", "{invalid json", 3600)
             .await
             .expect("注入损坏缓存应成功");
@@ -857,7 +853,6 @@ mod db_sqlite_tests {
             .await
             .expect("dao.get 应成功");
         assert!(cached.is_some(), "缓存应已被重新写入");
-        // 验证缓存内容是有效的 JSON
         let closure: std::collections::HashMap<String, std::collections::HashSet<String>> =
             serde_json::from_str(&cached.unwrap()).expect("缓存应为有效 JSON");
         assert!(closure.contains_key("user"), "闭包应包含 user");
@@ -872,7 +867,6 @@ mod db_sqlite_tests {
         insert_edge(&pool, 0, "user", "admin").await;
         let svc = RoleHierarchyService::new(dao.clone());
 
-        // 查询不存在的角色
         let ancestors = svc
             .get_ancestors("nonexistent_role", 0)
             .await
@@ -1060,7 +1054,6 @@ mod db_sqlite_tests {
 
         let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
-        // A 的后代应含 B, C, D
         let descendants = svc
             .get_descendants("A", 0)
             .await
@@ -1069,7 +1062,6 @@ mod db_sqlite_tests {
         assert!(descendants.contains("C"), "A 的后代应含 C");
         assert!(descendants.contains("D"), "A 的后代应含 D");
 
-        // B 的后代应含 D，不含 C/A
         let b_descendants = svc
             .get_descendants("B", 0)
             .await
@@ -1099,7 +1091,6 @@ mod db_sqlite_tests {
         let result = svc.add_edge("user", "admin", 0).await;
         assert!(result.is_ok(), "重复插入相同边应幂等返回 Ok");
 
-        // 验证只有一条记录
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();
         let stmt = Statement::from_sql_and_values(
@@ -1183,7 +1174,6 @@ mod db_sqlite_tests {
             "D 的祖先应为 {{B, C, A}}（去重后 3 个）"
         );
 
-        // B 的祖先应含 A，不含 C/D
         let b_ancestors = closure.get("B").expect("closure 应包含 B");
         assert!(b_ancestors.contains("A"), "B 的祖先应含 A");
         assert!(!b_ancestors.contains("C"), "B 的祖先不应含 C");
@@ -1318,7 +1308,6 @@ mod db_sqlite_tests {
             .expect("首次 get_ancestors(user) 应成功");
         assert!(user_ancestors.contains("admin"));
 
-        // 删除所有数据
         let session = pool.get_session("admin").await.unwrap();
         let conn = session.connection().unwrap();
         conn.execute_raw(Statement::from_sql_and_values(
@@ -1368,7 +1357,6 @@ mod db_sqlite_tests {
             .await
             .expect("tenant 1 首次查询应成功");
 
-        // 两个缓存都应存在
         assert!(
             dao.get("tenant:0:role_closure").await.unwrap().is_some(),
             "tenant 0 缓存应已写入"
@@ -1438,7 +1426,6 @@ mod db_sqlite_tests {
 
         let svc = RoleHierarchyService::new(setup_dao(pool).await);
 
-        // admin 的后代应含 user
         let admin_desc = svc
             .get_descendants("admin", 0)
             .await
@@ -1448,7 +1435,6 @@ mod db_sqlite_tests {
             "admin 的后代应含 user（user 继承 admin）"
         );
 
-        // manager 的后代应含 user
         let mgr_desc = svc
             .get_descendants("manager", 0)
             .await
@@ -1458,7 +1444,6 @@ mod db_sqlite_tests {
             "manager 的后代应含 user（user 继承 manager）"
         );
 
-        // user 的后代应为空
         let user_desc = svc
             .get_descendants("user", 0)
             .await

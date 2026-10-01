@@ -7,13 +7,13 @@
 | 模块 | Feature | 核心类型 | 依赖 |
 |:---|:---|:---|:---|
 | TOTP | `secure-totp` | `TotpHandler` | `totp-rs` + `base32` |
-| Sign | `secure-sign` | `Signer` / `SignVerifier` trait | `sha2` + `hmac` + `base64` + `subtle` |
+| Sign | `secure-sign` | `Signer` / `SignVerifier` trait | `sha2` + `hmac` + `base64` + `secure-ct-eq` |
 | HTTP Basic | `protocol-httpbasic` | `HttpBasicAuth` | `base64` |
-| HTTP Digest | `protocol-httpdigest` | `HttpDigestAuth` | `sha2` + `base64` + `md5` + `subtle` + `hkdf` + `hmac` |
+| HTTP Digest | `protocol-httpdigest` | `HttpDigestAuth` | `sha2` + `base64` + `md5` + `secure-ct-eq` + `hkdf` + `hmac` |
 | Unicode 同形字 | `secure-confusable` | `check_confusable` 函数 | `unicode-security` |
 | 敏感数据脱敏 | `secure-masking` | `SensitiveDataMasker` | `regex` |
 | XSS 防护 | `secure-xss` | `XssProtector` | 零外部依赖 |
-| SMS 验证码 | `sms-rate-limit` | `SmsVerificationService` | `rand` |
+| SMS 验证码 | `sms-rate-limit` | `SmsVerificationService` | `rand` + `secure-ct-eq` |
 | 输入消毒 | `secure-sanitize` | `sanitize_input` 函数 | 零外部依赖 |
 
 ## TOTP（RFC 6238）

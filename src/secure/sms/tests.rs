@@ -1,12 +1,12 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! SmsVerificationService / SmsRateLimiter / constant_time_eq 单元测试。
+//! SmsVerificationService / SmsRateLimiter / 验证码比对原语（secure::ct_eq，ADR-0003）单元测试。
 
-use super::service::constant_time_eq;
 use super::*;
 use crate::dao::tests::MockDao;
 use crate::error::GarrisonError;
+use crate::secure::ct_eq::constant_time_eq;
 use std::sync::Arc;
 
 /// 构造测试用 SmsVerificationService（默认配置）。
@@ -120,10 +120,8 @@ async fn correct_code_verifies_and_deletes() {
     );
     service.send_code("13800138004").await.unwrap();
     let code = sender.code.lock().as_ref().cloned().unwrap();
-    // 验证通过
     let result = service.verify_code("13800138004", &code).await;
     assert!(result.is_ok(), "正确验证码应验证通过");
-    // 验证码已被删除
     let stored = dao.get("sms:code:13800138004").await.unwrap();
     assert!(stored.is_none(), "验证后验证码应被删除");
 }
@@ -140,14 +138,12 @@ async fn wrong_code_increments_attempts() {
         3,
     );
     service.send_code("13800138005").await.unwrap();
-    // 第一次错误
     service
         .verify_code("13800138005", "wrong")
         .await
         .unwrap_err();
     let attempts = dao.get("sms:attempts:13800138005").await.unwrap();
     assert_eq!(attempts, Some("1".to_string()));
-    // 第二次错误
     service
         .verify_code("13800138005", "wrong")
         .await
@@ -180,7 +176,6 @@ async fn rate_key_format_hour() {
         3,
     );
     service.send_code("13800138007").await.unwrap();
-    // 验证 key 存在
     let keys = dao.keys("sms:rate:13800138007:hour:*").await.unwrap();
     assert!(
         !keys.is_empty(),
@@ -282,37 +277,37 @@ async fn unverified_threshold_recycles_channel() {
 /// 验证 constant_time_eq 对相同字符串返回 true。
 #[test]
 fn constant_time_eq_same_string_returns_true() {
-    assert!(constant_time_eq("123456", "123456"));
-    assert!(constant_time_eq("", ""));
-    assert!(constant_time_eq("abcdef", "abcdef"));
+    assert!(constant_time_eq(b"123456", b"123456"));
+    assert!(constant_time_eq(b"", b""));
+    assert!(constant_time_eq(b"abcdef", b"abcdef"));
 }
 
 /// 验证 constant_time_eq 对不同字符串返回 false。
 #[test]
 fn constant_time_eq_different_string_returns_false() {
-    assert!(!constant_time_eq("123456", "000000"));
-    assert!(!constant_time_eq("123456", "123457"));
-    assert!(!constant_time_eq("abcdef", "abcdeF"));
+    assert!(!constant_time_eq(b"123456", b"000000"));
+    assert!(!constant_time_eq(b"123456", b"123457"));
+    assert!(!constant_time_eq(b"abcdef", b"abcdeF"));
 }
 
 /// 验证 constant_time_eq 对不同长度字符串返回 false。
 #[test]
 fn constant_time_eq_different_length_returns_false() {
-    assert!(!constant_time_eq("12345", "123456"));
-    assert!(!constant_time_eq("1234567", "123456"));
-    assert!(!constant_time_eq("", "123456"));
+    assert!(!constant_time_eq(b"12345", b"123456"));
+    assert!(!constant_time_eq(b"1234567", b"123456"));
+    assert!(!constant_time_eq(b"", b"123456"));
 }
 
 /// 验证 constant_time_eq 对仅首位不同的字符串返回 false（覆盖首字节差异）。
 #[test]
 fn constant_time_eq_first_byte_diff_returns_false() {
-    assert!(!constant_time_eq("023456", "123456"));
+    assert!(!constant_time_eq(b"023456", b"123456"));
 }
 
 /// 验证 constant_time_eq 对仅末位不同的字符串返回 false（覆盖末字节差异）。
 #[test]
 fn constant_time_eq_last_byte_diff_returns_false() {
-    assert!(!constant_time_eq("123450", "123456"));
+    assert!(!constant_time_eq(b"123450", b"123456"));
 }
 
 // ============================================================================

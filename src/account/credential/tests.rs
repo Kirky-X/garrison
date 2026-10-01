@@ -46,7 +46,6 @@ fn credential_model_serializes_all_8_fields() {
         priority: 0,
     };
     let json = serde_json::to_string(&model).expect("序列化应成功");
-    // 验证全部 8 字段存在于 JSON 输出中
     assert!(
         json.contains("\"id\":\"cred-001\""),
         "JSON 缺少 id 字段: {}",
@@ -239,7 +238,6 @@ async fn repository_update_overwrites_and_errors_on_missing() {
     let m = make_model("c1", "alice", "password", 0);
     repo.create(m).await.unwrap();
 
-    // 更新已存在凭证
     let updated = CredentialModel {
         id: "c1".to_string(),
         user_id: "alice".to_string(),
@@ -257,7 +255,6 @@ async fn repository_update_overwrites_and_errors_on_missing() {
     assert!(!found[0].enabled);
     assert_eq!(found[0].priority, 5);
 
-    // 更新不存在凭证
     let missing = make_model("nonexistent", "alice", "password", 0);
     let result = repo.update("alice", missing).await;
     assert!(result.is_err(), "更新不存在的凭证应返回错误");
@@ -271,12 +268,10 @@ async fn repository_delete_removes_and_errors_on_missing() {
         .await
         .unwrap();
 
-    // 删除已存在凭证
     repo.delete("alice", "c1").await.unwrap();
     let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(found.len(), 0, "删除后应查不到凭证");
 
-    // 删除不存在凭证
     let result = repo.delete("alice", "c1").await;
     assert!(result.is_err(), "删除不存在的凭证应返回错误");
 }
@@ -403,7 +398,6 @@ async fn dao_repo_update_overwrites_and_errors_on_missing() {
     assert!(!found[0].enabled);
     assert_eq!(found[0].priority, 5);
 
-    // 更新不存在凭证
     let missing = make_model("nonexistent", "alice", "password", 0);
     let result = repo.update("alice", missing).await;
     assert!(result.is_err(), "更新不存在的凭证应返回错误");
@@ -501,7 +495,6 @@ async fn dao_repo_delete_removes_and_errors_on_missing() {
     let found = repo.find_by_user("alice", "alice").await.unwrap();
     assert!(found.is_empty(), "删除后应查不到凭证");
 
-    // 删除不存在凭证
     let result = repo.delete("alice", "c1").await;
     assert!(result.is_err(), "删除不存在的凭证应返回错误");
 }
@@ -525,7 +518,6 @@ async fn dao_repo_multi_user_isolation() {
     assert_eq!(bob.len(), 1);
     assert_eq!(bob[0].id, "c2");
 
-    // carol 无凭证
     let carol = repo.find_by_user("carol", "carol").await.unwrap();
     assert!(carol.is_empty());
 }
@@ -559,7 +551,6 @@ async fn dao_repo_find_returns_disabled_credentials() {
     repo.create(make_model("c1", "alice", "password", 0))
         .await
         .unwrap();
-    // 创建一个 enabled=false 的凭证
     let disabled = CredentialModel {
         id: "c2".to_string(),
         user_id: "alice".to_string(),
@@ -717,7 +708,6 @@ async fn mock_delete_denied_when_caller_not_owner() {
         .expect_err("alice 删除 bob 的凭证应被拒绝");
     assert_idor_denied(err, "mock delete alice→bob c1");
 
-    // 验证 bob 的凭证未被删除
     let remaining = repo.find_by_user("bob", "bob").await.unwrap();
     assert_eq!(remaining.len(), 1, "拒绝后 bob 的凭证应仍存在");
     assert_eq!(remaining[0].id, "c1");
@@ -737,7 +727,6 @@ async fn dao_delete_denied_when_caller_not_owner() {
         .expect_err("alice 删除 bob 的凭证应被拒绝");
     assert_idor_denied(err, "dao delete alice→bob c1");
 
-    // 验证 bob 的凭证未被删除
     let remaining = repo.find_by_user("bob", "bob").await.unwrap();
     assert_eq!(remaining.len(), 1, "拒绝后 bob 的凭证应仍存在");
 }
@@ -820,7 +809,6 @@ async fn dao_update_denied_when_caller_not_owner() {
         .expect_err("alice 更新 bob 的凭证应被拒绝");
     assert_idor_denied(err, "dao update alice→bob c1");
 
-    // 验证 bob 的凭证未被修改
     let remaining = repo.find_by_user("bob", "bob").await.unwrap();
     assert_eq!(
         remaining[0].secret_data, "$argon2id$m=8,t=1,p=1$x",
@@ -857,7 +845,6 @@ async fn mock_update_denied_when_user_id_transferred() {
         .expect_err("alice 转移凭证到 bob 应被拒绝");
     assert_idor_denied(err, "mock update user_id transfer");
 
-    // 验证凭证仍属于 alice
     let alice_creds = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(alice_creds.len(), 1, "凭证应仍属于 alice");
     assert_eq!(alice_creds[0].user_id, "alice");
@@ -887,7 +874,6 @@ async fn dao_update_denied_when_user_id_transferred() {
         .expect_err("alice 转移凭证到 bob 应被拒绝");
     assert_idor_denied(err, "dao update user_id transfer");
 
-    // 验证凭证仍属于 alice
     let alice_creds = repo.find_by_user("alice", "alice").await.unwrap();
     assert_eq!(alice_creds.len(), 1, "凭证应仍属于 alice");
     assert_eq!(alice_creds[0].user_id, "alice");

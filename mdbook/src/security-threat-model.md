@@ -108,7 +108,7 @@
 | 同 authenticator 绑定到多个账户（凭据挪用） | 注册仪式携 `ExcludeCredentials`（协议级防线）+ 数据库唯一约束兜底并发；冲突回查仅披露原占用者 user_id，不泄露其他行内容 | `src/protocol/webauthn/service.rs`、`src/dao/repository/sqlite/webauthn_credential_repo.rs` 契约测试 |
 | 找回密码存在性枚举（探测哪些邮箱/手机号已注册） | 未知标识走同路径 dummy token + 相同限流计数与响应外形（对齐 authgear 防枚举）；超限锁定（1 小时窗口） | `src/account/password_reset/service.rs`、`tests.rs` 不可区分用例 |
 | 重置 token 重放/并发消费（双花） | jti 经 DAO `set_if_absent` 一次性消费登记 + 原子消费（并发恰一成功）；两段式防竞态：消费失败凭据操作回滚 | `src/account/password_reset/`（jti 并发/两段式回滚用例） |
-| 跨用户改密（窃取他人重置 token） | code-subject 绑定存 authflow 会话；`password_owner` claim 与 `sub` 一致性校验；restricted 会话仅可达改密端点 | `tests.rs` 跨用户 token 用例 |
+| 跨用户改密（窃取他人重置 token） | code-subject 绑定存 authflow 会话，消费时校验 `ActionToken.sub` 与 code-subject 一致；restricted 会话仅可达改密端点 | `src/account/password_reset/service.rs`、`tests.rs` 跨用户 token 用例 |
 | 新密码重用历史密码 | `app_password_history` 追加 + HistoryRule 复用检测（拒绝最近 N 条）；追加失败回滚凭据写入 | `tests.rs` 历史复用/回滚用例 |
 
 ### Refresh token 重用三级处置表

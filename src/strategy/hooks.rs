@@ -539,7 +539,6 @@ mod tests {
     async fn check_login_frequency_blocks_at_threshold() {
         let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
-        // 记录 10 次失败
         for _ in 0..10 {
             hook.record_failure(&ctx).await.unwrap();
         }
@@ -692,14 +691,11 @@ mod tests {
     async fn record_failure_dao_mode_increments_counter() {
         let (hook, dao) = make_dao_hook();
         let ctx = LoginContext::new("1001").with_ip("1.2.3.4");
-        // 记录 3 次失败
         for _ in 0..3 {
             hook.record_failure(&ctx).await.unwrap();
         }
-        // 验证 DAO 中 IP 维度计数为 3
         let ip_count = dao.get("fw:ip:1.2.3.4").await.unwrap();
         assert_eq!(ip_count.as_deref(), Some("3"));
-        // 验证 DAO 中账号维度计数为 3
         let acct_count = dao.get("fw:acct:1001").await.unwrap();
         assert_eq!(acct_count.as_deref(), Some("3"));
     }
@@ -741,7 +737,6 @@ mod tests {
     #[tokio::test]
     async fn check_token_reuse_dao_mode_blocks_blacklisted() {
         let (hook, dao) = make_dao_hook();
-        // 预置黑名单
         dao.set("token:blacklist:1001", "revoked", 3600)
             .await
             .unwrap();
@@ -770,7 +765,6 @@ mod tests {
     #[tokio::test]
     async fn check_geo_anomaly_dao_mode_blocks_different_geo() {
         let (hook, dao) = make_dao_hook();
-        // 预置上次登录地理位置为 Beijing
         dao.set("fw:geo:1001", "Beijing", 3600).await.unwrap();
         // 本次登录地理位置为 Shanghai → 异地
         let ctx = LoginContext::new("1001").with_geo("Shanghai");
@@ -850,7 +844,6 @@ mod tests {
     async fn record_failure_resets_ip_count_when_window_expired() {
         let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001").with_ip("10.0.0.1");
-        // 第一次失败
         hook.record_failure(&ctx).await.unwrap();
         assert_eq!(hook.ip_failure_count("10.0.0.1").await, 1);
         // 模拟窗口过期：删除 IP 计数器 key（等价于 TTL 过期被 DAO 自动清理）
@@ -873,7 +866,6 @@ mod tests {
     async fn record_failure_resets_account_count_when_window_expired() {
         let hook = GarrisonFirewallCheckHookDefault::new();
         let ctx = LoginContext::new("1001");
-        // 第一次失败
         hook.record_failure(&ctx).await.unwrap();
         assert_eq!(hook.account_failure_count("1001").await, 1);
         // 模拟窗口过期：删除账号计数器 key
@@ -896,7 +888,6 @@ mod tests {
     #[tokio::test]
     async fn check_brute_force_returns_err_on_dirty_count() {
         let dao = Arc::new(InMemoryDao::new());
-        // 写入非数字字符串到 fw:acct:1001
         dao.set("fw:acct:1001", "not-a-number", 3600).await.unwrap();
         let hook = GarrisonFirewallCheckHookDefault::new().with_dao(dao);
         let ctx = LoginContext::new("1001");
@@ -961,7 +952,6 @@ mod tests {
         let ctx = LoginContext::new("1001");
         let result = hook.check_brute_force(&ctx).await;
         assert!(result.is_err(), "5 次失败 ≥ 阈值 5，应阻断");
-        // 验证错误信息包含 login_id
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("1001"), "错误信息应包含 login_id=1001");
     }

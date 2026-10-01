@@ -212,7 +212,6 @@ mod tests {
     async fn open_breaker_rejects_immediately() {
         let wrapper = CircuitBreakerWrapper::new(make_config());
 
-        // 触发熔断
         for _ in 0..3 {
             let _ = wrapper
                 .execute(|| async { Err::<(), _>(GarrisonError::Network("timeout".into())) })

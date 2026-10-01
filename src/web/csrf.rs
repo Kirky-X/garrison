@@ -137,41 +137,29 @@ pub fn generate_csrf_token() -> GarrisonResult<String> {
 ///
 /// # 常量时间策略
 ///
-/// - 长度不一致时不提前返回，仍遍历较短长度执行 XOR 累积。
-/// - 长度差异单独追踪，最终同时判断字节差异与长度差异。
+/// - 长度 + 逐字节比较统一委托公共原语
+///   [`crate::secure::ct_eq::constant_time_eq`]（ADR-0003 决策 2：消除本地第二
+///   实现）：长度比较不 early return，字节比较遍历到 `max_len`（短方 0 padding），
+///   不因内容不匹配或长度差异提前返回。
+/// - 空 token 视为非法输入（输入校验语义，公共原语不包含）：长度非密钥数据，
+///   且原语循环次数本就随 `max_len` 变化，空/非空检查无需常量时间伪装；
+///   以非短路 `&` 聚合，不影响已完成的常量时间比较。
 ///
 /// # 返回
 ///
 /// 任一 token 为空时返回 `false`（空 token 视为非法输入）；
 /// 否则长度一致且所有字节匹配时返回 `true`，否则返回 `false`。
 pub fn validate_csrf_token(header_token: &str, cookie_token: &str) -> bool {
-    // 统一使用 subtle::ConstantTimeEq 做常量时间比较，
-    // 并移除 is_empty early return（避免长度泄露）。
-    use std::ops::Not;
-    use subtle::ConstantTimeEq;
-
     let h = header_token.as_bytes();
     let c = cookie_token.as_bytes();
 
-    let h_len = h.len() as u64;
-    let c_len = c.len() as u64;
+    // 空 token 视为非法输入：双方都非空（非短路 &，与后续比较无条件聚合）
+    let non_empty = !h.is_empty() & !c.is_empty();
 
-    // 长度比较用常量时间（u64::ct_eq），不 early return
-    let len_eq = h_len.ct_eq(&c_len);
+    // 长度 + 逐字节比较统一委托公共原语（ADR-0003 决策 2）
+    let bytes_eq = crate::secure::ct_eq::constant_time_eq(h, c);
 
-    // 空 token 视为非法输入：常量时间检查双方都非空（不 early return）
-    let non_empty = h_len.ct_eq(&0).not() & c_len.ct_eq(&0).not();
-
-    // 字节比较：遍历到 max_len，短的一方用 0 padding
-    let max_len = h.len().max(c.len());
-    let mut byte_eq = subtle::Choice::from(1);
-    for i in 0..max_len {
-        let x = h.get(i).copied().unwrap_or(0);
-        let y = c.get(i).copied().unwrap_or(0);
-        byte_eq &= x.ct_eq(&y);
-    }
-
-    (non_empty & len_eq & byte_eq).unwrap_u8() == 1
+    non_empty & bytes_eq
 }
 
 // ============================================================================
@@ -950,7 +938,6 @@ mod tests {
             extract_origin_host("http://example.com:80/path").as_deref(),
             Some("example.com")
         );
-        // 非默认端口保留
         assert_eq!(
             extract_origin_host("http://localhost:3000").as_deref(),
             Some("localhost:3000")
@@ -959,7 +946,6 @@ mod tests {
             extract_origin_host("https://example.com:8443").as_deref(),
             Some("example.com:8443")
         );
-        // 无端口
         assert_eq!(
             extract_origin_host("https://example.com/x").as_deref(),
             Some("example.com")

@@ -216,7 +216,6 @@ impl TenantResolver for SubdomainTenantResolver {
         } else {
             host.split(':').next().unwrap_or(host)
         };
-        // extract first segment as subdomain
         let subdomain = hostname.split('.').next().unwrap_or(hostname);
         if subdomain.is_empty() {
             return Err(GarrisonError::Config(format!(

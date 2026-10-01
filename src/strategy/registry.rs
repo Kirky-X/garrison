@@ -773,7 +773,6 @@ mod tests {
             "默认策略不应是 TrackingLoginHandler"
         );
 
-        // 注册自定义策略
         strategy.register_login_handler(Arc::new(TrackingLoginHandler { id: 42 }));
         let custom_token = strategy.login_handler().handle_login("1").await.unwrap();
         assert_eq!(custom_token, "42-1", "get 应返回当前注册的策略");
@@ -793,7 +792,6 @@ mod tests {
             }
         }
 
-        // 注册自定义策略
         strategy.register_login_handler(Arc::new(CustomLoginHandler));
         let custom_token = strategy.login_handler().handle_login("1001").await.unwrap();
         assert_eq!(custom_token, "custom-1001");
@@ -859,7 +857,6 @@ mod tests {
         // 替换前：克隆 logout_handler 的 Arc 引用
         let original_logout = strategy.logout_handler().clone();
 
-        // 替换 login_handler
         strategy.register_login_handler(Arc::new(CustomLoginHandler));
 
         // 替换后：logout_handler 的 Arc 应指向同一对象（未被替换）
@@ -868,7 +865,6 @@ mod tests {
             "替换 LoginHandler 不应影响 LogoutHandler"
         );
 
-        // login_handler 确实已替换
         let token = strategy.login_handler().handle_login("1001").await.unwrap();
         assert_eq!(token, "custom-1001");
     }
@@ -890,7 +886,6 @@ mod tests {
             }
         }
 
-        // 注册第一个自定义策略
         let handler_v1 = Arc::new(CustomLoginHandler);
         let weak_v1 = Arc::downgrade(&handler_v1);
         strategy.register_login_handler(handler_v1);
@@ -1036,7 +1031,6 @@ mod tests {
             "generate_token 应委托 logic.login 返回 token，实际: {:?}",
             result
         );
-        // 验证返回的 token 非空
         let token = result.unwrap();
         assert!(!token.is_empty(), "生成的 token 不应为空");
     }

@@ -181,7 +181,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    tenant-a.set(\"config:timeout\", \"30\")");
     println!("    tenant-b.set(\"config:timeout\", \"60\")");
 
-    // 读取各自 tenant 的值
     let val_a = cache_a.get("config:timeout").await?;
     let val_b = cache_b.get("config:timeout").await?;
     println!("    tenant-a.get(\"config:timeout\") → {:?}", val_a);

@@ -145,7 +145,6 @@ pub fn parse_remember_me_param(params: Option<&str>) -> bool {
 #[async_trait]
 impl AuthLogic for AuthLogicDefault {
     async fn login(&self, id: &str, params: Option<&str>) -> GarrisonResult<String> {
-        // 解析 remember_me 参数
         let remember_me = parse_remember_me_param(params);
         let effective_timeout = if remember_me && self.remember_me_enabled {
             self.remember_me_timeout
@@ -206,14 +205,12 @@ impl AuthLogic for AuthLogicDefault {
     }
 
     async fn switch_to(&self, token: &str, target_login_id: &str) -> GarrisonResult<()> {
-        // 验证 target_login_id 非空
         if target_login_id.is_empty() {
             return Err(GarrisonError::InvalidParam(
                 "core-auth-target-login-id-empty".to_string(),
             ));
         }
 
-        // 获取当前 TokenSession
         let mut ts = self
             .session
             .get_token_session(token)
@@ -252,11 +249,9 @@ impl AuthLogic for AuthLogicDefault {
         // 保存原始 TokenSession 快照：两阶段 Account-Session 迁移的失败路径回滚用
         let ts_original = ts.clone();
 
-        // 存储原始 login_id 到 attrs["switched_from"]
         ts.attrs
             .insert("switched_from".to_string(), original_login_id.clone());
 
-        // 更新 login_id 为 target_login_id
         ts.login_id = target_login_id.to_string();
         ts.last_active_at = Utc::now().timestamp();
         // 身份切换后认证事实归零（fail-closed）：因子账本与 auth_time 是
@@ -353,7 +348,6 @@ impl AuthLogic for AuthLogicDefault {
             return Err(ensure_err);
         }
 
-        // 审计日志
         // token 脱敏：仅记录前 8 字符
         let token_prefix = if token.len() >= 8 { &token[..8] } else { token };
         tracing::info!(

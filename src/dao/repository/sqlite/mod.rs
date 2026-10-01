@@ -269,7 +269,6 @@ mod tests {
         let pool = setup_db().await;
         let repo = DbnexusUserRepository::new(pool);
 
-        // 在 tenant 42 创建用户
         let user_42 = repo
             .create(
                 42,
@@ -282,7 +281,6 @@ mod tests {
             .await
             .expect("create tenant 42 用户应成功");
 
-        // 在 tenant 1 创建用户
         let user_1 = repo
             .create(
                 1,
@@ -302,14 +300,12 @@ mod tests {
             "tenant 42 不应查到 tenant 1 的用户（SQL 过滤生效）"
         );
 
-        // 跨租户 find_by_id：tenant 1 查不到 tenant 42 的用户
         let cross = repo.find_by_id(1, &user_42).await.unwrap();
         assert!(
             cross.is_none(),
             "tenant 1 不应查到 tenant 42 的用户（SQL 过滤生效）"
         );
 
-        // 跨租户 find_by_username：tenant 42 查不到 tenant 1 的 username
         let cross = repo.find_by_username(42, "tenant-1-user").await.unwrap();
         assert!(
             cross.is_none(),
@@ -330,7 +326,6 @@ mod tests {
             "tenant 1 list 应仅含本租户用户"
         );
 
-        // 验证返回行的 tenant_id 字段正确
         let row_42 = repo.find_by_id(42, &user_42).await.unwrap().unwrap();
         assert_eq!(row_42.tenant_id, 42, "返回行 tenant_id 应为 42");
     }
@@ -391,11 +386,9 @@ mod tests {
             }
         );
 
-        // find_owner 返回当前归属
         let owner = repo.find_owner("phone", "13800001234").await.unwrap();
         assert_eq!(owner.as_deref(), Some("user-aaa"));
 
-        // 未注册标识 → None
         let none = repo.find_owner("phone", "13900000000").await.unwrap();
         assert!(none.is_none());
     }

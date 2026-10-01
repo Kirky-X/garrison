@@ -447,7 +447,6 @@ mod tests {
         perms.insert("1001".to_string(), vec!["user:read".to_string()]);
         init_manager_with_perms(false, perms, HashMap::new()).await;
 
-        // 先 login 获取有效 token
         let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
         let result = with_default_tenant(async {
@@ -616,7 +615,6 @@ mod tests {
         perms.insert("2002".to_string(), vec!["user:read".to_string()]);
         init_manager_with_perms(false, perms, HashMap::new()).await;
 
-        // async 调用并 await
         let result = with_default_tenant(async {
             ParameterQueryBuilder::new()
                 .with_login_id("2002".to_string())

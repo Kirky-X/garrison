@@ -322,7 +322,6 @@ mod tests {
             dao.get(expected_key).await.unwrap().is_some(),
             "key 应为 disable:payment:user-1003（service 在前）"
         );
-        // 验证反序 key 不存在
         let wrong_key = "disable:user-1003:payment";
         assert!(
             dao.get(wrong_key).await.unwrap().is_none(),
@@ -366,7 +365,6 @@ mod tests {
     async fn t016_multiple_disable_overwrites_previous() {
         let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        // 第一次 disable(level=1)
         repo.disable("user-1006", "default", None, 1, 0)
             .await
             .unwrap();
@@ -374,7 +372,6 @@ mod tests {
         let entry1: DisableEntry =
             serde_json::from_str(&dao.get(key).await.unwrap().unwrap()).unwrap();
         assert_eq!(entry1.level, 1);
-        // 第二次 disable(level=3)
         repo.disable("user-1006", "default", None, 3, 0)
             .await
             .unwrap();
@@ -393,7 +390,6 @@ mod tests {
             !repo.is_disable("user-1007", "default").await.unwrap(),
             "未封禁时 is_disable 应返回 false"
         );
-        // disable 后 is_disable 返回 true
         repo.disable("user-1007", "default", None, 0, 0)
             .await
             .unwrap();
@@ -408,7 +404,6 @@ mod tests {
     async fn t016_untie_disable_missing_key_returns_ok() {
         let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        // 对未封禁的 login_id 调用 untie_disable
         let result = repo.untie_disable("never_disabled", "default").await;
         assert!(
             result.is_ok(),
@@ -427,7 +422,6 @@ mod tests {
     async fn t017_is_disable_returns_false_for_unbanned_service() {
         let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        // 在 "default" service 上封禁
         repo.disable("user-2001", "default", None, 0, 0)
             .await
             .unwrap();
@@ -526,7 +520,6 @@ mod tests {
     async fn t017_get_disable_time_returns_err_on_deserialize_failure() {
         let dao = Arc::new(InMemoryDao::new());
         let repo = DefaultDisableRepository::new(dao.clone());
-        // 手动写入损坏 JSON 到 disable key
         let key = "disable:default:user-2006";
         dao.set(key, "{invalid json}", 0).await.unwrap();
         let result = repo.get_disable_time("user-2006", "default").await;
@@ -545,12 +538,10 @@ mod tests {
         repo.disable("user-2007", "default", None, 0, 0)
             .await
             .unwrap();
-        // 封禁后 is_disable 应为 true
         assert!(
             repo.is_disable("user-2007", "default").await.unwrap(),
             "disable 后 is_disable 应为 true"
         );
-        // untie_disable 后 is_disable 应为 false
         repo.untie_disable("user-2007", "default").await.unwrap();
         assert!(
             !repo.is_disable("user-2007", "default").await.unwrap(),
@@ -645,7 +636,6 @@ mod tests {
         repo.disable("user-3004", "default", None, 10, 0)
             .await
             .unwrap();
-        // 通过 API 验证
         assert_eq!(
             repo.get_disable_level("user-3004", "default")
                 .await
@@ -783,7 +773,6 @@ mod tests {
             "实际 TTL 应为 max(3600, ≈60) = 3600 秒，实际: {} 秒",
             ttl
         );
-        // until 未到：仍处于活跃封禁
         assert!(repo.is_disable("user-ttl2", "default").await.unwrap());
     }
 }

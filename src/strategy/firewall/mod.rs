@@ -253,7 +253,6 @@ mod tests {
             count
         );
 
-        // 验证 5 个预期名称都存在
         let names: Vec<&'static str> = inventory::iter::<StrategyRegistration>()
             .map(|r| r.name)
             .collect();

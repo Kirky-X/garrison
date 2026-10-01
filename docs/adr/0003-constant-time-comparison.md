@@ -35,7 +35,7 @@
 
 - 单点实现 + 类型级约束（subtle 的 `Choice` 类型防误转 bool 提前返回）。
 
-- 适用路径可枚举、可测试（`tests/constant_time_eq.rs` 回归）。
+- 适用路径可枚举、可测试（`tests/acceptance/security.rs` 中 `acc_sec_020_ct_eq_constant_time_semantics` 回归）。
 
 **负面 / 代价：**
 

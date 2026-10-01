@@ -256,7 +256,6 @@ mod tests {
             priority: 0,
         };
         let cred = TotpCredential::new(model);
-        // 生成当前时间戳的验证码用于测试
         let code = cred.generate_current().expect("generate_current 应成功");
         (cred, code)
     }

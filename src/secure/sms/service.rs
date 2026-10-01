@@ -88,7 +88,6 @@ impl SmsVerificationService {
             },
         };
 
-        // 检查异常发送
         if unverified_count > self.unverified_threshold as u64 {
             // 回滚限速计数器
             if let Err(e) = self.rate_limiter.rollback_with(phone, &windows).await {
@@ -113,7 +112,6 @@ impl SmsVerificationService {
             return Err(GarrisonError::SmsChannelRecycled);
         }
 
-        // 发送验证码
         if let Err(e) = self.sender.send(phone, &code).await {
             // 发送失败：聚合执行全部清理（限速回滚 + 删码 + 递减未验证计数），
             // 任一清理失败仅 error 告警不中断剩余清理，最终保留原始发送错误。
@@ -156,7 +154,8 @@ impl SmsVerificationService {
         let stored = self.dao.get(&code_key).await?;
         let stored = stored.ok_or(GarrisonError::SmsCodeNotFound)?;
 
-        if constant_time_eq(&stored, code) {
+        // 验证码比对统一走公共常量时间原语（ADR-0003 决策 2，sms-rate-limit 依赖 secure-ct-eq）
+        if crate::secure::ct_eq::constant_time_eq(stored.as_bytes(), code.as_bytes()) {
             // 验证成功：删除验证码 + 清零未验证计数 + 清零尝试次数。
             // 聚合执行三个 delete（首个失败不中断剩余清理），返回首个错误：
             // code 已删后其余 delete 失败不应让调用方误以为验证码仍有效。
@@ -177,7 +176,6 @@ impl SmsVerificationService {
                 None => Ok(()),
             }
         } else {
-            // 验证失败：递增尝试次数
             let attempts_key = format!("sms:attempts:{}", phone);
             let attempts = self.dao.incr(&attempts_key, 300).await?;
             if attempts > self.max_verify_attempts as u64 {
@@ -227,32 +225,4 @@ pub(super) fn mask_phone_in_key(key: &str) -> String {
         Some((prefix, phone)) => format!("{}:{}", prefix, mask_phone(phone)),
         None => mask_phone(key),
     }
-}
-
-/// 常量时间字符串比较（防止时序攻击）。
-///
-/// 启用 `secure-ct-eq` feature 时优先使用框架统一实现
-/// [`crate::secure::ct_eq`]（基于 `subtle::ConstantTimeEq`，长度比较不 early return）。
-#[cfg(feature = "secure-ct-eq")]
-pub(super) fn constant_time_eq(a: &str, b: &str) -> bool {
-    crate::secure::ct_eq::constant_time_eq(a.as_bytes(), b.as_bytes())
-}
-
-/// 常量时间字符串比较（fallback，未启用 `secure-ct-eq` 时使用）。
-///
-/// 与 [`crate::secure::ct_eq`] 同构：长度比较不 early return，短方按 0 padding
-/// 循环到 `max_len`，消除原实现的长度早退（长度信息泄露）；
-/// 验证码固定 6 位，实际泄露面极小，此处统一采用无早退语义。
-#[cfg(not(feature = "secure-ct-eq"))]
-pub(super) fn constant_time_eq(a: &str, b: &str) -> bool {
-    let len_eq = (a.len() as u64) == (b.len() as u64);
-    let max_len = a.len().max(b.len());
-    let mut byte_diff: u8 = 0;
-    let (a_bytes, b_bytes) = (a.as_bytes(), b.as_bytes());
-    for i in 0..max_len {
-        let x = a_bytes.get(i).copied().unwrap_or(0);
-        let y = b_bytes.get(i).copied().unwrap_or(0);
-        byte_diff |= x ^ y;
-    }
-    len_eq && byte_diff == 0
 }

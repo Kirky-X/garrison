@@ -197,8 +197,9 @@ fn verify_hmac_sha256_constant_time_no_early_return() {
     // 常量时间比较：错误签名不应明显快于正确签名（阈值 4x，交错后噪声大幅收敛）。
     // 守卫边界（三维审查 L 记录）：本测试可捕获「跳过 HMAC/整段比较」类数量级
     // 回归；「naive 逐字节 ==」类回归耗时比≈1.0-1.2（HMAC 计算占主导），
-    // 无法由时序测试捕获——该类由实现侧 constant-time 原语（subtle 全长比较）
-    // 保证，见 signer.rs；本测试为防回归粗筛而非时序侧信道唯一防线。
+    // 无法由时序测试捕获——该类由公共 constant-time 原语（secure::ct_eq，
+    // subtle 全长比较）保证，见 signer.rs 与 src/secure/ct_eq.rs；
+    // 本测试为防回归粗筛而非时序侧信道唯一防线。
     let ratio = if invalid_nanos < valid_nanos {
         valid_nanos as f64 / invalid_nanos.max(1) as f64
     } else {

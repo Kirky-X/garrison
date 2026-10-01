@@ -188,7 +188,6 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(info.login_id, "1001");
     assert!(!info.revoked);
 
-    // 校验不存在的 Key
     let invalid = handler.verify("nonexistent-key").await;
     assert!(invalid.is_err());
     println!("    verify(\"nonexistent-key\") → Err(InvalidToken) ✓（全局 verify 已放开）\n");
@@ -199,7 +198,6 @@ pub async fn run() -> GarrisonResult<()> {
     handler.revoke(&key).await?;
     println!("[4] revoke:");
     println!("    吊销 key = {}...", &key[..16]);
-    // 吊销后 verify 失败
     let revoked = handler.verify(&key).await;
     assert!(revoked.is_err());
     println!("    吊销后 verify → Err(InvalidToken) ✓\n");

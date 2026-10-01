@@ -52,7 +52,7 @@
 
 | 框架防御 | 业务方责任 |
 |---------|-----------|
-| 全事件审计：`listener/audit` 覆盖全部非门控事件（登录/登出/替换/邀请/积分等 20+ 事件类型），token 统一掩码 | 审计日志保留周期与外部不可变存储（合规要求的留存期限由业务方定） |
+| 全事件审计：`listener/audit` 覆盖全部非门控事件（登录/登出/替换/邀请/积分等 30+ 事件类型），token 统一掩码 | 审计日志保留周期与外部不可变存储（合规要求的留存期限由业务方定） |
 | API Key `last_used_at` 追踪 + `owner_id` 归属记录 | 关键业务操作的**应用层**业务审计（框架审计认证事件，业务动作需业务方记录） |
 | 登录/登出/封禁事件的 SIEM 外送（`audit-inklog-siem`，TCP/UDP 断线缓冲重连） | SIEM 侧的完整性与告警规则配置 |
 
@@ -95,7 +95,7 @@
 | refresh token 重放 | `RefreshTokenRotation` 三级重用分类（RecentPrev / OrphanedBranch / StaleLineage）+ 链式撤销（未注入时 warn 显性告警），处置见下表 | `src/protocol/jwt/refresh.rs` 内嵌测试 |
 | 状态参数伪造/重放 | OIDC `state` 一次性 + TTL（`protocol/sso/oidc.rs`） | oidc.rs 内嵌测试 |
 | API Key 泄露后的横向使用 | sha256 哈希存储 + IP 级失败限速 + namespace 隔离 | 根目录 [SECURITY.md](../SECURITY.md) API Key 安全节 |
-| 定时侧信道（token 比较） | `secure-ct-eq` 常量时间公共原语（subtle） | `tests/constant_time_eq.rs` |
+| 定时侧信道（token 比较） | `secure-ct-eq` 常量时间公共原语（subtle） | `tests/acceptance/security.rs`（`acc_sec_020_ct_eq_constant_time_semantics`） |
 | XML 注入/畸形 SAML | 长度限制 + 特殊字符拒绝 + 签名 fail-closed + fuzz 回归 | `fuzz/fuzz_targets/fuzz_saml_xml.rs` |
 | Set-Cookie 属性注入（name/value 含 `;`、控制字符注入 `Domain=`/移除 HttpOnly） | `context::validate_cookie_name_value` 注入校验 + 单一构建点 `context::cookie::build_set_cookie_value`（三框架适配器 / 续签 / CSRF 写点统一经构建点产出，拒绝后不产出 Set-Cookie） | `src/context/cookie.rs`、`src/context/axum_adapter.rs` 内嵌测试 |
 | Cookie 子域篡改（恶意子域写同Domain cookie 覆盖会话 token） | 默认不设 `Domain`（host-only）；`production` + Secure 上下文强制 `__Host-`（Path=/ 且无 Domain）/ `__Secure-` 前缀，浏览器层拒绝带 Domain 的 `__Host-` cookie | `src/context/cookie.rs`、`src/web/csrf.rs` 内嵌测试 |
@@ -108,7 +108,7 @@
 | 同 authenticator 绑定到多个账户（凭据挪用） | 注册仪式携 `ExcludeCredentials`（协议级防线）+ 数据库唯一约束兜底并发；冲突回查仅披露原占用者 user_id，不泄露其他行内容 | `src/protocol/webauthn/service.rs`、`src/dao/repository/sqlite/webauthn_credential_repo.rs` 契约测试 |
 | 找回密码存在性枚举（探测哪些邮箱/手机号已注册） | 未知标识走同路径 dummy token + 相同限流计数与响应外形（对齐 authgear 防枚举）；超限锁定（1 小时窗口） | `src/account/password_reset/service.rs`、`tests.rs` 不可区分用例 |
 | 重置 token 重放/并发消费（双花） | jti 经 DAO `set_if_absent` 一次性消费登记 + 原子消费（并发恰一成功）；两段式防竞态：消费失败凭据操作回滚 | `src/account/password_reset/`（jti 并发/两段式回滚用例） |
-| 跨用户改密（窃取他人重置 token） | code-subject 绑定存 authflow 会话；`password_owner` claim 与 `sub` 一致性校验；restricted 会话仅可达改密端点 | `tests.rs` 跨用户 token 用例 |
+| 跨用户改密（窃取他人重置 token） | code-subject 绑定存 authflow 会话，消费时校验 `ActionToken.sub` 与 code-subject 一致（不一致映射为 `NotPermission("pwdreset-subject-binding-mismatch::…")`）；restricted 会话仅可达改密端点 | `src/account/password_reset/service.rs`、`tests.rs` 跨用户 token 用例 |
 | 新密码重用历史密码 | `app_password_history` 追加 + HistoryRule 复用检测（拒绝最近 N 条）；追加失败回滚凭据写入 | `tests.rs` 历史复用/回滚用例 |
 
 ### Refresh token 重用三级处置表

@@ -198,7 +198,6 @@ pub async fn run() -> GarrisonResult<()> {
     );
     assert_eq!(verified_id, "1001");
 
-    // 校验无效 token
     let invalid_result = auth.verify_token("invalid-token").await;
     assert!(invalid_result.is_err());
     println!("\n[6] verify_token(\"invalid-token\"):");
@@ -211,7 +210,6 @@ pub async fn run() -> GarrisonResult<()> {
     println!("[7] logout(\"{}\"):", &token[..8]);
     println!("    完成");
 
-    // logout 后 is_login 返回 false
     let after_logout = auth.is_login(&token).await?;
     assert!(!after_logout);
     println!(

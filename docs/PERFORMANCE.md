@@ -61,7 +61,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- \
 
 ## 📈 验收性能基线（E2E）
 
-性能基线固化在验收套件的 `#[ignore]` 用例中（`tests/acceptance/concurrency.rs`，`perf_*` 前缀），打真实 HTTP 服务并经 `RecordingClient` 抓包：
+性能基线固化在验收套件的 `#[ignore]` 用例中（`tests/acceptance/concurrency.rs`，`perf_*` 前缀），打真实 HTTP 服务并由 `perf_util` 模块的 `LoadRunner` 经 `reqwest` 直连采集：
 
 ```bash
 # 方式一：一键执行（启动 auth_server_serve → 全量验收 → 性能基线 → 聚合报告）
@@ -82,7 +82,7 @@ python3 scripts/e2e_analyze.py --log-dir logs
 - **debug 构建**：软警告——login 链路涉及 argon2/bcrypt，debug 下 P99 约 1.1s 不达标属预期；
 - **release 构建**：硬失败（panic）。外部 release 服务的硬判定经 `GARRISON_E2E_EXTERNAL_URL` / `GARRISON_E2E_INTERNAL_URL` / `GARRISON_E2E_API_KEY` 注入（`RemoteContext::connect_env` 路径）。
 
-方法论记录（`perf_login` 基线重校准，2026-09-11）：压测使用 100 账号轮转（`LoadRunner::with_body_fn`）度量多用户真实流量，而非单账号并发——登录路径存在 per-login_id 互斥锁（`SessionStore::with_login_lock`，TOCTOU 修复，设计如此：保护同账号 Account-Session 读改写原子性），单账号并发必然串行化（实测 P99 约 700ms）。同账号并发正确性由 concurrency 域竞争测试覆盖。
+方法论记录（`perf_login` 基线重校准，2026-09-11）：压测使用 100 账号轮转（`LoadRunner::with_body_fn`）度量多用户真实流量，而非单账号并发——登录路径存在 per-login_id 互斥锁（`GarrisonSession::with_login_lock`，TOCTOU 修复，设计如此：保护同账号 Account-Session 读改写原子性），单账号并发必然串行化（实测 P99 约 700ms）。同账号并发正确性由 concurrency 域竞争测试覆盖。
 
 ---
 
@@ -108,7 +108,7 @@ python3 scripts/e2e_analyze.py --log-dir logs
 
 ## 🛠️ 优化建议
 
-1. **选对存储后端**：开发用 `development` 预设（内存 DAO）；生产用 `cache-redis` + `db-postgres`/`db-mysql`，L1 内存层兜住热路径读取。注意 dbnexus 互斥约束（sqlite ⊕ postgres/mysql）。
+1. **选对存储后端**：开发用 `development` 预设（内存 DAO）；生产用 `cache-redis` + `db-postgres`/`db-mysql`，L1 内存层兜住热路径读取。注意 dbnexus 的两条编译期 `compile_error!` 互斥约束：① 嵌入式（sqlite / duckdb）⊕ 服务端（postgres / mysql）不可混用；② 在无嵌入式后端时 `postgres` 与 `mysql` 互斥——两条合起来即「关系型后端至多启用一个」。
 2. **调大 L1 缓存**：高读多写少场景显式配置 `l1_cache_capacity`（默认 10000），命中率越高 DAO 往返越少。
 3. **release 构建跑性能验证**：`assert_perf_baseline` 仅在 release 下硬判定；密码哈希在 debug 构建下天然慢一个量级，不要用 debug 数据评估登录性能。
 4. **保持 feature 面最小**：未启用的能力零开销（编译期剔除）；聚合 `full` 仅用于验证，生产按需组合。

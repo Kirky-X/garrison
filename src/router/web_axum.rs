@@ -146,7 +146,6 @@ impl GarrisonRouter {
             config: self.config.clone(),
         };
 
-        // 执行闭包，在子 router 上注册路由
         let child = f(child);
 
         // 合并子 router 的 rules 到父 router（附加前缀 + 注解处理）

@@ -453,7 +453,6 @@ mod tests {
     #[tokio::test]
     async fn multiple_sessions_uses_latest_ip() {
         let (dao, session) = make_session();
-        // 创建两个 session，T1 的 IP 为 1.1.1.1，T2 的 IP 为 2.2.2.2
         create_session_with_ip(&session, "1001", "T1", "1.1.1.1").await;
         create_session_with_ip(&session, "1001", "T2", "2.2.2.2").await;
 
@@ -780,7 +779,6 @@ mod tests {
             let (_dao, session) = make_session();
             create_session_with_ip_ua(&session, "1001", "T1", Some("1.2.3.4"), None).await;
 
-            // 确认 session 存在
             assert!(session.get_token_session("T1").await.unwrap().is_some());
 
             let detector = SessionHijackDetector::new(session.clone(), SessionHijackMode::Kickout);

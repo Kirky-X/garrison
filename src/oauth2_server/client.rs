@@ -480,7 +480,6 @@ mod tests {
     /// redirect_uri 白名单条目入库前须通过基本合法性校验（纵深防御）。
     #[test]
     fn new_client_rejects_invalid_redirect_uris() {
-        // 空 URI
         let err = OAuth2Client::new("cid", "s", vec!["".into()], vec![], vec![]).unwrap_err();
         assert!(matches!(err, GarrisonError::InvalidParam(_)));
         // 缺 scheme（无 `:`）

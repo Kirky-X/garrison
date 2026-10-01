@@ -424,7 +424,6 @@ mod service {
             let username: Option<String> = row.try_get("", "username").ok().flatten();
             let user_id: Option<i64> = row.try_get("", "user_id").ok().flatten();
 
-            // 生成新 refresh token + 签发新 access token
             let new_refresh = Uuid::new_v4().to_string();
             let new_access = self.jwt_handler.sign(&login_id, 3600)?;
             let new_hash = Self::sha256_hex(&new_refresh);
@@ -1356,7 +1355,6 @@ mod db_sqlite_tests {
     async fn rotate_inserts_new_token_and_marks_old_consumed() {
         let pool = setup_db().await;
 
-        // 预先 INSERT old_token record
         let old_token = "old_token_value";
         let old_hash = sha256_hex(old_token);
         insert_refresh_token(&pool, &old_hash, None, 1, 0, 1, 9999, 0).await;
@@ -1366,12 +1364,10 @@ mod db_sqlite_tests {
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
-        // rotate
         let (new_access, new_refresh) = rotation.rotate(old_token).await.expect("rotate 应成功");
         assert!(!new_access.is_empty(), "new_access 应非空");
         assert!(!new_refresh.is_empty(), "new_refresh 应非空");
 
-        // 断言 old_token revoked=1
         let old_revoked = query_revoked(&pool, &old_hash).await;
         assert_eq!(old_revoked, 1, "old_token 应标记为 revoked");
 
@@ -1409,7 +1405,6 @@ mod db_sqlite_tests {
         let rotation =
             RefreshTokenRotation::new(pool.clone(), jwt_handler, Arc::new(RwLock::new(1)));
 
-        // rotate 后 old_token 应 revoked=1
         let (_, new_refresh) = rotation.rotate(old_token).await.expect("rotate 应成功");
 
         // detect_reuse(old_hash) → Some（已被消费）
@@ -2327,10 +2322,8 @@ mod db_sqlite_tests {
 
         let old_hash = sha256_hex(&old_token);
 
-        // rotate
         let (_, new_refresh) = rotation.rotate(&old_token).await.expect("rotate 应成功");
 
-        // validate 新 token
         let new_record = rotation
             .validate(&new_refresh)
             .await
@@ -2348,7 +2341,6 @@ mod db_sqlite_tests {
             Some(old_hash),
             "新记录 parent_token_hash 应指向旧记录 token_hash"
         );
-        // 旧 token 应 revoked
         let old_record = rotation
             .validate(&old_token)
             .await
@@ -2372,10 +2364,8 @@ mod db_sqlite_tests {
         let old_hash = sha256_hex(old_token);
         insert_refresh_token(&pool, &old_hash, None, 1, 0, 1, 9999, 0).await;
 
-        // rotate
         let (_, new_refresh) = rotation.rotate(old_token).await.expect("rotate 应成功");
 
-        // validate 新 token
         let new_record = rotation
             .validate(&new_refresh)
             .await

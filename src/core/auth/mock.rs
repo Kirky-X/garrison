@@ -186,7 +186,6 @@ mod mock_dao_coverage_tests {
         assert_eq!(dao.incr("ctr", 60).await.unwrap(), 2, "二次 incr 应为 2");
         assert_eq!(dao.decr("ctr").await.unwrap(), 1, "decr 应递减到 1");
 
-        // rename：old 键迁移到 new 键
         dao.rename("k1", "k2").await.unwrap();
         assert_eq!(dao.get("k1").await.unwrap(), None, "rename 后旧键应删除");
         assert_eq!(
@@ -209,7 +208,6 @@ mod mock_dao_coverage_tests {
             "expected 不匹配时 compare_and_swap 应返回 false"
         );
 
-        // set_permanent：永久键可读且 get_timeout 为 None（无 TTL）
         dao.set_permanent("p1", "val").await.unwrap();
         assert_eq!(dao.get("p1").await.unwrap().as_deref(), Some("val"));
         assert_eq!(
@@ -218,7 +216,6 @@ mod mock_dao_coverage_tests {
             "永久键 get_timeout 应为 None"
         );
 
-        // get_with_ttl：存在且设置了 TTL 的键返回 Some((value, Some(remaining)))
         let (v, ttl) = dao
             .get_with_ttl("k2")
             .await

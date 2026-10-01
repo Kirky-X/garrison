@@ -162,7 +162,6 @@ mod mock_dao_coverage_tests {
         let inserted = dao.set_if_absent("a1", "v1", 60).await.unwrap();
         assert!(inserted, "set_if_absent 对不存在的 key 应返回 true");
 
-        // get_and_delete：取回并删除
         let removed = dao.get_and_delete("a1").await.unwrap();
         assert_eq!(
             removed.as_deref(),
@@ -172,7 +171,6 @@ mod mock_dao_coverage_tests {
         let gone = dao.get("a1").await.unwrap();
         assert!(gone.is_none(), "get_and_delete 后 key 应不存在");
 
-        // incr：从 1 开始计数
         let n = dao.incr("ctr", 60).await.unwrap();
         assert_eq!(n, 1, "incr 对不存在的 key 应返回 1");
 
@@ -182,7 +180,6 @@ mod mock_dao_coverage_tests {
         let gone = dao.get("ctr").await.unwrap();
         assert!(gone.is_none(), "decr 到 0 后 key 应被删除");
 
-        // rename：值迁移到新 key
         dao.rename("k1", "k2").await.unwrap();
         let migrated = dao.get("k2").await.unwrap();
         assert_eq!(
@@ -202,7 +199,6 @@ mod mock_dao_coverage_tests {
         let updated = dao.get("k2").await.unwrap();
         assert_eq!(updated.as_deref(), Some("v2"));
 
-        // set_permanent + get
         dao.set_permanent("p1", "val").await.unwrap();
         let v = dao.get("p1").await.unwrap();
         assert_eq!(v.as_deref(), Some("val"));

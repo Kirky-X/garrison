@@ -1,0 +1,25 @@
+# Copyright (c) 2026 Kirky.X🌠
+# SPDX-License-Identifier: Apache-2.0
+
+# cargo-audit 配置 —— `cargo audit`（含门禁脚本独立运行）按此豁免通告。
+#
+# 豁免集合与 deny.toml [advisories].ignore 保持一致（修改任一处必须同步另一处）。
+# 仓库的漏洞门禁以 cargo-deny 为唯一事实来源（ci.yml 已删除独立 audit job，
+# 即为避免两份忽略列表漂移）；本文件仅是 `cargo audit` 运行路径的等价桥接，
+# 不得在此加入 deny.toml 未记录的豁免项。
+
+[advisories]
+ignore = [
+    # rsa 0.9.x RUSTSEC-2023-0071（Marvin Attack 定时侧信道，CVSS 5.9 MEDIUM）：
+    # 官方无 patched 版本（advisory 原文 `patched = []`，截至 2026-09-12 最新稳定版
+    # 0.9.10 仍在受影响列表），无法通过升级/pin 修复。
+    # garrison 使用 rsa 的路径全部为私钥签名/公钥验签（protocol-saml 验签、
+    # social-alipay RSA2 签名、protocol-jwt RS* 签名/验签 + pkcs1/pkcs8 纯 DER
+    # 解析），src/ 无任何 RSA 解密 API 调用；Marvin Attack 针对解密操作的时序
+    # 侧信道，对签名/验签路径不可达。
+    # 完整处置论证：deny.toml [advisories] 注释、SECURITY.md §5「已知安全考量」。
+    # 回归锚定：rsa 发布修复版本后须升级并移除此忽略项；若引入 RSA 解密能力
+    # （如 JWE 解密）须重新评估并补充防护。
+    # 参见 https://rustsec.org/advisories/RUSTSEC-2023-0071
+    "RUSTSEC-2023-0071",
+]

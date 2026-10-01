@@ -549,7 +549,8 @@ async fn acc_res_004_internal_api_key_wrong_rejected_401() {
 }
 
 /// （异常）：auth-server 外网限流——速率上限内放行（200），
-/// 超限返回 429（令牌桶 per-IP）。
+/// 超限返回 429（令牌桶 per-IP），响应体为 R04 统一错误体
+/// （`GarrisonError::to_json_body`：error_code / error_id / message）。
 #[tokio::test]
 async fn acc_res_005_auth_server_rate_limit_returns_429() {
     // 限速 2 req/s
@@ -579,8 +580,12 @@ async fn acc_res_005_auth_server_rate_limit_returns_429() {
     assert_eq!(resp.status(), 429, "超限第 3 个请求应被限流 429");
     let resp_body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(
-        resp_body["error"], "rate_limited",
-        "429 响应体应携带 rate_limited 错误码"
+        resp_body["error_code"], "RATE_LIMITED",
+        "429 响应体应携带统一错误模型 error_code=RATE_LIMITED"
+    );
+    assert_eq!(
+        resp_body["error_id"], "ratelimit.rate_limited",
+        "429 响应体应携带模块前缀 error_id=ratelimit.rate_limited"
     );
 }
 

@@ -292,11 +292,9 @@ mod tests {
         let result = svc.register("a:b", make_stub("bad"));
         assert!(result.is_err(), "含冒号的 provider name 应拒绝");
 
-        // 大写字母
         let result = svc.register("WeChat", make_stub("bad"));
         assert!(result.is_err(), "大写字母 provider name 应拒绝");
 
-        // 空字符串
         let result = svc.register("", make_stub("bad"));
         assert!(result.is_err(), "空字符串 provider name 应拒绝");
 
@@ -304,7 +302,6 @@ mod tests {
         let result = svc.register("a\nb", make_stub("bad"));
         assert!(result.is_err(), "含换行符的 provider name 应拒绝");
 
-        // 确认非法 name 未被注册
         assert!(svc.list().is_empty(), "非法 name 不应被写入注册表");
     }
 
@@ -438,7 +435,6 @@ mod tests {
         let svc = Arc::new(SocialLoginService::new());
         let mut handles = vec![];
 
-        // 并发注册 10 个 provider
         for i in 0..10 {
             let svc_clone = svc.clone();
             handles.push(tokio::spawn(async move {
@@ -451,7 +447,6 @@ mod tests {
             h.await.unwrap();
         }
 
-        // 验证所有 provider 都已注册
         let mut names = svc.list();
         names.sort();
         assert_eq!(names.len(), 10);

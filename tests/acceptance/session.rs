@@ -636,7 +636,6 @@ async fn acc_sess_017_bw_ac_003_kickout_by_device_isolates_device() {
         .await
         .expect("set_device 应成功");
 
-    // 两个 token 初始均有效
     assert!(
         session.is_valid("token-a").await.expect("is_valid token-a"),
         "device-a 的 token 应初始有效"
@@ -646,7 +645,6 @@ async fn acc_sess_017_bw_ac_003_kickout_by_device_isolates_device() {
         "device-b 的 token 应初始有效"
     );
 
-    // When: 踢出设备 A 的会话
     session
         .kickout_by_device("user-003", "device-a")
         .await
@@ -702,7 +700,6 @@ async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
         .expect("登录应成功");
     assert!(!token.is_empty(), "登录应返回非空 token");
 
-    // Then: Account-Session 存在
     let account_key = format!("account:session:{}", "oidc-user-001");
     assert!(
         account_key.starts_with("account:session:"),
@@ -716,7 +713,6 @@ async fn acc_sess_018_bw_ac_001_login_creates_account_and_token_keys() {
         "Account-Session 应存在 (key={account_key})"
     );
 
-    // Then: Token-Session 存在
     let token_key = format!("token:session:{}", token);
     assert!(
         token_key.starts_with("token:session:"),

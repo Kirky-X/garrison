@@ -550,7 +550,6 @@ async fn handler_works_with_axum_router() {
     .await;
     let token = GarrisonUtil::login_simple("1001").await.unwrap();
 
-    // 构建 axum Router，挂载宏标注的 handler
     let app = axum::Router::new()
         .route("/login", get(login_handler))
         .route("/perm", get(perm_handler))

@@ -109,7 +109,6 @@ impl IntrospectHandler {
 
     /// 处理 introspect 请求。
     pub async fn handle(&self, req: &IntrospectRequest) -> GarrisonResult<IntrospectResponse> {
-        // 1. 客户端认证
         let client = self.store.get(&req.client_id).await?.ok_or_else(|| {
             GarrisonError::OAuth2(format!(
                 "oauth2-server-introspect-invalid-client::{}",
@@ -371,7 +370,6 @@ mod tests {
         handler.store.create(make_client("int-003")).await.unwrap();
         let token = issue_token(&token_handler, "int-003").await;
 
-        // 撤销 token
         token_handler.revoke_token(&token).await.unwrap();
 
         let req = IntrospectRequest {

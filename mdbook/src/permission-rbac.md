@@ -64,7 +64,7 @@ let strategy = GarrisonPermissionStrategyDefault::new(interface.clone())
 
 `with_role_hierarchy` 注入角色层级映射，支持"继承"语义：拥有高级角色自动拥有低级角色的权限。例如 `admin` > `manager` > `user`，校验 `check_role("manager")` 时，`admin` 用户也通过。
 
-> 角色层级基础映射自 0.2.0 起支持（`with_role_hierarchy` 注入）；0.5.0 新增 `role_hierarchy` 表（`parents`/`indirect_ancestors` + TC 预计算），登录时缓存权限并集。
+> 角色层级基础映射自 0.2.0 起支持（`with_role_hierarchy` 注入）；0.5.0 新增 `role_hierarchy` 表（`child_role`/`parent_role`/`tenant_id` + TC 预计算），登录时缓存权限并集。
 
 ## 权限缓存
 

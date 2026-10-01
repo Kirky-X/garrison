@@ -29,7 +29,6 @@
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use subtle::ConstantTimeEq;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -151,9 +150,9 @@ impl AuditEventChain {
             let Some(actual) = hex_decode_fixed::<CHAIN_HASH_LEN>(&entry.hmac) else {
                 return false;
             };
-            // 常量时间比较（subtle::ConstantTimeEq）；长度不等在上面的解码已失败——
-            // 长度本身非秘密
-            if !bool::from(expected.ct_eq(&actual)) {
+            // 常量时间比较统一走公共原语（ADR-0003 决策 2/3：审计链哈希校验）；
+            // 长度不等在上面的定长解码已失败——长度本身非秘密
+            if !crate::secure::ct_eq::constant_time_eq(&expected, &actual) {
                 return false;
             }
             prev_hash = expected;
@@ -260,7 +259,6 @@ mod tests {
         chain.append(&event("b", 2));
         chain.append(&event("c", 3));
 
-        // 删除中间条目
         let mut entries = chain.entries().to_vec();
         entries.remove(1);
         assert!(
@@ -268,7 +266,6 @@ mod tests {
             "deletion must break the chain"
         );
 
-        // 重排
         let mut entries = chain.entries().to_vec();
         entries.swap(0, 1);
         assert!(

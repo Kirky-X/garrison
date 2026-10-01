@@ -398,7 +398,6 @@ impl GarrisonUtil {
     ) -> GarrisonResult<()> {
         let login_id: String = login_id.into();
         let logic = crate::manager::GarrisonManager::logic()?;
-        // 销毁该用户所有会话
         logic.session.logout_by_login_id(&login_id).await?;
         // 广播 Kickout 事件（reason: "password-changed"）
         #[cfg(feature = "listener")]

@@ -237,7 +237,6 @@ mod tests {
     async fn is_anon_returns_true_for_anon_token() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
 
-        // 先创建匿名 Session
         session.get_anon_token_session("anon-1").await.unwrap();
 
         let result = session.is_anon("anon-1").await.unwrap();
@@ -249,7 +248,6 @@ mod tests {
     async fn is_anon_returns_false_for_login_token() {
         let (_dao, session) = make_anon_session(3600, 86400, 1800);
 
-        // 创建登录 Session
         session.create("1001", "T1").await.unwrap();
 
         let result = session.is_anon("T1").await.unwrap();
@@ -272,7 +270,6 @@ mod tests {
             "首次创建后 is_anon 应为 true"
         );
 
-        // 注销
         session.logout_anon("anon-1").await.unwrap();
         assert!(
             !session.is_anon("anon-1").await.unwrap(),

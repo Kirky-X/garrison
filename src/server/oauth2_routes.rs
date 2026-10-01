@@ -26,6 +26,7 @@ use serde_json::json;
 use crate::context::GarrisonPrincipal;
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
+use crate::loc;
 use crate::oauth2_server::authorize::{AuthorizeHandler, AuthorizeRequest, AuthorizeResponse};
 use crate::oauth2_server::client::OAuth2ClientStore;
 use crate::oauth2_server::introspect::{IntrospectHandler, IntrospectRequest};
@@ -686,7 +687,7 @@ async fn authorize_resume_endpoint(
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": "invalid_request",
-                "message": "missing ticket"
+                "message": loc!("oauth2-resume-ticket-missing", "missing ticket".to_string())
             })),
         )
             .into_response();
@@ -1043,6 +1044,36 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
+    /// resume 缺 ticket → 400 + `invalid_request`，message 经 Fluent i18n：
+    /// zh locale 下返回 `oauth2-resume-ticket-missing` 的中文翻译
+    /// （与英文 fallback 文案可区分，命中即证明响应体未硬编码英文）。
+    #[tokio::test]
+    async fn test_authorize_resume_missing_ticket_message_is_localized() {
+        let (state, _) = make_state();
+        let app = oauth2_external_router(state);
+        let _guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/oauth2/authorize/resume")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        // RFC 6749 协议 token 保持不变，仅 message 走 i18n
+        assert_eq!(json["error"], "invalid_request");
+        assert!(
+            json["message"].as_str().unwrap().contains("参数缺失"),
+            "zh locale 应返回 Fluent 翻译，实际: {}",
+            json["message"]
+        );
+    }
+
     // === 端点行为测试 ===
 
     #[tokio::test]
@@ -1318,7 +1349,6 @@ mod tests {
 
         let body = "grant_type=client_credentials&client_id=rl-429&client_secret=secret-123";
 
-        // 第 1 次成功（200 OK）
         let resp = app
             .clone()
             .oneshot(
@@ -1363,7 +1393,6 @@ mod tests {
             "429 响应必须携带 Retry-After 头"
         );
 
-        // 验证响应体含 RATE_LIMIT_EXCEEDED error code
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
         let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(

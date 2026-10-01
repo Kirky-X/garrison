@@ -392,6 +392,10 @@ impl GarrisonError {
     /// 限流拒绝是预期行为而非错误：429 攻击路径下每个被拒请求一条 error 日志
     /// 且 error 级无法被 EnvFilter 静音，构成日志洪水向量，故 `RateLimited`
     /// 降级为 `warn`；其余变体保持 `error` 级。
+    // 调用方仅存在于三个 web 适配器（web-axum/web-actix/web-warp）；三者全关的
+    // feature 组合下方法无调用点，会触发 dead_code（clippy -D warnings 下为
+    // error），故按调用方并集门控。
+    #[cfg(any(feature = "web-axum", feature = "web-actix", feature = "web-warp"))]
     pub(crate) fn log_rejection(&self) {
         if matches!(self, Self::RateLimited { .. }) {
             tracing::warn!(error = ?self, "garrison rejection: rate limited");
@@ -1387,7 +1391,6 @@ mod tests {
         let body = err.to_json_body();
         assert_eq!(body["error_code"], "NOT_LOGIN");
         assert_eq!(body["message"], "Not logged in");
-        // 普通错误变体不应包含 code 字段
         assert!(body.get("code").is_none(), "普通错误变体不应包含 code 字段");
     }
 
@@ -1412,22 +1415,18 @@ mod tests {
     /// 验证 `response_parts` 对各变体返回正确的 HTTP 状态码和错误码。
     #[test]
     fn response_parts_returns_correct_status_and_code() {
-        // NotLogin → 401
         let (status, code, _, _) = GarrisonError::NotLogin("".to_string()).response_parts();
         assert_eq!(status, 401);
         assert_eq!(code, "NOT_LOGIN");
 
-        // NotPermission → 403
         let (status, code, _, _) = GarrisonError::NotPermission("".to_string()).response_parts();
         assert_eq!(status, 403);
         assert_eq!(code, "NOT_PERMISSION");
 
-        // Dao → 500
         let (status, code, _, _) = GarrisonError::Dao("".to_string()).response_parts();
         assert_eq!(status, 500);
         assert_eq!(code, "DAO_ERROR");
 
-        // NotImplemented → 501
         let (status, code, _, _) = GarrisonError::NotImplemented("".to_string()).response_parts();
         assert_eq!(status, 501);
         assert_eq!(code, "NOT_IMPLEMENTED");
@@ -1448,7 +1447,6 @@ mod tests {
         use axum::response::IntoResponse;
         use http_body_util::BodyExt;
 
-        // 构造超长 error message（10KB）
         let long_msg = "x".repeat(10 * 1024);
         let err = GarrisonError::InvalidParam(long_msg);
         let response = err.into_response();
@@ -1688,7 +1686,6 @@ mod tests {
             "Account disabled: service=default, until=None"
         );
 
-        // 带 until 的 Display
         let until = chrono::DateTime::parse_from_rfc3339("2026-12-31T23:59:59Z")
             .unwrap()
             .with_timezone(&chrono::Utc);

@@ -23,7 +23,7 @@
 
 <table style="width:100%; border-collapse: collapse">
 <tr>
-<td align="center" width="25%">🧩<br><b>注解驱动</b><br><span style="color:#64748B">10 个属性宏 · 声明式接入</span></td>
+<td align="center" width="25%">🧩<br><b>注解驱动</b><br><span style="color:#64748B">13 个属性宏 · 声明式接入</span></td>
 <td align="center" width="25%">🔀<br><b>双模会话</b><br><span style="color:#64748B">账号级 · 登录级 · 多端策略</span></td>
 <td align="center" width="25%">🌐<br><b>Web 集成</b><br><span style="color:#64748B">axum · actix · warp</span></td>
 <td align="center" width="25%">⚙️<br><b>特性门控</b><br><span style="color:#64748B">100+ flag · 按需编译</span></td>
@@ -71,7 +71,7 @@
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>高可观测</b><br><span style="color:#64748B"><code>tracing</code> 日志 + <code>listener</code> 事件订阅 + <code>prometheus</code> 指标（可选）</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">5300+ 个测试（lib 约 4800 + 验收/集成/示例约 530），95%+ 行覆盖率，clippy 零警告</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">5600+ 个测试（lib 约 5100 + 验收/集成/示例约 520），95%+ 行覆盖率，clippy 零警告</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web 框架适配</b><br><span style="color:#64748B">axum/actix/warp 三框架注解式 extractor + 过程宏</span></td>
 </tr>
 </table>
@@ -196,8 +196,8 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>web-axum</code></td><td align="center">❌</td><td>axum Web 框架适配</td></tr>
 <tr><td><code>web-actix</code></td><td align="center">❌</td><td>actix-web Web 框架适配</td></tr>
 <tr><td><code>web-warp</code></td><td align="center">❌</td><td>warp Web 框架适配</td></tr>
-<tr><td><code>web-waf</code> / <code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td>WAF / CORS / CSRF 中间件</td></tr>
-<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td>JWT 签发与验证（HS256/HS512 + refresh）</td></tr>
+<tr><td><code>web-cors</code> / <code>web-csrf</code></td><td align="center">❌</td><td>CORS / CSRF 中间件（WAF 已并入 <code>firewall-waf</code>）</td></tr>
+<tr><td><code>protocol-jwt</code></td><td align="center">❌</td><td>JWT 签发与验证（HS256 / HS384 / HS512，另支持 RS / ES / EdDSA 非对称算法 + refresh）</td></tr>
 <tr><td><code>protocol-oauth2</code></td><td align="center">❌</td><td>OAuth2 四种模式</td></tr>
 <tr><td><code>protocol-sso</code> / <code>protocol-sso-server</code></td><td align="center">❌</td><td>SSO ticket / SSO Server 抽象</td></tr>
 <tr><td><code>protocol-sign</code></td><td align="center">❌</td><td>API 签名 + nonce 防重放</td></tr>
@@ -214,9 +214,9 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>secure-simple-token</code> / <code>secure-ct-eq</code></td><td align="center">❌</td><td>签名 / 常量时间比较</td></tr>
 <tr><td><code>account-credential</code> / <code>account-policy</code> / <code>account-lockout</code> / <code>account-authflow</code></td><td align="center">❌</td><td>账号安全引擎</td></tr>
 <tr><td><code>firewall</code> / <code>firewall-*</code></td><td align="center">❌</td><td>安全防护套件（暴力破解/限流/异常/GeoIP/DDoS/WAF）</td></tr>
-<tr><td><code>listener</code></td><td align="center">❌</td><td>事件监听器（15 个事件变体）</td></tr>
+<tr><td><code>listener</code></td><td align="center">❌</td><td>事件监听器（31 个事件变体）</td></tr>
 <tr><td><code>tracing-log</code> / <code>metrics-prometheus</code> / <code>otlp</code></td><td align="center">❌</td><td>可观测性</td></tr>
-<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td>10 个属性宏</td></tr>
+<tr><td><code>annotation-macros</code></td><td align="center">❌</td><td>13 个属性宏</td></tr>
 <tr><td><code>tenant-isolation</code></td><td align="center">❌</td><td>多租户逻辑隔离</td></tr>
 <tr><td><code>social-wechat</code> / <code>social-alipay</code></td><td align="center">❌</td><td>社交登录</td></tr>
 <tr><td><code>core-advanced</code> / <code>session-extra</code></td><td align="center">❌</td><td>核心增强 / 会话增强合并</td></tr>
@@ -310,7 +310,7 @@ cargo test --test acceptance --features "full testing" perf_ -- \
     --nocapture --test-threads=1 --ignored
 
 # 文档测试（CI Linux/MSRV 腿）
-cargo test --features "full,audit-log" --doc --locked
+cargo test --features "full" --doc --locked
 
 # 一键 E2E（auth_server_serve 冒烟 + 全量验收 + 性能基线 + 报告聚合）
 bash scripts/e2e_run.sh
@@ -336,7 +336,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 测试规模
 
-约 5330 个测试（单元约 4800 + 验收 / 集成 / UI 约 406 + 示例级约 116 + 过程宏 8）与 4 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 85%（当前约 95.8%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
+约 5645 个测试（lib 单元 5117 + 验收 / 集成 / UI 404 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数）与 4 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 85%（当前约 95.8%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
 
 ---
 
@@ -426,9 +426,9 @@ CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / �
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
-| 0.9.0-rc.2 | 2026-08-26 | fail-closed 安全加固（check_api_key / check_abac）；自研库 rc.4 升级 |
+| 0.9.0-rc.2 | 2026-08-26 | fail-closed 安全加固（check_api_key / check_abac） |
 | 0.9.0-rc.1 | 2026-08-25 | 验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层 |
-| 0.8.1 | 2026-07-25 | 文档一致性修复 + 依赖版本同步 |
+| 0.8.1 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |
 
 ---
 

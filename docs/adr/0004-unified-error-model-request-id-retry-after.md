@@ -66,6 +66,6 @@ request id 经 tokio `task_local!`（`REQUEST_ID: Arc<str>`，与 `stp` 的 `CUR
 
 - 新增变体时 `parts_and_msg_key` 需人工补 `error_id`（哨兵测试 `prefixed_code_covers_all_variants_unique_and_well_formed` 强制覆盖 + 格式校验）。
 - warp 路径错误响应有一次 body 缓冲 + 重序列化开销（仅 4xx/5xx JSON；成功响应零缓冲）。
-- OIDC 端点自建错误体（RFC 6749 信封）保持 body 键不动，`/oauth2/token` 限流 429 经 `rate_limited` 前缀桥接为 `RateLimited` 后补 `Retry-After` 头（其余三端点无限流来源，头为防御性 no-op）——两套错误体形状（OAuth2 `error` vs 统一 `error_code`）并存是既有契约，非本次引入。
+- OIDC 端点自建错误体（RFC 6749 信封）保持 body 键不动，`/oauth2/token` 限流 429 经 `rate_limited` 前缀桥接为 `RateLimited` 后补 `Retry-After` 头（其余 4 个端点——`/oauth2/authorize`、`/oauth2/authorize/resume`、`/oauth2/revoke`、`/oauth2/introspect`——均套 `with_retry_after` 但无限流来源，头为防御性 no-op）——两套错误体形状（OAuth2 `error` vs 统一 `error_code`）并存是既有契约，非本次引入。
 
 **测试锚点：** 哨兵计数 29/33/30/34（四组 cfg 组合）、旧码冻结全量对照表（`legacy_error_codes_frozen_at_original_values` 覆盖全部 arm 的状态码 / error_code / `code()`，行数与 `all_variant_samples()` 对齐）、`prefixed_code` 全变体唯一 + 格式、`retry_after_secs` 下限、体积 ≤64B、三框架 X-Request-ID / request_id / Retry-After 对等断言集、OIDC 429 Retry-After 头断言、限流日志降级 warn 断言。

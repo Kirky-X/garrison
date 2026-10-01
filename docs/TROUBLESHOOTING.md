@@ -238,7 +238,7 @@ let app = GarrisonRouter::new(Arc::new(config))
    }
    ```
 
-2. 检查数据库中 `user_permissions` 与 `user_roles` 表是否有对应记录。
+2. 检查数据库中 `app_permission` 与 `app_user_role` 表是否有对应记录（框架 schema 统一带 `app_` 前缀；角色定义在 `app_role`，角色-权限映射在 `app_role_permission`）。
 
 3. 启用调试日志查看实际返回的权限列表：
 

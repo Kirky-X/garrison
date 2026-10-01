@@ -821,7 +821,6 @@ pub mod tests {
         async fn test_oxcache_keys_clears_expired() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
             dao.set("anomalous:login:1:1", "v1", 1).await.unwrap();
-            // 等待 TTL 过期（1s + 1s 余量）
             tokio::time::sleep(Duration::from_secs(2)).await;
             let keys = dao.keys("anomalous:login:*").await.unwrap();
             assert!(
@@ -927,10 +926,8 @@ pub mod tests {
         dao.set("key1", "value1", 2).await.unwrap();
         // 立即 update（在 TTL 内）
         dao.update("key1", "value2").await.unwrap();
-        // 验证值已更新
         let got = dao.get("key1").await.unwrap();
         assert_eq!(got, Some("value2".to_string()));
-        // 等待原 TTL 过期（2 秒 + 1 秒余量）
         tokio::time::sleep(Duration::from_secs(3)).await;
         // update 保留了原 TTL，应已过期
         let got = dao.get("key1").await.unwrap();
@@ -956,7 +953,6 @@ pub mod tests {
     async fn mock_expire_resets_ttl() {
         let dao = MockDao::new();
         dao.set("key1", "value1", 1).await.unwrap();
-        // 在过期前重置 TTL
         dao.expire("key1", 3600).await.unwrap();
         tokio::time::sleep(Duration::from_secs(2)).await;
         // 原 TTL 已过，但 expire 重置后应仍存在
@@ -1014,7 +1010,6 @@ pub mod tests {
         dao.set("k", "v", 1).await.unwrap();
         // expire(0) 改为永久驻留
         dao.expire("k", 0).await.unwrap();
-        // 等待原 TTL 过期
         tokio::time::sleep(Duration::from_secs(2)).await;
         let got = dao.get("k").await.unwrap();
         assert_eq!(got, Some("v".to_string()), "expire(0) 应改为永久驻留");
@@ -1292,13 +1287,10 @@ pub mod tests {
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_expire_zero_seconds_makes_permanent() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
-            // 设置短 TTL，键会在 1 秒后过期
             dao.set("oc_perm", "value1", 1).await.unwrap();
             // expire(0) 将键改为永久驻留
             dao.expire("oc_perm", 0).await.unwrap();
-            // 等待原 TTL 过期
             tokio::time::sleep(Duration::from_secs(2)).await;
-            // 键应仍存在（已改为永久驻留）
             let got = dao.get("oc_perm").await.unwrap();
             assert_eq!(
                 got,
@@ -1345,7 +1337,6 @@ pub mod tests {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
             // set(ttl=0) 表示永久驻留
             dao.set("oc_zero_ttl", "permanent_value", 0).await.unwrap();
-            // 等待 2 秒，验证键未过期
             tokio::time::sleep(Duration::from_secs(2)).await;
             let got = dao.get("oc_zero_ttl").await.unwrap();
             assert_eq!(
@@ -1469,14 +1460,10 @@ pub mod tests {
         #[tokio::test(flavor = "multi_thread")]
         async fn oxcache_rename_preserves_ttl() {
             let dao = GarrisonDaoOxcache::new().await.unwrap();
-            // 设置短 TTL（2 秒）
             dao.set("oc_short_ttl", "value", 2).await.unwrap();
-            // rename 到新 key
             dao.rename("oc_short_ttl", "oc_renamed").await.unwrap();
-            // 验证新 key 存在
             let got = dao.get("oc_renamed").await.unwrap();
             assert_eq!(got, Some("value".to_string()));
-            // 等待原 TTL 过期（2 秒 + 1 秒余量）
             tokio::time::sleep(Duration::from_secs(3)).await;
             // rename 保留了原 TTL，应已过期
             let got = dao.get("oc_renamed").await.unwrap();
@@ -1611,7 +1598,6 @@ pub mod tests {
 
             let dao = GarrisonDaoOxcache::new().await.unwrap();
 
-            // tenant 42 写入
             let ctx_42 = TenantContext {
                 tenant_id: 42,
                 resolved_from: TenantSource::Header,
@@ -1714,7 +1700,6 @@ pub mod tests {
             TENANT
                 .scope(ctx, async {
                     dao.set("del_key", "value", 3600).await.unwrap();
-                    // 先确认值已写入
                     assert_eq!(
                         dao.get("del_key").await.unwrap(),
                         Some("value".to_string()),
@@ -1746,7 +1731,6 @@ pub mod tests {
         dao.set("atomic_key", "value", 3600).await.unwrap();
         let got = dao.get_and_delete("atomic_key").await.unwrap();
         assert_eq!(got, Some("value".to_string()));
-        // key 应已被删除
         let after = dao.get("atomic_key").await.unwrap();
         assert!(after.is_none(), "get_and_delete 后 key 应不存在");
     }
@@ -1844,7 +1828,6 @@ pub mod tests {
             zero_count
         );
 
-        // 计数器最终应为 0（已被删除）
         let final_val = dao.get("counter").await.unwrap();
         assert!(
             final_val.is_none(),
@@ -1870,7 +1853,6 @@ pub mod tests {
             "decr 不存在的 key 不应创建 key"
         );
 
-        // 设置初始值 3，递减 3 → 2 → 1 → 0
         dao.set("counter", "3", 3600).await.unwrap();
         assert_eq!(dao.decr("counter").await.unwrap(), 2);
         assert_eq!(dao.decr("counter").await.unwrap(), 1);
@@ -1986,7 +1968,6 @@ pub mod tests {
         let dao = MinimalDao::new();
         // 调用默认实现的 set_permanent
         dao.set_permanent("perm_key", "perm_value").await.unwrap();
-        // 验证值已写入（通过 get 读取）
         let val = dao.get("perm_key").await.unwrap();
         assert_eq!(val.as_deref(), Some("perm_value"));
     }
@@ -2016,9 +1997,7 @@ pub mod tests {
         dao.set("old_key", "old_value", 0).await.unwrap();
         // 调用默认实现的 rename
         dao.rename("old_key", "new_key").await.unwrap();
-        // 验证 old_key 已被删除
         assert!(dao.get("old_key").await.unwrap().is_none());
-        // 验证 new_key 已写入
         assert_eq!(
             dao.get("new_key").await.unwrap().as_deref(),
             Some("old_value")
@@ -2113,7 +2092,6 @@ pub mod tests {
     #[tokio::test]
     async fn in_memory_incr_non_numeric_value_errors_explicitly() {
         let dao = InMemoryDao::new();
-        // 污染值（非数字）写入计数器 key
         dao.set("rate:polluted", "not-a-number", 60).await.unwrap();
         let result = dao.incr("rate:polluted", 60).await;
         assert!(
@@ -2121,7 +2099,6 @@ pub mod tests {
             "incr 对非数字值应显式报错而非静默重置，实际: {:?}",
             result
         );
-        // 原值不被改写
         assert_eq!(
             dao.get("rate:polluted").await.unwrap().as_deref(),
             Some("not-a-number")
@@ -2514,7 +2491,6 @@ pub mod tests {
         let dao = MinimalDao::new();
         let result = dao.incr("counter", 3600).await.unwrap();
         assert_eq!(result, 1, "新键应初始化为 1");
-        // 验证值已写入
         let val = dao.get("counter").await.unwrap();
         assert_eq!(val.as_deref(), Some("1"));
     }
@@ -2528,7 +2504,6 @@ pub mod tests {
         dao.set("counter", "5", 3600).await.unwrap();
         let result = dao.incr("counter", 3600).await.unwrap();
         assert_eq!(result, 6, "已存在键 5 应递增为 6");
-        // 再次递增
         let result = dao.incr("counter", 3600).await.unwrap();
         assert_eq!(result, 7, "已存在键 6 应递增为 7");
     }

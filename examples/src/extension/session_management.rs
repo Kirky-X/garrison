@@ -144,7 +144,6 @@ pub async fn run() -> GarrisonResult<()> {
     println!("     Account-Session token 数 = {}", as_.tokens.len());
     assert_eq!(as_.tokens.len(), 2);
 
-    // 登出整个账号
     session.logout_by_login_id(login_id).await?;
     println!("     logout_by_login_id({}) 完成", login_id);
 

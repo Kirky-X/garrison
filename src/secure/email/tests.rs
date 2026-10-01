@@ -4,7 +4,7 @@
 //! 邮箱验证码模块单元测试。
 
 use super::rate_limiter::{normalize_email, validate_email};
-use super::service::{constant_time_eq, generate_code};
+use super::service::generate_code;
 use super::*;
 use crate::dao::tests::MockDao;
 use crate::error::GarrisonError;
@@ -98,24 +98,27 @@ fn generate_code_returns_six_digits() {
 }
 
 // ============================================================
-// constant_time_eq 测试
+// 验证码比对原语测试（ADR-0003 决策 2：统一走 secure::ct_eq）
 // ============================================================
 
 #[test]
-fn constant_time_eq_equal_strings() {
-    assert!(constant_time_eq("123456", "123456"));
+fn code_ct_eq_equal_strings() {
+    use crate::secure::ct_eq::constant_time_eq;
+    assert!(constant_time_eq(b"123456", b"123456"));
 }
 
 #[test]
-fn constant_time_eq_different_strings() {
-    assert!(!constant_time_eq("123456", "654321"));
-    assert!(!constant_time_eq("123456", "123457"));
+fn code_ct_eq_different_strings() {
+    use crate::secure::ct_eq::constant_time_eq;
+    assert!(!constant_time_eq(b"123456", b"654321"));
+    assert!(!constant_time_eq(b"123456", b"123457"));
 }
 
 #[test]
-fn constant_time_eq_different_lengths() {
-    assert!(!constant_time_eq("123456", "12345"));
-    assert!(!constant_time_eq("12", "123456"));
+fn code_ct_eq_different_lengths() {
+    use crate::secure::ct_eq::constant_time_eq;
+    assert!(!constant_time_eq(b"123456", b"12345"));
+    assert!(!constant_time_eq(b"12", b"123456"));
 }
 
 // ============================================================

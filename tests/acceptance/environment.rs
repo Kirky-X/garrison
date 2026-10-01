@@ -230,7 +230,6 @@ async fn acc_env_002_redis_dao_basic_io_with_ttl() {
     assert_eq!(moved_value, "v2");
     assert!(moved_ttl.is_some(), "rename 应保留原键 TTL");
 
-    // delete
     dao.delete(moved_key).await.expect("delete 应成功");
     assert_eq!(dao.get(moved_key).await.unwrap(), None, "delete 后应不存在");
 }

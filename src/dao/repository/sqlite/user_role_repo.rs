@@ -225,7 +225,6 @@ mod tests {
             .await
             .expect("创建 role 应成功");
 
-        // 为同一角色分配 2 个用户
         for i in 0..2 {
             let user_id = user_repo
                 .create(
@@ -283,13 +282,11 @@ mod tests {
         let pool = setup_db().await;
         let repo = DbnexusUserRoleRepository::new(pool.clone());
 
-        // tenant 1 分配 1 条
         let (user_1, role_1) = setup_user_and_role(&pool, 1).await;
         repo.assign(1, &user_1, &role_1, None)
             .await
             .expect("assign tenant 1 应成功");
 
-        // tenant 2 分配 1 条
         let (user_2, role_2) = setup_user_and_role(&pool, 2).await;
         repo.assign(2, &user_2, &role_2, None)
             .await

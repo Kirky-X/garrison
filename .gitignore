@@ -221,5 +221,8 @@ flamegraph.svg
 # specmark 工作目录与 skills lock 不入库
 /specmark/
 skills-lock.json
-.cargo/
+# .cargo/audit.toml 入库（cargo-audit 漏洞豁免，与 deny.toml [advisories] 同步维护）；
+# 其余（本地 config.toml 等机器私有配置）仍忽略
+.cargo/*
+!.cargo/audit.toml
 .workbuddy-ai/

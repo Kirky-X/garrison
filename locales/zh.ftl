@@ -79,6 +79,7 @@ qrlogin-confirm-token-invalid = 扫码登录确认凭据无效或已过期
 qrlogin-domain-not-allowed = 扫码登录票据域名不在白名单内
 qrlogin-issuer-failed = 扫码登录会话签发失败: {$detail}
 qrlogin-app-unauthorized = 扫码登录需要有效的应用会话 token
+qrlogin-action-invalid = action 必须为 "confirm" 或 "cancel"
 
 # --- 微信小程序（wechat mini-app）---
 wechat-mini-app-get-authorization-url-not-supported = WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）
@@ -1335,3 +1336,6 @@ metrics-encode-failed = Prometheus 指标编码失败
 # Password reset（account-password-reset）
 pwdreset-mail-subject = 密码重置请求
 pwdreset-mail-body = 您请求了密码重置。请在 {$minutes} 分钟内使用以下一次性令牌完成重置：/reset-password?token={$token}
+
+# OAuth2 authorize/resume 端点（0.9.0 i18n 收口）
+oauth2-resume-ticket-missing = ticket 参数缺失

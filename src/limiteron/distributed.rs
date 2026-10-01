@@ -415,7 +415,6 @@ mod tests {
         let result = limiter.allow(3).await;
         assert!(result.is_ok(), "allow 应返回 Ok");
         assert!(result.unwrap(), "allow 应返回 true");
-        // 验证全局计数器已递增
         assert!(
             limiter.get_count("_global").await.unwrap() >= 3,
             "_global 计数器应 >= 3"
@@ -445,9 +444,7 @@ mod tests {
     #[tokio::test]
     async fn limiter_incr_zero_amount_returns_current_count() {
         let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
-        // 先递增到 3
         limiter.incr("zero_key", 3).await.unwrap();
-        // amount=0 应返回当前值 3
         let count = limiter.incr("zero_key", 0).await.unwrap();
         assert_eq!(count, 3, "amount=0 应返回当前 count 而不递增");
     }
@@ -482,7 +479,6 @@ mod tests {
             .unwrap();
         assert!(ok, "count 1 <= 5 应允许");
 
-        // 继续递增到 6 > 5 → 拒绝
         for _ in 0..5 {
             limiter
                 .atomic_check_and_incr("lua_key", 5, Duration::from_secs(60))

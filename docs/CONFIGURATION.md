@@ -27,7 +27,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | 优先级 | 来源 | 说明 |
 |--------|------|------|
 | 高 | 环境变量 | 以 `GARRISON_` 前缀 + 字段名大写下划线形式，例如 `GARRISON_TIMEOUT`、`GARRISON_JWT_SECRET` |
-| 中 | toml 文件 | 通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.6，内部通过 `TomlContentSource` 注入以支持 Windows 绝对路径） |
+| 中 | toml 文件 | 通过 `GarrisonConfig::load(Some(path))` 加载 toml 文件（基于 confers 0.6，文件加载改用 confers `FileSource`——confers 0.6.0-rc.4 起已放行 Windows 盘符前缀，手写的 `TomlContentSource` workaround 已删除） |
 | 低 | 代码默认值 | `GarrisonConfig::default_config()` 内联的默认值 |
 
 > 三源合并在 `GarrisonConfig::load()` 阶段完成：先加载 toml（`None` 时使用代码默认值），再由环境变量覆盖，最后 `validate()` 校验。
@@ -304,7 +304,8 @@ GARRISON_TENANT_ISOLATION__RESOLVER=header
 GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE=1
 
 # === 数据库与缓存 ===
-GARRISON_DB_URL=sqlite://garrison.db?mode=rwc
+# 注意：数据库 URL 不走环境变量——框架不读取 GARRISON_DB_URL，须由宿主编程式传入
+# garrison::dao::init_dbnexus(&db_url)（CLI 对应 --db-url 参数）。
 GARRISON_REDIS_URL=redis://127.0.0.1:6379/0
 
 # === 日志 ===
@@ -369,16 +370,16 @@ assert_eq!(new_config.timeout, 3600);
 
 `GarrisonConfig::validate()` 会执行字段校验，非法值抛出 `GarrisonError::Config`：
 
-| 字段 | 校验规则 | 错误信息示例 |
+| 字段 | 校验规则 | 错误 i18n key（`GarrisonError::Config`） |
 |------|----------|--------------|
-| `timeout` | 必须 > 0 | `timeout must be positive` |
-| `token_style` | 必须在 `["uuid", "random_64", "simple", "jwt"]` 内 | `unknown token_style: invalid` |
-| `token_style=jwt` | `jwt_secret` 不能为空 | `jwt_secret must not be empty when token_style is jwt` |
-| `cookie_same_site` | 必须在 `["Lax", "Strict", "None"]` 内 | `unknown cookie_same_site: invalid` |
-| `is_share=true` | 要求 `is_concurrent=true` | `is_share requires is_concurrent to be true` |
-| `remember_me_timeout` | `remember_me_enabled=true` 时必须 > `timeout`；`remember_me_enabled=false` 时必须 > 0 | `remember_me_timeout (X) must be greater than timeout (Y) when remember_me_enabled is true` |
-| `auto_renewal_threshold` | 必须为 `-1` 或 `0..=100` | `auto_renewal_threshold must be -1 or 0..=100` |
-| `device_binding_mode` | 必须在 `["strict", "loose", "disabled"]` 内 | `unknown device_binding_mode: invalid` |
+| `timeout` | 必须 > 0 | `config-timeout-must-positive::` |
+| `token_style` | 必须在 `["uuid", "random_64", "simple", "jwt"]` 内 | `config-unknown-token-style::{值}` |
+| `token_style=jwt` | `jwt_secret` 不能为空 | `config-jwt-secret-empty::` |
+| `cookie_same_site` | 必须在 `["Lax", "Strict", "None"]` 内 | `config-unknown-cookie-same-site::{值}` |
+| `is_share=true` | 要求 `is_concurrent=true` | `config-is-share-requires-concurrent::` |
+| `remember_me_timeout` | `remember_me_enabled=true` 时必须 > `timeout`；`remember_me_enabled=false` 时必须 > 0 | `config-remember-me-timeout-mismatch::{值}::{timeout}` / `config-remember-me-timeout-positive::{值}` |
+| `auto_renewal_threshold` | 必须为 `-1` 或 `0..=100` | `config-auto-renewal-threshold-invalid::{值}` |
+| `device_binding_mode` | 必须在 `["strict", "loose", "disabled"]` 内 | `config-unknown-device-binding-mode::{值}` |
 
 > 环境变量覆盖后也会触发 `validate()`，非法值（如 `GARRISON_TIMEOUT=not-a-number`）会被拒绝并返回 `GarrisonError::Config`。
 
@@ -392,14 +393,14 @@ assert_eq!(new_config.timeout, 3600);
 
 ### 5.1 Redis 部署模式配置（0.6.0 新增）
 
-`RedisDeploymentMode` 枚举覆盖生产环境常见 Redis 拓扑，通过 `RedisConfig` 聚合结构配置：
+`RedisDeploymentMode` 枚举覆盖生产环境常见 Redis 拓扑，通过 `RedisConfig` 聚合结构配置（注意：`RedisConfig` 并非 `GarrisonConfig` 的字段，而是编程式传给缓存构建器 `with_redis_config`；配置文件中由 `GARRISON_REDIS_URL` 等环境变量注入）：
 
 | 模式 | 字段 | 说明 |
 |------|------|------|
 | `Single` | `url: String` | 单节点模式（默认 `redis://127.0.0.1:6379`） |
-| `Sentinel` | `master_name: String`, `urls: Vec<String>` | 哨兵模式：通过 Sentinel 集群自动故障转移 |
-| `Cluster` | `urls: Vec<String>` | 集群模式：Redis Cluster 分片存储（至少 3 个 master 节点） |
-| `MasterSlave` | `master_url: String`, `slave_urls: Vec<String>` | 主从模式：1 master + N slaves，读分离需客户端支持 |
+| `Sentinel` | `primary_name: String`, `urls: Vec<String>` | 哨兵模式：通过 Sentinel 集群自动故障转移（配置值仍可用旧键 `master_name`，`#[serde(alias)]` 兼容） |
+| `Cluster` | `urls: Vec<String>` | 集群模式：Redis Cluster 分片存储（至少 3 个 primary 节点） |
+| `PrimaryReplica` | `primary_url: String`, `replica_urls: Vec<String>` | 主从模式：1 primary + N replica，读分离需客户端支持（配置值仍可用旧变体名 `MasterSlave`，`#[serde(alias)]` 兼容） |
 
 `RedisConfig` 完整字段：`mode`（部署模式）/ `password`（认证密码）/ `db`（数据库编号 0-15）/ `connection_timeout_secs`（默认 5）/ `pool_size`（默认 10）。
 
@@ -413,7 +414,7 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 |---------|------|------------|
 | `cache-memory` | 关 | 无（使用 oxcache 内存缓存） |
 | `cache-redis` | 关 | 需配置 `GARRISON_REDIS_URL` |
-| `db-sqlite` | 关 | 由 dbnexus 管理 SQLite 路径（`GARRISON_DB_URL`） |
+| `db-sqlite` | 关 | SQLite 路径由宿主编程式传给 `garrison::dao::init_dbnexus(&db_url)`（无 `GARRISON_DB_URL` 环境变量） |
 | `web-axum` | 关 | 启用 axum extractor / router |
 | `protocol-jwt` | 关 | `jwt_algorithm`（`GARRISON_JWT_SECRET` 必填） |
 | `protocol-oauth2` | 关 | 需配套 oauth2 client 配置 |
@@ -454,7 +455,7 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 ```toml
 # Cargo.toml
 [dependencies]
-garrison = { version = "0.9", features = ["web-axum"] }        # 或 web-actix / web-warp
+garrison = { version = "0.9.0-rc.2", features = ["web-axum"] } # 或 web-actix / web-warp
 ```
 
 ```rust,ignore
@@ -486,7 +487,7 @@ delta-seconds 整数秒，下限 1）。
 ```toml
 [dependencies]
 garrison = {
-    version = "0.9",
+    version = "0.9.0-rc.2",
     features = [
         "cache-memory",
         "cache-redis",

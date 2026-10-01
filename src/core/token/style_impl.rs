@@ -168,8 +168,6 @@ impl Token for SimpleTokenStyle {
     }
 
     fn verify(&self, token: &str) -> GarrisonResult<Option<String>> {
-        use subtle::ConstantTimeEq;
-
         // 对齐 JWT：secret 短于 32 字节视为无效（所有 token 拒绝）
         if self.secret.len() < 32 {
             return Ok(None);
@@ -183,7 +181,6 @@ impl Token for SimpleTokenStyle {
         if login_id.is_empty() {
             return Ok(None);
         }
-        // 校验 UUID 部分为合法格式
         if Uuid::parse_str(uuid_part).is_err() {
             return Ok(None);
         }
@@ -196,9 +193,9 @@ impl Token for SimpleTokenStyle {
             Ok(h) => h,
             Err(_) => return Ok(None),
         };
-        // ConstantTimeEq 防止 timing side-channel 攻击
-        let ct_result = expected_hmac.as_bytes().ct_eq(hmac_part.as_bytes());
-        if bool::from(ct_result) {
+        // 常量时间比较统一走公共原语（ADR-0003 决策 2：消除本地第二实现），
+        // 防止 timing side-channel 攻击
+        if crate::secure::ct_eq::constant_time_eq(expected_hmac.as_bytes(), hmac_part.as_bytes()) {
             Ok(Some(login_id.to_string()))
         } else {
             Ok(None)
@@ -221,7 +218,6 @@ impl Token for SimpleTokenStyle {
                 "core-simple-token-login-id-empty::".to_string(),
             ));
         }
-        // 校验 UUID 部分
         if Uuid::parse_str(uuid_part).is_err() {
             return Err(GarrisonError::Internal(
                 "core-simple-token-uuid-invalid::".to_string(),
@@ -233,11 +229,9 @@ impl Token for SimpleTokenStyle {
                 "core-simple-token-expired::".to_string(),
             ));
         }
-        // 校验 HMAC（常数时间比较）
-        use subtle::ConstantTimeEq;
+        // 校验 HMAC（常数时间比较，统一走公共原语：ADR-0003 决策 2）
         let expected_hmac = self.compute_hmac(login_id, uuid_part, exp)?;
-        let ct_result = expected_hmac.as_bytes().ct_eq(hmac_part.as_bytes());
-        if !bool::from(ct_result) {
+        if !crate::secure::ct_eq::constant_time_eq(expected_hmac.as_bytes(), hmac_part.as_bytes()) {
             return Err(GarrisonError::InvalidToken(
                 "core-simple-token-hmac-failed::".to_string(),
             ));
@@ -498,5 +492,49 @@ mod simple_token_impl_tests {
             None,
             "篡改 exp 后 HMAC 应失败"
         );
+    }
+
+    /// 篡改 HMAC 段（单字节差异 + 篡改最后字节）：verify 返回 None、
+    /// parse 返回 InvalidToken（HMAC 校验统一走公共原语，ADR-0003 决策 2/3）。
+    #[test]
+    fn simple_token_tampered_hmac_rejected() {
+        let style = make_style();
+        let uuid_str = Uuid::new_v4().to_string();
+        let future_exp = chrono::Utc::now().timestamp() + 3600;
+        let hmac = style.compute_hmac("u1", &uuid_str, future_exp).unwrap();
+
+        // 单字节差异（首字符翻转）→ verify None + parse InvalidToken
+        let mut tampered_hmac = hmac.clone();
+        tampered_hmac.replace_range(0..1, if &hmac[0..1] == "A" { "B" } else { "A" });
+        let bad = format!("u1\x1f{}.{}.{}", uuid_str, future_exp, tampered_hmac);
+        assert_eq!(
+            style.verify(&bad).unwrap(),
+            None,
+            "篡改 HMAC 首字符后 token 应无效"
+        );
+        assert!(
+            matches!(style.parse(&bad), Err(GarrisonError::InvalidToken(_))),
+            "篡改 HMAC 后 parse 应返回 InvalidToken，实际: {:?}",
+            style.parse(&bad)
+        );
+
+        // 篡改最后字节 → 同样拒绝
+        let mut last_flipped = hmac.clone();
+        let last = last_flipped.pop().unwrap();
+        last_flipped.push(if last == 'A' { 'B' } else { 'A' });
+        let bad_last = format!("u1\x1f{}.{}.{}", uuid_str, future_exp, last_flipped);
+        assert_eq!(style.verify(&bad_last).unwrap(), None);
+
+        // HMAC 段长度不符（截断）→ 长度不等常量时间判 false → None
+        let truncated = format!("u1\x1f{}.{}.{}", uuid_str, future_exp, &hmac[..42]);
+        assert_eq!(
+            style.verify(&truncated).unwrap(),
+            None,
+            "HMAC 段长度不符应无效"
+        );
+
+        // 正确 HMAC 仍通过（防测试本身写错方向）
+        let good = format!("u1\x1f{}.{}.{}", uuid_str, future_exp, hmac);
+        assert_eq!(style.verify(&good).unwrap(), Some("u1".to_string()));
     }
 }

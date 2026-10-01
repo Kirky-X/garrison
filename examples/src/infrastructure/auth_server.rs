@@ -84,7 +84,6 @@ pub async fn setup_garrison_manager() -> GarrisonResult<BackendEmbedded> {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison Auth Server 配置示例 ===\n");
 
-    // 1. 创建 BackendEmbedded
     let backend: Arc<dyn AuthBackend> = Arc::new(BackendEmbedded::new());
     println!("[1] BackendEmbedded 创建成功");
 
@@ -97,7 +96,6 @@ pub async fn run() -> GarrisonResult<()> {
         "REPLACE_ME".to_string()
     });
 
-    // 3. 创建 GarrisonAuthServer 并配置
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(8080)
         .with_internal_port(8081)

@@ -279,7 +279,6 @@ mod tests {
         let repo = DbnexusSessionRepository::new(pool.clone());
         let user_id = setup_user(&pool, 1).await;
 
-        // 为同一用户创建 3 个会话
         for i in 0..3 {
             repo.create(
                 1,

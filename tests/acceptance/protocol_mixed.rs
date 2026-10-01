@@ -113,7 +113,6 @@ async fn acc_mixed_002_sso_ticket_one_time_use_rejects_replay() {
 
     let ticket = client_a.issue_ticket("1001", 2001).await.unwrap();
 
-    // 首次校验成功
     assert_eq!(
         client_b.validate_ticket(&ticket, 2001).await.unwrap(),
         "1001".to_string()

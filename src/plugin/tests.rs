@@ -71,7 +71,6 @@ fn on_login_invokes_all_plugins() {
 #[serial]
 fn on_logout_invokes_all_plugins() {
     reset_counters();
-    // 验证 reset_counters 确实清零
     assert_eq!(
         LOGOUT_CALLS.load(Ordering::SeqCst),
         0,
@@ -87,7 +86,6 @@ fn on_logout_invokes_all_plugins() {
 #[serial]
 fn on_permission_check_invokes_all_plugins() {
     reset_counters();
-    // 验证 reset_counters 确实清零
     assert_eq!(
         PERM_CHECK_CALLS.load(Ordering::SeqCst),
         0,

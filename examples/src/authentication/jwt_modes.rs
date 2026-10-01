@@ -85,7 +85,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!token.is_empty());
     println!("    ✓ login 成功，token 包含 3 段 Base64URL\n");
 
-    // 2. Stateless 模式
     println!("[2] Stateless 模式（仅 JWT verify，不查 session，高可用场景）");
     let logic_stateless = make_logic_with_mode(JwtMode::Stateless).await;
     let token_s = logic_stateless
@@ -95,7 +94,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!token_s.is_empty());
     println!("    ✓ login 成功，Stateless 模式不依赖 oxcache session\n");
 
-    // 3. Simple 模式
     println!("[3] Simple 模式（仅 session，JWT 仅作载体，不验证签名）");
     let logic_simple = make_logic_with_mode(JwtMode::Simple).await;
     let token_simple = logic_simple.login("1001", &LoginParams::default()).await?;
@@ -103,7 +101,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(!token_simple.is_empty());
     println!("    ✓ login 成功，Simple 模式 token 可能不是 JWT 格式\n");
 
-    // 4. 演示 JWT 签发后可被 JwtHandler 独立校验
     println!("[4] JWT 独立校验（使用 protocol::jwt::JwtHandler）");
     use garrison::protocol::jwt::JwtHandler;
     // 与 make_logic_with_mode 中 config.jwt_secret 保持一致（同一密钥签发与校验）

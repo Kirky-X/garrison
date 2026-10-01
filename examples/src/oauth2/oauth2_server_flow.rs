@@ -80,7 +80,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    grant_types: [authorization_code, refresh_token, client_credentials, password]");
     println!("    scopes: [read, write]\n");
 
-    // 构建 handler 链
     let authorize_handler = Arc::new(AuthorizeHandler::new(
         store.clone(),
         dao.clone(),
@@ -121,6 +120,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         state: Some("random-state-xyz".into()),
         code_challenge: code_challenge.clone(),
         code_challenge_method: "S256".into(),
+        prompt: None,
     };
     let auth_resp = authorize_handler.authorize(&auth_req, Some(1001)).await?;
 

@@ -632,7 +632,6 @@ async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
         TokenGenerator,
     };
 
-    // LoginHandler
     struct MyLoginHandler;
     #[async_trait::async_trait]
     impl LoginHandler for MyLoginHandler {
@@ -643,7 +642,6 @@ async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
     let handler = MyLoginHandler;
     assert_eq!(handler.handle_login("1001").await.unwrap(), "token-1001");
 
-    // LogoutHandler
     struct MyLogoutHandler;
     #[async_trait::async_trait]
     impl LogoutHandler for MyLogoutHandler {
@@ -658,7 +656,6 @@ async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
     assert!(handler.handle_logout().await.is_ok());
     assert!(handler.handle_logout_by_login_id("1001").await.is_ok());
 
-    // PermissionHandler
     struct MyPermissionHandler;
     #[async_trait::async_trait]
     impl PermissionHandler for MyPermissionHandler {
@@ -673,7 +670,6 @@ async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
     assert!(handler.handle_check_permission("user:read").await.is_ok());
     assert!(handler.handle_check_role("admin").await.is_ok());
 
-    // TokenGenerator
     struct MyTokenGenerator;
     #[async_trait::async_trait]
     impl TokenGenerator for MyTokenGenerator {
@@ -688,7 +684,6 @@ async fn acc_rbac_010_six_strategy_traits_externally_implementable() {
     assert_eq!(gen.generate_token("1001").await.unwrap(), "gen-1001");
     assert_eq!(gen.refresh_token("old").await.unwrap(), "refreshed-old");
 
-    // SessionCreator
     struct MySessionCreator;
     #[async_trait::async_trait]
     impl SessionCreator for MySessionCreator {
@@ -952,7 +947,6 @@ async fn acc_rbac_015_replace_isolated_and_old_handler_dropped() {
         "替换 LoginHandler 不应影响 FirewallStrategy"
     );
 
-    // login_handler 确实已替换
     let token = strategy.login_handler().handle_login("1001").await.unwrap();
     assert_eq!(token, "custom-1001");
 
@@ -994,11 +988,9 @@ async fn acc_rbac_016_manager_with_strategy_replaces_registry() {
         "init 后应能获取 strategy"
     );
 
-    // 获取原 logic 并构造自定义 Strategy
     let logic = GarrisonManager::logic().unwrap();
     let custom_strategy = Arc::new(RwLock::new(Strategy::new(logic)));
 
-    // 注入自定义 LoginHandler
     struct CustomLogin;
     #[async_trait::async_trait]
     impl LoginHandler for CustomLogin {
@@ -1010,7 +1002,6 @@ async fn acc_rbac_016_manager_with_strategy_replaces_registry() {
         .write()
         .register_login_handler(Arc::new(CustomLogin));
 
-    // with_strategy 替换
     GarrisonManager::with_strategy(custom_strategy).unwrap();
 
     // 验证替换后使用自定义策略

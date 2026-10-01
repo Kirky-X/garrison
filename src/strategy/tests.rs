@@ -531,7 +531,6 @@ async fn cache_permission_overwrite() {
     let iface = MockInterface::new();
     let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
 
-    // 第一次缓存 true
     fw.cache_permission("1001", "user:read", true, 300)
         .await
         .unwrap();
@@ -540,7 +539,6 @@ async fn cache_permission_overwrite() {
         Some(true)
     );
 
-    // 覆盖为 false
     fw.cache_permission("1001", "user:read", false, 300)
         .await
         .unwrap();
@@ -1211,16 +1209,10 @@ async fn failing_dao_atomic_methods_coverage() {
     }
 
     let dao = SimpleDao;
-    // set_if_absent
     let _ = dao.set_if_absent("k1", "v1", 60).await;
-    // get_and_delete
     let _ = dao.get_and_delete("k1").await;
-    // incr
     let _ = dao.incr("counter", 60).await;
-    // decr
     let _ = dao.decr("counter").await;
-    // rename
     let _ = dao.rename("old", "new").await;
-    // compare_and_swap
     let _ = dao.compare_and_swap("k2", Some("old"), "new", 60).await;
 }

@@ -4,7 +4,7 @@
 //! `httpdigest` 模块单元测试。
 
 use super::algorithm::hex_encode;
-use super::auth::{constant_time_eq, current_unix_seconds};
+use super::auth::current_unix_seconds;
 use super::*;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::sync::Arc;
@@ -91,7 +91,6 @@ fn challenge_nonce_is_random() {
     let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
     let c1 = auth.challenge();
     let c2 = auth.challenge();
-    // 提取 nonce
     let n1 = extract_nonce(&c1).unwrap();
     let n2 = extract_nonce(&c2).unwrap();
     assert!(!n1.is_empty());
@@ -328,7 +327,6 @@ fn validate_expired_nonce_rejected() {
         uri,
         &ha1,
     );
-    // nonce 过期 → 应失败
     assert!(!auth.validate(&header, method, uri, &ha1));
 }
 
@@ -379,7 +377,6 @@ fn validate_malformed_nonce_rejected() {
         uri,
         &ha1,
     );
-    // nonce 格式无效 → 应失败
     assert!(!auth.validate(&header, method, uri, &ha1));
 }
 
@@ -408,7 +405,6 @@ fn validate_custom_ttl_works() {
         &ha1,
     );
     assert!(!auth.validate(&header, method, uri, &ha1));
-    // 刚生成的有效 nonce 应通过
     let valid_nonce = make_valid_nonce();
     let valid_header = build_md5_auth_header(
         &auth,
@@ -584,9 +580,7 @@ fn validate_with_body_supports_auth_qop() {
 fn validate_malformed_header_returns_false() {
     let auth = HttpDigestAuth::new("realm", "MD5").unwrap();
     let ha1 = "dummy";
-    // 非 Digest 方案
     assert!(!auth.validate("Basic abc123", "GET", "/resource", ha1));
-    // 缺失参数
     assert!(!auth.validate("Digest username=\"admin\"", "GET", "/resource", ha1));
 }
 
@@ -727,32 +721,6 @@ fn is_nonce_valid_non_numeric_timestamp_returns_false() {
 }
 
 // ========================================================================
-// constant_time_eq 测试
-// ========================================================================
-
-/// 验证 constant_time_eq 对不同长度字符串返回 false。
-///
-/// 覆盖 constant_time_eq 中 `if a.len() != b.len() { return false; }` 分支。
-#[test]
-fn constant_time_eq_different_lengths_returns_false() {
-    assert!(!constant_time_eq(b"abc", b"ab"));
-    assert!(!constant_time_eq(b"ab", b"abc"));
-}
-
-/// 验证 constant_time_eq 对相同字符串返回 true。
-#[test]
-fn constant_time_eq_same_strings_returns_true() {
-    assert!(constant_time_eq(b"abc", b"abc"));
-    assert!(constant_time_eq(b"", b""));
-}
-
-/// 验证 constant_time_eq 对不同字符串返回 false。
-#[test]
-fn constant_time_eq_different_strings_returns_false() {
-    assert!(!constant_time_eq(b"abc", b"xyz"));
-}
-
-// ========================================================================
 // hex_encode 测试
 // ========================================================================
 
@@ -830,7 +798,6 @@ async fn validate_nc_replay_rejected_with_dao() {
         uri,
         &ha1,
     );
-    // 第一次：通过
     assert!(
         auth.validate(&header, method, uri, &ha1),
         "vuln-0008: 首次请求应通过"
@@ -948,7 +915,6 @@ async fn validate_nc_skipped_without_dao() {
         uri,
         &ha1,
     );
-    // 第一次：通过
     assert!(
         auth.validate(&header, method, uri, &ha1),
         "vuln-0008: 无 DAO 时首次请求应通过"

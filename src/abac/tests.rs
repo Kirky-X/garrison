@@ -67,7 +67,6 @@ async fn init_abac_engine_success_then_get_returns_some() {
     .unwrap();
     init_abac_engine(engine).expect("首次 init_abac_engine 应成功");
 
-    // get_abac_engine 应返回 Some(Arc<AbacEngine>)
     let result = get_abac_engine();
     assert!(
         result.is_ok(),
@@ -164,9 +163,7 @@ async fn check_abac_with_policy_no_engine_various_actions() {
     assert!(result2.is_err());
     let result3 = check_abac_with_policy("", r#"Resource::"default""#, "").await;
     assert!(result3.is_err());
-    // 验证错误类型为 Config
     if let Err(crate::error::GarrisonError::Config(_)) = result1 {
-        // OK
     } else {
         panic!("期望 Config 错误，实际: {:?}", result1);
     }
@@ -241,18 +238,15 @@ async fn check_abac_with_policy_engine_initialized_allow() {
     crate::manager::GarrisonManager::reset_for_test();
     init_manager_for_abac().await;
 
-    // 初始化 ABAC 引擎
     let engine = AbacEngine::new(EVAL_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
         .await
         .expect("schema valid");
     init_abac_engine(engine).expect("init_abac_engine 应成功");
 
-    // 登录获取 token
     let token = GarrisonUtil::login_simple("1001")
         .await
         .expect("login 应成功");
 
-    // 在 token 作用域内调用 check_abac_with_policy
     let result = with_current_token(token, async {
         check_abac_with_policy("access", r#"Resource::"default""#, "principal == principal").await
     })
@@ -440,7 +434,6 @@ async fn check_abac_with_policy_accepts_legitimate_resource() {
 /// 合法 abac_expr 应通过校验。
 #[test]
 fn validate_abac_expr_accepts_legitimate_expressions() {
-    // 引用 principal/resource/action 的合法表达式
     assert!(validate_abac_expr("resource.owner == principal.id").is_ok());
     assert!(validate_abac_expr("principal.department == \"eng\"").is_ok());
     assert!(validate_abac_expr("action in [Action::\"read\"]").is_ok());

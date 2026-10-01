@@ -108,7 +108,8 @@ pub struct Random64TokenStyle;
 ///
 /// - **生成**：服务端用 `secret` 对 `login_id|uuid|exp` 计算 HMAC-SHA256，附加到 token 末尾；
 ///   `timeout <= 0` 时拒绝生成（fail-closed，杜绝无过期时间的永久 token）
-/// - **验证**：用 `subtle::ConstantTimeEq` 常数时间比较 HMAC，防止 timing side-channel；
+/// - **验证**：用公共常量时间比较原语 `secure::ct_eq::constant_time_eq`（ADR-0003）
+///   常数时间比较 HMAC，防止 timing side-channel；
 ///   `exp` 已过期（`Utc::now() >= exp`）时视为无效
 /// - **fail-closed**：`secure-simple-token` feature 未启用时，`generate` 返回 `Err`，
 ///   杜绝无签名的不安全 token 流入生产环境

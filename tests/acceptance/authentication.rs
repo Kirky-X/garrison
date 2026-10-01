@@ -112,7 +112,6 @@ async fn acc_auth_003_switch_account_context() {
             GarrisonUtil::get_login_id().await.unwrap(),
             Some("user-a".to_string())
         );
-        // 切换到 B
         with_current_token(token_b.clone(), async {
             assert_eq!(
                 GarrisonUtil::get_login_id().await.unwrap(),
@@ -121,7 +120,6 @@ async fn acc_auth_003_switch_account_context() {
             );
         })
         .await;
-        // 回到 A
         assert_eq!(
             GarrisonUtil::get_login_id().await.unwrap(),
             Some("user-a".to_string()),
@@ -481,7 +479,6 @@ async fn acc_auth_011_disable_rejects_then_untie_restores() {
     })
     .await;
 
-    // 解封 → 恢复放行
     repo.untie_disable("1001", "default").await.unwrap();
     with_current_token(token, async {
         GarrisonUtil::check_disable()
@@ -696,7 +693,6 @@ async fn acc_auth_019_bw_ac_010_login_failure_locks_account() {
         other => panic!("期望 DisableService 变体，实际: {other:?}"),
     }
 
-    // 验证 HTTP status = 403
     let (status, _, _, _) = disable_err.response_parts();
     assert_eq!(status, 403, "DisableService 的 HTTP status 应为 403");
 }

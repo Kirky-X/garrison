@@ -395,10 +395,8 @@ impl AuthorizeHandler {
         // 1. 校验 response_type / PKCE 方法 / challenge 非空
         validate_request_shape(req)?;
 
-        // 2. 校验 client_id
         let client = self.load_client(&req.client_id).await?;
 
-        // 3. 校验 redirect_uri 白名单
         if !client.is_redirect_uri_allowed(&req.redirect_uri) {
             return Err(GarrisonError::OAuth2(format!(
                 "oauth2-server-authorize-redirect-uri-not-allowed::{}",
@@ -411,7 +409,6 @@ impl AuthorizeHandler {
             return self.restage_and_login_redirect(req).await;
         }
 
-        // 5. 检查用户登录状态
         let Some(user_id) = user_id else {
             // prompt=none：不弹登录——interaction_required 显性失败
             if prompt == AuthorizePrompt::NoInteraction {
@@ -1090,7 +1087,6 @@ mod tests {
     fn verify_pkce_mismatch() {
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let wrong_challenge = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM";
-        // 使用不同的 verifier 生成 challenge
         let other = generate_code_challenge("other-verifier-other-verifier-other-verifier");
         assert!(!verify_pkce(verifier, &other).unwrap());
         let _ = wrong_challenge;
@@ -1212,7 +1208,6 @@ mod tests {
             .unwrap();
 
         let req = make_request("auth-005", "challenge");
-        // 修改 method 为 plain
         let mut req = req;
         req.code_challenge_method = "plain".into();
 
@@ -2424,7 +2419,6 @@ mod tests {
                     "state 中的特殊字符未被编码: {}",
                     location
                 );
-                // 应包含编码后的 state
                 assert!(location.contains("state="), "应有 state 参数: {}", location);
             },
             _ => panic!("期望 Redirect"),
@@ -2533,9 +2527,7 @@ mod tests {
             .next()
             .unwrap();
 
-        // 第一次消费：成功
         assert!(handler.consume_code(code).await.unwrap().is_some());
-        // 第二次消费：已删除
         assert!(handler.consume_code(code).await.unwrap().is_none());
     }
 
@@ -2624,7 +2616,6 @@ mod tests {
             .unwrap()
             .to_string();
 
-        // 首次消费成功
         assert!(handler.consume_code(&code).await.unwrap().is_some());
         // 记录该 code 签发的 token（模拟 issue_tokens 之后）
         handler
@@ -2634,7 +2625,6 @@ mod tests {
         // 重放：第二次消费返回 None
         assert!(handler.consume_code(&code).await.unwrap().is_none());
 
-        // 吊销此前签发的 token
         let revoked = handler.revoke_replayed_code_tokens(&code).await.unwrap();
         assert!(revoked, "应检测到 codeused 记录并吊销 token");
         // access/refresh token DAO 记录应被删除

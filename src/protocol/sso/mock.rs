@@ -171,9 +171,7 @@ mod mock_dao_coverage_tests {
     async fn mock_dao_ttl_expires_key() {
         let dao = MockDao::new();
         dao.set("ttl-key", "v", 1).await.unwrap();
-        // 过期前可读
         assert_eq!(dao.get("ttl-key").await.unwrap().as_deref(), Some("v"));
-        // 等待过期（TTL=1s）
         tokio::time::sleep(Duration::from_millis(1100)).await;
         assert_eq!(
             dao.get("ttl-key").await.unwrap(),

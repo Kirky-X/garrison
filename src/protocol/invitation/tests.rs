@@ -354,7 +354,6 @@ mod create_tests {
         assert_eq!(record.used_count, 0);
         assert_eq!(record.status, InvitationStatus::Active);
         assert!(record.created_at > 0 && record.expires_at > record.created_at);
-        // KV 中可读回且剩余 TTL > 0
         let key = format!("garrison:invitation:code:{}", record.code);
         let (value, ttl) = handler.dao.get_with_ttl(&key).await.unwrap().unwrap();
         assert_eq!(value, serde_json::to_string(&record).unwrap());
@@ -585,7 +584,6 @@ mod redeem_tests {
         // 单次消费后 KV 删除
         let key = format!("garrison:invitation:code:{}", record.code);
         assert!(handler.dao.get(&key).await.unwrap().is_none());
-        // 二次消费 NotFound
         let err = handler
             .redeem(&record.code, "user-2", "10.0.0.2")
             .await
@@ -612,7 +610,6 @@ mod redeem_tests {
                 "第 {i} 次消费后回写剩余 TTL 应 > 0"
             );
         }
-        // 第 4 次：Exhausted
         let err = handler
             .redeem(&record.code, "user-4", "10.0.0.1")
             .await
@@ -887,7 +884,6 @@ mod revoke_list_tests {
         handler.revoke(&record.code, "issuer-1").await.unwrap();
         let report = handler.validate(&record.code).await.unwrap();
         assert_eq!(report.reason, Some(InvitationInvalidReason::Revoked));
-        // 吊销后 redeem 被拒
         let err = handler
             .redeem(&record.code, "user-1", "10.0.0.1")
             .await

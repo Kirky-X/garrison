@@ -1,6 +1,6 @@
 # 🧪 Garrison 测试场景矩阵
 
-> 适用版本：Garrison **0.9.0-rc.2**（MSRV 1.85，`rust-toolchain.toml` 锁定 1.85.1）
+> 适用版本：Garrison **0.9.0-rc.2**（MSRV 1.85；`rust-toolchain.toml` 锁定的是 `stable` 通道，1.85.1 仅在 CI workflow 侧 pin）
 > 编写依据（只读核对）：`Cargo.toml [features]` 与 `[[test]]` 注册、`tests/acceptance.rs` 域入口、`tests/acceptance/*.rs`、`tests/acceptance/migrated/*.rs`、`examples/tests/`、`.github/workflows/ci.yml`、`.github/workflows/feature-matrix.yml`、`scripts/e2e_matrix.sh`、`scripts/e2e_run.sh`、`benches/garrison_benchmark.rs`。
 > 本文合并自原《E2E 特性组合测试套件》文档（`E2E_TESTING.md` 已删除），并补入基于真实测试套件的场景穷举。
 > 规模数字均为 `#[test]` / `#[tokio::test]` 属性的 grep 统计（含 `#[tokio::test(flavor = ...)]` 形态），截至 2026-09-15。
@@ -59,11 +59,13 @@
 
 | 类别 | 位置 | 数量 |
 |------|------|------|
-| 单元测试 | `src/` 内联（237 个 `#[cfg(test)]` 模块） | 约 4800 |
-| 验收 / 集成 / UI 测试 | `tests/`（acceptance 20 域 + migrated 11 文件 + db 专用 target + macros_ui） | 约 406 |
-| 示例级集成测试 | `examples/tests/`（58 个文件，与示例 bin 一一对应） | 约 116 |
+| 单元测试 | `src/` 内联（265 个 `#[cfg(test)]` 模块） | 5117 |
+| 验收 / 集成 / UI 测试 | `tests/`（acceptance 20 域 + migrated 11 文件 + db 专用 target + macros_ui） | 404 |
+| 示例级集成测试 | `examples/tests/`（65 个文件，与示例 bin 一一对应） | 约 116 |
 | 过程宏测试 | `macros/` | 8 |
-| 合计 | — | **约 5330** |
+| 合计 | — | **约 5645** |
+
+> 单元与验收两列为 `cargo test --features full --lib -- --list` / `cargo test --test acceptance --features "full testing" -- --list` 实测计数；示例与过程宏为测试属性静态计数。
 | Criterion 基准 | `benches/garrison_benchmark.rs` | 4 场景 |
 | 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 85`（当前行覆盖率约 95.8%，见 CHANGELOG 0.8.1 TEST-01 记录） |
 
@@ -81,14 +83,14 @@
 | `session.rs` | 19 | 双模会话（Account-Session / Token-Session）、并发与共享策略 |
 | `rbac.rs` | 18 | RBAC 权限校验与角色层级 |
 | `protocol_jwt.rs` | 19 | JWT 签发 / 验证 / refresh 轮换 |
-| `protocol_oauth2.rs` | 16 | OAuth2 四种 grant（打真实 Keycloak 26） |
+| `protocol_oauth2.rs` | 19 | OAuth2 四种 grant（打真实 Keycloak 26） |
 | `protocol_mixed.rs` | 23 | 多协议混合场景（JWT/OAuth2/SSO 交叉） |
 | `server.rs` | 22 | 独立认证服务器（auth-server 端点行为） |
 | `web_axum.rs` | 25 | axum 路由拦截与注解 |
 | `web_actix.rs` | 8 | actix-web 中间件 |
 | `web_warp.rs` | 6 | warp 过滤器 |
 | `bw_ac.rs` | 6 | ABAC（Cedar DSL）属性访问控制 |
-| `repository.rs` | 30 | Repository 层（10 trait）CRUD 与租户隔离 |
+| `repository.rs` | 30 | Repository 层（13 trait）CRUD 与租户隔离 |
 | `keycloak_fixture.rs` | 3 | 真实 Keycloak 登录表单流夹具自检 |
 | `web_smoke.rs` | 3 | 三 Web 框架冒烟 |
 | `storage.rs` | 16 | 存储后端行为（TTL / 过期 / 持久化） |
@@ -100,6 +102,7 @@
 |--------|:------:|----------|
 | `security.rs` | 30 | 渗透测试攻击面（Token 伪造 / 注入 / CSRF，原 pentest 套件 ACC-SEC-021..030 并入） |
 | `resilience.rs` | 12 | 故障韧性（超时 / 断连 / 熔断 / fail-closed） |
+| `qrlogin.rs` | 7 | 第一方扫码登录（Web 扫码 + App 确认，两票分离） |
 | `concurrency.rs` | 9 | 竞争条件（含 8 个 `#[ignore]` 性能基线 `perf_*` 用例） |
 | `environment.rs` | 8 | 外部服务环境门控（Redis DAO / Postgres 迁移 / MySQL testcontainers，不可达自动 [SKIP]） |
 
@@ -129,7 +132,7 @@ dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与 server-side（postgr
 
 ### 示例级集成测试（`examples/tests/`）
 
-58 个测试文件与 `examples/src/bin/` 一一对应（basic_login、axum_integration、oauth2_flow、sso_server、jwt_modes、firewall_defense、account_security 等），随 `cargo test -p garrison-examples --all-features` 执行，共约 116 个测试属性。其中 `readme_quickstart.rs` 与 README「最小示例」逐字对应，防止文档漂移。
+65 个测试文件与 `examples/src/bin/` 一一对应（basic_login、axum_integration、oauth2_flow、sso_server、jwt_modes、firewall_defense、account_security 等），随 `cargo test -p garrison-examples --all-features` 执行，共约 116 个测试属性。其中 `readme_quickstart.rs` 与 README「最小示例」逐字对应，防止文档漂移。
 
 ---
 
@@ -137,8 +140,8 @@ dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与 server-side（postgr
 
 ### 规模概览
 
-- `cargo metadata` 统计：**145 个 feature**（含 `dep:` 展开项），聚合特性
-  `full` 传递启用 95 项、`production` 35 项、`config-full` 12 项、`db-base` 15 项。
+- `cargo metadata` 统计：**143 个具名 feature**，聚合特性
+  `full` 传递启用 104 项、`production` 41 项、`config-full` 13 项、`db-base` 14 项。
 - 模块分层：核心（无开关，总编译）+ 9 大可选功能域 + 3 个聚合特性。
 
 ### 功能域与依赖结构
@@ -236,7 +239,7 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 | `protocol-sso` ⇒ `protocol-jwt` | OIDC `exchange_code` 必须验签 `id_token`（安全审计 fail-open → fail-closed 修复） |
 | `http` 桥接 feature 不可改名 | sdforge `#[forge]` 宏硬编码 `#[cfg(feature = "http")]`，改名 = 全部动态路由 404 |
 | `security-alert` 必须落地 `security-extra` | 历史上为零依赖死 feature，导致 device-binding 单独启用编译失败 |
-| MSRV | Cargo.toml 声明 1.85，但当前 lockfile 的 rc.2 兄弟 crate 要求 ≥1.97.1（以 lockfile 为准） |
+| MSRV | Cargo.toml 声明 1.85，但兄弟生态 crate（oxcache / dbnexus / confers / sdforge / limiteron / inklog 的 rc.5、trait-kit rc.6）要求 rustc ≥1.97.1——实际开发工具链需按后者 |
 
 ---
 
@@ -332,12 +335,15 @@ bash scripts/e2e_matrix.sh --keep-env
 docker compose -f docker/docker-compose.e2e.yml down -v --remove-orphans   # 手动清理
 ```
 
-一键 HTTP E2E（外部 18080 / 内部 18081，auth_server_serve 进程级黑盒冒烟）：
+一键 HTTP E2E（auth_server_serve 进程级黑盒冒烟）：
 
 ```bash
+# 独立运行：脚本默认端口为 8080 / 8081
 EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
 # 产物：logs/perf.jsonl + logs/e2e_final_report.md
 ```
+
+> 端口 18080 / 18081 是 `scripts/e2e_matrix.sh` 的 S7 阶段导出的高位端口（避免 8080 被开发机驻留服务占用），并非 `e2e_run.sh` 的默认值——独立运行脚本走 8080 / 8081。
 
 报告输出：`logs/e2e_matrix_report.md`（各阶段日志在 `logs/e2e_matrix/`）。
 退出码：`0` 全过；`1` 存在失败阶段（先看 `logs/e2e_matrix_report.md`，
@@ -345,7 +351,7 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
 
 ### 环境要求
 
-- Rust stable ≥ 1.97.1（lockfile 约束；国内镜像滞后的镜像源可临时
+- Rust stable ≥ 1.97.1（兄弟生态 crate 的 MSRV 约束，非 lockfile 字段——`Cargo.lock` 不携带 `rust-version`；国内镜像滞后的镜像源可临时
   `RUSTUP_DIST_SERVER=https://static.rust-lang.org rustup update stable`）
 - Docker（daemon 可达；testcontainers 拉取 MySQL 镜像需外网或本地缓存）
 - protoc（sdforge 构建依赖）、cargo-hack（仅 `--full-matrix` 需要）
@@ -368,8 +374,8 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
 
 ## 📝 已知问题与处置记录
 
-- **工具链**：兄弟生态 crate（confers/dbnexus/oxcache/sdforge/limiteron/inklog/
-  trait-kit rc.2）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable
+- **工具链**：兄弟生态 crate（confers / dbnexus / oxcache / sdforge / limiteron / inklog 的
+  rc.5 与 trait-kit rc.6）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable
   （`RUSTUP_DIST_SERVER=https://static.rust-lang.org rustup update stable`）。
 - **e2e target 残留**：迁移删除了 examples 的 `--test e2e`
   target，但 `scripts/e2e_run.sh` 仍引用之——已重写指向现行 `tests/acceptance`
@@ -394,7 +400,7 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
   注入（`RemoteContext::connect_env` 路径）。
 - **perf_login 基线重校准（2026-09-11）**：原测试用单一账号 `perf_user` 以
   并发 100 压测，撞上登录路径的 per-login_id 互斥锁
-  （`SessionStore::with_login_lock`，TOCTOU 修复，**设计如此**——保护
+  （`GarrisonSession::with_login_lock`，TOCTOU 修复，**设计如此**——保护
   同账号 Account-Session 读改写原子性），单账号并发必然串行化（实测
   P99 ~700ms）。已改为 100 账号轮转（`LoadRunner::with_body_fn`），度量
   多用户真实流量下的系统吞吐；同账号并发正确性由 concurrency 域竞争测试

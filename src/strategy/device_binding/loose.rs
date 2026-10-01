@@ -223,9 +223,7 @@ mod tests {
 
         // LooseBinding 总是返回 false（仅告警不阻断）
         assert!(!require, "LooseBinding require_secondary_auth 应返回 false");
-        // listener 应被调用 1 次
         assert_eq!(counter.call_count(), 1, "新设备应广播 1 次告警事件");
-        // 验证事件类型为 NewDeviceLogin
         match counter.last_event() {
             Some(SecurityAlertEvent::NewDeviceLogin {
                 login_id,

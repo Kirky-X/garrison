@@ -546,9 +546,7 @@ mod tests {
         dao.update("k", "v2").await.unwrap();
         dao.expire("k", 30).await.unwrap();
         dao.delete("k").await.unwrap();
-        // get 始终返回 None
         assert!(dao.get("k").await.unwrap().is_none());
-        // keys 按 pattern 过滤
         let keys = dao.keys("role:*").await.unwrap();
         assert_eq!(keys.len(), 1);
         let empty = dao.keys("tenant:*").await.unwrap();
@@ -654,9 +652,7 @@ mod tests {
         dao.update("k", "v2").await.unwrap();
         dao.expire("k", 30).await.unwrap();
         dao.delete("k").await.unwrap();
-        // get 返回错误
         assert!(dao.get("k").await.is_err());
-        // keys 按 pattern 过滤
         let keys = dao.keys("role:*").await.unwrap();
         assert_eq!(keys.len(), 1);
         // atomic + 默认 trait 方法覆盖
@@ -695,9 +691,7 @@ mod tests {
             dao.get("role:test").await.unwrap().as_deref(),
             Some("value")
         );
-        // get 对未知 key 返回 None
         assert!(dao.get("unknown").await.unwrap().is_none());
-        // keys 对 role: 返回成功
         let keys = dao.keys("role:*").await.unwrap();
         assert_eq!(keys.len(), 1);
         // keys 对 tenant: 返回 NotImplemented

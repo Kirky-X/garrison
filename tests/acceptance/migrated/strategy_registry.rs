@@ -270,7 +270,6 @@ async fn register_get_remove_login_handler_roundtrip() {
     let logic = make_logic().await;
     let mut strategy = Strategy::new(logic);
 
-    // 注册自定义策略
     strategy.register_login_handler(Arc::new(CustomLoginHandler { suffix: "v1" }));
     let token = strategy.login_handler().handle_login("1001").await.unwrap();
     assert_eq!(token, "custom-v1-1001", "register 后应使用自定义策略");
@@ -416,7 +415,6 @@ async fn replace_one_strategy_does_not_affect_others() {
     let original_session = strategy.session_creator().clone();
     let original_firewall = strategy.firewall_strategy().clone();
 
-    // 替换 login_handler
     strategy.register_login_handler(Arc::new(CustomLoginHandler));
 
     // 替换后：其他 5 个策略的 Arc 应指向同一对象（未被替换）
@@ -441,7 +439,6 @@ async fn replace_one_strategy_does_not_affect_others() {
         "替换 LoginHandler 不应影响 FirewallStrategy"
     );
 
-    // login_handler 确实已替换
     let token = strategy.login_handler().handle_login("1001").await.unwrap();
     assert_eq!(token, "custom-1001");
 }
@@ -460,7 +457,6 @@ async fn replace_drops_old_handler_no_leak() {
     let logic = make_logic().await;
     let mut strategy = Strategy::new(logic);
 
-    // 注册第一个自定义策略
     let handler_v1 = Arc::new(CustomLoginHandler);
     let weak_v1 = Arc::downgrade(&handler_v1);
     strategy.register_login_handler(handler_v1);
@@ -506,7 +502,6 @@ async fn manager_init_makes_strategy_available() {
     let strategy = GarrisonManager::strategy();
     assert!(strategy.is_ok(), "init 后应能获取 strategy");
 
-    // 验证 strategy 可读
     let strategy = strategy.unwrap();
     let _guard = strategy.read();
     // 6 个 getter 均可调用
@@ -530,11 +525,9 @@ async fn manager_with_strategy_replaces_registry() {
         .await
         .unwrap();
 
-    // 获取原 logic 并构造自定义 Strategy
     let logic = GarrisonManager::logic().unwrap();
     let custom_strategy = Arc::new(RwLock::new(Strategy::new(logic)));
 
-    // 注入自定义 LoginHandler
     struct CustomLogin;
     #[async_trait]
     impl LoginHandler for CustomLogin {
@@ -546,7 +539,6 @@ async fn manager_with_strategy_replaces_registry() {
         .write()
         .register_login_handler(Arc::new(CustomLogin));
 
-    // with_strategy 替换
     GarrisonManager::with_strategy(custom_strategy).unwrap();
 
     // 验证替换后使用自定义策略
@@ -579,7 +571,6 @@ async fn runtime_register_takes_effect_immediately() {
     let default_token = default_handler.handle_login("1001").await.unwrap();
     assert!(!default_token.is_empty());
 
-    // 运行时替换
     struct CustomLogin;
     #[async_trait]
     impl LoginHandler for CustomLogin {
@@ -621,7 +612,6 @@ async fn runtime_register_then_remove_restores_default() {
     let default_token = default_handler.handle_login("42").await.unwrap();
     assert!(!default_token.is_empty());
 
-    // 2. 注册自定义策略
     struct CustomLogin;
     #[async_trait]
     impl LoginHandler for CustomLogin {

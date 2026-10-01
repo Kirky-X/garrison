@@ -259,7 +259,6 @@ async fn test_external_router_rate_limit() {
         "params": LoginParams::default()
     });
 
-    // 前 2 个请求成功
     for _ in 0..2 {
         let resp = app
             .clone()
@@ -276,7 +275,6 @@ async fn test_external_router_rate_limit() {
         assert_eq!(resp.status(), StatusCode::OK);
     }
 
-    // 第 3 个请求被限速
     let resp = app
         .oneshot(
             Request::builder()
@@ -333,7 +331,6 @@ async fn test_new_with_kit_builds_server() {
     let server = GarrisonAuthServer::new_with_kit(kit)
         .await
         .expect("new_with_kit failed");
-    // 验证 server 用默认配置创建
     assert_eq!(server.config.external_port, 8080);
     assert_eq!(server.config.internal_port, 8081);
 }
@@ -1216,11 +1213,9 @@ async fn test_with_rate_limit_large_value() {
 async fn test_with_internal_api_key_accepts_str_and_string() {
     let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
 
-    // &str
     let server1 = GarrisonAuthServer::new(backend.clone()).with_internal_api_key("str-key");
     assert_eq!(server1.config.internal_api_key, "str-key");
 
-    // String
     let server2 = GarrisonAuthServer::new(backend).with_internal_api_key("string-key".to_string());
     assert_eq!(server2.config.internal_api_key, "string-key");
 }

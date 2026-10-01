@@ -2481,9 +2481,7 @@ mod tests {
     /// validate_destination / validate_audience 辅助函数单元测试。
     #[test]
     fn validate_destination_audience_unit_tests() {
-        // Destination 匹配
         assert!(validate_destination("https://sp/acs", Some("https://sp/acs")).is_ok());
-        // Destination 不匹配
         assert!(matches!(
             validate_destination("https://evil/acs", Some("https://sp/acs")),
             Err(GarrisonError::InvalidParam(_))
@@ -2493,9 +2491,7 @@ mod tests {
         // Destination 预期为空字符串 → Ok + warn
         assert!(validate_destination("https://sp/acs", Some("")).is_ok());
 
-        // Audience 匹配
         assert!(validate_audience("https://sp", Some("https://sp")).is_ok());
-        // Audience 不匹配
         assert!(matches!(
             validate_audience("https://evil", Some("https://sp")),
             Err(GarrisonError::InvalidParam(_))
@@ -2868,7 +2864,6 @@ mod tests {
             .unwrap()
             .to_rfc3339();
 
-        // 首次消费应通过
         let first = check_assertion_replay("assertion-serial-001", &future_str, &dao)
             .await
             .expect("首次 check 不应报错");
@@ -3113,7 +3108,6 @@ mod tests {
             .build_authn_request("sp", "https://sp/acs", "https://idp/sso")
             .await
             .unwrap();
-        // 注册表应已写入请求 ID
         assert!(
             dao.get(&format!("{}req:{}", DaoKeyPrefix::Saml, request.id))
                 .await

@@ -260,7 +260,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         &token[..std::cmp::min(20, token.len())]
     );
 
-    // 3. #[check_login] 已登录 → 200
     println!("\n[3] #[check_login] 已登录 → 200");
     let response = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -271,7 +270,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    body:   {}", read_body(response).await);
     assert_eq!(StatusCode::OK, axum::http::StatusCode::OK);
 
-    // 4. #[check_permission("user:read")] 持有权限 → 200
     println!("\n[4] #[check_permission(\"user:read\")] 持有权限 → 200");
     let response = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -281,7 +279,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
-    // 5. #[check_permission("user:read", "user:write")] 多权限 AND → 200
     println!("\n[5] #[check_permission(\"user:read\", \"user:write\")] 多权限 AND → 200");
     let response = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -292,7 +289,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
-    // 6. #[check_role("admin")] 持有角色 → 200
     println!("\n[6] #[check_role(\"admin\")] 持有角色 → 200");
     let response = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -302,7 +298,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    状态码: {}", response.status());
     println!("    body:   {}", read_body(response).await);
 
-    // 7. #[check_role("admin", "superadmin")] 多角色 AND → 403（缺少 superadmin）
     println!("\n[7] #[check_role(\"admin\", \"superadmin\")] 多角色 AND → 403（缺 superadmin）");
     let response = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -316,7 +311,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 
-    // 8. 未登录（无效 token）→ 401
     println!("\n[8] 未登录（无效 token）→ 401");
     let response = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -329,7 +323,6 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    状态码: {}（预期 401）", response.status());
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
-    // 9. 无权限 → 403
     println!("\n[9] 无权限 → 403");
     // 初始化一个无权限的用户 2002
     init_manager(&[], &[("2002", &["admin"])]).await;

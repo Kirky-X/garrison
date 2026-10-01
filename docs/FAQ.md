@@ -49,7 +49,7 @@ A: 直接使用 `jsonwebtoken` 有三个痛点：
 2. 错误类型是 `jsonwebtoken::errors::Error`，与 `GarrisonError` 体系不互通，业务侧需要 `map_err` 转译；
 3. 多算法支持、密钥轮换、kid 头部等生产级需求，`jsonwebtoken` 不提供高层 API。
 
-`JwtHandler` 包装层在 `GarrisonJwtClaims` 中预置了框架标准字段，统一错误转换为 `GarrisonError::Jwt`，并提供 `sign`/`verify`/`refresh` 一站式 API。业务侧只需实现 `GarrisonJwtClaimsExt` 即可扩展自定义字段，无需关心底层算法细节。
+`JwtHandler` 包装层在 `GarrisonJwtClaims` 中预置了框架标准字段，统一错误转换为 `GarrisonError::Jwt`，并提供 `sign`/`verify`/`refresh` 一站式 API。业务侧通过自定义自己的 claims 结构并调用 `sign`/`verify` 传入即可扩展自定义字段，无需关心底层算法细节（框架未提供 `GarrisonJwtClaimsExt` 之类的扩展 trait——`GarrisonJwtClaims` 是固定结构体）。
 
 ---
 
@@ -199,34 +199,32 @@ A: 推荐使用聚合 feature `production`，它包含以下子特性：
 
 ```toml
 [dependencies]
-garrison = { version = "0.9", features = ["production"] }
+garrison = { version = "0.9.0-rc.2", features = ["production"] }
 ```
 
-`production` 等价于（参见 `Cargo.toml` 中的 `production` 聚合特性）：
+`production` 聚合下列 43 个特性（权威列表见 `Cargo.toml` 的 `[features] production`）：
 
-- `cache-redis`（Redis 缓存后端，含 `cache-memory`）
-- `db-postgres`（PostgreSQL 持久化）
+- `cache-redis`（Redis 缓存后端，含 `cache-memory`）、`three-tier-cache`（三层缓存架构）、`cache-batch`、`cache-audit`
+- `db-postgres`（PostgreSQL 持久化）、`db-sharding`、`db-replica`
 - `web-axum`（axum extractor + Router + Interceptor）
-- `protocol-jwt`（JWT 签发与验证）
-- `protocol-sign`（API 签名 + nonce 防重放）
-- `secure-sign`（HMAC 签名工具）
+- `protocol-jwt`（JWT 签发与验证）、`protocol-sign`（API 签名 + nonce 防重放）、`protocol-webauthn`（WebAuthn / Passkey）、`backchannel-logout`
+- `secure-sign`（HMAC 签名工具）、`field-encryption`
 - `listener`（事件监听器，用于审计、日志）
-- `tracing-log`（追踪日志）
-- `metrics-prometheus`（Prometheus 指标导出）
+- `tracing-log`（追踪日志）、`metrics-prometheus`（Prometheus 指标导出）
 - `audit-inklog`（inklog 结构化审计日志）
 - `tenant-isolation`（多租户逻辑隔离）
-- `security-alert`（安全告警系统）
+- `security-alert`（安全告警系统）、`session-hijack-detection`、`security-extra`
 - `device-binding`（设备绑定策略）
+- `mfa-recovery`、`account-password-reset`
 - `core-advanced`（决策溯源 / 权限注册表 / forbid 优先语义）
-- `firewall-waf`（WAF 请求内容校验）
-- `three-tier-cache`（三层缓存架构）
+- `firewall-waf`（WAF 请求内容校验）、`firewall-gcra`、`firewall-tower`、`firewall-monitoring`、`firewall-parallel`
 - `sms-rate-limit`（SMS 验证码渐进式限速）
-- `email-verification`（邮箱验证码：发送/验证/双窗口限速/异常检测；`email-verification-smtp` 提供内置 SMTP 发送）
-- `backend-embedded`（默认嵌入式后端）
-- `backend-kit`（trait-kit typestate DI 构建）
-- `auth-server`（独立 Auth Server 模式）
-- `auth-server-sdforge`（声明式路由）
+- `backend-embedded`（默认嵌入式后端）、`backend-kit`（trait-kit typestate DI 构建）
+- `auth-server`（独立 Auth Server 模式）、`auth-server-sdforge`（声明式路由）
 - `abac`（基于 Cedar DSL 的属性访问控制引擎）
+- `api-docs`、`config-yaml`、`config-distributed`、`config-audit`
+
+> 注意：`email-verification` / `email-verification-smtp` **不在** `production` 聚合内，仅在 `full` 面中提供——邮箱验证码属可选项，需按需显式追加。
 
 如需 OAuth2、SSO 等其他协议层特性，单独追加：
 
@@ -250,21 +248,30 @@ A: **支持。** 0.5.0 起 `dbnexus` 0.4+ 提供 SQLite / PostgreSQL / MySQL 三
 - 0.5.3 起 MySQL 后端可用（`db-mysql` feature）
 - 当前 `dbnexus` 已升级至 0.6（参见 `Cargo.toml`）
 
-注意：`db-sqlite` 与 `db-mysql` 不能同时启用（dbnexus 编译期 `compile_error!` 约束）。MySQL 后端的集成测试需要 Docker 环境（使用 `testcontainers`）。
+注意：关系型后端至多启用一个。dbnexus 有两条编译期 `compile_error!` 约束——① 嵌入式（sqlite / duckdb）与服务端（postgres / mysql）不可混用；② 在未启用嵌入式后端时，`postgres` 与 `mysql` 互斥。MySQL 后端的集成测试需要 Docker 环境（使用 `testcontainers`）。
 
 ### Q: 是否支持分布式会话？
 
-A: 支持。通过启用 `cache-redis` feature，并配置 Redis 连接（单机或 Sentinel 均可）：
+A: 支持。通过启用 `cache-redis` feature，并配置 Redis 连接（单机或 Sentinel 均可）。注意 `GarrisonConfig` **没有** `cache` 字段——Redis 配置走 `dao::RedisConfig` 聚合结构，编程式传给缓存构建器；配置文件中则由 `GARRISON_REDIS_URL` 环境变量注入：
 
 ```rust
-config.cache = CacheConfig::Redis {
-    url: "redis://:password@10.0.0.1:6379/0".parse()?,
-    prefix: "garrison:".into(),
-    ttl_default: Duration::from_secs(3600),
+use std::sync::Arc;
+use garrison::dao::{RedisConfig, RedisDeploymentMode};
+
+let redis = RedisConfig {
+    mode: RedisDeploymentMode::Single {
+        url: "redis://:password@10.0.0.1:6379/0".to_string(),
+    },
+    password: None,
+    db: 0,
+    connection_timeout_secs: 5,
+    pool_size: 10,
 };
+// 交给缓存构建器（with_redis_config），而非塞进 GarrisonConfig
+let dao = build_dao().with_redis_config(redis);
 ```
 
-多端会话、互踢、权限缓存等所有运行期状态都会落到 Redis，多个 Garrison 实例共享同一 Redis 即可构成分布式会话集群。0.6.1 起支持四种 Redis 部署模式（`RedisDeploymentMode`：Single / Sentinel / Cluster / MasterSlave），详见 [configuration.md](./CONFIGURATION.md) 的 Redis 部署模式配置章节。
+多端会话、互踢、权限缓存等所有运行期状态都会落到 Redis，多个 Garrison 实例共享同一 Redis 即可构成分布式会话集群。0.6.1 起支持四种 Redis 部署模式（`RedisDeploymentMode`：Single / Sentinel / Cluster / PrimaryReplica，旧配置值 `MasterSlave` 经 `#[serde(alias)]` 兼容），详见 [configuration.md](./CONFIGURATION.md) 的 Redis 部署模式配置章节。
 
 注意：单机 `oxcache` 内存模式无法跨实例共享，仅适合单实例部署或开发环境。
 
@@ -285,12 +292,12 @@ GarrisonManager::builder()
 
 随后：
 
-- **Listener**：实现 `GarrisonListener` trait，在 `on_login` / `on_logout` / `on_check_permission` 等回调中打日志或上报到 ELK；
+- **Listener**：实现 `GarrisonListener` trait，在唯一的 `async fn on_event(&self, event: &GarrisonEvent)` 回调中按 `GarrisonEvent` 变体（31 个，如 `Login` / `Logout` / `Kickout` / `PermissionCheck`）分支处理，打日志或上报到 ELK；
 - **Prometheus metrics**：框架自动暴露 `/metrics` endpoint（axum 集成下），包含：
   - `garrison_login_total{result}`
-  - `garrison_permission_check_duration_seconds`
-  - `garrison_active_session_count`
-  - `garrison_token_verify_failures_total{reason}`
+  - `garrison_token_validation_duration_seconds`
+  - `garrison_permission_query_total`
+  - `garrison_role_query_total`
 
 0.3.0 起已集成 OpenTelemetry（`otlp` feature），提供分布式追踪能力，便于把 Garrison 内部耗时计入全链路 trace span。
 

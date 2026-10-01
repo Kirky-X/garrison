@@ -148,7 +148,6 @@ fn event_derives_debug_and_clone() {
         device: None,
         request_context: None,
     };
-    // Clone
     let cloned = event.clone();
     match cloned {
         GarrisonEvent::Login { login_id, .. } => assert_eq!(login_id, "1001".to_string()),
@@ -178,7 +177,6 @@ fn event_derives_debug_and_clone() {
 #[test]
 #[serial]
 fn garrison_event_includes_14_variants() {
-    // 1. Login
     let e = GarrisonEvent::Login {
         login_id: "1".to_string(),
         token: "t".into(),
@@ -187,7 +185,6 @@ fn garrison_event_includes_14_variants() {
     };
     assert!(matches!(e, GarrisonEvent::Login { .. }));
 
-    // 2. Logout
     let e = GarrisonEvent::Logout {
         login_id: "1".to_string(),
         token: "t".into(),
@@ -195,7 +192,6 @@ fn garrison_event_includes_14_variants() {
     };
     assert!(matches!(e, GarrisonEvent::Logout { .. }));
 
-    // 3. Kickout
     let e = GarrisonEvent::Kickout {
         login_id: "1".to_string(),
         token: "t".into(),
@@ -204,7 +200,6 @@ fn garrison_event_includes_14_variants() {
     };
     assert!(matches!(e, GarrisonEvent::Kickout { .. }));
 
-    // 4. LoginFailure
     let e = GarrisonEvent::LoginFailure {
         login_id: "1".to_string(),
         reason: "r".into(),
@@ -252,7 +247,6 @@ fn garrison_event_includes_14_variants() {
     };
     assert!(matches!(e, GarrisonEvent::TokenRotate { .. }));
 
-    // 10. SocialLogin（新增）
     let e = GarrisonEvent::SocialLogin {
         provider: "wechat".into(),
         user_id: "u".into(),
@@ -261,7 +255,6 @@ fn garrison_event_includes_14_variants() {
     };
     assert!(matches!(e, GarrisonEvent::SocialLogin { .. }));
 
-    // 11. TenantSwitch（新增）
     let e = GarrisonEvent::TenantSwitch {
         login_id: "1".to_string(),
         from_tenant: 100,
@@ -270,7 +263,6 @@ fn garrison_event_includes_14_variants() {
     };
     assert!(matches!(e, GarrisonEvent::TenantSwitch { .. }));
 
-    // 12. DeviceBlock（新增）
     let e = GarrisonEvent::DeviceBlock {
         login_id: "1".to_string(),
         device: "d".into(),
@@ -278,7 +270,6 @@ fn garrison_event_includes_14_variants() {
     };
     assert!(matches!(e, GarrisonEvent::DeviceBlock { .. }));
 
-    // 13. DeviceUnblock（新增）
     let e = GarrisonEvent::DeviceUnblock {
         login_id: "1".to_string(),
         device: "d".into(),
@@ -286,7 +277,6 @@ fn garrison_event_includes_14_variants() {
     };
     assert!(matches!(e, GarrisonEvent::DeviceUnblock { .. }));
 
-    // 14. ConfigReload（新增）
     let e = GarrisonEvent::ConfigReload {
         config_version: 1,
         request_context: None,
@@ -670,7 +660,6 @@ fn test_credit_consumed_event_construct_and_match() {
         total_consumed: 100,
         request_context: None,
     };
-    // pattern match
     match event.clone() {
         GarrisonEvent::CreditConsumed {
             tenant_id,
@@ -688,7 +677,6 @@ fn test_credit_consumed_event_construct_and_match() {
         },
         _ => panic!("期望 CreditConsumed 事件"),
     }
-    // PartialEq
     let cloned = event.clone();
     assert_eq!(event, cloned);
     // Debug
@@ -710,7 +698,6 @@ fn test_credit_alert_event_construct_and_match() {
         credit_limit: 1000,
         request_context: None,
     };
-    // pattern match
     match event.clone() {
         GarrisonEvent::CreditAlert {
             tenant_id,
@@ -728,7 +715,6 @@ fn test_credit_alert_event_construct_and_match() {
         },
         _ => panic!("期望 CreditAlert 事件"),
     }
-    // PartialEq
     let cloned = event.clone();
     assert_eq!(event, cloned);
     // Debug

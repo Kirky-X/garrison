@@ -191,7 +191,6 @@ async fn revoke_existing_returns_ok() {
     let key = handler.issue("invite", "data", 60).await.unwrap();
     let result = handler.revoke(&key).await;
     assert_eq!(result.unwrap(), (), "撤销存在的临时令牌应返回 Ok(())");
-    // 再次 get 应为 None
     let value = handler.get(&key).await.unwrap();
     assert_eq!(value, None);
 }
@@ -219,7 +218,6 @@ async fn consume_returns_value_and_deletes() {
     let key = handler.issue("invite", "data", 60).await.unwrap();
     let value = handler.consume(&key).await.unwrap();
     assert_eq!(value, Some("data".to_string()));
-    // 再次 consume 应为 None
     let again = handler.consume(&key).await.unwrap();
     assert_eq!(again, None);
 }

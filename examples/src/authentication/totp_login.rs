@@ -41,7 +41,6 @@ pub fn run() -> GarrisonResult<()> {
     println!("[生成] 当前时间的 TOTP 验证码：{}", code);
     assert_eq!(code.len(), 6, "6 位验证码");
 
-    // 5. 校验用户输入的验证码
     println!("[校验] 用户输入验证码 {} ...", code);
     if handler.validate(&code, now)? {
         println!("       校验通过，2FA 完成");

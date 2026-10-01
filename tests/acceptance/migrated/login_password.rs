@@ -213,7 +213,6 @@ async fn password_verifier_auto_detects_algorithm() {
         "PasswordVerifier 应识别 Bcrypt hash 并校验通过"
     );
 
-    // 错误密码应校验失败
     assert!(
         !PasswordVerifier::verify("wrong", &argon2_hash).unwrap(),
         "Argon2 hash 错误密码应不匹配"
@@ -246,7 +245,6 @@ async fn make_logic_with_password() -> Arc<GarrisonLogicDefault> {
         .await
         .expect("预置用户应成功");
 
-    // 构造 oxcache DAO
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
     let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
     let mut config = garrison::config::GarrisonConfig::default_config();

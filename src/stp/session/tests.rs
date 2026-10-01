@@ -139,7 +139,6 @@ mod suite {
         let mock = MockSession {
             config: Arc::new(GarrisonConfig::default()),
         };
-        // GarrisonCore
         let _ = mock.config();
         // SessionLogic 未覆盖方法
         mock.logout().await.unwrap();
@@ -821,7 +820,6 @@ mod suite {
             // login 被阻断
             let _ = logic.login("1001", &params).await;
 
-            // 验证无 session 被创建
             let tokens = logic.session.get_tokens_by_login_id("1001");
             assert!(
                 tokens.is_empty(),
@@ -861,7 +859,6 @@ mod suite {
 
             assert!(!token.is_empty(), "login 应返回非空 token");
             assert_ne!(token, "pre-token-T2", "应创建新 token（is_share=false）");
-            // 验证新 session 已创建
             let ts = logic
                 .session
                 .get_token_session(&token)
@@ -898,7 +895,6 @@ mod suite {
                 .expect("loose 模式新设备 login 应成功（不阻断）");
 
             assert!(!token.is_empty(), "login 应返回非空 token");
-            // 验证告警已广播
             assert_eq!(
                 listener.count(),
                 1,
@@ -1240,7 +1236,6 @@ mod suite {
             let dao = Arc::new(CountingDao::new());
             let logic = Arc::new(make_logic_with_cache(dao.clone()));
 
-            // 登录用户
             let token = logic
                 .login("1001", &LoginParams::default())
                 .await
@@ -1282,7 +1277,6 @@ mod suite {
             let dao = Arc::new(CountingDao::new());
             let logic = Arc::new(make_logic_with_cache(dao.clone()));
 
-            // 登录用户
             let _token = logic
                 .login("2002", &LoginParams::default())
                 .await
@@ -1788,7 +1782,6 @@ mod suite {
             let count = logic.revoke_all_sessions("revoke-user-001").await.unwrap();
             assert_eq!(count, 3, "应吊销 3 个会话，实际: {}", count);
 
-            // 验证所有 token 已被吊销
             assert!(
                 logic
                     .session
@@ -2481,7 +2474,6 @@ mod suite {
                     result
                 );
 
-                // 验证会话已创建
                 assert!(
                     logic
                         .session
@@ -2638,7 +2630,6 @@ mod suite {
                 .login_with_token("lwt-user-001", "custom-token-001")
                 .await
                 .unwrap();
-            // 验证会话已创建
             let ts = logic
                 .session
                 .get_token_session("custom-token-001")
@@ -2870,7 +2861,6 @@ mod suite {
                 .login_with_token("user-001", "12345678")
                 .await
                 .expect("8 字节 token 应通过校验");
-            // 验证会话已创建
             let ts = logic
                 .session
                 .get_token_session("12345678")
@@ -2892,7 +2882,6 @@ mod suite {
                 .login_with_token("user-001", &max_token)
                 .await
                 .expect("256 字节 token 应通过校验");
-            // 验证会话已创建
             let ts = logic
                 .session
                 .get_token_session(&max_token)
@@ -2986,7 +2975,6 @@ mod suite {
                 "random_64 token 应为 64 字符，实际: {} 字符",
                 token.len()
             );
-            // 验证全部为十六进制字符
             assert!(
                 token.chars().all(|c| c.is_ascii_hexdigit()),
                 "random_64 token 应全部为十六进制字符"
@@ -3198,7 +3186,6 @@ mod suite {
             Arc::make_mut(&mut logic.config).replaced_login_exit_mode =
                 ReplacedLoginExitMode::NewDevice;
 
-            // 首次登录成功
             let _t1 = logic
                 .login("new-device-reject-001", &LoginParams::default())
                 .await
@@ -3237,7 +3224,6 @@ mod suite {
                 .login("old-device-001", &LoginParams::default())
                 .await
                 .unwrap();
-            // 旧 token 应被踢出
             assert!(
                 logic
                     .session
@@ -3247,7 +3233,6 @@ mod suite {
                     .is_none(),
                 "OldDevice 模式下旧 token 应被踢出"
             );
-            // 新 token 应有效
             assert!(
                 logic
                     .session
@@ -3374,17 +3359,16 @@ mod suite {
                 .await
                 .unwrap();
 
-            // 提取 jti
-            let claims = handler.verify(&token).unwrap();
+            // login 的 JWT token 盖戳 nbf=now，宿主墙钟 NTP 回跳会使紧随的
+            // verify 误报 jwt-not-yet-valid，经 tests::verify_ok 容错。
+            let claims = crate::protocol::jwt::tests::verify_ok(&handler, &token);
             let jti = claims.jti.expect("JWT 应包含 jti");
 
-            // 执行 logout（需设置 current_token）
             with_current_token(token, async {
                 logic.logout().await.expect("logout 应成功");
             })
             .await;
 
-            // 验证黑名单已写入
             let key = format!("jwt:blacklist:{}", jti);
             let value = dao.get(&key).await.unwrap();
             assert!(value.is_some(), "logout 后 jti 应被写入黑名单");
@@ -3442,7 +3426,10 @@ mod suite {
                 .login("user-rt", &LoginParams::default())
                 .await
                 .unwrap();
-            let jti = handler.verify(&token).unwrap().jti.expect("JWT 应包含 jti");
+            // 同上：墙钟 NTP 回跳容错，见 protocol::jwt::tests::verify_ok。
+            let jti = crate::protocol::jwt::tests::verify_ok(&handler, &token)
+                .jti
+                .expect("JWT 应包含 jti");
 
             logic
                 .revoke_token(&token)
@@ -3655,7 +3642,8 @@ mod suite {
                 .await
                 .unwrap();
 
-            let claims = handler.verify(&token).unwrap();
+            // 同上：墙钟 NTP 回跳容错，见 protocol::jwt::tests::verify_ok。
+            let claims = crate::protocol::jwt::tests::verify_ok(&handler, &token);
             let jti = claims.jti.expect("JWT 应包含 jti");
 
             with_current_token(token, async {
@@ -3663,7 +3651,6 @@ mod suite {
             })
             .await;
 
-            // 黑名单不应有记录
             let key = format!("jwt:blacklist:{}", jti);
             let value = dao.get(&key).await.unwrap();
             assert!(
@@ -3743,7 +3730,6 @@ mod firewall_tests {
         // 先制造若干失败计数，再执行一次成功登录（无 token 的 check_login 失败不算，
         // 这里用 login 成功路径验证清零逻辑：login 成功会 delete 计数键）。
         with_current_ip(ip.clone(), async {
-            // 失败计数累积
             for _ in 0..3 {
                 with_current_token("bogus".to_string(), async {
                     let _ = GarrisonUtil::check_login().await;

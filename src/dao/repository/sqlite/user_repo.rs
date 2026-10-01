@@ -647,7 +647,6 @@ mod tests {
         let pool = setup_db().await;
         let repo = DbnexusUserRepository::new(pool);
 
-        // tenant 1 创建 alice
         repo.create(
             1,
             NewUser {

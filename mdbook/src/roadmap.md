@@ -88,7 +88,7 @@
 - ✅ 审计日志（`audit-log`）：`audit_logs` 表 + listener 事件订阅（0.5.0 时覆盖 14 种事件；现 `GarrisonEvent` 已扩展至 31 个变体，audit 监听器对全部变体穷尽匹配、无 `_ =>` 兜底）+ 复合条件查询 + 自动脱敏
 - ✅ Token Rotation（`protocol-jwt` 扩展）：`refresh_tokens` 表 + tokenHash + parentTokenHash 链 + 重用检测
 - ✅ 安全防护套件：5 个 FirewallStrategy 实现 + MaxMindDb 生产后端（现经 limiteron GeoMatcher 提供，feature 名 `firewall-maxminddb` 保留）
-- ✅ 角色层级：`role_hierarchy` 表 + parents/indirect_ancestors + TC 预计算
+- ✅ 角色层级：`role_hierarchy` 表（child_role/parent_role/tenant_id）+ 间接祖先闭包 + TC 预计算
 - ✅ 决策溯源（`decision-trace`，v0.9.0 并入 `core-advanced`）：`Decision`（allowed / reason / errors 等溯源字段）+ 新增 `authorize()` API
 - ✅ Keycloak OIDC RP（`keycloak-oidc`）：discovery + JWKS 验签 + ID Token 验证
 - ✅ PostgreSQL 后端：dbnexus 0.3+ 集成

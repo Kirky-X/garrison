@@ -468,7 +468,6 @@ mod tests {
             .unwrap();
         assert!(GarrisonManager::is_initialized());
 
-        // 从全局单例获取 logic，构造 Manager
         let logic = GarrisonManager::logic().unwrap();
         let strong_count_before = Arc::strong_count(&logic);
         {
@@ -491,7 +490,6 @@ mod tests {
             GarrisonManager::is_initialized(),
             "Drop Manager 后全局单例应仍初始化"
         );
-        // 全局单例仍可正常 login
         let token = GarrisonUtil::login_simple("2002").await.unwrap();
         assert!(!token.is_empty(), "全局单例 login 仍应正常工作");
 

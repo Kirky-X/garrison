@@ -1115,7 +1115,6 @@ mod tests {
     async fn invalidate_nonexistent_key_is_idempotent() {
         let (_dao, _interface, service) = make_default_service();
 
-        // invalidate 一个从未缓存过的 login_id，不应报错
         let result = service.invalidate("nonexistent_user").await;
         assert!(result.is_ok(), "invalidate 不存在的 key 应幂等返回 Ok(())");
     }
@@ -1231,7 +1230,6 @@ mod tests {
             "未 invalidate 时应返回缓存的旧权限"
         );
 
-        // invalidate 后返回新权限
         service.invalidate("13001").await.unwrap();
         let perms3 = service.get_permissions("13001").await.unwrap();
         assert_eq!(
@@ -1720,7 +1718,6 @@ mod tests {
     #[tokio::test]
     async fn invalidate_l2_delete_failure_propagates_error() {
         let (dao, _interface, service) = make_default_service();
-        // 注入 DAO delete 错误
         dao.set_fail_delete(true);
 
         let result = service.invalidate("25001").await;
@@ -1737,7 +1734,6 @@ mod tests {
             Ok(_) => panic!("期望 Err，实际 Ok"),
         }
 
-        // 验证 delete 被调用过（至少一次）
         assert!(
             dao.delete_count() >= 1,
             "应至少调用一次 L2 delete，实际: {}",
@@ -2140,7 +2136,6 @@ mod tests {
         assert!(dao.contains_key("role:cache:42001"));
         assert!(dao.contains_key("user:cache:42001"));
 
-        // 注入 delete 失败
         dao.set_fail_delete(true);
 
         let result = service.invalidate("42001").await;
@@ -2187,7 +2182,6 @@ mod tests {
         assert!(dao.contains_key("role:cache:43001"));
         assert!(dao.contains_key("user:cache:43001"));
 
-        // 执行 invalidate
         service.invalidate("43001").await.unwrap();
 
         // 验证 L2 缓存已全部删除
@@ -2305,17 +2299,14 @@ mod tests {
         let (dao, interface, service) = make_default_service();
         interface.set_permissions("user_2001.v2", vec!["perm:a".to_string()]);
 
-        // 填充缓存
         let _ = service.get_permissions("user_2001.v2").await.unwrap();
         assert!(dao.contains_key("perm:cache:user_2001.v2"));
 
-        // invalidate
         service.invalidate("user_2001.v2").await.unwrap();
 
         // 验证 L2 已清除
         assert!(!dao.contains_key("perm:cache:user_2001.v2"));
 
-        // 验证 delete 调用使用了正确的 key
         let delete_keys = dao.delete_keys();
         assert!(
             delete_keys.iter().any(|k| k == "perm:cache:user_2001.v2"),
@@ -2345,7 +2336,6 @@ mod tests {
             "同一 key 的 singleflight_lock 应返回同一 Arc<RwLock>"
         );
 
-        // 不同 key 应返回不同锁
         let lock3 = service.singleflight_lock("test-key-2");
         assert!(
             !Arc::ptr_eq(&lock1, &lock3),
@@ -2479,7 +2469,6 @@ mod tests {
         // 更新 L3 数据
         interface.set_permissions("53001", vec!["new:perm".to_string()]);
 
-        // invalidate
         service.invalidate("53001").await.unwrap();
 
         // 立即查询：应返回新权限
