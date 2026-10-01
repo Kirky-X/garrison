@@ -2145,7 +2145,7 @@ mod tests {
             "批准时的属性快照应覆盖后续同视图请求"
         );
 
-        /// 属性视图漂移 → 重征询
+        // 属性视图漂移 → 重征询
         let d = handler
             .consent_decision(0, 7006, "attr-006", &["read".into(), "admin".into()], &[])
             .await

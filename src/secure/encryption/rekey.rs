@@ -422,6 +422,7 @@ mod tests {
         dao.inner_dao()
             .set(
                 "totp:seed:bad",
+                // nosemgrep: generic.secrets.security.detected-telegram-bot-api-key.detected-telegram-bot-api-key —— 刻意构造的损坏密文夹具（k9 未注册，非真实凭证）
                 "enc:v1:k9:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
                 0,
             )

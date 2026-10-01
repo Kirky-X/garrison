@@ -15,19 +15,14 @@
 
 use super::challenge::{ChallengePayload, ChallengeStore};
 use super::credential::WebauthnCredential;
-use super::service::{RelyingParty, WebauthnAuthentication, WebauthnService};
+use super::service::{RelyingParty, WebauthnService};
 use super::{FactorPolicy, FactorPurpose, WebauthnCeremonyError, WebauthnConfig};
 use crate::dao::repository::sqlite::DbnexusWebauthnCredentialRepository;
 use crate::dao::repository::WebauthnCredentialRepository;
 use crate::dao::InMemoryDao;
 use std::sync::Arc;
 use webauthn_rs::prelude::{
-    Credential, CredentialID, PublicKeyCredential, RegisterPublicKeyCredential, Url,
-    WebauthnBuilder,
-};
-use webauthn_rs_core::proto::{
-    AttestationFormat, AttestationMetadata, COSEAlgorithm, COSEEC2Key, COSEKeyType, ECDSACurve,
-    ParsedAttestation, ParsedAttestationData, RegisteredExtensions, UserVerificationPolicy,
+    Credential, CredentialID, PublicKeyCredential, RegisterPublicKeyCredential, WebauthnBuilder,
 };
 
 // ============================================================================

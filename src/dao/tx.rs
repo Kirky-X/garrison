@@ -80,7 +80,7 @@ use std::sync::Arc;
 /// 事件派发事务 guard（OnCommit 语义）。
 ///
 /// 持有一个独立的 dbnexus `Session`（从 `DbPool` 获取）与监听器管理器引用，
-/// 缓冲 `GarrisonEvent` 至 commit 成功后派发。参阅[模块文档](self)了解
+/// 缓冲 `GarrisonEvent` 至 commit 成功后派发。参阅[模块文档](super)了解
 /// 事务路由边界与生命周期。
 pub struct GarrisonEventTx {
     /// 事务会话；`commit`/`rollback` 时 `take`，`None` 表示已终结。

@@ -1019,6 +1019,10 @@ mod hook_tests {
 
     #[async_trait::async_trait]
     impl InvitationRedeemHook for MockHook {
+        // `fetch_update` 在新版 stable 被标记 deprecated（更名为 `try_update`）；
+        // MSRV 1.85 尚无新名，故保留旧方法并按工具链版本豁免（无 deprecated
+        // 告警的工具链上此 allow 为 no-op）。MSRV 提升后迁移 `try_update`。
+        #[allow(deprecated)]
         async fn on_redeem(&self, record: &InvitationRecord) -> crate::error::GarrisonResult<()> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             if self

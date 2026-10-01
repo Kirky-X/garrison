@@ -331,6 +331,11 @@ async fn discovery_response(state: &OAuth2State, flavor: DiscoveryFlavor) -> Res
 }
 
 /// `scopes_supported` 派生（注册客户端 scope 并集）并写入 300s 进程内缓存。
+///
+/// `Err` 直接携带完整 `Response` 供调用方 `return resp` 短路（与
+/// `grpc/interceptor.rs` 的 `Result<_, Status>` 同型），装箱仅增间接层——
+/// 豁免 `result_large_err`。
+#[allow(clippy::result_large_err)]
 async fn derive_scopes_supported(
     state: &OAuth2State,
 ) -> Result<std::sync::Arc<Vec<String>>, Response> {

@@ -1916,6 +1916,7 @@ mod tests {
             ),
             other => panic!("p 超上限应返回 InvalidParam，实际: {:?}", other.map(|_| ())),
         }
+        // nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash —— validate_imported_hash 超限测试的 bcrypt 形状夹具（非真实凭证）
         let bcrypt_over = "$2b$16$012345678901234567890123456789012345678901234567890123456";
         match validate_imported_hash(bcrypt_over) {
             Err(GarrisonError::InvalidParam(msg)) => assert!(
@@ -1938,6 +1939,7 @@ mod tests {
             validate_imported_hash(at_limit).is_ok(),
             "m=1GiB/t=10/p=4 恰在边界应放行"
         );
+        // nosemgrep: generic.secrets.security.detected-bcrypt-hash.detected-bcrypt-hash —— validate_imported_hash 边界值测试的 bcrypt 形状夹具（非真实凭证）
         let bcrypt_at_limit = "$2b$15$012345678901234567890123456789012345678901234567890123456";
         assert!(
             validate_imported_hash(bcrypt_at_limit).is_ok(),
