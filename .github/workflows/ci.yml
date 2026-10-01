@@ -164,17 +164,19 @@ jobs:
       # attestation 面经 webauthn-attestation-ca 无条件依赖 openssl，
       # full 面（protocol-webauthn）在 Windows 编译即触发 openssl-sys
       # "Could not find directory of OpenSSL installation"（2026-10 实录）。
-      # choco 安装并将 OPENSSL_DIR 指向实际目录（openssl-sys 标准发现途径）；
+      # 用 runner 预装 vcpkg 装 openssl（static-md 三元组，免 DLL 依赖），
+      # 经 openssl-sys 的 vcpkg 发现模式（VCPKG_ROOT + VCPKGRS_TRIPLET）链接；
+      # 不设 OPENSSL_DIR（choco 版 lib 布局与 openssl-sys 预期不符，已验证）。
       # Linux/macOS 自带 OpenSSL，无需此步。
       - name: "Install OpenSSL (Windows: webauthn attestation-ca)"
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install openssl -y --no-progress
-          $opensslDir = (Get-ChildItem "$env:ProgramFiles" -Directory -Filter "OpenSSL*" |
-            Select-Object -First 1).FullName -replace '\\', '/'
-          if (-not $opensslDir) { throw "OpenSSL install directory not found" }
-          "OPENSSL_DIR=$opensslDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          if (-not $env:VCPKG_ROOT) { $env:VCPKG_ROOT = 'C:\vcpkg' }
+          & "$env:VCPKG_ROOT\vcpkg.exe" install openssl:x64-windows-static-md --disable-metrics
+          if ($LASTEXITCODE -ne 0) { throw "vcpkg install openssl failed" }
+          "VCPKG_ROOT=$env:VCPKG_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "VCPKGRS_TRIPLET=x64-windows-static-md" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: ci-test-deps-${{ matrix.rust }}
