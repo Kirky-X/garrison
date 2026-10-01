@@ -271,10 +271,10 @@ async fn unverified_threshold_recycles_channel() {
 }
 
 // ============================================================================
-// 常量时间比较测试（时序攻击防护）
+// 常量时间比较测试（verify_code 存储码与用户输入的统一比较原语）
 // ============================================================================
 
-/// 验证 constant_time_eq 对相同字符串返回 true。
+/// 验证 constant_time_eq 对相同输入返回 true。
 #[test]
 fn constant_time_eq_same_string_returns_true() {
     assert!(constant_time_eq(b"123456", b"123456"));
@@ -282,7 +282,7 @@ fn constant_time_eq_same_string_returns_true() {
     assert!(constant_time_eq(b"abcdef", b"abcdef"));
 }
 
-/// 验证 constant_time_eq 对不同字符串返回 false。
+/// 验证 constant_time_eq 对不同输入返回 false。
 #[test]
 fn constant_time_eq_different_string_returns_false() {
     assert!(!constant_time_eq(b"123456", b"000000"));
@@ -290,24 +290,57 @@ fn constant_time_eq_different_string_returns_false() {
     assert!(!constant_time_eq(b"abcdef", b"abcdeF"));
 }
 
-/// 验证 constant_time_eq 对不同长度字符串返回 false。
+/// 验证 constant_time_eq 对不同长度输入返回 false。
 #[test]
 fn constant_time_eq_different_length_returns_false() {
     assert!(!constant_time_eq(b"12345", b"123456"));
     assert!(!constant_time_eq(b"1234567", b"123456"));
     assert!(!constant_time_eq(b"", b"123456"));
+    assert!(!constant_time_eq(b"123456", b""));
 }
 
-/// 验证 constant_time_eq 对仅首位不同的字符串返回 false（覆盖首字节差异）。
+/// 验证 constant_time_eq 对仅首位不同的输入返回 false（覆盖首字节差异）。
 #[test]
 fn constant_time_eq_first_byte_diff_returns_false() {
     assert!(!constant_time_eq(b"023456", b"123456"));
 }
 
-/// 验证 constant_time_eq 对仅末位不同的字符串返回 false（覆盖末字节差异）。
+/// 验证 constant_time_eq 对仅末位不同的输入返回 false（覆盖末字节差异）。
 #[test]
 fn constant_time_eq_last_byte_diff_returns_false() {
     assert!(!constant_time_eq(b"123450", b"123456"));
+}
+
+/// 超长/短验证码输入按「错误验证码」失败路径处理（计入尝试次数）。
+///
+/// 安全属性：验证码定长 6 位（`generate_code` 保证），长度不符必然不等，
+/// `verify_code` 在进入比较前即拒绝（与 email 侧同型防线）——用户可控的
+/// 输入长度不得放大服务端计算量；长度是公开参数，提前拒绝不泄露秘密。
+#[tokio::test]
+async fn wrong_length_code_counts_as_failed_attempt() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let rate_limiter = SmsRateLimiter::new(dao.clone(), 100, 100);
+    let sender: Arc<dyn SmsSender> = Arc::new(NoopSmsSender);
+    let service = SmsVerificationService::new(rate_limiter, sender, dao.clone(), 3, 100);
+
+    service.send_code("13800138020").await.unwrap();
+    // 超长输入：拒绝且计入一次失败尝试
+    let oversized = "1".repeat(4096);
+    let result = service.verify_code("13800138020", &oversized).await;
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.starts_with(service::ERR_SMS_CODE_WRONG)),
+        "超长验证码应按错误验证码拒绝，实际: {:?}",
+        result
+    );
+    // 短输入同型
+    let result = service.verify_code("13800138020", "12345").await;
+    assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
+    let attempts = dao.get("sms:attempts:13800138020").await.unwrap();
+    assert_eq!(
+        attempts,
+        Some("2".to_string()),
+        "长度不符的输入应计入失败尝试"
+    );
 }
 
 // ============================================================================

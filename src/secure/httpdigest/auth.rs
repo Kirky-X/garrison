@@ -483,8 +483,11 @@ impl HttpDigestAuth {
                     ha2
                 );
                 let expected = self.algorithm.hash(response_input.as_bytes());
-                // 常量时间比较，避免时序攻击
-                constant_time_eq(expected.as_bytes(), resp.response.as_bytes())
+                // 常量时间比较，避免时序攻击；response 长度是公开协议参数
+                // （hex 后 MD5 32 / SHA-256 64），长度不符必然不等，提前短路——
+                // 客户端可控的输入长度不得进入比较循环放大计算量
+                resp.response.len() == expected.len()
+                    && constant_time_eq(expected.as_bytes(), resp.response.as_bytes())
             },
             Err(_) => false,
         }
@@ -681,5 +684,7 @@ fn verify_nonce_signature(
     mac_hex: &str,
 ) -> bool {
     let expected = sign_nonce_payload(server_key, timestamp, uuid);
-    constant_time_eq(expected.as_bytes(), mac_hex.as_bytes())
+    // mac 长度是公开参数（HMAC-SHA256 hex 64 字符），长度不符必然不等，
+    // 提前短路避免客户端可控的超长输入进入比较循环
+    mac_hex.len() == expected.len() && constant_time_eq(expected.as_bytes(), mac_hex.as_bytes())
 }

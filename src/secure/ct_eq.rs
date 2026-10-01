@@ -11,6 +11,10 @@
 //! - HMAC 签名链验证（`listener::audit::AuditLogListener::verify_signature_chain`）
 //! - OAuth2 PKCE code_challenge 校验（`oauth2_server::authorize::verify_pkce`）
 //! - API Key / token 哈希比对
+//! - HTTP Digest 的 URI / response / nonce 签名比较（`secure::httpdigest`）
+//! - 邮箱验证码比对（`secure::email`，经 `email-verification` feature 传递启用）
+//! - 短信验证码比对（`secure::sms`，经 `sms-rate-limit` feature 传递启用）
+//! - 备份码 SHA-256 哈希比对（`account::credential::backup_code`）
 //!
 //! # 算法
 //!
@@ -244,5 +248,43 @@ mod tests {
             "ADR-0003 守卫：发现敏感路径 subtle 直连：\n{}",
             violations.join("\n")
         );
+    }
+
+    /// 与切片/`str` 相等语义等价：消费模块（验证码、哈希、签名比较）的
+    /// 可观测语义必须与短路比较完全一致（同输入同输出，任意长度/内容
+    /// 组合均不改变结论）。矩阵在本原语处单点维护，消费模块仅保留 smoke。
+    #[test]
+    fn matches_slice_equality_matrix() {
+        let samples: [&[u8]; 10] = [
+            b"", b"a", b"ab", b"abc", b"abcd", b"xyz", b"123456", b"12345", b"654321", b"abcdef",
+        ];
+        for a in samples {
+            for b in samples {
+                assert_eq!(
+                    constant_time_eq(a, b),
+                    a == b,
+                    "constant_time_eq({:?}, {:?}) 应与切片相等语义一致",
+                    String::from_utf8_lossy(a),
+                    String::from_utf8_lossy(b)
+                );
+            }
+        }
+    }
+
+    /// `str.as_bytes()` 视图同矩阵：验证码/哈希字符串比较场景的等价性。
+    #[test]
+    fn matches_str_equality_matrix() {
+        let samples = [
+            "", "1", "12", "123456", "12345", "654321", "000000", "abcdef",
+        ];
+        for a in samples {
+            for b in samples {
+                assert_eq!(
+                    constant_time_eq(a.as_bytes(), b.as_bytes()),
+                    a == b,
+                    "constant_time_eq({a:?}, {b:?}) 应与 str 相等语义一致"
+                );
+            }
+        }
     }
 }

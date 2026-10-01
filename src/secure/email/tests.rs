@@ -8,6 +8,7 @@ use super::service::generate_code;
 use super::*;
 use crate::dao::tests::MockDao;
 use crate::error::GarrisonError;
+use crate::secure::ct_eq::constant_time_eq;
 use async_trait::async_trait;
 use std::sync::Arc;
 
@@ -114,11 +115,66 @@ fn code_ct_eq_different_strings() {
     assert!(!constant_time_eq(b"123456", b"123457"));
 }
 
+// constant_time_eq 测试（verify_code 存储码与用户输入的统一比较原语）
+// ============================================================
+
+#[test]
+fn constant_time_eq_equal_strings() {
+    assert!(constant_time_eq(b"123456", b"123456"));
+    assert!(constant_time_eq(b"", b""));
+}
+
+#[test]
+fn constant_time_eq_different_strings() {
+    assert!(!constant_time_eq(b"123456", b"654321"));
+    assert!(!constant_time_eq(b"123456", b"123457"));
+}
+
 #[test]
 fn code_ct_eq_different_lengths() {
     use crate::secure::ct_eq::constant_time_eq;
     assert!(!constant_time_eq(b"123456", b"12345"));
     assert!(!constant_time_eq(b"12", b"123456"));
+}
+
+#[test]
+fn constant_time_eq_different_lengths() {
+    assert!(!constant_time_eq(b"123456", b"12345"));
+    assert!(!constant_time_eq(b"12", b"123456"));
+    assert!(!constant_time_eq(b"", b"123456"));
+    assert!(!constant_time_eq(b"123456", b""));
+}
+
+/// 超长/短验证码输入按「错误验证码」失败路径处理（计入尝试次数）。
+///
+/// 安全属性：验证码定长 6 位（`generate_code` 保证），长度不符必然不等，
+/// `verify_code` 在进入比较前即拒绝——用户可控的输入长度不得放大服务端
+/// 计算量（统一原语的调用方长度预校验约定）；长度是公开参数，提前拒绝
+/// 不泄露任何秘密。
+#[tokio::test]
+async fn wrong_length_code_counts_as_failed_attempt() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let service = make_service_with(dao.clone(), 3, 3);
+    service.send_code("user6@example.com").await.unwrap();
+
+    // 超长输入（1MB）：拒绝且计入一次失败尝试（与失败语义一致）
+    let oversized = "1".repeat(1024 * 1024);
+    let result = service.verify_code("user6@example.com", &oversized).await;
+    assert!(
+        matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.starts_with(service::ERR_EMAIL_CODE_WRONG)),
+        "超长验证码应按错误验证码拒绝，实际: {:?}",
+        result
+    );
+    // 短输入同型
+    let result = service.verify_code("user6@example.com", "12345").await;
+    assert!(matches!(result, Err(GarrisonError::InvalidParam(_))));
+    // 两次失败均计入尝试次数
+    let attempts = dao.get("email:attempts:user6@example.com").await.unwrap();
+    assert_eq!(
+        attempts,
+        Some("2".to_string()),
+        "长度不符的输入应计入失败尝试"
+    );
 }
 
 // ============================================================

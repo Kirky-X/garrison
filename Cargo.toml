@@ -395,7 +395,7 @@ secure-sign = ["dep:sha2", "dep:hmac", "dep:base64", "secure-ct-eq"]
 # secure-httpbasic → protocol-httpbasic（域统一到协议层）
 protocol-httpbasic = ["dep:base64"]
 # secure-httpdigest → protocol-httpdigest（域统一到协议层）
-# secure-ct-eq：Digest response/uri/nonce-mac 校验常量时间比较统一走公共原语（ADR-0003 决策 2/3）
+# secure-ct-eq：Digest response/uri/nonce-mac 校验常量时间比较统一走公共原语（ADR-0003 决策 2/3；URI/response/nonce 签名比较）
 protocol-httpdigest = ["dep:sha2", "dep:base64", "dep:md5", "secure-ct-eq", "dep:hkdf", "dep:hmac"]
 # Unicode 同形异义字检测
 secure-confusable = ["dep:unicode-security"]
@@ -403,9 +403,10 @@ secure-confusable = ["dep:unicode-security"]
 secure-masking = ["dep:regex"]
 secure-xss = []
 secure-sanitize = []
+# secure-ct-eq：验证码比对统一走公共常量时间比较原语（ADR-0003 决策 2，消除 cfg fallback 第二实现与模块内双版本/长度早退本地 fallback）
 sms-rate-limit = ["dep:rand", "secure-ct-eq"]
 # 邮箱验证码（基础 trait + service + rate_limiter，业务方自行实现 EmailSender）
-# secure-ct-eq：验证码比对统一走公共常量时间比较原语（ADR-0003 决策 2，消除 cfg fallback 第二实现）
+# secure-ct-eq：验证码比对统一走公共常量时间比较原语（ADR-0003 决策 2，消除 cfg fallback 第二实现与长度早退本地 fallback）
 email-verification = ["dep:rand", "secure-ct-eq"]
 # 邮箱验证码 SMTP 内置实现（lettre，含 SmtpEmailSender）
 email-verification-smtp = ["email-verification", "dep:lettre"]
@@ -419,7 +420,8 @@ field-encryption = ["dep:aes-gcm", "dep:getrandom", "dep:base64", "dep:sha2"]
 mfa-recovery = ["dep:sha2"]
 
 # === 账号安全引擎 ===
-account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:getrandom", "dep:sha2", "dep:base32"]
+# secure-ct-eq：备份码哈希比对统一走常量时间比较原语（消除本地 ct_eq_hex）
+account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:getrandom", "dep:sha2", "dep:base32", "secure-ct-eq"]
 # account-credential-zeroize → credential-zeroize（缩短名称）
 credential-zeroize = ["account-credential", "dep:zeroize"]
 account-policy = ["account-credential", "dep:regex"]

@@ -22,6 +22,7 @@ use super::{Credential, CredentialModel, CredentialType};
 use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
+use crate::secure::ct_eq::constant_time_eq;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -53,28 +54,6 @@ fn sha256_hex(input: &str) -> String {
     hasher.update(input.as_bytes());
     let result = hasher.finalize();
     result.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-/// 常量时间比较两个 SHA-256 hex 字符串（认证关键路径，CWE-208 防御）。
-///
-/// `String ==` 会在首个不匹配字节处短路返回，攻击者可借响应时间逐字节推断
-/// 匹配前缀。此函数逐字节 XOR 折叠，不在不匹配处提前返回。
-///
-/// # 实现说明
-///
-/// 与 `subtle::ConstantTimeEq` 的折叠模式等价；因 `subtle` 为可选依赖且
-/// `account-credential` feature 未引入它（避免新增依赖），故在本地实现。
-/// SHA-256 hex 输出定长 64 字符，长度分支不泄露任何秘密信息。
-fn ct_eq_hex(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
 }
 
 /// 规范化备份码输入：移除 `-` 分隔符并转为大写。
@@ -220,7 +199,11 @@ impl BackupCodeCredential {
             let mut data = BackupCodeSecretData::from_json(&model.secret_data)?;
 
             // 2. 查找并消费备份码（常量时间比较，CWE-208）
-            if let Some(idx) = data.codes.iter().position(|h| ct_eq_hex(h, &input_hash)) {
+            if let Some(idx) = data
+                .codes
+                .iter()
+                .position(|h| constant_time_eq(h.as_bytes(), input_hash.as_bytes()))
+            {
                 data.codes.remove(idx);
                 let new_secret = serde_json::to_string(&data).map_err(|e| {
                     GarrisonError::Internal(format!("account-backup-serialize::{}", e))
@@ -285,7 +268,10 @@ impl Credential for BackupCodeCredential {
         let data = BackupCodeSecretData::from_json(&self.model.secret_data)?;
         let input_hash = sha256_hex(&normalize(input));
         // 常量时间比较（CWE-208）：不使用 contains/== 短路比较
-        Ok(data.codes.iter().any(|h| ct_eq_hex(h, &input_hash)))
+        Ok(data
+            .codes
+            .iter()
+            .any(|h| constant_time_eq(h.as_bytes(), input_hash.as_bytes())))
     }
 }
 
@@ -503,17 +489,24 @@ mod tests {
         assert!(verify_remaining, "未消费码 verify 应仍返回 true");
     }
 
-    /// ct_eq_hex 常量时间比较语义：相等/不等/长度不等。
+    /// 备份码哈希比较（`secure::ct_eq` 统一原语）语义：相等/不等/长度不等。
+    /// 与 `==` 的全组合等价性矩阵由原语测试模块单点维护（`secure::ct_eq`）。
     #[test]
-    fn ct_eq_hex_comparison_semantics() {
+    fn constant_time_eq_comparison_semantics() {
         let h = sha256_hex("AAAA-AAAA-AAAA");
-        assert!(ct_eq_hex(&h, &h), "相同哈希应相等");
         assert!(
-            !ct_eq_hex(&h, &sha256_hex("BBBB-BBBB-BBBB")),
+            constant_time_eq(h.as_bytes(), h.as_bytes()),
+            "相同哈希应相等"
+        );
+        assert!(
+            !constant_time_eq(h.as_bytes(), sha256_hex("BBBB-BBBB-BBBB").as_bytes()),
             "不同哈希应不等"
         );
-        assert!(!ct_eq_hex(&h, "short"), "长度不等应返回 false");
-        assert!(ct_eq_hex("", ""), "空串应相等");
+        assert!(
+            !constant_time_eq(h.as_bytes(), b"short"),
+            "长度不等应返回 false"
+        );
+        assert!(constant_time_eq(b"", b""), "空串应相等");
     }
 
     /// `BackupCodeCredential` 可作 `Box<dyn Credential>` 使用（对象安全验证）。

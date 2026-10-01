@@ -6,6 +6,7 @@
 use super::algorithm::hex_encode;
 use super::auth::current_unix_seconds;
 use super::*;
+use crate::secure::ct_eq::constant_time_eq;
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -718,6 +719,91 @@ fn is_nonce_valid_non_numeric_timestamp_returns_false() {
     let raw = "abc:def";
     let nonce = STANDARD.encode(raw.as_bytes());
     assert!(!auth.is_nonce_valid(&nonce));
+}
+
+// ========================================================================
+// constant_time_eq 测试
+// ========================================================================
+
+/// 验证 constant_time_eq 对不同长度输入返回 false（含单侧为空）。
+#[test]
+fn constant_time_eq_different_lengths_returns_false() {
+    assert!(!constant_time_eq(b"abc", b"ab"));
+    assert!(!constant_time_eq(b"ab", b"abc"));
+    assert!(!constant_time_eq(b"", b"abc"));
+    assert!(!constant_time_eq(b"abc", b""));
+}
+
+/// 验证 constant_time_eq 对相同字符串返回 true。
+#[test]
+fn constant_time_eq_same_strings_returns_true() {
+    assert!(constant_time_eq(b"abc", b"abc"));
+    assert!(constant_time_eq(b"", b""));
+}
+
+/// 验证 constant_time_eq 对不同字符串返回 false。
+#[test]
+fn constant_time_eq_different_strings_returns_false() {
+    assert!(!constant_time_eq(b"abc", b"xyz"));
+}
+
+/// 超长 digest response 拒绝：response 长度是公开协议参数（hex 后 MD5 32 /
+/// SHA-256 64），长度不符必然不等，validate 在进入比较前即拒绝——客户端
+/// 可控的输入长度不得放大服务端计算量（统一原语的调用方长度预校验约定）。
+#[test]
+fn validate_oversized_response_rejected() {
+    let auth = HttpDigestAuth::new("test@realm", "MD5").unwrap();
+    let ha1 = auth.compute_ha1("admin", "secret");
+    let nonce = make_valid_nonce();
+    let header = build_md5_auth_header(
+        &auth,
+        "admin",
+        "test@realm",
+        &nonce,
+        "00000001",
+        "0a4f113c",
+        "GET",
+        "/resource",
+        &ha1,
+    );
+    // 将 32 位 response 替换为超长值（其余参数保持合法）
+    let resp_start = header.find("response=\"").unwrap() + "response=\"".len();
+    let resp_end = header[resp_start..].find('"').unwrap() + resp_start;
+    let oversized = format!(
+        "{}{}{}",
+        &header[..resp_start],
+        "a".repeat(4096),
+        &header[resp_end..]
+    );
+    assert!(
+        !auth.validate(&oversized, "GET", "/resource", &ha1),
+        "超长 response 应被拒绝"
+    );
+    // 长度不足同型（31 位）
+    let short = format!(
+        "{}{}{}",
+        &header[..resp_start],
+        "a".repeat(31),
+        &header[resp_end..]
+    );
+    assert!(
+        !auth.validate(&short, "GET", "/resource", &ha1),
+        "长度不足的 response 应被拒绝"
+    );
+}
+
+/// 超长 nonce 签名 mac 段拒绝：mac 长度是公开参数（HMAC-SHA256 hex 64 字符），
+/// 长度不符在进入比较前即拒绝。
+#[test]
+fn is_nonce_valid_oversized_mac_returns_false() {
+    let auth = HttpDigestAuth::new("realm", "SHA256")
+        .unwrap()
+        .with_server_key(b"server-secret-key-material-with-enough-bytes-32");
+    let ts = current_unix_seconds();
+    let uuid = Uuid::new_v4().simple().to_string();
+    let oversized = format!("{}:{}:{}", ts, uuid, "a".repeat(4096));
+    let forged = STANDARD.encode(oversized.as_bytes());
+    assert!(!auth.is_nonce_valid(&forged), "超长 mac 段应被拒绝");
 }
 
 // ========================================================================
