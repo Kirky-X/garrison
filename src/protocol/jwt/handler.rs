@@ -610,6 +610,10 @@ impl JwtHandler {
     ///
     /// 注意：本方法**不做** exp/iat 等标准时间字段填充——由调用方的 claims
     /// 结构自行携带，语义由调用方定义。
+    // 唯一生产调用方为 backchannel（backchannel-logout 门控）；仅启用
+    // protocol-jwt 而无 backchannel-logout 的组合（compile 矩阵 jwt-ct-eq、
+    // oauth2-redis lib 面）只剩测试调用，按仓库 cfg_attr 先例定向豁免。
+    #[cfg_attr(not(any(test, feature = "backchannel-logout")), allow(dead_code))]
     pub(crate) fn sign_claims<T: Serialize>(&self, claims: &T) -> GarrisonResult<String> {
         self.validate_hs_secret()?;
         validate_algorithm_match(&self.key_material, self.algorithm)?;

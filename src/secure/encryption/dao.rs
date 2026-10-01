@@ -104,7 +104,8 @@ impl FieldEncryptionDao {
     /// 装配：包装内部 DAO 与字段加解密门面。
     ///
     /// `inner` 必须是未经本装饰器包装的底层存储 DAO（运维接口经
-    /// [`Self::inner_dao`] 直接操作落库层，不存在「误传装饰器实例」的入参位）。
+    /// `Self::inner_dao` 直接操作落库层，不存在「误传装饰器实例」的入参位；
+    /// inner_dao 为 pub(crate)，不渲染进公开文档，故此处不作 intra-doc 链接）。
     pub fn new(
         inner: Arc<dyn GarrisonDao>,
         cipher: Arc<FieldCipher>,

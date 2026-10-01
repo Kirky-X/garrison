@@ -110,6 +110,13 @@ static DUMMY_ARGON2_HASH: std::sync::LazyLock<String> = std::sync::LazyLock::new
 /// 同属 `DaoKeyPrefix::BruteForce` 但以 `acct:` 段隔离（登录方可控的 login_id
 /// 不得污染 IP 计数键）；与 hooks 的 `fw:acct:*` **无关**——`hooks::reset` 不覆盖
 /// 本键，解锁仅靠 TTL 自然过期或手动删除 `bf:acct:<login_id>:lock`。
+// 唯一生产调用方 login_with_password 门控在 account-credential + db-sqlite 之下：
+// 仅 firewall-bruteforce 而无数据库的组合（如 compile 矩阵 tenant-bruteforce）中
+// 函数编译但调用方不在，按仓库 cfg_attr 先例定向豁免 dead_code。
+#[cfg_attr(
+    not(all(feature = "account-credential", feature = "db-sqlite")),
+    allow(dead_code)
+)]
 #[cfg(feature = "firewall-bruteforce")]
 fn acct_count_key(login_id: &str) -> String {
     format!(
@@ -120,6 +127,10 @@ fn acct_count_key(login_id: &str) -> String {
 }
 
 /// 账号维度锁定标记键（前缀语义见 [`acct_count_key`]）。
+#[cfg_attr(
+    not(all(feature = "account-credential", feature = "db-sqlite")),
+    allow(dead_code)
+)]
 #[cfg(feature = "firewall-bruteforce")]
 fn acct_lock_key(login_id: &str) -> String {
     format!(
@@ -130,6 +141,10 @@ fn acct_lock_key(login_id: &str) -> String {
 }
 
 /// 前置检查：账号处于锁定期内则拒绝（不消耗校验资源）。
+#[cfg_attr(
+    not(all(feature = "account-credential", feature = "db-sqlite")),
+    allow(dead_code)
+)]
 #[cfg(feature = "firewall-bruteforce")]
 async fn is_password_locked(dao: &Arc<dyn GarrisonDao>, login_id: &str) -> GarrisonResult<bool> {
     dao.get(&acct_lock_key(login_id))
@@ -139,6 +154,10 @@ async fn is_password_locked(dao: &Arc<dyn GarrisonDao>, login_id: &str) -> Garri
 }
 
 /// 记录一次密码认证失败：窗口内原子递增，超阈值置锁定标记。
+#[cfg_attr(
+    not(all(feature = "account-credential", feature = "db-sqlite")),
+    allow(dead_code)
+)]
 #[cfg(feature = "firewall-bruteforce")]
 async fn record_password_failure(dao: &Arc<dyn GarrisonDao>, login_id: &str) -> GarrisonResult<()> {
     use crate::strategy::firewall::brute_force::BruteForceConfig;
@@ -157,6 +176,10 @@ async fn record_password_failure(dao: &Arc<dyn GarrisonDao>, login_id: &str) -> 
 }
 
 /// 登录成功后清零失败计数。
+#[cfg_attr(
+    not(all(feature = "account-credential", feature = "db-sqlite")),
+    allow(dead_code)
+)]
 #[cfg(feature = "firewall-bruteforce")]
 async fn reset_password_failures(dao: &Arc<dyn GarrisonDao>, login_id: &str) {
     if let Err(e) = dao.delete(&acct_count_key(login_id)).await {
@@ -392,6 +415,13 @@ mod tests {
     /// 构造 GarrisonLogicDefault（不注入 hasher/repo，测试 Config 错误路径）。
     /// 位于 mod tests 顶层：供 default_impl_coverage 与顶层锁定回归测试共用
     /// （diting B7——锁定测试不能依赖 listener 门）。
+    // 使用方测试均门控在 account-credential + db-sqlite（部分再加 firewall-bruteforce
+    // /listener）之下：缺这两者的组合（compile 矩阵 default/minimal 等）助手
+    // 编译但无调用方，按仓库 cfg_attr 先例定向豁免 dead_code。
+    #[cfg_attr(
+        not(all(feature = "account-credential", feature = "db-sqlite")),
+        allow(dead_code)
+    )]
     fn make_logic_without_creds() -> GarrisonLogicDefault {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
@@ -412,6 +442,12 @@ mod tests {
         )
     }
 
+    // 与 make_logic_without_creds 同理：使用方测试均门控在
+    // account-credential + db-sqlite 之下，缺者定向豁免。
+    #[cfg_attr(
+        not(all(feature = "account-credential", feature = "db-sqlite")),
+        allow(dead_code)
+    )]
     fn make_user_row(login_id: &str, password_hash: &str) -> UserRow {
         UserRow {
             id: format!("u-{}", login_id),

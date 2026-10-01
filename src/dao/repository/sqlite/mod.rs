@@ -184,9 +184,15 @@ pub(crate) mod test_support {
     /// 稳定复现），这两面历史上对内存库无跨连接问题。
     pub async fn setup_db() -> DbPool {
         if std::env::var("GARRISON_TEST_SQLITE_MEMORY").as_deref() == Ok("1") {
-            let pool = init_dbnexus("sqlite::memory:")
-                .await
-                .expect("init_dbnexus 应成功");
+            // 命名内存库 + shared cache：池内全部连接共享同一库。`sqlite::memory:`
+            // 每连接一个独立库，迁移建表与业务查询落不同连接时偶发
+            // "no such table"（app_user_identifier 测试在 CI 内存面稳定复现）。
+            // UUID 命名隔离并发的不同测试二进制（lib / integration）。
+            let url = format!(
+                "sqlite:file:garrison_test_mem_{}?mode=memory&cache=shared",
+                uuid::Uuid::new_v4()
+            );
+            let pool = init_dbnexus(&url).await.expect("init_dbnexus 应成功");
             let migration =
                 GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
             let applied = migration.migrate_core().await.expect("migrate_core 应成功");
@@ -231,9 +237,12 @@ mod tests {
     /// （见上方 `setup_db` 文档）。
     async fn setup_db() -> DbPool {
         if std::env::var("GARRISON_TEST_SQLITE_MEMORY").as_deref() == Ok("1") {
-            let pool = init_dbnexus("sqlite::memory:")
-                .await
-                .expect("init_dbnexus 应成功");
+            // 命名内存库 + shared cache，原因同上方 `setup_db` 注释
+            let url = format!(
+                "sqlite:file:garrison_test_mem_{}?mode=memory&cache=shared",
+                uuid::Uuid::new_v4()
+            );
+            let pool = init_dbnexus(&url).await.expect("init_dbnexus 应成功");
             let migration =
                 GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
             let applied = migration.migrate_core().await.expect("migrate_core 应成功");
