@@ -415,6 +415,11 @@ mod tests {
     }
 
     /// 容量丢弃必须输出结构性 warn（含 key 与累计丢弃数），显性化不静默。
+    ///
+    /// tracing interest 缓存是进程级全局态：并行运行的非订阅者测试可能抢先
+    /// 首次注册事件 callsite 并缓存 `Interest::never`（事件被宏直接剔除，与
+    /// 本线程订阅者无关，同 `web::request_id` 的 init_capture 先例）——故
+    /// set_default 后显式重建，捕获缺失时重建重试。
     #[tokio::test(start_paused = true)]
     #[serial_test::serial]
     async fn capacity_drop_emits_structured_warning() {
@@ -422,25 +427,37 @@ mod tests {
         use tracing_subscriber::util::SubscriberInitExt;
 
         let logs = Arc::new(Mutex::new(Vec::<String>::new()));
-        let subscriber = tracing_subscriber::registry().with(
-            tracing_subscriber::fmt::layer()
-                .with_ansi(false)
-                .with_writer(LogCapture(logs.clone())),
-        );
-        let _guard = subscriber.set_default();
+        let _guard = tracing_subscriber::registry()
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(LogCapture(logs.clone())),
+            )
+            .set_default();
+        tracing::callsite::rebuild_interest_cache();
 
-        let throttle = ActivityWriteThrottle::with_limits(1, DEBOUNCE, TIMEOUT);
-        assert_eq!(throttle.record("first", 1), RecordOutcome::Recorded);
-        assert_eq!(throttle.record("second", 2), RecordOutcome::Dropped);
-        assert_eq!(throttle.dropped_total(), 1);
+        let mut lines = Vec::<String>::new();
+        for _ in 0..3 {
+            let throttle = ActivityWriteThrottle::with_limits(1, DEBOUNCE, TIMEOUT);
+            assert_eq!(throttle.record("first", 1), RecordOutcome::Recorded);
+            assert_eq!(throttle.record("second", 2), RecordOutcome::Dropped);
+            assert_eq!(throttle.dropped_total(), 1);
 
-        let lines = logs.lock();
+            lines = logs.lock().clone();
+            if lines
+                .iter()
+                .any(|l| l.contains("丢弃") && l.contains("second") && l.contains("WARN"))
+            {
+                break;
+            }
+            tracing::callsite::rebuild_interest_cache();
+        }
         assert!(
             lines
                 .iter()
                 .any(|l| l.contains("丢弃") && l.contains("second") && l.contains("WARN")),
             "容量丢弃应输出含 key 的 warn，实际: {:?}",
-            *lines
+            lines
         );
     }
 
