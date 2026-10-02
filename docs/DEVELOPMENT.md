@@ -207,7 +207,7 @@ Garrison 强制采用测试驱动开发（TDD）。每个任务必须严格按�
 4. **运行测试通过** — `cargo test --features full` 必须全部通过
 5. **格式化与 Lint** — `cargo fmt` + `cargo clippy --features full -- -D warnings`，然后 `git commit`
 
-> 不得先写实现再补测试。覆盖率门槛 95%+，新增代码需保持同等水准。
+> 不得先写实现再补测试。覆盖率门禁为行覆盖率 ≥ 85%（CI `--fail-under-lines 85`），新增代码不得使总覆盖率下降。
 
 ### 3.2 测试驱动示例
 
@@ -326,10 +326,12 @@ garrison::dao_conformance_tests! {
 
 ### 4.4 覆盖率要求
 
-Garrison 要求测试覆盖率 **≥ 95%**（当前 95%+）：
+Garrison 的覆盖率门禁为**行覆盖率 ≥ 85%**（CI 门禁 `cargo llvm-cov --features "full" --fail-under-lines 85`；当前约 95.8%）。新增代码不得使总覆盖率下降。
 
-| 模块类型 | 覆盖率要求 |
-|---------|----------|
+以下分模块数值为目标线（团队内期望值），**非 CI 门禁**：
+
+| 模块类型 | 目标线（非 CI 门禁） |
+|---------|-------------------|
 | 核心模块（core/stp/session/config/context/manager） | ≥ 95% |
 | 协议/安全插件 | ≥ 90% |
 | Web 适配层 | 集成测试覆盖主要中间件路径即可 |
