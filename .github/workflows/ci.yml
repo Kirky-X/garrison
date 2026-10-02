@@ -134,7 +134,10 @@ jobs:
   test:
     name: Test (${{ matrix.os }} / Rust ${{ matrix.rust }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # Windows 腿需要更长时限：vcpkg 源码编译 openssl（webauthn attestation-ca
+    # 依赖）+ 全特性面冷编译 ~20min，25min 上限两轮实测均到点被杀
+    #（超时在 GitHub 上表现为 job cancelled）。其余平台维持 25min。
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 45 || 25 }}
     env:
       # Linux runner 上 sqlite 文件库 URL 在 1.85/beta 面触发
       # SQLITE_READONLY（预创建空文件亦然），统一回退内存库；
