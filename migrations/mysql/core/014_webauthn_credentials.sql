@@ -14,8 +14,9 @@ CREATE TABLE IF NOT EXISTS app_webauthn_credential (
     tenant_id BIGINT NOT NULL DEFAULT 0,
     user_id VARCHAR(255) NOT NULL,
     -- WebAuthn credential ID 规范上限 1023 字节（base64url ≈ 1364 字符）；
--- utf8mb4 主键索引字节预算 3072 → VARCHAR 上限 768 字符
-    credential_id VARCHAR(768) NOT NULL,
+-- utf8mb4 复合主键字节预算 3072 = tenant_id BIGINT(8) + credential_id → 上限 766 字符
+-- （768×4=3072 未给 tenant_id 留位，真实 MySQL 8 触发 1071 Specified key was too long）
+    credential_id VARCHAR(766) NOT NULL,
     public_key TEXT NOT NULL,
     sign_count INT NOT NULL DEFAULT 0,
     backup_eligible TINYINT NOT NULL DEFAULT 0,

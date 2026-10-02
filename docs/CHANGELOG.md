@@ -107,6 +107,7 @@
 
 ### Fixed
 
+- **WebAuthn MySQL 迁移索引超长（testcontainers 真实 MySQL 8 验收发现）**：`014_webauthn_credentials.sql` 复合主键 `(tenant_id, credential_id)` 的字节预算漏算 `tenant_id BIGINT` 的 8 字节——`credential_id VARCHAR(768)`（768×4=3072）加 8 字节即超 InnoDB 3072 字节上限，真实 MySQL 8 报 1071 Specified key was too long，迁移失败导致 MySQL 后端 WebAuthn 表无法创建（SQLite/Postgres 无此限制不受影响）。`credential_id` 收窄为 `VARCHAR(766)`（3064+8=3072 恰达上限），容量损失 2 字符（规范上限 1023 字节本就未覆盖，与既有设计一致）；由 testcontainers 真实 MySQL 8 验收（acc_env_007/008）红转绿锁定。
 - **`max_login_count` 闸门改读 DAO**：原读进程本地 `login_token_map`，多节点共享存储部署下闸门被短路形同虚设；现以 DAO AccountSession 为权威数据源。
 - **DbHealthCheck 真实探测**：新增 `DbHealthCheck::with_pool(pool)`，readiness 执行真实 SQL 往返（`get_session` + `SELECT 1`）；未注入连接池时返回 `Degraded`（原探测内存 KV DAO，Postgres 宕机 readiness 仍 Healthy，K8s 摘流失效）。
 - **`l1_cache_capacity` 配置静默无效（自研库吸收）**：`GarrisonConfig::l1_cache_capacity` 有默认值有校验但从未接入 L1（恒为库默认 10000）；新增 `UserCacheService::new_with_capacity` 构造器并在 `GarrisonManagerBuilder` 装配路径传入。
