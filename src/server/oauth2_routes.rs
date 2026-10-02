@@ -872,9 +872,13 @@ mod tests {
     }
 
     /// 进程内日志捕获 writer（fmt Layer 的 MakeWriter，收集格式化行）。
+    /// 与唯一使用方 `oauth2_state_new_without_rotation_warns_at_construction`
+    /// 同门控：仅 db-sqlite 测试面编译，否则 oauth2-server 开 + db-sqlite 关的组合下 dead_code。
+    #[cfg(feature = "db-sqlite")]
     #[derive(Clone)]
     struct LogCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
 
+    #[cfg(feature = "db-sqlite")]
     impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for LogCapture {
         type Writer = LogCaptureWriter;
         fn make_writer(&'a self) -> Self::Writer {
@@ -882,8 +886,10 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "db-sqlite")]
     struct LogCaptureWriter(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
 
+    #[cfg(feature = "db-sqlite")]
     impl std::io::Write for LogCaptureWriter {
         fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
             self.0

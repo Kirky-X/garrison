@@ -23,9 +23,10 @@ use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::stp::session::SessionLogic;
 use async_trait::async_trait;
-// 仅 protocol-webauthn（RequiredActionProvider 注册）与 mfa-recovery
-// （RecoveryCodeManager）使用；两者全关的 feature 组合下为 unused_imports。
-#[cfg(any(feature = "protocol-webauthn", feature = "mfa-recovery"))]
+// 仅 mfa-recovery（RecoveryCodeManager）在非测试代码使用；webauthn 全流程
+// 穿透测试的 Arc 在该测试函数内部局部导入（其门控为 all(test, db-sqlite)，
+// 与非测试面不同，顶层导入无法同时满足两个目标）。
+#[cfg(feature = "mfa-recovery")]
 use std::sync::Arc;
 
 /// MFA 逻辑 trait，定义二级认证与账号禁用校验契约。

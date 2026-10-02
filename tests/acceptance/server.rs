@@ -17,6 +17,7 @@
 //! `GarrisonManager` 全局单例，但按验收域惯例统一 `#[serial]` 串行
 //!（与其他域共享测试进程，避免任何潜在的全局登记表串扰）。
 
+use crate::relay::SendRelayRetry;
 use async_trait::async_trait;
 use garrison::backend::types::{LoginParams, SessionData, TokenInfo};
 use garrison::backend::AuthBackend;
@@ -232,7 +233,7 @@ async fn http_login(client: &reqwest::Client, external_url: &str, login_id: &str
             "login_id": login_id,
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("login 请求应送达服务器");
     assert_eq!(resp.status(), 200, "login 应返回 200");
@@ -262,7 +263,7 @@ async fn http_check_login(
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", api_key)
         .json(&serde_json::json!({ "token": token }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("check-login 请求应送达服务器");
     assert_eq!(resp.status(), 200, "check-login 应返回 200");
@@ -306,7 +307,7 @@ async fn acc_srv_002_internal_health_endpoint() {
     let resp = client
         .get(format!("{}/api/v1/auth/health", internal_url))
         .header("x-api-key", "test-key")
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "health 应返回 200");
@@ -328,7 +329,7 @@ async fn acc_srv_003_external_logout_invalidates_token() {
     let resp = client
         .post(format!("{}/api/v1/auth/logout", external_url))
         .json(&serde_json::json!({ "token": token }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "logout 应返回 200");
@@ -353,7 +354,7 @@ async fn acc_srv_004_external_refresh_returns_new_token() {
     let resp = client
         .post(format!("{}/api/v1/auth/refresh", external_url))
         .json(&serde_json::json!({ "token": old_token }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "refresh 应返回 200");
@@ -377,7 +378,7 @@ async fn acc_srv_005_internal_get_token_info() {
         .post(format!("{}/api/v1/auth/get-token-info", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "token": token }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -401,7 +402,7 @@ async fn acc_srv_006_internal_get_session() {
         .post(format!("{}/api/v1/auth/get-session", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "token": token }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200);
@@ -425,7 +426,7 @@ async fn acc_srv_007_internal_rejects_missing_and_wrong_api_key() {
     // 缺少 X-API-Key
     let resp = client
         .get(format!("{}/api/v1/auth/health", internal_url))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 401, "缺 X-API-Key 应返回 401");
@@ -434,7 +435,7 @@ async fn acc_srv_007_internal_rejects_missing_and_wrong_api_key() {
     let resp = client
         .get(format!("{}/api/v1/auth/health", internal_url))
         .header("x-api-key", "wrong-key")
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 401, "错误 X-API-Key 应返回 401");
@@ -456,7 +457,7 @@ async fn acc_srv_008_internal_kickout_invalidates_all_tokens() {
         .post(format!("{}/api/v1/auth/kickout", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "login_id": "user1", "caller_login_id": "user1" }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "kickout 应返回 200");
@@ -489,7 +490,7 @@ async fn acc_srv_009_internal_switch_to_changes_session_subject() {
             "target_login_id": "user2",
             "caller_login_id": "user1"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "switch-to 应返回 200");
@@ -498,7 +499,7 @@ async fn acc_srv_009_internal_switch_to_changes_session_subject() {
         .post(format!("{}/api/v1/auth/get-session", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "token": token }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -526,7 +527,7 @@ async fn acc_srv_010_external_rate_limit_returns_429() {
         let resp = client
             .post(format!("{}/api/v1/auth/login", external_url))
             .json(&body)
-            .send()
+            .send_relay_retry()
             .await
             .unwrap();
         assert_eq!(resp.status(), 200, "限速窗口内请求应成功");
@@ -535,7 +536,7 @@ async fn acc_srv_010_external_rate_limit_returns_429() {
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&body)
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 429, "超限速应返回 429");
@@ -557,7 +558,7 @@ async fn acc_srv_011_internal_check_permission_invalid_token_error_code() {
             "token": "invalid-token",
             "permission": "user:read"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "业务错误以 200 + error_code 表达");
@@ -579,7 +580,7 @@ async fn acc_srv_012_external_internal_paths_mutually_exclusive() {
     // 外网调用内网专属端点 → 404
     let resp = client
         .get(format!("{}/api/v1/auth/health", external_url))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 404, "外网端口不应暴露内网端点");
@@ -592,7 +593,7 @@ async fn acc_srv_012_external_internal_paths_mutually_exclusive() {
             "login_id": "user1",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 404, "内网端口不应暴露外网端点");
@@ -604,7 +605,7 @@ async fn acc_srv_012_external_internal_paths_mutually_exclusive() {
             "login_id": "user1",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(
@@ -755,7 +756,7 @@ async fn acc_srv_013_authorize_redirect_logged_in_and_anonymous() {
     );
 
     // 异常侧：未登录 → 302 到登录页（LoginRequired）
-    let resp = client.get(&uri).send().await.unwrap();
+    let resp = client.get(&uri).send_relay_retry().await.unwrap();
     assert_eq!(resp.status(), 302, "未登录应重定向（FOUND）");
     let login_location = resp.headers().get("location").unwrap().to_str().unwrap();
     assert!(
@@ -768,7 +769,7 @@ async fn acc_srv_013_authorize_redirect_logged_in_and_anonymous() {
     let resp = client
         .get(&uri)
         .header("Authorization", format!("Bearer {token}"))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 302, "已登录应重定向（FOUND）");
@@ -814,7 +815,7 @@ async fn acc_srv_014_token_authorization_code_grant_pkce() {
     let resp = client
         .get(&uri)
         .header("Authorization", format!("Bearer {token}"))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     let location = resp.headers().get("location").unwrap().to_str().unwrap();
@@ -831,7 +832,7 @@ async fn acc_srv_014_token_authorization_code_grant_pkce() {
             "redirect_uri": "https://app.example.com/cb",
             "code_verifier": RFC7636_VERIFIER
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "authorization_code 交换应返回 200");
@@ -866,7 +867,7 @@ async fn acc_srv_014_token_authorization_code_grant_pkce() {
             "redirect_uri": "https://app.example.com/cb",
             "code_verifier": RFC7636_VERIFIER
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 400, "授权码重放应返回 400");
@@ -884,7 +885,7 @@ async fn acc_srv_014_token_authorization_code_grant_pkce() {
             "redirect_uri": "https://app.example.com/cb",
             "code_verifier": RFC7636_VERIFIER
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 400, "无效 code 应返回 400");
@@ -913,7 +914,7 @@ async fn acc_srv_015_token_client_credentials_grant() {
             "client_secret": "secret-123",
             "scope": "read"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "client_credentials 应返回 200");
@@ -943,7 +944,7 @@ async fn acc_srv_015_token_client_credentials_grant() {
         let resp = client
             .post(format!("{}/oauth2/token", external_url))
             .form(&bad)
-            .send()
+            .send_relay_retry()
             .await
             .unwrap();
         assert_eq!(resp.status(), 400, "无效客户端凭证应返回 400");
@@ -1035,7 +1036,7 @@ async fn acc_srv_016_token_password_grant() {
             "password": "wonderland",
             "scope": "read"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "正确凭证 password grant 应返回 200");
@@ -1056,7 +1057,7 @@ async fn acc_srv_016_token_password_grant() {
             "password": "wrong",
             "scope": "read"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 400, "错误密码应返回 400");
@@ -1092,7 +1093,7 @@ async fn acc_srv_017_token_refresh_token_grant_rotates() {
     let resp = client
         .get(&uri)
         .header("Authorization", format!("Bearer {token}"))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     let location = resp.headers().get("location").unwrap().to_str().unwrap();
@@ -1108,7 +1109,7 @@ async fn acc_srv_017_token_refresh_token_grant_rotates() {
             "redirect_uri": "https://app.example.com/cb",
             "code_verifier": RFC7636_VERIFIER
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -1123,7 +1124,7 @@ async fn acc_srv_017_token_refresh_token_grant_rotates() {
             "client_secret": "secret-123",
             "refresh_token": refresh_token
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "refresh_token grant 应返回 200");
@@ -1141,7 +1142,7 @@ async fn acc_srv_017_token_refresh_token_grant_rotates() {
             "client_secret": "secret-123",
             "refresh_token": refresh_token
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 400, "旧 refresh_token 重放应返回 400");
@@ -1171,7 +1172,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
             "client_id": "srv-018-client",
             "client_secret": "secret-123"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     let body: serde_json::Value = resp.json().await.unwrap();
@@ -1186,7 +1187,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
             "client_id": "srv-018-client",
             "client_secret": "secret-123"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "introspect 应返回 200");
@@ -1203,7 +1204,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
             "client_id": "srv-018-client",
             "client_secret": "secret-123"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 204, "revoke 成功应返回 204 No Content");
@@ -1218,7 +1219,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
                 "client_id": "srv-018-client",
                 "client_secret": "secret-123"
             }))
-            .send()
+            .send_relay_retry()
             .await
             .unwrap();
         assert_eq!(
@@ -1238,7 +1239,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
             "client_id": "srv-018-client",
             "client_secret": "wrong-secret"
         }))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 400, "revoke 客户端认证失败应返回 400");
@@ -1357,7 +1358,7 @@ async fn acc_srv_019_auth_server_bin_startup_smoke() {
     let external_health = format!("http://127.0.0.1:{}/api/v1/auth/health", external_port);
     let mut external_up = false;
     for _ in 0..60 {
-        match client.get(&external_health).send().await {
+        match client.get(&external_health).send_relay_retry().await {
             Ok(resp) => {
                 let _ = resp.status(); // 预期 404（path-filter），任意响应即存活
                 external_up = true;
@@ -1379,7 +1380,7 @@ async fn acc_srv_019_auth_server_bin_startup_smoke() {
             internal_port
         ))
         .header("x-api-key", test_api_key)
-        .send()
+        .send_relay_retry()
         .await
         .expect("内网 health 请求应送达（进程已确认存活）");
     assert_eq!(resp.status(), 200, "内网 health 应返回 200");

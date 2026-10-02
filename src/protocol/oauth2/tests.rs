@@ -798,18 +798,20 @@ async fn introspect_token_server_error_returns_oauth2_error() {
 
 /// 授权服务器不可达返回 Network 错误）。
 ///
-/// 端口 1 通常未启用，reqwest 连接会立即失败（connection refused）→ 触发 Network 错误。
+/// 不可达端点用 RFC 2606 保留 TLD `.invalid`（保证 NXDOMAIN）——DNS 解析失败
+/// 走 reqwest 请求错误的 Network 分支。勿用「未监听端口号」模拟：Docker Desktop
+/// 的 WSL 回环代理会对未绑定端口返回 503，使连接拒绝语义在本机开发环境不可靠。
 #[tokio::test]
 async fn introspect_token_network_error_returns_network_error() {
     let client = OAuth2Client::new(
         "cid",
         "secret",
         "https://example.com/cb",
-        "http://127.0.0.1:1/auth",
-        "http://127.0.0.1:1/token",
+        "https://oauth2-auth.invalid/auth",
+        "https://oauth2-token.invalid/token",
     )
     .unwrap()
-    .with_introspect_url("http://127.0.0.1:1/introspect");
+    .with_introspect_url("https://oauth2-introspect.invalid/introspect");
 
     let result = client.introspect_token("any-token").await;
     assert!(result.is_err());

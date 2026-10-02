@@ -14,6 +14,7 @@
 //! perf_login / perf_check_login / perf_check_permission，保留 `#[ignore]`
 //! 与原文档注释；经 `--ignored` 显式触发）。
 
+use crate::relay::SendRelayRetry;
 use garrison::dao::{GarrisonDao, InMemoryDao};
 use garrison::protocol::jwt::JwtHandler;
 use garrison::session::GarrisonSession;
@@ -665,6 +666,7 @@ async fn acc_conc_006_concurrent_renew_to_equivalent_exactly_once() {
 // ============================================================================
 
 mod perf_util {
+    use crate::relay::SendRelayRetry;
     use once_cell::sync::OnceCell;
     use parking_lot::Mutex;
     use serde_json::json;
@@ -750,7 +752,7 @@ mod perf_util {
                 if let Ok(resp) = client
                     .get(format!("{}/api/v1/auth/health", internal_url))
                     .header("x-api-key", &api_key)
-                    .send()
+                    .send_relay_retry()
                     .await
                 {
                     if resp.status().is_success() {
@@ -1049,7 +1051,7 @@ mod perf_util {
                     req = req.json(&f(total.load(Ordering::Relaxed)));
                 }
                 let start = Instant::now();
-                match req.send().await {
+                match req.send_relay_retry().await {
                     Ok(resp) => {
                         let latency = start.elapsed().as_millis() as u64;
                         let is_success = resp.status().is_success();
@@ -1218,7 +1220,7 @@ async fn perf_check_login_p99_under_50ms_5000rps() {
             "login_id": "perf_check_login",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("login 失败");
     assert_eq!(resp.status(), 200, "login 应返回 200");
@@ -1283,7 +1285,7 @@ async fn perf_check_permission_p99_under_50ms_5000rps() {
             "login_id": "perf_check_permission",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("login 失败");
     assert_eq!(resp.status(), 200, "login 应返回 200");

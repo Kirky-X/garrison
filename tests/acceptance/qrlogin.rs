@@ -16,6 +16,7 @@
 //!
 //! 装配同 `server.rs`：随机端口 + `axum::serve` 后台任务 + `#[serial]` 串行。
 
+use crate::relay::SendRelayRetry;
 use async_trait::async_trait;
 use garrison::backend::types::{LoginParams, SessionData, TokenInfo};
 use garrison::backend::AuthBackend;
@@ -265,7 +266,7 @@ async fn post_json(
     if let Some(token) = bearer {
         req = req.bearer_auth(token);
     }
-    let resp = req.send().await.expect("请求应送达服务器");
+    let resp = req.send_relay_retry().await.expect("请求应送达服务器");
     let status = resp.status();
     let json: serde_json::Value = resp.json().await.unwrap_or(serde_json::Value::Null);
     (status, json)
@@ -280,7 +281,7 @@ async fn web_create(client: &reqwest::Client, external_url: &str) -> (String, St
             "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/126.0 Safari/537.36",
         )
         .json(&serde_json::json!({}))
-        .send()
+        .send_relay_retry()
         .await
         .expect("create 请求应送达服务器");
     assert_eq!(resp.status(), reqwest::StatusCode::OK, "create 应返回 200");
@@ -318,7 +319,7 @@ async fn app_login(client: &reqwest::Client, external_url: &str, login_id: &str)
             "login_id": login_id,
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("login 请求应送达服务器");
     assert_eq!(resp.status(), reqwest::StatusCode::OK, "login 应返回 200");
@@ -397,7 +398,7 @@ async fn dual_device_full_flow_confirmed_and_exchange() {
         .post(format!("{}/api/v1/auth/get-session", internal_url))
         .header("x-api-key", "acceptance-internal-key")
         .json(&serde_json::json!({ "token": web_token }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("get-session 请求应送达服务器");
     assert_eq!(
@@ -648,7 +649,7 @@ async fn qrlogin_endpoints_are_rate_limited() {
         let resp = web
             .post(format!("{}/qrlogin/create", external_url))
             .json(&serde_json::json!({}))
-            .send()
+            .send_relay_retry()
             .await
             .expect("create 请求应送达服务器");
         statuses.push(resp.status());

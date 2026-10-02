@@ -27,6 +27,7 @@
 //! - 密码策略集无强制字符集/复杂度规则（NIST SP 800-63B 不推荐），「字符集不满足」
 //!   经 `RegexRule` 自定义约束表达。
 
+use crate::relay::SendRelayRetry;
 use crate::resilience::{start_garrison_server, start_test_server, tenant_client};
 use garrison::backend::types::LoginParams;
 use garrison::config::GarrisonConfig;
@@ -582,13 +583,29 @@ async fn acc_sec_014_hibp_leaked_password_pwned() {
     }
 
     let rule = NistComplianceRule::new(8);
-    let verdict = rule
-        .check_hibp_with_base("password", "https://api.pwnedpasswords.com/range")
-        .await
-        .expect("check_hibp 不应出错");
+    // 出口链路偶发抖动（TLS 重置等）会被实现的 fail-open 语义吞成
+    // service_available=false + pwned=false；对「服务不可用」做有界重试，
+    // 连续失败才按真实断言处理（真离线环境已被上方探活门控跳过）。
+    let mut verdict = None;
+    for _ in 0..3 {
+        let v = rule
+            .check_hibp_with_base("password", "https://api.pwnedpasswords.com/range")
+            .await
+            .expect("check_hibp 不应出错");
+        let available = v.service_available;
+        verdict = Some(v);
+        if available {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    let verdict = verdict.expect("重试循环至少执行一次");
+    assert!(
+        verdict.service_available,
+        "3 次重试后服务仍不可用：本环境出口链路持续失败，应人工核查"
+    );
     assert!(verdict.pwned, "公认泄露密码应判定 pwned（真实泄露库）");
     assert!(verdict.count > 0, "泄露次数应 > 0，实际: {}", verdict.count);
-    assert!(verdict.service_available);
 }
 
 /// （正常）：HIBP 正常密码通过（真实 api.pwnedpasswords.com）——
@@ -606,13 +623,27 @@ async fn acc_sec_015_hibp_clean_password_passes() {
     let rule = NistComplianceRule::new(8);
     // 高熵密码：随机后缀保证不在泄露库（命中概率可忽略）
     let password = format!("totally_clean_{}_{}", std::process::id(), "x9QmV2tL");
-    let verdict = rule
-        .check_hibp_with_base(&password, "https://api.pwnedpasswords.com/range")
-        .await
-        .expect("check_hibp 不应出错");
+    // 同 acc_sec_014：对出口抖动的 fail-open 结果做有界重试
+    let mut verdict = None;
+    for _ in 0..3 {
+        let v = rule
+            .check_hibp_with_base(&password, "https://api.pwnedpasswords.com/range")
+            .await
+            .expect("check_hibp 不应出错");
+        let available = v.service_available;
+        verdict = Some(v);
+        if available {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    let verdict = verdict.expect("重试循环至少执行一次");
+    assert!(
+        verdict.service_available,
+        "3 次重试后服务仍不可用：应人工核查出口链路"
+    );
     assert!(!verdict.pwned, "未命中泄露库应放行");
     assert_eq!(verdict.count, 0);
-    assert!(verdict.service_available, "真实 API 可达时服务应标记可用");
 }
 
 /// （异常）：HIBP 网络错误——行为偏差记录：实现为 **fail-open**
@@ -921,7 +952,7 @@ async fn acc_sec_021_forged_tokens_authentication_bypass_rejected() {
             .post(&check_login_url)
             .header("x-api-key", "test-key")
             .json(&serde_json::json!({ "token": token }))
-            .send()
+            .send_relay_retry()
             .await
             .unwrap_or_else(|e| panic!("check-login 请求失败 (token={token:?}): {e}"));
 
@@ -970,7 +1001,7 @@ async fn acc_sec_022_sql_injection_login_id_no_crash_no_leak() {
                 "login_id": payload,
                 "params": LoginParams::default()
             }))
-            .send()
+            .send_relay_retry()
             .await
             .unwrap_or_else(|e| panic!("SQL 注入请求失败 (payload={payload:?}): {e}"));
 
@@ -1028,7 +1059,7 @@ async fn acc_sec_023_xss_login_id_not_reflected() {
                 "login_id": payload,
                 "params": LoginParams::default()
             }))
-            .send()
+            .send_relay_retry()
             .await
             .unwrap_or_else(|e| panic!("XSS 请求失败 (payload={payload:?}): {e}"));
 
@@ -1088,7 +1119,7 @@ async fn acc_sec_024_csrf_api_mode_origin_behavior() {
             "login_id": "csrf-no-origin",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("无 Origin 请求失败");
     assert_eq!(
@@ -1108,7 +1139,7 @@ async fn acc_sec_024_csrf_api_mode_origin_behavior() {
             "login_id": "csrf-evil-origin",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("evil Origin 请求失败");
     let status = resp.status();
@@ -1161,7 +1192,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
             "login_id": "tenant0-user",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("租户 0 登录请求失败");
     assert_eq!(resp.status(), 200, "租户 0 登录应返回 200");
@@ -1173,7 +1204,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "token": token }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("同租户 check-login 请求失败");
     assert_eq!(resp.status(), 200);
@@ -1186,7 +1217,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
         .header("x-api-key", "test-key")
         .header("X-Tenant-Id", "1")
         .json(&serde_json::json!({ "token": token }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("跨租户 check-login 请求失败");
     let status = resp.status();
@@ -1214,7 +1245,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
         .header("x-api-key", "test-key")
         .header("X-Tenant-Id", "1")
         .json(&serde_json::json!({ "token": token, "permission": "read" }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("跨租户 check-permission 请求失败");
     let status = resp.status();
@@ -1250,7 +1281,7 @@ async fn acc_sec_026_normal_user_admin_privilege_denied() {
             "login_id": "user1",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("login 请求失败");
     assert_eq!(resp.status(), 200);
@@ -1262,7 +1293,7 @@ async fn acc_sec_026_normal_user_admin_privilege_denied() {
         .post(format!("{}/api/v1/auth/check-permission", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "token": token, "permission": "admin:*" }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("check-permission 请求失败");
     let status = resp.status();
@@ -1294,7 +1325,7 @@ async fn acc_sec_027_brute_force_same_login_100_attempts_429() {
                 "login_id": "brute_target",
                 "params": LoginParams::default()
             }))
-            .send()
+            .send_relay_retry()
             .await
             .unwrap_or_else(|e| panic!("第 {} 次暴力破解请求失败: {e}", i + 1));
         match resp.status().as_u16() {
@@ -1336,7 +1367,7 @@ async fn acc_sec_028_dictionary_100_logins_no_crash() {
                 "login_id": &login_id,
                 "params": LoginParams::default()
             }))
-            .send()
+            .send_relay_retry()
             .await
             .unwrap_or_else(|e| panic!("dict login 请求失败 ({login_id}): {e}"));
         if resp.status().as_u16() == 500 {
@@ -1379,7 +1410,7 @@ async fn acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device()
                 ..Default::default()
             }
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("deviceA 登录请求失败");
     assert_eq!(resp.status(), 200, "deviceA 登录应返回 200");
@@ -1396,7 +1427,7 @@ async fn acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device()
                 ..Default::default()
             }
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("deviceB 登录请求失败");
     assert_eq!(resp.status(), 200, "deviceB 登录应返回 200");
@@ -1408,7 +1439,7 @@ async fn acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device()
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "token": token1 }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("token1 check-login 请求失败");
     let status = resp.status();
@@ -1424,7 +1455,7 @@ async fn acc_sec_029_session_hijack_concurrent_login_disabled_kicks_old_device()
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "token": token2 }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("token2 check-login 请求失败");
     let body: serde_json::Value = resp.json().await.expect("check-login 响应非 JSON");

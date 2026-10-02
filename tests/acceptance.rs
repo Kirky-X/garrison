@@ -16,6 +16,10 @@ mod common;
 #[path = "acceptance/harness.rs"]
 mod harness;
 
+// 回环传输层抗抖动发送扩展（Docker Desktop WSL2 回环中继偶发截断，见模块注释）
+#[path = "acceptance/relay.rs"]
+mod relay;
+
 // 真实 Keycloak 夹具（OAuth2/OIDC 协议验收共享；登录表单流自动化 + 探活门控）
 #[cfg(feature = "protocol-oauth2")]
 #[path = "acceptance/keycloak_fixture.rs"]

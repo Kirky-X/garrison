@@ -10,6 +10,7 @@
 //!
 
 use crate::common::harness::{web_test_config, GarrisonTestHarness, SpawnedServer};
+use crate::relay::SendRelayRetry;
 use garrison::stp::GarrisonUtil;
 use serial_test::serial;
 
@@ -22,7 +23,11 @@ async fn assert_protected_semantics(server: &SpawnedServer, token: &str) {
     let url = format!("http://{}/protected", server.addr());
 
     // （a）未登录 → 401 + 统一错误 JSON
-    let resp = client.get(&url).send().await.expect("请求应送达测试服务器");
+    let resp = client
+        .get(&url)
+        .send_relay_retry()
+        .await
+        .expect("请求应送达测试服务器");
     let status = resp.status();
     let body_text = resp.text().await.unwrap_or_default();
     assert_eq!(
@@ -44,7 +49,7 @@ async fn assert_protected_semantics(server: &SpawnedServer, token: &str) {
     let resp = client
         .get(&url)
         .header("Authorization", format!("Bearer {token}"))
-        .send()
+        .send_relay_retry()
         .await
         .expect("请求应送达测试服务器");
     assert_eq!(resp.status(), 200, "有效 token 访问受保护路由应放行 200");

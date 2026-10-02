@@ -18,6 +18,7 @@
 
 #![cfg(feature = "protocol-oauth2")]
 
+use crate::relay::SendRelayRetry;
 use std::time::Duration;
 
 /// Keycloak 根地址：`GARRISON_TEST_KEYCLOAK_URL` 可覆盖
@@ -76,7 +77,7 @@ impl KeycloakFixture {
             .plain
             .get(&url)
             .timeout(Duration::from_secs(2))
-            .send()
+            .send_relay_retry()
             .await
             .map(|r| r.status().is_success())
             .unwrap_or(false);
@@ -139,7 +140,7 @@ impl KeycloakFixture {
         let resp = self
             .browser
             .get(&url)
-            .send()
+            .send_relay_retry()
             .await
             .map_err(|e| format!("GET auth 失败: {e}"))?;
         let page = resp
@@ -157,7 +158,7 @@ impl KeycloakFixture {
             .browser
             .post(&action)
             .form(&[("username", USERNAME), ("password", PASSWORD)])
-            .send()
+            .send_relay_retry()
             .await
             .map_err(|e| format!("POST 登录凭证失败: {e}"))?;
         let location = resp
@@ -191,7 +192,7 @@ impl KeycloakFixture {
                 path = path
             ))
             .form(form)
-            .send()
+            .send_relay_retry()
             .await
             .map_err(|e| format!("POST {path} 失败: {e}"))
     }

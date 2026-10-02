@@ -171,7 +171,9 @@ impl WebauthnCredential {
     }
 
     /// 协议态只读视图（测试植入/对照用）。
-    #[cfg(test)]
+    /// 与唯一调用方 `protocol::webauthn::tests::domain_to_credential` 同门控：
+    /// 仅 db-sqlite 测试面编译，否则 webauthn 开 + db-sqlite 关的组合下 dead_code。
+    #[cfg(all(test, feature = "db-sqlite"))]
     pub(crate) fn protocol_credential(&self) -> &Credential {
         &self.credential
     }

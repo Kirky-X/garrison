@@ -18,6 +18,7 @@
 //!   真实网络条件），熔断由真实连接拒绝（无监听端口）驱动打开、真实
 //!   auth-server 恢复（见 src/backend/remote.rs）。
 
+use crate::relay::SendRelayRetry;
 use async_trait::async_trait;
 use garrison::backend::types::LoginParams;
 use garrison::backend::{AuthBackend, BackendEmbedded, BackendRemote};
@@ -522,7 +523,7 @@ async fn acc_res_004_internal_api_key_wrong_rejected_401() {
     // 缺失 X-API-Key → 401
     let resp = client
         .get(format!("{}/api/v1/auth/health", internal_url))
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 401, "缺失 API Key 应返回 401");
@@ -531,7 +532,7 @@ async fn acc_res_004_internal_api_key_wrong_rejected_401() {
     let resp = client
         .get(format!("{}/api/v1/auth/health", internal_url))
         .header("x-api-key", "wrong-key")
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 401, "错误 API Key 应返回 401");
@@ -540,7 +541,7 @@ async fn acc_res_004_internal_api_key_wrong_rejected_401() {
     let resp = client
         .get(format!("{}/api/v1/auth/health", internal_url))
         .header("x-api-key", "secret-key")
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 200, "正确 API Key 应放行");
@@ -565,7 +566,7 @@ async fn acc_res_005_auth_server_rate_limit_returns_429() {
         let resp = client
             .post(format!("{}/api/v1/auth/login", external_url))
             .json(&body)
-            .send()
+            .send_relay_retry()
             .await
             .unwrap();
         assert_eq!(resp.status(), 200, "限速额度内登录应放行");
@@ -574,7 +575,7 @@ async fn acc_res_005_auth_server_rate_limit_returns_429() {
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&body)
-        .send()
+        .send_relay_retry()
         .await
         .unwrap();
     assert_eq!(resp.status(), 429, "超限第 3 个请求应被限流 429");
@@ -675,6 +676,27 @@ async fn acc_res_007_backend_remote_timeout_error_propagates() {
     );
 }
 
+/// 恢复阶段探活：对传输层抖动（Docker Desktop WSL2 回环中继偶发截断，
+/// 见 `crate::relay` 模块注释）做有界重试；仅重试「发送阶段」的 Network
+/// 错误，业务错误与状态码语义原样上抛。
+async fn check_login_relay_retry(
+    remote: &BackendRemote,
+    token: &str,
+) -> Result<bool, GarrisonError> {
+    let mut attempt = 1;
+    loop {
+        match remote.check_login(token).await {
+            Err(GarrisonError::Network(msg))
+                if msg.contains("error sending request") && attempt < 3 =>
+            {
+                attempt += 1;
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            },
+            other => return other,
+        }
+    }
+}
+
 /// （异常+恢复）：BackendRemote 熔断——真实故障（无监听端口的连接拒绝）
 /// 连续失败达阈值后打开并快速拒绝（不再发起真实 HTTP 请求），打开超时后
 /// 对真实 auth-server 探活成功自动恢复关闭。
@@ -685,16 +707,27 @@ async fn acc_res_007_backend_remote_timeout_error_propagates() {
 #[tokio::test]
 async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
     // failure_threshold=3, success_threshold=2（半开需 2 次成功才关闭）, 打开 700ms
-    let breaker = Arc::new(CircuitBreakerWrapper::new(CircuitBreakerConfig::new(
-        3,
-        2,
-        Duration::from_millis(700),
-    )));
+    let breaker = Arc::new(CircuitBreakerWrapper::new(
+        CircuitBreakerConfig::new(3, 2, Duration::from_millis(700))
+            // 本用例验证「失败计数 → 打开」语义。慢调用维度必须禁用：网络失败
+            // 的耗时不可控（Docker Desktop WSL 回环代理对未绑定端口的 503 耗时
+            // ~1s、NXDOMAIN 解析 ~1.2s，均超默认 500ms 慢调用阈值），慢调用率
+            // 100% 会在第 1 次失败就开闸，抢在失败阈值之前。
+            .slow_call_duration_threshold(Duration::from_secs(3600))
+            .slow_call_rate_threshold(f64::INFINITY),
+    ));
 
-    // 故障阶段：真实连接拒绝（dead端口，无任何监听者）连续 3 次
-    let dead_remote = BackendRemote::new("http://127.0.0.1:1", "api-key", Duration::from_secs(5))
-        .unwrap()
-        .with_circuit_breaker(breaker.clone());
+    // 故障阶段：真实网络层失败（RFC 2606 保留 TLD，保证 NXDOMAIN）连续 3 次。
+    // 勿用「未监听端口号」模拟：Docker Desktop 的 WSL 回环代理会对未绑定端口
+    // 返回 HTTP 503，使连接拒绝语义在本机开发环境不可靠（详见
+    // protocol::oauth2::tests::introspect_token_network_error_returns_network_error 注释）。
+    let dead_remote = BackendRemote::new(
+        "https://circuit-breaker-dead.invalid",
+        "api-key",
+        Duration::from_secs(5),
+    )
+    .unwrap()
+    .with_circuit_breaker(breaker.clone());
     for _ in 0..3 {
         let result = dead_remote.check_login("some-token").await;
         assert!(
@@ -745,15 +778,13 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
     // 半开探活以 check_login 的 Ok 结果计数（未知 token 业务层返回 Ok(false)，
     // 对熔断器是成功——login 属外网专用路由，内网端口按设计 404）。
     for i in 0..2 {
-        remote
-            .check_login("res-008-token")
+        check_login_relay_retry(&remote, "res-008-token")
             .await
             .unwrap_or_else(|e| panic!("第 {} 次探活应成功，实际: {e}", i + 1));
     }
     assert!(!breaker.is_open().await, "探活成功后熔断器应恢复关闭");
 
-    remote
-        .check_login("res-008-token")
+    check_login_relay_retry(&remote, "res-008-token")
         .await
         .expect("关闭后请求应正常");
 }
@@ -867,7 +898,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .post(format!("{}/api/v1/auth/login", external_url))
         .body("")
         .header("content-type", "application/json")
-        .send()
+        .send_relay_retry()
         .await
         .expect("空 body 请求失败");
     assert_is_4xx!(resp.status(), "空 body 应返回 4xx");
@@ -877,7 +908,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .post(format!("{}/api/v1/auth/login", external_url))
         .body("not json")
         .header("content-type", "application/json")
-        .send()
+        .send_relay_retry()
         .await
         .expect("非 JSON 请求失败");
     assert_is_4xx!(resp.status(), "非 JSON 字符串应返回 4xx");
@@ -886,7 +917,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({}))
-        .send()
+        .send_relay_retry()
         .await
         .expect("空 JSON 对象请求失败");
     assert_is_4xx!(resp.status(), "空 JSON 对象应返回 4xx");
@@ -895,7 +926,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({ "params": LoginParams::default() }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("缺 login_id 请求失败");
     assert_is_4xx!(resp.status(), "缺 login_id 字段应返回 4xx");
@@ -904,7 +935,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({ "login_id": 123, "params": LoginParams::default() }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("类型错误请求失败");
     assert_is_4xx!(resp.status(), "login_id 类型错误应返回 4xx");
@@ -916,7 +947,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .post(format!("{}/api/v1/auth/login", external_url))
         .body(null_byte_body)
         .header("content-type", "application/json")
-        .send()
+        .send_relay_retry()
         .await
         .expect("null 字节请求失败");
     let status = resp.status();
@@ -939,7 +970,7 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({}))
-        .send()
+        .send_relay_retry()
         .await
         .expect("无 token 字段请求失败");
     assert_is_4xx!(resp.status(), "check-login 缺 token 字段应返回 4xx");
@@ -963,7 +994,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
                 "login_id": "a".repeat(len),
                 "params": LoginParams::default()
             }))
-            .send()
+            .send_relay_retry()
             .await
             .unwrap_or_else(|e| panic!("login_id 长度 {} 请求失败: {}", len, e));
         assert_eq!(
@@ -989,7 +1020,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
             "login_id": "",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("空串请求失败");
     assert!(
@@ -1006,7 +1037,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
                 "login_id": "a".repeat(len),
                 "params": LoginParams::default()
             }))
-            .send()
+            .send_relay_retry()
             .await
             .unwrap_or_else(|e| panic!("login_id 长度 {} 请求失败: {}", len, e));
         let status = resp.status();
@@ -1040,7 +1071,7 @@ async fn acc_res_011_path_filter_isolation_and_audit_health_flow() {
     let resp = client
         .post(format!("{}/api/v1/auth/check-login", external_url))
         .json(&serde_json::json!({ "token": "any" }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("外部访问内网路径请求失败");
     assert_eq!(
@@ -1058,7 +1089,7 @@ async fn acc_res_011_path_filter_isolation_and_audit_health_flow() {
             "login_id": "user1",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("内网访问外网路径请求失败");
     assert_eq!(
@@ -1075,7 +1106,7 @@ async fn acc_res_011_path_filter_isolation_and_audit_health_flow() {
             "login_id": "audit-user",
             "params": LoginParams::default()
         }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("审计链路 login 请求失败");
     assert_eq!(
@@ -1093,7 +1124,7 @@ async fn acc_res_011_path_filter_isolation_and_audit_health_flow() {
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")
         .json(&serde_json::json!({ "token": token }))
-        .send()
+        .send_relay_retry()
         .await
         .expect("审计链路 check-login 请求失败");
     assert_eq!(
@@ -1109,7 +1140,7 @@ async fn acc_res_011_path_filter_isolation_and_audit_health_flow() {
     let resp = client
         .get(format!("{}/api/v1/auth/health", internal_url))
         .header("x-api-key", "test-key")
-        .send()
+        .send_relay_retry()
         .await
         .expect("health 请求失败");
     assert_eq!(
@@ -1134,7 +1165,7 @@ async fn acc_res_012_metrics_endpoint_serves_prometheus() {
     let resp = client
         .get(format!("{}/api/v1/metrics", internal_url))
         .header("x-api-key", "test-key")
-        .send()
+        .send_relay_retry()
         .await
         .expect("metrics 请求失败");
     assert_eq!(
