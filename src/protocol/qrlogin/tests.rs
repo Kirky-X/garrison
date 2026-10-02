@@ -548,3 +548,118 @@ mod app_context_event_tests {
         assert_eq!(rc.ip.as_deref(), Some("198.51.100.9"));
     }
 }
+
+// ========================================================================
+// Debug 脱敏 / 设备标签解析 / poll 防御分支
+// ========================================================================
+
+/// Debug 输出脱敏：secret 与 HMAC 密钥不得进 Debug（CWE-532）。
+#[test]
+fn debug_redacts_secret_and_hmac_key() {
+    let secret = "test-secret-key-0123456789abcdef-0123456789abcdef";
+    let svc = QrLoginService::new(Arc::new(InMemoryDao::new()), secret).unwrap();
+    let s = format!("{svc:?}");
+    assert!(s.contains("[REDACTED]"), "secret 应脱敏: {s}");
+    assert!(!s.contains(secret), "Debug 不得包含 secret 原文: {s}");
+}
+
+/// scan 摘要的设备标签按 UA 解析：Edge 优先于 Chrome（特例序），未知 UA 兜底。
+#[tokio::test]
+async fn scan_device_label_parses_edge_firefox_safari_and_unknown() {
+    let cases: &[(&str, &str)] = &[
+        (
+            "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/126.0 Safari/537.36 Edg/126.0",
+            "Edge",
+        ),
+        ("Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 Firefox/127.0", "Firefox"),
+        ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", "Safari"),
+        ("curl/8.5.0", "Unknown device"),
+    ];
+    for (ua, expected) in cases {
+        let svc = service();
+        let ctx = QrLoginWebContext {
+            ip: None,
+            user_agent: Some((*ua).to_string()),
+            created_at_ms: 1_725_000_000_000,
+        };
+        let created = svc.create_session(ctx).await.unwrap();
+        let view = svc.scan(&created.qr_content, "user-1", None).await.unwrap();
+        assert_eq!(
+            view.web_device_label, *expected,
+            "UA「{ua}」应解析为 {expected}"
+        );
+    }
+}
+
+/// scan 摘要：无 UA（None）时设备标签为 Unknown device。
+#[tokio::test]
+async fn scan_device_label_without_user_agent_is_unknown() {
+    let svc = service();
+    let ctx = QrLoginWebContext {
+        ip: None,
+        user_agent: None,
+        created_at_ms: 1_725_000_000_000,
+    };
+    let created = svc.create_session(ctx).await.unwrap();
+    let view = svc.scan(&created.qr_content, "user-1", None).await.unwrap();
+    assert_eq!(view.web_device_label, "Unknown device");
+}
+
+/// poll：非 hex 形态的 qr_id / bind_token 直接 Expired（票据不得成为 DAO 键）。
+#[tokio::test]
+async fn poll_rejects_non_hex_ticket_shapes() {
+    let svc = service();
+    assert_eq!(
+        svc.poll("short", "also-not-hex").await.unwrap(),
+        QrLoginPollOutcome::Expired,
+        "非 64-hex 形态应直接 Expired"
+    );
+    let long_non_hex = "z".repeat(64);
+    assert_eq!(
+        svc.poll(&long_non_hex, &long_non_hex).await.unwrap(),
+        QrLoginPollOutcome::Expired
+    );
+}
+
+/// poll：未知会话（64-hex 形态但不存在）返回 Expired，而非 panic / 内部错误。
+#[tokio::test]
+async fn poll_unknown_session_returns_expired() {
+    let svc = service();
+    let hex64 = "a".repeat(64);
+    assert_eq!(
+        svc.poll(&hex64, &hex64).await.unwrap(),
+        QrLoginPollOutcome::Expired
+    );
+}
+
+/// poll：bind_token 第二票不匹配（匿名端拿到他人 qr_id）一律 Expired，
+/// 覆盖 Pending / Scanned / Cancelled 三态的错误票分支。
+#[tokio::test]
+async fn poll_with_wrong_bind_token_returns_expired_in_each_state() {
+    // Pending 态：错票 → Expired
+    let svc = service();
+    let created = svc.create_session(web_context()).await.unwrap();
+    let wrong_bind = "b".repeat(64);
+    assert_eq!(
+        svc.poll(&created.qr_id, &wrong_bind).await.unwrap(),
+        QrLoginPollOutcome::Expired,
+        "Pending 怕错票应 Expired"
+    );
+
+    // Scanned 态：错票 → Expired
+    let view = svc.scan(&created.qr_content, "user-1", None).await.unwrap();
+    assert_eq!(
+        svc.poll(&created.qr_id, &wrong_bind).await.unwrap(),
+        QrLoginPollOutcome::Expired
+    );
+    assert!(!view.confirm_token.is_empty());
+
+    // Cancelled 态：错票 → Expired
+    svc.confirm(&view.confirm_token, "user-1", QrLoginAction::Cancel, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        svc.poll(&created.qr_id, &wrong_bind).await.unwrap(),
+        QrLoginPollOutcome::Expired
+    );
+}

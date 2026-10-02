@@ -2653,3 +2653,72 @@ mod tests {
         assert!(code1.len() >= 43); // 32 bytes → 43 base64url chars
     }
 }
+
+// === prompt 解析 / 错误构造 / 租户回退 单测 ===
+#[cfg(test)]
+mod prompt_and_error_tests {
+    use super::*;
+
+    fn make_req(prompt: Option<&str>) -> AuthorizeRequest {
+        AuthorizeRequest {
+            response_type: "code".into(),
+            client_id: "c1".into(),
+            redirect_uri: "https://app.example.com/cb".into(),
+            scope: Some("read".into()),
+            state: Some("xyz".into()),
+            code_challenge: "challenge-001".into(),
+            code_challenge_method: "S256".into(),
+            prompt: prompt.map(str::to_string),
+        }
+    }
+
+    /// prompt 缺省/未知值 → 默认流程；none/login 及别名、空白容忍各归其位。
+    #[test]
+    fn prompt_hint_parses_none_login_and_alias() {
+        assert_eq!(
+            make_req(None).prompt_hint(),
+            AuthorizePrompt::None,
+            "缺省 → 默认流程"
+        );
+        assert_eq!(
+            make_req(Some("none")).prompt_hint(),
+            AuthorizePrompt::NoInteraction
+        );
+        assert_eq!(
+            make_req(Some("login")).prompt_hint(),
+            AuthorizePrompt::ForceLogin
+        );
+        assert_eq!(
+            make_req(Some("consent")).prompt_hint(),
+            AuthorizePrompt::None,
+            "未知值 → 默认流程"
+        );
+        assert_eq!(
+            make_req(Some("  login  ")).prompt_hint(),
+            AuthorizePrompt::ForceLogin,
+            "值应先 trim 再匹配"
+        );
+    }
+
+    /// ticket 失效 / prompt=none 交互禁止的错误构造使用稳定 OAuth2 错误码。
+    #[test]
+    fn ticket_and_interaction_errors_use_stable_oauth2_codes() {
+        let err = ticket_invalid_error();
+        assert!(
+            matches!(&err, GarrisonError::OAuth2(m) if m.contains("ticket-invalid-or-expired")),
+            "ticket 失效应报稳定的 OAuth2 错误码，实际: {err:?}"
+        );
+        let err = interaction_required_error();
+        assert!(
+            matches!(&err, GarrisonError::OAuth2(m) if m.contains("interaction-required")),
+            "prompt=none 交互禁止应报 interaction-required，实际: {err:?}"
+        );
+    }
+
+    /// 无租户上下文时 current_tenant_id_with_warn 回退默认租户 0（fail-visible 语义）。
+    #[tokio::test]
+    async fn current_tenant_falls_back_to_zero_without_context() {
+        // 本测试运行于独立 tokio worker，无 task_local 上下文注入 → 走 None 分支
+        assert_eq!(current_tenant_id_with_warn(), 0);
+    }
+}

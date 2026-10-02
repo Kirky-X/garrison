@@ -886,4 +886,75 @@ dzWfBsm+KAfTJuqbV7VnJL3G
         assert!(!json.contains("private"), "JWK 不得含私钥字段");
         assert!(json.contains("\"use\":\"sig\"") && json.contains("\"kid\":"));
     }
+
+    // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+    const TEST_EC_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgHu89Emnr1D+OpkZF
+T2f/jZRjQNl9Q6AyVEnsI2rH+tihRANCAARSS8Qlg3TwbmWk6ICPdeHxy/X0LARI
+FTcfYH6rUSsxJH2JD7Adnx1iw7UhnOZXVf8YOnDrqaXJkQcXNWPSUBqA
+-----END PRIVATE KEY-----
+";
+
+    // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+    const TEST_ED_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MC4CAQAwBQYDK2VwBCIEIOChr1YQD9KWBWWGBLFFjHQiHx9+OznRi69Gh25Uhv8H
+-----END PRIVATE KEY-----
+";
+
+    // ========================================================================
+    // build_jwk_set：三算法 JWK 构建 + 对称/非法输入拒绝
+    // ========================================================================
+
+    /// ES256：EC PEM → kty=EC、crv=P-256、x/y 齐备且无私钥成分。
+    #[test]
+    fn build_jwk_set_ec_produces_ec_key() {
+        let doc = build_jwk_set("ES256", TEST_EC_PEM).unwrap();
+        assert_eq!(doc.keys.len(), 1);
+        let k = &doc.keys[0];
+        assert_eq!(k.kty, "EC");
+        assert_eq!(k.alg, "ES256");
+        assert_eq!(k.crv.as_deref(), Some("P-256"));
+        assert!(k.x.is_some() && k.y.is_some(), "EC JWK 应含 x/y");
+        assert!(k.n.is_none() && k.e.is_none(), "EC JWK 不得含 RSA 成分");
+        assert!(!k.kid.is_empty(), "kid 应为 RFC 7638 thumbprint");
+    }
+
+    /// EdDSA：Ed25519 PEM → kty=OKP、crv=Ed25519、仅 x 成分。
+    #[test]
+    fn build_jwk_set_ed_produces_okp_key() {
+        let doc = build_jwk_set("EdDSA", TEST_ED_PEM).unwrap();
+        assert_eq!(doc.keys.len(), 1);
+        let k = &doc.keys[0];
+        assert_eq!(k.kty, "OKP");
+        assert_eq!(k.alg, "EdDSA");
+        assert_eq!(k.crv.as_deref(), Some("Ed25519"));
+        assert!(k.x.is_some(), "OKP JWK 应含 x");
+        assert!(k.n.is_none() && k.e.is_none() && k.y.is_none());
+    }
+
+    /// RS256：RSA PEM → kty=RSA、n/e 齐备（回归保护，对齐既有测试口径）。
+    #[test]
+    fn build_jwk_set_rsa_produces_rsa_key() {
+        let doc = build_jwk_set("RS256", TEST_RSA_PEM).unwrap();
+        assert_eq!(doc.keys.len(), 1);
+        let k = &doc.keys[0];
+        assert_eq!(k.kty, "RSA");
+        assert!(k.n.is_some() && k.e.is_some(), "RSA JWK 应含 n/e");
+    }
+
+    /// 对称算法无可公开成分 → 构造期 fail-closed 报错（端点层 404 前置）。
+    #[test]
+    fn build_jwk_set_rejects_symmetric_algorithm() {
+        let err = build_jwk_set("HS256", TEST_RSA_PEM).unwrap_err();
+        assert!(
+            matches!(err, GarrisonError::Config(ref m) if m.contains("jwt-jwks-unsupported-alg")),
+            "HS256 应报 jwt-jwks-unsupported-alg，实际: {err:?}"
+        );
+    }
+
+    /// 非法 PEM → 构造期报错（不产半成品 JWK Set）。
+    #[test]
+    fn build_jwk_set_rejects_invalid_pem() {
+        assert!(build_jwk_set("RS256", "not-a-pem").is_err());
+    }
 }

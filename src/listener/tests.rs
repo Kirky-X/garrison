@@ -941,3 +941,415 @@ mod dispatch_tiers {
         );
     }
 }
+
+// ========================================================================
+// GarrisonEvent 手动 Debug 脱敏（CWE-532 双保险）逐变体测试
+// ========================================================================
+//
+// `GarrisonEvent` 的 `Debug` 为手动实现：token 类字段经
+// `redact_secret_for_debug` 脱敏（>8 字节留前 8 字节 + `***`，其余整体
+// `***`），login_id / reason / device / ip 等排障关联字段保留明文。
+// 以下逐变体验证：敏感字段在 `{:?}` 输出中被掩码且不含明文尾部，
+// 非敏感字段仍可见（排障可关联）。
+
+/// 构造带 PII 上下文的公共断言：ip / user_agent 保留明文（文档承诺排障可见）。
+fn ctx() -> Option<RequestContext> {
+    Some(RequestContext {
+        ip: Some("203.0.113.7".to_string()),
+        user_agent: Some("ua-test".to_string()),
+    })
+}
+
+/// Logout：token 掩码，login_id 与 request_context 保留。
+#[test]
+fn debug_logout_masks_token_keeps_login_id() {
+    let event = GarrisonEvent::Logout {
+        login_id: "u-logout".to_string(),
+        token: "logout12-SECRET-TAIL".to_string(),
+        request_context: ctx(),
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("Logout"), "应含变体名: {s}");
+    assert!(s.contains("logout12***"), "token 应为前 8 字符掩码: {s}");
+    assert!(!s.contains("SECRET-TAIL"), "不得泄露 token 明文尾部: {s}");
+    assert!(s.contains("u-logout"), "login_id 应保留明文: {s}");
+    assert!(s.contains("203.0.113.7"), "request_context.ip 应保留: {s}");
+}
+
+/// Kickout：token 掩码，reason 保留。
+#[test]
+fn debug_kickout_masks_token_keeps_reason() {
+    let event = GarrisonEvent::Kickout {
+        login_id: "u-kick".to_string(),
+        token: "kickout1-SECRET-TAIL".to_string(),
+        reason: "admin_force".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("Kickout"), "应含变体名: {s}");
+    assert!(s.contains("kickout1***"), "token 应掩码: {s}");
+    assert!(!s.contains("SECRET-TAIL"), "不得泄露 token 明文: {s}");
+    assert!(s.contains("admin_force"), "reason 应保留明文: {s}");
+}
+
+/// PermissionCheck：无敏感字段，permission 明文保留。
+#[test]
+fn debug_permission_check_fields_visible() {
+    let event = GarrisonEvent::PermissionCheck {
+        login_id: "u-perm".to_string(),
+        permission: "doc:read".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("PermissionCheck"), "应含变体名: {s}");
+    assert!(s.contains("doc:read"), "permission 应保留明文: {s}");
+    assert!(s.contains("u-perm"), "login_id 应保留明文: {s}");
+}
+
+/// RoleCheck：无敏感字段，role 明文保留。
+#[test]
+fn debug_role_check_fields_visible() {
+    let event = GarrisonEvent::RoleCheck {
+        login_id: "u-role".to_string(),
+        role: "admin".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("RoleCheck"), "应含变体名: {s}");
+    assert!(s.contains("admin"), "role 应保留明文: {s}");
+}
+
+/// TokenExpired：token 掩码。
+#[test]
+fn debug_token_expired_masks_token() {
+    let event = GarrisonEvent::TokenExpired {
+        token: "expired-SECRET-TAIL".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("TokenExpired"), "应含变体名: {s}");
+    assert!(s.contains("expired-***"), "token 应掩码: {s}");
+    assert!(!s.contains("SECRET-TAIL"), "不得泄露 token 明文: {s}");
+}
+
+/// PasswordRehashed：无哈希载荷（载荷最小化），login_id 保留。
+#[test]
+fn debug_password_rehashed_fields_visible() {
+    let event = GarrisonEvent::PasswordRehashed {
+        login_id: "u-rehash".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("PasswordRehashed"), "应含变体名: {s}");
+    assert!(s.contains("u-rehash"), "login_id 应保留明文: {s}");
+}
+
+/// SocialLogin：provider / user_id / login_id 保留。
+#[test]
+fn debug_social_login_fields_visible() {
+    let event = GarrisonEvent::SocialLogin {
+        provider: "wechat".to_string(),
+        user_id: "wx-open-id".to_string(),
+        login_id: Some("u-social".to_string()),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("SocialLogin"), "应含变体名: {s}");
+    assert!(s.contains("wechat"), "provider 应保留: {s}");
+    assert!(s.contains("wx-open-id"), "user_id 应保留: {s}");
+    assert!(s.contains("u-social"), "login_id 应保留: {s}");
+}
+
+/// TenantSwitch：租户 ID 保留。
+#[test]
+fn debug_tenant_switch_fields_visible() {
+    let event = GarrisonEvent::TenantSwitch {
+        login_id: "u-tenant".to_string(),
+        from_tenant: 100,
+        to_tenant: 200,
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("TenantSwitch"), "应含变体名: {s}");
+    assert!(s.contains("100"), "from_tenant 应保留: {s}");
+    assert!(s.contains("200"), "to_tenant 应保留: {s}");
+}
+
+/// DeviceBlock：device 标识保留。
+#[test]
+fn debug_device_block_fields_visible() {
+    let event = GarrisonEvent::DeviceBlock {
+        login_id: "u-devblk".to_string(),
+        device: "device-A1".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("DeviceBlock"), "应含变体名: {s}");
+    assert!(s.contains("device-A1"), "device 应保留: {s}");
+}
+
+/// DeviceUnblock：device 标识保留。
+#[test]
+fn debug_device_unblock_fields_visible() {
+    let event = GarrisonEvent::DeviceUnblock {
+        login_id: "u-devunblk".to_string(),
+        device: "device-B2".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("DeviceUnblock"), "应含变体名: {s}");
+    assert!(s.contains("device-B2"), "device 应保留: {s}");
+}
+
+/// ConfigReload：配置版本号保留。
+#[test]
+fn debug_config_reload_fields_visible() {
+    let event = GarrisonEvent::ConfigReload {
+        config_version: 42,
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("ConfigReload"), "应含变体名: {s}");
+    assert!(s.contains("42"), "config_version 应保留: {s}");
+}
+
+/// Replaced：token 掩码，reason 保留。
+#[test]
+fn debug_replaced_masks_token_keeps_reason() {
+    let event = GarrisonEvent::Replaced {
+        login_id: "u-repl".to_string(),
+        token: "replaced-SECRET-TAIL".to_string(),
+        reason: "max_sessions".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("Replaced"), "应含变体名: {s}");
+    assert!(s.contains("replaced***"), "token 应掩码: {s}");
+    assert!(!s.contains("SECRET-TAIL"), "不得泄露 token 明文: {s}");
+    assert!(s.contains("max_sessions"), "reason 应保留: {s}");
+}
+
+/// AnomalousLoginDetected：login_id / reason / detail / timestamp 保留
+/// （仅 anomalous-detector-dual 特性下编译，与枚举变体同门控）。
+#[cfg(feature = "anomalous-detector-dual")]
+#[test]
+fn debug_anomalous_login_detected_fields_visible() {
+    let event = GarrisonEvent::AnomalousLoginDetected {
+        login_id: "u-anom".to_string(),
+        reason: "geo_jump".to_string(),
+        detail: serde_json::json!({"distance_km": 1200}),
+        timestamp: 1_700_000_000,
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("AnomalousLoginDetected"), "应含变体名: {s}");
+    assert!(s.contains("geo_jump"), "reason 应保留: {s}");
+    assert!(s.contains("1200"), "detail 应保留: {s}");
+    assert!(s.contains("1700000000"), "timestamp 应保留: {s}");
+}
+
+/// QrLoginCreated：qr_id 掩码（扫码会话 ID 即凭据）。
+#[test]
+fn debug_qrlogin_created_masks_qr_id() {
+    let event = GarrisonEvent::QrLoginCreated {
+        qr_id: "qrcreate-SECRET-TAIL".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("QrLoginCreated"), "应含变体名: {s}");
+    assert!(s.contains("qrcreate***"), "qr_id 应掩码: {s}");
+    assert!(!s.contains("SECRET-TAIL"), "不得泄露 qr_id 明文: {s}");
+}
+
+/// QrLoginScanned：qr_id 掩码，app_login_id 保留。
+#[test]
+fn debug_qrlogin_scanned_masks_qr_id() {
+    let event = GarrisonEvent::QrLoginScanned {
+        qr_id: "qrscan00-SECRET-TAIL".to_string(),
+        app_login_id: "u-scanner".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("QrLoginScanned"), "应含变体名: {s}");
+    assert!(s.contains("qrscan00***"), "qr_id 应掩码: {s}");
+    assert!(!s.contains("SECRET-TAIL"), "不得泄露 qr_id 明文: {s}");
+    assert!(s.contains("u-scanner"), "app_login_id 应保留: {s}");
+}
+
+/// QrLoginConfirmed：qr_id 掩码，app_login_id 保留。
+#[test]
+fn debug_qrlogin_confirmed_masks_qr_id() {
+    let event = GarrisonEvent::QrLoginConfirmed {
+        qr_id: "qrconf00-SECRET-TAIL".to_string(),
+        app_login_id: "u-confirmer".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("QrLoginConfirmed"), "应含变体名: {s}");
+    assert!(s.contains("qrconf00***"), "qr_id 应掩码: {s}");
+    assert!(!s.contains("SECRET-TAIL"), "不得泄露 qr_id 明文: {s}");
+    assert!(s.contains("u-confirmer"), "app_login_id 应保留: {s}");
+}
+
+/// QrLoginCancelled：qr_id 掩码，app_login_id 保留。
+#[test]
+fn debug_qrlogin_cancelled_masks_qr_id() {
+    let event = GarrisonEvent::QrLoginCancelled {
+        qr_id: "qrcancel-SECRET-TAIL".to_string(),
+        app_login_id: "u-canceller".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains("QrLoginCancelled"), "应含变体名: {s}");
+    assert!(s.contains("qrcancel***"), "qr_id 应掩码: {s}");
+    assert!(!s.contains("SECRET-TAIL"), "不得泄露 qr_id 明文: {s}");
+    assert!(s.contains("u-canceller"), "app_login_id 应保留: {s}");
+}
+
+// ========================================================================
+// redact_secret_for_debug 边界（Debug 脱敏共用原语）
+// ========================================================================
+
+/// Debug 脱敏原语与 mask_token_for_event 语义一致：9 字节截前 8 字节。
+#[test]
+fn redact_secret_for_debug_nine_bytes_gets_prefix_mask() {
+    let s = super::redact_secret_for_debug("123456789");
+    assert_eq!(s, "12345678***");
+}
+
+/// 恰 8 字节属短密钥：整体掩码，避免短密钥前缀即全量泄露。
+#[test]
+fn redact_secret_for_debug_eight_bytes_fully_masked() {
+    assert_eq!(super::redact_secret_for_debug("12345678"), "***");
+}
+
+/// 空 / 多字节边界：不 panic，短 token 整体掩码。
+#[test]
+fn redact_secret_for_debug_empty_and_multibyte_safe() {
+    assert_eq!(super::redact_secret_for_debug(""), "***");
+    // "日"=3 字节，8 字节边界落在多字节字符中间 → 退化为整体掩码
+    let masked = super::redact_secret_for_debug("日本語テスト");
+    assert_eq!(masked, "***", "char boundary 退化应整体掩码");
+}
+
+/// 短 token（<= 8 字符）在 Debug 输出中为整体 `***`，无前缀可猜测。
+#[test]
+fn debug_short_token_fully_masked_without_prefix() {
+    let event = GarrisonEvent::Logout {
+        login_id: "u-short".to_string(),
+        token: "abc".to_string(),
+        request_context: None,
+    };
+    let s = format!("{event:?}");
+    assert!(s.contains(r#"token: "***""#), "短 token 应整体掩码: {s}");
+    assert!(!s.contains("abc"), "短 token 不得出现任何明文: {s}");
+}
+
+// ========================================================================
+// listener panic 隔离（catch_unwind 降级）
+// ========================================================================
+
+mod panic_isolation {
+    use super::*;
+    use crate::error::GarrisonResult;
+    use async_trait::async_trait;
+    use std::sync::Arc;
+
+    /// 恒 panic 的 listener：验证 catch_unwind 降级不中断广播。
+    struct PanickyListener;
+
+    #[async_trait]
+    impl GarrisonListener for PanickyListener {
+        async fn on_event(&self, _event: &GarrisonEvent) -> GarrisonResult<()> {
+            panic!("listener-boom");
+        }
+    }
+
+    /// 运行时注册的事件记录 listener（验证 panic 后续 listener 仍收到事件）。
+    struct RecordingListener {
+        tags: parking_lot::Mutex<Vec<String>>,
+    }
+
+    impl RecordingListener {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                tags: parking_lot::Mutex::new(Vec::new()),
+            })
+        }
+
+        fn snapshot(&self) -> Vec<String> {
+            self.tags.lock().clone()
+        }
+    }
+
+    #[async_trait]
+    impl GarrisonListener for RecordingListener {
+        async fn on_event(&self, event: &GarrisonEvent) -> GarrisonResult<()> {
+            if let GarrisonEvent::Login { login_id, .. } = event {
+                self.tags.lock().push(format!("login:{login_id}"));
+            }
+            Ok(())
+        }
+    }
+
+    fn login_event(login_id: &str) -> GarrisonEvent {
+        GarrisonEvent::Login {
+            login_id: login_id.to_string(),
+            token: "T1".to_string(),
+            device: None,
+            request_context: None,
+        }
+    }
+
+    /// Scenario: OnCommit 档 listener panic。
+    /// WHEN manager 注册恒 panic listener（其后还有 Recording listener），
+    /// broadcast_after_commit([e])
+    /// THEN panic 被 catch_unwind 降级为 warn：该事件计入 failed，
+    /// 且后续 Recording listener 仍收到事件（panic 不中断派发链）。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn broadcast_after_commit_listener_panic_reported_and_isolated() {
+        let manager = GarrisonListenerManager::new();
+        let recorder = RecordingListener::new();
+        manager.register(Arc::new(PanickyListener));
+        manager.register(recorder.clone());
+
+        let outcome = manager
+            .broadcast_after_commit(&[login_event("panic-e1")])
+            .await;
+
+        assert_eq!(
+            outcome,
+            DispatchOutcome {
+                dispatched: 0,
+                failed: 1
+            },
+            "panic 的事件应计入 failed（审计链缺口显性化）"
+        );
+        assert_eq!(
+            recorder.snapshot(),
+            vec!["login:panic-e1".to_string()],
+            "listener panic 不应中断同事件后续 listener"
+        );
+    }
+
+    /// Scenario: Immediately 档 listener panic 不传播到广播方（不 panic、不中断）。
+    #[tokio::test(flavor = "multi_thread")]
+    #[serial]
+    async fn broadcast_listener_panic_does_not_propagate() {
+        reset_counters();
+        let manager = GarrisonListenerManager::new();
+        let recorder = RecordingListener::new();
+        manager.register(Arc::new(PanickyListener));
+        manager.register(recorder.clone());
+
+        // 不 panic 即为通过：Immediately 档单个 listener panic 被降级为 warn
+        manager.broadcast(&login_event("panic-e2")).await;
+
+        assert_eq!(
+            recorder.snapshot(),
+            vec!["login:panic-e2".to_string()],
+            "Immediately 档 panic 后续 listener 仍应收到事件"
+        );
+    }
+}

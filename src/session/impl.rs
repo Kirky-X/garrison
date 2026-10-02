@@ -2833,4 +2833,351 @@ mod tests {
         session.add_expiry_listener(Arc::new(NoopListener));
         assert_eq!(session.expiry_listeners.len(), 2);
     }
+
+    // ----------------------------------------------------------------
+    // TOCTOU 双重检查删除守卫：错误/并发分支
+    // ----------------------------------------------------------------
+
+    /// get 注入动作。
+    enum GetAction {
+        /// get 直接返回 Err（DAO 故障）。
+        Fail,
+        /// get 前先删除该 key（模拟并发删除）。
+        DeleteKey,
+        /// get 前把 value 覆写为损坏 JSON（模拟并发写坏）。
+        Rewrite(&'static str),
+    }
+
+    /// 按脚本注入 get 行为的 DAO 包装：对指定 key 第 n 次（含）起的 get 触发动作。
+    /// 用于在不引入真实并发的前提下，复现「外层读取后、守卫重读前」记录
+    /// 被并发修改/删除/读取失败的时间窗。
+    struct ScriptedDao {
+        inner: crate::dao::InMemoryDao,
+        /// (key, 剩余倒数, 动作)：该 key 每被 get 一次倒数减一，归零即触发并移除。
+        /// 仅统计注册（arm）之后的调用，种子构造期的读取不计入。
+        on_get: parking_lot::Mutex<Vec<(String, u64, GetAction)>>,
+        /// 对这些 key 的 delete 返回 Err（注入删除失败）。
+        fail_delete_keys: parking_lot::Mutex<Vec<String>>,
+    }
+
+    impl ScriptedDao {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                inner: crate::dao::InMemoryDao::new(),
+                on_get: parking_lot::Mutex::new(Vec::new()),
+                fail_delete_keys: parking_lot::Mutex::new(Vec::new()),
+            })
+        }
+
+        /// 注册注入动作：arm 后该 key 第 n 次 get 触发（n=2 → 外层读取后、守卫重读时）。
+        fn on_get_nth(&self, key: String, n: u64, action: GetAction) {
+            assert!(n >= 1);
+            self.on_get.lock().push((key, n, action));
+        }
+
+        /// 注入 delete 失败。
+        fn fail_delete_on(&self, key: String) {
+            self.fail_delete_keys.lock().push(key);
+        }
+
+        /// 倒数递减：本次 get 是否应触发动作（归零即触发并移除，一次性）。
+        fn take_action(&self, key: &str) -> Option<GetAction> {
+            let mut script = self.on_get.lock();
+            let idx = script.iter().position(|(k, _, _)| k == key)?;
+            let entry = &mut script[idx];
+            if entry.1 > 1 {
+                entry.1 -= 1;
+                return None;
+            }
+            Some(script.remove(idx).2)
+        }
+    }
+
+    #[async_trait]
+    impl crate::dao::GarrisonDao for ScriptedDao {
+        async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
+            match self.take_action(key) {
+                Some(GetAction::Fail) => {
+                    return Err(GarrisonError::Dao("scripted get error".to_string()));
+                },
+                Some(GetAction::DeleteKey) => {
+                    self.inner.delete(key).await?;
+                    return Ok(None);
+                },
+                Some(GetAction::Rewrite(v)) => {
+                    self.inner.update(key, v).await?;
+                },
+                None => {},
+            }
+            self.inner.get(key).await
+        }
+
+        async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
+            self.inner.set(key, value, ttl_seconds).await
+        }
+
+        async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
+            self.inner.update(key, value).await
+        }
+
+        async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
+            self.inner.expire(key, seconds).await
+        }
+
+        async fn delete(&self, key: &str) -> GarrisonResult<()> {
+            if self.fail_delete_keys.lock().iter().any(|k| k == key) {
+                return Err(GarrisonError::Dao("scripted delete error".to_string()));
+            }
+            self.inner.delete(key).await
+        }
+
+        async fn set_if_absent(
+            &self,
+            key: &str,
+            value: &str,
+            ttl_seconds: u64,
+        ) -> GarrisonResult<bool> {
+            self.inner.set_if_absent(key, value, ttl_seconds).await
+        }
+
+        async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
+            self.inner.rename(old_key, new_key).await
+        }
+
+        async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
+            self.inner.get_and_delete(key).await
+        }
+
+        async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
+            self.inner.incr(key, ttl_seconds).await
+        }
+
+        async fn decr(&self, key: &str) -> GarrisonResult<u64> {
+            self.inner.decr(key).await
+        }
+
+        async fn compare_and_swap(
+            &self,
+            key: &str,
+            expected: Option<&str>,
+            new_value: &str,
+            ttl_seconds: u64,
+        ) -> GarrisonResult<bool> {
+            self.inner
+                .compare_and_swap(key, expected, new_value, ttl_seconds)
+                .await
+        }
+    }
+
+    /// 辅助：造一个已过期的 Token-Session（timeout=3600，last_active 回拨 7200s）。
+    async fn seed_expired_token_session(dao: &Arc<ScriptedDao>, token: &str) -> GarrisonSession {
+        let session = GarrisonSession::new(dao.clone(), 3600, 86400, 0);
+        session
+            .create_token_session("u-toctou", token, &crate::stp::LoginParams::default())
+            .await
+            .unwrap();
+        ts_set_last_active(&session, token, Utc::now().timestamp() - 7_200).await;
+        session
+    }
+
+    /// 辅助：造一个已过期的 Account-Session（active_timeout=3600，回拨 7200s）。
+    async fn seed_expired_account_session(
+        dao: &Arc<ScriptedDao>,
+        login_id: &str,
+    ) -> GarrisonSession {
+        let session = GarrisonSession::new(dao.clone(), 3600, 3600, 0);
+        session
+            .create_token_session(login_id, "acct-tok-1", &crate::stp::LoginParams::default())
+            .await
+            .unwrap();
+        let mut acct = session
+            .get_account_session(login_id)
+            .await
+            .unwrap()
+            .unwrap();
+        acct.last_active_at = Utc::now().timestamp() - 7_200;
+        let json = serde_json::to_string(&acct).unwrap();
+        session
+            .dao
+            .set(&account_key(login_id), &json, 7200)
+            .await
+            .unwrap();
+        session
+    }
+
+    /// 守卫重读失败（DAO Err）→ 记录不删、仅 warn，外层仍返回 None。
+    #[tokio::test]
+    async fn token_guard_reread_error_keeps_record() {
+        let dao = ScriptedDao::new();
+        let session = seed_expired_token_session(&dao, "guard-err-tok").await;
+        dao.on_get_nth(token_key("guard-err-tok"), 2, GetAction::Fail);
+        let live = session.get_token_session("guard-err-tok").await.unwrap();
+        assert!(live.is_none(), "过期会话对外仍应不可见");
+        let stored = dao.inner.get(&token_key("guard-err-tok")).await.unwrap();
+        assert!(
+            stored.is_some(),
+            "守卫重读失败时不得误删记录（TOCTOU 保守侧）"
+        );
+    }
+
+    /// 守卫重读发现记录已被并发删除 → 直接返回，不重复删除。
+    #[tokio::test]
+    async fn token_guard_reread_missing_is_noop() {
+        let dao = ScriptedDao::new();
+        let session = seed_expired_token_session(&dao, "guard-gone-tok").await;
+        dao.on_get_nth(token_key("guard-gone-tok"), 2, GetAction::DeleteKey);
+        let live = session.get_token_session("guard-gone-tok").await.unwrap();
+        assert!(live.is_none());
+        let stored = dao.inner.get(&token_key("guard-gone-tok")).await.unwrap();
+        assert!(stored.is_none(), "并发已删的记录应保持已删");
+    }
+
+    /// 守卫重读发现记录损坏 → 交由读取路径报错逻辑处理，不删除。
+    #[tokio::test]
+    async fn token_guard_reread_corrupt_keeps_record() {
+        let dao = ScriptedDao::new();
+        let session = seed_expired_token_session(&dao, "guard-corrupt-tok").await;
+        dao.on_get_nth(
+            token_key("guard-corrupt-tok"),
+            2,
+            GetAction::Rewrite("{{{corrupt"),
+        );
+        let live = session
+            .get_token_session("guard-corrupt-tok")
+            .await
+            .unwrap();
+        assert!(live.is_none());
+        let stored = dao
+            .inner
+            .get(&token_key("guard-corrupt-tok"))
+            .await
+            .unwrap();
+        assert!(stored.is_some(), "损坏记录不由守卫处理（保守侧，不删）");
+    }
+
+    /// 守卫确认仍过期后删除失败 → warn 不 panic，记录保留（可重试语义）。
+    #[tokio::test]
+    async fn token_guard_delete_error_keeps_record() {
+        let dao = ScriptedDao::new();
+        dao.fail_delete_on(token_key("guard-del-err-tok"));
+        let session = seed_expired_token_session(&dao, "guard-del-err-tok").await;
+        let live = session
+            .get_token_session("guard-del-err-tok")
+            .await
+            .unwrap();
+        assert!(live.is_none());
+        let stored = dao
+            .inner
+            .get(&token_key("guard-del-err-tok"))
+            .await
+            .unwrap();
+        assert!(stored.is_some(), "删除失败时记录保留，等待下次清理");
+    }
+
+    /// Account-Session 守卫：重读失败（DAO Err）→ 不误删。
+    #[tokio::test]
+    async fn account_guard_reread_error_keeps_record() {
+        let dao = ScriptedDao::new();
+        let session = seed_expired_account_session(&dao, "acct-guard-err").await;
+        dao.on_get_nth(account_key("acct-guard-err"), 2, GetAction::Fail);
+        let live = session.get_account_session("acct-guard-err").await.unwrap();
+        assert!(live.is_none(), "过期账号会话对外不可见");
+        let stored = dao.inner.get(&account_key("acct-guard-err")).await.unwrap();
+        assert!(stored.is_some(), "守卫重读失败时不得误删 Account-Session");
+    }
+
+    /// Account-Session 守卫：重读发现并发已删 → no-op。
+    #[tokio::test]
+    async fn account_guard_reread_missing_is_noop() {
+        let dao = ScriptedDao::new();
+        let session = seed_expired_account_session(&dao, "acct-guard-gone").await;
+        dao.on_get_nth(account_key("acct-guard-gone"), 2, GetAction::DeleteKey);
+        let live = session
+            .get_account_session("acct-guard-gone")
+            .await
+            .unwrap();
+        assert!(live.is_none());
+        let stored = dao
+            .inner
+            .get(&account_key("acct-guard-gone"))
+            .await
+            .unwrap();
+        assert!(stored.is_none(), "并发已删的 Account-Session 应保持已删");
+    }
+
+    /// Account-Session 守卫：重读发现损坏记录 → 不删，交由读取路径报错。
+    #[tokio::test]
+    async fn account_guard_reread_corrupt_keeps_record() {
+        let dao = ScriptedDao::new();
+        let session = seed_expired_account_session(&dao, "acct-guard-corrupt").await;
+        dao.on_get_nth(
+            account_key("acct-guard-corrupt"),
+            2,
+            GetAction::Rewrite("nonsense-json"),
+        );
+        let live = session
+            .get_account_session("acct-guard-corrupt")
+            .await
+            .unwrap();
+        assert!(live.is_none());
+        let stored = dao
+            .inner
+            .get(&account_key("acct-guard-corrupt"))
+            .await
+            .unwrap();
+        assert!(stored.is_some(), "损坏的 Account-Session 不由守卫删除");
+    }
+
+    /// Account-Session 守卫：确认仍过期后删除失败 → warn 保留。
+    #[tokio::test]
+    async fn account_guard_delete_error_keeps_record() {
+        let dao = ScriptedDao::new();
+        dao.fail_delete_on(account_key("acct-guard-del-err"));
+        let session = seed_expired_account_session(&dao, "acct-guard-del-err").await;
+        let live = session
+            .get_account_session("acct-guard-del-err")
+            .await
+            .unwrap();
+        assert!(live.is_none());
+        let stored = dao
+            .inner
+            .get(&account_key("acct-guard-del-err"))
+            .await
+            .unwrap();
+        assert!(stored.is_some(), "删除失败时 Account-Session 保留");
+    }
+
+    /// get_token_session_with_ttl：存储值损坏 → 返回反序列化错误（带稳定前缀）。
+    #[tokio::test]
+    async fn get_token_session_with_ttl_corrupt_value_errors() {
+        let (dao, session) = make_session(3600, 86400);
+        dao.set(&token_key("corrupt-ttl-tok"), "{{{not-json", 3600)
+            .await
+            .unwrap();
+        let err = match session.get_token_session_with_ttl("corrupt-ttl-tok").await {
+            Err(e) => e,
+            Ok(v) => panic!("损坏值应报错，实际: {v:?}"),
+        };
+        assert!(
+            matches!(&err, GarrisonError::Session(m) if m.contains("session-sim-token-deserialize")),
+            "应报 session-sim-token-deserialize，实际: {err:?}"
+        );
+    }
+
+    /// get_account_session：存储值损坏 → 返回反序列化错误（带稳定前缀）。
+    #[tokio::test]
+    async fn get_account_session_corrupt_value_errors() {
+        let (dao, session) = make_session(3600, 86400);
+        dao.set(&account_key("acct-corrupt"), "{{{not-json", 86400)
+            .await
+            .unwrap();
+        let err = match session.get_account_session("acct-corrupt").await {
+            Err(e) => e,
+            Ok(v) => panic!("损坏值应报错，实际: {v:?}"),
+        };
+        assert!(
+            matches!(&err, GarrisonError::Session(m) if m.contains("session-sim-account-deserialize")),
+            "应报 session-sim-account-deserialize，实际: {err:?}"
+        );
+    }
 }

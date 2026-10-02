@@ -832,3 +832,148 @@ async fn correct_code_after_max_attempts_still_rejected() {
         result
     );
 }
+
+// ========================================================================
+// 发送失败清理 & unverified incr 失败回滚（防残留可用验证码）
+// ========================================================================
+
+/// 恒失败的 SmsSender：模拟上游短信网关故障。
+struct FailingSmsSender;
+
+#[async_trait]
+impl SmsSender for FailingSmsSender {
+    async fn send(&self, _phone: &str, _code: &str) -> GarrisonResult<()> {
+        Err(GarrisonError::Internal("gateway-down".to_string()))
+    }
+}
+
+/// 发送失败：原始错误保留，且已写入的验证码被删除（防发送失败后验证码仍可验证）。
+#[tokio::test]
+async fn send_failure_cleans_stored_code_and_keeps_original_error() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let service = SmsVerificationService::new(
+        SmsRateLimiter::new(dao.clone(), 5, 10),
+        Arc::new(FailingSmsSender),
+        dao.clone(),
+        3,
+        100,
+    );
+    let result = service.send_code("13800138010").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Internal(m)) if m == "gateway-down"),
+        "应保留原始发送错误，实际: {:?}",
+        result
+    );
+    // 验证码必须被清理：同码验证应返回 not found 而非成功
+    let code = "123456";
+    let verify = service.verify_code("13800138010", code).await;
+    assert!(
+        matches!(&verify, Err(GarrisonError::SmsCodeNotFound)),
+        "发送失败后验证码不应可验证（已清理），实际: {:?}",
+        verify
+    );
+}
+
+/// 仅对 `sms:unverified:` 前缀注入 incr 失败的 DAO：
+/// 验证「未验证计数递增失败 → 回滚限速计数 + 删除已存验证码 + 保留原始错误」。
+struct UnverifiedIncrFaultDao {
+    inner: MockDao,
+}
+
+#[async_trait]
+impl GarrisonDao for UnverifiedIncrFaultDao {
+    async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
+        self.inner.get(key).await
+    }
+
+    async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
+        self.inner.set(key, value, ttl_seconds).await
+    }
+
+    async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
+        self.inner.update(key, value).await
+    }
+
+    async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
+        self.inner.expire(key, seconds).await
+    }
+
+    async fn delete(&self, key: &str) -> GarrisonResult<()> {
+        self.inner.delete(key).await
+    }
+
+    async fn set_if_absent(
+        &self,
+        key: &str,
+        value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        self.inner.set_if_absent(key, value, ttl_seconds).await
+    }
+
+    async fn rename(&self, old_key: &str, new_key: &str) -> GarrisonResult<()> {
+        self.inner.rename(old_key, new_key).await
+    }
+
+    async fn get_and_delete(&self, key: &str) -> GarrisonResult<Option<String>> {
+        self.inner.get_and_delete(key).await
+    }
+
+    async fn keys(&self, pattern: &str) -> GarrisonResult<Vec<String>> {
+        self.inner.keys(pattern).await
+    }
+
+    async fn compare_and_swap(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        new_value: &str,
+        ttl_seconds: u64,
+    ) -> GarrisonResult<bool> {
+        self.inner
+            .compare_and_swap(key, expected, new_value, ttl_seconds)
+            .await
+    }
+
+    async fn incr(&self, key: &str, ttl_seconds: u64) -> GarrisonResult<u64> {
+        if key.starts_with("sms:unverified:") {
+            return Err(GarrisonError::Dao("unverified-incr-failed".to_string()));
+        }
+        self.inner.incr(key, ttl_seconds).await
+    }
+
+    async fn decr(&self, key: &str) -> GarrisonResult<u64> {
+        self.inner.decr(key).await
+    }
+}
+
+/// unverified incr 失败：错误上抛、已写验证码删除、限速计数回滚（不残留膨胀计数）。
+#[tokio::test]
+async fn unverified_incr_failure_rolls_back_limiter_and_code() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(UnverifiedIncrFaultDao {
+        inner: MockDao::new(),
+    });
+    let service = SmsVerificationService::new(
+        SmsRateLimiter::new(dao.clone(), 5, 10),
+        Arc::new(NoopSmsSender),
+        dao.clone(),
+        3,
+        100,
+    );
+    let result = service.send_code("13800138011").await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Dao(m)) if m == "unverified-incr-failed"),
+        "应保留 unverified incr 的原始错误，实际: {:?}",
+        result
+    );
+    // 已存验证码被删除
+    let code = dao.get("sms:code:13800138011").await.unwrap();
+    assert!(code.is_none(), "unverified incr 失败后验证码应被删除");
+    // 小时限速计数已回滚（不残留本次递增）
+    let hourly = window_counter_value(&dao, "13800138011", "hour").await;
+    assert!(
+        hourly.is_none() || hourly.as_deref() == Some("0"),
+        "限速计数应回滚，实际: {:?}",
+        hourly
+    );
+}

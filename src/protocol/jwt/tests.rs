@@ -1072,3 +1072,469 @@ fn sign_without_amr_omits_claims_and_still_verifies() {
     assert_eq!(claims.amr, None);
     assert_eq!(claims.auth_time, None);
 }
+
+// ============================================================================
+// JWKS 公钥导出（export_public_jwk_parts）与 from_algorithm_parts 构造分派
+// ============================================================================
+
+/// 测试专用 RSA 2048 私钥（PKCS#1 传统格式 PEM，仅用于单元测试，非真实凭证）。
+/// 覆盖 extract_rsa_public_components 的 PKCS#1 分支（`BEGIN RSA PRIVATE KEY`）。
+// nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+const TEST_RSA_PKCS1_PRIVATE_PEM: &str = "-----BEGIN RSA PRIVATE KEY-----
+MIIEpQIBAAKCAQEAx6M/FqpYLvQqKelZMKmfWuQXzOOoGcy8cP7LHV0W1I1qnx1v
+nYynQNItKsmZ6WZYkSQUjA0ZzBwfBtH9aJRPWJD4UqCuMXne2EJydtuNsYbNW1kl
+ypobLiPEak9BzjQDe/NO6WDsAP5N1MuB167bJhCXRNGkwpVUCVotUjk4m4Zr5EVu
+vp5JSKsMYK29n04Seb9+HvIpuV7wWr9LWGC3HcC2E+X83chGcBVx6i28oQPQszVE
+MnmjnLPPtu6iGNNBbs4b1oucUg7u4e/2sdwiYXx5XIAitvWoQpSRtDVSIl5V5fp8
+LbiuoPqy8aQX3aJNXYblqQXiQ2yx3OcmV3UyOwIDAQABAoIBABN0umpIEa4Jx64r
++rA+Z7Rg9FzYdwKErHzKqBrlfpsaaSC2qrENCyPLF/HKkgBoJAuJG6OGh1QYDYIJ
+pwuxIIZ+ImVTGYbi3K/w0dz5iraZb5wOdRtop2t4uuStcrlY4loLHU6rTnTOU+GA
+L9hIRz1Pcp6XW9pG2VjL/Ay+XODzLWNwdJU3ZwqQkF/8GbMs3bJ4OhzTYijDE+j7
+GmRIA79ZI55eqKZBr73vLy5VI63mGI/ktKW3Usfwqm/Ulp7Ox4l9t/RFkQHNtAVB
+1zHhhlNnfGC4w94Y8vFMhY/AU+fEJ08ChLaW4vxFIeuaFt29ZvcTBe22tyI6YSXN
++OQTCFkCgYEA/mWwNfeAdVT6XoJQKGxbZ1KHktDgiXYizgd4sWO0QpUdzDVoa372
+Qrdl9V6Fx13Js2pj3vTuJIlInuzrq4NIgCOXRsZun6hoqzAlZjg718n/XABOx4/c
+z5qrLJW29KShADHTFjDsi5KKt12ZqHWf507LQJQUr+FMXKwodlxMGCcCgYEAyOU8
+12SjFpvOs9vciIWxgFUx4jRRE1Se6GfBwbN8J+xxkxzOVMVLipxPkSqvsXvANVVu
+0EftWvOyR6fcd4zeT5ywgGlQR64mc6xtCUqpdjQDovu2CsFB7ZvJ20Sn0rm9Nicx
+ymMZ6XP/v0QyvQLAwdMsJzyY0sqZFUDQDgzhLc0CgYEAtYSFSNyC0jWCN/EvlMhM
+J9shVUapECw1BWEbYydLNb8EdfMdwKXkvRHzNDLvraNkChq9jBaj3Xn/UTanqceQ
+8a1zgVKRGGan2I4QAXHacUx2YoTtsUMbQR6RSMzCsKjPID5s6YabIbO8Or4Up7jW
+EcuNB1UhtaVCQVWtwVZ2DT0CgYEAicE/TgdxGZCvVX+eonLiezhwI0dyjMnKyVxU
+bUlxCkNEwfbPuSssmJiEqutVXGOaMjgp62JW7LYMerwtHkEXNAoisXsFlJFjRpBm
+mCd9OlOCZuEpPAi294KLEPLsDUBV8WtA5iG8Y+up4/KUxCy+FmqCbUlNFcXc4Mj3
+oZrNUcUCgYEA6Bi7enYoTbWCkSo0NtJ9gcXg5Yb+QQ/SJty7PFD8rKrCY0nTB52e
+Bd3jPAqUJiKPnNiN9aL8l+zmx4wLhsZBP2L1j1B/QEJjAHmWDeckdV8nPSbik9i7
+5dutLlFkZR4+7pAMV3WwVglnoPjR7HhvL9DCxweeSxBHvOhzEdtSx68=
+-----END RSA PRIVATE KEY-----
+";
+
+/// 测试专用 P-256 EC 私钥（PKCS#8，RFC 5915 结构**不含**内嵌公钥位串），
+/// 覆盖 extract_ec_public_sec1 的曲线 OID 分派 + P-256 标量乘法路径。
+// nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+const TEST_EC_NO_PUB_PEM: &str = "-----BEGIN PRIVATE KEY-----
+ME0CAQAwEwYHKoZIzj0CAQYIKoZIzj0DAQcEMzAxAgEBBCCi+olhcIeXdliGiFfC
+hhSoxgLJoyTjnNhg/4ZvBAAdAKAKBggqhkjOPQMBBw==
+-----END PRIVATE KEY-----
+";
+
+use base64::Engine as _;
+
+/// RSA PKCS#8 PEM：export_public_jwk_parts 返回 JWK 口径 (n, e)。
+#[test]
+fn export_public_jwk_rsa_pkcs8() {
+    let handler = JwtHandler::new("placeholder")
+        .with_rsa_private_pem(TEST_RSA_PRIVATE_PEM)
+        .unwrap();
+    let jwk = handler.export_public_jwk_parts().unwrap();
+    match jwk {
+        Some(JwkPublicKey::Rsa { n, e }) => {
+            assert_eq!(e, "AQAB", "RSA 公钥指数 65537 的 base64url 为 AQAB");
+            let n_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&n)
+                .expect("n 必须是合法 base64url");
+            assert_eq!(n_bytes.len(), 256, "RSA-2048 模数应为 256 字节");
+            assert!(
+                !n.contains('=') && !n.contains('+') && !n.contains('/'),
+                "JWK 口径必须 base64url 无 padding"
+            );
+        },
+        other => panic!("RSA 密钥应导出 Rsa JWK，实际: {other:?}"),
+    }
+}
+
+/// RSA PKCS#1 传统 PEM：`BEGIN RSA PRIVATE KEY` 分支同样可提取公钥组件。
+#[test]
+fn export_public_jwk_rsa_pkcs1_traditional() {
+    let handler = JwtHandler::new("placeholder")
+        .with_rsa_private_pem(TEST_RSA_PKCS1_PRIVATE_PEM)
+        .unwrap();
+    let jwk = handler.export_public_jwk_parts().unwrap();
+    match jwk {
+        Some(JwkPublicKey::Rsa { n, e }) => {
+            let n_bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(&n)
+                .expect("n 必须是合法 base64url");
+            assert_eq!(n_bytes.len(), 256, "RSA-2048 模数应为 256 字节");
+            assert_eq!(e, "AQAB");
+        },
+        other => panic!("PKCS#1 RSA 应导出 Rsa JWK，实际: {other:?}"),
+    }
+}
+
+/// EC P-256（PEM 内嵌公钥位串）：直接取用位串，x/y 各 32 字节、crv=P-256。
+#[test]
+fn export_public_jwk_ec_p256_embedded_pubkey() {
+    let handler = JwtHandler::new("placeholder")
+        .with_ec_pem(TEST_EC_PRIVATE_PEM)
+        .unwrap();
+    match handler.export_public_jwk_parts().unwrap() {
+        Some(JwkPublicKey::Ec { crv, x, y }) => {
+            assert_eq!(crv, "P-256");
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&x)
+                    .unwrap()
+                    .len(),
+                32,
+                "P-256 x 坐标应为 32 字节"
+            );
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&y)
+                    .unwrap()
+                    .len(),
+                32,
+                "P-256 y 坐标应为 32 字节"
+            );
+        },
+        other => panic!("EC P-256 应导出 Ec JWK，实际: {other:?}"),
+    }
+}
+
+/// EC P-256（RFC 5915 无内嵌公钥）：按曲线 OID 分派做标量乘法计算公钥点，
+/// 结果与内嵌路径同构（x/y 各 32 字节）。
+#[test]
+fn export_public_jwk_ec_p256_scalar_mult_when_pubkey_absent() {
+    let handler = JwtHandler::new("placeholder")
+        .with_ec_pem(TEST_EC_NO_PUB_PEM)
+        .unwrap();
+    match handler.export_public_jwk_parts().unwrap() {
+        Some(JwkPublicKey::Ec { crv, x, y }) => {
+            assert_eq!(crv, "P-256", "P-256 OID 应分派到 P-256 标量乘法");
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&x)
+                    .unwrap()
+                    .len(),
+                32
+            );
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&y)
+                    .unwrap()
+                    .len(),
+                32
+            );
+        },
+        other => panic!("无内嵌公钥的 EC 应经标量乘法导出 Ec JWK，实际: {other:?}"),
+    }
+}
+
+/// EC P-384：crv=P-384，x/y 各 48 字节。
+#[test]
+fn export_public_jwk_ec_p384_embedded_pubkey() {
+    let handler = JwtHandler::new("placeholder")
+        .with_ec_pem(TEST_EC_P384_PRIVATE_PEM)
+        .unwrap();
+    match handler.export_public_jwk_parts().unwrap() {
+        Some(JwkPublicKey::Ec { crv, x, y }) => {
+            assert_eq!(crv, "P-384");
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&x)
+                    .unwrap()
+                    .len(),
+                48,
+                "P-384 x 坐标应为 48 字节"
+            );
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&y)
+                    .unwrap()
+                    .len(),
+                48
+            );
+        },
+        other => panic!("EC P-384 应导出 Ec JWK，实际: {other:?}"),
+    }
+}
+
+/// Ed25519：导出 OKP 口径公钥 x（32 字节）。
+#[test]
+fn export_public_jwk_ed25519_okp() {
+    let handler = JwtHandler::new("placeholder")
+        .with_ed_pem(TEST_ED_PRIVATE_PEM)
+        .unwrap();
+    match handler.export_public_jwk_parts().unwrap() {
+        Some(JwkPublicKey::Okp { x }) => {
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&x)
+                    .unwrap()
+                    .len(),
+                32,
+                "Ed25519 公钥应为 32 字节"
+            );
+        },
+        other => panic!("Ed25519 应导出 Okp JWK，实际: {other:?}"),
+    }
+}
+
+/// 对称密钥（Hs）无可公开成分 → Ok(None)。
+#[test]
+fn export_public_jwk_hs_returns_none() {
+    let handler = JwtHandler::new("symmetric-secret");
+    assert!(handler.export_public_jwk_parts().unwrap().is_none());
+}
+
+/// KeyMaterial Debug 脱敏覆盖 EC / Ed 变体：输出 `<redacted>` 且无 PEM 原文。
+#[test]
+fn key_material_debug_redacts_ec_and_ed() {
+    let ec = JwtHandler::new("placeholder")
+        .with_ec_pem(TEST_EC_PRIVATE_PEM)
+        .unwrap();
+    let s = format!("{:?}", ec.key_material);
+    assert!(s.contains("EcPem(<redacted>"), "EC Debug 应脱敏: {s}");
+    assert!(!s.contains("MIGHAgEA"), "不得泄露 PEM 内容: {s}");
+
+    let ed = JwtHandler::new("placeholder")
+        .with_ed_pem(TEST_ED_PRIVATE_PEM)
+        .unwrap();
+    let s = format!("{:?}", ed.key_material);
+    assert!(s.contains("EdPem(<redacted>"), "Ed Debug 应脱敏: {s}");
+    assert!(!s.contains("MC4CAQ"), "不得泄露 PEM 内容: {s}");
+}
+
+/// from_algorithm_parts：config 白名单算法名全量分派（HS/RS/ES/Ed）。
+#[test]
+fn from_algorithm_parts_builds_each_algorithm() {
+    assert!(JwtHandler::from_algorithm_parts("HS256", "secret", None, None, None).is_ok());
+    assert!(JwtHandler::from_algorithm_parts("HS384", "secret", None, None, None).is_ok());
+    assert!(JwtHandler::from_algorithm_parts("HS512", "secret", None, None, None).is_ok());
+    assert!(JwtHandler::from_algorithm_parts(
+        "RS256",
+        "placeholder",
+        Some(TEST_RSA_PRIVATE_PEM),
+        None,
+        None
+    )
+    .is_ok());
+    assert!(JwtHandler::from_algorithm_parts(
+        "ES256",
+        "placeholder",
+        None,
+        Some(TEST_EC_PRIVATE_PEM),
+        None
+    )
+    .is_ok());
+    assert!(JwtHandler::from_algorithm_parts(
+        "EdDSA",
+        "placeholder",
+        None,
+        None,
+        Some(TEST_ED_PRIVATE_PEM)
+    )
+    .is_ok());
+}
+
+/// from_algorithm_parts：未知算法名 fail-fast（config-jwt-algorithm-unsupported）。
+#[test]
+fn from_algorithm_parts_rejects_unknown_algorithm() {
+    let err = match JwtHandler::from_algorithm_parts("HS1024", "secret", None, None, None) {
+        Err(e) => e,
+        Ok(_) => panic!("未知算法应被拒绝"),
+    };
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("config-jwt-algorithm-unsupported")),
+        "未知算法应报 config-jwt-algorithm-unsupported，实际: {err:?}"
+    );
+}
+
+/// from_algorithm_parts：非对称算法缺对应 PEM → 构造期报错（不静默回退 HS）。
+#[test]
+fn from_algorithm_parts_asymmetric_requires_pem() {
+    assert!(JwtHandler::from_algorithm_parts("RS256", "placeholder", None, None, None).is_err());
+    assert!(JwtHandler::from_algorithm_parts("ES256", "placeholder", None, None, None).is_err());
+    assert!(JwtHandler::from_algorithm_parts("EdDSA", "placeholder", None, None, None).is_err());
+}
+
+/// 过期 token verify → ExpiredSignature 映射为 GarrisonError::ExpiredToken
+/// （错误消息只含错误类别 + jwt-expired 前缀，不含 token 内容）。
+#[test]
+fn verify_expired_token_maps_to_expired_token_error() {
+    use crate::protocol::jwt::GarrisonJwtClaims;
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    let handler = JwtHandler::new("expired-token-secret-0123456789abcdef")
+        .try_with_algorithm(Algorithm::HS256)
+        .unwrap();
+    // sign 拒绝负 timeout（Config 校验），故手工签发一枚已过期 token：
+    // exp 在过去、nbf 更早（避免 nbf 误报抢在 exp 之前触发）
+    let now = chrono::Utc::now().timestamp();
+    let claims = GarrisonJwtClaims {
+        sub: "user-exp".to_string(),
+        iat: now - 7_200,
+        exp: now - 3_600,
+        login_id: "user-exp".to_string(),
+        device: None,
+        jti: Some("expired-jti".to_string()),
+        nbf: Some(now - 7_200),
+        amr: None,
+        auth_time: None,
+    };
+    let token = encode(
+        &Header::new(jsonwebtoken::Algorithm::HS256),
+        &claims,
+        &EncodingKey::from_secret("expired-token-secret-0123456789abcdef".as_bytes()),
+    )
+    .unwrap();
+    let err = handler.verify(&token).unwrap_err();
+    assert!(
+        matches!(err, GarrisonError::ExpiredToken(ref m) if m.contains("jwt-expired")),
+        "过期 token 应报 ExpiredToken(jwt-expired)，实际: {err:?}"
+    );
+}
+
+// ============================================================================
+// 覆盖收口：Debug(Hs) / 曲线分派 / sign_with_amr / 参数与密钥校验
+// ============================================================================
+
+/// 测试专用 P-384 EC 私钥（PKCS#8，RFC 5915 无内嵌公钥）——覆盖曲线 OID
+/// 分派后的 P-384 标量乘法路径。
+// nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
+const TEST_EC_P384_NO_PUB_PEM: &str = "-----BEGIN PRIVATE KEY-----
+MFcCAQAwEAYHKoZIzj0CAQYFK4EEACIEQDA+AgEBBDCrSR9PoTneWpSyQK4o7cZ9
+KOjYI78wO42PYSfhcB9CSltc9XIsGYxelq9j5ZyfZxOgBwYFK4EEACI=
+-----END PRIVATE KEY-----
+";
+
+/// Hs 变体的 Debug 输出为固定字面量（对称密钥不输出任何密钥材料）。
+#[test]
+fn key_material_debug_hs_variant() {
+    let handler = JwtHandler::new("hs-secret-0123456789abcdef-0123456789");
+    let s = format!("{:?}", handler.key_material);
+    assert_eq!(s, "KeyMaterial::Hs", "Hs Debug 应为固定字面量: {s}");
+}
+
+/// P-384 无内嵌公钥：经曲线 OID 分派做 P-384 标量乘法，坐标各 48 字节。
+#[test]
+fn export_public_jwk_ec_p384_scalar_mult_when_pubkey_absent() {
+    let handler = JwtHandler::new("placeholder")
+        .with_ec_pem(TEST_EC_P384_NO_PUB_PEM)
+        .unwrap();
+    match handler.export_public_jwk_parts().unwrap() {
+        Some(JwkPublicKey::Ec { crv, x, y }) => {
+            assert_eq!(crv, "P-384", "P-384 OID 应分派到 P-384 标量乘法");
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&x)
+                    .unwrap()
+                    .len(),
+                48
+            );
+            assert_eq!(
+                base64::engine::general_purpose::URL_SAFE_NO_PAD
+                    .decode(&y)
+                    .unwrap()
+                    .len(),
+                48
+            );
+        },
+        other => panic!("无内嵌公钥的 P-384 应经标量乘法导出 Ec JWK，实际: {other:?}"),
+    }
+}
+
+/// sign_with_amr：非对称密钥（RSA/EC/Ed）下携带 amr 账本签发并验回。
+#[test]
+fn sign_with_amr_works_for_asymmetric_materials() {
+    let rsa = JwtHandler::new("placeholder")
+        .with_rsa_private_pem(TEST_RSA_PRIVATE_PEM)
+        .unwrap()
+        .try_with_algorithm(Algorithm::RS256)
+        .unwrap();
+    let token = rsa
+        .sign_with_amr(
+            "user-amr",
+            3600,
+            &["pwd".to_string(), "otp".to_string()],
+            Some(1_700_000_000),
+        )
+        .unwrap();
+    assert_eq!(verify_ok(&rsa, &token).login_id, "user-amr");
+
+    let ec = JwtHandler::new("placeholder")
+        .with_ec_pem(TEST_EC_PRIVATE_PEM)
+        .unwrap()
+        .try_with_algorithm(Algorithm::ES256)
+        .unwrap();
+    let token = ec
+        .sign_with_amr("user-amr-ec", 3600, &["webauthn".to_string()], None)
+        .unwrap();
+    assert_eq!(verify_ok(&ec, &token).login_id, "user-amr-ec");
+
+    let ed = JwtHandler::new("placeholder")
+        .with_ed_pem(TEST_ED_PRIVATE_PEM)
+        .unwrap()
+        .try_with_algorithm(Algorithm::EdDSA)
+        .unwrap();
+    let token = ed
+        .sign_with_amr("user-amr-ed", 3600, &["pwd".to_string()], None)
+        .unwrap();
+    assert_eq!(verify_ok(&ed, &token).login_id, "user-amr-ed");
+}
+
+/// sign 负 timeout → fail-fast（jwt-timeout-negative），不产立即过期 token。
+#[test]
+fn sign_negative_timeout_rejected() {
+    let handler = JwtHandler::new("negative-timeout-secret-0123456789")
+        .try_with_algorithm(Algorithm::HS256)
+        .unwrap();
+    let err = match handler.sign("user-neg", -1) {
+        Err(e) => e,
+        Ok(t) => panic!("负 timeout 应被拒绝，实际签发: {t:?}"),
+    };
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("jwt-timeout-negative")),
+        "应报 jwt-timeout-negative，实际: {err:?}"
+    );
+}
+
+/// private_pem 访问器：非对称返回 PEM 原文（敏感，禁日志），Hs 返回 None。
+#[test]
+fn private_pem_accessors_per_material() {
+    let hs = JwtHandler::new("hs-secret-0123456789abcdef-0123456789");
+    assert!(hs.private_pem().is_none(), "Hs 无私钥 PEM");
+
+    let rsa = JwtHandler::new("placeholder")
+        .with_rsa_private_pem(TEST_RSA_PRIVATE_PEM)
+        .unwrap();
+    assert!(rsa.private_pem().unwrap().contains("BEGIN"));
+
+    let ec = JwtHandler::new("placeholder")
+        .with_ec_pem(TEST_EC_PRIVATE_PEM)
+        .unwrap();
+    assert!(ec.private_pem().unwrap().contains("BEGIN"));
+
+    let ed = JwtHandler::new("placeholder")
+        .with_ed_pem(TEST_ED_PRIVATE_PEM)
+        .unwrap();
+    assert!(ed.private_pem().unwrap().contains("BEGIN"));
+}
+
+/// 对称路径空密钥 sign → jwt-secret-empty（fail-fast）。
+#[test]
+fn sign_empty_secret_rejected() {
+    let handler = JwtHandler::new("");
+    let err = match handler.sign("user-empty", 3600) {
+        Err(e) => e,
+        Ok(t) => panic!("空密钥应被拒绝，实际签发: {t:?}"),
+    };
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("jwt-secret-empty")),
+        "应报 jwt-secret-empty，实际: {err:?}"
+    );
+}
+
+/// 对称路径过短密钥 sign → jwt-secret-too-short（含长度与下限）。
+#[test]
+fn sign_short_secret_rejected() {
+    let handler = JwtHandler::new("short-secret");
+    let err = match handler.sign("user-short", 3600) {
+        Err(e) => e,
+        Ok(t) => panic!("过短密钥应被拒绝，实际签发: {t:?}"),
+    };
+    assert!(
+        matches!(err, GarrisonError::Config(ref m) if m.contains("jwt-secret-too-short")),
+        "应报 jwt-secret-too-short，实际: {err:?}"
+    );
+}

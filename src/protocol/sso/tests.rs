@@ -323,3 +323,167 @@ async fn validate_ticket_client_id_mismatch_message_does_not_leak_ids() {
         other => panic!("期望 InvalidToken，实际: {:?}", other),
     }
 }
+
+// ========================================================================
+// DefaultSamlProvider：Destination / Audience 校验与 XML 解析分支
+// ========================================================================
+
+mod saml_provider_tests {
+    use super::*;
+    use crate::protocol::sso::saml::{DefaultSamlProvider, SamlProvider};
+
+    /// 构造 Destination/Audience 均匹配的 Response XML。
+    fn saml_xml(destination: &str, audience: &str) -> String {
+        let future = chrono::Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                Destination="{destination}">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <samlp:Status>
+    <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </samlp:Status>
+  <saml:Assertion ID="assertion-123">
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <saml:Subject>
+      <saml:NameID>user@example.com</saml:NameID>
+      <saml:SubjectConfirmation>
+        <saml:SubjectConfirmationData NotOnOrAfter="{future_str}"></saml:SubjectConfirmationData>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+    <saml:Conditions NotBefore="2020-01-01T00:00:00Z">
+      <saml:AudienceRestriction>
+        <saml:Audience>{audience}</saml:Audience>
+      </saml:AudienceRestriction>
+    </saml:Conditions>
+  </saml:Assertion>
+  <saml:Extensions><saml:VendorSpecific x="1"/></saml:Extensions>
+</samlp:Response>"#
+        )
+    }
+
+    /// Default trait 构造与 new 等价（构造不 panic 即为通过）。
+    #[test]
+    fn default_impl_constructs() {
+        let _provider = DefaultSamlProvider::default();
+    }
+
+    /// Destination 不匹配（expected 已配置）→ InvalidParam（fail-loud，防 open redirect）。
+    #[tokio::test]
+    async fn destination_mismatch_is_rejected_when_expected_configured() {
+        let provider = DefaultSamlProvider::new()
+            .unwrap()
+            .with_expected_destination("https://sp.example.com/acs".to_string());
+        let err = provider
+            .parse_response(&saml_xml(
+                "https://evil.example.com/acs",
+                "https://sp.example.com",
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, GarrisonError::InvalidParam(m) if m.contains("sso-saml-destination-mismatch")),
+            "Destination 不匹配应报 sso-saml-destination-mismatch，实际: {err:?}"
+        );
+    }
+
+    /// Destination 匹配（expected 已配置）→ 解析成功。
+    #[tokio::test]
+    async fn destination_match_passes_when_expected_configured() {
+        let provider = DefaultSamlProvider::new()
+            .unwrap()
+            .with_expected_destination("https://sp.example.com/acs".to_string());
+        let response = provider
+            .parse_response(&saml_xml(
+                "https://sp.example.com/acs",
+                "https://sp.example.com",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.destination, "https://sp.example.com/acs");
+    }
+
+    /// Audience 不匹配（expected 已配置）→ InvalidParam（防跨 SP 重放）。
+    #[tokio::test]
+    async fn audience_mismatch_is_rejected_when_expected_configured() {
+        let provider = DefaultSamlProvider::new()
+            .unwrap()
+            .with_expected_audience("https://sp.example.com".to_string());
+        let err = provider
+            .parse_response(&saml_xml(
+                "https://sp.example.com/acs",
+                "https://other-sp.example.com",
+            ))
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, GarrisonError::InvalidParam(m) if m.contains("sso-saml-audience-mismatch")),
+            "Audience 不匹配应报 sso-saml-audience-mismatch，实际: {err:?}"
+        );
+    }
+
+    /// Audience 匹配（expected 已配置）→ 解析成功。
+    #[tokio::test]
+    async fn audience_match_passes_when_expected_configured() {
+        let provider = DefaultSamlProvider::new()
+            .unwrap()
+            .with_expected_audience("https://sp.example.com".to_string());
+        let response = provider
+            .parse_response(&saml_xml(
+                "https://sp.example.com/acs",
+                "https://sp.example.com",
+            ))
+            .await
+            .unwrap();
+        assert!(
+            response.assertion.is_none(),
+            "无签名校验实现时 Assertion 剥离"
+        );
+    }
+
+    /// 同名 Attribute 携带多个 AttributeValue：解析出多条属性并触发
+    /// 重复属性告警分支（属性污染防御可见性）。
+    #[tokio::test]
+    async fn duplicate_attribute_names_are_all_collected() {
+        let future = chrono::Utc::now().timestamp() + 3600;
+        let future_str = chrono::DateTime::from_timestamp(future, 0)
+            .unwrap()
+            .to_rfc3339();
+        let xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <samlp:Status>
+    <samlp:StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/>
+  </samlp:Status>
+  <saml:Assertion ID="a1">
+    <saml:Issuer>https://idp.example.com</saml:Issuer>
+    <saml:Subject>
+      <saml:NameID>user@example.com</saml:NameID>
+      <saml:SubjectConfirmation>
+        <saml:SubjectConfirmationData NotOnOrAfter="{future_str}"></saml:SubjectConfirmationData>
+      </saml:SubjectConfirmation>
+    </saml:Subject>
+    <saml:AttributeStatement>
+      <saml:Attribute Name="role">
+        <saml:AttributeValue>admin</saml:AttributeValue>
+        <saml:AttributeValue>auditor</saml:AttributeValue>
+      </saml:Attribute>
+    </saml:AttributeStatement>
+  </saml:Assertion>
+</samlp:Response>"#
+        );
+        let provider = DefaultSamlProvider::new().unwrap();
+        let response = provider.parse_response(&xml).await.unwrap();
+        assert!(
+            response.assertion.is_none(),
+            "无签名校验时 Assertion 剥离，属性解析分支仍应执行"
+        );
+    }
+}

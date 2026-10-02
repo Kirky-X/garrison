@@ -2539,4 +2539,65 @@ mod tests {
             let _ = dao.delete_role_hierarchy_edge(0, "c", "p").await;
         }
     }
+    // ------------------------------------------------------------------------
+    // new_with_capacity 参数校验（TTL / capacity 0 值 fail-fast）
+    // ------------------------------------------------------------------------
+
+    /// 构造参数校验入口（复用 CountingMockDao / CountingMockInterface）。
+    fn build_with_capacity(l1: u64, l2: u64, cap: u64) -> GarrisonResult<UserCacheService> {
+        let dao = Arc::new(CountingMockDao::new());
+        let iface = Arc::new(CountingMockInterface::new());
+        UserCacheService::new_with_capacity(
+            dao as Arc<dyn GarrisonDao>,
+            iface as Arc<dyn GarrisonPermissionStrategy>,
+            l1,
+            l2,
+            cap,
+        )
+    }
+
+    /// l1_ttl = 0 → cache-l1-ttl-must-positive。
+    #[test]
+    fn rejects_zero_l1_ttl() {
+        let err = match build_with_capacity(0, 300, 128) {
+            Err(e) => e,
+            Ok(_) => panic!("l1_ttl=0 应被拒绝"),
+        };
+        assert!(
+            matches!(&err, GarrisonError::Config(m) if m.contains("cache-l1-ttl-must-positive")),
+            "l1_ttl=0 应报 cache-l1-ttl-must-positive，实际: {err:?}"
+        );
+    }
+
+    /// l2_ttl = 0 → cache-l2-ttl-must-positive。
+    #[test]
+    fn rejects_zero_l2_ttl() {
+        let err = match build_with_capacity(30, 0, 128) {
+            Err(e) => e,
+            Ok(_) => panic!("l2_ttl=0 应被拒绝"),
+        };
+        assert!(
+            matches!(&err, GarrisonError::Config(m) if m.contains("cache-l2-ttl-must-positive")),
+            "l2_ttl=0 应报 cache-l2-ttl-must-positive，实际: {err:?}"
+        );
+    }
+
+    /// l1_capacity = 0 → cache-l1-capacity-must-positive。
+    #[test]
+    fn rejects_zero_l1_capacity() {
+        let err = match build_with_capacity(30, 300, 0) {
+            Err(e) => e,
+            Ok(_) => panic!("capacity=0 应被拒绝"),
+        };
+        assert!(
+            matches!(&err, GarrisonError::Config(m) if m.contains("cache-l1-capacity-must-positive")),
+            "capacity=0 应报 cache-l1-capacity-must-positive，实际: {err:?}"
+        );
+    }
+
+    /// 全部合法参数 → 构造成功。
+    #[test]
+    fn accepts_positive_params() {
+        assert!(build_with_capacity(30, 300, 128).is_ok());
+    }
 }

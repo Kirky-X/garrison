@@ -57,6 +57,12 @@ regexes = [
     '''AvE\+iD2TB3fvkUXTiHfGgVHXfuFrVnam2DV9rPAWtzj78N/n4SzwIojGGzPFZtpd''',
     '''WMtC\+sHEdPpgJhF4LB8sWQq4baDEkzmx8SWB8XM94pqPf\+oFl\+btJo\+FZNSstLrG''',
     '''9YlpnAmxnsn9ZTuAMIcphoL4QqI\+4Kw5LeMtgV/7AikuyncGG9ywV1\+819ocVqlP''',
+    # 测试用固定 P-256 EC / Ed25519 私钥 PEM 的 base64 body 独特片段
+    # （src/oauth2_server/jwks.rs 内联测试常量 TEST_EC_PEM / TEST_ED_PEM，
+    # 与 HEAD 已入库的 src/protocol/jwt/tests.rs:709/777 假钥逐字节相同，
+    # 已核实为测试生成值，非真实凭证；tests.rs 副本由上方 paths 覆盖）
+    '''MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgHu89Emnr1D\+OpkZF''',
+    '''MC4CAQAwBQYDK2VwBCIEIOChr1YQD9KWBWWGBLFFjHQiHx9\+OznRi69Gh25Uhv8H''',
 ]
 
 # nosemgrep/nosecret 显式标注行的通用降噪由上方 paths 覆盖（测试/示例目录）。
