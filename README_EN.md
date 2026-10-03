@@ -370,7 +370,7 @@ Please do not report security vulnerabilities through public issues. Use the Git
 <tr><td align="center">✅</td><td>Security and protection</td><td>Account security engine / firewall suite / multi-tenant / audit logging</td></tr>
 <tr><td align="center">✅</td><td>Microservice architecture</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
 <tr><td align="center">✅</td><td>Observability</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
-<tr><td align="center">🚧</td><td>Next-release security hardening</td><td>Fail-closed external login endpoints, password-login timing side-channel alignment, OAuth2 password grant rate-limit fail-closed, JWT blacklist write retry (see [docs/CHANGELOG.md](docs/CHANGELOG.md) · Unreleased)</td></tr>
+<tr><td align="center">🚧</td><td>Next-release security hardening</td><td>Fail-closed acknowledgement for external login endpoints, password-login timing side-channel alignment, OAuth2 password grant rate-limit fail-closed, JWT blacklist write retry, default bind address tightened to 127.0.0.1, internal API key enforced at ≥32 bytes, SAML Destination/Audience strict by default, SSO secret ≥32 bytes + HMAC message envelope for pub/sub, check_safe/check_disable session precondition, multi-tenant isolation hardening (session-tenant binding / identifier registry / device APIs) (see [docs/CHANGELOG.md](docs/CHANGELOG.md) · Unreleased)</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 Stable</td><td>API freeze + performance benchmarks + production case studies</td></tr>
 </table>
 

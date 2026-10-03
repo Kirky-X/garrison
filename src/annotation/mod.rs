@@ -22,11 +22,12 @@ pub mod modes;
 
 /// 角色 marker trait，通过关联常量 `NAME` 指定角色名。
 ///
-/// 业务方定义类型实现此 trait，用作 `CheckRole<R>` 的类型参数：
+/// 业务方定义类型实现此 trait，用作 `CheckRole<R>` 的类型参数
+/// （extractor 定义见本模块 re-export 的 `CheckRole<R>`，`web-axum` feature）：
 /// ```ignore
 /// struct AdminRole;
 /// impl RoleName for AdminRole { const NAME: &'static str = "admin"; }
-/// async fn handler(CheckRole::<AdminRole>: CheckRole<AdminRole>) { ... }
+/// async fn handler(check: CheckRole<AdminRole>) { ... }
 /// ```
 pub trait RoleName: Send + Sync {
     /// 角色名称（如 "admin"）。

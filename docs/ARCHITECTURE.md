@@ -5,7 +5,7 @@
 > - 版本：0.9.0-rc.2（发布候选：验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
-> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate）+ Repository 层（13 trait + `Dbnexus*Repository` 实现，tenant_id 隔离）
+> - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate）+ Repository 层（13 trait + `Dbnexus*Repository` 实现，tenant_id 隔离）。例外与补口：`app_user_identifier`（登录标识防重）以 `(id_type, id_value)` 为全局主键，租户维度经 `find_owner_in_tenant` 租户作用域回查——注册唯一约束冲突时同租户返回 `Taken { by_user_id }`、命中他租户行返回中性 `Registered`（不泄露他租户 user_id）；找回密码（`account-password-reset`）签发 token 时写入 code-tenant 绑定，reset 校验请求租户与签发租户一致（绑定缺失 fail-closed 拒绝）
 > - 缓存：oxcache 0.5（L1 内存 + L2 redis，per-entry TTL + ttl_sync 查询）
 > - License：Apache-2.0
 > 配置相关字段说明详见 [⚙️ 配置指南](./CONFIGURATION.md)；开发规范详见 [🛠️ 开发规范](./DEVELOPMENT.md)。

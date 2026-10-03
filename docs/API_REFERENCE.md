@@ -373,7 +373,7 @@ garrison::dao_conformance_tests! {
 | `DbnexusUserRepository` / `DbnexusRoleRepository` / `DbnexusPermissionRepository` | 用户 / 角色 / 权限 |
 | `DbnexusUserRoleRepository` / `DbnexusRolePermissionRepository` | 关联表 |
 | `DbnexusAuthMethodRepository` / `DbnexusSessionRepository` / `DbnexusLoginLogRepository` / `DbnexusUserExtRepository` | 认证方式 / 会话 / 登录日志 / 扩展字段 |
-| `UserIdentifierRepository`（`app_user_identifier`） | 登录标识（phone / email）原子防重注册 |
+| `UserIdentifierRepository`（`app_user_identifier`） | 登录标识（phone / email）原子防重注册。`register` 唯一约束冲突按**租户作用域**回查归属（`find_owner_in_tenant`，SQL 带 `tenant_id` 谓词）：同租户冲突返回 `Taken { by_user_id }`；跨租户冲突返回中性 `Registered`（不带 `by_user_id`，不向他租户泄露归属）。`find_owner` 为全局维度反查原语（多租户部署中不可信输入须改用 `find_owner_in_tenant`，避免泄露他租户 user_id） |
 | `UserDeviceRepository`（`app_user_device`） | 设备注册与 `MAX_DEVICES` 上限 |
 | `WebauthnCredentialRepository`（`app_webauthn_credential`） | WebAuthn 凭据绑定与查询 |
 | `PasswordHistoryRepository`（`app_password_history`） | 历史密码 hash（`account-policy` 重用拒绝） |

@@ -63,6 +63,8 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | `replaced_login_exit_mode` | `String` | `"old_device"` | `GARRISON_REPLACED_LOGIN_EXIT_MODE` | 顶人下线策略 |
 | `overflow_logout_mode` | `String` | `"logout"` | `GARRISON_OVERFLOW_LOGOUT_MODE` | 溢出处理策略 |
 | `audit_mask_mode` | `String` | `"partial"` | `GARRISON_AUDIT_MASK_MODE` | 审计日志脱敏模式 |
+| `seed_primary_amr` | `bool` | `true` | `GARRISON_SEED_PRIMARY_AMR` | 登录是否向会话播种主认证因子（`amr=["pwd"]` / AAL 1 / `auth_time`）。默认 `true` 保持「login 即主认证」既有契约；**安全敏感部署建议显式 `false`**——凭证委托 / 零凭证 login 路径并未发生密码校验，播种 `pwd` 会向 amr_ledger 与 JWT claim 断言一次从未发生的认证，误导下游 step-up 判定（`assert_freshness` / `ledger_max_aal`）。关闭后会话 `amr_ledger` 为空、`auth_time` 为 `None`、JWT 不携带 `amr`/`auth_time` claim（MFA step-up 追加不受影响） |
+| `login_id_max_len` | `u32` | `255` | `GARRISON_LOGIN_ID_MAX_LEN` | stp 登录收口（`login` / `login_with_token` / `login_by_token`）的 login_id 字节长度上限，超限拒绝签发会话；`0` = 框架层不限。HTTP 请求层 `LoginRequest` 反序列化恒按 255 封顶（wire 层不读运行时配置），本配置只可进一步收紧 |
 
 ### 2.2 扩展配置（0.2.0 新增）
 
@@ -375,6 +377,9 @@ assert_eq!(new_config.timeout, 3600);
 | `timeout` | 必须 > 0 | `config-timeout-must-positive::` |
 | `token_style` | 必须在 `["uuid", "random_64", "simple", "jwt"]` 内 | `config-unknown-token-style::{值}` |
 | `token_style=jwt` | `jwt_secret` 不能为空 | `config-jwt-secret-empty::` |
+| `token_style=simple` | `jwt_secret` 长度必须 ≥ 32 字节（simple 风格密钥即 HMAC-SHA256 签名密钥，可离线爆破；原 warn 已升级为启动错误） | `config-jwt-secret-too-short::simple (min 32 bytes)::{长度}` |
+| `token_style=jwt`（HS 系）/ `simple` | `jwt_secret` 不得命中弱密钥黑名单（16 条常见弱密钥；剥除首尾填充字符后整串比对、忽略大小写，不做子串匹配，不误伤高熵密钥） | `config-jwt-secret-weak::blacklist hit` |
+| `GARRISON_CSRF_ENABLED`（环境变量，`web-csrf`） | 仅接受 `true` / `false`（大小写不敏感），其他取值在配置加载（环境变量覆盖阶段）即失败——原 `"1"`/`"yes"` 等 truthy 习惯值会静默禁用 CSRF 防护 | `config-csrf-enabled-unsupported::{值}` |
 | `cookie_same_site` | 必须在 `["Lax", "Strict", "None"]` 内 | `config-unknown-cookie-same-site::{值}` |
 | `is_share=true` | 要求 `is_concurrent=true` | `config-is-share-requires-concurrent::` |
 | `remember_me_timeout` | `remember_me_enabled=true` 时必须 > `timeout`；`remember_me_enabled=false` 时必须 > 0 | `config-remember-me-timeout-mismatch::{值}::{timeout}` / `config-remember-me-timeout-positive::{值}` |

@@ -24,7 +24,7 @@
 //!
 //! | 特性域 | 已有宏 | 缺失宏 | 备注 |
 //! |--------|--------|--------|------|
-//! | 登录认证 | `#[check_login]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` | — | check_login 校验登录状态；token 类型宏校验 token 类型粒度 |
+//! | 登录认证 | `#[check_login]` / `#[check_access_token]` / `#[check_client_token]` / `#[check_temp_token]` | — | check_login 校验登录状态；token 类型宏在默认装配下委托 check_login（不区分 token 类型），需要类型粒度校验须业务方覆写 `TokenLogic::check_*_token`（见 `src/stp/token.rs`） |
 //! | 权限认证 | `#[check_permission]` / `#[check_role]` | — | RBAC，AND 语义 |
 //! | Session 会话 | — | `#[check_session]`? | 手动调用 GarrisonUtil 会话 API |
 //! | OAuth2 | — | `#[check_oauth2]`? | 通过 OAuth2Client + `login_by_token` 建立 |
@@ -424,7 +424,11 @@ pub fn check_disable(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// # Feature 依赖
 ///
 /// - `abac` feature 开启：执行实际 Cedar 策略求值
-/// - `abac` feature 关闭：`check_abac_with_policy` 为 no-op stub（返回 `Ok(())`）
+/// - `abac` feature 关闭：`check_abac_with_policy` 降级为 fail-closed——
+///   端点声明了 `abac` 策略时默认拒绝（返回 `Err(Config)`），仅未声明
+///   `abac` 策略的端点为 no-op 放行；可经
+///   `garrison::abac::set_abac_missing_feature_policy(true)` 显式 opt-in 为
+///   AllowWithWarn（放行 + warn）。详见 `src/abac/mod.rs`。
 ///
 /// # 限制
 ///

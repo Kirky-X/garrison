@@ -21,7 +21,7 @@
 |------|---------|
 | 应用进程内存 | 信任宿主机（不防御 root/内核级攻击、内存 dump 分析者可读未 zeroize 的密钥残留——建议启用 `credential-zeroize`/`protocol-zeroize`） |
 | 网络传输 | **不信任**——TLS 终止由反向代理负责（框架不处理 TLS），代理与框架间须为可信网络 |
-| 配置来源 | 信任启动配置的正确性（`config-security-rules` 提供加载期 fail-fast 校验：JWT 密钥强度/CORS/SSRF/TLS） |
+| 配置来源 | 信任启动配置的正确性（`config-security-rules` 提供加载期 fail-fast 校验：JWT 密钥强度+弱密钥黑名单、CORS 组合；SSRF/TLS 在 GarrisonConfig 中无对应配置对象，不做校验——TLS 由反向代理终止） |
 | 依赖图 | 部分信任——`cargo deny`（RustSec/许可证/禁用源）、gitleaks、cargo vet 审核记录与 SBOM 构成供应链门禁（见根目录 [SECURITY.md](https://github.com/Kirky-X/garrison/blob/main/SECURITY.md) 供应链章节） |
 | 密码学原语 | 信任 RustCrypto 栈（argon2/bcrypt/sha2/hmac/subtle/jsonwebtoken rust_crypto），不手写密码学原语 |
 | 客户端输入 | **完全不信任**——所有外部输入（HTTP 头/XML/JSON/JWT/SAML）按恶意输入处理 |
@@ -80,7 +80,7 @@
 | 框架防御 | 业务方责任 |
 |---------|-----------|
 | 授权引擎：RBAC（core 常驻能力，`has_role`/`check_role`，见 `src/core/permission/`，详见 [权限与角色（RBAC）](./permission-rbac.md)）+ ABAC（cedar-policy，`abac` feature）+ `forbid` 优先语义（`core-advanced`） | **权限模型配置正确性**（框架执行规则，规则本身由业务方定义——最小权限原则） |
-| 多租户隔离：`tenant-isolation`（DAO 层按租户加前缀 + namespace 强制校验，防 IDOR） | 租户边界的业务定义（哪些资源属于哪个租户） |
+| 多租户隔离：`tenant-isolation`（DAO 层按租户加前缀 + namespace 强制校验，防 IDOR）；会话-租户绑定（租户上下文内创建的会话记录绑定租户，`check_login` 校验绑定与请求租户一致——客户端可控 `X-Tenant-Id` 不得携他人租户会话跨租户复用；Stateless JWT 以 `tid` claim 绑定并在验证时校验；未绑定的存量会话放行，语义随会话轮替逐步收敛）；RBAC 租户数据源（`get_permission_list_in_tenant` / `get_role_list_in_tenant` 回调 + 请求级租户判定与缓存键租户段） | 租户边界的业务定义（哪些资源属于哪个租户）；多租户部署（`login_id` 跨租户可能重名）覆写 `GarrisonInterface::get_permission_list_in_tenant` / `get_role_list_in_tenant` 提供租户作用域数据（默认委托全局方法，行为不变） |
 | 会话劫持检测：`session-hijack-detection`（IP 变更告警/踢出）+ `device-binding` | 管理员账号的额外保护（MFA 强制、独立网络策略） |
 | 账号锁定：`account-lockout` + `account-authflow`（IP 白名单等条件求值） | 锁定策略的解锁流程（防锁定滥用） |
 
@@ -110,6 +110,8 @@
 | 重置 token 重放/并发消费（双花） | jti 经 DAO `set_if_absent` 一次性消费登记 + 原子消费（并发恰一成功）；两段式防竞态：消费失败凭据操作回滚 | `src/account/password_reset/`（jti 并发/两段式回滚用例） |
 | 跨用户改密（窃取他人重置 token） | code-subject 绑定存 authflow 会话，消费时校验 `ActionToken.sub` 与 code-subject 一致；restricted 会话仅可达改密端点 | `src/account/password_reset/service.rs`、`tests.rs` 跨用户 token 用例 |
 | 新密码重用历史密码 | `app_password_history` 追加 + HistoryRule 复用检测（拒绝最近 N 条）；追加失败回滚凭据写入 | `tests.rs` 历史复用/回滚用例 |
+| 会话跨租户复用（客户端可控 `X-Tenant-Id` 携他人租户会话/令牌） | 会话-租户绑定：租户上下文内登录写入绑定 attr，`check_login` 在租户上下文存在且会话已绑定时校验一致（不匹配 `stp-check-login-tenant-mismatch` 显性拒绝）；Stateless JWT 签发 `tid` claim 并在 verify 后校验（闭合 jti 黑名单随请求租户命名空间错位的吊销逃逸）；未绑定存量会话/无租户上下文行为不变 | `src/stp/session/tests.rs`（会话绑定/跨租户拒绝/Stateless `tid` 系列）、`src/context/tenant.rs`（`SESSION_TENANT_ATTR_KEY` 契约） |
+| 伪造/已撤销 token 绕过二级认证与封禁判定（`check_safe`/`check_disable` 对无效会话宽松放行） | 二级认证族会话前置校验：携带 token 但会话无效/已撤销时显性返回 `Err(Session)`（不再与「未启用 MFA」「未封禁」合并为宽松结果；嵌入式 AuthBackend 的 bool 适配对 Session 错误原样透传不并入 bool）；有效会话「未配置 MFA 视为通过」语义不变 | `src/stp/mfa.rs` 内嵌测试、`src/backend/embedded.rs`（伪造/被踢 token 用例） |
 
 ### Refresh token 重用三级处置表
 

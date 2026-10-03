@@ -371,7 +371,7 @@ CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / �
 <tr><td align="center">✅</td><td>安全与防护</td><td>账号安全引擎 / 安全防护套件 / 防火墙 / 多租户 / 审计日志</td></tr>
 <tr><td align="center">✅</td><td>微服务架构</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
 <tr><td align="center">✅</td><td>可观测性</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
-<tr><td align="center">🚧</td><td>下一版本安全加固</td><td>外网登录端点 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试（见 [docs/CHANGELOG.md](docs/CHANGELOG.md) · Unreleased）</td></tr>
+<tr><td align="center">🚧</td><td>下一版本安全加固</td><td>外网登录端点暴露确认 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试、绑定地址缺省收敛 127.0.0.1、内网 API Key 强制 ≥32 字节、SAML Destination/Audience 缺省 strict、SSO secret ≥32 字节 + pub/sub 消息 HMAC 信封、check_safe/check_disable 会话前置校验、多租户隔离强化（会话-租户绑定 / 标识符注册表 / 设备接口）（见 [docs/CHANGELOG.md](docs/CHANGELOG.md) · Unreleased）</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 稳定版</td><td>API 冻结 + 性能基准 + 生产案例</td></tr>
 </table>
 

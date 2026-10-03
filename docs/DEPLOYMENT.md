@@ -221,10 +221,17 @@ docker build -f docker/Dockerfile.distroless \
 
 | 变量 | 必填 | 默认 | 说明 |
 |------|:---:|------|------|
-| `GARRISON_INTERNAL_API_KEY` | ✅ | 无（fail-closed） | 内网 API Key，未配置拒绝启动 |
+| `GARRISON_INTERNAL_API_KEY` | ✅ | 无（fail-closed） | 内网 API Key，未配置拒绝启动；长度强制 ≥32 字节，短于拒绝启动（建议 `openssl rand -hex 32` 生成） |
 | `GARRISON_EXTERNAL_PORT` | — | `8080` | 外网端口（HEALTHCHECK 探针自动跟随此值） |
 | `GARRISON_INTERNAL_PORT` | — | `8081` | 内网端口（`check-*` 等管理面，需 X-API-Key） |
-| `GARRISON_EXTERNAL_LOGIN_ENABLED` | — | `false` | 外网登录端点开关（secure-by-default） |
+| `GARRISON_EXTERNAL_BIND` / `GARRISON_INTERNAL_BIND` | — | `127.0.0.1` | 外网 / 内网端口绑定地址（secure-by-default，仅本机可达；**镜像已内置 `0.0.0.0`** 供容器端口映射，宿主直跑需外部访问时显式设 `0.0.0.0`）。仅接受 IPv4/IPv6 字面量，非法值拒绝启动 |
+| `GARRISON_TRUSTED_PROXIES` | — | 空（不信任任何 XFF） | 可信代理 IP 列表（逗号分隔）。仅当部署在可信反代之后才配置；配置后 XFF 解析（限速键 / 客户端 IP）才启用。仅接受回环 / RFC 1918 / link-local / IPv6 ULA 地址，非法或公网值拒绝启动 |
+| `GARRISON_MAX_LOGIN_COUNT` | — | `10` | 同账号最大并发会话数，超出踢出最早登录的会话；显式传 `0` = 不限制（覆盖框架默认的 `0`） |
+| `GARRISON_SEED_PRIMARY_AMR` | — | `true` | 登录是否向会话播种主认证因子（`amr=["pwd"]`/AAL 1/`auth_time`）。安全敏感部署建议显式 `false`——参考部署 login 不校验凭证，默认播种会向因子账本断言一次从未发生的密码认证，误导下游 step-up 判定（详见 docs/CONFIGURATION.md `seed_primary_amr`） |
+| `GARRISON_EXTERNAL_LOGIN_ENABLED` | — | `false` | 外网登录端点开关（secure-by-default）。框架 login 不校验凭证，**开启前业务层必须已注入凭证校验**；开启且外网绑定为非回环地址时还须设置 `GARRISON_EXTERNAL_LOGIN_ACK`，否则拒绝启动 |
+| `GARRISON_EXTERNAL_LOGIN_ACK` | 条件必填 | 无 | 上述场景的显式风险确认：取值必须精确为 `i-understand-no-credential-check`（区分大小写），缺失或不匹配拒绝启动 |
+| `GARRISON_HEALTH_DETAILS` | — | `false` | 内网 `/readyz` 是否透传 `checks[].details`（可能含内部依赖拓扑，默认剥离仅保留 name/healthy）。接受 `1`/`true`/`yes`/`on` 与 `0`/`false`/`no`/`off`（大小写不敏感），无法识别取值告警并按默认处理 |
+| `GARRISON_API_KEY_LOCKOUT_THRESHOLD` / `GARRISON_API_KEY_LOCKOUT_WINDOW_SECS` | — | `10` / `300` | 内网 API Key 认证失败锁定：同源 IP 连续失败（缺失/错误/重复 `X-API-Key`）达阈值后窗口期内一律 429 + `Retry-After`，成功认证即清零；threshold `0` = 禁用锁定 |
 | `GARRISON_RATE_LIMIT_BACKEND` | — | 未设置（配置默认 Memory） | 限流后端覆盖：需 `rate-limit-redis` feature 才生效，`redis` 须同时配 `GARRISON_REDIS_URL`，未知值拒绝启动 |
 | `GARRISON_WORKER_THREADS` | — | CPU 核数 | Tokio worker 线程数 |
 | `GARRISON_MAX_BLOCKING_THREADS` | — | `512` | Tokio blocking 线程上限 |

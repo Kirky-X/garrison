@@ -14,8 +14,8 @@
 
 | 维度 | 内容 |
 |------|------|
-| 框架机制 | RBAC 权限模型（`permission` 策略引擎，角色/权限/通配匹配）；ABAC/ Cedar 属性决策（`abac` feature，策略溯源）；多租户隔离（`tenant-isolation`，DAO 层按租户自动加 key 前缀的物理隔离）；API Key namespace 强制校验（`verify_with_namespace`，跨 namespace key 不可通过，防 IDOR）；firewall 白名单/黑名单路径与 Host 校验（`firewall-waf`，`waf_allowed_hosts` 防 Host 头投毒） |
-| 业务方责任 | 权限模型的数据建模（角色/策略定义）与最小权限授予；租户解析器的正确接线（`tenant_resolution_middleware`）；业务对象级授权（如资源属主校验）在应用层执行 |
+| 框架机制 | RBAC 权限模型（`permission` 策略引擎，角色/权限/通配匹配）；ABAC/ Cedar 属性决策（`abac` feature，策略溯源）；多租户隔离（`tenant-isolation`，DAO 层按租户自动加 key 前缀的物理隔离 + 会话-租户绑定：租户上下文内创建的会话绑定租户，`check_login` 校验一致性，Stateless JWT 以 `tid` claim 绑定——客户端可控 `X-Tenant-Id` 不得携他人租户会话跨租户复用）；API Key namespace 强制校验（`verify_with_namespace`，跨 namespace key 不可通过，防 IDOR）；登录标识注册表跨租户防泄露（`app_user_identifier` 冲突回查租户作用域——他租户占用返回中性「已注册」，不泄露 user_id）；firewall 白名单/黑名单路径与 Host 校验（`firewall-waf`，`waf_allowed_hosts` 防 Host 头投毒） |
+| 业务方责任 | 权限模型的数据建模（角色/策略定义）与最小权限授予；租户解析器的正确接线（`tenant_resolution_middleware`）；多租户部署覆写 `get_permission_list_in_tenant` / `get_role_list_in_tenant` 提供租户作用域权限数据（默认委托全局方法）；业务对象级授权（如资源属主校验）在应用层执行 |
 
 ## A02 – Cryptographic Failures（加密机制失效）
 
@@ -42,7 +42,7 @@
 
 | 维度 | 内容 |
 |------|------|
-| 框架机制 | 启动期配置校验 fail-fast（`validate_core`：token_style 白名单、JWT 算法-密钥类型匹配、Argon2 参数下限 + 显式风险接受位、bcrypt cost 区间、remember-me 时间一致性等，非法配置拒绝启动）；配置安全规则集（`config-security-rules`）；危险默认值消除（`cookie_secure` 默认 true、`throw_on_not_login` 默认 true）；退化路径显性告警（refresh 轮换未注入结构性 warn） |
+| 框架机制 | 启动期配置校验 fail-fast（`validate_core`：token_style 白名单、JWT 算法-密钥类型匹配、Argon2 参数下限 + 显式风险接受位、bcrypt cost 区间、remember-me 时间一致性等，非法配置拒绝启动）；配置安全规则集（`config-security-rules`：JWT 密钥强度+弱密钥黑名单、CORS 组合校验）；危险默认值消除（`cookie_secure` 默认 true、`throw_on_not_login` 默认 true）；退化路径显性告警（refresh 轮换未注入结构性 warn） |
 | 业务方责任 | 生产部署加固核对（[DEPLOYMENT.md](./DEPLOYMENT.md)）；环境变量密钥管理（禁入版本库）；框架版本升级时对新增校验项的配置适配 |
 
 ## A06 – Vulnerable and Outdated Components（自带缺陷和过时的组件）
@@ -56,7 +56,7 @@
 
 | 维度 | 内容 |
 |------|------|
-| 框架机制 | 暴力破解防护（`firewall-bruteforce` IP 级失败计数封禁 + `account-lockout` 账户锁定 + `firewall-ratelimit` GCRA/滑动窗口，分布式后端 `rate-limit-redis`）；弱密码防护（`account-policy` 复杂度规则 + `policy-hibp` 泄露库 k-anonymity 校验）；慢哈希经 `spawn_blocking` 下沉（防登录风暴打挂 worker）+ 用户名枚举时序对齐（dummy verify）；TOTP RFC 6238 三组官方向量锁定（`secure-totp`）；JWT alg confusion 全链路对抗锁定（`alg=none`/跨密钥类型/篡改全拒）；认证器生命周期（`protocol-invitation` 一次性邀请码、`account-authflow` 条件引擎） |
+| 框架机制 | 暴力破解防护（`firewall-bruteforce` IP 级失败计数封禁 + `account-lockout` 账户锁定 + `firewall-ratelimit` GCRA/滑动窗口，分布式后端 `rate-limit-redis`）；弱密码防护（`account-policy` 复杂度规则 + `policy-hibp` 泄露库 k-anonymity 校验）；慢哈希经 `spawn_blocking` 下沉（防登录风暴打挂 worker）+ 用户名枚举时序对齐（dummy verify）；TOTP RFC 6238 三组官方向量锁定（`secure-totp`）；JWT alg confusion 全链路对抗锁定（`alg=none`/跨密钥类型/篡改全拒）；二级认证族会话前置校验（`check_safe`/`check_disable` 对无效/已撤销 token 显性拒绝，不再与「未启用 MFA」「未封禁」合并为宽松结果）；认证器生命周期（`protocol-invitation` 一次性邀请码、`account-authflow` 条件引擎） |
 | 业务方责任 | 认证失败提示话术统一（防枚举的最后一段）；MFA 编排组合（TOTP 原语已备）；会话凭证的前端保管（XSS 面收口） |
 
 ## A08 – Software and Data Integrity Failures（软件和数据完整性失效）
