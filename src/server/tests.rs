@@ -509,6 +509,33 @@ fn test_auth_server_config_default() {
         config.internal_api_key.is_empty(),
         "Default internal_api_key 必须为空（fail-closed）"
     );
+    // 绑定地址默认 0.0.0.0：框架层向后兼容（既有下游 listen() 行为不变）；
+    // 安全收口由调用方显式 with_external_bind/with_internal_bind 注入
+    // （参考部署 bin 缺省 127.0.0.1）。
+    assert_eq!(
+        config.external_bind,
+        std::net::IpAddr::from([0, 0, 0, 0]),
+        "默认外网绑定必须保持 0.0.0.0（向后兼容）"
+    );
+    assert_eq!(
+        config.internal_bind,
+        std::net::IpAddr::from([0, 0, 0, 0]),
+        "默认内网绑定必须保持 0.0.0.0（向后兼容）"
+    );
+}
+
+/// 测试 with_external_bind / with_internal_bind builder 注入绑定地址并保持链式语义。
+#[test]
+fn test_with_bind_builders() {
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let loopback = std::net::IpAddr::from([127, 0, 0, 1]);
+    let v6_loopback = std::net::IpAddr::from([0, 0, 0, 0, 0, 0, 0, 1]);
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_bind(loopback)
+        .with_internal_bind(v6_loopback);
+
+    assert_eq!(server.config.external_bind, loopback);
+    assert_eq!(server.config.internal_bind, v6_loopback);
 }
 
 // ========================================================================
@@ -595,6 +622,62 @@ async fn test_listen_starts_and_runs() {
     // listen 在正常运行中，测试通过
            },
        }
+}
+
+/// 测试 listen 按配置的绑定地址绑定外网端口（而非硬编码 0.0.0.0）。
+///
+/// 判别式：占住 `127.0.0.1:P` 后，`with_external_bind(127.0.0.2)` + 端口 P
+/// 应能成功绑定并持续运行——若 listen 仍硬编码 0.0.0.0（通配），bind 会与
+/// 既有 specific-address 绑定冲突（EADDRINUSE）并立即返回错误。
+#[tokio::test]
+async fn test_listen_uses_configured_external_bind() {
+    // 占住 127.0.0.1 上的端口（specific-address 绑定，与通配绑定互斥）
+    let occupier = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定 127.0.0.1 应成功");
+    let port = occupier.local_addr().expect("读取端口应成功").port();
+
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_port(port)
+        .with_external_bind(std::net::IpAddr::from([127, 0, 0, 2]))
+        .with_internal_port(0)
+        .with_internal_api_key("test-api-key");
+
+    tokio::select! {
+        result = server.listen() => {
+            panic!("配置 127.0.0.2 绑定应成功启动（不受 127.0.0.1 占用影响）: {:?}", result);
+        },
+        _ = tokio::time::sleep(std::time::Duration::from_millis(300)) => {
+            // listen 按配置地址绑定成功并正常运行
+        },
+    }
+}
+
+/// 测试 listen 绑定冲突发生在配置的绑定地址上时错误显性化。
+///
+/// 占住 `127.0.0.1:P` 后以相同绑定地址启动 → `TcpListener::bind` EADDRINUSE，
+/// listen 返回 `server-external-bind` 错误（bind 失败路径与通配行为一致）。
+#[tokio::test]
+async fn test_listen_bind_failure_on_configured_external_bind() {
+    let occupier = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("绑定 127.0.0.1 应成功");
+    let port = occupier.local_addr().expect("读取端口应成功").port();
+
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend);
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_port(port)
+        .with_external_bind(std::net::IpAddr::from([127, 0, 0, 1]))
+        .with_internal_port(0)
+        .with_internal_api_key("test-api-key");
+
+    let result = server.listen().await;
+    assert!(
+        matches!(&result, Err(GarrisonError::Internal(msg)) if msg.contains("server-external-bind")),
+        "同地址端口冲突应返回 server-external-bind 错误，实际: {:?}",
+        result
+    );
 }
 
 /// 测试 listen 在 TLS 证书文件不存在时返回错误（feature = "tls"）。

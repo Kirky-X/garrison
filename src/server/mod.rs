@@ -87,8 +87,15 @@ pub use server_impl::to_api_response;
 pub struct AuthServerConfig {
     /// 外网端口（面向用户）。
     pub external_port: u16,
+    /// 外网端口绑定地址（默认 **0.0.0.0**，向后兼容）。
+    ///
+    /// 框架默认保持通配绑定（既有下游 `listen()` 行为不变）；安全敏感部署
+    /// 应经 `with_external_bind` 显式收口（参考部署 bin 缺省 127.0.0.1）。
+    pub external_bind: std::net::IpAddr,
     /// 内网端口（服务间调用）。
     pub internal_port: u16,
+    /// 内网端口绑定地址（默认 **0.0.0.0**，向后兼容，语义同 `external_bind`）。
+    pub internal_bind: std::net::IpAddr,
     /// 每个 IP 每秒允许的外网请求数（默认 100）。
     pub external_rate_limit_per_ip: u32,
     /// 限速 HashMap 最大条目数（默认 100_000）。
@@ -130,7 +137,9 @@ impl std::fmt::Debug for AuthServerConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AuthServerConfig")
             .field("external_port", &self.external_port)
+            .field("external_bind", &self.external_bind)
             .field("internal_port", &self.internal_port)
+            .field("internal_bind", &self.internal_bind)
             .field(
                 "external_rate_limit_per_ip",
                 &self.external_rate_limit_per_ip,

@@ -759,6 +759,17 @@ pub struct GarrisonConfig {
     /// 仅当运维明确知悉风险并承担后果时设为 `true`；正常部署应使用 `enable_jwt_revocation=true` 或 `JwtMode::Mixin`。
     pub allow_stateless_jwt_no_revocation: bool,
 
+    /// 严格收口：Stateless JWT 在租户上下文内必须携带 `tid` 绑定 claim。默认 `false`。
+    ///
+    /// `false`（默认）：无 `tid` 的存量 token（无租户上下文签发 / 本字段引入前的
+    /// 历史签发）在租户上下文内放行（向后兼容，绑定语义随 token 自然轮替逐步收敛）。
+    /// `true`：`check_login_stateless` 在租户上下文存在且 claims 无 `tid` 时显性
+    /// 拒绝（`stp-check-login-tenant-unbound`）——封住存量无绑定 token 不受租户
+    /// 约束的窗口（jti 黑名单跨请求租户命名空间 miss 的吊销逃逸面）。无租户
+    /// 上下文部署不受影响；仅 `token_style="jwt"` + `jwt_mode=Stateless` 有实际效果。
+    /// 开启前应确认存量 token 已轮替（或可接受其显性失效）。
+    pub require_tenant_bound_jwt: bool,
+
     /// 审计日志脱敏模式。默认 `Partial`。
     ///
     /// - `Full`：所有 `mask_fields` 字段值替换为 `"***"`（完全屏蔽）

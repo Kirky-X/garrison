@@ -65,6 +65,7 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | `audit_mask_mode` | `String` | `"partial"` | `GARRISON_AUDIT_MASK_MODE` | 审计日志脱敏模式 |
 | `seed_primary_amr` | `bool` | `true` | `GARRISON_SEED_PRIMARY_AMR` | 登录是否向会话播种主认证因子（`amr=["pwd"]` / AAL 1 / `auth_time`）。默认 `true` 保持「login 即主认证」既有契约；**安全敏感部署建议显式 `false`**——凭证委托 / 零凭证 login 路径并未发生密码校验，播种 `pwd` 会向 amr_ledger 与 JWT claim 断言一次从未发生的认证，误导下游 step-up 判定（`assert_freshness` / `ledger_max_aal`）。关闭后会话 `amr_ledger` 为空、`auth_time` 为 `None`、JWT 不携带 `amr`/`auth_time` claim（MFA step-up 追加不受影响） |
 | `login_id_max_len` | `u32` | `255` | `GARRISON_LOGIN_ID_MAX_LEN` | stp 登录收口（`login` / `login_with_token` / `login_by_token`）的 login_id 字节长度上限，超限拒绝签发会话；`0` = 框架层不限。HTTP 请求层 `LoginRequest` 反序列化恒按 255 封顶（wire 层不读运行时配置），本配置只可进一步收紧 |
+| `require_tenant_bound_jwt` | `bool` | `false` | `GARRISON_REQUIRE_TENANT_BOUND_JWT` | 严格收口：Stateless JWT（`token_style="jwt"` + `jwt_mode=Stateless`）在租户上下文内必须携带签发租户绑定 claim `tid`。默认 `false`——无 `tid` 的存量 token（无租户上下文签发 / 历史签发）放行（向后兼容，绑定语义随 token 自然轮替收敛）；`true` 时 `check_login_stateless` 对无 `tid` token 显性拒绝（`stp-check-login-tenant-unbound`），封住存量无绑定 token 不受租户约束的窗口（jti 黑名单跨请求租户命名空间 miss 的吊销逃逸面）。无租户上下文部署不受影响；开启前应确认存量 token 已轮替（或可接受其显性失效） |
 
 ### 2.2 扩展配置（0.2.0 新增）
 

@@ -3158,6 +3158,48 @@ fn config_env_seed_primary_amr_invalid_type_rejected() {
     assert!(result.is_err(), "非布尔 seed_primary_amr 应在加载期拒绝");
 }
 
+// ========================================================================
+// require_tenant_bound_jwt 配置测试（渗透-租户隔离严格收口：存量无 tid
+// Stateless token 在租户上下文内显性拒绝的开关）
+// ========================================================================
+
+/// `default_config()`：require_tenant_bound_jwt 默认 false（保持存量 token 兼容）。
+#[test]
+fn config_default_require_tenant_bound_jwt_is_false() {
+    let config = GarrisonConfig::default_config();
+    assert!(
+        !config.require_tenant_bound_jwt,
+        "require_tenant_bound_jwt 默认应为 false（开关默认放行存量无 tid token，安全敏感部署显式开启）"
+    );
+}
+
+/// `GARRISON_REQUIRE_TENANT_BOUND_JWT=true` 环境变量覆盖生效。
+#[serial]
+#[test]
+fn config_env_override_require_tenant_bound_jwt_true() {
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_REQUIRE_TENANT_BOUND_JWT",
+        "true",
+    )];
+    let config = GarrisonConfig::load(None).expect("合法 env 覆盖应加载成功");
+    assert!(config.require_tenant_bound_jwt, "env 覆盖 true 应生效");
+}
+
+/// `GARRISON_REQUIRE_TENANT_BOUND_JWT` 非布尔值 → 加载期类型校验拒绝（fail-closed）。
+#[serial]
+#[test]
+fn config_env_require_tenant_bound_jwt_invalid_type_rejected() {
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_REQUIRE_TENANT_BOUND_JWT",
+        "not-a-bool",
+    )];
+    let result = GarrisonConfig::load(None);
+    assert!(
+        result.is_err(),
+        "非布尔 require_tenant_bound_jwt 应在加载期拒绝"
+    );
+}
+
 /// `GARRISON_LOGIN_ID_MAX_LEN=128` 环境变量覆盖生效。
 #[serial]
 #[test]

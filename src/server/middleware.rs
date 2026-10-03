@@ -7,8 +7,8 @@
 //! - `rate_limit_middleware`：基于 IP 的令牌桶限速，超限返回 429
 //! - `inject_client_ip`：从请求提取真实客户端 IP，存入 `Extension<ClientIp>`
 //! - `inject_login_client_ip`：login 端点自动填充 `params.ip`；读体超限/失败返回 413
-//! - `sanitize_json_rejection_middleware`：统一改写 axum Json rejection（400/415/422）
-//!   为统一 JSON 错误体，不回显内部类型名/字段名/字节偏移
+//! - `sanitize_json_rejection_middleware`：统一改写 axum Json rejection
+//!   （400/415/422/413）为统一 JSON 错误体，不回显内部类型名/字段名/字节偏移
 //! - `api_key_auth_middleware`：验证 X-API-Key 头，不匹配返回 401；
 //!   重复多值头 fail-closed 拒绝；按源 IP 失败锁定（GAR-25/28）
 //! - `audit_log_middleware`：tracing::info! 记录请求方法+路径+状态码
@@ -658,10 +658,11 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
             tracing::warn!(error = %e, "inject_login_client_ip: body read failed (oversize or IO)");
             return (
                 StatusCode::PAYLOAD_TOO_LARGE,
-                Json(json!({
-                    "error": "payload_too_large",
-                    "message": "request body exceeds size limit"
-                })),
+                [(
+                    CONTENT_TYPE,
+                    axum::http::HeaderValue::from_static("application/json"),
+                )],
+                PAYLOAD_TOO_LARGE_BODY,
             )
                 .into_response();
         },
@@ -714,13 +715,22 @@ pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
 const REJECTION_BODY: &str =
     r#"{"error":"bad_request","message":"request body failed validation"}"#;
 
+/// 请求体超限（413）的统一错误体——login 读体限幅（`inject_login_client_ip`）
+/// 与 sanitize 中间件（axum `DefaultBodyLimit` 裸 413 rejection）共用同一常量，
+/// 避免第二实现漂移。
+const PAYLOAD_TOO_LARGE_BODY: &str =
+    r#"{"error":"payload_too_large","message":"request body exceeds size limit"}"#;
+
 /// Json extractor rejection 清洗中间件 — 统一改写 axum 默认 rejection 响应。
 ///
 /// axum 0.8 的 `Json` extractor rejection（`JsonDataError` 422 / `JsonSyntaxError`
 /// 400 / `MissingJsonContentType` 415）以 `text/plain` 回显序列化诊断信息：
 /// 内部 Rust 类型名（"expected struct LoginRequest"）、字段名与攻击者输入的
-/// 字节偏移，可用于指纹识别与字段枚举。本中间件识别「4xx + text/plain + 非空
-/// body」的 rejection 响应，将 body 改写为统一 JSON 错误体，状态码保持原值。
+/// 字节偏移，可用于指纹识别与字段枚举。`DefaultBodyLimit` 的 body 超限
+/// rejection（`LengthLimitError`）同为 413 + text/plain 非空诊断体。本中间件
+/// 识别「4xx + text/plain + 非空 body」的 rejection 响应，将 body 改写为统一
+/// JSON 错误体，状态码保持原值（413 用 [`PAYLOAD_TOO_LARGE_BODY`]，与 login
+/// 读体限幅同体；其余用 [`REJECTION_BODY`]）。
 ///
 /// # 误伤排除
 ///
@@ -735,6 +745,7 @@ pub async fn sanitize_json_rejection_middleware(req: Request, next: Next) -> Res
         StatusCode::BAD_REQUEST
             | StatusCode::UNSUPPORTED_MEDIA_TYPE
             | StatusCode::UNPROCESSABLE_ENTITY
+            | StatusCode::PAYLOAD_TOO_LARGE
     );
     if !is_rejection_status {
         return response;
@@ -749,12 +760,17 @@ pub async fn sanitize_json_rejection_middleware(req: Request, next: Next) -> Res
     }
 
     let status = response.status();
+    let sanitized_body = if status == StatusCode::PAYLOAD_TOO_LARGE {
+        PAYLOAD_TOO_LARGE_BODY
+    } else {
+        REJECTION_BODY
+    };
     let (_, body) = response.into_parts();
     // rejection 诊断体均为短文本；64KB 上限仅为防御异常大 body
     match axum::body::to_bytes(body, 64 * 1024).await {
         // 重建响应（丢弃旧 headers，避免残留与新 body 不一致的 content-length）
         Ok(bytes) if !bytes.is_empty() => {
-            let mut sanitized = axum::http::Response::new(axum::body::Body::from(REJECTION_BODY));
+            let mut sanitized = axum::http::Response::new(axum::body::Body::from(sanitized_body));
             *sanitized.status_mut() = status;
             sanitized.headers_mut().insert(
                 CONTENT_TYPE,
@@ -771,7 +787,7 @@ pub async fn sanitize_json_rejection_middleware(req: Request, next: Next) -> Res
         // body 读取失败：错误显性化，返回统一错误体（拒绝语义不变）
         Err(e) => {
             tracing::warn!(error = %e, status = status.as_u16(), "sanitize_json_rejection: body read failed");
-            (status, axum::body::Body::from(REJECTION_BODY)).into_response()
+            (status, axum::body::Body::from(sanitized_body)).into_response()
         },
     }
 }
@@ -2135,6 +2151,54 @@ mod tests {
             .await
             .unwrap();
         assert!(serde_json::from_slice::<serde_json::Value>(&body).is_ok());
+    }
+
+    /// 非 login 端点超限 body（>256KB）命中 `DefaultBodyLimit` 的 413 text/plain
+    /// rejection（axum `LengthLimitError`，非空诊断体），被 sanitize 中间件归一为
+    /// 统一 JSON 错误体——与 login 读体限幅（`inject_login_client_ip`）同体，
+    /// 不回显 axum 内部诊断。
+    #[tokio::test]
+    async fn sanitize_json_rejection_unifies_413_oversize_body() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/refresh",
+                post(|_: axum::Json<SanitizeProbeBody>| async { "ok" }),
+            )
+            .layer(axum::extract::DefaultBodyLimit::max(256 * 1024))
+            .layer(axum::middleware::from_fn(
+                sanitize_json_rejection_middleware,
+            ));
+
+        let oversize = vec![b'x'; 256 * 1024 + 1];
+        let req = Request::builder()
+            .uri("/api/v1/auth/refresh")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(oversize))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "超限 body 应保持 413 语义"
+        );
+        assert_eq!(
+            resp.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json",
+            "裸 text/plain 413 应归一为 JSON 错误体"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            text, PAYLOAD_TOO_LARGE_BODY,
+            "413 错误体应与 login 路径统一"
+        );
+        assert!(
+            !text.contains("buffer"),
+            "不得回显 axum 内部诊断，实际: {text}"
+        );
     }
 
     /// 业务 JSON 错误体（application/json）与裸 404（空 body）原样通过，不误伤。

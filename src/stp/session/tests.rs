@@ -3918,6 +3918,96 @@ mod tenant_binding_tests {
             "无租户上下文 check_login 行为不变"
         );
     }
+
+    /// 绑定校验复用会话快照：check_login 全程 TokenSession 只整读一次，
+    /// 绑定校验不得对同一 token 追加第二次整读（性能 M3：同请求内
+    /// is_valid_with_session 已持有快照，其设计意图即消除重复 DAO 读）。
+    /// 结构性断言：MockDao.get 计数 —— is_valid_with_session 消耗 2 次
+    /// （Token-Session + Account-Session），绑定校验复用快照追加 0 次。
+    #[tokio::test]
+    async fn check_login_tenant_binding_reuses_snapshot_without_extra_dao_read() {
+        use crate::error::GarrisonResult;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// 委托 MockDao 并统计 get 调用次数的测试 DAO。
+        struct GetCountingDao {
+            inner: MockDao,
+            get_calls: AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl GarrisonDao for GetCountingDao {
+            async fn get(&self, key: &str) -> GarrisonResult<Option<String>> {
+                self.get_calls.fetch_add(1, Ordering::SeqCst);
+                GarrisonDao::get(&self.inner, key).await
+            }
+            async fn set(&self, key: &str, value: &str, ttl_seconds: u64) -> GarrisonResult<()> {
+                GarrisonDao::set(&self.inner, key, value, ttl_seconds).await
+            }
+            async fn update(&self, key: &str, value: &str) -> GarrisonResult<()> {
+                GarrisonDao::update(&self.inner, key, value).await
+            }
+            async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
+                GarrisonDao::expire(&self.inner, key, seconds).await
+            }
+            async fn delete(&self, key: &str) -> GarrisonResult<()> {
+                GarrisonDao::delete(&self.inner, key).await
+            }
+            async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<std::time::Duration>> {
+                GarrisonDao::get_timeout(&self.inner, key).await
+            }
+            crate::atomic_test_fallback!();
+        }
+
+        let dao = Arc::new(GetCountingDao {
+            inner: MockDao::new(),
+            get_calls: AtomicUsize::new(0),
+        });
+        let dao_dyn: Arc<dyn GarrisonDao> = dao.clone();
+        let session = Arc::new(GarrisonSession::new(dao_dyn.clone(), 3600, 86400, 0));
+        let mut config = GarrisonConfig::default_config();
+        config.throw_on_not_login = false;
+        config.token_style = "uuid".to_string();
+        let firewall: Arc<dyn crate::strategy::GarrisonPermissionStrategy> =
+            Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+        let logic = GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao_dyn,
+            )),
+        );
+
+        let token = TENANT
+            .scope(tenant_ctx(0), async {
+                logic
+                    .login("tb-count-1", &LoginParams::default())
+                    .await
+                    .unwrap()
+            })
+            .await;
+
+        let before = dao.get_calls.load(Ordering::SeqCst);
+        let ok = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(0), logic.check_login()).await
+        })
+        .await
+        .unwrap();
+        let after = dao.get_calls.load(Ordering::SeqCst);
+        assert!(ok, "同租户 check_login 应放行");
+        assert_eq!(
+            after - before,
+            2,
+            "check_login 只应整读一次 TokenSession（is_valid_with_session 的 \
+             Token-Session + Account-Session 两次 get），租户绑定校验须复用快照，\
+             不得追加第二次整读，实际追加 {} 次",
+            after - before - 2
+        );
+    }
 }
 
 // ============================================================================
@@ -4473,38 +4563,129 @@ mod session_token_security_tests {
             check
         );
     }
-}
 
-/// `TenantBoundJwtClaims` 签发的 token 必须能被 `GarrisonJwtClaims::verify`
-/// 解析且全部既有 claim 一致（字段漂移守护：上游 claim 结构新增必填字段时
-/// 本测试编译期/断言期失败，提示同步 parity 结构）。
-#[cfg(test)]
-#[cfg(feature = "protocol-jwt")]
-mod jwt_tenant_claims_parity_tests {
-    use crate::stp::session::helpers::TenantBoundJwtClaims;
+    // ------------------------------------------------------------------------
+    // 渗透-租户隔离 tid 单一 claims 结构（性能 M2 / 架构 L4 收敛）：
+    // 租户上下文签发统一走 GarrisonJwtClaims（with_tid），无二次验签探测
+    // ------------------------------------------------------------------------
 
-    #[test]
-    fn tenant_bound_claims_parse_as_garrison_jwt_claims() {
-        let claims = TenantBoundJwtClaims::new(
-            "parity-user",
-            3600,
-            &["pwd".to_string()],
-            Some(1_234_567),
-            7,
-        )
-        .expect("构造应成功");
-        let secret = "session-token-security-test-32bytes";
-        let handler = crate::protocol::jwt::JwtHandler::new(secret);
-        let token = handler.sign_custom(&claims).expect("签发应成功");
-        let parsed = crate::protocol::jwt::tests::verify_ok(&handler, &token);
-        assert_eq!(parsed.login_id, "parity-user");
-        assert_eq!(parsed.sub, "parity-user");
-        assert_eq!(parsed.iat, claims.iat);
-        assert_eq!(parsed.exp, claims.exp);
-        assert_eq!(parsed.nbf, claims.nbf);
-        assert_eq!(parsed.jti, claims.jti);
-        assert_eq!(parsed.device, None);
-        assert_eq!(parsed.amr, Some(vec!["pwd".to_string()]));
-        assert_eq!(parsed.auth_time, Some(1_234_567));
+    /// 租户上下文内登录签发的 JWT 经 `GarrisonJwtClaims::verify` 读回
+    /// `tid == Some(签发租户)`（单一 claims 结构往返，取代 parity 镜像守护）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn tenant_context_login_issues_claims_with_tid_roundtrip() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let token = TENANT
+            .scope(tenant_ctx(7), async {
+                logic.login("sec-tid-1", &LoginParams::default()).await
+            })
+            .await
+            .unwrap();
+        let handler = crate::protocol::jwt::JwtHandler::new("session-token-security-test-32bytes");
+        let claims = crate::protocol::jwt::tests::verify_ok(&handler, &token);
+        assert_eq!(claims.tid, Some(7), "租户上下文签发应写 tid claim");
+        assert_eq!(claims.login_id, "sec-tid-1", "既有 claim 不受 tid 接线影响");
+        // 同租户校验放行（tid 与请求租户一致）
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(7), logic.check_login()).await
+        })
+        .await;
+        assert!(
+            matches!(check, Ok(true)),
+            "同租户 tid token 应放行，实际: {:?}",
+            check
+        );
+    }
+
+    /// 无租户上下文签发的 token 载荷不含 `tid` 字段（旧格式逐字节兼容对照：
+    /// 严格开关开启前行为不变的结构性锚点）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn no_tenant_context_login_omits_tid_claim() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let token = logic
+            .login("sec-tid-2", &LoginParams::default())
+            .await
+            .unwrap();
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        use base64::Engine;
+        let payload = token.split('.').nth(1).unwrap();
+        let json = URL_SAFE_NO_PAD
+            .decode(payload)
+            .map(|b| String::from_utf8(b).unwrap())
+            .unwrap();
+        assert!(
+            !json.contains("\"tid\""),
+            "无租户上下文签发载荷不应含 tid，实际: {}",
+            json
+        );
+        let handler = crate::protocol::jwt::JwtHandler::new("session-token-security-test-32bytes");
+        let claims = crate::protocol::jwt::tests::verify_ok(&handler, &token);
+        assert_eq!(claims.tid, None);
+    }
+
+    // ------------------------------------------------------------------------
+    // 渗透-租户隔离严格收口：require_tenant_bound_jwt=true 时存量无 tid
+    // token 在租户上下文内显性拒绝（jti 黑名单跨命名空间 miss 窗口闭合）
+    // ------------------------------------------------------------------------
+
+    /// 开关开启：无 tid token 在租户上下文内拒绝（stp-check-login-tenant-unbound）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn require_tenant_bound_jwt_rejects_unbound_token_under_tenant() {
+        let (logic, _dao) = make_jwt_stateless_logic(|c| c.require_tenant_bound_jwt = true);
+        // 无租户上下文签发（无 tid）→ 租户上下文内校验
+        let token = logic
+            .login("sec-unbound-1", &LoginParams::default())
+            .await
+            .unwrap();
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(7), logic.check_login()).await
+        })
+        .await;
+        assert!(
+            matches!(check, Err(GarrisonError::Session(ref m)) if m.contains("stp-check-login-tenant-unbound")),
+            "开启严格开关后无 tid token 应显性拒绝，实际: {:?}",
+            check
+        );
+    }
+
+    /// 开关开启：带匹配 tid 的 token 照常放行（严格开关不误伤新签发 token）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn require_tenant_bound_jwt_allows_tid_matching_token() {
+        let (logic, _dao) = make_jwt_stateless_logic(|c| c.require_tenant_bound_jwt = true);
+        let token = TENANT
+            .scope(tenant_ctx(7), async {
+                logic.login("sec-unbound-2", &LoginParams::default()).await
+            })
+            .await
+            .unwrap();
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(7), logic.check_login()).await
+        })
+        .await;
+        assert!(
+            matches!(check, Ok(true)),
+            "带匹配 tid 的 token 应放行，实际: {:?}",
+            check
+        );
+    }
+
+    /// 开关开启：无租户上下文请求不受影响（开关只作用于租户上下文内的校验）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn require_tenant_bound_jwt_no_tenant_context_unchanged() {
+        let (logic, _dao) = make_jwt_stateless_logic(|c| c.require_tenant_bound_jwt = true);
+        let token = logic
+            .login("sec-unbound-3", &LoginParams::default())
+            .await
+            .unwrap();
+        let check = with_current_token(token, logic.check_login()).await;
+        assert!(
+            matches!(check, Ok(true)),
+            "无租户上下文行为不变，实际: {:?}",
+            check
+        );
     }
 }

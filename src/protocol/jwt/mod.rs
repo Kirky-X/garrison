@@ -83,6 +83,20 @@ pub struct GarrisonJwtClaims {
     /// 来自会话 `auth_time`；为 `None` 时整体跳过序列化。
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub auth_time: Option<i64>,
+
+    /// 签发租户绑定（多租户部署的 Stateless JWT 补口）。
+    ///
+    /// 租户上下文存在时签发写入签发租户 ID（`GarrisonLogicDefault::generate_token`
+    /// 经 `JwtHandler::with_tid` 接线）；`check_login_stateless` 从首次验签的
+    /// claims 直接读取并校验与请求租户一致（客户端可控的请求租户头不得携他
+    /// 租户签发的 JWT 跨租户复用，否则 jti 黑名单随请求租户物理命名空间错位
+    /// 形成吊销逃逸）。字段为 `Option` 以向后兼容两类存量 token：
+    /// - 无租户上下文签发：`tid` 不序列化（`skip_serializing_if` 保持载荷与
+    ///   既有格式逐字节一致，即「不带 tid」）；
+    /// - 历史签发（本字段引入前）：载荷无 `tid`，serde default 解析为 `None`，
+    ///   `verify` 对旧 token 行为不变。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub tid: Option<i64>,
     // 找回密码扩展 claim（password_owner/password_token_type/password_purpose）
     // 审查后移除：ActionToken 自有 claims 结构承载流程语义，GarrisonJwtClaims
     // 上的同名扩展从未被写入非 None 值（无校验死代码，诱导未来无 enforcement
@@ -112,6 +126,11 @@ pub struct JwtHandler {
     pub amr: Option<Vec<String>>,
     /// 可选 `auth_time` claim（OIDC 主认证时刻，builder [`with_auth_time`](JwtHandler::with_auth_time) 设置）。
     pub auth_time: Option<i64>,
+    /// 可选签发租户绑定（签发时写入 claims `tid`，builder [`with_tid`](JwtHandler::with_tid) 设置）。
+    ///
+    /// `pub(crate)`：租户上下文签发属框架内部职责（`GarrisonLogicDefault::generate_token`），
+    /// 不对外暴露租户语义注入点。默认 `None`，签发格式与既有 token 一致。
+    pub(crate) tid: Option<i64>,
     /// 密钥材料（crate 内私有）：决定 sign/verify 的密钥来源与算法白名单。
     ///
     /// `new()` 默认 [`KeyMaterial::Hs`](crate::protocol::jwt::KeyMaterial)；非对称

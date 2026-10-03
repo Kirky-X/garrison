@@ -320,6 +320,7 @@ async fn acc_jwt_007_algorithm_mismatch_rejected() {
         nbf: None,
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let header = Header::new(Algorithm::HS256);
     let declared_hs256 = encode(
@@ -425,6 +426,7 @@ async fn acc_jwt_009_wrong_key_with_or_without_kid_rejected() {
         nbf: None,
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let mut header = Header::new(Algorithm::HS256);
     header.kid = Some("attacker-key-1".to_string());
@@ -633,6 +635,7 @@ async fn acc_jwt_013_future_iat_tolerates_clock_skew() {
         nbf: None,
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let token = encode(
         &Header::new(Algorithm::HS256),

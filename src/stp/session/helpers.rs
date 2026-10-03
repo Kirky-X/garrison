@@ -9,100 +9,6 @@
 use super::*;
 
 // ============================================================================
-// 租户绑定 JWT claims（渗透-租户隔离-会话绑定-1 的 Stateless 补口）
-// ============================================================================
-
-/// Stateless JWT 的租户绑定签发载荷：[`crate::protocol::jwt::GarrisonJwtClaims`]
-/// 全字段 + `tid`（签发租户绑定）。
-///
-/// JwtHandler 固定签发 `GarrisonJwtClaims`（无租户 claim 参数，protocol 层
-/// 不感知租户语义），租户上下文存在时经 `sign_custom` 以本结构签发，
-/// payload 为既有格式 + `tid` claim；无租户上下文仍走 `sign_with_amr`
-/// 既有路径，签发格式不变。字段与 serde 跳过属性必须与
-/// `GarrisonJwtClaims` 保持一致——`GarrisonJwtClaims::verify`（serde 忽略
-/// 未知字段）解析本结构签发的 token 时行为与既有 token 完全一致，
-/// `jwt_tenant_claims_parity_tests::tenant_bound_claims_parse_as_garrison_jwt_claims`
-/// 测试守护该契约防字段漂移。
-#[cfg(feature = "protocol-jwt")]
-#[derive(Debug, serde::Serialize)]
-pub(super) struct TenantBoundJwtClaims {
-    /// 主体标识（与 login_id 一致）。
-    pub(super) sub: String,
-    /// 签发时间（Unix 秒）。
-    pub(super) iat: i64,
-    /// 过期时间（Unix 秒）。
-    pub(super) exp: i64,
-    /// Garrison 登录标识。
-    pub(super) login_id: String,
-    /// 可选设备标识（stp 签发路径恒为 None，序列化为 null，与既有格式一致）。
-    pub(super) device: Option<String>,
-    /// JWT 唯一标识（签发时生成 UUID v4）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) jti: Option<String>,
-    /// Not Before（签发时刻）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) nbf: Option<i64>,
-    /// RFC 8176 amr claim（账本映射；None 时跳过序列化）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) amr: Option<Vec<String>>,
-    /// OIDC auth_time claim（None 时跳过序列化）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) auth_time: Option<i64>,
-    /// 签发租户绑定（`TENANT` 上下文存在时写入；十进制 i64）。
-    pub(super) tid: i64,
-}
-
-#[cfg(feature = "protocol-jwt")]
-impl TenantBoundJwtClaims {
-    /// 按既有 `sign_with_kid` 同一口径构造（iat/nbf/exp/jti 生成逻辑一致）。
-    pub(super) fn new(
-        login_id: &str,
-        timeout: i64,
-        amr: &[String],
-        auth_time: Option<i64>,
-        tid: i64,
-    ) -> GarrisonResult<Self> {
-        if timeout < 0 {
-            return Err(GarrisonError::Config(format!(
-                "jwt-timeout-negative::{}",
-                timeout
-            )));
-        }
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|e| GarrisonError::Internal(format!("system-clock-error::{}", e)))?
-            .as_secs() as i64;
-        let exp = now.checked_add(timeout).ok_or_else(|| {
-            GarrisonError::InvalidParam(format!("jwt-timeout-overflow::{}", timeout))
-        })?;
-        Ok(Self {
-            sub: login_id.to_string(),
-            iat: now,
-            exp,
-            login_id: login_id.to_string(),
-            device: None,
-            jti: Some(uuid::Uuid::new_v4().to_string()),
-            nbf: Some(now),
-            amr: if amr.is_empty() {
-                None
-            } else {
-                Some(amr.to_vec())
-            },
-            auth_time,
-            tid,
-        })
-    }
-}
-
-/// check 侧 `tid` 探针：只反序列化租户绑定 claim（未知字段忽略，缺失为 None）。
-#[cfg(feature = "protocol-jwt")]
-#[derive(serde::Deserialize)]
-struct JwtTenantProbe {
-    #[serde(default)]
-    tid: Option<i64>,
-}
-
-// ============================================================================
 // 私有 helper 方法（从 mod.rs 搬移，供 SessionLogic impl 调用）
 // ============================================================================
 
@@ -792,30 +698,26 @@ impl GarrisonLogicDefault {
                         (Vec::new(), None)
                     };
                     // 租户上下文存在时签发携带 `tid` 绑定 claim（渗透-租户隔离-
-                    // 会话绑定-1 的 Stateless 补口）：check_login_stateless 据此
-                    // 拒绝跨租户复用，换 X-Tenant-Id 头不得逃逸吊销。无租户
-                    // 上下文走 `sign_with_amr`，payload 与既有格式逐字节一致。
+                    // 会话绑定-1 的 Stateless 补口）：经 `with_tid` 统一以
+                    // `GarrisonJwtClaims` 签发（租户绑定字段与既有 claims 同构，
+                    // check_login_stateless 从首次验签的 claims 直接读 tid，无需
+                    // 二次验签探测）。无租户上下文走同一 `sign_with_amr` 路径且
+                    // 不接 tid，payload 与既有格式逐字节一致。
                     let tenant_id = crate::context::tenant::TENANT
                         .try_get()
                         .ok()
                         .map(|ctx| ctx.tenant_id);
+                    let handler =
+                        crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
                     match tenant_id {
-                        Some(tid) => {
-                            let handler = crate::protocol::jwt::JwtHandler::new(
-                                self.config.jwt_secret.as_str(),
-                            );
-                            let claims = TenantBoundJwtClaims::new(
-                                login_id,
-                                self.config.timeout,
-                                &amr,
-                                auth_time,
-                                tid,
-                            )?;
-                            handler.sign_custom(&claims)
-                        },
+                        Some(tid) => handler.with_tid(tid).sign_with_amr(
+                            login_id,
+                            self.config.timeout,
+                            &amr,
+                            auth_time,
+                        ),
                         None => {
-                            crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str())
-                                .sign_with_amr(login_id, self.config.timeout, &amr, auth_time)
+                            handler.sign_with_amr(login_id, self.config.timeout, &amr, auth_time)
                         },
                     }
                 }
@@ -842,14 +744,20 @@ impl GarrisonLogicDefault {
     ///
     /// # 租户绑定校验（渗透-租户隔离-会话绑定-1 的 Stateless 补口）
     ///
-    /// 租户上下文存在且 token 携带 `tid` 绑定 claim（登录时租户上下文内签发）
-    /// 时，绑定租户 ≠ 请求租户即拒绝——客户端可控的 `X-Tenant-Id` 头不得携
-    /// 他租户签发的 JWT 跨租户复用（否则 jti 黑名单经 DAO 租户前缀错位后
-    /// 形成吊销逃逸：黑名单写读各随请求租户命名空间，换头即 miss）。
-    /// token 无 `tid`（无租户上下文签发的存量/兼容 token）或无租户上下文时
-    /// 行为不变。黑名单键仍为 `jwt:blacklist:{jti}`：键构造无法跨越 DAO 的
-    /// 请求租户物理命名空间（写读两侧前缀各随当时的请求租户），同租户内
-    /// 命中语义不变，跨租户逃逸由本绑定校验闭合。
+    /// 从**首次验签**的 claims 直接读取 `tid`（租户上下文内签发时由
+    /// `JwtHandler::with_tid` 写入，单一 claims 结构，无二次 `verify_custom`
+    /// 验签）：租户上下文存在且 token 携带 `tid` 时，绑定租户 ≠ 请求租户即
+    /// 拒绝——客户端可控的 `X-Tenant-Id` 头不得携他租户签发的 JWT 跨租户复用
+    /// （否则 jti 黑名单经 DAO 租户前缀错位后形成吊销逃逸：黑名单写读各随
+    /// 请求租户命名空间，换头即 miss）。
+    ///
+    /// token 无 `tid`（无租户上下文签发的存量/兼容 token）时默认放行；
+    /// `require_tenant_bound_jwt=true`（严格收口开关）时显性拒绝（错误码
+    /// `stp-check-login-tenant-unbound`，与 `stp-check-login-tenant-mismatch`
+    /// 同风格），封住存量无 tid token 在租户上下文内不受绑定约束的窗口。
+    /// 无租户上下文时行为不变。黑名单键仍为 `jwt:blacklist:{jti}`：键构造无法
+    /// 跨越 DAO 的请求租户物理命名空间（写读两侧前缀各随当时的请求租户），
+    /// 同租户内命中语义不变，跨租户逃逸由本绑定校验闭合。
     pub(super) async fn check_login_stateless(
         &self,
         token: &str,
@@ -878,11 +786,20 @@ impl GarrisonLogicDefault {
             // 租户绑定校验（verify 成功后、黑名单检查前）：签发租户 ≠ 请求租户
             // 即拒绝，错误码与会话模式的跨租户拒绝一致
             if let Ok(ctx) = crate::context::tenant::TENANT.try_get() {
-                let probe = handler.verify_custom::<JwtTenantProbe>(token)?;
-                if probe.tid.is_some_and(|tid| tid != ctx.tenant_id) {
-                    return Err(GarrisonError::Session(
-                        "stp-check-login-tenant-mismatch::".to_string(),
-                    ));
+                match claims.tid {
+                    Some(tid) if tid != ctx.tenant_id => {
+                        return Err(GarrisonError::Session(
+                            "stp-check-login-tenant-mismatch::".to_string(),
+                        ));
+                    },
+                    // 严格收口开关：存量无 tid token 在租户上下文内显性拒绝
+                    // （默认 false 向后兼容；开启后部署需等存量 token 自然过期轮替）
+                    None if self.config.require_tenant_bound_jwt => {
+                        return Err(GarrisonError::Session(
+                            "stp-check-login-tenant-unbound::".to_string(),
+                        ));
+                    },
+                    _ => {},
                 }
             }
             // JWT 撤销黑名单检查（verify 成功后、返回 Ok 前）
@@ -914,22 +831,33 @@ impl GarrisonLogicDefault {
     /// 启用 `protocol-jwt` feature 且 `token_style=jwt` 时先 JWT verify 再查 session
     /// （JWT verify 失败直接返回错误，不查询 session）。否则仅查 session
     /// （无 protocol-jwt feature 或 token_style != jwt 时）。
+    ///
+    /// 返回值第二元为校验通过时持有的 Token-Session 快照（请求内复用：租户
+    /// 绑定校验、hover 检查与登录身份缓存共享同一份，消除重复 DAO 读）。
     pub(super) async fn check_login_mixin(
         &self,
         token: &str,
-    ) -> GarrisonResult<(bool, Option<String>)> {
+    ) -> (
+        GarrisonResult<(bool, Option<String>)>,
+        Option<crate::session::TokenSession>,
+    ) {
         #[cfg(feature = "protocol-jwt")]
         {
             if self.config.token_style == "jwt" {
                 let handler =
                     crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
                 // JWT 签名无效直接返回错误（不查询 session）
-                handler.verify(token)?;
+                if let Err(e) = handler.verify(token) {
+                    return (Err(e), None);
+                }
             }
         }
         // is_valid_with_session 返回 Token-Session 快照——hover 检查与
         // 登录身份缓存复用同一快照，消除同一请求内的重复 DAO 读取
-        let ts_opt = self.session.is_valid_with_session(token).await?;
+        let ts_opt = match self.session.is_valid_with_session(token).await {
+            Ok(ts) => ts,
+            Err(e) => return (Err(e), None),
+        };
         let valid = ts_opt.is_some();
         let login_id = ts_opt.as_ref().map(|ts| ts.login_id.clone());
         if !valid {
@@ -948,22 +876,28 @@ impl GarrisonLogicDefault {
                 }
             }
             if self.config.throw_on_not_login {
-                return Err(GarrisonError::Session("stp-not-login::".to_string()));
+                return (
+                    Err(GarrisonError::Session("stp-not-login::".to_string())),
+                    None,
+                );
             }
         }
         // 悬停检查（仅 valid 时）
         if valid {
-            let hover_ok = self.check_and_update_hover(token, ts_opt).await?;
+            let hover_ok = match self.check_and_update_hover(token, ts_opt.as_ref()).await {
+                Ok(ok) => ok,
+                Err(e) => return (Err(e), None),
+            };
             if !hover_ok {
-                return Ok((false, None));
+                return (Ok((false, None)), ts_opt);
             }
             // Token 自动续签（若启用且剩余 TTL 低于阈值）
             if let Err(e) = self.check_and_renew(token).await {
                 tracing::warn!(error = %e, "Token auto-renewal failed, old Token still in use");
             }
-            return Ok((true, login_id));
+            return (Ok((true, login_id)), ts_opt);
         }
-        Ok((false, None))
+        (Ok((false, None)), ts_opt)
     }
 
     /// 检查悬停超时并更新最后活跃时间。
@@ -980,7 +914,7 @@ impl GarrisonLogicDefault {
     pub(super) async fn check_and_update_hover(
         &self,
         token: &str,
-        ts_opt: Option<crate::session::TokenSession>,
+        ts_opt: Option<&crate::session::TokenSession>,
     ) -> GarrisonResult<bool> {
         if let Some(ts) = ts_opt {
             let now_millis = self.clock.now().timestamp_millis();
@@ -1017,13 +951,22 @@ impl GarrisonLogicDefault {
     /// Simple 模式：仅 session 校验，不验证 JWT 签名。
     ///
     /// session 不存在时按 `throw_on_not_login` 决定返回 `Ok(false)` 或 `Session` 错误。
+    ///
+    /// 返回值第二元为校验通过时持有的 Token-Session 快照（请求内复用：租户
+    /// 绑定校验、hover 检查与登录身份缓存共享同一份，消除重复 DAO 读）。
     pub(super) async fn check_login_simple(
         &self,
         token: &str,
-    ) -> GarrisonResult<(bool, Option<String>)> {
+    ) -> (
+        GarrisonResult<(bool, Option<String>)>,
+        Option<crate::session::TokenSession>,
+    ) {
         // is_valid_with_session 返回 Token-Session 快照——hover 检查与
         // 登录身份缓存复用同一快照，消除同一请求内的重复 DAO 读取
-        let ts_opt = self.session.is_valid_with_session(token).await?;
+        let ts_opt = match self.session.is_valid_with_session(token).await {
+            Ok(ts) => ts,
+            Err(e) => return (Err(e), None),
+        };
         let valid = ts_opt.is_some();
         let login_id = ts_opt.as_ref().map(|ts| ts.login_id.clone());
         if !valid {
@@ -1042,22 +985,28 @@ impl GarrisonLogicDefault {
                 }
             }
             if self.config.throw_on_not_login {
-                return Err(GarrisonError::Session("stp-not-login::".to_string()));
+                return (
+                    Err(GarrisonError::Session("stp-not-login::".to_string())),
+                    None,
+                );
             }
         }
         // 悬停检查（仅 valid 时）
         if valid {
-            let hover_ok = self.check_and_update_hover(token, ts_opt).await?;
+            let hover_ok = match self.check_and_update_hover(token, ts_opt.as_ref()).await {
+                Ok(ok) => ok,
+                Err(e) => return (Err(e), None),
+            };
             if !hover_ok {
-                return Ok((false, None));
+                return (Ok((false, None)), ts_opt);
             }
             // Token 自动续签（若启用且剩余 TTL 低于阈值）
             if let Err(e) = self.check_and_renew(token).await {
                 tracing::warn!(error = %e, "Token auto-renewal failed, old Token still in use");
             }
-            return Ok((true, login_id));
+            return (Ok((true, login_id)), ts_opt);
         }
-        Ok((false, None))
+        (Ok((false, None)), ts_opt)
     }
 }
 

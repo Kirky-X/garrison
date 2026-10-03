@@ -301,7 +301,23 @@ impl JwtHandler {
             key_material: KeyMaterial::Hs,
             amr: None,
             auth_time: None,
+            tid: None,
         }
+    }
+
+    /// 设置签发租户绑定（签发时写入 claims 的 `tid` claim）。
+    ///
+    /// crate 内租户上下文签发路径专用（`GarrisonLogicDefault::generate_token`）：
+    /// 租户上下文存在时接入，签发的 token 携带签发租户 ID，供
+    /// `check_login_stateless` 从首次验签的 claims 直接读取校验（无需二次
+    /// 验签探测）。未调用时签发格式与既有 token 逐字节一致（不带 `tid`）。
+    ///
+    /// # 参数
+    /// - `tid`: 签发租户 ID。
+    #[must_use]
+    pub(crate) fn with_tid(mut self, tid: i64) -> Self {
+        self.tid = Some(tid);
+        self
     }
 
     /// 导出公钥参数（JWKS 端点用；无私钥成分）。
@@ -508,6 +524,7 @@ impl JwtHandler {
                 Some(amr.to_vec())
             },
             auth_time,
+            tid: self.tid,
         };
         handler.sign(login_id, timeout)
     }
@@ -572,6 +589,7 @@ impl JwtHandler {
             nbf: Some(now), // 签发时设置 nbf，verify 时强制校验
             amr: self.amr.clone(),
             auth_time: self.auth_time,
+            tid: self.tid,
         };
         let header = Header {
             kid,

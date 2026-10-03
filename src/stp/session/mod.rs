@@ -620,17 +620,21 @@ impl SessionLogic for GarrisonLogicDefault {
         // 缓存作用域 `with_login_id_scope` 由 Web middleware 在请求开始时创建
         // （覆盖整个请求处理期）；未在作用域内调用（直连 API/测试）时写入为
         // no-op，get_login_id 回退 DAO 读取，语义不变。
-        let result = match self.jwt_mode {
-            JwtMode::Stateless => self.check_login_stateless(&token).await,
-            JwtMode::Mixin => self.check_login_mixin(&token).await,
-            JwtMode::Simple => self.check_login_simple(&token).await,
-        };
         // 会话-租户一致性校验（渗透-租户隔离-会话绑定-1 / FINDING-025 演变）：
         // 仅在判定有效时执行——租户上下文存在且会话已绑定租户时，
         // 绑定租户与当前请求租户不一致即拒绝（客户端可控 X-Tenant-Id
         // 不得携他人租户的会话跨租户复用）。会话无绑定（旧会话/非多租户部署）
         // 或无租户上下文时行为不变；Stateless 无 session（无绑定可校验）不变。
-        let result = self.validate_session_tenant_binding(&token, result).await;
+        // simple/mixin 模式将 is_valid_with_session 已取的 Token-Session 快照
+        // 透传给绑定校验（同一请求内复用，快照设计意图即消除重复 DAO 读）。
+        let (result, snapshot) = match self.jwt_mode {
+            JwtMode::Stateless => (self.check_login_stateless(&token).await, None),
+            JwtMode::Mixin => self.check_login_mixin(&token).await,
+            JwtMode::Simple => self.check_login_simple(&token).await,
+        };
+        let result = self
+            .validate_session_tenant_binding(&token, result, snapshot.as_ref())
+            .await;
         // 异常检测（仅 valid 时，检测失败不中断主流程）
         #[cfg(feature = "security-extra")]
         if let Ok((true, Some(ref login_id))) = result {
@@ -761,11 +765,19 @@ impl GarrisonLogicDefault {
     /// - Stateless 模式无 session 存储（无可校验绑定）：原样放行——Stateless
     ///   的租户强制属 `stp/session/helpers.rs` JWT 层职责，本机制不覆盖。
     ///
-    /// 绑定 attr 读取经 `session.get`（DAO 读），DAO 故障透传 Err（失败显性化）。
+    /// # 快照复用与 DAO 读取
+    ///
+    /// `snapshot` 为同请求 `check_login_simple` / `check_login_mixin` 经
+    /// `is_valid_with_session` 已取的 Token-Session 快照：可达（Some）时直接读
+    /// 快照 attrs，不追加 DAO 读；不可达（None，如 Stateless——`jwt_mode` 分派
+    /// 时不持有会话快照）时保持原 `session.get` 读取路径，行为与旧版完全一致。
+    /// 绑定 attr 仅在会话创建时写入、此后不变，快照读取与整读语义等价。
+    /// DAO 故障透传 Err（失败显性化）。
     async fn validate_session_tenant_binding(
         &self,
         token: &str,
         result: GarrisonResult<(bool, Option<String>)>,
+        snapshot: Option<&crate::session::TokenSession>,
     ) -> GarrisonResult<(bool, Option<String>)> {
         // 仅有效判定需要校验（无效判定本就不放行）
         if !matches!(result, Ok((true, _))) {
@@ -775,10 +787,18 @@ impl GarrisonLogicDefault {
             Ok(ctx) => ctx,
             Err(_) => return result, // 无租户上下文：行为不变
         };
-        let bound = self
-            .session
-            .get(token, crate::context::tenant::SESSION_TENANT_ATTR_KEY)
-            .await?;
+        let bound = match snapshot {
+            Some(ts) => ts
+                .attrs
+                .get(crate::context::tenant::SESSION_TENANT_ATTR_KEY)
+                .cloned(),
+            // 快照不可达（Stateless 无会话存储）：保持原整读路径
+            None => {
+                self.session
+                    .get(token, crate::context::tenant::SESSION_TENANT_ATTR_KEY)
+                    .await?
+            },
+        };
         match bound {
             // 已绑定：规范十进制字符串比较（绑定写入恒为 i64::to_string）
             Some(bound) if bound == ctx.tenant_id.to_string() => result,

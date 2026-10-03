@@ -77,6 +77,7 @@ fn claims_serializes_full_fields() {
         nbf: Some(1700000000),
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let json = serde_json::to_string(&claims).unwrap();
     assert!(json.contains("\"sub\":\"1001\""));
@@ -101,6 +102,7 @@ fn claims_device_none_serializes_as_null() {
         nbf: None,
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let json = serde_json::to_string(&claims).unwrap();
     assert!(json.contains("\"device\":null"));
@@ -123,6 +125,7 @@ fn claims_jti_none_skipped_in_json() {
         nbf: None,
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let json = serde_json::to_string(&claims).unwrap();
     assert!(!json.contains("jti"));
@@ -303,6 +306,7 @@ fn verify_expired_token_returns_expired_error() {
         nbf: Some(now - 20),
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let header = jsonwebtoken::Header::new(Algorithm::HS256);
     let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
@@ -349,6 +353,7 @@ fn verify_future_nbf_returns_invalid_token() {
         nbf: Some(now + 10), // 未来 10 秒生效
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let header = jsonwebtoken::Header::new(Algorithm::HS256);
     let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
@@ -396,6 +401,7 @@ fn verify_past_nbf_returns_ok() {
         nbf: Some(now - 10), // 过去 10 秒已生效
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let header = jsonwebtoken::Header::new(Algorithm::HS256);
     let key = jsonwebtoken::EncodingKey::from_secret(b"0123456789abcdef0123456789abcdef");
@@ -975,6 +981,7 @@ fn claims_amr_auth_time_serialize_and_deserialize() {
         nbf: None,
         amr: Some(vec!["pwd".to_string(), "otp".to_string()]),
         auth_time: Some(1700000000),
+        tid: None,
     };
     let json = serde_json::to_string(&claims).unwrap();
     assert!(
@@ -1005,6 +1012,7 @@ fn claims_amr_none_skipped_in_json() {
         nbf: None,
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let json = serde_json::to_string(&claims).unwrap();
     assert!(!json.contains("amr"), "amr=None 不应序列化，实际: {}", json);
@@ -1023,6 +1031,89 @@ fn claims_without_amr_fields_deserialize_as_none() {
     let claims: GarrisonJwtClaims = serde_json::from_str(json).unwrap();
     assert_eq!(claims.amr, None, "无 amr 字段应反序列化为 None");
     assert_eq!(claims.auth_time, None, "无 auth_time 字段应反序列化为 None");
+}
+
+/// tid=None 跳过序列化（无租户上下文签发不带 tid，载荷与既有格式逐字节一致）；
+/// 旧格式载荷（无 tid 字段）反序列化为 None（serde default 向后兼容）。
+#[test]
+fn claims_tid_none_skipped_and_legacy_payload_parses_as_none() {
+    let claims = GarrisonJwtClaims {
+        sub: "1001".to_string(),
+        iat: 1700000000,
+        exp: 1700003600,
+        login_id: "1001".to_string(),
+        device: None,
+        jti: None,
+        nbf: None,
+        amr: None,
+        auth_time: None,
+        tid: None,
+    };
+    let json = serde_json::to_string(&claims).unwrap();
+    assert!(!json.contains("tid"), "tid=None 不应序列化，实际: {}", json);
+    let parsed: GarrisonJwtClaims = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.tid, None);
+    // 旧格式 token（tid 字段引入前的签发）：载荷无 tid，解析为 None
+    let legacy =
+        r#"{"sub":"1001","iat":1700000000,"exp":1700003600,"login_id":"1001","device":"web"}"#;
+    let legacy_claims: GarrisonJwtClaims = serde_json::from_str(legacy).unwrap();
+    assert_eq!(legacy_claims.tid, None, "旧格式载荷无 tid 应解析为 None");
+}
+
+/// tid=Some 往返：序列化输出十进制 i64，反序列化读回。
+#[test]
+fn claims_tid_roundtrips_when_present() {
+    let claims = GarrisonJwtClaims {
+        sub: "1001".to_string(),
+        iat: 1700000000,
+        exp: 1700003600,
+        login_id: "1001".to_string(),
+        device: None,
+        jti: None,
+        nbf: None,
+        amr: None,
+        auth_time: None,
+        tid: Some(7),
+    };
+    let json = serde_json::to_string(&claims).unwrap();
+    assert!(
+        json.contains(r#""tid":7"#),
+        "tid 应输出十进制 i64，实际: {}",
+        json
+    );
+    let parsed: GarrisonJwtClaims = serde_json::from_str(&json).unwrap();
+    assert_eq!(parsed.tid, Some(7));
+}
+
+/// sign（无租户上下文口径）签发载荷不含 tid，verify 读回 None（签发格式不变对照）。
+#[test]
+fn sign_without_tenant_omits_tid_and_verifies() {
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef");
+    let token = handler.sign("1001", 3600).unwrap();
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine;
+    let payload = token.split('.').nth(1).unwrap();
+    let json = URL_SAFE_NO_PAD
+        .decode(payload)
+        .map(|b| String::from_utf8(b).unwrap())
+        .unwrap();
+    assert!(
+        !json.contains("\"tid\""),
+        "无租户签发载荷不应含 tid，实际: {}",
+        json
+    );
+    let claims = handler.verify(&token).unwrap();
+    assert_eq!(claims.tid, None);
+}
+
+/// with_tid 签发写 tid claim，verify 读回（签发-校验同构往返，租户上下文签发口径）。
+#[test]
+fn sign_with_tid_roundtrips_through_verify() {
+    let handler = JwtHandler::new("0123456789abcdef0123456789abcdef").with_tid(7);
+    let token = handler.sign("1001", 3600).unwrap();
+    let claims = verify_ok(&handler, &token);
+    assert_eq!(claims.tid, Some(7), "with_tid 签发应写 tid claim");
+    assert_eq!(claims.login_id, "1001", "既有 claim 不受 tid 接线影响");
 }
 
 /// sign_with_amr 签发后 verify 读回的 claim 内容一致（单一签发路径）。
@@ -1371,6 +1462,7 @@ fn verify_expired_token_maps_to_expired_token_error() {
         nbf: Some(now - 7_200),
         amr: None,
         auth_time: None,
+        tid: None,
     };
     let token = encode(
         &Header::new(jsonwebtoken::Algorithm::HS256),

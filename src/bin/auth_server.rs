@@ -44,7 +44,7 @@
 //! ```sh
 //! cargo run --features auth-server --bin auth_server
 //! ```
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::sync::Arc;
 
 use garrison::backend::embedded::BackendEmbedded;
@@ -479,115 +479,16 @@ async fn async_main() -> GarrisonResult<()> {
     let server = GarrisonAuthServer::new(backend)
         .with_external_port(external_port)
         .with_internal_port(internal_port)
+        // GAR-30：绑定地址经框架 builder API 注入（默认回环，secure-by-default），
+        // listen() 的 TCP/TLS 路径按配置地址绑定——bin 不再自建 serve 复刻
+        .with_external_bind(security.external_bind)
+        .with_internal_bind(security.internal_bind)
         .with_rate_limit(rate_limit)
         .with_external_login_enabled(external_login_enabled)
         .with_trusted_proxies(security.trusted_proxies)
         .with_internal_api_key(internal_api_key);
 
-    // GAR-30：框架 GarrisonAuthServer::listen() 将绑定地址硬编码为 0.0.0.0
-    // （AuthServerConfig 无绑定地址入口，src/server/ 属框架层不可改），参考部署
-    // 在 bin 侧以「自绑定 + axum::serve」收口绑定面：复用 server 的 pub
-    // external_router()/internal_router()（限流/审计/API-Key 中间件全量保留），
-    // 语义对齐 listen() 的 TCP 明文路径（含优雅停机）。本 bin 未接 with_tls，
-    // 需要 TLS 终止时须经框架 listen() 并自行在部署层收口绑定面。
-    let external_router = server.external_router();
-    let internal_router = server.internal_router();
-    let external_listener =
-        tokio::net::TcpListener::bind(SocketAddr::new(security.external_bind, external_port))
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("server-external-bind::{}", e)))?;
-    let internal_listener =
-        tokio::net::TcpListener::bind(SocketAddr::new(security.internal_bind, internal_port))
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("server-internal-bind::{}", e)))?;
-
-    tracing::info!(
-        external = %external_listener.local_addr().map(|a| a.to_string()).unwrap_or_default(),
-        internal = %internal_listener.local_addr().map(|a| a.to_string()).unwrap_or_default(),
-        "starting GarrisonAuthServer"
-    );
-
-    // 信号监听 → Notify 广播给两个端口 serve future（与框架 listen() 同语义）
-    #[cfg(feature = "server-graceful-shutdown")]
-    let shutdown_notify = {
-        let notify = Arc::new(tokio::sync::Notify::new());
-        let n2 = Arc::clone(&notify);
-        tokio::spawn(async move {
-            shutdown_signal().await;
-            n2.notify_waiters();
-        });
-        notify
-    };
-    #[cfg(feature = "server-graceful-shutdown")]
-    let shutdown_notify_ext = Arc::clone(&shutdown_notify);
-    #[cfg(feature = "server-graceful-shutdown")]
-    let shutdown_notify_int = Arc::clone(&shutdown_notify);
-
-    let serve_external = async {
-        let serve = axum::serve(
-            external_listener,
-            external_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        );
-        #[cfg(feature = "server-graceful-shutdown")]
-        let serve = serve.with_graceful_shutdown(async move {
-            shutdown_notify_ext.notified().await;
-        });
-        serve
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("server-external-server-error::{}", e)))
-    };
-    let serve_internal = async {
-        let serve = axum::serve(
-            internal_listener,
-            internal_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
-        );
-        #[cfg(feature = "server-graceful-shutdown")]
-        let serve = serve.with_graceful_shutdown(async move {
-            shutdown_notify_int.notified().await;
-        });
-        serve
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("server-internal-server-error::{}", e)))
-    };
-
-    // 双端口并行服务；任一端口异常即整体返回错误（另一端口随之终止）
-    if let Err(e) = tokio::try_join!(serve_external, serve_internal) {
-        tracing::error!(error = %e, "server exited abnormally");
-        return Err(e);
-    }
-
-    Ok(())
-}
-
-/// 优雅停机信号：SIGTERM / SIGINT 任一到达即返回（与框架 listen() 同语义）。
-#[cfg(feature = "server-graceful-shutdown")]
-async fn shutdown_signal() {
-    let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
-    };
-    #[cfg(unix)]
-    let terminate = async {
-        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
-            Ok(mut sig) => {
-                sig.recv().await;
-            },
-            Err(e) => {
-                // 信号处理器安装失败（罕见）：不 panic，退化为仅监听 Ctrl-C
-                tracing::warn!(error = %e, "failed to install SIGTERM handler");
-                std::future::pending::<()>().await;
-            },
-        }
-    };
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
-    }
-    tracing::info!(
-        "shutdown signal received; stopping new connections and draining in-flight requests"
-    );
+    server.listen().await
 }
 
 #[cfg(test)]

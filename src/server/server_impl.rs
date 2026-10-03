@@ -131,9 +131,24 @@ impl GarrisonAuthServer {
         self
     }
 
+    /// 设置外网端口绑定地址（默认 **0.0.0.0**，向后兼容）。
+    ///
+    /// 框架默认通配绑定保持既有下游行为；安全敏感部署应显式收口绑定面
+    /// （如 127.0.0.1 仅本机可达）。TCP 与 TLS 两条路径均使用该地址。
+    pub fn with_external_bind(mut self, addr: std::net::IpAddr) -> Self {
+        self.config.external_bind = addr;
+        self
+    }
+
     /// 设置内网端口（默认 8081）。
     pub fn with_internal_port(mut self, port: u16) -> Self {
         self.config.internal_port = port;
+        self
+    }
+
+    /// 设置内网端口绑定地址（默认 **0.0.0.0**，向后兼容，语义同 `with_external_bind`）。
+    pub fn with_internal_bind(mut self, addr: std::net::IpAddr) -> Self {
+        self.config.internal_bind = addr;
         self
     }
 
@@ -323,7 +338,7 @@ impl GarrisonAuthServer {
             .layer(axum::middleware::from_fn(
                 middleware::inject_login_client_ip,
             ))
-            // GAR-27: Json extractor rejection（400/415/422）统一清洗，
+            // GAR-27: Json extractor rejection（400/413/415/422）统一清洗，
             // 不向调用方回显内部类型名/字段名/字节偏移
             .layer(axum::middleware::from_fn(
                 middleware::sanitize_json_rejection_middleware,
@@ -555,6 +570,11 @@ impl GarrisonAuthServer {
     ///
     /// 两个服务器并行运行，任一服务器异常退出时整体返回错误。
     ///
+    /// # 绑定地址
+    ///
+    /// 由配置驱动：默认 **0.0.0.0**（向后兼容），经 `with_external_bind` /
+    /// `with_internal_bind` 显式收口绑定面；TCP 与 TLS 两条路径使用同一地址。
+    ///
     /// # TLS 终止
     ///
     /// 启用 `tls` feature 且调用 `with_tls()` 后，两个端口均使用
@@ -588,8 +608,12 @@ impl GarrisonAuthServer {
             notify
         };
 
-        let external_addr = format!("0.0.0.0:{}", self.config.external_port);
-        let internal_addr = format!("0.0.0.0:{}", self.config.internal_port);
+        // 绑定地址由配置驱动（默认 0.0.0.0 向后兼容；with_external_bind/
+        // with_internal_bind 可收口），TCP 与 TLS 路径共用同一 SocketAddr
+        let external_addr =
+            std::net::SocketAddr::new(self.config.external_bind, self.config.external_port);
+        let internal_addr =
+            std::net::SocketAddr::new(self.config.internal_bind, self.config.internal_port);
 
         #[cfg(feature = "tls")]
         let tls_config_ext = self.tls_config.clone();
@@ -600,6 +624,8 @@ impl GarrisonAuthServer {
         let internal_router = self.internal_router();
 
         tracing::info!(
+            external_bind = %external_addr,
+            internal_bind = %internal_addr,
             external_port = self.config.external_port,
             internal_port = self.config.internal_port,
             "GarrisonAuthServer starting"
@@ -631,9 +657,6 @@ impl GarrisonAuthServer {
                 )
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("server-external-tls-load::{}", e)))?;
-                let addr: std::net::SocketAddr = external_addr.parse().map_err(|e| {
-                    GarrisonError::Internal(format!("server-external-addr-parse::{}", e))
-                })?;
                 // TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
                 #[cfg(feature = "server-graceful-shutdown")]
                 let handle = {
@@ -646,7 +669,7 @@ impl GarrisonAuthServer {
                     });
                     handle
                 };
-                let bind = axum_server::bind_rustls(addr, rustls_config);
+                let bind = axum_server::bind_rustls(external_addr, rustls_config);
                 #[cfg(feature = "server-graceful-shutdown")]
                 let bind = bind.handle(handle);
                 return bind
@@ -693,9 +716,6 @@ impl GarrisonAuthServer {
                 )
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("server-internal-tls-load::{}", e)))?;
-                let addr: std::net::SocketAddr = internal_addr.parse().map_err(|e| {
-                    GarrisonError::Internal(format!("server-internal-addr-parse::{}", e))
-                })?;
                 // TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
                 #[cfg(feature = "server-graceful-shutdown")]
                 let handle = {
@@ -708,7 +728,7 @@ impl GarrisonAuthServer {
                     });
                     handle
                 };
-                let bind = axum_server::bind_rustls(addr, rustls_config);
+                let bind = axum_server::bind_rustls(internal_addr, rustls_config);
                 #[cfg(feature = "server-graceful-shutdown")]
                 let bind = bind.handle(handle);
                 return bind

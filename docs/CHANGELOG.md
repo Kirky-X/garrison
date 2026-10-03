@@ -33,6 +33,7 @@
 - **auth-server 聚合 feature 纳入 `web-security-headers`**：参考部署外网路由默认携带安全响应头（X-Content-Type-Options / X-Frame-Options / HSTS / Cache-Control），不再依赖业务方显式启用。
 - **参考部署信息泄露收敛（GAR-14 / GAR-27 / GAR-29 / GAR-23）**：外网端口健康探针仅暴露最小 `/healthz`（响应只含 `{"status":"healthy"}`，不回显 sdforge 版本号，`/readyz` 仅挂内网）；内网 `/readyz` 的 `checks[].details` 默认剥离仅保留 name/healthy（可能含内部依赖拓扑，`GARRISON_HEALTH_DETAILS=true` 或 `with_health_details(true)` 显式开启）；Json extractor rejection（400/415/422 的 text/plain 诊断体）统一清洗为 JSON 错误体（不回显内部 Rust 类型名/字段名/字节偏移，内外网路由同样生效）；login 端点读体超限（>256KB）返回 413 统一 JSON 错误体（原转发空 body 产生误导性 400 EOF）；内网 `get_token_info` / `get_session` 的 `caller_login_id` 路由层强制必填（缺失 400 fail-closed，原可选时 warn 后跳过所有权校验——内网 API Key 泄露即可静默枚举任意活跃 token 归属）。
 - **审计脱敏补口（Partial 模式）**：黑名单命中字段的非字符串值（Number/Bool/Null/Array）一律整体掩码 `***`（原仅匹配 `Value::String`，数字/布尔等敏感值绕过脱敏原样落库，对齐 Full 模式语义）；`mask_metadata` 遇非法 JSON 落 `warn` 后原样返回（返回值语义不变——审计链路不中断，但脱敏跳过显性可观测，不再静默）。
+- **`GarrisonAuthServer::listen()` 绑定地址可配置 + 非 login 路径 413 归一**：`AuthServerConfig` 新增 `external_bind` / `internal_bind` 字段（默认 **0.0.0.0** 向后兼容）与 `with_external_bind` / `with_internal_bind` builder，listen() 的 TCP 与 TLS 两条路径均按配置地址绑定（原硬编码 0.0.0.0，下游无法收口绑定面）；参考部署 bin 删除「自建 TcpListener + axum::serve」复刻，改经 builder 注入 bootstrap 解析的绑定地址重新走框架 listen()（缺省 127.0.0.1 与 `GARRISON_EXTERNAL_LOGIN_ACK` 门禁语义不变，优雅停机由框架 server-graceful-shutdown 路径承接）。`sanitize_json_rejection_middleware` 状态集新增 413——非 login 端点超限 body 的 axum 裸 413 text/plain 诊断体（"Failed to buffer the request body"）归一为与 login 读体限幅共用的 `{"error":"payload_too_large",...}` JSON 错误体（常量共享，无第二实现），业务 JSON 与空 body 响应不误伤。
 
 ### Added
 
@@ -40,6 +41,13 @@
 - **`login_id_max_len` 配置**（默认 255，`0` = 框架层不限）：stp 登录收口的 login_id 字节长度上限；HTTP wire 层反序列化恒按 `DEFAULT_LOGIN_ID_MAX_LEN`（255）封顶（wire 层不读运行时配置），本配置只可进一步收紧。
 - **auth_server bin 新环境变量**：`GARRISON_EXTERNAL_BIND` / `GARRISON_INTERNAL_BIND`（绑定地址，默认 `127.0.0.1`）、`GARRISON_TRUSTED_PROXIES`（可信代理 IP 逗号列表，默认空 = 不信任任何 XFF）、`GARRISON_MAX_LOGIN_COUNT`（默认 10）、`GARRISON_EXTERNAL_LOGIN_ACK`（外网登录暴露确认）、`GARRISON_HEALTH_DETAILS`（默认 `false`）、`GARRISON_API_KEY_LOCKOUT_THRESHOLD`（默认 10）/ `GARRISON_API_KEY_LOCKOUT_WINDOW_SECS`（默认 300）；`AuthServerConfig` 新增 `api_key_lockout_threshold` / `api_key_lockout_window_secs` / `health_details_enabled` 字段与 `with_api_key_lockout` / `with_health_details` builder。
 - **SSO pub/sub 消息信封 API**：`SsoMessageEnvelope` 结构与 `seal_sso_message` / `verify_sso_message` 公开助手（HMAC-SHA256 认证 + 单调 seq 防重放，secret 复用 SSO 票据签名密钥），供订阅侧按消费契约验签。
+- **`AuthServerConfig` 绑定地址配置**：`external_bind` / `internal_bind` 字段（默认 `0.0.0.0`，向后兼容）与 `with_external_bind` / `with_internal_bind` builder；安全敏感部署显式收口绑定面（如回环），`listen()` 启动日志输出实际绑定地址。
+- **`require_tenant_bound_jwt` 配置**（默认 `false`，`GARRISON_REQUIRE_TENANT_BOUND_JWT`）：Stateless JWT 租户绑定严格收口开关——开启后 `check_login_stateless` 在租户上下文存在且 claims 无 `tid` 时显性拒绝（`stp-check-login-tenant-unbound`），封住存量无绑定 token 在租户上下文内不受约束的窗口（jti 黑名单跨请求租户命名空间 miss 的吊销逃逸面）；默认 `false` 保持存量 token 兼容，无租户上下文部署不受影响。
+
+### Performance
+
+- **多租户 Stateless `check_login` 消除二次 JWT 验签**：租户绑定 `tid` 收敛为 `GarrisonJwtClaims` 的 `#[serde(default)] pub tid: Option<i64>` 字段（`JwtHandler::with_tid` 签发接线，旧 token 解析为 `None`、无租户上下文签发载荷不含 `tid`、`verify` 对旧 token 行为不变），`check_login_stateless` 从首次验签的 claims 直接读 `tid`——删除 `verify_custom::<JwtTenantProbe>` 第二次完整验签与 `TenantBoundJwtClaims` 镜像结构（原 ~2-10µs 双验签与 parity 测试守护的第二实现张力一并消除，字段漂移由单一结构在编译期排除）。
+- **会话模式 `check_login` 租户绑定校验复用会话快照**：`check_login_simple` / `check_login_mixin` 将 `is_valid_with_session` 已取的 Token-Session 快照透传给 `validate_session_tenant_binding`，消除同一请求内对同一 token 的第二次整读（原 +1 次 DAO 读 + 反序列化；快照不可达的 Stateless 模式保持原读取路径，行为零变化）。
 
 ### Breaking
 

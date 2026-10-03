@@ -718,6 +718,40 @@ async fn acc_srv_025_external_oversize_body_returns_413() {
     assert_eq!(body["error"], "payload_too_large");
 }
 
+/// GAR-29 残留收口：**非 login** 端点超限 body（>256KB）不再透传 axum 裸
+/// 413 text/plain 诊断体，而是与 login 路径统一的 JSON 错误体（refresh 走
+/// `DefaultBodyLimit` → `LengthLimitError` 413，由 sanitize 中间件归一）。
+#[tokio::test]
+#[serial]
+async fn acc_srv_034_external_non_login_oversize_body_returns_413_json() {
+    let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    let oversize = vec![b'x'; 256 * 1024 + 1];
+    let resp = client
+        .post(format!("{}/api/v1/auth/refresh", external_url))
+        .header("content-type", "application/json")
+        .body(oversize)
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 413, "超限 body 应保持 413 语义");
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/json",
+        "非 login 路径 413 应归一为 JSON 错误体（不再透传 text/plain 诊断）"
+    );
+    let text = resp.text().await.unwrap();
+    let body: serde_json::Value = serde_json::from_str(&text)
+        .unwrap_or_else(|e| panic!("413 错误体应为合法 JSON: {e}，实际: {text}"));
+    assert_eq!(body["error"], "payload_too_large");
+    assert_eq!(body["message"], "request body exceeds size limit");
+    assert!(
+        !text.contains("buffer"),
+        "不得回显 axum 内部诊断，实际: {text}"
+    );
+}
+
 /// GAR-28：重复 X-API-Key 头（任意顺序组合）一律 401 fail-closed。
 #[tokio::test]
 #[serial]
