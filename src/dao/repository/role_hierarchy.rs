@@ -486,10 +486,19 @@ mod db_sqlite_tests {
     }
 
     /// 创建并初始化 SQLite in-memory 数据库（迁移 + 返回 pool）。
+    ///
+    /// 用唯一命名的共享缓存内存库而非裸 `sqlite::memory:`：后者的连接池
+    /// 可能分配多个互不相通的内存实例——迁移建表落在连接 A、后续查询
+    /// 落在连接 B 时报 "no such table"（Windows CI 上曾偶发）；共享缓存
+    /// 保证池内所有连接看到同一实例，序号保证用例之间互不串库。
     async fn setup_db() -> DbPool {
-        let pool = init_dbnexus("sqlite::memory:")
-            .await
-            .expect("init_dbnexus 应成功");
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let db_id = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let pool = init_dbnexus(&format!(
+            "sqlite://garrison_role_hierarchy_{db_id}?mode=memory&cache=shared"
+        ))
+        .await
+        .expect("init_dbnexus 应成功");
         let migration = GarrisonMigration::with_base_dir(pool.clone(), project_migrations_dir());
         let applied = migration.migrate_core().await.expect("migrate_core 应成功");
         assert!(applied >= 1, "migrate_core 应至少执行 1 个文件");

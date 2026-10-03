@@ -481,12 +481,29 @@ impl DefaultOidcProvider {
             .as_ref()
             .ok_or_else(|| GarrisonError::Config("sso-oidc-dao-missing-cache-jwks".to_string()))?;
 
-        let resp = self
-            .http_client
-            .get(&self.config.jwks_uri)
-            .send()
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("sso-oidc-jwks-request::{}", e)))?;
+        // JWKS 拉取是幂等 GET：对传输层错误做一次有界重试。回环/内网链路
+        // 会以低概率截断连接（虚拟化回环中继、瞬时抖动），验证流程中 state
+        // 已一次性消费，此处失败会让整个认证作废——重试成本远低于误伤。
+        // 非 2xx 状态码与解析错误不重试：那是 IdP 行为语义，重试会掩盖真问题。
+        let resp = {
+            let mut attempt = 1;
+            loop {
+                match self.http_client.get(&self.config.jwks_uri).send().await {
+                    Ok(resp) => break resp,
+                    Err(e) if attempt < 2 => {
+                        attempt += 1;
+                        tracing::warn!("sso-oidc-jwks-fetch: 传输层错误，100ms 后重试: {e}");
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    },
+                    Err(e) => {
+                        return Err(GarrisonError::Internal(format!(
+                            "sso-oidc-jwks-request::{}",
+                            e
+                        )));
+                    },
+                }
+            }
+        };
 
         if !resp.status().is_success() {
             let status = resp.status();

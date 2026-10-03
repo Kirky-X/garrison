@@ -7,10 +7,22 @@ criteria = "safe-to-deploy"
 version = "0.6.0-rc.5"
 notes = "配置加载框架（confers 系），声明式配置解析与校验。自审通过（同作者系 CodeNexus 自研库）。"
 
+[[audits.confers]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.6"
+notes = "配置加载框架（confers 系），声明式配置解析与校验。自审通过（同作者系 CodeNexus 自研库）；rc.6 相对 rc.5 为 FileSource/EnvSource 增量演进。"
+
 [[audits.confers-macros]]
 who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.6.0-rc.5"
+notes = "confers 过程宏，无网络/文件系统副作用。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.confers-macros]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.6.0-rc.6"
 notes = "confers 过程宏，无网络/文件系统副作用。自审通过（同作者系 CodeNexus 自研库）。"
 
 [[audits.dbnexus]]
@@ -60,3 +72,9 @@ who = "Kirky-X <Kirky-X@outlook.com>"
 criteria = "safe-to-deploy"
 version = "0.5.0-rc.6"
 notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）。"
+
+[[audits.trait-kit]]
+who = "Kirky-X <Kirky-X@outlook.com>"
+criteria = "safe-to-deploy"
+version = "0.5.0-rc.7"
+notes = "typestate DI 构建器（trait-kit 系），生命周期与健康检查。自审通过（同作者系 CodeNexus 自研库）；rc.7 相对 rc.6 为增量演进。"
