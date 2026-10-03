@@ -561,7 +561,7 @@ backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallbac
 # 未启用此 feature 时，SimpleTokenStyle::generate 返回 Err（fail-closed，杜绝无签名伪造）
 # secure-ct-eq：HMAC 签名校验常量时间比较统一走公共原语（ADR-0003 决策 2/3）
 secure-simple-token = ["dep:sha2", "dep:hmac", "secure-ct-eq"]
-auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "secure-ct-eq", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown"]
+auth-server = ["web-axum", "backend-embedded", "auth-server-sdforge", "secure-ct-eq", "secure-simple-token", "dep:mimalloc", "server-graceful-shutdown", "web-security-headers"]
 # dep:sha2：决策缓存 key 的 context_json 摘要成分（SHA-256 前 16 字节）
 abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。

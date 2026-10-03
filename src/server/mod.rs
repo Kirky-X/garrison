@@ -11,7 +11,17 @@
 //! # 中间件
 //!
 //! - 外网：rate_limit_middleware（基于 IP 限速）+ audit_log_middleware
-//! - 内网：api_key_auth_middleware（X-API-Key 验证）+ audit_log_middleware
+//!   + sanitize_json_rejection_middleware（4xx text/plain rejection 统一 JSON）
+//! - 内网：api_key_auth_middleware（X-API-Key 验证 + 失败锁定）+ audit_log_middleware
+//!   + sanitize_json_rejection_middleware
+//!
+//! # 爆破防护边界（GAR-25 / GAR-26）
+//!
+//! 内网 API Key 认证失败锁定（`api_key_lockout`）与每 IP 令牌桶限速均为
+//! **单实例内存态**：单进程内可阻断 API Key 爆破与限流刷量，但 429 后约 1 秒
+//! 桶即补满、无递进惩罚/封禁升级，且多实例部署不共享锁定状态。生产环境
+//! （尤其多副本部署）应启用 `firewall-bruteforce`（ban-manager）与
+//! `ban-sync` feature 获得跨实例的递进封禁能力。
 //!
 //! # 使用
 //!
@@ -41,6 +51,12 @@ use crate::context::tenant::TenantResolver;
 pub mod config;
 pub mod middleware;
 
+/// 内网 API Key 认证失败锁定状态（GAR-25）。
+pub mod api_key_lockout;
+
+#[cfg(feature = "server-health-check")]
+pub mod health;
+
 #[cfg(feature = "auth-server-sdforge")]
 pub mod sdforge_routes;
 
@@ -53,10 +69,11 @@ pub mod qrlogin_routes;
 
 mod server_impl;
 
+pub use api_key_lockout::ApiKeyLockout;
 pub use middleware::{
     api_key_auth_middleware, audit_log_middleware, external_path_filter, inject_client_ip,
     inject_login_client_ip, inject_user_agent, internal_path_filter, rate_limit_middleware,
-    ClientIp, TrustedProxies,
+    sanitize_json_rejection_middleware, ClientIp, TrustedProxies,
 };
 #[cfg(feature = "session-hijack-detection")]
 pub use middleware::{current_client_ip, current_user_agent};
@@ -91,6 +108,22 @@ pub struct AuthServerConfig {
     /// 业务方注入自己的凭证校验后，通过 `with_external_login_enabled(true)`
     /// 或直接构造本字段显式开启；开启时 `listen()` 启动输出 warn 提醒。
     pub external_login_enabled: bool,
+    /// 内网 API Key 认证失败锁定阈值（默认 10；**0 = 禁用锁定**）。
+    ///
+    /// 同一源 IP 连续认证失败（缺失/错误/重复 `X-API-Key`）达到阈值后，
+    /// 窗口期内一律 429 + `Retry-After`；成功认证即清零。
+    /// 经 `GARRISON_API_KEY_LOCKOUT_THRESHOLD` 环境变量可覆盖默认值。
+    pub api_key_lockout_threshold: u32,
+    /// API Key 失败锁定窗口秒数（默认 300）。
+    ///
+    /// 经 `GARRISON_API_KEY_LOCKOUT_WINDOW_SECS` 环境变量可覆盖默认值。
+    pub api_key_lockout_window_secs: u64,
+    /// 内网 `/readyz` 探针是否透传 `checks[].details`（默认 **false**）。
+    ///
+    /// details 可能包含内部依赖拓扑（host、延迟等），默认剥离仅保留
+    /// name/healthy。经 `GARRISON_HEALTH_DETAILS=true` 或
+    /// `with_health_details(true)` 显式开启。
+    pub health_details_enabled: bool,
 }
 
 impl std::fmt::Debug for AuthServerConfig {
@@ -111,6 +144,12 @@ impl std::fmt::Debug for AuthServerConfig {
             .field("external_body_limit", &self.external_body_limit)
             .field("internal_body_limit", &self.internal_body_limit)
             .field("external_login_enabled", &self.external_login_enabled)
+            .field("api_key_lockout_threshold", &self.api_key_lockout_threshold)
+            .field(
+                "api_key_lockout_window_secs",
+                &self.api_key_lockout_window_secs,
+            )
+            .field("health_details_enabled", &self.health_details_enabled)
             .finish()
     }
 }

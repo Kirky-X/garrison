@@ -35,26 +35,55 @@ use std::sync::Arc;
 ///
 /// # 默认实现
 ///
-/// - [`check_safe`](Self::check_safe)：默认调用 `is_safe("default")`，未通过时返回
-/// `Err(NotSafe("SAFE_EXPIRED"))`；未覆写 `is_safe` 时返回 `Ok(())`（视为已通过）。
-/// - [`check_disable`](Self::check_disable)：默认返回 `Ok(())`（未实现禁用账号库）。
-/// 业务方覆写以查询当前 login_id 是否在禁用列表中。
+/// - [`check_safe`](Self::check_safe)：先执行会话前置校验
+/// （[`check_session_precondition`](Self::check_session_precondition)），再调用
+/// `is_safe("default")`，未通过时返回 `Err(NotSafe("SAFE_EXPIRED"))`；未覆写
+/// `is_safe` 且会话有效时返回 `Ok(())`（视为已通过）。
+/// - [`check_disable`](Self::check_disable)：先执行会话前置校验，再由覆写方查询
+/// 当前 login_id 是否在禁用列表中；未覆写时返回 `Ok(())`（未实现禁用账号库）。
 #[async_trait]
 pub trait MfaLogic: SessionLogic {
+    /// 二级认证族检查（`check_safe` / `check_disable`）共用的会话前置校验。
+    ///
+    /// # 语义（先验会话，后判 safe/disable；fail-closed）
+    ///
+    /// - 上下文携带 token 时：必须通过与 `check_login` 同等的校验（token 存在、
+    ///   会话未过期未被踢、token 签名有效）；无效/已撤销 token 返回
+    ///   `Err(GarrisonError::Session)`，与 check-login 的 SESSION_ERROR 语义对齐，
+    ///   不再与「未启用二级认证 / 未封禁」合并为宽松结果。
+    /// - 上下文无 token（如 authflow 编排等非 HTTP 上下文）：不属二级认证检查的
+    ///   职责，跳过本前置校验（返回 `Ok(())`），由后续 safe/disable 判定决定结果。
+    ///
+    /// `check_safe` 与 `check_disable` 的默认实现及 `GarrisonLogicDefault` 覆写
+    /// 均在进入各自判定前调用本方法，trait 定制者与 HTTP 端点同时受益。
+    async fn check_session_precondition(&self) -> GarrisonResult<()> {
+        if current_token().is_ok() && !self.check_login().await? {
+            return Err(GarrisonError::Session(
+                "stp-secondary-check-not-login::".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// 检查二级认证（MFA）状态。
     ///
-    /// 默认实现调用 `is_safe("default")` 检查 "default" service 的二级认证状态：
+    /// 默认实现先执行会话前置校验（[`check_session_precondition`](Self::check_session_precondition)，
+    /// 无效/已撤销 token → `Err(GarrisonError::Session)`），再调用 `is_safe("default")`
+    /// 检查 "default" service 的二级认证状态：
     /// - `Ok(true)` → 返回 `Ok(())`
     /// - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
     /// - `Err(e)` → 透传错误
     ///
-    /// 未覆写 `is_safe` 的实现者（如未启用 `safe-auth` feature 时），
-    /// `is_safe` 默认返回 `Ok(true)`，因此 `check_safe` 返回 `Ok(())`。
+    /// 未覆写 `is_safe` 的实现者（如未启用 `safe-auth`/`security-extra` feature 时），
+    /// `is_safe` 默认返回 `Ok(true)`，因此有效会话的 `check_safe` 返回 `Ok(())`
+    /// （未配置 MFA 的有效会话视为已通过二级认证）。
     ///
     /// # 返回
-    /// - `Ok(())`: 已通过二级认证或未启用 MFA。
+    /// - `Ok(())`: 已通过二级认证或未启用 MFA（会话有效时）。
+    /// - `Err(GarrisonError::Session)`: 会话无效（token 不存在/已过期/被踢）。
     /// - `Err(GarrisonError::NotSafe)`: 未通过二级认证（service 未开启或已过期）。
     async fn check_safe(&self) -> GarrisonResult<()> {
+        self.check_session_precondition().await?;
         self.check_mfa_chain(None).await?;
         if !self.is_safe("default").await? {
             return Err(Self::not_safe("SAFE_EXPIRED"));
@@ -86,14 +115,16 @@ pub trait MfaLogic: SessionLogic {
 
     /// 检查账号是否被禁用。
     ///
-    /// trait 默认实现返回 `Ok(())`（不查询禁用账号库）；`GarrisonLogicDefault` 覆写：
-    /// 从当前 token 取 login_id 并查询封禁状态，被封禁则返回
-    /// `DisableService` 错误。未登录时返回 `Ok(())`。
+    /// trait 默认实现先执行会话前置校验（[`check_session_precondition`](Self::check_session_precondition)，
+    /// 无效/已撤销 token → `Err(GarrisonError::Session)`），随后返回 `Ok(())`
+    /// （未实现禁用账号库）；业务方覆写以查询当前 login_id 是否在禁用列表中。
     ///
     /// # 返回
-    /// - `Ok(())`: 账号未禁用 / 未登录。
+    /// - `Ok(())`: 账号未禁用 / 未实现禁用库（会话有效时）。
+    /// - `Err(GarrisonError::Session)`: 会话无效（token 不存在/已过期/被踢）。
     /// - `Err(GarrisonError::DisableService)`: 账号已封禁（推荐使用专用异常）。
     async fn check_disable(&self) -> GarrisonResult<()> {
+        self.check_session_precondition().await?;
         Ok(())
     }
 
@@ -1167,7 +1198,9 @@ impl MfaLogic for GarrisonLogicDefault {
     /// 检查二级认证（MFA）状态。
     ///
     /// `GarrisonLogicDefault` 覆写实现：
-    /// 调用 `is_safe("default")` 检查 "default" service 的二级认证状态。
+    /// 先执行会话前置校验（[`MfaLogic::check_session_precondition`]，无效/已撤销
+    /// token → `Err(GarrisonError::Session)`），再调用 `is_safe("default")` 检查
+    /// "default" service 的二级认证状态。
     ///
     /// # 为什么覆写 trait default？
     ///
@@ -1184,6 +1217,7 @@ impl MfaLogic for GarrisonLogicDefault {
     /// - `Ok(false)` → 返回 `Err(Self::not_safe("SAFE_EXPIRED"))`
     /// - `Err(e)` → 透传错误
     async fn check_safe(&self) -> GarrisonResult<()> {
+        self.check_session_precondition().await?;
         self.check_mfa_chain(None).await?;
         if !self.is_safe("default").await? {
             return Err(Self::not_safe("SAFE_EXPIRED"));
@@ -1223,38 +1257,41 @@ impl MfaLogic for GarrisonLogicDefault {
 
     /// 检查当前登录账号是否被封禁。
     ///
-    /// `GarrisonLogicDefault` 覆写实现：
-    /// 1. 无当前 token（未登录）→ 返回 `Ok(())`
-    /// 2. token 对应的 TokenSession 不存在 → 返回 `Ok(())`
-    /// 3. 调用 `DisableRepository::is_disable(login_id, "default")`，未封禁 → `Ok(())`
-    /// 4. 已封禁 → 返回 `Err(Self::disable_service("default", until))`，
+    /// `GarrisonLogicDefault` 覆写实现（先验会话，后判封禁；fail-closed）：
+    /// 1. 会话前置校验（[`MfaLogic::check_session_precondition`]）：携带 token 但
+    ///    会话无效（token 不存在/已过期/被踢）→ `Err(GarrisonError::Session)`——
+    ///    「token 无效」不再与「未封禁」合并为 `Ok(())`（渗透测试 R2-1 修复）
+    /// 2. 无当前 token（非 HTTP 编排上下文）→ 返回 `Ok(())`（无主体可判禁用）
+    /// 3. 与前置校验竞态时 TokenSession 缺失（防御分支）→ `Err(GarrisonError::Session)`
+    /// 4. 调用 `DisableRepository::is_disable(login_id, "default")`，未封禁 → `Ok(())`
+    /// 5. 已封禁 → 返回 `Err(Self::disable_service("default", until))`，
     /// `until` 来自 `get_disable_time`（None=永久封禁，Some=定时解封）
     ///
     /// # 错误
+    /// - `GarrisonError::Session`: 会话无效（token 不存在/已过期/被踢）。
     /// - `GarrisonError::DisableService`: 账号已封禁。
     /// - DAO/反序列化失败：透传 `GarrisonError`。
     async fn check_disable(&self) -> GarrisonResult<()> {
-        // 获取当前 token（未登录时返回 Ok）
+        // 先验会话：无效 token 显性拒绝，不进入封禁判定
+        self.check_session_precondition().await?;
+        // 获取当前 token（无 token 上下文时无主体可判禁用，维持既有 Ok 语义）
         let token = match current_token() {
             Ok(t) => t,
             Err(_) => {
                 tracing::warn!(
                     reason = "no_current_token",
-                    "check_disable skipped (fail-open): no current token (not logged in)"
+                    "check_disable skipped: no current token (not logged in)"
                 );
                 return Ok(());
             },
         };
-        // 获取 login_id（TokenSession 不存在时返回 Ok）
+        // 防御分支：前置校验通过后 session 被并发删除（登出/踢出竞态）→ fail-closed
         let ts = match self.session.get_token_session(&token).await? {
             Some(ts) => ts,
             None => {
-                tracing::warn!(
-                    reason = "token_session_not_found",
-                    token = %token.get(..8).unwrap_or("***"),
-                    "check_disable skipped (fail-open): TokenSession not found for current token"
-                );
-                return Ok(());
+                return Err(GarrisonError::Session(
+                    "stp-check-disable-token-session-not-found::".to_string(),
+                ));
             },
         };
         if self
@@ -1743,6 +1780,130 @@ mod tests {
             "is_safe 返回 Internal 错误时应透传，实际: {:?}",
             result
         );
+    }
+
+    // ========================================================================
+    // 会话前置校验测试（trait default 路径，GAR-02 / R2-1 回归）
+    // ========================================================================
+
+    /// check_login 结果可配置的 mock：仅依赖 trait defaults，验证 check_safe /
+    /// check_disable 在进入 safe/disable 判定前的会话前置校验行为。
+    struct MockMfaSession {
+        config: Arc<GarrisonConfig>,
+        logged_in: bool,
+    }
+
+    impl GarrisonCore for MockMfaSession {
+        fn config(&self) -> Arc<GarrisonConfig> {
+            Arc::clone(&self.config)
+        }
+    }
+
+    #[async_trait]
+    impl SessionLogic for MockMfaSession {
+        async fn login(
+            &self,
+            _login_id: &str,
+            _params: &crate::stp::LoginParams,
+        ) -> GarrisonResult<String> {
+            Ok("mock-token".to_string())
+        }
+        async fn login_with_token(&self, _login_id: &str, _token: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn logout(&self) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn logout_by_login_id(&self, _login_id: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn kickout(&self, _login_id: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn kickout_by_token(&self, _token: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn revoke_token(&self, _token: &str) -> GarrisonResult<()> {
+            Ok(())
+        }
+        async fn check_login(&self) -> GarrisonResult<bool> {
+            Ok(self.logged_in)
+        }
+        async fn get_login_id(&self) -> GarrisonResult<Option<String>> {
+            Ok(Some("42".to_string()))
+        }
+    }
+
+    #[async_trait]
+    impl MfaLogic for MockMfaSession {}
+
+    /// trait default check_safe：上下文携带 token 但会话无效（check_login=false）
+    /// → 显性 `Err(Session)`，不再并入「未启用 MFA」的宽松放行（GAR-02）。
+    #[tokio::test]
+    async fn t_sec_check_safe_trait_default_rejects_invalid_session() {
+        let mock = MockMfaSession {
+            config: Arc::new(GarrisonConfig::default()),
+            logged_in: false,
+        };
+        let result = crate::stp::with_current_token("forged-token".to_string(), async {
+            mock.check_safe().await
+        })
+        .await;
+        assert!(
+            matches!(result, Err(GarrisonError::Session(_))),
+            "无效会话的 check_safe 应返回 Err(Session)，实际: {:?}",
+            result
+        );
+    }
+
+    /// trait default check_disable：上下文携带 token 但会话无效（check_login=false）
+    /// → 显性 `Err(Session)`，不再与「未封禁」合并（R2-1）。
+    #[tokio::test]
+    async fn t_sec_check_disable_trait_default_rejects_invalid_session() {
+        let mock = MockMfaSession {
+            config: Arc::new(GarrisonConfig::default()),
+            logged_in: false,
+        };
+        let result = crate::stp::with_current_token("forged-token".to_string(), async {
+            mock.check_disable().await
+        })
+        .await;
+        assert!(
+            matches!(result, Err(GarrisonError::Session(_))),
+            "无效会话的 check_disable 应返回 Err(Session)，实际: {:?}",
+            result
+        );
+    }
+
+    /// trait default check_safe：有效会话 + token 上下文 → `Ok(())`（行为保持对照：
+    /// 未配置 MFA 的有效会话视为已通过二级认证）。
+    #[tokio::test]
+    async fn t_sec_check_safe_trait_default_valid_session_passes() {
+        let mock = MockMfaSession {
+            config: Arc::new(GarrisonConfig::default()),
+            logged_in: true,
+        };
+        let result = crate::stp::with_current_token("valid-token".to_string(), async {
+            mock.check_safe().await
+        })
+        .await;
+        assert!(
+            result.is_ok(),
+            "有效会话的 check_safe 应保持 Ok(())，实际: {:?}",
+            result
+        );
+    }
+
+    /// trait default check_safe：无 token 上下文（如 authflow 编排）不触发前置校验，
+    /// 维持既有放行语义（is_safe 默认 true → Ok(())）——Mfa(None) 编排兼容性锚定。
+    #[tokio::test]
+    async fn t_sec_check_safe_trait_default_without_token_context_keeps_pass() {
+        let mock = MockMfaSession {
+            config: Arc::new(GarrisonConfig::default()),
+            logged_in: false,
+        };
+        // 不设置 current_token：前置校验按存在性守卫跳过
+        mock.check_safe().await.unwrap();
     }
 
     /// 验证 `disable_service` Display 输出包含 service 名称。
@@ -2294,11 +2455,12 @@ mod tests {
             );
         }
 
-        /// 设置 current_token 但对应 TokenSession 不存在，check_disable 返回 Ok（幂等）。
+        /// 设置 current_token 但对应 TokenSession 不存在 → 显性 Err(Session)（fail-closed）。
         ///
-        /// 覆盖 lines 219-222：token 存在但 session.get_token_session 返回 None → Ok(())。
+        /// 覆盖 R2-1 修复：无效 token 不再与「未封禁」合并为 `Ok(())`（原 fail-open
+        /// 分支），而是显性拒绝，使消费方可区分「token 无效」与「账号未封禁」。
         #[tokio::test]
-        async fn test_check_disable_token_session_not_found_returns_ok() {
+        async fn test_check_disable_token_session_not_found_fails_closed() {
             let (logic, _repo, _dao) = make_logic_with_repo();
             // 不调用 login，直接设置一个不存在的 token
             let result = with_current_token("nonexistent-token-xyz".to_string(), async {
@@ -2307,8 +2469,8 @@ mod tests {
             .await;
 
             assert!(
-                result.is_ok(),
-                "token 对应的 TokenSession 不存在时 check_disable 应返回 Ok，实际: {:?}",
+                matches!(result, Err(GarrisonError::Session(_))),
+                "token 对应的 TokenSession 不存在时 check_disable 应返回 Err(Session)，实际: {:?}",
                 result
             );
         }
@@ -2323,6 +2485,232 @@ mod tests {
             let _ = fw.check_role("u1", "admin").await.unwrap();
             let _ = fw.check_role_any("u1", &["admin", "user"]).await.unwrap();
             let _ = fw.check_role_all("u1", &["admin", "user"]).await.unwrap();
+        }
+    }
+
+    // ========================================================================
+    // 二级认证族会话前置校验（GarrisonLogicDefault 路径，GAR-02 / R2-1 回归）
+    // ========================================================================
+
+    /// check_safe / check_disable 的会话前置校验回归（渗透测试 GAR-02 / R2-1）。
+    ///
+    /// 语义基线：未配置 MFA 的有效会话视为已通过二级认证（保持不变）；
+    /// 修复旁路：伪造/已撤销 token 不再得到宽松结果，而是显性 `Err(Session)`
+    /// （与 check-login 的 SESSION_ERROR 语义对齐）。直接构造
+    /// `GarrisonLogicDefault`（不依赖全局 manager），安全前置校验在进入
+    /// safe/disable 判定前执行，security-extra 启用与否断言一致。
+    mod t_sec_session_precondition {
+        use super::*;
+        use crate::account::disable::DefaultDisableRepository;
+        use crate::dao::tests::MockDao;
+        use crate::dao::GarrisonDao;
+        use crate::session::GarrisonSession;
+        use crate::stp::with_current_token;
+        use crate::stp::LoginParams;
+        use crate::strategy::GarrisonPermissionStrategy;
+        use async_trait::async_trait;
+        use std::sync::Arc;
+
+        struct MockFirewall;
+
+        #[async_trait]
+        impl GarrisonPermissionStrategy for MockFirewall {
+            async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+                Ok(vec![])
+            }
+            async fn check_permission(
+                &self,
+                _login_id: &str,
+                _permission: &str,
+            ) -> GarrisonResult<bool> {
+                Ok(true)
+            }
+            async fn check_role(&self, _login_id: &str, _role: &str) -> GarrisonResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_any(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> GarrisonResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_all(
+                &self,
+                _login_id: &str,
+                _roles: &[&str],
+            ) -> GarrisonResult<bool> {
+                Ok(true)
+            }
+            async fn check_permission_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _permission: &str,
+            ) -> GarrisonResult<bool> {
+                Ok(true)
+            }
+            async fn check_role_in_tenant(
+                &self,
+                _tenant_id: i64,
+                _login_id: &str,
+                _role: &str,
+            ) -> GarrisonResult<bool> {
+                Ok(true)
+            }
+            #[cfg(any(
+                feature = "sms-rate-limit",
+                feature = "firewall-ratelimit",
+                feature = "firewall-bruteforce",
+                feature = "firewall-ddos",
+                feature = "firewall",
+                feature = "oauth2-server"
+            ))]
+            async fn check_login_hooks(
+                &self,
+                _login_id: &str,
+                _ctx: &crate::strategy::hooks::LoginContext,
+            ) -> GarrisonResult<()> {
+                Ok(())
+            }
+        }
+
+        fn make_logic() -> GarrisonLogicDefault {
+            let dao = Arc::new(MockDao::new());
+            let session = Arc::new(GarrisonSession::new(
+                dao.clone() as Arc<dyn GarrisonDao>,
+                3600,
+                86400,
+                0,
+            ));
+            let mut config = GarrisonConfig::default_config();
+            config.throw_on_not_login = false;
+            config.token_style = "uuid".to_string();
+            let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall);
+            GarrisonLogicDefault::new(
+                session,
+                Arc::new(config),
+                firewall,
+                Arc::new(DefaultDisableRepository::new(dao)),
+            )
+        }
+
+        /// 伪造 token（任意 UUID）→ check_safe 显性 `Err(Session)`（GAR-02：
+        /// 原行为恒返回宽松 true）。
+        #[tokio::test]
+        async fn check_safe_rejects_forged_token() {
+            let logic = make_logic();
+            let result =
+                with_current_token("00000000-0000-0000-0000-000000000000".to_string(), async {
+                    logic.check_safe().await
+                })
+                .await;
+            assert!(
+                matches!(result, Err(GarrisonError::Session(_))),
+                "伪造 token 的 check_safe 应返回 Err(Session)，实际: {:?}",
+                result
+            );
+        }
+
+        /// kickout 后旧 token → check_safe 显性 `Err(Session)`（GAR-02：已撤销
+        /// 会话不再被放行）。
+        #[tokio::test]
+        async fn check_safe_rejects_kicked_out_token() {
+            let logic = make_logic();
+            let token = logic
+                .login("sec-safe-kick", &LoginParams::default())
+                .await
+                .unwrap();
+            logic.kickout("sec-safe-kick").await.unwrap();
+
+            let result = with_current_token(token, async { logic.check_safe().await }).await;
+            assert!(
+                matches!(result, Err(GarrisonError::Session(_))),
+                "kickout 后旧 token 的 check_safe 应返回 Err(Session)，实际: {:?}",
+                result
+            );
+        }
+
+        /// 有效 token 行为保持对照：无 security-extra → `Ok(())`（未配置 MFA 视为
+        /// 已通过二级认证）；有 security-extra → `Err(NotSafe)`（safe_services 为空，
+        /// 既有语义不变）。
+        #[tokio::test]
+        async fn check_safe_valid_token_behavior_preserved() {
+            let logic = make_logic();
+            let token = logic
+                .login("sec-safe-valid", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let result = with_current_token(token, async { logic.check_safe().await }).await;
+
+            #[cfg(feature = "security-extra")]
+            assert!(
+                matches!(result, Err(GarrisonError::NotSafe { .. })),
+                "security-extra 下有效 token 未 open_safe 应为 NotSafe，实际: {:?}",
+                result
+            );
+            #[cfg(not(feature = "security-extra"))]
+            assert!(
+                result.is_ok(),
+                "无 security-extra 时有效 token 的 check_safe 应保持 Ok，实际: {:?}",
+                result
+            );
+        }
+
+        /// 伪造 token → check_disable 显性 `Err(Session)` 而非 `Ok(())`（R2-1：
+        /// 「token 无效」不再与「未封禁」合并为同一 bool）。
+        #[tokio::test]
+        async fn check_disable_rejects_forged_token() {
+            let logic = make_logic();
+            let result =
+                with_current_token("00000000-0000-0000-0000-000000000000".to_string(), async {
+                    logic.check_disable().await
+                })
+                .await;
+            assert!(
+                matches!(result, Err(GarrisonError::Session(_))),
+                "伪造 token 的 check_disable 应返回 Err(Session)，实际: {:?}",
+                result
+            );
+        }
+
+        /// kickout 后旧 token → check_disable 显性 `Err(Session)` 而非 `Ok(())`（R2-1）。
+        #[tokio::test]
+        async fn check_disable_rejects_kicked_out_token() {
+            let logic = make_logic();
+            let token = logic
+                .login("sec-disable-kick", &LoginParams::default())
+                .await
+                .unwrap();
+            logic.kickout("sec-disable-kick").await.unwrap();
+
+            let result = with_current_token(token, async { logic.check_disable().await }).await;
+            assert!(
+                matches!(result, Err(GarrisonError::Session(_))),
+                "kickout 后旧 token 的 check_disable 应返回 Err(Session)，实际: {:?}",
+                result
+            );
+        }
+
+        /// 有效 token 未封禁 → `Ok(())`（行为保持对照）。
+        #[tokio::test]
+        async fn check_disable_valid_token_unbanned_still_ok() {
+            let logic = make_logic();
+            let token = logic
+                .login("sec-disable-valid", &LoginParams::default())
+                .await
+                .unwrap();
+
+            let result = with_current_token(token, async { logic.check_disable().await }).await;
+            assert!(
+                result.is_ok(),
+                "有效 token 未封禁时 check_disable 应保持 Ok，实际: {:?}",
+                result
+            );
         }
     }
 

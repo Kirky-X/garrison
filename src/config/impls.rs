@@ -198,6 +198,8 @@ impl GarrisonConfig {
             jwks_retention_secs: DEFAULT_JWKS_RETENTION_SECS,
             remember_me_enabled: false,
             remember_me_timeout: REMEMBER_ME_DEFAULT_TIMEOUT,
+            seed_primary_amr: true,
+            login_id_max_len: DEFAULT_LOGIN_ID_MAX_LEN,
             session_hover_timeout: DEFAULT_SESSION_HOVER_TIMEOUT,
             frontend_separation: DEFAULT_FRONTEND_SEPARATION,
             auto_renewal_threshold: DEFAULT_AUTO_RENEWAL_THRESHOLD,
@@ -374,6 +376,11 @@ impl GarrisonConfig {
                 "remember_me_timeout",
                 ConfigValue::integer(REMEMBER_ME_DEFAULT_TIMEOUT),
             )
+            .default("seed_primary_amr", ConfigValue::bool(true))
+            .default(
+                "login_id_max_len",
+                ConfigValue::uint(DEFAULT_LOGIN_ID_MAX_LEN as u64),
+            )
             .default(
                 "session_hover_timeout",
                 ConfigValue::integer(DEFAULT_SESSION_HOVER_TIMEOUT),
@@ -517,7 +524,7 @@ impl GarrisonConfig {
         #[cfg(feature = "web-cors")]
         apply_web_cors_env_override(&mut config);
         #[cfg(feature = "web-csrf")]
-        apply_web_csrf_env_override(&mut config);
+        apply_web_csrf_env_override(&mut config)?;
         #[cfg(feature = "rate-limit-redis")]
         apply_rate_limit_env_override(&mut config)?;
 
@@ -572,6 +579,10 @@ impl GarrisonConfig {
         self.validate_feature_gated()?;
         // 两个 cfg 互斥定义（rate-limit-redis 启用/未启用）恰存其一，无条件调用
         self.warn_memory_rate_limit_backend();
+        // config-security-rules 安全规则集：JWT 强度/CORS 组合的显式汇总校验点
+        // （feature 关闭时零行为变化）
+        #[cfg(feature = "config-security-rules")]
+        self.validate_security_rules()?;
         Ok(())
     }
 
@@ -723,22 +734,84 @@ impl GarrisonConfig {
         }
     }
 
-    /// JWT 密钥强度校验（仅当 `token_style=jwt` 时强制校验，`simple` 时 warn）。
-    fn validate_jwt_secret(&self) -> GarrisonResult<()> {
+    /// JWT 密钥强度校验。
+    ///
+    /// - `token_style=jwt`：非对称算法（RS256/ES256/EdDSA）强度由 PEM 决定
+    ///   （JwtHandler 构造期校验），jwt_secret 可留空占位；HS 系按 RFC 7518
+    ///   最小长度硬校验
+    /// - `token_style=simple`：jwt_secret 直接作为 HMAC-SHA256 签名密钥
+    ///   （`SimpleTokenStyle`），可离线爆破，短于 32B 硬错误（配置层对齐
+    ///   运行时 `core-simple-secret-too-short` 的 fail-closed）
+    /// - `uuid` / `random_64` 等不透明风格：token 由 CSPRNG 生成，签名路径
+    ///   不消费 jwt_secret，无离线爆破面，不要求配置（维持宽松默认，不迫使
+    ///   非 JWT 部署配置无意义密钥）
+    ///
+    /// jwt/simple 两种消费密钥的风格均做弱密钥黑名单校验
+    /// （[`Self::reject_weak_jwt_secret`]）。
+    ///
+    /// `pub(super)`：`config-security-rules` 规则集模块复用同一规则
+    /// （见 `security_rules::validate_security_rules`）。
+    pub(super) fn validate_jwt_secret(&self) -> GarrisonResult<()> {
         if self.token_style == "jwt" {
             // 非对称算法：密钥强度由 PEM 决定（JwtHandler 构造期校验），
             // jwt_secret 可留空作占位，跳过对称密钥长度校验
             if matches!(self.jwt_algorithm.as_str(), "RS256" | "ES256" | "EdDSA") {
                 return Ok(());
             }
-            return self.validate_hs_secret_min_len();
+            self.validate_hs_secret_min_len()?;
+            return self.reject_weak_jwt_secret();
         }
-        if self.token_style == "simple" && self.jwt_secret.as_str().len() < 32 {
-            tracing::warn!(
-                "jwt_secret length {} < 32 bytes, token_style={} skips mandatory check, but hardening is recommended against HMAC brute force",
-                self.jwt_secret.as_str().len(),
-                self.token_style
-            );
+        if self.token_style == "simple" {
+            let secret_len = self.jwt_secret.as_str().len();
+            if secret_len < 32 {
+                return Err(GarrisonError::Config(format!(
+                    "config-jwt-secret-too-short::simple (min 32 bytes)::{} — simple 风格 jwt_secret 即 HMAC-SHA256 签名密钥，可用 `openssl rand -base64 48` 生成",
+                    secret_len
+                )));
+            }
+            return self.reject_weak_jwt_secret();
+        }
+        Ok(())
+    }
+
+    /// 常见弱密钥黑名单（吸收 confers `security-rules` WEAK_SECRETS 16 条——
+    /// 原 feature 仅透传 confers 依赖，校验器从未接线，此处落地为自有规则）。
+    const WEAK_JWT_SECRETS: &[&str] = &[
+        "secret",
+        "changeme",
+        "change_me",
+        "password",
+        "test",
+        "test123",
+        "key",
+        "default",
+        "admin",
+        "letmein",
+        "welcome",
+        "qwerty",
+        "abc123",
+        "123456",
+        "12345678",
+        "1234567890",
+    ];
+
+    /// jwt/simple 风格的弱密钥黑名单校验（fail-closed）。
+    ///
+    /// 匹配语义：剥除首尾填充字符（`_`/`-`/`.` 等占位符）后整串比对、忽略
+    /// 大小写——"changeme"+下划线填充至 32 字节这类可预测变体同样命中；
+    /// 刻意不做子串匹配，高熵密钥尾部含弱串（如 "correct horse battery
+    /// staple 123456"）不误伤。
+    fn reject_weak_jwt_secret(&self) -> GarrisonResult<()> {
+        const PADDING_CHARS: &[char] = &[' ', '\t', '_', '-', '.', '=', '*', '~'];
+        let normalized = self
+            .jwt_secret
+            .as_str()
+            .trim_matches(PADDING_CHARS)
+            .to_lowercase();
+        if Self::WEAK_JWT_SECRETS.contains(&normalized.as_str()) {
+            return Err(GarrisonError::Config(
+                "config-jwt-secret-weak::blacklist hit (padded/case variants included) — 可预测密钥可被字典爆破，用 `openssl rand -base64 48` 生成高熵密钥".to_string(),
+            ));
         }
         Ok(())
     }
@@ -1112,12 +1185,27 @@ fn apply_web_cors_env_override(config: &mut GarrisonConfig) {
 }
 
 /// `web-csrf` 显式环境变量覆盖：`GARRISON_CSRF_ENABLED`。
+///
+/// 仅接受 "true"/"false"（大小写不敏感），其余值返回配置错误（fail-closed）：
+/// 安全控制不允许歧义取值——"1"/"yes"/"on" 等 truthy 习惯值此前会静默禁用
+/// CSRF 防护，对齐 [`apply_rate_limit_env_override`] 的硬错误语义。
 #[cfg(feature = "web-csrf")]
-fn apply_web_csrf_env_override(config: &mut GarrisonConfig) {
+fn apply_web_csrf_env_override(config: &mut GarrisonConfig) -> GarrisonResult<()> {
     let Ok(val) = std::env::var("GARRISON_CSRF_ENABLED") else {
-        return;
+        return Ok(());
     };
-    config.csrf_config.enabled = val.eq_ignore_ascii_case("true");
+    match val.to_lowercase().as_str() {
+        "true" => config.csrf_config.enabled = true,
+        "false" => config.csrf_config.enabled = false,
+        // 错误消息保留用户原始输入，便于定位误配源
+        _ => {
+            return Err(GarrisonError::Config(format!(
+                "config-csrf-enabled-unsupported::{} (allowed: true/false, case-insensitive)",
+                val
+            )));
+        },
+    }
+    Ok(())
 }
 
 /// `rate-limit-redis` 显式环境变量覆盖：`GARRISON_RATE_LIMIT_BACKEND` +

@@ -139,7 +139,8 @@ fn action_token_rejects_tampered_payload() {
 use super::consumer::ActionTokenConsumer;
 use super::restricted::{RestrictedSessionGuard, ENDPOINT_PASSWORD_CHANGE, RESTRICTED_ATTR_KEY};
 use super::service::{
-    binding_key, rate_key, PasswordResetService, ResetIdentityResolver, ResetMailSender,
+    binding_key, binding_tenant_key, rate_key, PasswordResetService, ResetIdentityResolver,
+    ResetMailSender,
 };
 use crate::account::credential::password::{Argon2Hasher, PasswordHasher as _};
 use crate::account::credential::{CredentialModel, CredentialRepository, DaoCredentialRepository};
@@ -642,6 +643,9 @@ async fn cross_user_token_rejected_by_subject_binding() {
     dao.set(&binding_key(&claims.jti), "bob", 600)
         .await
         .expect("改写绑定应成功");
+    dao.set(&binding_tenant_key(&claims.jti), &TENANT.to_string(), 600)
+        .await
+        .expect("改写租户绑定应成功");
     ensure_token_session(&session, "bob", "sess-bob").await;
     let err = service
         .reset(TENANT, "sess-bob", &token, "NewPass9!")
@@ -658,6 +662,105 @@ async fn cross_user_token_rejected_by_subject_binding() {
             .expect("查询 bob 凭据应成功")
             .is_empty(),
         "被拒路径不得为 bob 建立凭据"
+    );
+}
+
+/// 跨租户重置被拒（subject∈tenant 校验，渗透-租户隔离-标识符注册表-1）：
+/// 请求租户与签发租户不一致时拒绝，凭据零变更，错误不泄露归属信息。
+#[tokio::test]
+async fn cross_tenant_reset_rejected_without_ownership_leak() {
+    let dao = Arc::new(InMemoryDao::new());
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+    let sender = Arc::new(RecordingSender::default());
+    let tokens = ActionTokenService::new(Arc::new(JwtHandler::new(TEST_SECRET)));
+    let creds = DaoCredentialRepository::new(dao.clone());
+    let hasher = Argon2Hasher::default();
+    let original_hash = seed_credential(&creds, &hasher, "alice", "OldPass1!").await;
+    let service = make_service(
+        &dao,
+        &session,
+        PasswordPolicyEngine::new(Vec::new(), ErrorMode::FirstError),
+        Arc::new(InMemoryHistory::default()),
+        map_resolver(&[("alice@x.com", "alice")]),
+        &sender,
+        &tokens,
+    );
+    ensure_token_session(&session, "alice", "sess-alice").await;
+    service
+        .request_reset(TENANT, "alice@x.com")
+        .await
+        .expect("请求应成功");
+    let token = {
+        sender.wait_for_deliveries(1).await;
+        let deliveries = sender.deliveries.lock().unwrap();
+        extract_token(&deliveries[0].2).to_string()
+    };
+
+    // 他租户（2）携带合法 token 重置租户 1 主体：必须拒绝
+    let other_tenant = TENANT + 1;
+    let err = service
+        .reset(other_tenant, "sess-alice", &token, "NewPass9!")
+        .await
+        .expect_err("跨租户重置必须拒绝");
+    assert!(
+        matches!(err, GarrisonError::NotPermission(ref m) if m.contains("pwdreset-tenant-mismatch")),
+        "应返回跨租户拒绝的 NotPermission，实际: {err:?}"
+    );
+    let err_text = format!("{err:?}");
+    assert!(
+        !err_text.contains("alice") && !err_text.contains(&TENANT.to_string()),
+        "错误信息不得泄露归属主体/签发租户，实际: {err_text}"
+    );
+    // 凭据零变更（被拒路径在消费之前）
+    let after = stored_hash(&creds, "alice").await;
+    assert_eq!(after, original_hash, "被拒路径不得变更凭据");
+    // 同租户重放同 token 仍可成功（token 未被跨租户路径消费）
+    service
+        .reset(TENANT, "sess-alice", &token, "NewPass9!")
+        .await
+        .expect("同租户重置应成功");
+}
+
+/// 升级前旧 token（无 tenant 绑定键）fail-closed 拒绝，不静默降级为无租户校验。
+#[tokio::test]
+async fn legacy_token_without_tenant_binding_fail_closed() {
+    let dao = Arc::new(InMemoryDao::new());
+    let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+    let sender = Arc::new(RecordingSender::default());
+    let tokens = ActionTokenService::new(Arc::new(JwtHandler::new(TEST_SECRET)));
+    let service = make_service(
+        &dao,
+        &session,
+        PasswordPolicyEngine::new(Vec::new(), ErrorMode::FirstError),
+        Arc::new(InMemoryHistory::default()),
+        map_resolver(&[("alice@x.com", "alice")]),
+        &sender,
+        &tokens,
+    );
+    ensure_token_session(&session, "alice", "sess-alice").await;
+    service
+        .request_reset(TENANT, "alice@x.com")
+        .await
+        .expect("请求应成功");
+    let token = {
+        sender.wait_for_deliveries(1).await;
+        let deliveries = sender.deliveries.lock().unwrap();
+        extract_token(&deliveries[0].2).to_string()
+    };
+    let claims = tokens.verify(&token).expect("token 应可校验");
+
+    // 模拟升级前签发的 token：删除 tenant 绑定键，仅保留 subject 绑定
+    dao.delete(&binding_tenant_key(&claims.jti))
+        .await
+        .expect("删除 tenant 绑定应成功");
+
+    let err = service
+        .reset(TENANT, "sess-alice", &token, "NewPass9!")
+        .await
+        .expect_err("缺 tenant 绑定的旧 token 必须 fail-closed 拒绝");
+    assert!(
+        matches!(err, GarrisonError::InvalidToken(ref m) if m.contains("pwdreset-tenant-binding-missing")),
+        "应返回 tenant 绑定缺失的显性 InvalidToken，实际: {err:?}"
     );
 }
 

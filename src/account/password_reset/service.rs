@@ -220,6 +220,16 @@ impl PasswordResetService {
                 self.dao
                     .set(&binding_key(&issued.claims.jti), &subject, ttl)
                     .await?;
+                // code-tenant 绑定（渗透-租户隔离-标识符注册表-1）：与 subject 绑定
+                // 同 TTL，reset 时校验请求租户与签发租户一致。写失败显性透传——
+                // 缺 tenant 绑定的 token 会被 reset 以 fail-closed 拒绝，不得静默降级。
+                self.dao
+                    .set(
+                        &binding_tenant_key(&issued.claims.jti),
+                        &tenant_id.to_string(),
+                        ttl,
+                    )
+                    .await?;
                 let (subject_line, body_line) = render_mail(&issued.token);
                 // 投递 fire-and-forget（对齐 authgear 异步投递）：请求路径不做
                 // SMTP 同步等待——时序与错误通道都与未知标识路径不可区分
@@ -251,7 +261,8 @@ impl PasswordResetService {
     /// 重置密码（两段式防竞态）。
     ///
     /// # 参数
-    /// - `tenant_id`: 租户（历史记录归属）。
+    /// - `tenant_id`: 租户（历史记录归属）。必须与 `request_reset` 签发 token 时的
+    ///   租户一致（code-tenant 绑定校验，渗透-租户隔离-标识符注册表-1）。
     /// - `session_token`: 恢复会话 token（须为已存在的 Token-Session，
     ///   宿主在用户点击邮件链接后创建）。reset 会对其打 restricted 标记，
     ///   标记在返回后保留（fail-safe），宿主可显式清除。
@@ -262,6 +273,10 @@ impl PasswordResetService {
     /// - token 非法/过期/purpose 不符：透传 [`ActionTokenService::verify`]
     /// - 绑定缺失：`InvalidToken("pwdreset-binding-missing::")`
     /// - 跨用户挪用（绑定不一致）：`NotPermission("pwdreset-subject-binding-mismatch::...")`
+    /// - 租户绑定缺失（升级前签发的旧 token，fail-closed）：
+    ///   `InvalidToken("pwdreset-tenant-binding-missing::")`
+    /// - 跨租户重置（请求租户与签发租户不一致，错误不含归属信息）：
+    ///   `NotPermission("pwdreset-tenant-mismatch::")`
     /// - 恢复会话归属他人：`NotPermission("pwdreset-session-subject-mismatch::...")`
     /// - 二次消费/并发败者：`InvalidToken("pwdreset-token-consume-failed::")`
     ///   （此刻无任何凭据变更——两段式回滚由「消费前不改凭据」结构保证）
@@ -290,6 +305,24 @@ impl PasswordResetService {
             None => {
                 return Err(GarrisonError::InvalidToken(
                     "pwdreset-binding-missing::".to_string(),
+                ));
+            },
+        }
+        // subject∈tenant 校验（渗透-租户隔离-标识符注册表-1）：请求租户必须与
+        // 签发租户一致。绑定缺失（升级前旧 token）fail-closed 拒绝；不匹配拒绝
+        // 且错误不含归属信息（不泄露 token 签发租户）。两条校验都在任何凭据
+        // 写入之前——被拒路径零凭据变更。
+        let bound_tenant = self.dao.get(&binding_tenant_key(&claims.jti)).await?;
+        match bound_tenant {
+            Some(t) if t == tenant_id.to_string() => {},
+            Some(_) => {
+                return Err(GarrisonError::NotPermission(
+                    "pwdreset-tenant-mismatch::".to_string(),
+                ));
+            },
+            None => {
+                return Err(GarrisonError::InvalidToken(
+                    "pwdreset-tenant-binding-missing::".to_string(),
                 ));
             },
         }
@@ -440,6 +473,14 @@ pub(crate) fn rate_key(identifier: &str) -> String {
 /// code-subject 绑定 key：`pwdreset:bind:{jti}`。
 pub(crate) fn binding_key(jti: &str) -> String {
     format!("{}bind:{}", DaoKeyPrefix::PasswordReset, jti)
+}
+
+/// code-tenant 绑定 key：`pwdreset:bindt:{jti}`。
+///
+/// 记录 ActionToken 签发时的 tenant_id，`reset` 校验请求租户一致
+/// （subject∈tenant 校验，渗透-租户隔离-标识符注册表-1）。
+pub(crate) fn binding_tenant_key(jti: &str) -> String {
+    format!("{}bindt:{}", DaoKeyPrefix::PasswordReset, jti)
 }
 
 /// 渲染找回邮件主题/正文（走 i18n FTL，禁止硬编码文案；与

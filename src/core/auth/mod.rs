@@ -193,6 +193,13 @@ pub struct AuthLogicDefault {
     /// 同样受构造器级正数校验：`with_remember_me` 拒绝非正数，
     /// 回退为 7776000 秒并输出 warn。
     remember_me_timeout: i64,
+    /// 登录时是否播种主认证因子（amr=["pwd"] / aal:1 / auth_time）。默认 `true`。
+    ///
+    /// 由 [`AuthLogicDefault::with_seed_primary_amr`](crate::core::auth::AuthLogicDefault::with_seed_primary_amr)
+    /// 设置（默认 true 保持既有契约，与 `config.seed_primary_amr` 同语义）；
+    /// 凭证委托 login 未发生密码校验的部署应关闭，避免向签发 claim 断言
+    /// 不存在的认证事实（渗透-认证绕过-3 / 会话与令牌-5）。
+    seed_primary_amr: bool,
     /// 身份切换权限校验 guard（默认 DenyAllSwitchToGuard fail-closed）。
     switch_to_guard: Arc<dyn SwitchToGuard>,
     /// per-token 异步互斥锁，串行化同一 token 的 `renew_to_equivalent` 操作

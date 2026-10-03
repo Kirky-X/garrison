@@ -105,8 +105,11 @@ pub use registry::{
 pub trait GarrisonPermissionStrategy: Send + Sync {
     /// 按主体失效权限判定缓存（登出/踢出联动调用；默认 no-op）。
     ///
-    /// `DefaultPermissionStrategy` 覆写为尽力删除 `garrison:perm:cache:<tenant>:<login_id>:*`
-    /// （键枚举不可用的后端 warn 降级，缓存 TTL 兜底）。第三方实现无需覆写。
+    /// `DefaultPermissionStrategy` 覆写为递增该主体的失效版本号键
+    /// （`garrison:decision:ver:{login_id}`，`dao.incr` 原子）——判定缓存键内嵌
+    /// 版本段 `garrison:perm:cache:v{ver}:{tenant}:…`，版本递增后**全部租户段**的
+    /// 旧 Allow 立即不可达（跨租户失效，两后端一致，不依赖 `keys()` 枚举），
+    /// 旧键随缓存 TTL（当前 300s）自然过期。第三方实现无需覆写。
     /// 注意：权限/角色**变更**点（不经过登出）仍需业务方显式调用
     /// `DefaultPermissionStrategy::invalidate_permission_cache`；未覆写的第三方
     /// 实现下旧 Allow 最长存续缓存 TTL（当前 300s）。
@@ -189,13 +192,16 @@ pub trait GarrisonPermissionStrategy: Send + Sync {
     /// 校验角色（带租户维度）。
     ///
     /// stp 层 `check_role` 的 firewall 回退路径通过此方法把请求级 `tenant_id`
-    /// 传入策略（此前 `_tenant_id` 计算后弃用，firewall 路径无租户过滤）。
+    /// 传入策略。
     ///
     /// # 必须实现
     ///
     /// 实现方**必须**将 `tenant_id` 纳入角色判定：
-    /// - 数据源按租户隔离的策略应以 `tenant_id` 过滤角色数据；
-    /// - 数据源与租户无关的策略应显式说明这一点（而非静默丢弃参数）。
+    /// - 默认实现（`GarrisonPermissionStrategyDefault`）经
+    ///   [`GarrisonInterface::get_role_list_in_tenant`] 查询角色数据（默认委托
+    ///   全局方法，行为不变；覆写的业务方获得租户作用域数据源），判定结果缓存键
+    ///   纳入租户段（编码与失效机制与权限判定缓存一致）；
+    /// - 自定义实现若数据源与租户无关，应显式说明这一点（而非静默丢弃参数）。
     ///
     /// # 参数
     /// - `tenant_id`: 请求级租户 ID（0 表示单租户/未隔离）。
@@ -325,8 +331,9 @@ pub struct GarrisonPermissionStrategyDefault {
     dao: Option<Arc<dyn GarrisonDao>>,
     /// 可选租户维度，用于权限缓存键隔离。
     ///
-    /// `Some(t)` 时缓存键为 `garrison:perm:cache:<t>:<login_id>:<permission>`；
-    /// `None` 时使用占位符 `_`（未配置租户隔离，所有租户共享缓存键）。
+    /// `Some(t)` 时缓存键租户段为 `<t>`（分量经歧义消除编码，键含失效版本段
+    /// `garrison:perm:cache:v{ver}:{t}:…`）；
+    /// `None` 时租户段使用占位符 `_`（未配置租户隔离，所有租户共享缓存键）。
     tenant_id: Option<i64>,
     /// 默认 login_type（多账号体系，接线 `_with_type` 回调）。
     ///

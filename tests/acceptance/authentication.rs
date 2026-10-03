@@ -698,15 +698,18 @@ async fn acc_auth_019_bw_ac_010_login_failure_locks_account() {
 }
 
 /// （正常）：安全默认值——新登录 token 未经二级认证
-/// `check_safe=false`、未被封禁 `check_disable=false`；未知 token 同样两项
-/// 均为 false（不误报封禁/认证状态）。
+/// `check_safe=false`、未被封禁 `check_disable=false`；无效 token（伪造/kickout
+/// 后旧 token）显性返回 `Session` 错误（与 check-login 的 SESSION_ERROR 语义对齐），
+/// 不再与「未封禁/未认证」合并为宽松 false。
 ///
 /// 对应 e2e 原用例（check-disable 部分）：经 HTTP 断言 `data=false`；本场景经
-/// `BackendEmbedded::check_safe` / `check_disable`（端点同一下游）直接断言布尔值。
+/// `BackendEmbedded::check_safe` / `check_disable`（端点同一下游）直接断言布尔值
+/// 与错误变体（GAR-02 / R2-1 回归）。
 #[tokio::test]
 #[serial]
 async fn acc_auth_016_safe_disable_defaults_false() {
     use garrison::backend::{AuthBackend, BackendEmbedded};
+    use garrison::error::GarrisonError;
 
     let _h = GarrisonTestHarness::builder()
         .config(test_config())
@@ -726,20 +729,23 @@ async fn acc_auth_016_safe_disable_defaults_false() {
         !backend.check_disable(&token).await.unwrap(),
         "新 token 未被封禁，check_disable 应为 false"
     );
-    // 未知 token → 两者均为 false（不误报， fallback 语义）
+    // 伪造 token → 显性 Err(Session)，不再宽松返回 false（GAR-02）
+    let unknown_safe = backend
+        .check_safe("nonexistent-token-disabled-test-12345")
+        .await;
     assert!(
-        !backend
-            .check_safe("nonexistent-token-disabled-test-12345")
-            .await
-            .unwrap(),
-        "未知 token check_safe 应为 false"
+        matches!(unknown_safe, Err(GarrisonError::Session(_))),
+        "伪造 token check_safe 应显性拒绝（Err(Session)），实际: {:?}",
+        unknown_safe
     );
+    // 伪造 token → 显性 Err(Session)，不再与「未封禁」合并（R2-1）
+    let unknown_disable = backend
+        .check_disable("nonexistent-token-disabled-test-12345")
+        .await;
     assert!(
-        !backend
-            .check_disable("nonexistent-token-disabled-test-12345")
-            .await
-            .unwrap(),
-        "未知 token check_disable 应为 false（未标记封禁）"
+        matches!(unknown_disable, Err(GarrisonError::Session(_))),
+        "伪造 token check_disable 应显性拒绝（Err(Session)），实际: {:?}",
+        unknown_disable
     );
 }
 

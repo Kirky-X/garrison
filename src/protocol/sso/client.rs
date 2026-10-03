@@ -25,6 +25,10 @@ type HmacSha256 = Hmac<Sha256>;
 /// SSO ticket 默认 TTL（秒）。
 const DEFAULT_TICKET_TTL: u64 = 60;
 
+/// HMAC secret 最小长度（字节），与 qrlogin / protocol-sign 的 32 字节下限对齐
+/// （安全审计 GAR-15：短 secret 可被持票攻击者离线爆破后伪造票据签名）。
+pub(crate) const MIN_SECRET_LEN: usize = 32;
+
 /// 计算 ticket 随机部分的 HMAC-SHA256 签名（供 SsoClient / DefaultSsoServer 共用）。
 ///
 /// 签名输入为 `random_part`，输出为 base64 编码的 HMAC-SHA256。
@@ -60,16 +64,27 @@ impl SsoClient {
     ///
     /// # 参数
     /// - `dao`: DAO 抽象层实例。
-    /// - `secret`: HMAC 签名密钥（用于 ticket 防伪造，禁止空字符串）。
+    /// - `secret`: HMAC 签名密钥（用于 ticket 防伪造，禁止空字符串，
+    ///   且长度不得少于 [`MIN_SECRET_LEN`] 32 字节）。
     ///
     /// # 错误
-    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（不 panic，可恢复配置错误）。
+    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（`sso-client-secret-empty`）；
+    /// - `secret` 短于 32 字节时返回 `GarrisonError::InvalidParam`
+    ///   （`sso-client-secret-too-short`，安全审计 GAR-15）。
+    ///   均不 panic，可恢复配置错误。
     pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> GarrisonResult<Self> {
         let secret: String = secret.into();
         if secret.is_empty() {
             return Err(GarrisonError::InvalidParam(
                 "sso-client-secret-empty::".to_string(),
             ));
+        }
+        if secret.len() < MIN_SECRET_LEN {
+            return Err(GarrisonError::InvalidParam(format!(
+                "sso-client-secret-too-short::len={}::min={}",
+                secret.len(),
+                MIN_SECRET_LEN
+            )));
         }
         Ok(Self {
             dao,

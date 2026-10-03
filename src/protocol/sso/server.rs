@@ -17,11 +17,94 @@ use uuid::Uuid;
 
 // 复用 `sso::client` 中的 `sign_ticket` + `verify_ticket_signature`，
 // 以及 `sso::mod.rs` 中的 `SsoTicketData`，避免 ticket 格式漂移和签名逻辑重复。
-use super::client::{sign_ticket, verify_ticket_signature};
+use super::client::{sign_ticket, verify_ticket_signature, MIN_SECRET_LEN};
 use super::SsoTicketData;
 
 /// SSO ticket 默认 TTL（秒），与 `SsoClient` 保持一致。
 const DEFAULT_TICKET_TTL: u64 = 60;
+
+// ============================================================================
+// SSO pub/sub 消息信封（R2-3：pub/sub 事件认证 + 防重放）
+// ============================================================================
+
+/// SSO pub/sub 消息信封：HMAC-SHA256 认证 + 单调 seq 防重放。
+///
+/// [`SsoServer::push_message`] 发布侧将业务消息封装为本信封（JSON 序列化后
+/// 经 `SsoChannel` 发布）；订阅侧经 [`verify_sso_message`] 验签后取回 payload。
+///
+/// # 消费契约
+///
+/// - `hmac` = base64(HMAC-SHA256(secret, seq(be 字节) || payload))，secret 为
+///   SSO 票据签名密钥（发布/订阅两侧共享）；
+/// - `seq` 为发布实例内单调递增（AtomicU64），订阅方以 `&mut u64` 维护
+///   「已见最大 seq」状态：`seq <= last_seq` 即判定重放拒绝；
+/// - **跨实例部署**：各实例 seq 独立计数，订阅方须按（topic × 发布实例）维度
+///   维护 last_seq，或以共享单调源扩展。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SsoMessageEnvelope {
+    /// 业务消息原文。
+    pub payload: String,
+    /// HMAC-SHA256（base64），覆盖 `seq` 与 `payload`。
+    pub hmac: String,
+    /// 发布序号（发布实例内单调递增），防重放。
+    pub seq: u64,
+}
+
+type HmacSha256 = hmac::Hmac<sha2::Sha256>;
+
+/// 计算信封 HMAC（base64）：HMAC-SHA256(secret, seq.to_be_bytes() || payload)。
+fn sso_message_hmac(secret: &str, payload: &str, seq: u64) -> GarrisonResult<String> {
+    use base64::Engine as _;
+    use hmac::{KeyInit, Mac};
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .map_err(|e| GarrisonError::Internal(format!("sso-message-hmac-init::{}", e)))?;
+    mac.update(&seq.to_be_bytes());
+    mac.update(payload.as_bytes());
+    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+    Ok(BASE64_STANDARD.encode(mac.finalize().into_bytes()))
+}
+
+/// 发布侧：将业务消息封装为 HMAC 信封（JSON 字符串，供 `SsoChannel::push` 发布）。
+///
+/// `seq` 由调用方保证在发布实例内单调递增（`DefaultSsoServer` 内置 AtomicU64）。
+pub fn seal_sso_message(secret: &str, payload: &str, seq: u64) -> GarrisonResult<String> {
+    let hmac = sso_message_hmac(secret, payload, seq)?;
+    serde_json::to_string(&SsoMessageEnvelope {
+        payload: payload.to_string(),
+        hmac,
+        seq,
+    })
+    .map_err(|e| GarrisonError::Internal(format!("sso-message-envelope-serialize::{}", e)))
+}
+
+/// 订阅侧验签助手：校验 HMAC 信封并返回业务消息 payload。
+///
+/// - 信封格式非法 / HMAC 不匹配 / `seq <= *last_seq`（重放）均返回 Err（fail-closed）；
+/// - 验签通过后推进 `*last_seq`（订阅方按 topic × 发布实例 维护该状态）。
+pub fn verify_sso_message(secret: &str, raw: &str, last_seq: &mut u64) -> GarrisonResult<String> {
+    use base64::Engine as _;
+    use hmac::{KeyInit, Mac};
+    let envelope: SsoMessageEnvelope = serde_json::from_str(raw)
+        .map_err(|_| GarrisonError::InvalidToken("sso-message-envelope-format::".to_string()))?;
+    // 常量时间比较（与 ticket 验签一致）：先重算 HMAC 再 verify_slice
+    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+        .map_err(|e| GarrisonError::Internal(format!("sso-message-hmac-init::{}", e)))?;
+    mac.update(&envelope.seq.to_be_bytes());
+    mac.update(envelope.payload.as_bytes());
+    let sig_bytes = base64::engine::general_purpose::STANDARD
+        .decode(&envelope.hmac)
+        .map_err(|_| GarrisonError::InvalidToken("sso-message-hmac-verify::".to_string()))?;
+    mac.verify_slice(&sig_bytes)
+        .map_err(|_| GarrisonError::InvalidToken("sso-message-hmac-verify::".to_string()))?;
+    if envelope.seq <= *last_seq {
+        return Err(GarrisonError::InvalidToken(format!(
+            "sso-message-seq-replay::seq={}::last_seq={}",
+            envelope.seq, *last_seq
+        )));
+    }
+    *last_seq = envelope.seq;
+    Ok(envelope.payload)
+}
 
 // ============================================================================
 // Trait 定义
@@ -67,6 +150,13 @@ pub trait SsoServer: Send + Sync {
     ///
     /// topic 名为 `sso:user:{sha256(login_id)[..32hex]}`（login_id 经确定性指纹
     /// 脱敏，防止邮箱/手机号等 PII 泄漏到 topic/日志）；订阅方需按同一规则拼接 topic。
+    ///
+    /// # 消息认证契约（R2-3：pub/sub 事件认证）
+    ///
+    /// 发布侧将 `message` 封装为 HMAC-SHA256 信封
+    /// （[`SsoMessageEnvelope`]：`{payload, hmac, seq}`，seq 单调防重放）后发布；
+    /// 订阅侧必须经 [`verify_sso_message`] 验签消费，未经信封封装或验签失败的
+    /// 原始消息不可信（pub/sub 通道对任意订阅者/发布者开放，无传输层认证）。
     async fn push_message(&self, login_id: &str, message: &str) -> GarrisonResult<()>;
 }
 
@@ -156,6 +246,8 @@ pub struct DefaultSsoServer {
     converter: Arc<dyn CenterIdConverter>,
     /// HMAC 签名密钥（所有 ticket 必须签名，与 SsoClient 格式一致）。
     secret: String,
+    /// pub/sub 消息发布序号（实例内单调递增，R2-3 信封防重放）。
+    message_seq: std::sync::atomic::AtomicU64,
 }
 
 impl DefaultSsoServer {
@@ -168,10 +260,14 @@ impl DefaultSsoServer {
     ///
     /// # 参数
     /// - `dao`: DAO 抽象层实例。
-    /// - `secret`: HMAC 签名密钥（与 SsoClient 必须一致，禁止空字符串）。
+    /// - `secret`: HMAC 签名密钥（与 SsoClient 必须一致，禁止空字符串，
+    ///   且长度不得少于 [`MIN_SECRET_LEN`] 32 字节）。
     ///
     /// # 错误
-    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（不 panic，可恢复配置错误）。
+    /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（`sso-server-secret-empty`）；
+    /// - `secret` 短于 32 字节时返回 `GarrisonError::InvalidParam`
+    ///   （`sso-server-secret-too-short`，安全审计 GAR-15）。
+    ///   均不 panic，可恢复配置错误。
     pub fn new(dao: Arc<dyn GarrisonDao>, secret: impl Into<String>) -> GarrisonResult<Self> {
         let secret: String = secret.into();
         if secret.is_empty() {
@@ -179,12 +275,22 @@ impl DefaultSsoServer {
                 "sso-server-secret-empty::".to_string(),
             ));
         }
+        if secret.len() < MIN_SECRET_LEN {
+            return Err(GarrisonError::InvalidParam(format!(
+                "sso-server-secret-too-short::len={}::min={}",
+                secret.len(),
+                MIN_SECRET_LEN
+            )));
+        }
         Ok(Self {
             dao,
             ticket_ttl_seconds: DEFAULT_TICKET_TTL,
             channel: None,
             converter: Arc::new(IdentityCenterIdConverter),
             secret,
+            // 首条消息 seq 从 1 起：订阅方 last_seq 以 0 初始化，0 <= 0 会被
+            // `seq <= last_seq` 防重放检查误判为重放
+            message_seq: std::sync::atomic::AtomicU64::new(1),
         })
     }
 
@@ -280,7 +386,13 @@ impl SsoServer for DefaultSsoServer {
             // 改用 SHA-256 指纹（截断 32 hex），避免 PII 泄漏到 Redis topic /
             // 监控面板 / broker 元数据。指纹为确定性映射，订阅方按同一规则拼 topic。
             let topic = format!("sso:user:{}", fingerprint_id(login_id));
-            channel.push(&topic, message).await?;
+            // R2-3：发布侧 HMAC 信封（seq 实例内单调递增），订阅侧经
+            // verify_sso_message 验签消费（见 SsoServer::push_message 消费契约）
+            let seq = self
+                .message_seq
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let envelope = seal_sso_message(&self.secret, message, seq)?;
+            channel.push(&topic, &envelope).await?;
         }
         // 未注入 channel 时 noop
         Ok(())
@@ -323,8 +435,8 @@ mod tests {
     #[test]
     fn new_creates_server_with_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let _server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let _server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         // 构造成功即验证（dao 通过类型系统保证非空）
     }
 
@@ -332,7 +444,7 @@ mod tests {
     #[test]
     fn builder_chain_sets_fields() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功")
             .with_ticket_ttl(120)
             .with_channel(Arc::new(NoopSsoChannel))
@@ -411,8 +523,8 @@ mod tests {
     #[tokio::test]
     async fn issue_and_validate_ticket_roundtrip() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
         assert_eq!(login_id, "1001");
@@ -422,8 +534,8 @@ mod tests {
     #[tokio::test]
     async fn issue_ticket_returns_64_chars() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         // 新格式：{64_hex_random}.{hmac_b64}，长度不再固定为 64
         let parts: Vec<&str> = ticket.splitn(2, '.').collect();
@@ -436,8 +548,8 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_one_time_use_second_fails() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let first = server.validate_ticket(&ticket, 2001).await;
         let second = server.validate_ticket(&ticket, 2001).await;
@@ -452,8 +564,8 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_client_id_mismatch_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         let result = server.validate_ticket(&ticket, 9999).await;
         assert!(result.is_err());
@@ -467,8 +579,8 @@ mod tests {
     #[tokio::test]
     async fn validate_ticket_nonexistent_returns_error() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let result = server.validate_ticket("nonexistent-ticket", 2001).await;
         assert!(result.is_err());
         match result.err() {
@@ -485,8 +597,8 @@ mod tests {
     #[tokio::test]
     async fn destroy_ticket_idempotent() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let result = server.destroy_ticket("nonexistent-ticket").await;
         assert_eq!(result.unwrap(), (), "销毁不存在的票据应返回 Ok(())（幂等）");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
@@ -516,7 +628,7 @@ mod tests {
             }
         }
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功")
             .with_converter(Arc::new(OffsetConverter));
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
@@ -533,8 +645,8 @@ mod tests {
     #[tokio::test]
     async fn push_message_noop_when_no_channel() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let result = server.push_message("1001", "hello").await;
         assert_eq!(
             result.unwrap(),
@@ -568,7 +680,7 @@ mod tests {
         let channel = Arc::new(CountingChannel {
             count: AtomicUsize::new(0),
         });
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功")
             .with_channel(channel.clone());
         server.push_message("1001", "hello").await.unwrap();
@@ -602,7 +714,7 @@ mod tests {
         let channel = Arc::new(TopicCapturingChannel {
             topics: std::sync::Mutex::new(Vec::new()),
         });
-        let server = DefaultSsoServer::new(dao, "test-sso-secret-key")
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功")
             .with_channel(channel.clone());
 
@@ -648,6 +760,196 @@ mod tests {
         }
     }
 
+    /// 短于 32 字节的 secret 构造返回 InvalidParam（安全审计 GAR-15：
+    /// 与 qrlogin/protocol-sign 对齐，弱密钥可被持票攻击者离线爆破后伪造签名）。
+    #[test]
+    fn new_rejects_short_secret_with_invalid_param() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let result = DefaultSsoServer::new(dao, "a".repeat(31));
+        match result {
+            Err(GarrisonError::InvalidParam(msg)) => {
+                assert!(
+                    msg.contains("sso-server-secret-too-short"),
+                    "错误消息应含 sso-server-secret-too-short 前缀，实际: {}",
+                    msg
+                );
+            },
+            Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+            Ok(_) => panic!("31 字节 secret 不应构造成功"),
+        }
+        // 32 字节（下限）应构造成功
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        assert!(
+            DefaultSsoServer::new(dao, "a".repeat(32)).is_ok(),
+            "32 字节 secret 应构造成功"
+        );
+    }
+
+    // ========================================================================
+    // pub/sub 消息信封（R2-3：HMAC 认证 + seq 防重放）
+    // ========================================================================
+
+    /// 捕获 push 消息体的 channel（信封测试用）。
+    struct MessageCapturingChannel {
+        messages: std::sync::Mutex<Vec<String>>,
+    }
+    #[async_trait]
+    impl SsoChannel for MessageCapturingChannel {
+        async fn push(&self, _topic: &str, message: &str) -> GarrisonResult<()> {
+            self.messages.lock().unwrap().push(message.to_string());
+            Ok(())
+        }
+        async fn subscribe(
+            &self,
+            _topic: &str,
+            _handler: Box<dyn Fn(String) + Send + Sync>,
+        ) -> GarrisonResult<()> {
+            Ok(())
+        }
+    }
+
+    /// push_message 发布侧封装 HMAC 信封：订阅侧 verify_sso_message 验签
+    /// 取回原始 payload，且 seq 随发布单调递增。
+    #[tokio::test]
+    async fn push_message_seals_hmac_envelope_and_verifies() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let channel = Arc::new(MessageCapturingChannel {
+            messages: std::sync::Mutex::new(Vec::new()),
+        });
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功")
+            .with_channel(channel.clone());
+        server.push_message("1001", "kickout-notify").await.unwrap();
+        server.push_message("1001", "perm-changed").await.unwrap();
+
+        let messages = channel.messages.lock().unwrap();
+        assert_eq!(messages.len(), 2);
+        let mut last_seq = 0u64;
+        let payload1 = verify_sso_message(
+            "test-sso-secret-key-for-unit-tests-01",
+            &messages[0],
+            &mut last_seq,
+        )
+        .expect("信封验签应通过");
+        assert_eq!(payload1, "kickout-notify");
+        let payload2 = verify_sso_message(
+            "test-sso-secret-key-for-unit-tests-01",
+            &messages[1],
+            &mut last_seq,
+        )
+        .expect("第二封信封验签应通过");
+        assert_eq!(payload2, "perm-changed");
+        // seq 单调递增由 verify 的重放检查间接保证（第二次通过说明 seq2 > seq1）
+    }
+
+    /// 篡改 payload 的信封被拒绝（HMAC 不匹配，fail-closed）。
+    #[tokio::test]
+    async fn verify_sso_message_rejects_tampered_payload() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let channel = Arc::new(MessageCapturingChannel {
+            messages: std::sync::Mutex::new(Vec::new()),
+        });
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功")
+            .with_channel(channel.clone());
+        server.push_message("1001", "original").await.unwrap();
+
+        let raw = channel.messages.lock().unwrap()[0].clone();
+        let tampered = raw.replace("original", "forged");
+        assert_ne!(tampered, raw);
+        let mut last_seq = 0u64;
+        let result = verify_sso_message(
+            "test-sso-secret-key-for-unit-tests-01",
+            &tampered,
+            &mut last_seq,
+        );
+        match result {
+            Err(GarrisonError::InvalidToken(msg)) => assert!(
+                msg.contains("sso-message-hmac-verify"),
+                "篡改 payload 应报 sso-message-hmac-verify，实际: {msg}"
+            ),
+            other => panic!("期望 InvalidToken，实际: {:?}", other),
+        }
+    }
+
+    /// 重放旧 seq 的信封被拒绝（seq 单调防重放）。
+    #[tokio::test]
+    async fn verify_sso_message_rejects_replayed_seq() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let channel = Arc::new(MessageCapturingChannel {
+            messages: std::sync::Mutex::new(Vec::new()),
+        });
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功")
+            .with_channel(channel.clone());
+        server.push_message("1001", "m1").await.unwrap();
+        server.push_message("1001", "m2").await.unwrap();
+
+        let messages = channel.messages.lock().unwrap();
+        let mut last_seq = 0u64;
+        // 正常顺序：m1（seq0）→ m2（seq1）
+        verify_sso_message(
+            "test-sso-secret-key-for-unit-tests-01",
+            &messages[0],
+            &mut last_seq,
+        )
+        .unwrap();
+        verify_sso_message(
+            "test-sso-secret-key-for-unit-tests-01",
+            &messages[1],
+            &mut last_seq,
+        )
+        .unwrap();
+        // 重放第一封（seq0 <= last_seq=1）→ 拒绝
+        let replay = verify_sso_message(
+            "test-sso-secret-key-for-unit-tests-01",
+            &messages[0],
+            &mut last_seq,
+        );
+        match replay {
+            Err(GarrisonError::InvalidToken(msg)) => assert!(
+                msg.contains("sso-message-seq-replay"),
+                "重放旧 seq 应报 sso-message-seq-replay，实际: {msg}"
+            ),
+            other => panic!("期望 InvalidToken，实际: {:?}", other),
+        }
+        // 攻击者伪造的高 seq 信封（无有效 HMAC）同样被拒——先验签后查 seq，
+        // 伪造 hmac 不可通过
+        let forged = serde_json::json!({
+            "payload": "forged",
+            "hmac": "AAAA",
+            "seq": 9999u64
+        })
+        .to_string();
+        let forged_result = verify_sso_message(
+            "test-sso-secret-key-for-unit-tests-01",
+            &forged,
+            &mut last_seq,
+        );
+        assert!(
+            matches!(forged_result, Err(GarrisonError::InvalidToken(_))),
+            "伪造信封应被拒绝"
+        );
+    }
+
+    /// 非 JSON / 缺字段的消息体被拒绝（信封格式 fail-closed）。
+    #[tokio::test]
+    async fn verify_sso_message_rejects_malformed_envelope() {
+        let mut last_seq = 0u64;
+        let result = verify_sso_message(
+            "test-sso-secret-key-for-unit-tests-01",
+            "plain-message",
+            &mut last_seq,
+        );
+        match result {
+            Err(GarrisonError::InvalidToken(msg)) => assert!(
+                msg.contains("sso-message-envelope-format"),
+                "非信封消息应报 sso-message-envelope-format，实际: {msg}"
+            ),
+            other => panic!("期望 InvalidToken，实际: {:?}", other),
+        }
+    }
+
     // ========================================================================
     // SsoServer 与 SsoClient 通过共享 GarrisonDao 间接通信
     // ========================================================================
@@ -657,11 +959,12 @@ mod tests {
     async fn server_and_client_communicate_via_shared_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // SsoServer 签发 ticket
-        let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key")
+        let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key-for-unit-tests-01")
             .expect("secret 非空构造应成功");
         let ticket = server.issue_ticket("1001", 2001).await.unwrap();
         // SsoClient 校验同一 ticket（共享 DAO）
-        let client = SsoClient::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let client = SsoClient::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let login_id = client.validate_ticket(&ticket, 2001).await.unwrap();
         assert_eq!(login_id, "1001");
     }
@@ -671,12 +974,12 @@ mod tests {
     async fn client_and_server_communicate_via_shared_dao() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         // SsoClient 签发 ticket
-        let client =
-            SsoClient::new(dao.clone(), "test-sso-secret-key").expect("secret 非空构造应成功");
+        let client = SsoClient::new(dao.clone(), "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let ticket = client.issue_ticket("1001", 2001).await.unwrap();
         // SsoServer 校验同一 ticket（共享 DAO）
-        let server =
-            DefaultSsoServer::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功");
+        let server = DefaultSsoServer::new(dao, "test-sso-secret-key-for-unit-tests-01")
+            .expect("secret 非空构造应成功");
         let login_id = server.validate_ticket(&ticket, 2001).await.unwrap();
         assert_eq!(login_id, "1001");
     }

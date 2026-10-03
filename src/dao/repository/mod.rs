@@ -788,8 +788,16 @@ pub trait UserExtRepository: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RegisterOutcome {
     /// 注册成功（该标识此前未被占用）。
+    ///
+    /// # 租户隔离语义（渗透-租户隔离-标识符注册表-1 修复）
+    ///
+    /// 全局主键 `(id_type, id_value)` 冲突但命中行属**其他租户**时同样返回本变体
+    /// （中性「已注册」，不带 `by_user_id`）：调用方视作注册完成即可，
+    /// 不得从返回值推断该标识在当前租户可用。
     Registered,
     /// 标识已被占用（携带占用者 user_id）。
+    ///
+    /// 仅**同租户**冲突携带 `by_user_id`（同信任域，供业务方决定冲突语义）。
     Taken {
         /// 当前占用该标识的用户 ID。
         by_user_id: String,
@@ -798,15 +806,26 @@ pub enum RegisterOutcome {
 
 /// 登录标识 Repository trait。
 ///
-/// 提供 phone/email 等登录标识的**数据库级原子防重**：`(id_type, id_value)` 为主键，
-/// 数据库唯一约束兜底并发注册。`register` 返回 [`RegisterOutcome`] 供业务方决定
-/// 冲突语义（拒绝注册 / 引导登录 / 走账号合并流程）。
+/// 提供 phone/email 等登录标识的**数据库级原子防重**：`(id_type, id_value)` 为全局主键
+/// （设计使然，登录标识数据库级防重），数据库唯一约束兜底并发注册。
+/// `register` 返回 [`RegisterOutcome`] 供业务方决定冲突语义
+/// （拒绝注册 / 引导登录 / 走账号合并流程）。
+///
+/// # 租户隔离（渗透-租户隔离-标识符注册表-1）
+///
+/// 全局主键意味着不同租户无法注册同一标识：冲突命中他租户行时
+/// `register` 返回中性 [`RegisterOutcome::Registered`]（不带 `by_user_id`，
+/// 不向其他租户泄露 user_id）；同租户冲突才返回
+/// [`RegisterOutcome::Taken`]。租户感知归属查询用
+/// [`find_owner_in_tenant`](Self::find_owner_in_tenant)。
 #[async_trait::async_trait]
 pub trait UserIdentifierRepository: Send + Sync {
     /// 注册登录标识。
     ///
     /// `id_value` 由调用方归一化（框架提供 trim；格式校验属业务层）。
-    /// INSERT 冲突时回查归属返回 `Taken { by_user_id }`（不泄露其他记录内容）。
+    /// INSERT 冲突时按租户作用域回查归属：同租户冲突返回 `Taken { by_user_id }`；
+    /// 他租户占用（或冲突行并发消失）返回中性 `Registered`——不泄露其他租户的
+    /// 记录归属。
     async fn register(
         &self,
         tenant_id: i64,
@@ -815,8 +834,27 @@ pub trait UserIdentifierRepository: Send + Sync {
         user_id: &str,
     ) -> GarrisonResult<RegisterOutcome>;
 
-    /// 查询标识当前归属（未注册返回 `Ok(None)`）。
+    /// 查询标识当前归属（**全局**维度，未注册返回 `Ok(None)`）。
+    ///
+    /// # 泄露警告
+    ///
+    /// 本方法无租户谓词（全局主键的反查原语）：多租户部署中调用方必须
+    /// 自行确保 `id_value` 不来自不可信输入，否则返回的 `user_id` 会向
+    /// 调用方泄露该标识在**其他租户**的归属。租户上下文场景请改用
+    /// [`find_owner_in_tenant`](Self::find_owner_in_tenant)。
     async fn find_owner(&self, id_type: &str, id_value: &str) -> GarrisonResult<Option<String>>;
+
+    /// 查询标识在指定租户内的归属（租户感知，未注册或属他租户返回 `Ok(None)`）。
+    ///
+    /// 与 [`find_owner`](Self::find_owner) 的区别：SQL 带 `tenant_id` 谓词，
+    /// 跨租户命中一律返回 `None`（不泄露归属），供 `register` 冲突回查与
+    /// 多租户找回密码等租户上下文场景使用。
+    async fn find_owner_in_tenant(
+        &self,
+        tenant_id: i64,
+        id_type: &str,
+        id_value: &str,
+    ) -> GarrisonResult<Option<String>>;
 }
 
 /// 单用户最大设备数。
@@ -854,10 +892,16 @@ pub trait UserDeviceRepository: Send + Sync {
     ) -> GarrisonResult<String>;
 
     /// 阻止设备（设置 is_blocked = 1）。
-    async fn block_device(&self, device_id: &str) -> GarrisonResult<()>;
+    ///
+    /// 必须同时传 `tenant_id` 与 `device_id`（SQL `WHERE tenant_id = ? AND id = ?`）：
+    /// 这是 `app_user_device` 唯一的按 id 直写路径，缺租户谓词会构成跨租户封禁
+    /// 原语（渗透-租户隔离-设备接口-1）。跨租户 `device_id` 命中 0 行（no-op 幂等）。
+    async fn block_device(&self, tenant_id: i64, device_id: &str) -> GarrisonResult<()>;
 
     /// 解除阻止（设置 is_blocked = 0）。
-    async fn unblock_device(&self, device_id: &str) -> GarrisonResult<()>;
+    ///
+    /// 租户谓词契约同 [`block_device`](Self::block_device)。
+    async fn unblock_device(&self, tenant_id: i64, device_id: &str) -> GarrisonResult<()>;
 
     /// 列出用户的所有设备（按 tenant_id + login_id 过滤）。
     async fn list_user_devices(

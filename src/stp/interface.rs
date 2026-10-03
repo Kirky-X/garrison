@@ -104,6 +104,65 @@ pub trait GarrisonInterface: Send + Sync {
     ) -> GarrisonResult<Vec<String>> {
         self.get_role_list(login_id).await
     }
+
+    /// 获取指定主体在指定租户下的权限列表（租户感知数据源）。
+    ///
+    /// # 生产接线（渗透-RBAC-租户维度-1 修复）
+    ///
+    /// `GarrisonPermissionStrategyDefault::check_permission_in_tenant` /
+    /// stp 层 firewall 回退路径在请求级租户存在时**优先调用本方法**：
+    /// 覆写了本方法的业务方获得真实租户作用域的权限数据，
+    /// 跨租户重名 `login_id` 不再互染。
+    ///
+    /// # 默认实现
+    ///
+    /// 默认实现委托 [`get_permission_list`](Self::get_permission_list)（忽略 `tenant_id`），
+    /// 数据源未按租户隔离的既有实现者**无需覆写、行为不变**。
+    /// 多租户部署（`login_id` 跨租户可能重名）**必须覆写**本方法按租户过滤，
+    /// 否则判定退化为全局共享（方法名契约不成立，跨租户互染风险由业务方承担）。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 请求级租户 ID。
+    /// - `login_id`: 登录主体标识（**租户内**标识，同名主体不同租户互不相同）。
+    ///
+    /// # 错误
+    /// - 数据源访问失败：由业务方实现决定具体 `GarrisonError`。
+    async fn get_permission_list_in_tenant(
+        &self,
+        _tenant_id: i64,
+        login_id: &str,
+    ) -> GarrisonResult<Vec<String>> {
+        self.get_permission_list(login_id).await
+    }
+
+    /// 获取指定主体在指定租户下的角色列表（租户感知数据源）。
+    ///
+    /// # 生产接线（渗透-RBAC-租户维度-1 修复）
+    ///
+    /// `GarrisonPermissionStrategyDefault::check_role_in_tenant` 改为本方法驱动：
+    /// 覆写了本方法的业务方获得真实租户作用域的角色数据，
+    /// 跨租户重名 `login_id` 的角色不再互染。
+    ///
+    /// # 默认实现
+    ///
+    /// 默认实现委托 [`get_role_list`](Self::get_role_list)（忽略 `tenant_id`），
+    /// 数据源未按租户隔离的既有实现者**无需覆写、行为不变**。
+    /// 多租户部署（`login_id` 跨租户可能重名）**必须覆写**本方法按租户过滤，
+    /// 否则判定退化为全局共享（方法名契约不成立，跨租户互染风险由业务方承担）。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 请求级租户 ID。
+    /// - `login_id`: 登录主体标识（**租户内**标识，同名主体不同租户互不相同）。
+    ///
+    /// # 错误
+    /// - 数据源访问失败：由业务方实现决定具体 `GarrisonError`。
+    async fn get_role_list_in_tenant(
+        &self,
+        _tenant_id: i64,
+        login_id: &str,
+    ) -> GarrisonResult<Vec<String>> {
+        self.get_role_list(login_id).await
+    }
 }
 
 #[cfg(test)]
@@ -176,5 +235,32 @@ mod tests {
         let r1 = iface.get_role_list_with_type("u1", "admin").await.unwrap();
         let r2 = iface.get_role_list_with_type("u1", "user").await.unwrap();
         assert_eq!(r1, r2, "默认实现应忽略 login_type 参数");
+    }
+
+    /// `get_permission_list_in_tenant` 默认实现委托 `get_permission_list`（忽略租户）。
+    #[tokio::test]
+    async fn default_get_permission_list_in_tenant_delegates() {
+        let iface = MinimalInterface;
+        let perms = iface
+            .get_permission_list_in_tenant(42, "user1")
+            .await
+            .unwrap();
+        assert_eq!(
+            perms,
+            vec!["perm:user1:read"],
+            "默认实现应委托 get_permission_list（忽略 tenant_id）"
+        );
+    }
+
+    /// `get_role_list_in_tenant` 默认实现委托 `get_role_list`（忽略租户）。
+    #[tokio::test]
+    async fn default_get_role_list_in_tenant_delegates() {
+        let iface = MinimalInterface;
+        let roles = iface.get_role_list_in_tenant(42, "user1").await.unwrap();
+        assert_eq!(
+            roles,
+            vec!["role:user1:viewer"],
+            "默认实现应委托 get_role_list（忽略 tenant_id）"
+        );
     }
 }

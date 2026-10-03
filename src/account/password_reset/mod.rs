@@ -28,6 +28,7 @@
 //! | key | TTL | 用途 |
 //! |-----|-----|------|
 //! | `pwdreset:bind:{jti}` | ActionToken 剩余寿命 | code-subject 绑定（flow 会话状态） |
+//! | `pwdreset:bindt:{jti}` | ActionToken 剩余寿命 | code-tenant 绑定（subject∈tenant 校验，缺绑定的旧 token fail-closed 拒绝） |
 //! | `pwdreset:jti:{jti}` | ActionToken 剩余寿命 | 一次性消费登记（set_if_absent 原子语义） |
 //! | `pwdreset:rate:{identifier}` | 请求窗口 | 防枚举限流计数（与登录限流键隔离、口径一致） |
 //!

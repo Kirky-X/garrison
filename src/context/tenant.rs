@@ -118,6 +118,21 @@ pub fn current_tenant_id_or_error() -> GarrisonResult<i64> {
         .ok_or_else(|| GarrisonError::Config("ctx-tenant-context-missing::".into()))
 }
 
+/// Token-Session `attrs` 中记录会话绑定租户的保留键。
+///
+/// # 会话-租户绑定契约（渗透-租户隔离-会话绑定-1 修复 / FINDING-025 演变）
+///
+/// - **绑定**：会话创建（`GarrisonSession::create_token_session_inner`）时若存在
+///   `TENANT` task_local 上下文，则将该租户 ID（十进制字符串）写入本 attr。
+///   无上下文时不写（会话无绑定，非多租户部署语义不变）。
+/// - **校验**：`check_login` 在租户上下文存在**且**会话已绑定时比对一致性，
+///   不匹配即拒绝（`stp-check-login-tenant-mismatch`）；会话无绑定（旧会话/
+///   升级兼容/非多租户部署）行为不变。
+/// - **形态**：attr 值恒为 `i64::to_string()` 规范十进制（无符号/无前导零），
+///   校验按字符串比较（规范形下与数值比较等价）。`__` 前缀保留命名空间，
+///   业务方 attrs 不得占用。
+pub const SESSION_TENANT_ATTR_KEY: &str = "__garrison_tenant_id";
+
 /// 租户解析器 trait。
 ///
 /// 从 HTTP 请求头解析 `TenantContext`，三种实现：

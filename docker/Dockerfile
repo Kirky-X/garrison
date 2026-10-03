@@ -71,6 +71,12 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=builder /app/target/release/auth_server /app/target/release/garrison-healthcheck /app/
 
+# GAR-30：容器内端口必须绑 0.0.0.0 才能被 docker ports 映射（bin 缺省
+# 127.0.0.1 仅限宿主直跑的 secure-by-default）；对外暴露面由 ports 映射/
+# 防火墙控制，参考 docker-compose.example.yml
+ENV GARRISON_EXTERNAL_BIND=0.0.0.0 \
+    GARRISON_INTERNAL_BIND=0.0.0.0
+
 USER 1000
 EXPOSE 8080 8081
 # 探测本容器外网端口的 sdforge liveness 探针（恒 200）；目标端口随

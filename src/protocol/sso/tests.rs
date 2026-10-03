@@ -10,7 +10,7 @@ use crate::error::GarrisonError;
 /// 创建 SsoClient 实例（使用 MockDao + 测试用 secret）。
 fn make_client() -> SsoClient {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    SsoClient::new(dao, "test-sso-secret-key").expect("secret 非空构造应成功")
+    SsoClient::new(dao, "test-sso-secret-key-for-unit-tests-01").expect("secret 非空构造应成功")
 }
 
 // ========================================================================
@@ -65,7 +65,8 @@ async fn issue_ticket_same_login_different_clients() {
 #[tokio::test]
 async fn issue_ticket_uses_correct_key_prefix() {
     let dao = Arc::new(MockDao::new());
-    let client = SsoClient::new(dao.clone(), "test-sso-secret-key").expect("secret 非空构造应成功");
+    let client = SsoClient::new(dao.clone(), "test-sso-secret-key-for-unit-tests-01")
+        .expect("secret 非空构造应成功");
     let ticket = client.issue_ticket("1001", 2001).await.unwrap();
     let key = format!("garrison:sso:ticket:{}", ticket);
     let value = dao.get(&key).await.unwrap();
@@ -177,7 +178,7 @@ async fn destroy_ticket_nonexistent_returns_ok() {
 #[test]
 fn with_ticket_ttl_sets_ttl() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let client = SsoClient::new(dao, "test-sso-secret-key")
+    let client = SsoClient::new(dao, "test-sso-secret-key-for-unit-tests-01")
         .expect("secret 非空构造应成功")
         .with_ticket_ttl(120);
     assert_eq!(client.ticket_ttl_seconds, 120);
@@ -271,8 +272,10 @@ async fn validate_ticket_rejects_tampered_signature() {
 #[tokio::test]
 async fn validate_ticket_rejects_different_secret() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
-    let issuer = SsoClient::new(dao.clone(), "secret-a").expect("secret 非空构造应成功");
-    let validator = SsoClient::new(dao, "secret-b").expect("secret 非空构造应成功");
+    let issuer = SsoClient::new(dao.clone(), "secret-a-0123456789abcdef-32bytes!")
+        .expect("secret 非空构造应成功");
+    let validator =
+        SsoClient::new(dao, "secret-b-0123456789abcdef-32bytes!").expect("secret 非空构造应成功");
 
     let ticket = issuer.issue_ticket("1001", 2001).await.unwrap();
     let result = validator.validate_ticket(&ticket, 2001).await;
@@ -299,6 +302,31 @@ fn new_rejects_empty_secret() {
         Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
         Ok(_) => panic!("空 secret 不应构造成功"),
     }
+}
+
+/// 短于 32 字节的 secret 构造返回 `InvalidParam`（安全审计 GAR-15：
+/// 与 qrlogin/protocol-sign 对齐，弱密钥可被持票攻击者离线爆破后伪造签名）。
+#[test]
+fn new_rejects_short_secret() {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let result = SsoClient::new(dao, "a".repeat(31));
+    match result {
+        Err(GarrisonError::InvalidParam(msg)) => {
+            assert!(
+                msg.contains("sso-client-secret-too-short"),
+                "错误消息应含 sso-client-secret-too-short 前缀，实际: {}",
+                msg
+            );
+        },
+        Err(other) => panic!("期望 InvalidParam，实际: {:?}", other),
+        Ok(_) => panic!("31 字节 secret 不应构造成功"),
+    }
+    // 32 字节（下限）应构造成功
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    assert!(
+        SsoClient::new(dao, "a".repeat(32)).is_ok(),
+        "32 字节 secret 应构造成功"
+    );
 }
 
 /// client_id 不匹配的错误消息不得回显存储/调用方 client_id（防枚举）。

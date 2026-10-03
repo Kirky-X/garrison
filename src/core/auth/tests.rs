@@ -1514,3 +1514,51 @@ mod amr_claim_issuance {
         );
     }
 }
+
+// ========================================================================
+// seed_primary_amr 播种开关测试（渗透-认证绕过-3 / 会话与令牌-5）
+// ========================================================================
+
+/// 辅助函数：创建带 seed_primary_amr 配置的 AuthLogicDefault 实例。
+fn make_auth_logic_with_seed(seed_enabled: bool) -> AuthLogicDefault {
+    let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+    let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 0));
+    let token_handler: Arc<dyn Token> = Arc::new(UuidTokenStyle);
+    AuthLogicDefault::new(session, token_handler, 3600).with_seed_primary_amr(seed_enabled)
+}
+
+/// 默认 seed_primary_amr=true：login 播种 pwd/aal:1 账本与 auth_time（行为不变对照）。
+#[tokio::test]
+async fn core_login_seeds_primary_amr_by_default() {
+    let auth = make_auth_logic_with_seed(true);
+    let token = auth.login("seed-user-1", None).await.unwrap();
+    let ts = auth
+        .session
+        .get_token_session(&token)
+        .await
+        .unwrap()
+        .expect("会话应存在");
+    assert_eq!(ts.amr_ledger.len(), 1, "默认应播种主因子");
+    assert_eq!(ts.amr_ledger[0].method, "pwd");
+    assert_eq!(ts.amr_ledger[0].aal, 1);
+    assert!(ts.auth_time.is_some(), "默认应写 auth_time");
+}
+
+/// seed_primary_amr=false：login 不播种账本、auth_time 为 None。
+#[tokio::test]
+async fn core_login_skips_amr_seeding_when_disabled() {
+    let auth = make_auth_logic_with_seed(false);
+    let token = auth.login("seed-user-2", None).await.unwrap();
+    let ts = auth
+        .session
+        .get_token_session(&token)
+        .await
+        .unwrap()
+        .expect("会话应存在");
+    assert!(
+        ts.amr_ledger.is_empty(),
+        "开关关闭时不得播种 pwd 账本，实际: {:?}",
+        ts.amr_ledger
+    );
+    assert!(ts.auth_time.is_none(), "开关关闭时 auth_time 应为 None");
+}

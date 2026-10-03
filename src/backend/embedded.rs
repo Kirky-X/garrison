@@ -15,7 +15,8 @@
 //!   通过 `with_current_token` 桥接两种模式
 //! - **bool 适配**：`check_safe`/`check_disable` 在 GarrisonLogicDefault 中返回
 //!   `Result<()>`（Ok=通过，Err=未通过），AuthBackend 要求 `Result<bool>`，
-//!   适配时区分业务错误（NotSafe/DisableService）与系统错误
+//!   适配时区分业务错误（NotSafe/DisableService）与系统错误；会话无效
+//!   （伪造/过期/被踢 token）的 `Session` 错误原样透传（fail-closed，不并入 bool）
 
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::manager::GarrisonManager;
@@ -93,6 +94,7 @@ impl AuthBackend for BackendEmbedded {
     async fn check_safe(&self, token: &str) -> GarrisonResult<bool> {
         let logic = GarrisonManager::logic()?;
         with_current_token(token.to_string(), async {
+            // 仅 NotSafe 是「未通过二级认证」的业务 false；会话无效等错误原样透传
             match logic.check_safe().await {
                 Ok(()) => Ok(true),
                 Err(GarrisonError::NotSafe { .. }) => Ok(false),
@@ -105,6 +107,7 @@ impl AuthBackend for BackendEmbedded {
     async fn check_disable(&self, token: &str) -> GarrisonResult<bool> {
         let logic = GarrisonManager::logic()?;
         with_current_token(token.to_string(), async {
+            // 仅 DisableService 是「已封禁」的业务 true；会话无效等错误原样透传
             match logic.check_disable().await {
                 Ok(()) => Ok(false),
                 Err(GarrisonError::DisableService { .. }) => Ok(true),
@@ -330,6 +333,80 @@ mod tests {
             .unwrap();
         // 默认未注入 disable_repository，check_disable 返回 false
         assert!(!backend.check_disable(&token).await.unwrap());
+    }
+
+    // ========================================================================
+    // 会话前置校验（GAR-02 / R2-1 回归）：无效 token 显性拒绝，不再宽松 bool
+    // ========================================================================
+
+    /// `check_safe` 伪造 token → 显性 `Err(Session)`（GAR-02：原行为恒返回 true）。
+    #[tokio::test]
+    #[serial]
+    async fn test_check_safe_forged_token_returns_session_error() {
+        let backend = setup_backend().await;
+        let result = backend
+            .check_safe("00000000-0000-0000-0000-000000000000")
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::Session(_))),
+            "伪造 token 的 check_safe 应返回 Err(Session)，实际: {:?}",
+            result
+        );
+    }
+
+    /// `check_safe` kickout 后旧 token → 显性 `Err(Session)`（GAR-02：已撤销会话
+    /// 不再被放行）。
+    #[tokio::test]
+    #[serial]
+    async fn test_check_safe_kicked_out_token_returns_session_error() {
+        let backend = setup_backend().await;
+        let token = backend
+            .login("safe-kick-user", &LoginParams::default())
+            .await
+            .unwrap();
+        backend.kickout("safe-kick-user").await.unwrap();
+
+        let result = backend.check_safe(&token).await;
+        assert!(
+            matches!(result, Err(GarrisonError::Session(_))),
+            "kickout 后旧 token 的 check_safe 应返回 Err(Session)，实际: {:?}",
+            result
+        );
+    }
+
+    /// `check_disable` 伪造 token → 显性 `Err(Session)` 而非 Ok(false)（R2-1：
+    /// 「token 无效」不再与「未封禁」合并为同一 bool）。
+    #[tokio::test]
+    #[serial]
+    async fn test_check_disable_forged_token_returns_session_error() {
+        let backend = setup_backend().await;
+        let result = backend
+            .check_disable("00000000-0000-0000-0000-000000000000")
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::Session(_))),
+            "伪造 token 的 check_disable 应返回 Err(Session)，实际: {:?}",
+            result
+        );
+    }
+
+    /// `check_disable` kickout 后旧 token → 显性 `Err(Session)` 而非 Ok(false)（R2-1）。
+    #[tokio::test]
+    #[serial]
+    async fn test_check_disable_kicked_out_token_returns_session_error() {
+        let backend = setup_backend().await;
+        let token = backend
+            .login("disable-kick-user", &LoginParams::default())
+            .await
+            .unwrap();
+        backend.kickout("disable-kick-user").await.unwrap();
+
+        let result = backend.check_disable(&token).await;
+        assert!(
+            matches!(result, Err(GarrisonError::Session(_))),
+            "kickout 后旧 token 的 check_disable 应返回 Err(Session)，实际: {:?}",
+            result
+        );
     }
 
     #[tokio::test]

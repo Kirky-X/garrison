@@ -500,8 +500,10 @@ async fn cache_permission_writes_and_reads_back() {
     let cached = fw.get_cached_permission("1001", "user:read").await.unwrap();
     assert_eq!(cached, Some(true), "缓存应命中并返回 true");
 
-    // 验证 key 格式（tenant_id 未设置时使用占位符 `_`）
-    let key = "garrison:perm:cache:_:1001:user:read";
+    // 验证 key 格式：`garrison:perm:cache:v{version}:{tenant}:{enc(login)}:{enc(perm)}`。
+    // tenant_id 未设置时使用占位符 `_`；login/permission 经歧义消除编码
+    // （`:` → `%3A`，见 `encode_key_component` 契约），版本未失效时为 v0。
+    let key = "garrison:perm:cache:v0:_:1001:user%3Aread";
     assert_eq!(
         dao.get(key).await.unwrap(),
         Some("true".to_string()),
@@ -578,13 +580,13 @@ async fn cache_permission_isolated_by_tenant() {
 
     // 各自键空间独立
     assert_eq!(
-        dao.get("garrison:perm:cache:1:1001:user:read")
+        dao.get("garrison:perm:cache:v0:1:1001:user%3Aread")
             .await
             .unwrap(),
         Some("true".to_string())
     );
     assert_eq!(
-        dao.get("garrison:perm:cache:2:1001:user:read")
+        dao.get("garrison:perm:cache:v0:2:1001:user%3Aread")
             .await
             .unwrap(),
         None
@@ -663,6 +665,369 @@ async fn check_permission_uses_cache_short_circuit() {
     assert!(
         fw.check_permission("1001", "user:read").await.unwrap(),
         "应优先返回缓存结果 true，而非查询 interface"
+    );
+}
+
+// ------------------------------------------------------------------------
+// 权限缓存键歧义消除（渗透-租户隔离-缓存键歧义-1）与跨租户失效
+// （渗透-租户隔离-缓存失效-1）回归
+// ------------------------------------------------------------------------
+
+/// 键碰撞回归：不同 (login_id, permission) 组合编码后必不同键。
+///
+/// 旧版裸冒号拼接下 (login="a:b", perm="c") 与 (login="a", perm="b:c")
+/// 同得 `garrison:perm:cache:_:a:b:c`（缓存投毒）。编码后两组键必须互不命中。
+#[tokio::test]
+async fn perm_cache_key_components_do_not_collide_after_encoding() {
+    let dao = Arc::new(MockCacheDao::new());
+    let iface = MockInterface::new();
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+
+    // 组合 1：login="a:b" + perm="c" 缓存 Allow
+    fw.cache_permission("a:b", "c", true, 300).await.unwrap();
+    assert_eq!(
+        fw.get_cached_permission("a:b", "c").await.unwrap(),
+        Some(true)
+    );
+
+    // 组合 2（旧版同键）：login="a" + perm="b:c" 必须未命中（不得读到组合 1 的 Allow）
+    assert_eq!(
+        fw.get_cached_permission("a", "b:c").await.unwrap(),
+        None,
+        "编码后 (a:b, c) 与 (a, b:c) 不得共享缓存键"
+    );
+
+    // 组合 2 未命中 → 回源（interface 空）→ 判定 false 并写入自己的键
+    let fw2 = GarrisonPermissionStrategyDefault::new(Arc::new(MockInterface::new()))
+        .with_dao(dao.clone());
+    assert!(
+        !fw2.check_permission("a", "b:c").await.unwrap(),
+        "组合 2 回源应为 false，不得被组合 1 的缓存污染"
+    );
+}
+
+/// 编码后与旧版裸拼接键不冲突：旧键残留不作为新键命中。
+///
+/// 旧版本（升级前）写入的 `garrison:perm:cache:<t>:<login>:<perm>` 键
+/// 与新键 `garrison:perm:cache:v{ver}:<t>:<enc(login)>:<enc(perm)>` 键空间
+/// 不相交（新键第 4 段恒为 `v<数字>`，旧键该段为租户，纯数字或 `_`）——
+/// 旧键残留既不会被读到（防投毒），也不与新键碰撞。
+#[tokio::test]
+async fn perm_cache_key_encoded_format_never_hits_legacy_key() {
+    let dao = Arc::new(MockCacheDao::new());
+    // 手工写入旧版裸拼接键（模拟升级前残留）
+    dao.set("garrison:perm:cache:1:1001:user:read", "true", 300)
+        .await
+        .unwrap();
+
+    let mut iface = MockInterface::new();
+    iface.set_permissions("1001", &[]);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface))
+        .with_dao(dao)
+        .with_tenant_id(1);
+
+    // 新键未命中：旧键残留不得命中（返回 None），回源判定 false
+    assert_eq!(
+        fw.get_cached_permission("1001", "user:read").await.unwrap(),
+        None,
+        "旧版裸拼接键残留不得被新版编码键读到"
+    );
+    assert!(
+        !fw.check_permission("1001", "user:read").await.unwrap(),
+        "回源判定应为 false（旧键 Allow 不得越权）"
+    );
+}
+
+/// 跨租户失效回归（渗透-租户隔离-缓存失效-1 场景 A）：
+/// 多租户装配（builder 不设租户）下，请求级租户段写入的 Allow
+/// 经 invalidate_login_cache（logout/kickout 联动）必须立即清除。
+#[tokio::test]
+async fn invalidate_login_cache_clears_request_tenant_segments() {
+    let dao = Arc::new(MockCacheDao::new());
+    let mut iface = MockInterface::new();
+    iface.set_permissions("u1", &[]); // 回收后回源应 false
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+
+    // 租户 7 请求级租户段预先写入 Allow（模拟回收前的判定缓存）
+    fw.cache_permission_with(Some(7), "u1", "doc:read", true, 300)
+        .await
+        .unwrap();
+    assert!(
+        fw.check_permission_in_tenant(7, "u1", "doc:read")
+            .await
+            .unwrap(),
+        "预置条件：回收前缓存命中 Allow"
+    );
+
+    // 管理员回收权限 + kickout（invalidate_login_cache 无租户参数）
+    fw.invalidate_login_cache("u1").await.unwrap();
+
+    // 旧 Allow 不得存续：租户 7 段立即回源返回 false
+    assert_eq!(
+        fw.get_cached_permission_with(Some(7), "u1", "doc:read")
+            .await
+            .unwrap(),
+        None,
+        "失效后其他租户段的旧 Allow 必须清除"
+    );
+    assert!(
+        !fw.check_permission_in_tenant(7, "u1", "doc:read")
+            .await
+            .unwrap(),
+        "失效后应立即回源返回 false，而非读取已回收的缓存"
+    );
+}
+
+/// 跨租户失效回归（渗透-租户隔离-缓存失效-1 场景 C）：
+/// builder 配置租户（1）与请求级租户（7）错位时，失效端仍须清掉 7 段。
+#[tokio::test]
+async fn invalidate_permission_cache_clears_all_tenant_segments() {
+    let dao = Arc::new(MockCacheDao::new());
+    let mut iface = MockInterface::new();
+    iface.set_permissions("u1", &[]);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface))
+        .with_dao(dao)
+        .with_tenant_id(1);
+
+    // 请求级租户 7 写入 Allow（与 builder 租户 1 错位）
+    fw.cache_permission_with(Some(7), "u1", "doc:read", true, 300)
+        .await
+        .unwrap();
+    assert_eq!(
+        fw.get_cached_permission_with(Some(7), "u1", "doc:read")
+            .await
+            .unwrap(),
+        Some(true)
+    );
+
+    // invalidate_permission_cache（业务方权限变更监听器调用点）无租户参数
+    fw.invalidate_permission_cache("u1").await.unwrap();
+
+    assert_eq!(
+        fw.get_cached_permission_with(Some(7), "u1", "doc:read")
+            .await
+            .unwrap(),
+        None,
+        "失效端必须跨租户清除，而非只清 builder 配置租户段"
+    );
+}
+
+/// 失效版本号隔离：失效只影响目标 login_id，不误伤其他主体。
+#[tokio::test]
+async fn invalidate_permission_cache_scopes_to_target_login_id() {
+    let dao = Arc::new(MockCacheDao::new());
+    let mut iface = MockInterface::new();
+    iface.set_permissions("u1", &[]);
+    iface.set_permissions("u2", &["doc:read"]);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao);
+
+    fw.cache_permission_with(Some(7), "u1", "doc:read", true, 300)
+        .await
+        .unwrap();
+    fw.cache_permission_with(Some(7), "u2", "doc:read", true, 300)
+        .await
+        .unwrap();
+
+    fw.invalidate_permission_cache("u1").await.unwrap();
+
+    assert_eq!(
+        fw.get_cached_permission_with(Some(7), "u1", "doc:read")
+            .await
+            .unwrap(),
+        None,
+        "目标 login_id 的缓存应失效"
+    );
+    assert_eq!(
+        fw.get_cached_permission_with(Some(7), "u2", "doc:read")
+            .await
+            .unwrap(),
+        Some(true),
+        "其他主体的缓存不得被误伤"
+    );
+}
+
+/// 失效纪元唯一性（架构审查 H2 回归）：每次失效写入全新随机 UUID 标签。
+///
+/// 计数器方案在纪元键过期后计数重走，与上一纪元同值的旧 Allow 键仍存活时
+/// 可被再次命中（复活窗口）；随机标签使新旧纪元标签结构性不相等，
+/// 本测试钉死「标签为非计数 UUID 且逐次互异 + 旧键物理在场亦不可达」。
+#[tokio::test]
+async fn invalidation_epoch_is_fresh_uuid_per_call_and_old_keys_unreachable() {
+    let dao = Arc::new(MockCacheDao::new());
+    let mut iface = MockInterface::new();
+    iface.set_permissions("u1", &[]);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface)).with_dao(dao.clone());
+
+    // 哨兵纪元（v0）写入 Allow
+    fw.cache_permission_with(Some(7), "u1", "doc:read", true, 300)
+        .await
+        .unwrap();
+    let v0_key = "garrison:perm:cache:v0:7:u1:doc%3Aread";
+    assert_eq!(dao.get(v0_key).await.unwrap().as_deref(), Some("true"));
+
+    // 两次失效 → 纪元标签互异且为 32 位 hex（UUID simple），非计数重用
+    fw.invalidate_permission_cache("u1").await.unwrap();
+    let epoch_a = dao
+        .get("garrison:decision:ver:u1")
+        .await
+        .unwrap()
+        .expect("首次失效后纪元键应存在");
+    fw.invalidate_permission_cache("u1").await.unwrap();
+    let epoch_b = dao
+        .get("garrison:decision:ver:u1")
+        .await
+        .unwrap()
+        .expect("二次失效后纪元键应存在");
+    assert_ne!(epoch_a, epoch_b, "每次失效必须生成全新纪元标签");
+    for epoch in [&epoch_a, &epoch_b] {
+        assert_eq!(epoch.len(), 32, "纪元标签应为 UUID simple（32 hex）");
+        assert!(
+            epoch.bytes().all(|b| b.is_ascii_hexdigit()),
+            "纪元标签应为 hex：{epoch}"
+        );
+    }
+
+    // 旧哨兵纪元键仍物理在场，但当前纪元已迁移 → 读取必须不可达
+    assert_eq!(
+        dao.get(v0_key).await.unwrap().as_deref(),
+        Some("true"),
+        "旧纪元键残留为存储垃圾（TTL 兜底），属预期"
+    );
+    assert_eq!(
+        fw.get_cached_permission_with(Some(7), "u1", "doc:read")
+            .await
+            .unwrap(),
+        None,
+        "旧纪元 Allow 键物理在场时也必须不可达（失效结构性生效）"
+    );
+}
+
+// ------------------------------------------------------------------------
+// 租户感知数据源（渗透-RBAC-租户维度-1）回归
+// ------------------------------------------------------------------------
+
+/// 租户感知 interface mock：按 (tenant_id, login_id) 返回角色/权限，
+/// 覆写 `get_*_list_in_tenant` 模拟业务方租户隔离数据源。
+struct TenantAwareMockInterface {
+    roles: HashMap<(i64, String), Vec<String>>,
+    permissions: HashMap<(i64, String), Vec<String>>,
+    global_roles: HashMap<String, Vec<String>>,
+}
+
+#[async_trait]
+impl GarrisonInterface for TenantAwareMockInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_role_list(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(self.global_roles.get(login_id).cloned().unwrap_or_default())
+    }
+
+    async fn get_role_list_in_tenant(
+        &self,
+        tenant_id: i64,
+        login_id: &str,
+    ) -> GarrisonResult<Vec<String>> {
+        Ok(self
+            .roles
+            .get(&(tenant_id, login_id.to_string()))
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    async fn get_permission_list_in_tenant(
+        &self,
+        tenant_id: i64,
+        login_id: &str,
+    ) -> GarrisonResult<Vec<String>> {
+        Ok(self
+            .permissions
+            .get(&(tenant_id, login_id.to_string()))
+            .cloned()
+            .unwrap_or_default())
+    }
+}
+
+/// check_role_in_tenant 必须消费租户参数（租户感知数据源已实现时）：
+/// 跨租户重名 login_id 的角色不得互染（渗透-RBAC-租户维度-1 回归）。
+#[tokio::test]
+async fn check_role_in_tenant_queries_tenant_scoped_data_source() {
+    let mut iface = TenantAwareMockInterface {
+        roles: HashMap::new(),
+        permissions: HashMap::new(),
+        global_roles: HashMap::new(),
+    };
+    // 两个租户各有一个重名 login_id "admin"：租户 1 授予 tenant-a-root
+    iface
+        .roles
+        .insert((1, "admin".to_string()), vec!["tenant-a-root".to_string()]);
+    // 租户 2 的 "admin" 无任何角色
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface));
+
+    assert!(
+        fw.check_role_in_tenant(1, "admin", "tenant-a-root")
+            .await
+            .unwrap(),
+        "租户 1 的 admin 应持有租户 1 授予的角色"
+    );
+    assert!(
+        !fw.check_role_in_tenant(2, "admin", "tenant-a-root")
+            .await
+            .unwrap(),
+        "租户 2 的重名 admin 不得继承租户 1 的角色（互染回归）"
+    );
+}
+
+/// check_permission_in_tenant 在租户感知数据源已实现时按租户过滤权限。
+#[tokio::test]
+async fn check_permission_in_tenant_queries_tenant_scoped_data_source() {
+    let mut iface = TenantAwareMockInterface {
+        roles: HashMap::new(),
+        permissions: HashMap::new(),
+        global_roles: HashMap::new(),
+    };
+    iface
+        .permissions
+        .insert((1, "admin".to_string()), vec!["doc:delete".to_string()]);
+    let fw = GarrisonPermissionStrategyDefault::new(Arc::new(iface));
+
+    assert!(
+        fw.check_permission_in_tenant(1, "admin", "doc:delete")
+            .await
+            .unwrap(),
+        "租户 1 的 admin 应持有租户 1 授予的权限"
+    );
+    assert!(
+        !fw.check_permission_in_tenant(2, "admin", "doc:delete")
+            .await
+            .unwrap(),
+        "租户 2 的重名 admin 不得继承租户 1 的权限（互染回归）"
+    );
+}
+
+/// GarrisonInterface 租户感知默认方法委托全局方法（无行为破坏契约）：
+/// 未覆写 `get_role_list_in_tenant` 的既有实现，in_tenant 路径数据与全局一致。
+#[tokio::test]
+async fn interface_tenant_aware_defaults_delegate_to_global() {
+    let mut iface = MockInterface::new();
+    iface.set_roles("1001", &["admin"]);
+    iface.set_permissions("1001", &["user:read"]);
+
+    let roles = iface.get_role_list_in_tenant(7, "1001").await.unwrap();
+    assert_eq!(
+        roles,
+        vec!["admin"],
+        "默认实现应委托 get_role_list（忽略租户）"
+    );
+    let perms = iface
+        .get_permission_list_in_tenant(7, "1001")
+        .await
+        .unwrap();
+    assert_eq!(
+        perms,
+        vec!["user:read"],
+        "默认实现应委托 get_permission_list（忽略租户）"
     );
 }
 

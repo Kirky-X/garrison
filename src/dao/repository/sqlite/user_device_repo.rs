@@ -107,25 +107,29 @@ impl UserDeviceRepository for DbnexusUserDeviceRepository {
         Ok(device_id)
     }
 
-    async fn block_device(&self, device_id: &str) -> GarrisonResult<()> {
+    async fn block_device(&self, tenant_id: i64, device_id: &str) -> GarrisonResult<()> {
         dao_session!(self.pool, "dao-app-user-device-block-device", session, conn);
-        let sql = "UPDATE app_user_device SET is_blocked = 1 WHERE id = ?";
-        let stmt = make_statement(conn, sql, vec![v_str(device_id)]);
+        // 租户谓词强制（渗透-租户隔离-设备接口-1）：本方法为 app_user_device
+        // 唯一按 id 直写路径，仅 WHERE id = ? 会构成跨租户封禁原语
+        // （PG/MySQL 经 pub use 共用本实现）。
+        let sql = "UPDATE app_user_device SET is_blocked = 1 WHERE tenant_id = ? AND id = ?";
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(device_id)]);
         conn.execute_raw(stmt)
             .await
             .map_err(|e| GarrisonError::Dao(format!("dao-app-user-device-block-update::{}", e)))?;
         Ok(())
     }
 
-    async fn unblock_device(&self, device_id: &str) -> GarrisonResult<()> {
+    async fn unblock_device(&self, tenant_id: i64, device_id: &str) -> GarrisonResult<()> {
         dao_session!(
             self.pool,
             "dao-app-user-device-unblock-device",
             session,
             conn
         );
-        let sql = "UPDATE app_user_device SET is_blocked = 0 WHERE id = ?";
-        let stmt = make_statement(conn, sql, vec![v_str(device_id)]);
+        // 租户谓词强制：契约同 block_device
+        let sql = "UPDATE app_user_device SET is_blocked = 0 WHERE tenant_id = ? AND id = ?";
+        let stmt = make_statement(conn, sql, vec![v_i64(tenant_id), v_str(device_id)]);
         conn.execute_raw(stmt).await.map_err(|e| {
             GarrisonError::Dao(format!("dao-app-user-device-unblock-update::{}", e))
         })?;
@@ -379,7 +383,7 @@ mod tests {
             .expect("list 应成功");
         assert!(!devices[0].is_blocked, "初始状态应未阻断");
 
-        repo.block_device(&device_id)
+        repo.block_device(1, &device_id)
             .await
             .expect("block_device 应成功");
         let devices = repo
@@ -388,7 +392,7 @@ mod tests {
             .expect("list 应成功");
         assert!(devices[0].is_blocked, "阻断后 is_blocked 应为 true");
 
-        repo.unblock_device(&device_id)
+        repo.unblock_device(1, &device_id)
             .await
             .expect("unblock_device 应成功");
         let devices = repo
@@ -659,12 +663,54 @@ mod tests {
         let pool = setup_db().await;
         let repo = DbnexusUserDeviceRepository::new(pool);
 
-        repo.block_device("nonexistent-device")
+        repo.block_device(1, "nonexistent-device")
             .await
             .expect("block 不存在的设备应为 no-op");
-        repo.unblock_device("nonexistent-device")
+        repo.unblock_device(1, "nonexistent-device")
             .await
             .expect("unblock 不存在的设备应为 no-op");
+    }
+
+    /// 跨租户封禁必须 no-op（渗透-租户隔离-设备接口-1 回归）：
+    /// 租户 1 的管理员持租户 2 设备的 device_id 调 block_device，
+    /// 0 行受影响——租户 2 设备状态不变；仅匹配租户时才生效。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn block_device_cross_tenant_is_noop() {
+        let pool = setup_db().await;
+        let repo = DbnexusUserDeviceRepository::new(pool);
+
+        // 租户 1 注册设备
+        let device_id = repo
+            .register_device(1, "login-cross", "fp-cross", "Chrome/120.0")
+            .await
+            .expect("register 应成功");
+
+        // 租户 2 的管理员按 device_id 封禁：0 行受影响（幂等 Ok，不报错）
+        repo.block_device(2, &device_id)
+            .await
+            .expect("跨租户 block 应为 no-op 而非错误");
+        let devices = repo
+            .list_user_devices(1, "login-cross")
+            .await
+            .expect("list 应成功");
+        assert!(
+            !devices[0].is_blocked,
+            "跨租户 block 不得改动他租户设备的 is_blocked"
+        );
+
+        repo.unblock_device(2, &device_id)
+            .await
+            .expect("跨租户 unblock 应为 no-op 而非错误");
+
+        // 同租户封禁正常生效（对照）
+        repo.block_device(1, &device_id)
+            .await
+            .expect("同租户 block 应生效");
+        let devices = repo
+            .list_user_devices(1, "login-cross")
+            .await
+            .expect("list 应成功");
+        assert!(devices[0].is_blocked, "同租户 block 应置 is_blocked = 1");
     }
 
     /// list_user_devices 查询不存在的 login_id 应返回空列表。
@@ -769,7 +815,7 @@ mod tests {
                 .await
                 .expect("DROP TABLE 失败");
         }
-        let result = repo.block_device("some-id").await;
+        let result = repo.block_device(1, "some-id").await;
         assert!(result.is_err(), "表删除后 block_device 应返回错误");
     }
 
@@ -785,7 +831,7 @@ mod tests {
                 .await
                 .expect("DROP TABLE 失败");
         }
-        let result = repo.unblock_device("some-id").await;
+        let result = repo.unblock_device(1, "some-id").await;
         assert!(result.is_err(), "表删除后 unblock_device 应返回错误");
     }
 }

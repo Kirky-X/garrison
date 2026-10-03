@@ -175,16 +175,17 @@ pub struct TokenSession {
     pub is_anon: bool,
     /// remember-me 生效时的权威 token TTL（秒）。
     ///
-    /// `LoginParams.remember_me == true` 且配置启用时写入 `Some(remember_me_timeout)`，
-    /// 否则为 `None`（使用全局 `timeout`）。
-    /// `get_token_session` / `get_token_session_with_ttl` 的过期判定以本字段为权威来源，
+    /// stp login 收口在 `remember_me_enabled` 为 true 且
+    /// `LoginParams.remember_me == true` 时写入 `Some(remember_me_timeout)`，
+    /// 否则为 `None`（使用全局 `timeout`）。过期判定以本字段为权威来源，
     /// 避免 DB/缓存 TTL 与业务语义漂移。
     /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
     #[serde(default)]
     pub effective_timeout: Option<i64>,
     /// 因子账本：按完成顺序记录的认证步骤（MFA 编排基座）。
     ///
-    /// 主登录时播种主因子条目（pwd / AAL 1），step-up 经
+    /// 主登录时按 `seed_primary_amr` 配置播种主因子条目（pwd / AAL 1，默认
+    /// 播种；凭证委托部署可关闭），step-up 经
     /// [`GarrisonSession::append_amr_entry`](crate::session::GarrisonSession::append_amr_entry)
     /// 追加次因子。签发 token 时映射为 RFC 8176 `amr` claim。
     /// `#[serde(default)]` 反序列化遇到缺失字段时默认为空列表。
@@ -192,8 +193,8 @@ pub struct TokenSession {
     pub amr_ledger: Vec<crate::stp::mfa::AmrEntry>,
     /// 主认证完成时刻（Unix 秒）——OIDC `auth_time` claim 的权威来源。
     ///
-    /// 登录播种时写入；后续 step-up 不移动（`auth_time` 表达主认证时刻，
-    /// step-up 只升级账本 AAL）。
+    /// 登录播种（随 `seed_primary_amr` 开关）时写入；后续 step-up 不移动
+    /// （`auth_time` 表达主认证时刻，step-up 只升级账本 AAL）。
     /// `#[serde(default)]` 反序列化遇到缺失字段时默认为 `None`。
     #[serde(default)]
     pub auth_time: Option<i64>,
@@ -259,11 +260,14 @@ pub struct GarrisonSession {
     active_timeout: u64,
     /// remember-me 扩展后的 token TTL（秒）。
     ///
-    /// 登录时 `LoginParams.remember_me == true` 且 `remember_me_enabled` 时，
+    /// stp login 收口（`create_session_with_quota`）在 `config.remember_me_enabled`
+    /// 为 true 且 `LoginParams.remember_me == true` 时传入 remember-me 标记，
     /// Token-Session 的 DAO TTL 与该 TokenSession 的 `effective_timeout` 均取此值，
     /// 否则使用 `timeout`（TTL 权威来源写入会话记录）。
     ///
     /// 非 `remember_me` 登录路径仍使用 `timeout`，`effective_timeout` 为 `None`。
+    /// 直接调用 session 层 `create` / `create_token_session`（未过 stp 收口）时
+    /// 按调用方传入的 remember_me 标记生效——开关的消费点在 stp 收口。
     remember_me_timeout: u64,
     /// 匿名 Session 超时（秒）。
     ///

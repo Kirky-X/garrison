@@ -114,7 +114,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 1. 创建 SsoClient，注入 DAO（ticket TTL 默认 60 秒）
     // new 校验 secret 非空，返回 GarrisonResult
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
-    let sso = SsoClient::new(dao, "test-sso-secret-key")?;
+    let sso = SsoClient::new(dao, "test-sso-secret-key-for-unit-tests-01")?;
 
     // 2. 模拟子系统 A 已登录用户 1001，签发 SSO ticket 供子系统 B 登录
     let login_id = "1001";

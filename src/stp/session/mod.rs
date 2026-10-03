@@ -260,7 +260,6 @@ pub trait SessionLogic: GarrisonCore {
 ///
 /// # 校验规则
 ///
-/// - `login_id` 非空：防止空标识创建无主会话（攻击者可借此构造游离会话）
 /// - `token` 非空：空 token 无法标识会话，且可能在下游 DAO 层产生异常键
 /// - `token` 长度 `8..=256`：
 /// - 下限 8：拒绝过短 token（易碰撞/伪造，如 "0"/"1" 等单字符 token）
@@ -268,15 +267,14 @@ pub trait SessionLogic: GarrisonCore {
 /// - `token` 不含控制字符（U+0000..=U+001F / U+007F..=U+009F）：
 ///   阻断 CRLF 注入、HTTP header smuggling、日志污染等攻击
 ///
+/// `login_id` 的不变量（非空 / 无控制字符 / 长度上限）由
+/// [`GarrisonLogicDefault::validate_login_id`](crate::stp::GarrisonLogicDefault) 统一承载
+/// （与 `login` / `login_by_token` 同族收口共用同一校验与错误码）。
+///
 /// # 错误
 ///
 /// - `GarrisonError::InvalidParam`：任一校验失败时返回，消息含失败原因（不含敏感数据）。
-fn validate_login_with_token_inputs(login_id: &str, token: &str) -> GarrisonResult<()> {
-    if login_id.is_empty() {
-        return Err(GarrisonError::InvalidParam(
-            "stp-login-id-empty::".to_string(),
-        ));
-    }
+fn validate_login_with_token_inputs(token: &str) -> GarrisonResult<()> {
     if token.is_empty() {
         return Err(GarrisonError::InvalidParam("stp-token-empty::".to_string()));
     }
@@ -372,10 +370,11 @@ impl SessionLogic for GarrisonLogicDefault {
         // 入口校验 — 阻断会话固定/劫持的常见攻击向量。
         // 校验在锁外执行：纯输入校验无需临界区保护，避免无谓持锁。
         //
-        // - login_id 非空：防止空标识创建无主会话
+        // - login_id 不变量与非空：同 login 收口（validate_login_id，含长度上限）
         // - token 非空 + 长度 8..=256：拒绝过短（易碰撞/伪造）/过长（DoS）的 token
         // - token 不含控制字符：阻断 CRLF 注入、HTTP header smuggling、日志污染
-        validate_login_with_token_inputs(login_id, token)?;
+        self.validate_login_id(login_id)?;
+        validate_login_with_token_inputs(token)?;
 
         // 检查 token 是否已关联其他 login_id，避免同一 token 同时映射到两个
         // login_id（dual-mapping）构成会话劫持风险。
@@ -451,20 +450,23 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn logout_by_login_id(&self, login_id: &str) -> GarrisonResult<()> {
-        // JWT 撤销黑名单（与 kickout 同款：Stateless 模式下改密/管理员登出后
-        // 旧 access token 必须立即失效，而非存活至自然过期）
-        #[cfg(feature = "protocol-jwt")]
-        {
-            let tokens = self.session.get_tokens_by_login_id(login_id);
-            for token in &tokens {
-                self.blacklist_jwt_jti(token).await;
-            }
-        }
-        // 权限判定缓存联动失效（回收角色/权限后 + 登出，旧 Allow 不得存续）
+        // 权限判定缓存联动失效（回收角色/权限后 + 登出，旧 Allow 不得存续；
+        // 锁外执行，失败不影响登出结果）
         if let Err(e) = self.firewall.invalidate_login_cache(login_id).await {
             tracing::warn!(error = %e, login_id, "invalidate_login_cache failed (does not affect the logout result)");
         }
-        self.session.logout_by_login_id(login_id).await?;
+        // 「token 快照 → jti 黑名单 → 会话删除」同一 per-login_id 临界区
+        // （渗透-竞态-踢出黑名单-1：旧实现快照在锁外获取，与并发 login 竞态时
+        // 新 token 的 session 被删除而 jti 未入黑名单，Stateless 模式下该 token
+        // 存活至自然过期。锁内快照与删除串行后窗口闭合，锁序分析见
+        // `GarrisonSession::logout_by_login_id_inner`）。
+        self.session
+            .with_login_lock(login_id, async {
+                #[cfg(feature = "protocol-jwt")]
+                self.blacklist_all_jwt_jti_locked(login_id).await;
+                self.session.logout_by_login_id_inner(login_id).await
+            })
+            .await?;
         // 按主体失效请求内登录身份缓存
         crate::stp::context::invalidate_login_identity_by_login_id(login_id);
         // three-tier-cache: 失效用户三层缓存（权限/角色/用户）
@@ -478,20 +480,21 @@ impl SessionLogic for GarrisonLogicDefault {
     }
 
     async fn kickout(&self, login_id: &str) -> GarrisonResult<()> {
-        // JWT 撤销黑名单（踢出前将所有 token 的 jti 写入黑名单）
-        #[cfg(feature = "protocol-jwt")]
-        {
-            let tokens = self.session.get_tokens_by_login_id(login_id);
-            for token in &tokens {
-                self.blacklist_jwt_jti(token).await;
-            }
-        }
-        // kickout 语义等同 logout_by_login_id
-        // 权限判定缓存联动失效
+        // 权限判定缓存联动失效（锁外执行，失败不影响踢出结果）
         if let Err(e) = self.firewall.invalidate_login_cache(login_id).await {
             tracing::warn!(error = %e, login_id, "invalidate_login_cache failed (does not affect the kickout result)");
         }
-        self.session.logout_by_login_id(login_id).await?;
+        // kickout 语义等同 logout_by_login_id：「token 快照 → jti 黑名单 →
+        // 会话删除」同一 per-login_id 临界区（渗透-竞态-踢出黑名单-1，竞态
+        // 闭缘与锁序分析同上；并发 login 在同一锁内串行，锁内快照不可能
+        // 漏掉随后被删除的 token）
+        self.session
+            .with_login_lock(login_id, async {
+                #[cfg(feature = "protocol-jwt")]
+                self.blacklist_all_jwt_jti_locked(login_id).await;
+                self.session.logout_by_login_id_inner(login_id).await
+            })
+            .await?;
         // 按主体失效请求内登录身份缓存
         crate::stp::context::invalidate_login_identity_by_login_id(login_id);
         // auto-wire: 触发 listener Kickout 事件（plugin 无 kickout 钩子）
@@ -622,6 +625,12 @@ impl SessionLogic for GarrisonLogicDefault {
             JwtMode::Mixin => self.check_login_mixin(&token).await,
             JwtMode::Simple => self.check_login_simple(&token).await,
         };
+        // 会话-租户一致性校验（渗透-租户隔离-会话绑定-1 / FINDING-025 演变）：
+        // 仅在判定有效时执行——租户上下文存在且会话已绑定租户时，
+        // 绑定租户与当前请求租户不一致即拒绝（客户端可控 X-Tenant-Id
+        // 不得携他人租户的会话跨租户复用）。会话无绑定（旧会话/非多租户部署）
+        // 或无租户上下文时行为不变；Stateless 无 session（无绑定可校验）不变。
+        let result = self.validate_session_tenant_binding(&token, result).await;
         // 异常检测（仅 valid 时，检测失败不中断主流程）
         #[cfg(feature = "security-extra")]
         if let Ok((true, Some(ref login_id))) = result {
@@ -694,6 +703,9 @@ impl SessionLogic for GarrisonLogicDefault {
         } else {
             self.verify_token(token).await?
         };
+        // 同族收口：外部 token 解析出的 login_id 同样过输入不变量
+        // （防上游数据源携带空串/控制字符/超长标识直通建会话）
+        self.validate_login_id(&login_id)?;
         // 建立内部会话（使用同一 token）
         self.session.create(&login_id, token).await?;
         // auto-wire: 触发 plugin on_login + listener Login 事件
@@ -730,6 +742,51 @@ impl SessionLogic for GarrisonLogicDefault {
             Err(GarrisonError::NotImplemented(
                 "stp-refresh-access-token-feature-required::".to_string(),
             ))
+        }
+    }
+}
+
+impl GarrisonLogicDefault {
+    /// 会话-租户绑定一致性校验（check_login 专用，渗透-租户隔离-会话绑定-1）。
+    ///
+    /// # 契约（与 [`crate::context::tenant::SESSION_TENANT_ATTR_KEY`] 绑定契约配对）
+    ///
+    /// - `result` 判定无效（未登录/token 失效）：原样透传，不额外校验；
+    /// - 无租户上下文（非多租户部署 / 未挂 `tenant_resolution_middleware`）：
+    ///   原样透传——行为与旧版完全一致；
+    /// - 租户上下文存在且会话**已绑定**租户：绑定租户 ≠ 请求租户 → 拒绝
+    ///   （`Session("stp-check-login-tenant-mismatch::")`，显性失败不降级）；
+    /// - 会话**无绑定**（升级前旧会话、非多租户部署创建的会话）：原样放行
+    ///   （向后兼容，绑定只对新生效会话逐步收敛）；
+    /// - Stateless 模式无 session 存储（无可校验绑定）：原样放行——Stateless
+    ///   的租户强制属 `stp/session/helpers.rs` JWT 层职责，本机制不覆盖。
+    ///
+    /// 绑定 attr 读取经 `session.get`（DAO 读），DAO 故障透传 Err（失败显性化）。
+    async fn validate_session_tenant_binding(
+        &self,
+        token: &str,
+        result: GarrisonResult<(bool, Option<String>)>,
+    ) -> GarrisonResult<(bool, Option<String>)> {
+        // 仅有效判定需要校验（无效判定本就不放行）
+        if !matches!(result, Ok((true, _))) {
+            return result;
+        }
+        let ctx = match crate::context::tenant::TENANT.try_get() {
+            Ok(ctx) => ctx,
+            Err(_) => return result, // 无租户上下文：行为不变
+        };
+        let bound = self
+            .session
+            .get(token, crate::context::tenant::SESSION_TENANT_ATTR_KEY)
+            .await?;
+        match bound {
+            // 已绑定：规范十进制字符串比较（绑定写入恒为 i64::to_string）
+            Some(bound) if bound == ctx.tenant_id.to_string() => result,
+            Some(_) => Err(GarrisonError::Session(
+                "stp-check-login-tenant-mismatch::".to_string(),
+            )),
+            // 无绑定（旧会话/非多租户部署创建）：向后兼容放行
+            None => result,
         }
     }
 }

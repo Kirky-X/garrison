@@ -319,11 +319,17 @@ impl SamlProvider for DefaultSamlProvider {
         .await?;
 
         // Destination 验证（fail-loud）
-        validate_destination(&response.destination, self.expected_destination.as_deref())?;
+        // DefaultSamlProvider 无验签实现，Assertion 恒被剥离（fail-closed），
+        // 跨 SP 断言不可能经本 Provider 存活，故缺省放行为 warn-only（见 GAR-31）。
+        validate_destination(
+            &response.destination,
+            self.expected_destination.as_deref(),
+            true,
+        )?;
 
         // Audience 验证（fail-loud，仅在有 Assertion 时校验）
         if let Some(ref assertion) = response.assertion {
-            validate_audience(&assertion.audience, self.expected_audience.as_deref())?;
+            validate_audience(&assertion.audience, self.expected_audience.as_deref(), true)?;
         }
 
         // DefaultSamlProvider 不实现签名验证（fail-closed 剥离 Assertion）
@@ -388,9 +394,16 @@ fn validate_status_code(status_code: &str) -> GarrisonResult<()> {
 
 /// 校验 SAML Response 的 Destination 是否匹配预期值。
 ///
-/// - `expected = Some(exp)`: 严格匹配，不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud）
-/// - `expected = None`: `tracing::warn!` 告警（开发环境兼容，生产环境应配置）
-fn validate_destination(actual: &str, expected: Option<&str>) -> GarrisonResult<()> {
+/// - `expected = Some(exp)`（非空）: 严格匹配，不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud）
+/// - `expected = None`/`Some("")` 且 `allow_unvalidated = false`: 拒绝（fail-closed，
+///   安全审计 GAR-31：缺省不放行未校验 Destination）
+/// - `expected` 缺失且 `allow_unvalidated = true`: `tracing::warn!` 告警后放行
+///   （显式 opt-out，仅限开发环境；跨 SP 断言重放风险由调用方自担）
+fn validate_destination(
+    actual: &str,
+    expected: Option<&str>,
+    allow_unvalidated: bool,
+) -> GarrisonResult<()> {
     match expected {
         Some(exp) if !exp.is_empty() => {
             if actual != exp {
@@ -401,23 +414,34 @@ fn validate_destination(actual: &str, expected: Option<&str>) -> GarrisonResult<
             }
             Ok(())
         },
-        _ => {
+        _ if allow_unvalidated => {
             if !actual.is_empty() {
                 tracing::warn!(
                     actual = %actual,
-                    "SAML Destination validation not configured (expected_destination=None), open redirect attack risk"
+                    "SAML Destination validation opted out (allow_unvalidated_destination), open redirect attack risk"
                 );
             }
             Ok(())
         },
+        _ => Err(GarrisonError::InvalidParam(format!(
+            "sso-saml-destination-not-configured::actual={}",
+            actual
+        ))),
     }
 }
 
 /// 校验 SAML Assertion 的 Audience 是否匹配预期值。
 ///
-/// - `expected = Some(exp)`: 严格匹配，不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud）
-/// - `expected = None`: `tracing::warn!` 告警（开发环境兼容，生产环境应配置）
-fn validate_audience(actual: &str, expected: Option<&str>) -> GarrisonResult<()> {
+/// - `expected = Some(exp)`（非空）: 严格匹配，不匹配返回 [`GarrisonError::InvalidParam`]（fail-loud）
+/// - `expected = None`/`Some("")` 且 `allow_unvalidated = false`: 拒绝（fail-closed，
+///   安全审计 GAR-31：缺省不放行未校验 Audience）
+/// - `expected` 缺失且 `allow_unvalidated = true`: `tracing::warn!` 告警后放行
+///   （显式 opt-out，仅限开发环境；open redirect 风险由调用方自担）
+fn validate_audience(
+    actual: &str,
+    expected: Option<&str>,
+    allow_unvalidated: bool,
+) -> GarrisonResult<()> {
     match expected {
         Some(exp) if !exp.is_empty() => {
             if actual != exp {
@@ -428,15 +452,19 @@ fn validate_audience(actual: &str, expected: Option<&str>) -> GarrisonResult<()>
             }
             Ok(())
         },
-        _ => {
+        _ if allow_unvalidated => {
             if !actual.is_empty() {
                 tracing::warn!(
                     actual = %actual,
-                    "SAML Audience validation not configured (expected_audience=None), cross-SP replay risk"
+                    "SAML Audience validation opted out (allow_unvalidated_audience), cross-SP replay risk"
                 );
             }
             Ok(())
         },
+        _ => Err(GarrisonError::InvalidParam(format!(
+            "sso-saml-audience-not-configured::actual={}",
+            actual
+        ))),
     }
 }
 
@@ -1206,26 +1234,60 @@ fn extract_xml_text(xml: &str, local_name: &str) -> Option<String> {
     find_element_text_span(xml, local_name)
 }
 
-/// 按 ID 属性定位元素并返回其原始 XML 切片（含起止标签）。
+/// 提取被验元素切片根元素（位置 0 的开始标签）的限定名与 `ID` 属性值。
 ///
-/// 通过扫描同限定名标签的嵌套深度确定闭合位置；自闭合标签不影响深度。
-/// 找不到返回 None。
+/// SAML 验签的锚点：`verify_saml_signature` 的输入切片恒以被验 Assertion
+/// 的开始标签开头（解析层按字节范围截取），根元素 ID 即签名声明约束的主体。
+/// 开始标签 `>` 的定位带引号状态机（属性值可含 `>`），属性解析复用
+/// [`parse_tag_inner`]。切片不以元素开始标签开头时返回 None（fail-closed）。
 #[cfg(feature = "protocol-saml")]
-fn find_element_raw_by_id(xml: &str, id: &str) -> Option<String> {
-    if id.is_empty() || id.contains('"') {
+fn root_element_identity(xml: &str) -> Option<(String, String)> {
+    let bytes = xml.as_bytes();
+    if bytes.first() != Some(&b'<') {
         return None;
     }
-    let id_pattern = format!("ID=\"{}\"", id);
-    let id_pos = xml.find(&id_pattern)?;
-    // 回退到最近的元素起始 '<'
-    let elem_start = xml[..id_pos].rfind('<')?;
-    let rest = &xml[elem_start + 1..];
-    let name_end = rest.find(|c| [' ', '>', '/'].contains(&c))?;
-    let qname = &rest[..name_end];
+    let mut quote: Option<u8> = None;
+    let mut i = 1usize;
+    let gt = loop {
+        if i >= bytes.len() {
+            return None;
+        }
+        match quote {
+            Some(q) => {
+                if bytes[i] == q {
+                    quote = None;
+                }
+            },
+            None => {
+                if bytes[i] == b'"' || bytes[i] == b'\'' {
+                    quote = Some(bytes[i]);
+                } else if bytes[i] == b'>' {
+                    break i;
+                }
+            },
+        }
+        i += 1;
+    };
+    let (qname, attrs) = parse_tag_inner(&xml[1..gt]);
     if qname.is_empty() || qname.starts_with('!') || qname.starts_with('?') {
         return None;
     }
+    let id = attrs
+        .iter()
+        .find(|(k, _)| k == "ID")
+        .map(|(_, v)| v.clone())?;
+    Some((qname, id))
+}
 
+/// 计算以位置 0 为根的元素完整字节范围（含起止标签），基于同限定名嵌套深度。
+///
+/// 旧实现 `find_element_raw_by_id` 在全文档做 `ID="..."` 纯字符串扫描，
+/// CDATA 字面量中的元素（quick-xml 不产生事件，但字符串扫描可命中）会把
+/// 摘要计算引向攻击者投喂的内容（XSW CDATA 隐藏变体的根因）。本函数锚定
+/// 切片起始位置定位根元素：CDATA 内的同限定名字面量无法改变「根元素从
+/// 位置 0 开始」这一事实，摘要计算因此无法被移花接木。自闭合标签不影响深度。
+#[cfg(feature = "protocol-saml")]
+fn root_element_span(xml: &str, qname: &str) -> Option<(usize, usize)> {
     let open_pat = format!("<{}", qname);
     let close_pat = format!("</{}>", qname);
     let is_valid_open = |abs: usize| -> bool {
@@ -1242,7 +1304,7 @@ fn find_element_raw_by_id(xml: &str, id: &str) -> Option<String> {
     };
 
     let mut depth: usize = 0;
-    let mut pos = elem_start;
+    let mut pos = 0usize;
     loop {
         let o_rel = xml[pos..].find(&open_pat).map(|i| i + pos);
         let c_rel = xml[pos..].find(&close_pat).map(|i| i + pos);
@@ -1257,7 +1319,7 @@ fn find_element_raw_by_id(xml: &str, id: &str) -> Option<String> {
         depth = depth.checked_sub(1)?;
         pos = close_abs + close_pat.len();
         if depth == 0 {
-            return Some(xml[elem_start..pos].to_string());
+            return Some((0, pos));
         }
     }
 }
@@ -1424,7 +1486,13 @@ fn parse_tag_inner(inner: &str) -> (String, Vec<(String, String)>) {
     (qname, attrs)
 }
 
-/// 校验单个 Reference 绑定：URI 解析 → 元素定位 → 摘要常量时间比对。
+/// 校验单个 Reference 绑定：URI 解析 → 根元素锚定 → 摘要常量时间比对。
+///
+/// XSW 双防线（安全审计 GAR-01）：
+/// 1. **URI 锚定**——每个 `<ds:Reference>` 的 URI 必须为 `#<被验 Assertion 根元素 ID>`；
+///    指向他处（含全文扫描可命中的 CDATA 内元素）或无 URI 即拒绝；
+/// 2. **摘要锚定**——摘要输入锚定为被验切片根元素子树（[`root_element_span`]），
+///    不做 `ID="..."` 全文扫描，CDATA 内的同名元素字面量无法劫持摘要计算。
 ///
 /// 返回 Err(reason) 表示绑定失败（调用方应拒绝验签）。
 #[cfg(feature = "protocol-saml")]
@@ -1441,15 +1509,25 @@ fn validate_reference_binding(
     if binding.digest_method.as_deref() != Some(DIGEST_ALG_SHA256) {
         return Err("digest-method-not-sha256");
     }
-    let Some(element_raw) = find_element_raw_by_id(document_xml, id) else {
+    // 切片头部可能带事件间空白（quick-xml trim_text_start 在读取 Start 事件时才
+    // 跳过空白，而起始位置在跳过前记录），先修剪再锚定，保证切片以根元素开始标签开头。
+    let xml = document_xml.trim_start();
+    let Some((root_qname, root_id)) = root_element_identity(xml) else {
+        return Err("verified-root-element-not-found");
+    };
+    if root_id != id {
+        return Err("reference-uri-not-anchored-to-verified-assertion");
+    }
+    let Some((start, end)) = root_element_span(xml, &root_qname) else {
         return Err("referenced-element-not-found");
     };
+    let element_raw = &xml[start..end];
 
     use base64::Engine as _;
     use rsa::sha2::{Digest, Sha256};
     use subtle::ConstantTimeEq;
 
-    let stripped = strip_enveloped_signature(&element_raw);
+    let stripped = strip_enveloped_signature(element_raw);
     let computed = Sha256::digest(stripped.as_bytes());
     let expected = base64::engine::general_purpose::STANDARD
         .decode(binding.digest_value_b64.trim())
@@ -1637,6 +1715,15 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
 /// - 生产环境 SSO 单点登录（需 IdP 公钥 + Destination + Audience 配置）
 /// - 测试环境（配合 `rsa::RsaPrivateKey::new` 生成测试密钥对）
 ///
+/// # Destination / Audience 缺省 fail-closed（安全审计 GAR-31）
+///
+/// `expected_destination` / `expected_audience` **未配置时默认拒绝**（不再 warn 放行）：
+/// 签名合法但受众/目标指向其他 SP 的断言（跨 SP 断言重放）在缺省配置下即被拒。
+/// 生产部署必须 `with_expected_destination` + `with_expected_audience` 显式配置；
+/// 开发/测试环境可经 [`allow_unvalidated_destination`](Self::allow_unvalidated_destination)
+/// / [`allow_unvalidated_audience`](Self::allow_unvalidated_audience) 显式豁免
+/// （warn 后放行，风险自担）。
+///
 /// # 限制（C14N）
 ///
 /// 当前实现**不执行 XML Canonicalization (C14N)**，直接使用原始 `<ds:SignedInfo>`
@@ -1651,10 +1738,16 @@ fn verify_saml_signature(assertion_xml: &str, idp_public_key_pem: &str) -> Garri
 pub struct XmlSecSamlProvider {
     /// IdP RSA 公钥 PEM（PKCS#8 或 PKCS#1 格式），用于验证 Assertion 签名。
     idp_public_key_pem: String,
-    /// 预期 Destination（SP 的 ACS URL）。None = 跳过验证（仅告警）。
+    /// 预期 Destination（SP 的 ACS URL）。None = 未配置 → 拒绝（fail-closed），
+    /// 除非 `allow_unvalidated_destination` 显式豁免。
     expected_destination: Option<String>,
-    /// 预期 Audience（SP 的 entity_id）。None = 跳过验证（仅告警）。
+    /// 预期 Audience（SP 的 entity_id）。None = 未配置 → 拒绝（fail-closed），
+    /// 除非 `allow_unvalidated_audience` 显式豁免。
     expected_audience: Option<String>,
+    /// Destination 校验豁免标记（显式 opt-out，缺省 false = fail-closed）。
+    allow_unvalidated_destination: bool,
+    /// Audience 校验豁免标记（显式 opt-out，缺省 false = fail-closed）。
+    allow_unvalidated_audience: bool,
     /// 可选 DAO：启用 InResponseTo 绑定校验与 Assertion 重放防护。
     request_dao: Option<std::sync::Arc<dyn crate::dao::GarrisonDao>>,
     /// 未配置 DAO 的 warn-once 标记。
@@ -1679,6 +1772,8 @@ impl XmlSecSamlProvider {
             idp_public_key_pem,
             expected_destination: None,
             expected_audience: None,
+            allow_unvalidated_destination: false,
+            allow_unvalidated_audience: false,
             request_dao: None,
             warned_no_dao: std::sync::atomic::AtomicBool::new(false),
         })
@@ -1699,6 +1794,32 @@ impl XmlSecSamlProvider {
     /// 配置预期 Audience（SP 的 entity_id），开启 Audience 验证。
     pub fn with_expected_audience(mut self, audience: String) -> Self {
         self.expected_audience = Some(audience);
+        self
+    }
+
+    /// 显式豁免 Destination 校验（安全审计 GAR-31 的 opt-out 出口）。
+    ///
+    /// # 风险
+    ///
+    /// 豁免后 Destination 不匹配的响应仅告警放行，存在 open redirect 风险；
+    /// **仅限开发/测试环境**，生产部署必须改用
+    /// [`with_expected_destination`](Self::with_expected_destination)。
+    #[must_use = "豁免 Destination 校验属显式安全决策，返回值必须被消费"]
+    pub fn allow_unvalidated_destination(mut self) -> Self {
+        self.allow_unvalidated_destination = true;
+        self
+    }
+
+    /// 显式豁免 Audience 校验（安全审计 GAR-31 的 opt-out 出口）。
+    ///
+    /// # 风险
+    ///
+    /// 豁免后受众为其他 SP 的签名合法断言将被接受（跨 SP 断言重放风险）；
+    /// **仅限开发/测试环境**，生产部署必须改用
+    /// [`with_expected_audience`](Self::with_expected_audience)。
+    #[must_use = "豁免 Audience 校验属显式安全决策，返回值必须被消费"]
+    pub fn allow_unvalidated_audience(mut self) -> Self {
+        self.allow_unvalidated_audience = true;
         self
     }
 }
@@ -1770,12 +1891,21 @@ impl SamlProvider for XmlSecSamlProvider {
         )
         .await?;
 
-        // Destination 验证（fail-loud）
-        validate_destination(&response.destination, self.expected_destination.as_deref())?;
+        // Destination 验证（fail-loud；未配置且未豁免时 fail-closed 拒绝，GAR-31）
+        validate_destination(
+            &response.destination,
+            self.expected_destination.as_deref(),
+            self.allow_unvalidated_destination,
+        )?;
 
-        // Audience 验证（fail-loud，仅在有 Assertion 时校验）
+        // Audience 验证（fail-loud，仅在有 Assertion 时校验；未配置且未豁免时
+        // fail-closed 拒绝，GAR-31）
         if let Some(ref assertion) = response.assertion {
-            validate_audience(&assertion.audience, self.expected_audience.as_deref())?;
+            validate_audience(
+                &assertion.audience,
+                self.expected_audience.as_deref(),
+                self.allow_unvalidated_audience,
+            )?;
         }
 
         // 验证 Assertion 签名（非 fail-closed，而是真实验证）
@@ -2481,23 +2611,40 @@ mod tests {
     /// validate_destination / validate_audience 辅助函数单元测试。
     #[test]
     fn validate_destination_audience_unit_tests() {
-        assert!(validate_destination("https://sp/acs", Some("https://sp/acs")).is_ok());
+        assert!(validate_destination("https://sp/acs", Some("https://sp/acs"), false).is_ok());
         assert!(matches!(
-            validate_destination("https://evil/acs", Some("https://sp/acs")),
+            validate_destination("https://evil/acs", Some("https://sp/acs"), false),
             Err(GarrisonError::InvalidParam(_))
         ));
-        // Destination 未配置（None）→ Ok + warn
-        assert!(validate_destination("https://sp/acs", None).is_ok());
-        // Destination 预期为空字符串 → Ok + warn
-        assert!(validate_destination("https://sp/acs", Some("")).is_ok());
+        // Destination 未配置（None / Some("")）→ fail-closed 拒绝（GAR-31），
+        // 显式豁免（allow_unvalidated=true）→ Ok + warn
+        assert!(matches!(
+            validate_destination("https://sp/acs", None, false),
+            Err(GarrisonError::InvalidParam(ref m)) if m.contains("sso-saml-destination-not-configured")
+        ));
+        assert!(matches!(
+            validate_destination("https://sp/acs", Some(""), false),
+            Err(GarrisonError::InvalidParam(ref m)) if m.contains("sso-saml-destination-not-configured")
+        ));
+        assert!(validate_destination("https://sp/acs", None, true).is_ok());
+        assert!(validate_destination("https://sp/acs", Some(""), true).is_ok());
 
-        assert!(validate_audience("https://sp", Some("https://sp")).is_ok());
+        assert!(validate_audience("https://sp", Some("https://sp"), false).is_ok());
         assert!(matches!(
-            validate_audience("https://evil", Some("https://sp")),
+            validate_audience("https://evil", Some("https://sp"), false),
             Err(GarrisonError::InvalidParam(_))
         ));
-        // Audience 未配置（None）→ Ok + warn
-        assert!(validate_audience("https://sp", None).is_ok());
+        // Audience 未配置（None / Some("")）→ fail-closed 拒绝（GAR-31），
+        // 显式豁免 → Ok + warn
+        assert!(matches!(
+            validate_audience("https://sp", None, false),
+            Err(GarrisonError::InvalidParam(ref m)) if m.contains("sso-saml-audience-not-configured")
+        ));
+        assert!(matches!(
+            validate_audience("https://sp", Some(""), false),
+            Err(GarrisonError::InvalidParam(ref m)) if m.contains("sso-saml-audience-not-configured")
+        ));
+        assert!(validate_audience("https://sp", None, true).is_ok());
     }
 
     // ========================================================================
@@ -2642,6 +2789,83 @@ mod tests {
             );
         }
 
+        /// SAML XSW「CDATA 隐藏变体」回归测试（安全审计 GAR-01）。
+        ///
+        /// 攻击者在伪造 Assertion（ID=evil-*，NameID/Attributes 任意）内嵌入
+        /// (a) 受害者合法 `<ds:Signature>` 原样拷贝 (b) `<![CDATA[受害者完整断言原文]]>`：
+        /// quick-xml 不解析 CDATA（业务字段解析为伪造值），而纯字符串扫描能在
+        /// CDATA 内命中被 Reference 引用的受害者元素 → digest/签名全部通过。
+        /// 验签必须拒绝：每个 `<ds:Reference>` 的 URI 必须锚定被验 Assertion
+        /// 根元素自身的 ID，且摘要计算锚定在根元素子树内。
+        ///
+        /// 返回 (evil_assertion_xml, victim_public_key_pem)。
+        fn build_xsw_cdata_evil_assertion() -> (String, String) {
+            let (victim_xml, public_key_pem) = build_test_signed_assertion();
+            let sig_start = victim_xml
+                .find("<ds:Signature>")
+                .expect("victim fixture 应含 Signature");
+            let sig_end = victim_xml
+                .find("</ds:Signature>")
+                .expect("victim fixture 应含 Signature 闭合")
+                + "</ds:Signature>".len();
+            let stolen_signature = victim_xml[sig_start..sig_end].to_string();
+
+            // 伪造断言自带未来 NotOnOrAfter：排除解析层过期/缺失校验先拒的干扰，
+            // 使端到端拒绝确实落在验签层（Reference 锚定/摘要校验）。
+            let future = chrono::Utc::now().timestamp() + 3600;
+            let future_str = chrono::DateTime::from_timestamp(future, 0)
+                .unwrap()
+                .to_rfc3339();
+
+            let evil_xml = format!(
+                r#"<Assertion ID="evil-cdata-xsw"><saml:Issuer>https://idp.example.com</saml:Issuer><saml:Subject><saml:NameID>admin@evil.test</saml:NameID><saml:SubjectConfirmationData NotOnOrAfter="{future_str}"/></saml:Subject>{}<![CDATA[{}]]><saml:Attribute Name="role"><saml:AttributeValue>super-admin</saml:AttributeValue></saml:Attribute></Assertion>"#,
+                stolen_signature, victim_xml
+            );
+            (evil_xml, public_key_pem)
+        }
+
+        /// CDATA 隐藏变体：Reference 指向 CDATA 内受害者元素（非根元素）必须被拒。
+        #[test]
+        fn verify_saml_signature_rejects_xsw_cdata_hidden_variant() {
+            let (evil_xml, public_key_pem) = build_xsw_cdata_evil_assertion();
+            let result = verify_saml_signature(&evil_xml, &public_key_pem);
+            assert!(
+                result.is_ok(),
+                "XSW 检测不应报错，应返回 Ok(false): {:?}",
+                result
+            );
+            assert!(
+                !result.unwrap(),
+                "XSW CDATA 变体：拷贝的受害者签名不得为伪造断言背书"
+            );
+        }
+
+        /// CDATA 隐藏变体（同 ID 变体）：伪造断言 ID 与受害者 ID 相同时，
+        /// URI 锚定检查通过，但摘要必须锚定根元素子树——伪造内容 digest 不匹配。
+        #[test]
+        fn verify_saml_signature_rejects_xsw_cdata_same_id_variant() {
+            let (victim_xml, public_key_pem) = build_test_signed_assertion();
+            let sig_start = victim_xml
+                .find("<ds:Signature>")
+                .expect("victim fixture 应含 Signature");
+            let sig_end = victim_xml
+                .find("</ds:Signature>")
+                .expect("victim fixture 应含 Signature 闭合")
+                + "</ds:Signature>".len();
+            let stolen_signature = victim_xml[sig_start..sig_end].to_string();
+            // 伪造断言沿用受害者 ID（URI 锚定检查可过），内容为攻击者任意身份
+            let evil_xml = format!(
+                r#"<Assertion ID="_test-assertion-001"><saml:Subject><saml:NameID>admin@evil.test</saml:NameID></saml:Subject>{}<![CDATA[{}]]></Assertion>"#,
+                stolen_signature, victim_xml
+            );
+            let result = verify_saml_signature(&evil_xml, &public_key_pem);
+            assert!(result.is_ok(), "不应报错，应返回 Ok(false): {:?}", result);
+            assert!(
+                !result.unwrap(),
+                "同 ID CDATA 变体：根子树摘要必须不匹配伪造内容"
+            );
+        }
+
         /// 合法 RSA-SHA256 签名应验证通过。
         #[test]
         fn verify_saml_signature_accepts_valid_signature() {
@@ -2768,7 +2992,10 @@ mod tests {
             let dao = std::sync::Arc::new(crate::dao::tests::MockDao::new());
             let provider = XmlSecSamlProvider::new(public_key_pem)
                 .unwrap()
-                .with_request_dao(dao);
+                .with_request_dao(dao)
+                // 本用例聚焦重放防护，Destination/Audience 显式豁免（GAR-31 opt-out）
+                .allow_unvalidated_destination()
+                .allow_unvalidated_audience();
 
             let xml = format!(
                 r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
@@ -2788,6 +3015,140 @@ mod tests {
                 "同一签名 Assertion 二次提交应被重放防护拒绝，实际: {:?}",
                 second
             );
+        }
+
+        // ====================================================================
+        // Destination / Audience 缺省 fail-closed（安全审计 GAR-31）
+        // ====================================================================
+
+        /// 构造带未来 NotOnOrAfter 与 Audience 的签名 Assertion Response
+        /// （XmlSecSamlProvider e2e 用；extra 内容纳入 DigestValue 计算）。
+        fn build_xsec_signed_response() -> (String, String) {
+            let future = Utc::now().timestamp() + 3600;
+            let future_str = chrono::DateTime::from_timestamp(future, 0)
+                .unwrap()
+                .to_rfc3339();
+            let (signed_assertion, public_key_pem) = build_test_signed_assertion_with_inner(
+                &format!(
+                    "<SubjectConfirmationData NotOnOrAfter=\"{future_str}\"/>\
+<saml:Conditions><saml:AudienceRestriction><saml:Audience>https://sp.example.com</saml:Audience></saml:AudienceRestriction></saml:Conditions>"
+                ),
+            );
+            let xml = format!(
+                r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <Status><StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></Status>
+  {signed_assertion}
+</samlp:Response>"#
+            );
+            (xml, public_key_pem)
+        }
+
+        /// 缺省构造（未配置 Destination）→ fail-closed 拒绝，错误码
+        /// sso-saml-destination-not-configured（不再 warn 放行）。
+        #[tokio::test]
+        async fn xmlsec_provider_default_rejects_unconfigured_destination() {
+            let (xml, public_key_pem) = build_xsec_signed_response();
+            let provider = XmlSecSamlProvider::new(public_key_pem).unwrap();
+            let result = provider.parse_response(&xml).await;
+            assert!(
+                matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("sso-saml-destination-not-configured")),
+                "缺省未配置 Destination 应 fail-closed 拒绝，实际: {:?}",
+                result
+            );
+        }
+
+        /// 仅豁免 Destination（Audience 仍缺省）→ fail-closed 拒绝，错误码
+        /// sso-saml-audience-not-configured。
+        #[tokio::test]
+        async fn xmlsec_provider_default_rejects_unconfigured_audience() {
+            let (xml, public_key_pem) = build_xsec_signed_response();
+            let provider = XmlSecSamlProvider::new(public_key_pem)
+                .unwrap()
+                .allow_unvalidated_destination();
+            let result = provider.parse_response(&xml).await;
+            assert!(
+                matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("sso-saml-audience-not-configured")),
+                "缺省未配置 Audience 应 fail-closed 拒绝，实际: {:?}",
+                result
+            );
+        }
+
+        /// 显式配置 expected_audience/expected_destination → 签名合法断言放行
+        /// （GAR-31 缺省收紧不得破坏显式配置的正常路径）。
+        #[tokio::test]
+        async fn xmlsec_provider_with_expected_config_accepts_signed_assertion() {
+            let (xml, public_key_pem) = build_xsec_signed_response();
+            let provider = XmlSecSamlProvider::new(public_key_pem)
+                .unwrap()
+                .with_expected_destination("https://sp.example.com/acs".to_string())
+                .with_expected_audience("https://sp.example.com".to_string());
+            let response = provider.parse_response(&xml).await.unwrap();
+            let assertion = response.assertion.expect("显式配置 + 签名合法断言应保留");
+            assert_eq!(assertion.subject, "user@example.com");
+        }
+
+        /// 显式 opt-out（allow_unvalidated_*）→ warn 放行（开发/测试场景出口）。
+        #[tokio::test]
+        async fn xmlsec_provider_allow_unvalidated_opt_out_passes_signed_assertion() {
+            let (xml, public_key_pem) = build_xsec_signed_response();
+            let provider = XmlSecSamlProvider::new(public_key_pem)
+                .unwrap()
+                .allow_unvalidated_destination()
+                .allow_unvalidated_audience();
+            let response = provider.parse_response(&xml).await.unwrap();
+            assert!(
+                response.assertion.is_some(),
+                "显式豁免 Destination/Audience 后签名合法断言应放行"
+            );
+        }
+
+        /// XSW CDATA 隐藏变体端到端（安全审计 GAR-01）：
+        /// 伪造断言（含拷贝的受害者签名 + CDATA 包裹的受害者断言）经完整
+        /// parse_response 流程后必须被拒——断言剥离或整体拒绝，
+        /// 伪造的 subject/attributes 不得存活，重放防护（DAO）亦不改变结论。
+        #[tokio::test]
+        async fn xmlsec_provider_rejects_xsw_cdata_forged_assertion() {
+            let (evil_assertion, public_key_pem) = build_xsw_cdata_evil_assertion();
+            let xml = format!(
+                r#"<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol"
+                xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion"
+                Destination="https://sp.example.com/acs">
+  <saml:Issuer>https://idp.example.com</saml:Issuer>
+  <Status><StatusCode Value="urn:oasis:names:tc:SAML:2.0:status:Success"/></Status>
+  {evil_assertion}
+</samlp:Response>"#
+            );
+
+            let dao = std::sync::Arc::new(crate::dao::tests::MockDao::new());
+            let provider = XmlSecSamlProvider::new(public_key_pem)
+                .unwrap()
+                .with_request_dao(dao)
+                .with_expected_destination("https://sp.example.com/acs".to_string())
+                .allow_unvalidated_audience();
+
+            let out = provider.parse_response(&xml).await;
+            match out {
+                Ok(resp) => {
+                    let a = resp.assertion.as_ref();
+                    assert!(
+                        a.is_none(),
+                        "XSW CDATA 变体断言必须被剥离，实际保留: subject={:?} attrs={:?}",
+                        a.map(|x| &x.subject),
+                        a.map(|x| &x.attributes)
+                    );
+                },
+                Err(e) => {
+                    // 整体拒绝同样可接受（fail-closed），但必须是签名/绑定类错误
+                    let msg = format!("{e:?}");
+                    assert!(
+                        !msg.contains("not-configured"),
+                        "本用例已显式配置校验，不应因缺省配置拒绝: {msg}"
+                    );
+                },
+            }
         }
     }
 

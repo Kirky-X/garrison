@@ -3,10 +3,14 @@
 
 //! Auth Server 中间件栈。
 //!
-//! 提供四个中间件：
+//! 提供：
 //! - `rate_limit_middleware`：基于 IP 的令牌桶限速，超限返回 429
 //! - `inject_client_ip`：从请求提取真实客户端 IP，存入 `Extension<ClientIp>`
-//! - `api_key_auth_middleware`：验证 X-API-Key 头，不匹配返回 401
+//! - `inject_login_client_ip`：login 端点自动填充 `params.ip`；读体超限/失败返回 413
+//! - `sanitize_json_rejection_middleware`：统一改写 axum Json rejection（400/415/422）
+//!   为统一 JSON 错误体，不回显内部类型名/字段名/字节偏移
+//! - `api_key_auth_middleware`：验证 X-API-Key 头，不匹配返回 401；
+//!   重复多值头 fail-closed 拒绝；按源 IP 失败锁定（GAR-25/28）
 //! - `audit_log_middleware`：tracing::info! 记录请求方法+路径+状态码
 //!
 //! # 设计
@@ -18,6 +22,7 @@
 use crate::i18n::translate_detail;
 use axum::extract::ConnectInfo;
 use axum::extract::Request;
+use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -32,6 +37,7 @@ use std::time::Instant;
 use crate::backend::AuthBackend;
 use crate::context::GarrisonPrincipal;
 use crate::error::GarrisonError;
+use crate::server::api_key_lockout::ApiKeyLockout;
 
 /// per-IP 限速桶条目 — 持有 limiteron 令牌桶 + 最后访问时间（用于 LRU 淘汰）。
 ///
@@ -241,11 +247,33 @@ pub async fn rate_limit_middleware(
 
 /// API Key 认证中间件状态。
 ///
-/// 持有预期的 API Key 值，与请求 X-API-Key 头比对。
+/// 持有预期的 API Key 值与认证失败锁定状态，与请求 X-API-Key 头比对。
 #[derive(Debug, Clone)]
 pub struct ApiKeyState {
     /// 预期的 API Key。
     pub api_key: String,
+    /// 认证失败锁定（按源 IP 记账，GAR-25）。
+    pub lockout: Arc<ApiKeyLockout>,
+}
+
+impl ApiKeyState {
+    /// 以默认锁定配置（阈值 10 / 窗口 300s，与 AuthServerConfig::default 一致）构造状态。
+    pub fn new(api_key: impl Into<String>) -> Self {
+        let config = super::AuthServerConfig::default();
+        Self::with_lockout(
+            api_key,
+            config.api_key_lockout_threshold,
+            config.api_key_lockout_window_secs,
+        )
+    }
+
+    /// 完整构造（锁定阈值/窗口由调用方给定；threshold=0 禁用锁定）。
+    pub fn with_lockout(api_key: impl Into<String>, threshold: u32, window_secs: u64) -> Self {
+        Self {
+            api_key: api_key.into(),
+            lockout: Arc::new(ApiKeyLockout::new(threshold, window_secs)),
+        }
+    }
 }
 
 /// 常量时间比较循环的固定工作量（字节）。
@@ -290,6 +318,14 @@ fn api_key_ct_eq(a: &str, b: &str) -> bool {
 
 /// API Key 认证中间件 — 验证 X-API-Key 头。
 ///
+/// # 拒绝语义（全部 fail-closed）
+///
+/// - 空 `api_key` 配置：拒绝所有请求（防御默认值泄露），不参与锁定记账
+/// - 重复 `X-API-Key` 头（多值）：401（GAR-28——首值/末值语义因网关而异，
+///   多值头本身就是异常请求，直接拒绝消除判定分裂）
+/// - 锁定中（同源 IP 连续失败达阈值且在窗口内）：429 + `Retry-After`
+/// - 缺失/不匹配：401 并记一次失败；达到锁定阈值时本请求即返回 429
+///
 /// 不匹配或缺失返回 401 Unauthorized，响应体为 JSON：
 /// ```json
 /// { "error": "unauthorized", "message": "Invalid API Key" }
@@ -311,26 +347,72 @@ pub async fn api_key_auth_middleware(
             .into_response();
     }
 
+    // 锁定记账键：源连接 IP（无 ConnectInfo 时聚合为 "unknown"；
+    // 内网端口面向服务间调用，不做 XFF 解析，避免可信头伪造绕过记账）
+    let source = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    // 锁定中：窗口期内一律 429，无论本次 key 是否合法
+    if let Some(retry_after) = state.lockout.check_locked(&source) {
+        tracing::warn!(source = %source, retry_after, "api key auth locked: brute-force lockout window active");
+        return GarrisonError::RateLimited {
+            retry_after_secs: retry_after,
+        }
+        .into_response();
+    }
+
+    // GAR-28: 重复 X-API-Key 头 fail-closed 拒绝（首值/末值语义分歧下的判定分裂面）
+    let mut header_values = req.headers().get_all("x-api-key").iter();
+    let first = header_values.next();
+    if header_values.next().is_some() {
+        let outcome = state.lockout.record_failure(&source);
+        tracing::warn!(source = %source, failures = outcome.count, "duplicate X-API-Key header rejected");
+        return auth_failure_response(&state, &source, outcome);
+    }
+
     // 常量时间比较，防止 timing attack 逐字节推断 API Key
-    let valid = req
-        .headers()
-        .get("x-api-key")
+    let valid = first
         .and_then(|v| v.to_str().ok())
         .map(|k| api_key_ct_eq(k, &state.api_key))
         .unwrap_or(false);
 
     if !valid {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(json!({
-                "error": "unauthorized",
-                "message": translate_detail("server-invalid-api-key", &[])
-            })),
-        )
-            .into_response();
+        let outcome = state.lockout.record_failure(&source);
+        tracing::warn!(source = %source, failures = outcome.count, "api key auth failed");
+        return auth_failure_response(&state, &source, outcome);
     }
 
+    // 成功认证清零失败记录
+    state.lockout.record_success(&source);
+
     next.run(req).await
+}
+
+/// 认证失败响应：达到锁定阈值即 429（本请求即生效，不等下一次），
+/// 否则统一 401 JSON 错误体。
+fn auth_failure_response(
+    state: &ApiKeyState,
+    source: &str,
+    outcome: crate::server::api_key_lockout::FailureOutcome,
+) -> Response {
+    if outcome.locked {
+        tracing::warn!(source = %source, threshold = state.lockout.threshold(), "api key auth locked out");
+        return GarrisonError::RateLimited {
+            retry_after_secs: outcome.retry_after_secs,
+        }
+        .into_response();
+    }
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(json!({
+            "error": "unauthorized",
+            "message": translate_detail("server-invalid-api-key", &[])
+        })),
+    )
+        .into_response()
 }
 
 /// 审计日志中间件 — tracing::info! 记录请求方法+路径+状态码。
@@ -551,62 +633,147 @@ pub async fn inject_user_agent(req: Request, next: Next) -> Response {
 ///
 /// 调用方显式传入 `params.ip` 时不覆盖（显式值优先于自动填充）。
 /// 非 login 路径不应挂载此中间件（避免不必要的 body 解析开销）。
-pub async fn inject_login_client_ip(mut req: Request, next: Next) -> Response {
+pub async fn inject_login_client_ip(req: Request, next: Next) -> Response {
     // 仅处理 login 端点，其余路径直接放行（避免不必要的 body 解析）
     if req.uri().path() != "/api/v1/auth/login" {
         return next.run(req).await;
     }
 
-    let client_ip = req.extensions().get::<ClientIp>().map(|c| c.0.clone());
+    // GAR-29：读体与限幅判定无条件执行（不依赖 ClientIp 可用性）——否则
+    // Extension 缺失/unknown 时超限 body 会穿透到 axum DefaultBodyLimit，
+    // 以裸 text 413 响应绕开统一 JSON 错误体。
+    let client_ip = req
+        .extensions()
+        .get::<ClientIp>()
+        .map(|c| c.0.clone())
+        .filter(|ip| ip != "unknown");
 
-    if let Some(ip) = client_ip {
-        if ip != "unknown" {
-            let (parts, body) = req.into_parts();
-            let bytes = match axum::body::to_bytes(body, 256 * 1024).await {
-                Ok(b) => b,
-                Err(e) => {
-                    tracing::warn!(error = %e, "inject_login_client_ip: body read failed");
-                    return next
-                        .run(Request::from_parts(parts, axum::body::Body::empty()))
-                        .await;
-                },
-            };
+    let (parts, body) = req.into_parts();
+    let bytes = match axum::body::to_bytes(body, 256 * 1024).await {
+        Ok(b) => b,
+        Err(e) => {
+            // 读体失败（限幅超限 LengthLimitError 或 IO 错误）直接
+            // 返回 413 统一 JSON 错误体——不转发空 body（空 body 会到达
+            // Json extractor 产生误导性的 400 EOF），也不静默断连。
+            tracing::warn!(error = %e, "inject_login_client_ip: body read failed (oversize or IO)");
+            return (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                Json(json!({
+                    "error": "payload_too_large",
+                    "message": "request body exceeds size limit"
+                })),
+            )
+                .into_response();
+        },
+    };
 
-            // 畸形 JSON body 不再静默替换为 null——
-            // 直接返回 400 Bad Request（fail-fast），避免下游 handler 收到被破坏的请求体。
-            let mut json: serde_json::Value = match serde_json::from_slice(&bytes) {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(error = %e, "inject_login_client_ip: malformed JSON body");
-                    return (
-                        StatusCode::BAD_REQUEST,
-                        Json(json!({
-                            "error": "bad_request",
-                            "message": "request body must be valid JSON"
-                        })),
-                    )
-                        .into_response();
-                },
-            };
+    // 畸形 JSON body 不再静默替换为 null——
+    // 直接返回 400 Bad Request（fail-fast），避免下游 handler 收到被破坏的请求体。
+    let mut json: serde_json::Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "inject_login_client_ip: malformed JSON body");
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "error": "bad_request",
+                    "message": "request body must be valid JSON"
+                })),
+            )
+                .into_response();
+        },
+    };
 
-            let should_inject = json
-                .get("params")
-                .and_then(|p| p.get("ip"))
-                .is_none_or(|v| v.is_null());
+    // 显式传入的 params.ip 优先于自动填充；仅存在已知客户端 IP 时注入
+    let should_inject = client_ip.is_some()
+        && json
+            .get("params")
+            .and_then(|p| p.get("ip"))
+            .is_none_or(|v| v.is_null());
 
-            if should_inject {
-                if let Some(params) = json.get_mut("params").and_then(|p| p.as_object_mut()) {
-                    params.insert("ip".to_string(), serde_json::Value::String(ip));
-                }
-            }
-
-            let new_body =
-                axum::body::Body::from(serde_json::to_vec(&json).unwrap_or(bytes.to_vec()));
-            req = Request::from_parts(parts, new_body);
+    let new_body = if should_inject {
+        if let Some(params) = json.get_mut("params").and_then(|p| p.as_object_mut()) {
+            let ip = client_ip.expect("should_inject 蕴含 client_ip 存在");
+            params.insert("ip".to_string(), serde_json::Value::String(ip));
         }
-    }
+        axum::body::Body::from(serde_json::to_vec(&json).unwrap_or_else(|_| bytes.to_vec()))
+    } else {
+        // 未注入时原样转发原始字节（不做序列化往返）
+        axum::body::Body::from(bytes)
+    };
+    let req = Request::from_parts(parts, new_body);
 
     next.run(req).await
+}
+
+// ============================================================================
+// Json extractor rejection 清洗（GAR-27：422 类型名泄露）
+// ============================================================================
+
+/// Json extractor rejection 的统一错误体（不含任何类型/字段/偏移细节）。
+const REJECTION_BODY: &str =
+    r#"{"error":"bad_request","message":"request body failed validation"}"#;
+
+/// Json extractor rejection 清洗中间件 — 统一改写 axum 默认 rejection 响应。
+///
+/// axum 0.8 的 `Json` extractor rejection（`JsonDataError` 422 / `JsonSyntaxError`
+/// 400 / `MissingJsonContentType` 415）以 `text/plain` 回显序列化诊断信息：
+/// 内部 Rust 类型名（"expected struct LoginRequest"）、字段名与攻击者输入的
+/// 字节偏移，可用于指纹识别与字段枚举。本中间件识别「4xx + text/plain + 非空
+/// body」的 rejection 响应，将 body 改写为统一 JSON 错误体，状态码保持原值。
+///
+/// # 误伤排除
+///
+/// - 业务与中间件自身的 JSON 错误体（`application/json`）不匹配，原样通过
+/// - path-filter 等裸 `StatusCode` 响应为空 body，不匹配（且 404 不在集合内）
+/// - OAuth2/qrlogin merge 路由自带中间件栈，handler 自产 JSON 错误，不受影响
+pub async fn sanitize_json_rejection_middleware(req: Request, next: Next) -> Response {
+    let response = next.run(req).await;
+
+    let is_rejection_status = matches!(
+        response.status(),
+        StatusCode::BAD_REQUEST
+            | StatusCode::UNSUPPORTED_MEDIA_TYPE
+            | StatusCode::UNPROCESSABLE_ENTITY
+    );
+    if !is_rejection_status {
+        return response;
+    }
+    let is_text_plain = response
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("text/plain"));
+    if !is_text_plain {
+        return response;
+    }
+
+    let status = response.status();
+    let (_, body) = response.into_parts();
+    // rejection 诊断体均为短文本；64KB 上限仅为防御异常大 body
+    match axum::body::to_bytes(body, 64 * 1024).await {
+        // 重建响应（丢弃旧 headers，避免残留与新 body 不一致的 content-length）
+        Ok(bytes) if !bytes.is_empty() => {
+            let mut sanitized = axum::http::Response::new(axum::body::Body::from(REJECTION_BODY));
+            *sanitized.status_mut() = status;
+            sanitized.headers_mut().insert(
+                CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("application/json"),
+            );
+            sanitized
+        },
+        // 空 body 的裸状态码响应（非 rejection）原样放行
+        Ok(_) => {
+            let mut empty = axum::http::Response::new(axum::body::Body::empty());
+            *empty.status_mut() = status;
+            empty
+        },
+        // body 读取失败：错误显性化，返回统一错误体（拒绝语义不变）
+        Err(e) => {
+            tracing::warn!(error = %e, status = status.as_u16(), "sanitize_json_rejection: body read failed");
+            (status, axum::body::Body::from(REJECTION_BODY)).into_response()
+        },
+    }
 }
 
 /// Principal 注入中间件 — 从 Authorization header 提取 Bearer token，
@@ -941,9 +1108,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_key_auth_missing_header() {
-        let state = Arc::new(ApiKeyState {
-            api_key: "secret-key".to_string(),
-        });
+        let state = Arc::new(ApiKeyState::new("secret-key"));
         let app = ok_router().layer(axum::middleware::from_fn_with_state(
             state,
             api_key_auth_middleware,
@@ -958,9 +1123,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_key_auth_wrong_key() {
-        let state = Arc::new(ApiKeyState {
-            api_key: "secret-key".to_string(),
-        });
+        let state = Arc::new(ApiKeyState::new("secret-key"));
         let app = ok_router().layer(axum::middleware::from_fn_with_state(
             state,
             api_key_auth_middleware,
@@ -981,9 +1144,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_api_key_auth_correct_key() {
-        let state = Arc::new(ApiKeyState {
-            api_key: "secret-key".to_string(),
-        });
+        let state = Arc::new(ApiKeyState::new("secret-key"));
         let app = ok_router().layer(axum::middleware::from_fn_with_state(
             state,
             api_key_auth_middleware,
@@ -1016,9 +1177,7 @@ mod tests {
     /// 空 API Key 时所有请求被拒绝（fail-closed）。
     #[tokio::test]
     async fn test_api_key_auth_empty_key_rejects_all() {
-        let state = Arc::new(ApiKeyState {
-            api_key: String::new(), // 空字符串
-        });
+        let state = Arc::new(ApiKeyState::new(String::new()));
         let app = ok_router().layer(axum::middleware::from_fn_with_state(
             state,
             api_key_auth_middleware,
@@ -1841,5 +2000,379 @@ mod tests {
             .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(json["params"].get("ip").is_none(), "unknown IP 不应被注入");
+    }
+
+    // ========================================================================
+    // GAR-29: 限幅超限返回 413
+    // ========================================================================
+
+    /// login 端点读体超限（>256KB）返回 413 统一 JSON 错误体，
+    /// 不再转发空 body（旧行为会以误导性 400 EOF 到达 handler）。
+    #[tokio::test]
+    async fn inject_login_client_ip_oversize_body_returns_413() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/login",
+                post(|body: axum::Json<serde_json::Value>| async move { axum::Json(body.0) }),
+            )
+            .layer(axum::middleware::from_fn(inject_login_client_ip))
+            .layer(Extension(ClientIp("203.0.113.1".to_string())));
+
+        let oversize = vec![b'x'; 256 * 1024 + 1];
+        let req = Request::builder()
+            .uri("/api/v1/auth/login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(oversize))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "超限 body 应返回 413 而非空 body 透传"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "payload_too_large");
+    }
+
+    // ========================================================================
+    // GAR-27: Json extractor rejection 清洗
+    // ========================================================================
+
+    /// 422 rejection 测试目标类型（触发类型不匹配诊断，回显结构体名）。
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct SanitizeProbeBody {
+        token: String,
+    }
+
+    /// 类型错误（422 text/plain，含内部类型名/字段名/字节偏移）被改写为
+    /// 统一 JSON 错误体，状态码保持 4xx，无任何类型/字段细节。
+    #[tokio::test]
+    async fn sanitize_json_rejection_hides_type_details_on_422() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/check-login",
+                post(|_: axum::Json<SanitizeProbeBody>| async { "ok" }),
+            )
+            .layer(axum::middleware::from_fn(
+                sanitize_json_rejection_middleware,
+            ));
+
+        let req = Request::builder()
+            .uri("/api/v1/auth/check-login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from(r#"{"token":{"a":1}}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "状态码保持 422（4xx 语义不变，仅清洗 body）"
+        );
+        assert_eq!(
+            resp.headers().get(CONTENT_TYPE).unwrap(),
+            "application/json",
+            "清洗后应为 JSON 错误体"
+        );
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert_eq!(
+            text, r#"{"error":"bad_request","message":"request body failed validation"}"#,
+            "统一错误体，无任何类型/字段/偏移细节"
+        );
+        for leaked in ["SanitizeProbeBody", "expected", "line", "column", "token"] {
+            assert!(
+                !text.contains(leaked),
+                "响应不得泄露 {leaked}，实际: {text}"
+            );
+        }
+    }
+
+    /// 语法错误（400）与缺失 content-type（415）同样统一为 JSON 错误体。
+    #[tokio::test]
+    async fn sanitize_json_rejection_unifies_400_and_415() {
+        let app = Router::new()
+            .route(
+                "/api/v1/auth/check-login",
+                post(|_: axum::Json<SanitizeProbeBody>| async { "ok" }),
+            )
+            .layer(axum::middleware::from_fn(
+                sanitize_json_rejection_middleware,
+            ));
+
+        // 语法错误 → 400 + 统一 JSON
+        let req = Request::builder()
+            .uri("/api/v1/auth/check-login")
+            .method("POST")
+            .header("content-type", "application/json")
+            .body(Body::from("{bad json"))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let text = std::str::from_utf8(&body).unwrap();
+        assert!(!text.contains("EOF"), "不得回显诊断细节: {text}");
+        assert!(serde_json::from_slice::<serde_json::Value>(&body).is_ok());
+
+        // 缺失 content-type → 415 + 统一 JSON
+        let req = Request::builder()
+            .uri("/api/v1/auth/check-login")
+            .method("POST")
+            .body(Body::from(r#"{"token":"x"}"#))
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert!(serde_json::from_slice::<serde_json::Value>(&body).is_ok());
+    }
+
+    /// 业务 JSON 错误体（application/json）与裸 404（空 body）原样通过，不误伤。
+    #[tokio::test]
+    async fn sanitize_json_rejection_passes_json_and_404_through() {
+        let app = Router::new()
+            .route(
+                "/biz",
+                post(|| async {
+                    (
+                        StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"error": "custom"})),
+                    )
+                }),
+            )
+            .layer(axum::middleware::from_fn(
+                sanitize_json_rejection_middleware,
+            ));
+
+        // JSON 400（业务错误体）不被改写
+        let req = Request::builder()
+            .uri("/biz")
+            .method("POST")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["error"], "custom", "业务 JSON 错误体不应被清洗");
+
+        // 404（空 body，裸 StatusCode）不被改写
+        let req = Request::builder()
+            .uri("/no-such-route")
+            .method("POST")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    // ========================================================================
+    // GAR-28: 重复 X-API-Key 头 fail-closed
+    // ========================================================================
+
+    /// 重复 X-API-Key 头（错误值在前）→ 401，即使后续存在合法值。
+    #[tokio::test]
+    async fn api_key_auth_rejects_duplicate_header_wrong_first() {
+        let state = Arc::new(ApiKeyState::with_lockout("secret-key", 0, 300));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            api_key_auth_middleware,
+        ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ping")
+                    .header("x-api-key", "wrong-key")
+                    .header("x-api-key", "secret-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "重复头应 fail-closed 拒绝，不按首值/末值任一语义放行"
+        );
+    }
+
+    /// 重复 X-API-Key 头（合法值在前）同样 401——消除与「取末值」网关的判定分裂。
+    #[tokio::test]
+    async fn api_key_auth_rejects_duplicate_header_valid_first() {
+        let state = Arc::new(ApiKeyState::with_lockout("secret-key", 0, 300));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            api_key_auth_middleware,
+        ));
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/ping")
+                    .header("x-api-key", "secret-key")
+                    .header("x-api-key", "wrong-key")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // ========================================================================
+    // GAR-25: API Key 认证失败锁定
+    // ========================================================================
+
+    /// 连续失败达阈值后，合法 key 也被 429 + Retry-After 锁定。
+    #[tokio::test]
+    async fn api_key_lockout_blocks_correct_key_after_threshold() {
+        let state = Arc::new(ApiKeyState::with_lockout("secret-key", 2, 300));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            api_key_auth_middleware,
+        ));
+        let wrong = |app: &Router| {
+            let req = Request::builder()
+                .uri("/ping")
+                .header("x-api-key", "wrong")
+                .body(Body::empty())
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+
+        let resp = wrong(&app).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "第 1 次失败仍 401");
+        let resp = wrong(&app).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "达阈值请求本身即返回 429"
+        );
+        assert!(
+            resp.headers().get("Retry-After").is_some(),
+            "429 应携带 Retry-After 头"
+        );
+
+        // 锁定窗口内：正确 key 也 429
+        let req = Request::builder()
+            .uri("/ping")
+            .header("x-api-key", "secret-key")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "锁定窗口内正确 key 也应 429"
+        );
+    }
+
+    /// 成功认证清零失败记录：失败→成功→失败 不触发锁定。
+    #[tokio::test]
+    async fn api_key_lockout_resets_on_success() {
+        let state = Arc::new(ApiKeyState::with_lockout("secret-key", 2, 300));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            api_key_auth_middleware,
+        ));
+        let send = |key: &'static str, app: &Router| {
+            let req = Request::builder()
+                .uri("/ping")
+                .header("x-api-key", key)
+                .body(Body::empty())
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+
+        assert_eq!(
+            send("wrong", &app).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            send("secret-key", &app).await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            send("wrong", &app).await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            send("secret-key", &app).await.unwrap().status(),
+            StatusCode::OK,
+            "成功清零后第二次失败（count=1）不应锁定"
+        );
+    }
+
+    /// 窗口过期后锁定解除，锁定内/外的响应语义正确。
+    #[tokio::test]
+    async fn api_key_lockout_window_expiry_unlocks() {
+        let state = Arc::new(ApiKeyState::with_lockout("secret-key", 1, 1));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            api_key_auth_middleware,
+        ));
+
+        let req = Request::builder()
+            .uri("/ping")
+            .header("x-api-key", "wrong")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::TOO_MANY_REQUESTS,
+            "阈值 1：首次失败即锁定"
+        );
+
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+
+        let req = Request::builder()
+            .uri("/ping")
+            .header("x-api-key", "secret-key")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "窗口过期后锁定应解除，正确 key 恢复 200"
+        );
+    }
+
+    /// threshold=0 显式禁用锁定：多次失败后合法 key 仍 200。
+    #[tokio::test]
+    async fn api_key_lockout_disabled_when_threshold_zero() {
+        let state = Arc::new(ApiKeyState::with_lockout("secret-key", 0, 300));
+        let app = ok_router().layer(axum::middleware::from_fn_with_state(
+            state,
+            api_key_auth_middleware,
+        ));
+        for _ in 0..20 {
+            let req = Request::builder()
+                .uri("/ping")
+                .header("x-api-key", "wrong")
+                .body(Body::empty())
+                .unwrap();
+            let resp = app.clone().oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED, "禁用态应恒 401");
+        }
+        let req = Request::builder()
+            .uri("/ping")
+            .header("x-api-key", "secret-key")
+            .body(Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK, "禁用态下合法 key 应 200");
     }
 }

@@ -56,20 +56,31 @@ use super::to_api_response;
 ///
 /// # 字段语义
 ///
-/// `caller_login_id` 为可选字段（`#[serde(default)]`）：服务间调用方
-/// （如 BackendRemote）可只传 `token`，此时 `caller_login_id` 为 `None`。
+/// `caller_login_id` 在 serde 层可选（`#[serde(default)]`，兼容存量反序列化），
+/// 但**路由层强制必填**：缺失时返回 400（fail-closed，GAR-23——内网 API Key
+/// 一旦泄露，缺省跳过校验即可静默枚举任意活跃 token 归属）。
 ///
 /// # 安全语义
 ///
-/// - `caller_login_id = Some(id)` 且 `id != session.login_id` → 返回 `NotPermission` 错误
-/// - `caller_login_id = None` → 记录 warn 日志，允许访问（服务间调用的所有权校验为 opt-in）
+/// - `caller_login_id` 缺失 → 400（fail-closed）
+/// - `caller_login_id = Some(id)` 且 `id != session.login_id` → `NotPermission` 错误
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GetSessionRequest {
     /// 待查询的 token 字符串。
     pub token: String,
-    /// 调用者 login_id（用于所有权校验，可选）。
+    /// 调用者 login_id（用于所有权校验，路由层强制必填）。
     #[serde(default)]
     pub caller_login_id: Option<String>,
+}
+
+/// GAR-23: caller_login_id 缺失的 fail-closed 拒绝（两所有权校验端点共用）。
+fn missing_caller_login_id() -> ApiError {
+    tracing::warn!("caller_login_id missing: ownership check is mandatory, rejecting");
+    ApiError::InvalidInput {
+        message: "caller_login_id is required".to_string(),
+        field: Some("caller_login_id".to_string()),
+        value: None,
+    }
 }
 
 // ============================================================================
@@ -236,26 +247,27 @@ async fn get_token_info(
     #[state] backend: Arc<dyn AuthBackend>,
     req: GetSessionRequest,
 ) -> Result<ApiResponse<crate::backend::types::TokenInfo>, ApiError> {
-    // A5: caller 所有权校验——需先获取 session 以比对 login_id
+    // A5/GAR-23: caller 所有权校验——caller_login_id 强制必填（fail-closed）
+    let caller = match req.caller_login_id {
+        Some(ref caller) => caller,
+        None => return Err(missing_caller_login_id()),
+    };
+    // 需先获取 session 以比对 login_id
     let session_result = backend.get_session(&req.token).await;
     let session = match session_result {
         Ok(s) => s,
         Err(e) => return Ok(to_api_response(Err(e))),
     };
-    if let Some(ref caller) = req.caller_login_id {
-        if caller != &session.login_id {
-            tracing::warn!(
-                caller_login_id = %caller,
-                session_login_id = %session.login_id,
-                "get_token_info 所有权校验失败：跨用户访问"
-            );
-            return Ok(to_api_response(Err(GarrisonError::NotPermission(loc!(
-                "caller-login-id-mismatch",
-                "caller_login_id does not match session.login_id"
-            )))));
-        }
-    } else {
-        tracing::warn!("get_token_info 未提供 caller_login_id，跳过所有权校验");
+    if caller != &session.login_id {
+        tracing::warn!(
+            caller_login_id = %caller,
+            session_login_id = %session.login_id,
+            "get_token_info 所有权校验失败：跨用户访问"
+        );
+        return Ok(to_api_response(Err(GarrisonError::NotPermission(loc!(
+            "caller-login-id-mismatch",
+            "caller_login_id does not match session.login_id"
+        )))));
     }
     let result = backend.get_token_info(&req.token).await;
     Ok(to_api_response(result))
@@ -273,25 +285,25 @@ async fn get_session(
     #[state] backend: Arc<dyn AuthBackend>,
     req: GetSessionRequest,
 ) -> Result<ApiResponse<crate::backend::types::SessionData>, ApiError> {
-    // A5: caller 所有权校验
+    // A5/GAR-23: caller 所有权校验——caller_login_id 强制必填（fail-closed）
+    let caller = match req.caller_login_id {
+        Some(ref caller) => caller,
+        None => return Err(missing_caller_login_id()),
+    };
     let mut session = match backend.get_session(&req.token).await {
         Ok(s) => s,
         Err(e) => return Ok(to_api_response(Err(e))),
     };
-    if let Some(ref caller) = req.caller_login_id {
-        if caller != &session.login_id {
-            tracing::warn!(
-                caller_login_id = %caller,
-                session_login_id = %session.login_id,
-                "get_session 所有权校验失败：跨用户访问"
-            );
-            return Ok(to_api_response(Err(GarrisonError::NotPermission(loc!(
-                "caller-login-id-mismatch",
-                "caller_login_id does not match session.login_id"
-            )))));
-        }
-    } else {
-        tracing::warn!("get_session 未提供 caller_login_id，跳过所有权校验");
+    if caller != &session.login_id {
+        tracing::warn!(
+            caller_login_id = %caller,
+            session_login_id = %session.login_id,
+            "get_session 所有权校验失败：跨用户访问"
+        );
+        return Ok(to_api_response(Err(GarrisonError::NotPermission(loc!(
+            "caller-login-id-mismatch",
+            "caller_login_id does not match session.login_id"
+        )))));
     }
     // A5: PII 过滤——ip / user_agent / device 不暴露给内部端点调用方
     session.ip = None;
@@ -529,12 +541,12 @@ mod tests {
         sdforge::http::build().layer(Extension(make_backend()))
     }
 
-    /// 发送 POST 请求并返回响应 JSON。
-    async fn post_json(
+    /// 发送 POST 请求并返回 (状态码, 响应 JSON)。
+    async fn post_json_with_status(
         router: axum::Router,
         uri: &str,
         body: serde_json::Value,
-    ) -> serde_json::Value {
+    ) -> (StatusCode, serde_json::Value) {
         let resp = router
             .oneshot(
                 Request::builder()
@@ -546,9 +558,20 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK);
+        let status = resp.status();
         let bytes = resp.into_body().collect().await.unwrap().to_bytes();
-        serde_json::from_slice(&bytes).unwrap()
+        (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    /// 发送 POST 请求并断言 200 后返回响应 JSON。
+    async fn post_json(
+        router: axum::Router,
+        uri: &str,
+        body: serde_json::Value,
+    ) -> serde_json::Value {
+        let (status, json) = post_json_with_status(router, uri, body).await;
+        assert_eq!(status, StatusCode::OK);
+        json
     }
 
     // ========================================================================
@@ -661,7 +684,7 @@ mod tests {
     #[tokio::test]
     async fn test_sdforge_get_token_info() {
         let app = make_router();
-        let body = serde_json::json!({ "token": "my-token" });
+        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "mock-user" });
         let resp_json = post_json(app, "/api/v1/auth/get-token-info", body).await;
         assert_eq!(resp_json["data"]["token"], "my-token");
         assert_eq!(resp_json["data"]["created_at"], 1000);
@@ -670,7 +693,7 @@ mod tests {
     #[tokio::test]
     async fn test_sdforge_get_session() {
         let app = make_router();
-        let body = serde_json::json!({ "token": "my-token" });
+        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "mock-user" });
         let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
         assert_eq!(resp_json["data"]["token"], "my-token");
         assert_eq!(resp_json["data"]["login_id"], "mock-user");
@@ -684,7 +707,7 @@ mod tests {
     #[tokio::test]
     async fn test_sdforge_get_session_filters_pii_fields() {
         let app = make_router();
-        let body = serde_json::json!({ "token": "my-token" });
+        let body = serde_json::json!({ "token": "my-token", "caller_login_id": "mock-user" });
         let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
         // PII 字段应为 null（被过滤）
         assert!(
@@ -731,13 +754,37 @@ mod tests {
         );
     }
 
-    /// A5: 未提供 caller_login_id 时应仍返回数据（服务间调用，所有权校验为 opt-in）。
+    /// GAR-23: 未提供 caller_login_id 时 fail-closed 拒绝（HTTP 400），
+    /// 不再 warn+放行——内网 key 泄露即可静默枚举任意 token 归属的面已消除。
     #[tokio::test]
-    async fn test_sdforge_get_session_without_caller_login_id() {
+    async fn test_sdforge_get_session_missing_caller_login_id_rejected() {
         let app = make_router();
-        let body = serde_json::json!({ "token": "my-token" });
-        let resp_json = post_json(app, "/api/v1/auth/get-session", body).await;
-        assert_eq!(resp_json["data"]["login_id"], "mock-user");
+        let (status, resp_json) = post_json_with_status(
+            app,
+            "/api/v1/auth/get-session",
+            serde_json::json!({ "token": "my-token" }),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::BAD_REQUEST,
+            "caller_login_id 缺失应返回 4xx，实际: {status}"
+        );
+        assert!(resp_json.get("data").is_none(), "拒绝响应不得携带会话数据");
+    }
+
+    /// GAR-23: get-token-info 缺失 caller_login_id 同样 fail-closed 拒绝。
+    #[tokio::test]
+    async fn test_sdforge_get_token_info_missing_caller_login_id_rejected() {
+        let app = make_router();
+        let (status, resp_json) = post_json_with_status(
+            app,
+            "/api/v1/auth/get-token-info",
+            serde_json::json!({ "token": "my-token" }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(resp_json.get("data").is_none());
     }
 
     /// A5: get-token-info 同样应用 caller 所有权校验。

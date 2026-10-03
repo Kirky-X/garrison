@@ -343,11 +343,10 @@ impl GarrisonManagerBuilder {
             )?);
         let auth_logic: Arc<dyn AuthLogic> = match self.auth_logic {
             Some(al) => al,
-            None => Arc::new(AuthLogicDefault::new(
-                session.clone(),
-                token_handler,
-                config.timeout,
-            )),
+            None => Arc::new(
+                AuthLogicDefault::new(session.clone(), token_handler, config.timeout)
+                    .with_seed_primary_amr(config.seed_primary_amr),
+            ),
         };
 
         // 5. 构造 firewall，注入 permission_checker + plugin_manager

@@ -873,7 +873,8 @@ impl AuditLogListener {
     /// 对 metadata JSON 字符串进行字段掩码。
     ///
     /// 遍历 `config.mask_fields`，将 metadata JSON 中对应字段值替换为 `"***"`。
-    /// 非 JSON 字符串或字段不存在时原样返回（不报错）。
+    /// 非法 JSON 落 `tracing::warn!` 后原样返回（不中断审计链路，但脱敏跳过
+    /// 必须显性可观测）；字段不存在时原样返回。
     ///
     /// # 示例
     ///
@@ -904,14 +905,23 @@ impl AuditLogListener {
     /// - `Full`：递归掩码所有值
     /// - `Partial`：仅掩码 operator `mask_fields` ∪ 内置黑名单命中的字段
     ///
-    /// 非法 JSON 原样返回（不落日志告警，避免审计链路失败）。
+    /// 非法 JSON：落 `tracing::warn!`（含错误与长度上下文，不含原文——原文
+    /// 可能正是待脱敏的敏感值）后原样返回。返回值语义保持既有约定（审计
+    /// 链路不因 metadata 非法而中断），但脱敏跳过不再静默。
     pub fn mask_metadata(&self, metadata: &str) -> String {
         if metadata.is_empty() {
             return metadata.to_string();
         }
         let mut value: serde_json::Value = match serde_json::from_str(metadata) {
             Ok(v) => v,
-            Err(_) => return metadata.to_string(),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    metadata_len = metadata.len(),
+                    "audit mask_metadata: metadata is not valid JSON, masking skipped and raw value kept"
+                );
+                return metadata.to_string();
+            },
         };
         match self.config.audit_mask_mode {
             AuditMaskMode::Full => self.mask_value_recursive(&mut value),
@@ -955,21 +965,29 @@ impl AuditLogListener {
     /// Partial 模式递归脱敏：使用 `SensitiveDataMasker` 类型感知脱敏。
     ///
     /// 对 `mask_fields` 中的字段：
-    /// - 匹配 `SensitiveDataMasker` 规则的字段（phone/email/id_card/bank_card）→ 类型感知脱敏
-    /// - 无匹配规则的字段 → 回退为 `"***"`（安全优先）
+    /// - 字符串值：匹配 `SensitiveDataMasker` 规则的字段（phone/email/id_card/
+    ///   bank_card）→ 类型感知脱敏；无匹配规则的字段 → 回退为 `"***"`（安全优先）
+    /// - 非字符串值（Number/Bool/Null/Array/Object）：黑名单命中即整体替换
+    ///   `"***"`，对齐 Full 模式的 `contains_key` 语义——原实现仅匹配
+    ///   `Value::String`，数字/布尔等敏感值绕过脱敏原样落库（两模式不一致）
     #[cfg(feature = "secure-masking")]
     fn mask_value_partial(&self, value: &mut serde_json::Value) {
         let masker = default_audit_masker();
         if let Some(obj) = value.as_object_mut() {
             for field in self.effective_mask_fields() {
-                if let Some(serde_json::Value::String(s)) = obj.get_mut(field) {
-                    let masked = masker.mask_field(field, s);
-                    if masked == *s {
-                        // 无匹配规则，回退为 "***"
-                        *s = "***".to_string();
-                    } else {
-                        *s = masked;
-                    }
+                match obj.get_mut(field) {
+                    Some(serde_json::Value::String(s)) => {
+                        let masked = masker.mask_field(field, s);
+                        if masked == *s {
+                            // 无匹配规则，回退为 "***"
+                            *s = "***".to_string();
+                        } else {
+                            *s = masked;
+                        }
+                    },
+                    // 黑名单命中的一切非字符串值统一整体掩码
+                    Some(v) => *v = serde_json::Value::String("***".to_string()),
+                    None => {},
                 }
             }
             for (_, child) in obj.iter_mut() {
@@ -2618,6 +2636,202 @@ mod db_sqlite_tests {
             parsed["password"],
             serde_json::Value::String("***".to_string()),
             "Partial 模式下 password 无匹配规则，应回退为 ***"
+        );
+    }
+
+    // ========================================================================
+    // Partial 模式非字符串值脱敏 + 非法 JSON 显性告警（静态-配置与部署-4）
+    // ========================================================================
+
+    /// Partial 模式下黑名单字段承载非字符串值（Number/Bool/Null/Array）时
+    /// 一律整体替换 "***"，对齐 Full 模式语义。
+    ///
+    /// 原实现 mask_value_partial 仅匹配 `Value::String`，`{"token":123456}`
+    /// 这类值绕过脱敏原样落库（动态复现确凿，AnomalousLoginDetected 的
+    /// `detail: Value` 是内部唯一可携带任意类型值的真实路径）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_partial_mode_masks_non_string_blacklist_fields() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        // access_token/password/refresh_token/token 命中 BUILTIN 黑名单（精确键名），
+        // 非字符串值须整体掩码；count 未命中黑名单，任何类型都应原样保留
+        let metadata = r#"{"access_token":123456,"password":true,"refresh_token":null,"token":[1,2],"count":42}"#;
+        let masked = listener.mask_metadata(metadata);
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&masked).expect("masked JSON 应可解析");
+        assert_eq!(
+            parsed["access_token"],
+            serde_json::Value::String("***".to_string()),
+            "黑名单字段的数字值应整体掩码，实际: {}",
+            masked
+        );
+        assert_eq!(
+            parsed["password"],
+            serde_json::Value::String("***".to_string()),
+            "黑名单字段的布尔值应整体掩码"
+        );
+        assert_eq!(
+            parsed["refresh_token"],
+            serde_json::Value::String("***".to_string()),
+            "黑名单字段的 null 值应整体掩码"
+        );
+        assert_eq!(
+            parsed["token"],
+            serde_json::Value::String("***".to_string()),
+            "黑名单字段的数组值应整体掩码"
+        );
+        assert_eq!(
+            parsed["count"].as_i64(),
+            Some(42),
+            "非黑名单字段的值不应被掩码"
+        );
+    }
+
+    /// Partial 模式递归脱敏嵌套对象中黑名单字段的非字符串值。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_partial_mode_masks_nested_non_string_blacklist_fields() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let metadata = r#"{"user":{"token":42},"detail":{"password":false}}"#;
+        let masked = listener.mask_metadata(metadata);
+
+        let parsed: serde_json::Value =
+            serde_json::from_str(&masked).expect("masked JSON 应可解析");
+        assert_eq!(
+            parsed["user"]["token"],
+            serde_json::Value::String("***".to_string()),
+            "嵌套对象的黑名单数字值应递归掩码，实际: {}",
+            masked
+        );
+        assert_eq!(
+            parsed["detail"]["password"],
+            serde_json::Value::String("***".to_string()),
+            "嵌套对象的黑名单布尔值应递归掩码"
+        );
+    }
+
+    /// 进程内日志捕获 writer（复用 config::tests 的 MakeWriter 模式，
+    /// 收集格式化日志行供断言）。
+    #[derive(Clone)]
+    struct AuditLogCapture(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for AuditLogCapture {
+        type Writer = std::io::LineWriter<AuditLogCapture>;
+        fn make_writer(&'a self) -> Self::Writer {
+            std::io::LineWriter::new(AuditLogCapture(self.0.clone()))
+        }
+    }
+
+    impl std::io::Write for AuditLogCapture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("日志缓冲锁应可用")
+                .push(String::from_utf8_lossy(buf).to_string());
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// mask_metadata 遇非法 JSON 时落 tracing::warn!（含上下文）且仍原样返回。
+    ///
+    /// 返回值语义不变（审计链路不中断），但脱敏跳过必须显性化——静默
+    /// fail-open 使敏感值绕过脱敏不可观测（静态-配置与部署-4）。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_mask_metadata_invalid_json_warns_and_returns_original() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let logs = AuditLogCapture(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+        let captured = logs.clone();
+        {
+            use tracing_subscriber::layer::SubscriberExt;
+            use tracing_subscriber::util::SubscriberInitExt;
+            let subscriber = tracing_subscriber::registry().with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(logs.clone()),
+            );
+            let _guard = subscriber.set_default();
+
+            let invalid = "pwd=abc&token=xyz";
+            assert_eq!(
+                listener.mask_metadata(invalid),
+                invalid,
+                "非法 JSON 应原样返回（返回值语义不变）"
+            );
+        }
+
+        let lines = captured.0.lock().expect("日志缓冲锁应可用");
+        assert!(
+            lines.iter().any(|l| {
+                l.contains("WARN") && l.contains("mask_metadata") && l.contains("not valid JSON")
+            }),
+            "非法 JSON 应落 warn 告警（含 mask_metadata 上下文），实际日志: {:?}",
+            *lines
+        );
+    }
+
+    /// 合法 JSON 路径不应误报非法 JSON 告警。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn audit_mask_metadata_valid_json_does_not_warn() {
+        let pool = setup_db().await;
+        let config = AuditConfig {
+            mask_fields: vec![],
+            retain_days: 0,
+            async_write: false,
+            signing_key: None,
+            audit_mask_mode: AuditMaskMode::Partial,
+        };
+        let listener = AuditLogListener::new(pool, config);
+
+        let logs = AuditLogCapture(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+        let captured = logs.clone();
+        {
+            use tracing_subscriber::layer::SubscriberExt;
+            use tracing_subscriber::util::SubscriberInitExt;
+            let subscriber = tracing_subscriber::registry().with(
+                tracing_subscriber::fmt::layer()
+                    .with_ansi(false)
+                    .with_writer(logs.clone()),
+            );
+            let _guard = subscriber.set_default();
+
+            let valid = r#"{"token":"secret"}"#;
+            assert!(listener.mask_metadata(valid) != valid, "合法 JSON 应被脱敏");
+        }
+
+        let lines = captured.0.lock().expect("日志缓冲锁应可用");
+        assert!(
+            !lines.iter().any(|l| l.contains("not valid JSON")),
+            "合法 JSON 不应触发非法 JSON 告警，实际日志: {:?}",
+            *lines
         );
     }
 }

@@ -56,6 +56,7 @@ impl AuthLogicDefault {
             timeout,
             remember_me_enabled: false,
             remember_me_timeout: DEFAULT_REMEMBER_ME_TIMEOUT_SECS,
+            seed_primary_amr: true,
             switch_to_guard: Arc::new(DenyAllSwitchToGuard),
             renew_locks: Arc::new(DashMap::new()),
         }
@@ -82,6 +83,24 @@ impl AuthLogicDefault {
             );
             DEFAULT_REMEMBER_ME_TIMEOUT_SECS
         };
+        self
+    }
+
+    /// 配置登录时是否播种主认证因子（amr=["pwd"] / aal:1 / auth_time）。
+    ///
+    /// 默认 `true`（保持「login 即密码认证」的既有签发契约）。凭证委托 /
+    /// 零凭证 login 路径未发生密码校验的部署应显式关闭：关闭后 `login`
+    /// 签发的 token 不携带 `amr` / `auth_time` claim，会话账本为空——
+    /// 下游 step-up 判定（`assert_freshness` / `ledger_max_aal`）不再被
+    /// 未经发生的 `pwd` 断言误导（渗透-认证绕过-3 / 会话与令牌-5）。
+    /// MFA 编排的 step-up 追加（`append_amr_entry`）不受影响。
+    ///
+    /// 与 `config.seed_primary_amr` 同语义；管理器默认装配经
+    /// `GarrisonManagerBuilder` 从配置桥接（builder.rs 装配 auth_logic 时
+    /// 注入 `config.seed_primary_amr`），本 builder 供直连构造
+    /// `AuthLogicDefault` 的调用方覆盖默认值。
+    pub fn with_seed_primary_amr(mut self, enabled: bool) -> Self {
+        self.seed_primary_amr = enabled;
         self
     }
 
@@ -151,13 +170,23 @@ impl AuthLogic for AuthLogicDefault {
         } else {
             self.timeout
         };
-        // 主登录即密码认证：签发 claim 与会话账本播种取统一口径
+        // 主登录即密码认证：签发 claim 与会话账本播种取统一口径。
+        // seed_primary_amr=false（凭证委托 login 未发生密码校验）时零断言
+        // 签发：不携带 amr/auth_time claim（渗透-认证绕过-3 / 会话与令牌-5）。
         let now = Utc::now().timestamp();
-        let (amr, auth_time) = crate::stp::mfa::primary_issuance_claims(now);
+        let (amr, auth_time) = if self.seed_primary_amr {
+            crate::stp::mfa::primary_issuance_claims(now)
+        } else {
+            (Vec::new(), None)
+        };
         let token = self
             .token_handler
             .generate_with_amr(id, effective_timeout, &amr, auth_time)?;
-        self.session.create(id, &token).await?;
+        // 会话账本播种随同一开关（false 时账本为空、auth_time 为 None，
+        // 与签发 claim 的零断言语义一致）
+        self.session
+            .create_with_seed_primary_amr(id, &token, self.seed_primary_amr)
+            .await?;
         // remember_me 扩展 Token-Session TTL
         if effective_timeout != self.timeout {
             // 构造器已保证 timeout/remember_me_timeout 为正数，

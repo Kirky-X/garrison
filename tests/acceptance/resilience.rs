@@ -976,9 +976,9 @@ async fn acc_res_009_malformed_body_rejected_4xx() {
     assert_is_4xx!(resp.status(), "check-login 缺 token 字段应返回 4xx");
 }
 
-/// （正常+异常）：login_id 长度边界——空串与超长 65536/70000 返回
-/// 4xx 或 200（不返回 5xx）；常规长度 1/255/256 必须 200 + 非空 token
-/// （+ 合并移植）。
+/// （正常+异常）：login_id 长度边界——常规长度 1/255 必须 200 + 非空 token；
+/// 256 起超框架默认上限（GAR-12：DEFAULT_LOGIN_ID_MAX_LEN=255）与空串、
+/// 超长 65536/70000 一律 4xx 拒绝且不返回 5xx（+ 合并移植）。
 #[tokio::test]
 async fn acc_res_010_login_id_length_boundaries_no_5xx() {
     use garrison::backend::types::LoginParams;
@@ -986,8 +986,8 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
     let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
     let client = reqwest::Client::new();
 
-    // 常规长度：1/255/256 → 200 + token
-    for len in [1usize, 255, 256] {
+    // 常规长度：1/255 → 200 + token（GAR-12：默认上限 255 内放行）
+    for len in [1usize, 255] {
         let resp = client
             .post(format!("{}/api/v1/auth/login", external_url))
             .json(&serde_json::json!({
@@ -1013,7 +1013,7 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
         );
     }
 
-    // 空串：4xx 或 200（InMemoryAuthBackend 不校验 login_id 有效性）
+    // 空串：4xx 拒绝（GAR-22/GAR-24：login_id 输入不变量，wire 层 fail-closed）
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({
@@ -1024,13 +1024,14 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
         .await
         .expect("空串请求失败");
     assert!(
-        resp.status().is_client_error() || resp.status() == reqwest::StatusCode::OK,
-        "login_id 空串应返回 4xx 或 200，实际 status={}",
+        resp.status().is_client_error(),
+        "login_id 空串应返回 4xx，实际 status={}",
         resp.status()
     );
 
-    // 超长：65536 / 70000 → 200 或 4xx，禁止 5xx
-    for len in [65536usize, 70000] {
+    // 超长：256（恰好超默认上限）/ 65536 / 70000 → 一律 4xx，禁止 5xx
+    //（GAR-12：wire 层按 DEFAULT_LOGIN_ID_MAX_LEN=255 封顶，签发源头无 MB 级灌入）
+    for len in [256usize, 65536, 70000] {
         let resp = client
             .post(format!("{}/api/v1/auth/login", external_url))
             .json(&serde_json::json!({
@@ -1042,8 +1043,8 @@ async fn acc_res_010_login_id_length_boundaries_no_5xx() {
             .unwrap_or_else(|e| panic!("login_id 长度 {} 请求失败: {}", len, e));
         let status = resp.status();
         assert!(
-            status == reqwest::StatusCode::OK || status.is_client_error(),
-            "login_id 长度 {} 应返回 200 或 4xx，实际 status={}",
+            status.is_client_error(),
+            "login_id 长度 {} 应返回 4xx，实际 status={}",
             len,
             status
         );

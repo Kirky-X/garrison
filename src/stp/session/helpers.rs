@@ -9,13 +9,158 @@
 use super::*;
 
 // ============================================================================
+// 租户绑定 JWT claims（渗透-租户隔离-会话绑定-1 的 Stateless 补口）
+// ============================================================================
+
+/// Stateless JWT 的租户绑定签发载荷：[`crate::protocol::jwt::GarrisonJwtClaims`]
+/// 全字段 + `tid`（签发租户绑定）。
+///
+/// JwtHandler 固定签发 `GarrisonJwtClaims`（无租户 claim 参数，protocol 层
+/// 不感知租户语义），租户上下文存在时经 `sign_custom` 以本结构签发，
+/// payload 为既有格式 + `tid` claim；无租户上下文仍走 `sign_with_amr`
+/// 既有路径，签发格式不变。字段与 serde 跳过属性必须与
+/// `GarrisonJwtClaims` 保持一致——`GarrisonJwtClaims::verify`（serde 忽略
+/// 未知字段）解析本结构签发的 token 时行为与既有 token 完全一致，
+/// `jwt_tenant_claims_parity_tests::tenant_bound_claims_parse_as_garrison_jwt_claims`
+/// 测试守护该契约防字段漂移。
+#[cfg(feature = "protocol-jwt")]
+#[derive(Debug, serde::Serialize)]
+pub(super) struct TenantBoundJwtClaims {
+    /// 主体标识（与 login_id 一致）。
+    pub(super) sub: String,
+    /// 签发时间（Unix 秒）。
+    pub(super) iat: i64,
+    /// 过期时间（Unix 秒）。
+    pub(super) exp: i64,
+    /// Garrison 登录标识。
+    pub(super) login_id: String,
+    /// 可选设备标识（stp 签发路径恒为 None，序列化为 null，与既有格式一致）。
+    pub(super) device: Option<String>,
+    /// JWT 唯一标识（签发时生成 UUID v4）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) jti: Option<String>,
+    /// Not Before（签发时刻）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) nbf: Option<i64>,
+    /// RFC 8176 amr claim（账本映射；None 时跳过序列化）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) amr: Option<Vec<String>>,
+    /// OIDC auth_time claim（None 时跳过序列化）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) auth_time: Option<i64>,
+    /// 签发租户绑定（`TENANT` 上下文存在时写入；十进制 i64）。
+    pub(super) tid: i64,
+}
+
+#[cfg(feature = "protocol-jwt")]
+impl TenantBoundJwtClaims {
+    /// 按既有 `sign_with_kid` 同一口径构造（iat/nbf/exp/jti 生成逻辑一致）。
+    pub(super) fn new(
+        login_id: &str,
+        timeout: i64,
+        amr: &[String],
+        auth_time: Option<i64>,
+        tid: i64,
+    ) -> GarrisonResult<Self> {
+        if timeout < 0 {
+            return Err(GarrisonError::Config(format!(
+                "jwt-timeout-negative::{}",
+                timeout
+            )));
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| GarrisonError::Internal(format!("system-clock-error::{}", e)))?
+            .as_secs() as i64;
+        let exp = now.checked_add(timeout).ok_or_else(|| {
+            GarrisonError::InvalidParam(format!("jwt-timeout-overflow::{}", timeout))
+        })?;
+        Ok(Self {
+            sub: login_id.to_string(),
+            iat: now,
+            exp,
+            login_id: login_id.to_string(),
+            device: None,
+            jti: Some(uuid::Uuid::new_v4().to_string()),
+            nbf: Some(now),
+            amr: if amr.is_empty() {
+                None
+            } else {
+                Some(amr.to_vec())
+            },
+            auth_time,
+            tid,
+        })
+    }
+}
+
+/// check 侧 `tid` 探针：只反序列化租户绑定 claim（未知字段忽略，缺失为 None）。
+#[cfg(feature = "protocol-jwt")]
+#[derive(serde::Deserialize)]
+struct JwtTenantProbe {
+    #[serde(default)]
+    tid: Option<i64>,
+}
+
+// ============================================================================
 // 私有 helper 方法（从 mod.rs 搬移，供 SessionLogic impl 调用）
 // ============================================================================
 
 impl GarrisonLogicDefault {
+    /// login_id 输入不变量校验（渗透-会话与令牌-2 / 限流与爆破-1 /
+    /// 注入-login_id 无长度上限-2：login 签发源头的 fail-closed 收口）。
+    ///
+    /// 与 [`crate::core::token::SimpleTokenStyle::generate`] 的校验语义对齐
+    /// （错误码同源命名）：
+    /// - trim 后非空（空串 / 纯空白拒绝：空主体低于任何业务契约）
+    /// - 不含 `\x1f`（token body 字段分隔符，内嵌会造成 verify 身份切分歧义）
+    /// - 不含其他控制字符（CRLF / 日志污染 / 键拼接歧义）
+    /// - 字节长度 ≤ `config.login_id_max_len`（`0` = 不限制；默认 255，
+    ///   封住未认证超大 login_id 灌入会话存储的内存增长向量）
+    ///
+    /// 仅拒绝明显非法值，正常标识不受影响；错误信息不含输入内容回显。
+    pub(super) fn validate_login_id(&self, login_id: &str) -> GarrisonResult<()> {
+        if login_id.is_empty() {
+            return Err(GarrisonError::InvalidParam(
+                "stp-login-id-empty::".to_string(),
+            ));
+        }
+        if login_id.trim().is_empty() {
+            return Err(GarrisonError::InvalidParam(
+                "stp-login-id-whitespace::".to_string(),
+            ));
+        }
+        if login_id.contains('\x1f') {
+            return Err(GarrisonError::InvalidParam(
+                "stp-login-id-sep::".to_string(),
+            ));
+        }
+        if login_id.chars().any(|c| c.is_control()) {
+            return Err(GarrisonError::InvalidParam(
+                "stp-login-id-control-char::".to_string(),
+            ));
+        }
+        let max_len = self.config.login_id_max_len;
+        if max_len > 0 && login_id.len() > max_len as usize {
+            // 只回显长度，不回显内容（超长输入不得进入日志/错误通道）
+            return Err(GarrisonError::InvalidParam(format!(
+                "stp-login-id-too-long::{}::{}",
+                login_id.len(),
+                max_len
+            )));
+        }
+        Ok(())
+    }
+
     /// login 实际逻辑（供 `login` 方法在 metrics 包装内调用）。
     ///
     /// 抽取此私有方法以保持 `login` trait 方法的 metrics 包装简洁。
+    ///
+    /// # login_id 不变量
+    ///
+    /// 进入防火墙钩子前先做输入校验（[`Self::validate_login_id`]），
+    /// 空串 / 空白 / 控制字符 / 超长 login_id 一律 fail-closed，
+    /// 不签发会话（对齐 SimpleTokenStyle 的生成期校验语义）。
     ///
     /// # 持锁时间
     ///
@@ -32,6 +177,10 @@ impl GarrisonLogicDefault {
         login_id: &str,
         params: &LoginParams,
     ) -> GarrisonResult<String> {
+        // 0. login_id 输入不变量（fail-closed，先于防火墙钩子，避免非法值
+        // 消耗限流/爆破计数等校验资源）
+        self.validate_login_id(login_id)?;
+
         // 1. 登录前防火墙安全钩子检查
         #[cfg(any(
             feature = "sms-rate-limit",
@@ -198,6 +347,20 @@ impl GarrisonLogicDefault {
     /// - `login_id` / `token`：会话主体与 token
     /// - `device` / `ip` / `user_agent`：设备上下文（来自 `LoginParams`，`login_with_token` 传 `None`）
     /// - `remember_me`：记住我
+    ///
+    /// # remember_me_enabled 开关（渗透-会话与令牌-1）
+    ///
+    /// 本方法是 stp login 调用链的唯一收口：`config.remember_me_enabled = false`
+    /// 时客户端提交的 `remember_me=true` 在此处一律降级为 `false`
+    /// （`effective_timeout` 不写 90 天，按全局 `timeout` 签发），使「禁用长会话」
+    /// 的配置在 HTTP login 实际调用链真实生效。降级仅记 debug 日志，不报错
+    /// （开关语义为忽略请求，非拒绝登录）。
+    ///
+    /// # amr 播种开关（渗透-认证绕过-3 / 会话与令牌-5）
+    ///
+    /// `config.seed_primary_amr = false` 时向 `create_token_session_inner`
+    /// 传递不播种标记：会话 `amr_ledger` 为空、`auth_time` 为 `None`，
+    /// 不为未经密码校验的 login 断言 `pwd` / AAL 1 认证事实。
     pub(super) async fn create_session_with_quota(
         &self,
         login_id: &str,
@@ -213,9 +376,20 @@ impl GarrisonLogicDefault {
         // 否则会重入死锁。
         self.check_concurrent_policy(login_id).await?;
 
+        // remember_me_enabled=false：客户端请求的 remember_me 降级为 false
+        // （渗透-会话与令牌-1：开关在调用链真实生效，effective_timeout 不写 90 天）
+        let effective_remember_me = remember_me && self.config.remember_me_enabled;
+        if remember_me && !effective_remember_me {
+            tracing::debug!(
+                login_id,
+                "remember_me requested but disabled by config, using default timeout"
+            );
+        }
+
         // 2. 创建 + enforce 最大登录数（同一 login 锁区内）
         let login_id_owned = login_id.to_string();
         let token_owned = token.to_string();
+        let seed_primary_amr = self.config.seed_primary_amr;
         self.session
             .with_login_lock(&login_id_owned, async {
                 self.session
@@ -225,7 +399,8 @@ impl GarrisonLogicDefault {
                         device,
                         ip,
                         user_agent,
-                        Some(remember_me),
+                        Some(effective_remember_me),
+                        seed_primary_amr,
                     )
                     .await?;
                 if self.config.max_login_count > 0 {
@@ -608,11 +783,41 @@ impl GarrisonLogicDefault {
                 #[cfg(feature = "protocol-jwt")]
                 {
                     // 主登录即密码认证：claim 映射取统一口径（与会话账本播种
-                    // 同源），不经各签发点自行硬编码。
+                    // 同源），不经各签发点自行硬编码；seed_primary_amr=false
+                    // 时零断言签发（渗透-认证绕过-3 / 会话与令牌-5）。
                     let now = chrono::Utc::now().timestamp();
-                    let (amr, auth_time) = crate::stp::mfa::primary_issuance_claims(now);
-                    crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str())
-                        .sign_with_amr(login_id, self.config.timeout, &amr, auth_time)
+                    let (amr, auth_time) = if self.config.seed_primary_amr {
+                        crate::stp::mfa::primary_issuance_claims(now)
+                    } else {
+                        (Vec::new(), None)
+                    };
+                    // 租户上下文存在时签发携带 `tid` 绑定 claim（渗透-租户隔离-
+                    // 会话绑定-1 的 Stateless 补口）：check_login_stateless 据此
+                    // 拒绝跨租户复用，换 X-Tenant-Id 头不得逃逸吊销。无租户
+                    // 上下文走 `sign_with_amr`，payload 与既有格式逐字节一致。
+                    let tenant_id = crate::context::tenant::TENANT
+                        .try_get()
+                        .ok()
+                        .map(|ctx| ctx.tenant_id);
+                    match tenant_id {
+                        Some(tid) => {
+                            let handler = crate::protocol::jwt::JwtHandler::new(
+                                self.config.jwt_secret.as_str(),
+                            );
+                            let claims = TenantBoundJwtClaims::new(
+                                login_id,
+                                self.config.timeout,
+                                &amr,
+                                auth_time,
+                                tid,
+                            )?;
+                            handler.sign_custom(&claims)
+                        },
+                        None => {
+                            crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str())
+                                .sign_with_amr(login_id, self.config.timeout, &amr, auth_time)
+                        },
+                    }
                 }
                 #[cfg(not(feature = "protocol-jwt"))]
                 {
@@ -634,6 +839,17 @@ impl GarrisonLogicDefault {
     /// 要求启用 `protocol-jwt` feature 且 `token_style=jwt`，否则返回 `Config` 错误。
     /// JWT verify 失败时透传 `InvalidToken`/`ExpiredToken`（不查询 session）。
     /// `enable_jwt_revocation=true` 时，verify 成功后检查 jti 黑名单。
+    ///
+    /// # 租户绑定校验（渗透-租户隔离-会话绑定-1 的 Stateless 补口）
+    ///
+    /// 租户上下文存在且 token 携带 `tid` 绑定 claim（登录时租户上下文内签发）
+    /// 时，绑定租户 ≠ 请求租户即拒绝——客户端可控的 `X-Tenant-Id` 头不得携
+    /// 他租户签发的 JWT 跨租户复用（否则 jti 黑名单经 DAO 租户前缀错位后
+    /// 形成吊销逃逸：黑名单写读各随请求租户命名空间，换头即 miss）。
+    /// token 无 `tid`（无租户上下文签发的存量/兼容 token）或无租户上下文时
+    /// 行为不变。黑名单键仍为 `jwt:blacklist:{jti}`：键构造无法跨越 DAO 的
+    /// 请求租户物理命名空间（写读两侧前缀各随当时的请求租户），同租户内
+    /// 命中语义不变，跨租户逃逸由本绑定校验闭合。
     pub(super) async fn check_login_stateless(
         &self,
         token: &str,
@@ -659,6 +875,16 @@ impl GarrisonLogicDefault {
             let handler = crate::protocol::jwt::JwtHandler::new(self.config.jwt_secret.as_str());
             // 无效签名返回 InvalidToken，过期返回 ExpiredToken（透传 verify 错误）
             let claims = handler.verify(token)?;
+            // 租户绑定校验（verify 成功后、黑名单检查前）：签发租户 ≠ 请求租户
+            // 即拒绝，错误码与会话模式的跨租户拒绝一致
+            if let Ok(ctx) = crate::context::tenant::TENANT.try_get() {
+                let probe = handler.verify_custom::<JwtTenantProbe>(token)?;
+                if probe.tid.is_some_and(|tid| tid != ctx.tenant_id) {
+                    return Err(GarrisonError::Session(
+                        "stp-check-login-tenant-mismatch::".to_string(),
+                    ));
+                }
+            }
             // JWT 撤销黑名单检查（verify 成功后、返回 Ok 前）
             if self.config.enable_jwt_revocation {
                 if let Some(jti) = &claims.jti {
@@ -840,11 +1066,52 @@ impl GarrisonLogicDefault {
 // ============================================================================
 
 impl GarrisonLogicDefault {
+    /// 黑名单写入 `login_id` 当前全部会话 token 的 jti（批量入口）。
+    ///
+    /// **调用方必须已持有 `with_login_lock(login_id)`**：与 `logout_by_login_id_inner`
+    /// 的会话删除同临界区执行，闭合「锁外快照 → 并发 login 插入新 token →
+    /// 锁内删除新 session 但 jti 未拉黑」的 TOCTOU 窗口（渗透-竞态-踢出黑名单-1）。
+    /// 锁内快照与删除同源（DAO AccountSession.tokens，而非 login_token_map
+    /// 内存索引——后者在 login-token-map-persistence 间隔写入下可能滞后）。
+    ///
+    /// 快照读取失败仅 warn 并继续（与 [`Self::blacklist_jwt_jti`] 的幂等成功
+    /// 语义一致，删除照常执行；warn 供部署侧监控黑名单覆盖缺口）。
+    #[cfg(feature = "protocol-jwt")]
+    pub(crate) async fn blacklist_all_jwt_jti_locked(&self, login_id: &str) {
+        if !self.config.enable_jwt_revocation || self.config.token_style != "jwt" {
+            return;
+        }
+        let tokens: Vec<String> = match self.session.get_account_session(login_id).await {
+            Ok(Some(account)) => account.tokens.into_iter().map(|ti| ti.token).collect(),
+            Ok(None) => return,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    login_id,
+                    "jti blacklist snapshot read failed; revoked tokens may remain valid until natural expiry"
+                );
+                return;
+            },
+        };
+        for token in &tokens {
+            self.blacklist_jwt_jti(token).await;
+        }
+    }
+
     /// 将 JWT 的 `jti` 写入 DAO 黑名单。
     ///
     /// 解析 token 获取 claims，若 `jti` 为 Some 且 TTL > 0，
     /// 则写入 `jwt:blacklist:{jti}` = "1"（TTL = 剩余有效期秒数）。
     /// DAO 失败时 warn 日志不中断主流程。
+    ///
+    /// # 键命名空间与租户
+    ///
+    /// 键不带显式租户段：tenant-isolation 下 DAO 按**请求租户**为所有键加
+    /// 物理前缀，键内拼接租户段无法跨越写读两侧的请求租户错位（黑名单写入
+    /// 与校验各随当次请求的租户命名空间）。跨租户吊销逃逸由签发侧 `tid`
+    /// 绑定 claim + `check_login_stateless` 的绑定校验闭合（换 X-Tenant-Id
+    /// 头在黑名单检查前即被拒绝）；同租户内 kickout 与 check 的请求租户
+    /// 一致，键命中语义不变。非租户上下文（单租户部署）无前缀，行为不变。
     #[cfg(feature = "protocol-jwt")]
     pub(crate) async fn blacklist_jwt_jti(&self, token: &str) {
         if !self.config.enable_jwt_revocation || self.config.token_style != "jwt" {

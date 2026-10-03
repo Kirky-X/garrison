@@ -1156,17 +1156,22 @@ async fn acc_sec_024_csrf_api_mode_origin_behavior() {
     );
 }
 
-/// （异常）：跨租户 token 隔离验收（FINDING-025 实证记录）。
+/// （正常）：跨租户 token 隔离验收（FINDING-025 → 会话-租户绑定 演变）。
 ///
-/// # 实测契约（findings 记录，非弱化）
+/// # 契约演变（渗透-租户隔离-会话绑定-1 修复）
 ///
-/// **会话存储（token:session）不按租户作用域**——`tenant_isolation.enabled` 当前
-/// 无运行时消费点（仅配置解析），跨租户 check-login 返回 `data=true`（原 pentest
-/// 断言从未被 CI 执行，属未验证声明；验收首次真实验证后按实际契约记录）。
-/// 隔离的既有强制点：DAO 前缀层与 check-permission 层
-/// （本场景下方硬断言）。会话级强制列为后续 change（随 DAO 键作用域设计）。
-/// 本场景以哨兵断言记录现状：若未来实施会话级隔离，哨兵将显性失败并要求
-/// 移除本记录（防静默「修复」后测试假绿）。
+/// 原 FINDING-025（会话存储不按租户作用域、跨租户 check-login 放行）已由
+/// **会话-租户绑定**修复：登录请求在 `tenant_resolution_middleware` 解析出的
+/// `TENANT` 上下文内执行时，会话创建即绑定该租户
+/// （`SESSION_TENANT_ATTR_KEY` attr）；`check_login` 在租户上下文存在且会话
+/// 已绑定时校验一致性，跨租户（X-Tenant-Id 与绑定不一致）**拒绝**。
+///
+/// 对照用例（非绑定场景放行）：
+/// - 无租户上下文登录的会话不绑定，租户上下文内 check-login 仍放行
+///   （单元对照：`stp::session::tests::tenant_binding_tests::
+///   check_login_unbound_session_under_tenant_context_allowed`）；
+/// - 无租户上下文的请求 check-login 行为不变（非多租户部署，
+///   同模块 `check_login_without_tenant_context_unchanged`）。
 #[tokio::test(flavor = "multi_thread")]
 #[serial]
 async fn acc_sec_025_cross_tenant_token_isolation() {
@@ -1185,7 +1190,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
         start_garrison_server(100, "test-key", config).await;
     let client = tenant_client();
 
-    // 租户 0 登录
+    // 租户 0 登录（tenant_client 默认携 X-Tenant-Id: 0 → 会话绑定租户 0）
     let resp = client
         .post(format!("{}/api/v1/auth/login", external_url))
         .json(&serde_json::json!({
@@ -1199,7 +1204,7 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
     let body: serde_json::Value = resp.json().await.expect("login 响应非 JSON");
     let token = body["data"].as_str().expect("应有 token").to_string();
 
-    // 同租户（X-Tenant-Id: 0）：check-login 放行 —— 隔离生效的锚点
+    // 同租户（X-Tenant-Id: 0，与绑定一致）：check-login 放行 —— 隔离生效的锚点
     let resp = client
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")
@@ -1211,7 +1216,8 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
     let body: serde_json::Value = resp.json().await.expect("check-login 响应非 JSON");
     assert_eq!(body["data"], true, "同租户 check-login 应放行（隔离锚点）");
 
-    // 跨租户（X-Tenant-Id: 1）：check-login 必须拒绝（数据隔离）
+    // 跨租户（X-Tenant-Id: 1，与会话绑定租户 0 不一致）：check-login 必须拒绝
+    // （会话-租户绑定一致性校验；原 FINDING-025 记录的 data=true 放行语义已废止）
     let resp = client
         .post(format!("{}/api/v1/auth/check-login", internal_url))
         .header("x-api-key", "test-key")
@@ -1221,22 +1227,10 @@ async fn acc_sec_025_cross_tenant_token_isolation() {
         .await
         .expect("跨租户 check-login 请求失败");
     let status = resp.status();
-    assert_eq!(status, 200, "跨租户 check-login 仍应返回 200");
     let body: serde_json::Value = resp.json().await.expect("check-login 响应非 JSON");
-
-    // 实证发现（FINDING-025）：会话存储（token:session）**不按租户作用域**——
-    // 当前无运行时消费点（仅配置解析），auth-server 的
-    // check-login 跨租户返回 data=true。e2e pentest 原断言「跨租户 check-login 拒绝」
-    // 从未被 CI 执行验证（e2e target 被 required-features 排除），属未验证声明。
-    // 本场景按**实际契约**记录：会话层共享为现状；租户隔离的既有强制点在
-    // DAO 前缀层与审计/决策溯源层（migrated::tenant_isolation
-    // E2E）。跨租户会话级强制列为后续 change（随 DAO 键作用域设计）。
     assert!(
-        !is_denied(&body, status),
-        "FINDING-025 语义漂移：会话层隔离现已生效，请移除本记录并同步文档"
-    );
-    eprintln!(
-        "[FINDING-025] 跨租户 check-login 返回 data=true（会话存储无租户作用域，         已知限制见 CHANGELOG Unreleased（FINDING-025）；隔离强制点：DAO 前缀层/审计层）"
+        is_denied(&body, status),
+        "跨租户 check-login 必须被会话-租户绑定校验拒绝（FINDING-025 修复后契约），body={body:?}"
     );
 
     // 跨租户 check-permission：拒绝（error_code / 4xx）

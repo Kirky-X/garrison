@@ -92,12 +92,51 @@ pub struct KickoutRequest {
 /// login 请求体。
 ///
 /// BackendRemote 调用 `POST /api/v1/auth/login` 时发送的 JSON 结构。
+///
+/// # login_id 反序列化不变量（渗透-注入-login_id 无长度上限-2 /
+/// 渗透-会话与令牌-2 / 限流与爆破-1）
+///
+/// 反序列化即校验（422 拒绝，签发源头之前的第一道防线）：trim 后非空、
+/// 不含 `\x1f` 与其他控制字符、字节长度 ≤
+/// [`DEFAULT_LOGIN_ID_MAX_LEN`](crate::config::DEFAULT_LOGIN_ID_MAX_LEN)。
+/// wire 层不读运行时配置，按框架默认常量封顶（stp 层
+/// `config.login_id_max_len` 可进一步收紧）；错误信息不含输入内容回显。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoginRequest {
     /// 登录主体标识。
+    #[serde(deserialize_with = "validate_login_id_field")]
     pub login_id: String,
     /// 登录参数。
     pub params: LoginParams,
+}
+
+/// `LoginRequest.login_id` 的反序列化校验（wire 层硬上限 = 框架默认常量）。
+///
+/// 校验语义与 stp 层 `validate_login_id` 同源镜像（错误码一致）；
+/// 长度上限取 [`DEFAULT_LOGIN_ID_MAX_LEN`] 而非运行时配置——HTTP 请求
+/// 反序列化发生在配置消费点之前，按防 DoS 的框架默认封顶。
+fn validate_login_id_field<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    let max_len = crate::config::DEFAULT_LOGIN_ID_MAX_LEN as usize;
+    let rejection = if value.is_empty() || value.trim().is_empty() {
+        Some("login_id must not be empty or whitespace-only (stp-login-id-empty)")
+    } else if value.contains('\x1f') {
+        Some("login_id must not contain the unit separator (stp-login-id-sep)")
+    } else if value.chars().any(|c| c.is_control()) {
+        Some("login_id must not contain control characters (stp-login-id-control-char)")
+    } else if value.len() > max_len {
+        // 只回显长度上限，不回显输入内容
+        Some("login_id exceeds the maximum length (stp-login-id-too-long)")
+    } else {
+        None
+    };
+    match rejection {
+        Some(msg) => Err(serde::de::Error::custom(msg)),
+        None => Ok(value),
+    }
 }
 
 /// logout 请求体。
@@ -122,8 +161,17 @@ pub struct SwitchToRequest {
 
 /// renew_to_equivalent 请求体。
 ///
-/// BackendRemote 调用 `POST /api/v1/auth/renew-to-equivalent` 时发送的 JSON 结构。
+/// BackendRemote 调用 `POST /api/v1/auth/renew-to-equivalent`（外网 refresh
+/// 端点同构）时发送的 JSON 结构。
+///
+/// # 未知字段拒绝（R2-2）
+///
+/// `deny_unknown_fields` 使携带未知字段（如误发的 `params.remember_me`）的
+/// refresh 请求在反序列化期显性 4xx，而非静默忽略造成「字段已生效」的
+/// 假象——refresh 的会话时长语义固定为承接旧会话（`effective_timeout`
+/// 承接 + 剩余 TTL 落库），不接受任何续期参数。
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RenewToEquivalentRequest {
     /// 待续期的 token 字符串。
     pub token: String,
@@ -250,5 +298,81 @@ mod tests {
         let (code, msg) = resp.into_result().unwrap_err();
         assert_eq!(code, "INVALID_TOKEN");
         assert_eq!(msg, "token 已过期");
+    }
+
+    // ------------------------------------------------------------------
+    // LoginRequest.login_id 反序列化不变量（渗透-注入-login_id 无长度上限-2）
+    // ------------------------------------------------------------------
+
+    fn deser_login_request(body: &str) -> Result<LoginRequest, serde_json::Error> {
+        serde_json::from_str(body)
+    }
+
+    fn login_body(login_id_json: &str) -> String {
+        format!(
+            r#"{{"login_id":{},"params":{{"remember_me":false,"require_mfa":false}}}}"#,
+            login_id_json
+        )
+    }
+
+    /// 256 字符（超框架默认上限 255）→ 反序列化拒绝（HTTP 层 422）。
+    #[test]
+    fn login_request_rejects_login_id_over_wire_max_len() {
+        let long_id = "L".repeat(256);
+        let err = deser_login_request(&login_body(&format!("\"{long_id}\"")))
+            .expect_err("超上限 login_id 应拒绝");
+        assert!(
+            err.to_string().contains("stp-login-id-too-long"),
+            "错误应含 too-long 码，实际: {err}"
+        );
+        assert!(!err.to_string().contains(&long_id), "错误不得回显输入内容");
+    }
+
+    /// 默认上限内 255 字符通过。
+    #[test]
+    fn login_request_accepts_login_id_at_wire_max_len() {
+        let id = "L".repeat(255);
+        let req = deser_login_request(&login_body(&format!("\"{id}\"")))
+            .expect("255 字符 login_id 应通过");
+        assert_eq!(req.login_id.len(), 255);
+    }
+
+    /// 空串 / 纯空白 / 控制字符 / \x1f 拒绝。
+    #[test]
+    fn login_request_rejects_invalid_login_id_shapes() {
+        for (raw, code) in [
+            ("\"\"", "stp-login-id-empty"),
+            ("\"   \"", "stp-login-id-empty"),
+            ("\"\\u001fadmin\"", "stp-login-id-sep"),
+            ("\"admin\\nroot\"", "stp-login-id-control-char"),
+        ] {
+            let err =
+                deser_login_request(&login_body(raw)).expect_err(&format!("login_id={raw} 应拒绝"));
+            assert!(
+                err.to_string().contains(code),
+                "login_id={raw} 应含 {code}，实际: {err}"
+            );
+        }
+    }
+
+    /// R2-2：refresh 请求携带未知字段（如误发的 params.remember_me）反序列化期
+    /// 显性拒绝，不再静默忽略。
+    #[test]
+    fn renew_request_rejects_unknown_fields() {
+        let cases = [
+            r#"{"token":"t","params":{"remember_me":true}}"#,
+            r#"{"token":"t","remember_me":true}"#,
+        ];
+        for body in cases {
+            let err: serde_json::Error = serde_json::from_str::<RenewToEquivalentRequest>(body)
+                .expect_err(&format!("未知字段应拒绝: {body}"));
+            assert!(
+                err.to_string().contains("unknown field"),
+                "应报 unknown field，实际: {err}"
+            );
+        }
+        let ok: RenewToEquivalentRequest =
+            serde_json::from_str(r#"{"token":"t"}"#).expect("仅 token 字段应通过");
+        assert_eq!(ok.token, "t");
     }
 }

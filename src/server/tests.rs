@@ -1444,25 +1444,55 @@ async fn test_oauth2_with_tenant_resolver_routes_reachable() {
     );
 }
 
-/// server-health-check：/healthz /readyz 探针在两个端口均绕过全部中间件。
+/// server-health-check：探针在两个端口均绕过全部中间件（GAR-14 收敛后）。
 ///
-/// - 外网路由：探针不被 `external_path_filter` 拦成 404、不被 rate_limit 限流
-/// - 内网路由：探针不要求 API Key（K8s 探针不持有 api_key_auth 凭证）
+/// - 外网路由：仅 `/healthz`（最小语义，无版本号）；`/readyz` 不暴露（404）
+/// - 内网路由：`/healthz` `/readyz` 均不要求 API Key（K8s 探针不持有 api_key_auth 凭证）
+///
+/// sdforge readiness 注册表是进程级全局态，与其他注册检查的测试串行执行。
 #[cfg(feature = "server-health-check")]
+#[serial_test::serial]
 #[tokio::test]
 async fn test_health_probes_bypass_middleware() {
+    sdforge::health::clear_readiness_checks();
     let server = make_server();
 
-    // 外网端口：liveness 恒 200，readiness 默认（无注册检查）即 ready
+    // 外网端口：仅 liveness，readiness 不暴露
     let app = server.external_router();
-    for uri in ["/healthz", "/readyz"] {
-        let resp = app
-            .clone()
-            .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(resp.status(), StatusCode::OK, "{uri} 外网端口应返回 200");
-    }
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/healthz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK, "/healthz 外网端口应返回 200");
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json,
+        serde_json::json!({"status": "healthy"}),
+        "GAR-14: 外网 healthz 仅含 status，不回显版本号"
+    );
+
+    let app = server.external_router();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "GAR-14: 外网端口不应暴露 /readyz"
+    );
 
     // 内网端口：无 X-API-Key 仍应 200（绕过 api_key_auth）
     let app = server.internal_router();
@@ -1478,4 +1508,267 @@ async fn test_health_probes_bypass_middleware() {
             "{uri} 内网端口应绕过 api_key_auth 返回 200"
         );
     }
+}
+
+/// GAR-14: 内网 /readyz 默认剥离 checks[].details（可能含内部依赖拓扑），
+/// 显式 with_health_details(true) 后透传。
+#[cfg(feature = "server-health-check")]
+#[serial_test::serial]
+#[tokio::test]
+async fn test_internal_readyz_details_gated_by_config() {
+    sdforge::health::register_readiness_check_fn("primary-db", || sdforge::health::CheckOutcome {
+        name: "primary-db".to_string(),
+        healthy: true,
+        details: Some(serde_json::json!({"host": "db.internal:5432", "latency_ms": 3})),
+    });
+
+    // 默认（details 关闭）：details 字段被剥离
+    let server = make_server();
+    let app = server.internal_router();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let check = &json["checks"][0];
+    assert_eq!(check["name"], "primary-db");
+    assert!(
+        check.get("details").is_none(),
+        "默认应剥离 details，实际: {check}"
+    );
+
+    // 显式开启：details 原样透传
+    let server = make_server().with_health_details(true);
+    let app = server.internal_router();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        json["checks"][0]["details"]["host"], "db.internal:5432",
+        "开启后 details 应透传"
+    );
+
+    sdforge::health::clear_readiness_checks();
+}
+
+/// GAR-14: readiness 判定语义保持——任一注册检查失败 → 503（details 仍剥离）。
+#[cfg(feature = "server-health-check")]
+#[serial_test::serial]
+#[tokio::test]
+async fn test_internal_readyz_failure_returns_503() {
+    sdforge::health::register_readiness_check_fn("downstream", || {
+        sdforge::health::CheckOutcome::unhealthy("downstream", "connection refused")
+    });
+
+    let server = make_server();
+    let app = server.internal_router();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/readyz")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["status"], "unavailable");
+    assert!(
+        json["checks"][0].get("details").is_none(),
+        "默认剥离 details（失败原因同样不外泄）"
+    );
+
+    sdforge::health::clear_readiness_checks();
+}
+
+/// GAR-27（端到端）：外网 login 畸形类型 body 返回统一 JSON 错误体，
+/// 不含内部类型名 / 字段名 / 字节偏移。
+#[tokio::test]
+async fn test_external_router_sanitizes_422_type_leak() {
+    let server = make_server();
+    let app = server.external_router();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from("[1,2,3]".to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "状态码保持 4xx"
+    );
+    assert_eq!(
+        resp.headers().get("content-type").unwrap(),
+        "application/json"
+    );
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    for leaked in [
+        "LoginRequest",
+        "LoginParams",
+        "struct",
+        "expected",
+        "line",
+        "column",
+        "login_id",
+    ] {
+        assert!(
+            !text.contains(leaked),
+            "响应不得泄露 {leaked}，实际: {text}"
+        );
+    }
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"], "bad_request");
+}
+
+/// GAR-29（端到端）：外网 login 读体超限（>256KB）返回 413 统一 JSON 错误体。
+#[tokio::test]
+async fn test_external_router_oversize_body_returns_413() {
+    let server = make_server();
+    let app = server.external_router();
+    let oversize = vec![b'x'; 256 * 1024 + 1];
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                // 注入 ConnectInfo 使 ClientIp 非 "unknown"（真实外网端口必有连接地址）
+                .extension(axum::extract::ConnectInfo(std::net::SocketAddr::new(
+                    std::net::IpAddr::V4(std::net::Ipv4Addr::new(203, 0, 113, 1)),
+                    40000,
+                )))
+                .body(Body::from(oversize))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "超限 body 应返回 413 而非误导性 400/断连"
+    );
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(json["error"], "payload_too_large");
+}
+
+/// GAR-28（端到端）：重复 X-API-Key 头经内网路由 fail-closed 401
+///（首值合法亦拒绝，消除与「取末值」网关的判定分裂）。
+#[tokio::test]
+async fn test_internal_router_rejects_duplicate_api_key_header() {
+    let server = make_server().with_api_key_lockout(0, 300);
+    let app = server.internal_router();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/api/v1/auth/health")
+                .header("x-api-key", "test-api-key")
+                .header("x-api-key", "wrong-key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::UNAUTHORIZED,
+        "重复 X-API-Key 头应 fail-closed 拒绝"
+    );
+}
+
+/// GAR-23（端到端）：内网 get-session 缺失 caller_login_id 返回 400（fail-closed）。
+#[tokio::test]
+async fn test_internal_router_get_session_without_caller_rejected() {
+    let server = make_server();
+    let app = server.internal_router();
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/get-session")
+                .header("content-type", "application/json")
+                .header("x-api-key", "test-api-key")
+                .body(Body::from(r#"{"token":"token-user1"}"#.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::BAD_REQUEST,
+        "caller_login_id 缺失应 4xx fail-closed"
+    );
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(json.get("data").is_none(), "拒绝响应不得携带会话数据");
+}
+
+/// GAR-13（端到端）：auth-server 聚合含 web-security-headers 后，
+/// 认证端点响应携带 Cache-Control: no-store / X-Content-Type-Options / X-Frame-Options。
+#[cfg(feature = "web-security-headers")]
+#[tokio::test]
+async fn test_external_router_response_has_security_headers() {
+    let server = make_server();
+    let app = server.external_router();
+    let body = serde_json::json!({
+        "login_id": "user1",
+        "params": LoginParams::default()
+    });
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/auth/login")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers()
+            .get("cache-control")
+            .map(|v| v.to_str().unwrap()),
+        Some("no-store"),
+        "GAR-13: token 承载端点应带 Cache-Control: no-store（CWE-525）"
+    );
+    assert_eq!(
+        resp.headers()
+            .get("x-content-type-options")
+            .map(|v| v.to_str().unwrap()),
+        Some("nosniff")
+    );
+    assert_eq!(
+        resp.headers()
+            .get("x-frame-options")
+            .map(|v| v.to_str().unwrap()),
+        Some("DENY")
+    );
 }

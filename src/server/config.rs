@@ -3,6 +3,38 @@
 
 use super::AuthServerConfig;
 
+/// 读取布尔环境变量开关（接受 "1"/"true"/"yes"/"on"，大小写不敏感）。
+///
+/// 变量存在但无法识别取值时告警并按 `None` 处理（调用方回退默认值）——
+/// 不静默吞掉：配置错误必须显性化。
+fn env_flag(key: &str) -> Option<bool> {
+    std::env::var(key)
+        .ok()
+        .and_then(|raw| match raw.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => Some(true),
+            "0" | "false" | "no" | "off" => Some(false),
+            _ => {
+                tracing::warn!(
+                    env = key,
+                    value = %raw,
+                    "unrecognized boolean, falling back to default"
+                );
+                None
+            },
+        })
+}
+
+/// 读取整数环境变量（非法取值告警并回退默认值，不静默）。
+fn env_num<T: std::str::FromStr>(key: &str) -> Option<T> {
+    std::env::var(key).ok().and_then(|raw| match raw.trim().parse::<T>() {
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::warn!(env = key, value = %raw, "unrecognized number, falling back to default");
+            None
+        },
+    })
+}
+
 impl AuthServerConfig {
     /// 校验配置合法性。
     ///
@@ -47,6 +79,14 @@ impl Default for AuthServerConfig {
             internal_body_limit: 1024 * 1024, // 1 MB
             // C-1: 外网登录端点默认关闭（框架不校验凭证，secure-by-default）
             external_login_enabled: false,
+            // GAR-25: API Key 失败锁定默认开启（阈值 10 / 窗口 300s；0 = 禁用）。
+            // 环境变量在 Default 读取（而非 bin 接线）：保证 bin 零改动即可
+            // 经 GARRISON_* 覆盖默认装配。
+            api_key_lockout_threshold: env_num("GARRISON_API_KEY_LOCKOUT_THRESHOLD").unwrap_or(10),
+            api_key_lockout_window_secs: env_num("GARRISON_API_KEY_LOCKOUT_WINDOW_SECS")
+                .unwrap_or(300),
+            // GAR-14: readyz details 默认剥离（可能含内部依赖拓扑），显式 opt-in
+            health_details_enabled: env_flag("GARRISON_HEALTH_DETAILS").unwrap_or(false),
         }
     }
 }

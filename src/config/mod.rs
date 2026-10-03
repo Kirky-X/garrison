@@ -35,6 +35,9 @@ use tokio::sync::watch;
 
 pub mod deprecation;
 pub mod impls;
+/// 配置安全规则集（`config-security-rules` feature 门控，见模块文档）。
+#[cfg(feature = "config-security-rules")]
+mod security_rules;
 /// Token 风格枚举（对应 token 风格）。
 ///
 /// 配置校验——token_style 必须是以下 4 个合法值之一。
@@ -163,6 +166,14 @@ pub const DEFAULT_IS_SHARE: bool = false;
 
 /// 默认最大登录数量（0 = 不限制，>0 = 超出时踢出最早登录的会话）。
 pub const DEFAULT_MAX_LOGIN_COUNT: u32 = 0;
+
+/// login_id 默认长度上限（字节，255；0 = 不限制）。
+///
+/// 同时作为 HTTP 请求层 `LoginRequest.login_id` 反序列化的硬上限
+/// （wire 层不读运行时配置，始终按本常量封顶，防未认证超大 login_id
+/// 灌入会话存储的内存增长向量）；`login_id_max_len` 配置可在 stp 签发
+/// 源头进一步收紧或放宽（0 = 框架层不限，HTTP wire 层仍按本常量封顶）。
+pub const DEFAULT_LOGIN_ID_MAX_LEN: u32 = 255;
 
 /// 默认设备绑定模式（"disabled" = 不启用设备绑定）。
 pub const DEFAULT_DEVICE_BINDING_MODE: &str = "disabled";
@@ -577,6 +588,27 @@ pub struct GarrisonConfig {
     ///
     /// 仅当 `remember_me_enabled = true` 且 `login` params 含 `remember_me=true` 时生效。
     pub remember_me_timeout: i64,
+
+    /// 登录时是否向会话播种主认证因子（amr=["pwd"] / aal:1 / auth_time）。默认 `true`。
+    ///
+    /// 默认 `true` 保持既有行为（login 即主认证的历史契约）。**安全敏感部署建议
+    /// 显式关闭**（`seed_primary_amr = false`）：凭证委托 / 零凭证 login 路径
+    /// （如参考部署的外网 login）并未发生密码校验，播种 `pwd` 会向 amr_ledger
+    /// 与 amr/auth_time claim 断言一次从未发生的认证，误导下游 step-up 判定
+    /// （`assert_freshness` / `ledger_max_aal`）。关闭后：
+    /// - 会话 `amr_ledger` 为空、`auth_time` 为 `None`；
+    /// - JWT 签发不携带 `amr` / `auth_time` claim（MFA 编排仍可经 step-up 追加）。
+    pub seed_primary_amr: bool,
+
+    /// login_id 长度上限（字节）。默认 255；`0` = 框架层不限制。
+    ///
+    /// 在 stp 登录收口（`login` / `login_with_token` / `login_by_token`）强制：
+    /// 超限返回 `InvalidParam`（拒绝签发会话，封住未认证内存增长源头）。
+    /// HTTP 请求层 `LoginRequest` 反序列化另有硬上限
+    /// [`DEFAULT_LOGIN_ID_MAX_LEN`](crate::config::DEFAULT_LOGIN_ID_MAX_LEN)
+    /// （wire 层不读运行时配置）；本配置只可收紧该上限，设为 0 时框架层不限
+    /// 但 wire 层仍按默认常量封顶。
+    pub login_id_max_len: u32,
 
     /// 会话悬停超时秒数（-1 = 不启用，>0 = 不活跃秒数后踢出）。
     ///

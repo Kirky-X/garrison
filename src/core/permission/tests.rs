@@ -5,6 +5,7 @@
 
 use super::mock::MockInterface;
 use super::*;
+use std::collections::HashMap;
 
 /// 创建 PermissionCheckerDefault 实例（账号 1001 持有 user:read/user:write 权限 + admin/user 角色）。
 fn make_checker() -> PermissionCheckerDefault {
@@ -397,4 +398,95 @@ async fn mock_interface_default_methods_with_type_coverage() {
         .get_role_list_with_type("u1", "default")
         .await
         .unwrap();
+}
+
+// ========================================================================
+// 租户感知判定（渗透-RBAC-租户维度-1）：authorize 消费 AuthRequest.tenant_id
+// ========================================================================
+
+/// 租户感知 interface mock：按 (tenant_id, login_id) 返回权限，
+/// 模拟业务方覆写 `get_permission_list_in_tenant` 的租户隔离数据源。
+struct TenantScopedInterface {
+    by_tenant: HashMap<(i64, String), Vec<String>>,
+}
+
+#[async_trait]
+impl GarrisonInterface for TenantScopedInterface {
+    async fn get_permission_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_role_list(&self, _login_id: &str) -> GarrisonResult<Vec<String>> {
+        Ok(Vec::new())
+    }
+
+    async fn get_permission_list_in_tenant(
+        &self,
+        tenant_id: i64,
+        login_id: &str,
+    ) -> GarrisonResult<Vec<String>> {
+        Ok(self
+            .by_tenant
+            .get(&(tenant_id, login_id.to_string()))
+            .cloned()
+            .unwrap_or_default())
+    }
+}
+
+/// authorize 默认实现消费 request.tenant_id：租户 1 的 "admin" 持有 doc:delete，
+/// 租户 2 的重名 "admin" 不得继承（跨租户互染回归）。
+#[tokio::test]
+async fn authorize_consumes_request_tenant_id_with_tenant_scoped_source() {
+    let mut map = HashMap::new();
+    map.insert((1, "admin".to_string()), vec!["doc:delete".to_string()]);
+    let checker = PermissionCheckerDefault::new(Arc::new(TenantScopedInterface { by_tenant: map }));
+
+    let mut req = AuthRequest::new("admin", "doc:delete");
+    req.tenant_id = 1;
+    let decision = PermissionChecker::authorize(&checker, &req).await.unwrap();
+    assert!(
+        decision.allowed,
+        "租户 1 的 admin 应被允许（租户作用域数据源命中）"
+    );
+
+    let mut req2 = AuthRequest::new("admin", "doc:delete");
+    req2.tenant_id = 2;
+    let decision2 = PermissionChecker::authorize(&checker, &req2).await.unwrap();
+    assert!(
+        !decision2.allowed,
+        "租户 2 的重名 admin 不得继承租户 1 的权限"
+    );
+    assert!(
+        matches!(decision2.reason, DecisionReason::NoMatchingPermission),
+        "拒绝原因应为 NoMatchingPermission，实际: {:?}",
+        decision2.reason
+    );
+}
+
+/// authorize 在 tenant_id = 0（单租户/未隔离）时保持全局路径行为不变。
+#[tokio::test]
+async fn authorize_tenant_zero_keeps_global_path_behavior() {
+    // 全局数据源持权，租户数据源为空：tenant_id=0 必须走全局路径命中
+    let interface = MockInterface::new().with_perms("1001", vec!["user:read"]);
+    let checker = PermissionCheckerDefault::new(Arc::new(interface));
+
+    let req = AuthRequest::new("1001", "user:read");
+    let decision = PermissionChecker::authorize(&checker, &req).await.unwrap();
+    assert!(
+        decision.allowed,
+        "tenant_id=0 应走全局数据源（行为不变契约）"
+    );
+}
+
+/// has_permission_in_tenant 默认实现委托 has_permission（未覆写实现行为不变契约）。
+#[tokio::test]
+async fn has_permission_in_tenant_default_delegates_to_global() {
+    let checker = make_checker();
+    assert!(
+        checker
+            .has_permission_in_tenant(42, "1001", "user:read")
+            .await
+            .unwrap(),
+        "默认实现应委托 has_permission（忽略 tenant_id）"
+    );
 }

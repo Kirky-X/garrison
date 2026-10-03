@@ -672,10 +672,21 @@ async fn acc_repo_010_user_device_register_list_block_unblock_count() {
     assert_eq!(devices[0].device_identifier, "block-fp");
     assert!(!devices[0].is_blocked, "新设备默认未阻断");
 
-    repo.block_device(&device_id).await.expect("block 应成功");
+    repo.block_device(TENANT_A, &device_id)
+        .await
+        .expect("block 应成功");
     let devices = repo.list_user_devices(TENANT_A, login_id).await.unwrap();
     assert!(devices[0].is_blocked, "block 后 is_blocked 应为 true");
-    repo.unblock_device(&device_id)
+    // 跨租户 no-op：其他租户按 device_id 封禁不得改动本租户设备（0 行受影响）
+    repo.block_device(TENANT_B, &device_id)
+        .await
+        .expect("跨租户 block 应为 no-op 而非错误");
+    let devices = repo.list_user_devices(TENANT_A, login_id).await.unwrap();
+    assert!(
+        devices[0].is_blocked,
+        "跨租户 unblock 亦不得改动他租户设备状态（仍为本租户 block 后的 true）"
+    );
+    repo.unblock_device(TENANT_A, &device_id)
         .await
         .expect("unblock 应成功");
     let devices = repo.list_user_devices(TENANT_A, login_id).await.unwrap();
@@ -1244,7 +1255,7 @@ async fn acc_repo_022_user_device_repo_table_missing() {
         repo.count_user_devices(TENANT_A, "1001").await,
         "app-user-device",
     );
-    assert_dao_error(repo.block_device("d-1").await, "app-user-device");
+    assert_dao_error(repo.block_device(TENANT_A, "d-1").await, "app-user-device");
 }
 
 // ------------------------------------------------------------------------

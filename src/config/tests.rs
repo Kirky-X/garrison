@@ -210,14 +210,17 @@ fn validate_rejects_zero_timeout() {
 }
 
 /// 验证所有合法 token_style 通过校验。
+///
+/// simple 风格自 静态-配置与部署-6 起 jwt_secret 即 HMAC 签名密钥，同 jwt 一样
+/// 要求 ≥32B 强密钥（空/短密钥硬错误），循环内一并补齐。
 #[test]
 #[cfg_attr(not(feature = "protocol-zeroize"), allow(clippy::useless_conversion))]
 fn validate_accepts_all_legal_token_styles() {
     for style in TOKEN_STYLES {
         let mut config = GarrisonConfig::default_config();
         config.token_style = style.to_string();
-        if *style == "jwt" {
-            // ≥32 字节，满足 HS256 jwt_secret 最小长度校验
+        if matches!(*style, "jwt" | "simple") {
+            // ≥32 字节，满足 jwt/HS256 与 simple 的 jwt_secret 最小长度校验
             config.jwt_secret = "test-secret-0123456789abcdefghij".to_string().into();
         }
         assert!(
@@ -338,20 +341,29 @@ fn validate_rejects_unknown_jwt_algorithm() {
     }
 }
 
-/// 验证非 jwt 风格（如 simple）允许短 jwt_secret：
+/// 验证 token_style=simple 且 jwt_secret 短于 32 字节时校验失败。
 ///
-/// jwt_secret 在 simple 风格下被复用为 HMAC 密钥，不是可离线爆破的 JWT 签名，
-/// 长度校验仅限定在 token_style=jwt，避免误伤其他风格。
-/// 注意：simple 风格下短密钥会触发 tracing::warn 提示强化，但 validate() 仍 Ok。
+/// simple 风格的 jwt_secret 直接作为 HMAC-SHA256 签名密钥（`SimpleTokenStyle`），
+/// 弱密钥可离线爆破，安全关键。rc 阶段接受 breaking：原 warn 不阻断与
+/// `SimpleTokenStyle::generate` 的运行时 fail-closed（`core-simple-secret-too-short`）
+/// 不一致，现配置层对齐硬错误，错误信息注明升级指引。
 #[test]
-fn validate_allows_short_secret_for_non_jwt_style() {
+fn validate_rejects_short_secret_for_simple_style() {
     let mut config = GarrisonConfig::default_config();
     config.token_style = "simple".to_string();
-    config.jwt_secret = "weak".to_string().into(); // 4 字节，simple 风格不受长度校验
-    assert!(
-        config.validate().is_ok(),
-        "非 jwt 风格不应触发 JWT 密钥长度校验"
-    );
+    config.jwt_secret = "weak".to_string().into(); // 4 字节 < 32
+    match config.validate() {
+        Err(GarrisonError::Config(msg)) => {
+            assert!(
+                msg.contains("config-jwt-secret-too-short")
+                    && msg.contains("min 32")
+                    && msg.contains("openssl rand"),
+                "simple 短密钥错误应含长度约束与升级指引，实际: {}",
+                msg
+            );
+        },
+        other => panic!("simple 风格短密钥应被拒绝，实际: {:?}", other),
+    }
 }
 
 /// 验证 ≥32 字节的 jwt_secret 在 HS256 下通过校验。
@@ -382,6 +394,112 @@ fn validate_accepts_strong_jwt_secret_hs512() {
     config.jwt_algorithm = "HS512".to_string();
     config.jwt_secret = "x".repeat(64).into(); // 恰好 64 字节边界
     assert!(config.validate().is_ok(), "64 字节密钥应通过 HS512 校验");
+}
+
+// ========================================================================
+// JWT 弱密钥黑名单（静态-配置与部署-6）
+// ========================================================================
+
+/// 验证 jwt 风格下 32 字节填充变体弱密钥被拒（过长度校验、命中黑名单）。
+///
+/// "changeme" + 24 个 '_' = 32 字节：仅靠长度校验拦不住可预测密钥，
+/// 黑名单剥离填充字符后整串比对（忽略大小写）。
+#[test]
+fn validate_rejects_weak_padded_jwt_secret_hs256() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS256".to_string();
+    config.jwt_secret = format!("changeme{}", "_".repeat(24)).into();
+    match config.validate() {
+        Err(GarrisonError::Config(msg)) => {
+            assert!(
+                msg.contains("config-jwt-secret-weak") && msg.contains("blacklist"),
+                "填充弱密钥应命中黑名单，实际: {}",
+                msg
+            );
+        },
+        other => panic!("弱密钥填充变体应被拒绝，实际: {:?}", other),
+    }
+}
+
+/// 验证弱密钥黑名单忽略大小写（jwt/HS512，满足长度仍拒）。
+#[test]
+fn validate_rejects_weak_jwt_secret_case_insensitive() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS512".to_string();
+    config.jwt_secret = format!("PASSWORD{}", "-".repeat(56)).into(); // 64 字节
+    let err = config.validate().expect_err("大写弱密钥填充变体应被拒绝");
+    assert!(
+        err.to_string().contains("config-jwt-secret-weak"),
+        "实际: {}",
+        err
+    );
+}
+
+/// 验证 simple 风格弱密钥（满足 32 字节长度）同样命中黑名单。
+#[test]
+fn validate_rejects_weak_secret_for_simple_style() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "simple".to_string();
+    config.jwt_secret = format!("letmein{}", ".".repeat(25)).into(); // 32 字节
+    let err = config.validate().expect_err("simple 弱密钥应被拒绝");
+    assert!(
+        err.to_string().contains("config-jwt-secret-weak"),
+        "实际: {}",
+        err
+    );
+}
+
+/// 验证强密钥包含弱密钥子串不误伤（黑名单为整串匹配，非子串匹配）。
+#[test]
+fn validate_accepts_strong_secret_containing_weak_substring() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "HS256".to_string();
+    // 35 字节高熵短句，尾部含 "123456" 子串——整串不命中黑名单
+    config.jwt_secret = "correct horse battery staple 123456".to_string().into();
+    assert!(config.validate().is_ok(), "含弱密钥子串的强密钥不应被误伤");
+}
+
+/// 验证各 token_style × 空/弱/强 jwt_secret 的校验矩阵。
+///
+/// - `uuid` / `random_64`：CSPRNG 不透明 token，签名不消费 jwt_secret，
+///   空/弱均放行（维持宽松默认，不迫使非 JWT 部署配置无意义密钥）
+/// - `simple`：空（<32B）硬错误
+/// - `jwt` + 非对称算法：强度由 PEM 决定，jwt_secret 空放行（既有语义）
+#[test]
+fn validate_jwt_secret_style_matrix() {
+    for style in ["uuid", "random_64"] {
+        let mut config = GarrisonConfig::default_config();
+        config.token_style = style.to_string();
+        config.jwt_secret = String::new().into();
+        assert!(
+            config.validate().is_ok(),
+            "{style} 风格空 jwt_secret 应放行（不透明风格不消费密钥）"
+        );
+        config.jwt_secret = "changeme".to_string().into();
+        assert!(
+            config.validate().is_ok(),
+            "{style} 风格弱 jwt_secret 应放行（不透明风格不消费密钥）"
+        );
+    }
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "simple".to_string();
+    config.jwt_secret = String::new().into();
+    assert!(
+        config.validate().is_err(),
+        "simple 风格空 jwt_secret 应拒绝（直接参与 HMAC 签名）"
+    );
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_algorithm = "RS256".to_string();
+    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
+    config.jwt_secret = String::new().into();
+    assert!(
+        config.validate().is_ok(),
+        "jwt 非对称算法空 jwt_secret 应放行（强度由 PEM 决定）"
+    );
 }
 
 // ========================================================================
@@ -1444,6 +1562,118 @@ fn env_overrides_csrf_enabled() {
         config.csrf_config.enabled,
         "GARRISON_CSRF_ENABLED=true 应启用 CSRF"
     );
+}
+
+/// `GARRISON_CSRF_ENABLED` 仅接受 true/false（大小写不敏感）。
+///
+/// "TRUE"/"False" 合法生效；fail-closed 对齐 `GARRISON_RATE_LIMIT_BACKEND`。
+#[cfg(feature = "web-csrf")]
+#[test]
+#[serial]
+fn env_csrf_enabled_accepts_true_false_case_insensitive() {
+    for (raw, expected) in [("TRUE", true), ("False", false), ("false", false)] {
+        let _guard = EnvVarGuard::set("GARRISON_CSRF_ENABLED", raw);
+        let config = GarrisonConfig::load(None).expect("合法布尔值 load 应成功");
+        assert_eq!(
+            config.csrf_config.enabled, expected,
+            "GARRISON_CSRF_ENABLED={raw} 应生效为 {expected}"
+        );
+    }
+}
+
+/// `GARRISON_CSRF_ENABLED` 非 true/false 值返回 Config 硬错误（fail-closed）。
+///
+/// "1"/"yes"/"on" 等 truthy 习惯值此前会静默禁用 CSRF 防护（安全控制
+/// 不允许歧义取值），现对齐限流后端覆盖的硬错误语义。
+#[cfg(feature = "web-csrf")]
+#[test]
+#[serial]
+fn env_csrf_enabled_invalid_value_fails_load() {
+    for raw in ["1", "yes", "on", "garbage"] {
+        let _guard = EnvVarGuard::set("GARRISON_CSRF_ENABLED", raw);
+        match GarrisonConfig::load(None) {
+            Err(GarrisonError::Config(msg)) => assert!(
+                msg.contains("config-csrf-enabled-unsupported") && msg.contains(raw),
+                "GARRISON_CSRF_ENABLED={raw} 应报错并回显原值，实际: {msg}"
+            ),
+            other => panic!("GARRISON_CSRF_ENABLED={raw} 应 load 失败，实际: {other:?}"),
+        }
+    }
+}
+
+// ========================================================================
+// config-security-rules 安全规则集（静态-配置与部署-1）
+// ========================================================================
+
+/// feature 开启时弱密钥配置经 validate() 被拒（规则路径复用 JWT 强度+黑名单）。
+#[cfg(feature = "config-security-rules")]
+#[test]
+fn security_rules_rejects_weak_jwt_secret() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    // 32 字节填充变体：过长度校验、命中黑名单，隔离出规则集自身的拒绝能力
+    config.jwt_secret = format!("changeme{}", "_".repeat(24)).into();
+    let err = config
+        .validate()
+        .expect_err("弱密钥应被 config-security-rules 拒绝");
+    assert!(
+        err.to_string().contains("config-jwt-secret-weak"),
+        "实际: {}",
+        err
+    );
+}
+
+/// feature 开启时加固配置通过 validate()（强密钥 + 显式 origin 白名单）。
+#[cfg(all(feature = "config-security-rules", feature = "web-cors"))]
+#[test]
+fn security_rules_accepts_hardened_config() {
+    let mut config = GarrisonConfig::default_config();
+    config.token_style = "jwt".to_string();
+    config.jwt_secret = "x".repeat(32).into();
+    config.cors_config.allowed_origins = vec!["https://a.example".to_string()];
+    config.cors_config.allow_credentials = true;
+    assert!(config.validate().is_ok(), "加固配置应通过安全规则校验");
+}
+
+/// feature 开启时通配 origin 且未开 credentials：不拒绝（公开只读 API 是
+/// 合法场景）但必须落 warn（显性提示任意源可读响应）。
+#[cfg(all(feature = "config-security-rules", feature = "web-cors"))]
+#[test]
+fn security_rules_warns_wildcard_origins_without_credentials() {
+    let mut config = GarrisonConfig::default_config();
+    config.cors_config.allowed_origins = vec!["*".to_string()];
+    config.cors_config.allow_credentials = false;
+    with_captured_deprecation_logs(|logs| {
+        config
+            .validate()
+            .expect("通配 origin 无 credentials 应放行");
+        let lines = logs.lock().expect("日志缓冲锁应可用");
+        assert!(
+            lines
+                .iter()
+                .any(|l| { l.contains("WARN") && l.contains("allowed_origins=[\"*\"]") }),
+            "通配 origin 应落风险警示 warn，实际日志: {:?}",
+            *lines
+        );
+    });
+}
+
+/// feature 关闭时安全规则集不生效（零行为变化）：同样的通配 origin 配置
+/// 不产生规则集 warn——两条 cfg 侧测试分别锁定两个 feature 形态的行为。
+#[cfg(all(not(feature = "config-security-rules"), feature = "web-cors"))]
+#[test]
+fn security_rules_disabled_no_rule_warnings() {
+    let mut config = GarrisonConfig::default_config();
+    config.cors_config.allowed_origins = vec!["*".to_string()];
+    with_captured_deprecation_logs(|logs| {
+        config.validate().expect("关闭规则集不应改变校验结果");
+        let lines = logs.lock().expect("日志缓冲锁应可用");
+        assert!(
+            !lines.iter().any(|l| l.contains("allowed_origins=[\"*\"]")),
+            "feature 关闭时不应有安全规则集 warn，实际日志: {:?}",
+            *lines
+        );
+    });
 }
 
 /// `GARRISON_RATE_LIMIT_BACKEND=redis` 覆盖限流后端为 Redis。
@@ -2885,4 +3115,72 @@ fn mfa_known_factors_pass_validation() {
         .per_client_chains
         .insert("client-b".to_string(), vec![]);
     assert!(config.validate().is_ok(), "已知 factor 应通过校验");
+}
+
+// ========================================================================
+// seed_primary_amr / login_id_max_len 配置测试（渗透-认证绕过-3 /
+// 注入-login_id 无长度上限-2）
+// ========================================================================
+
+/// `default_config()`：seed_primary_amr 默认 true（保持既有播种契约）。
+#[test]
+fn config_default_seed_primary_amr_is_true() {
+    let config = GarrisonConfig::default_config();
+    assert!(
+        config.seed_primary_amr,
+        "seed_primary_amr 默认应为 true（开关默认保持现状，安全敏感部署显式关闭）"
+    );
+}
+
+/// `default_config()`：login_id_max_len 默认 255。
+#[test]
+fn config_default_login_id_max_len_is_255() {
+    let config = GarrisonConfig::default_config();
+    assert_eq!(config.login_id_max_len, 255);
+    assert_eq!(config.login_id_max_len, DEFAULT_LOGIN_ID_MAX_LEN);
+}
+
+/// `GARRISON_SEED_PRIMARY_AMR=false` 环境变量覆盖生效。
+#[serial]
+#[test]
+fn config_env_override_seed_primary_amr_false() {
+    let _env_guards = [EnvVarGuard::set("GARRISON_SEED_PRIMARY_AMR", "false")];
+    let config = GarrisonConfig::load(None).expect("合法 env 覆盖应加载成功");
+    assert!(!config.seed_primary_amr, "env 覆盖 false 应生效");
+}
+
+/// `GARRISON_SEED_PRIMARY_AMR` 非布尔值 → 加载期类型校验拒绝（fail-closed）。
+#[serial]
+#[test]
+fn config_env_seed_primary_amr_invalid_type_rejected() {
+    let _env_guards = [EnvVarGuard::set("GARRISON_SEED_PRIMARY_AMR", "not-a-bool")];
+    let result = GarrisonConfig::load(None);
+    assert!(result.is_err(), "非布尔 seed_primary_amr 应在加载期拒绝");
+}
+
+/// `GARRISON_LOGIN_ID_MAX_LEN=128` 环境变量覆盖生效。
+#[serial]
+#[test]
+fn config_env_override_login_id_max_len() {
+    let _env_guards = [EnvVarGuard::set("GARRISON_LOGIN_ID_MAX_LEN", "128")];
+    let config = GarrisonConfig::load(None).expect("合法 env 覆盖应加载成功");
+    assert_eq!(config.login_id_max_len, 128);
+}
+
+/// `GARRISON_LOGIN_ID_MAX_LEN=0` 合法（0 = 框架层不限制）。
+#[serial]
+#[test]
+fn config_env_login_id_max_len_zero_means_unlimited() {
+    let _env_guards = [EnvVarGuard::set("GARRISON_LOGIN_ID_MAX_LEN", "0")];
+    let config = GarrisonConfig::load(None).expect("0=不限制应加载成功");
+    assert_eq!(config.login_id_max_len, 0);
+}
+
+/// `GARRISON_LOGIN_ID_MAX_LEN` 非整数值 → 加载期类型校验拒绝。
+#[serial]
+#[test]
+fn config_env_login_id_max_len_invalid_type_rejected() {
+    let _env_guards = [EnvVarGuard::set("GARRISON_LOGIN_ID_MAX_LEN", "abc")];
+    let result = GarrisonConfig::load(None);
+    assert!(result.is_err(), "非整数 login_id_max_len 应在加载期拒绝");
 }

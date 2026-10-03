@@ -236,6 +236,35 @@ impl GarrisonSession {
             .await
     }
 
+    /// [`create`](Self::create) 的主认证因子播种变体。
+    ///
+    /// `seed_primary_amr = false` 时不向会话播种 `pwd` / AAL 1 / `auth_time`
+    /// （渗透-认证绕过-3 / 会话与令牌-5：凭证委托 login 未发生密码校验，
+    /// 不得在因子账本断言不存在的认证事实；core auth 路径按
+    /// `AuthLogicDefault::with_seed_primary_amr` 传入）。其余语义与 `create`
+    /// 完全一致（无 remember_me，`effective_timeout` 为 `None`）。
+    pub async fn create_with_seed_primary_amr(
+        &self,
+        login_id: impl Into<String>,
+        token: &str,
+        seed_primary_amr: bool,
+    ) -> GarrisonResult<()> {
+        let login_id: String = login_id.into();
+        self.with_login_lock(&login_id, async {
+            self.create_token_session_inner(
+                &login_id,
+                token,
+                None,
+                None,
+                None,
+                None,
+                seed_primary_amr,
+            )
+            .await
+        })
+        .await
+    }
+
     /// 创建 Token-Session 并写入 LoginParams 中的 device/ip/user_agent。
     ///
     /// 与 [`create`](Self::create) 的区别：将 `LoginParams` 的 device/ip/user_agent
@@ -285,8 +314,18 @@ impl GarrisonSession {
     ) -> GarrisonResult<()> {
         let login_id: String = login_id.to_string();
         self.with_login_lock(&login_id, async {
-            self.create_token_session_inner(&login_id, token, device, ip, user_agent, remember_me)
-                .await
+            // 直接 session 层调用（非 stp login 收口）保持既有播种契约
+            //（seed_primary_amr 配置的消费点在 stp 收口 create_session_with_quota）
+            self.create_token_session_inner(
+                &login_id,
+                token,
+                device,
+                ip,
+                user_agent,
+                remember_me,
+                true,
+            )
+            .await
         })
         .await
     }
@@ -298,6 +337,12 @@ impl GarrisonSession {
     /// 未持锁调用会破坏 Account-Session read-modify-write 的并发安全。
     ///
     /// 双写 Token-Session + Account-Session，device/ip/user_agent 为 None 时对应字段留空。
+    ///
+    /// # 参数
+    /// - `seed_primary_amr`：是否向会话播种主认证因子（`pwd` / AAL 1 / `auth_time`）。
+    ///   由 `config.seed_primary_amr` 驱动（stp login 收口传入，渗透-认证绕过-3 /
+    ///   会话与令牌-5：凭证委托 login 未发生密码校验，不得断言 `pwd` 认证事实）。
+    ///   `false` 时 `amr_ledger` 为空、`auth_time` 为 `None`，MFA step-up 仍可追加。
     pub(crate) async fn create_token_session_inner(
         &self,
         login_id: &str,
@@ -306,11 +351,14 @@ impl GarrisonSession {
         ip: Option<&str>,
         user_agent: Option<&str>,
         remember_me: Option<bool>,
+        seed_primary_amr: bool,
     ) -> GarrisonResult<()> {
         let now = Utc::now().timestamp();
 
         // remember-me 生效时，TTL 权威来源 = remember_me_timeout，
         // 并写入 TokenSession.effective_timeout 供后续过期判定使用；否则使用全局 timeout。
+        // （remember_me_enabled 配置开关由 stp login 收口消费：开关关闭时传入
+        // Some(false)，本层按无 remember-me 处理——渗透-会话与令牌-1。）
         let (ttl, effective_timeout) = if remember_me == Some(true) {
             (
                 self.remember_me_timeout,
@@ -325,18 +373,23 @@ impl GarrisonSession {
         // 因子账本播种主因子（pwd / AAL 1）：本框架 `login` 即主认证，
         // 认证时刻 = 会话创建时刻，为 amr / auth_time claim 的权威起点。
         //
-        // 已知限制（审查记录）：非密码主认证路径（qrlogin confirm / SSO 回调
-        // 经 login_with_token 复用本 create）也播种 `pwd`——amr claim 与实际
-        // 认证方式不符（不影响 AAL 判定与 MFA gate：基线同为 AAL 1）。参数化
-        // 主因子需波及全部 create 调用方，留待后续 change 承接；RP 风控不
+        // 播种开关（seed_primary_amr，默认 true 保持既有契约）：凭证委托 /
+        // 零凭证 login 路径未发生密码校验，安全敏感部署应关闭播种，避免
+        // amr 断言不存在的认证误导下游 step-up 判定（assert_freshness /
+        // ledger_max_aal 真实消费该数据）。关闭时账本为空、auth_time 为 None；
+        // MFA 编排经 append_amr_entry 的 step-up 不受影响。RP 风控不
         // 应将本框架的 amr 视为认证方式的排他断言。
-        let primary_entry = crate::stp::mfa::AmrEntry::new(
-            crate::stp::mfa::PRIMARY_FACTOR_AMR,
-            crate::stp::mfa::PRIMARY_FACTOR_AAL,
-            now,
-        )
-        .map_err(|e| GarrisonError::Session(format!("session-sim-primary-amr::{:?}", e)))?;
-        let token_session = TokenSession {
+        let amr_ledger = if seed_primary_amr {
+            vec![crate::stp::mfa::AmrEntry::new(
+                crate::stp::mfa::PRIMARY_FACTOR_AMR,
+                crate::stp::mfa::PRIMARY_FACTOR_AAL,
+                now,
+            )
+            .map_err(|e| GarrisonError::Session(format!("session-sim-primary-amr::{:?}", e)))?]
+        } else {
+            Vec::new()
+        };
+        let mut token_session = TokenSession {
             token: token.to_string(),
             login_id: login_id.to_string(),
             created_at: now,
@@ -351,9 +404,21 @@ impl GarrisonSession {
             #[cfg(feature = "session-extra")]
             is_anon: false,
             effective_timeout,
-            amr_ledger: vec![primary_entry],
-            auth_time: Some(now),
+            amr_ledger,
+            auth_time: if seed_primary_amr { Some(now) } else { None },
         };
+        // 会话-租户绑定（渗透-租户隔离-会话绑定-1 / FINDING-025 演变）：
+        // 会话创建时存在租户上下文（tenant_resolution_middleware 解析的 TENANT
+        // task_local）则将会话与该租户绑定——check_login 在租户上下文存在时
+        // 校验绑定一致性，客户端可控的 X-Tenant-Id 不再能携他人会话跨租户复用。
+        // 无租户上下文（非多租户部署）不写绑定，行为不变。契约见
+        // `crate::context::tenant::SESSION_TENANT_ATTR_KEY`。
+        if let Ok(ctx) = crate::context::tenant::TENANT.try_get() {
+            token_session.attrs.insert(
+                crate::context::tenant::SESSION_TENANT_ATTR_KEY.to_string(),
+                ctx.tenant_id.to_string(),
+            );
+        }
         let token_json = serde_json::to_string(&token_session)
             .map_err(|e| GarrisonError::Session(format!("session-sim-token-serialize::{}", e)))?;
         self.dao.set(&token_key(token), &token_json, ttl).await?;
@@ -1517,17 +1582,31 @@ impl GarrisonSession {
         let login_id: String = login_id.into();
         // 获取 per-login_id 锁，保护 Account-Session 读-删序列
         self.with_login_lock(&login_id, async {
-            if let Some(account) = self.get_account_session(&login_id).await? {
-                for ti in &account.tokens {
-                    self.dao.delete(&token_key(&ti.token)).await?;
-                }
-            }
-            self.dao.delete(&account_key(&login_id)).await?;
-            // 移除整个 login_id 的内存索引（所有 token 已销毁）
-            self.login_token_map.remove(&login_id);
-            Ok(())
+            self.logout_by_login_id_inner(&login_id).await
         })
         .await
+    }
+
+    /// `logout_by_login_id` 的无锁内部实现（渗透-竞态-踢出黑名单-1 拆分）。
+    ///
+    /// **调用方必须已持有 `with_login_lock(login_id)`**（tokio Mutex 不可重入）。
+    /// 拆出本方法供 stp 层 kickout/logout_by_login_id 在同一 per-login_id
+    /// 临界区内完成「token 快照 → jti 黑名单 → 会话删除」原子序列：锁内快照
+    /// 必然包含锁前已落库的全部 token，且持锁期间并发 login 的
+    /// `create_token_session_inner`（同样持该锁）不可能插入——并发登录的新
+    /// token 要么在快照前已入账（被拉黑），要么在删除后创建（会话仍在，不属
+    /// 被踢范围）。锁序：`with_login_lock` → DAO 读写（DAO 不反向获取
+    /// login 锁），无死锁风险。
+    pub(crate) async fn logout_by_login_id_inner(&self, login_id: &str) -> GarrisonResult<()> {
+        if let Some(account) = self.get_account_session(login_id).await? {
+            for ti in &account.tokens {
+                self.dao.delete(&token_key(&ti.token)).await?;
+            }
+        }
+        self.dao.delete(&account_key(login_id)).await?;
+        // 移除整个 login_id 的内存索引（所有 token 已销毁）
+        self.login_token_map.remove(login_id);
+        Ok(())
     }
 
     /// 按设备踢出。

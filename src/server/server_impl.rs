@@ -176,6 +176,26 @@ impl GarrisonAuthServer {
         self
     }
 
+    /// 设置内网 API Key 认证失败锁定（GAR-25）。
+    ///
+    /// # 参数
+    /// - `threshold`：同源 IP 连续失败阈值，达到后窗口期内一律 429；`0` 禁用
+    /// - `window_secs`：锁定窗口秒数
+    pub fn with_api_key_lockout(mut self, threshold: u32, window_secs: u64) -> Self {
+        self.config.api_key_lockout_threshold = threshold;
+        self.config.api_key_lockout_window_secs = window_secs;
+        self
+    }
+
+    /// 是否透传内网 `/readyz` 的 `checks[].details`（默认 **false**，GAR-14）。
+    ///
+    /// details 可能包含内部依赖拓扑（host、延迟等），默认剥离仅保留
+    /// name/healthy；显式开启后方可在内网探针中输出诊断细节。
+    pub fn with_health_details(mut self, enabled: bool) -> Self {
+        self.config.health_details_enabled = enabled;
+        self
+    }
+
     /// 设置外网请求体大小上限（字节，默认 256KB）。
     ///
     /// 超过此限制的请求返回 `413 Payload Too Large`。
@@ -303,6 +323,11 @@ impl GarrisonAuthServer {
             .layer(axum::middleware::from_fn(
                 middleware::inject_login_client_ip,
             ))
+            // GAR-27: Json extractor rejection（400/415/422）统一清洗，
+            // 不向调用方回显内部类型名/字段名/字节偏移
+            .layer(axum::middleware::from_fn(
+                middleware::sanitize_json_rejection_middleware,
+            ))
             .layer(axum::middleware::from_fn(middleware::inject_client_ip))
             // User-Agent 注入 middleware（在 inject_client_ip 之后）
             .layer(axum::middleware::from_fn(middleware::inject_user_agent))
@@ -398,26 +423,39 @@ impl GarrisonAuthServer {
             self.config.external_body_limit,
         ));
 
-        // server-health-check：K8s 探针 merge 在最外层——axum merge 不继承 layer，
-        // 探针绕过 path_filter/rate_limit/audit 全部中间件（与 sdforge
-        // build_with_config "探针挂载在认证层之后" 同一语义）
+        // server-health-check：K8s liveness 探针 merge 在最外层——axum merge 不继承
+        // layer，探针绕过 path_filter/rate_limit/audit 全部中间件（K8s 探针惯例）。
+        // GAR-14：外网端口仅暴露最小化 /healthz（无版本号），/readyz 仅挂内网。
         #[cfg(feature = "server-health-check")]
-        let router = router.merge(Self::health_probe_router());
+        let router = router.merge(Self::external_health_probe_router());
 
         router
     }
 
-    /// K8s 探针路由（server-health-check feature）。
+    /// 外网健康探针路由（server-health-check feature）。
     ///
-    /// 复用 sdforge::health 处理器：`/healthz` 进程存活即恒 200（liveness），
-    /// `/readyz` 依据已注册 readiness check 返回 200/503（默认无注册检查即 ready；
-    /// 业务方经 `sdforge::health::register_readiness_check_fn` 注册下游依赖检查）。
+    /// GAR-14 最小语义：外网仅 `/healthz`，响应只含 `{"status":"healthy"}`——
+    /// 不暴露 sdforge 版本号，不暴露 `/readyz`（readiness 拓扑仅限内网）。
     #[cfg(feature = "server-health-check")]
-    fn health_probe_router() -> Router {
+    fn external_health_probe_router() -> Router {
+        use axum::routing::get;
+        Router::new().route("/healthz", get(super::health::liveness_handler))
+    }
+
+    /// 内网健康探针路由（server-health-check feature）。
+    ///
+    /// `/healthz` 最小语义同外网；`/readyz` 依据已注册 readiness check 返回
+    /// 200/503（业务方经 `sdforge::health::register_readiness_check_fn` 注册），
+    /// `checks[].details` 仅在 `health_details_enabled=true` 时透传（默认剥离）。
+    #[cfg(feature = "server-health-check")]
+    fn internal_health_probe_router(&self) -> Router {
         use axum::routing::get;
         Router::new()
-            .route("/healthz", get(sdforge::health::healthz_handler))
-            .route("/readyz", get(sdforge::health::readyz_handler))
+            .route("/healthz", get(super::health::liveness_handler))
+            .route("/readyz", get(super::health::readiness_handler))
+            .with_state(super::health::HealthDetailsEnabled(
+                self.config.health_details_enabled,
+            ))
     }
 
     /// 构建内网路由（sdforge + path-filter + api_key_auth + rate_limit + audit_log + tenant_resolution）。
@@ -440,8 +478,13 @@ impl GarrisonAuthServer {
     /// 用于测试时通过 `tower::ServiceExt::oneshot` 发送请求，避免实际 listen。
     pub fn internal_router(&self) -> Router {
         use axum::Extension;
+        // GAR-25: 认证失败锁定由配置驱动（threshold=0 禁用）
         let api_key_state = Arc::new(middleware::ApiKeyState {
             api_key: self.config.internal_api_key.clone(),
+            lockout: Arc::new(super::api_key_lockout::ApiKeyLockout::new(
+                self.config.api_key_lockout_threshold,
+                self.config.api_key_lockout_window_secs,
+            )),
         });
         // 内网路由限速状态（参数与外网一致，独立 bucket 实例）
         let rate_limit_state = Arc::new(middleware::RateLimitState::with_options(
@@ -470,6 +513,11 @@ impl GarrisonAuthServer {
                 api_key_state,
                 api_key_auth_middleware,
             ))
+            // GAR-27: 内网端点同样统一清洗 Json rejection（类型名不因内网信任
+            // 边界而豁免——单 key 泄露即可触达）
+            .layer(axum::middleware::from_fn(
+                middleware::sanitize_json_rejection_middleware,
+            ))
             .layer(axum::middleware::from_fn_with_state(
                 rate_limit_state,
                 rate_limit_middleware,
@@ -495,10 +543,10 @@ impl GarrisonAuthServer {
             self.config.internal_body_limit,
         ));
 
-        // server-health-check：探针同样 merge 在内网路由最外层（绕过 api_key_auth，
-        // K8s 探针不持有 API Key）
+        // server-health-check：内网探针同样 merge 在最外层（绕过 api_key_auth，
+        // K8s 探针不持有 API Key）；/readyz 的 details 经配置门控（GAR-14）
         #[cfg(feature = "server-health-check")]
-        let router = router.merge(Self::health_probe_router());
+        let router = router.merge(self.internal_health_probe_router());
 
         router
     }

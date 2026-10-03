@@ -365,6 +365,7 @@ async fn acc_srv_004_external_refresh_returns_new_token() {
 
 /// （正常）：内网 get-token-info 返回 token 元数据
 ///（`data.token` 一致、`created_at=1000` 与 mock 契约一致）。
+/// GAR-23: 所有权校验强制必填，请求携带与主体一致的 caller_login_id。
 /// 迁自 tests/auth_server_integration.rs::test_internal_get_token_info
 #[tokio::test]
 #[serial]
@@ -377,7 +378,7 @@ async fn acc_srv_005_internal_get_token_info() {
     let resp = client
         .post(format!("{}/api/v1/auth/get-token-info", internal_url))
         .header("x-api-key", "test-key")
-        .json(&serde_json::json!({ "token": token }))
+        .json(&serde_json::json!({ "token": token, "caller_login_id": "user1" }))
         .send_relay_retry()
         .await
         .unwrap();
@@ -389,6 +390,7 @@ async fn acc_srv_005_internal_get_token_info() {
 
 /// （正常）：内网 get-session 返回会话主体
 ///（`data.login_id` 与登录主体一致）。
+/// GAR-23: 所有权校验强制必填，请求携带与主体一致的 caller_login_id。
 /// 迁自 tests/auth_server_integration.rs::test_internal_get_session
 #[tokio::test]
 #[serial]
@@ -401,7 +403,7 @@ async fn acc_srv_006_internal_get_session() {
     let resp = client
         .post(format!("{}/api/v1/auth/get-session", internal_url))
         .header("x-api-key", "test-key")
-        .json(&serde_json::json!({ "token": token }))
+        .json(&serde_json::json!({ "token": token, "caller_login_id": "user1" }))
         .send_relay_retry()
         .await
         .unwrap();
@@ -498,7 +500,8 @@ async fn acc_srv_009_internal_switch_to_changes_session_subject() {
     let resp = client
         .post(format!("{}/api/v1/auth/get-session", internal_url))
         .header("x-api-key", "test-key")
-        .json(&serde_json::json!({ "token": token }))
+        // GAR-23: caller_login_id 强制必填；switch-to 后会话主体已是 user2
+        .json(&serde_json::json!({ "token": token, "caller_login_id": "user2" }))
         .send_relay_retry()
         .await
         .unwrap();
@@ -613,6 +616,286 @@ async fn acc_srv_012_external_internal_paths_mutually_exclusive() {
         401,
         "缺 X-API-Key 内网请求应 401（中间件顺序）"
     );
+}
+
+// ------------------------------------------------------------------------
+// 安全审计回归（GAR-13/14/23/25/27/28/29）
+// ------------------------------------------------------------------------
+
+/// GAR-23（异常→修复后）：内网 get-session / get-token-info 缺失
+/// `caller_login_id` 一律 400（fail-closed），不再 warn+放行返回会话。
+#[tokio::test]
+#[serial]
+async fn acc_srv_023_get_session_missing_caller_fail_closed() {
+    let (external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+    let token = http_login(&client, &external_url, "user1").await;
+
+    for uri in ["/api/v1/auth/get-session", "/api/v1/auth/get-token-info"] {
+        let resp = client
+            .post(format!("{}{}", internal_url, uri))
+            .header("x-api-key", "test-key")
+            .json(&serde_json::json!({ "token": token }))
+            .send_relay_retry()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            400,
+            "{uri} 缺失 caller_login_id 应 fail-closed 返回 4xx"
+        );
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert!(body.get("data").is_none(), "{uri} 拒绝响应不得携带会话数据");
+    }
+
+    // 跨用户 caller 仍保持 NOT_PERMISSION 语义（原 A5 契约不变）
+    let resp = client
+        .post(format!("{}/api/v1/auth/get-session", internal_url))
+        .header("x-api-key", "test-key")
+        .json(&serde_json::json!({
+            "token": token,
+            "caller_login_id": "someone-else"
+        }))
+        .send_relay_retry()
+        .await
+        .unwrap();
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error_code"], "NOT_PERMISSION");
+}
+
+/// GAR-27：外网 login 畸形类型 body 返回统一 JSON 错误体——
+/// 不回显内部 Rust 类型名 / 字段名 / 字节偏移，状态码保持 4xx。
+#[tokio::test]
+#[serial]
+async fn acc_srv_024_external_422_rejection_sanitized() {
+    let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .header("content-type", "application/json")
+        .body("[1,2,3]".to_string())
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16() / 100, 4, "状态码保持 4xx");
+    let text = resp.text().await.unwrap();
+    for leaked in [
+        "LoginRequest",
+        "LoginParams",
+        "struct",
+        "expected",
+        "line",
+        "column",
+    ] {
+        assert!(
+            !text.contains(leaked),
+            "响应不得泄露 {leaked}，实际: {text}"
+        );
+    }
+    let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(body["error"], "bad_request");
+}
+
+/// GAR-29：外网 login 读体超限（>256KB）返回 413 统一 JSON 错误体，
+/// 不再以空 body 透传出误导性 400 EOF。
+#[tokio::test]
+#[serial]
+async fn acc_srv_025_external_oversize_body_returns_413() {
+    let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    let oversize = vec![b'x'; 256 * 1024 + 1];
+    let resp = client
+        .post(format!("{}/api/v1/auth/login", external_url))
+        .header("content-type", "application/json")
+        .body(oversize)
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 413, "超限 body 应返回 413");
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "payload_too_large");
+}
+
+/// GAR-28：重复 X-API-Key 头（任意顺序组合）一律 401 fail-closed。
+#[tokio::test]
+#[serial]
+async fn acc_srv_026_internal_duplicate_api_key_header_rejected() {
+    let (_external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    for (first, second) in [("wrong-key", "test-key"), ("test-key", "wrong-key")] {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.append(
+            "x-api-key",
+            reqwest::header::HeaderValue::from_str(first).unwrap(),
+        );
+        headers.append(
+            "x-api-key",
+            reqwest::header::HeaderValue::from_str(second).unwrap(),
+        );
+        let resp = client
+            .get(format!("{}/api/v1/auth/health", internal_url))
+            .headers(headers)
+            .send_relay_retry()
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            401,
+            "重复 X-API-Key 头（{first} + {second}）应 fail-closed 401"
+        );
+    }
+}
+
+/// GAR-25：内网 API Key 连续失败达阈值后锁定——窗口内正确 key 也 429
+/// 并携带 Retry-After（with_api_key_lockout 显式配置的小阈值）。
+#[tokio::test]
+#[serial]
+async fn acc_srv_027_internal_api_key_lockout_after_threshold() {
+    let backend: Arc<dyn AuthBackend> = Arc::new(MockAuthBackend::new());
+    let external_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let internal_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let external_port = external_listener.local_addr().unwrap().port();
+    let internal_port = internal_listener.local_addr().unwrap().port();
+
+    let server = GarrisonAuthServer::new(backend)
+        .with_external_port(external_port)
+        .with_internal_port(internal_port)
+        .with_rate_limit(1000)
+        .with_external_login_enabled(true)
+        .with_internal_api_key("test-key")
+        // 阈值 2：两次失败即锁定，便于验收断言
+        .with_api_key_lockout(2, 300);
+
+    let external_url = format!("http://127.0.0.1:{}", external_port);
+    let internal_url = format!("http://127.0.0.1:{}", internal_port);
+    let external_router = server.external_router();
+    let internal_router = server.internal_router();
+    let _handle = tokio::spawn(async move {
+        let _ = tokio::join!(
+            axum::serve(external_listener, external_router),
+            axum::serve(internal_listener, internal_router)
+        );
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+    let client = reqwest::Client::new();
+    let health_url = format!("{}/api/v1/auth/health", internal_url);
+
+    // 第 1 次失败：401
+    let resp = client
+        .get(&health_url)
+        .header("x-api-key", "wrong")
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 401, "未达阈值仍 401");
+
+    // 第 2 次失败：达阈值即锁定（429 + Retry-After）
+    let resp = client
+        .get(&health_url)
+        .header("x-api-key", "wrong")
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 429, "达阈值请求应返回 429");
+    assert!(
+        resp.headers().get("retry-after").is_some(),
+        "应携带 Retry-After"
+    );
+
+    // 锁定窗口内：正确 key 也 429
+    let resp = client
+        .get(&health_url)
+        .header("x-api-key", "test-key")
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 429, "锁定窗口内正确 key 也应 429");
+}
+
+/// GAR-13：auth-server 聚合含 web-security-headers 后，token 承载端点
+/// 响应携带 Cache-Control: no-store / X-Content-Type-Options / X-Frame-Options。
+#[cfg(feature = "web-security-headers")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_028_auth_responses_have_security_headers() {
+    let (external_url, _internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    let token = http_login(&client, &external_url, "user1").await;
+
+    let resp = client
+        .post(format!("{}/api/v1/auth/refresh", external_url))
+        .json(&serde_json::json!({ "token": token }))
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert_eq!(
+        resp.headers().get("cache-control").unwrap(),
+        "no-store",
+        "GAR-13: token 承载端点应带 Cache-Control: no-store（CWE-525）"
+    );
+    assert_eq!(
+        resp.headers().get("x-content-type-options").unwrap(),
+        "nosniff"
+    );
+    assert_eq!(resp.headers().get("x-frame-options").unwrap(), "DENY");
+}
+
+/// GAR-14：健康探针最小化——外网仅 /healthz 且无版本字段；/readyz 仅内网；
+/// 内网 /readyz 默认剥离 checks[].details（GARRISON_HEALTH_DETAILS 未开启）。
+#[cfg(feature = "server-health-check")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_029_health_probes_minimized() {
+    // readiness 注册表为进程级全局态，先清空保证确定性
+    sdforge::health::clear_readiness_checks();
+    let (external_url, internal_url, _handle) = start_test_server(100, "test-key").await;
+    let client = reqwest::Client::new();
+
+    // 外网 /healthz：仅 {"status":"healthy"}，无版本字段
+    let resp = client
+        .get(format!("{}/healthz", external_url))
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({"status": "healthy"}),
+        "外网 healthz 仅含 status，不回显 sdforge 版本号"
+    );
+
+    // 外网 /readyz：不暴露
+    let resp = client
+        .get(format!("{}/readyz", external_url))
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404, "外网端口不应暴露 /readyz");
+
+    // 内网 /readyz：无 API Key 可达（K8s 探针语义），默认无 details
+    let resp = client
+        .get(format!("{}/readyz", internal_url))
+        .send_relay_retry()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["status"], "ready");
+    if let Some(checks) = body["checks"].as_array() {
+        for check in checks {
+            assert!(
+                check.get("details").is_none(),
+                "默认应剥离 details，实际: {check}"
+            );
+        }
+    }
 }
 
 // ------------------------------------------------------------------------
@@ -1251,9 +1534,11 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
 //
 // `src/bin/auth_server.rs` 是自含二进制：从环境变量装配
 // `GarrisonAuthServer::new(backend).with_*_port().with_rate_limit()
-// .with_internal_api_key()` 后 `listen()`（自含配置校验 + 路由构建 + 端口绑定，
-// 不依赖 GarrisonManager 全局初始化）；fail-closed：`GARRISON_INTERNAL_API_KEY`
-// 缺失或空串时 `std::process::exit(1)`。
+// .with_internal_api_key()` 后以 bin 侧 bind+serve 启动（自含配置校验 +
+// 路由构建 + 端口绑定，不依赖 GarrisonManager 全局初始化）；fail-closed：
+// `GARRISON_INTERNAL_API_KEY` 缺失 / 空串 / 长度不足 32 字节、绑定地址或
+// 可信代理解析失败、外网登录非回环绑定未确认（GARRISON_EXTERNAL_LOGIN_ACK）
+// 时均 `std::process::exit(1)`。
 //
 // 实现说明：
 // - 经 `CARGO_BIN_EXE_auth_server` 定位二进制（bin 的 required-features =
@@ -1279,11 +1564,17 @@ fn probe_free_port() -> u16 {
 /// 启动期 fail-closed 校验 `GARRISON_FIELD_ENCRYPTION_KEYS`（`key_id:hex64`，
 /// hex64 = 32 字节 AES-256 钥材 hex 编码，key_id 非空且不含冒号），缺失即
 /// exit 1（src/bin/auth_server.rs `setup_garrison_manager`）。
-/// acc_srv_019（成功路径烟测）与 acc_srv_022（要求失败仅来自端口冲突）
-/// 必须注入使语义成立；acc_srv_020/021 在该校验之前即被 API Key gate 拒绝，无需注入。
+/// acc_srv_019（成功路径烟测）与 acc_srv_022/032/033（要求失败仅来自
+/// 端口冲突 / ACK 语义）必须注入使语义成立；acc_srv_020/021/030/031 在
+/// 该校验之前即被 bootstrap 安全装配 gate 拒绝，无需注入。
 #[cfg(feature = "auth-server")]
 const TEST_FIELD_ENCRYPTION_KEYS: &str =
     "test-only-field-key-0:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+/// 合规测试占位 API Key（≥32 字节，非真实凭据）：bin 对
+/// `GARRISON_INTERNAL_API_KEY` 强制最低 32 字节（GAR-33 fail-closed）。
+#[cfg(feature = "auth-server")]
+const TEST_API_KEY: &str = "test-only-not-a-real-key-0123456789abcdef";
 
 /// 以给定 env 覆盖 / 移除项启动 auth_server 子进程（stdout/stderr 置空，
 /// 避免污染测试输出；其余环境继承自测试进程）。
@@ -1336,8 +1627,8 @@ async fn acc_srv_019_auth_server_bin_startup_smoke() {
     let internal_port = probe_free_port();
     let external_port = external_port.to_string();
     let internal_port = internal_port.to_string();
-    // 明显的测试占位串，非真实凭据
-    let test_api_key = "test-only-not-a-real-key";
+    // 合规测试占位串（≥32 字节，非真实凭据）
+    let test_api_key = TEST_API_KEY;
 
     let mut child = spawn_auth_server_process(
         &[
@@ -1473,7 +1764,7 @@ async fn acc_srv_022_auth_server_bin_port_conflict_exits_nonzero() {
         &[
             ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
             ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
-            ("GARRISON_INTERNAL_API_KEY", "test-only-not-a-real-key"),
+            ("GARRISON_INTERNAL_API_KEY", TEST_API_KEY),
             // field-encryption fail-closed 校验先于 bind，缺失会掩盖端口冲突失败源
             ("GARRISON_FIELD_ENCRYPTION_KEYS", TEST_FIELD_ENCRYPTION_KEYS),
         ],
@@ -1490,4 +1781,180 @@ async fn acc_srv_022_auth_server_bin_port_conflict_exits_nonzero() {
 
     // 4. 测试内监听最后 drop，释放占用的端口
     drop(occupier);
+}
+
+/// 轮询一个 URL 直到拿到任意 HTTP 响应（证明进程存活且在服务），
+/// 30s 预算与 acc_srv_019 一致（debug 构建冷启动可超过 10s）。
+#[cfg(feature = "auth-server")]
+async fn poll_http_alive(url: &str) -> bool {
+    let client = reqwest::Client::new();
+    for _ in 0..60 {
+        match client.get(url).send_relay_retry().await {
+            Ok(_) => return true,
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(500)).await,
+        }
+    }
+    false
+}
+
+/// （异常）：fail-closed（GAR-33）——`GARRISON_INTERNAL_API_KEY` 不足 32 字节时，
+/// 管理面唯一凭证强度不达标，进程以退出码 1 拒绝启动。
+#[cfg(feature = "auth-server")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_030_auth_server_exits_with_short_api_key() {
+    let external_port = probe_free_port().to_string();
+    let internal_port = probe_free_port().to_string();
+
+    let mut child = spawn_auth_server_process(
+        &[
+            ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
+            ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
+            // 24 字节 < 32 字节下限
+            ("GARRISON_INTERNAL_API_KEY", "test-only-not-a-real-key"),
+        ],
+        &[],
+    );
+
+    let status = wait_for_exit(&mut child).await;
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "不足 32 字节的 GARRISON_INTERNAL_API_KEY 应以退出码 1 拒绝启动（fail-closed）"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// （异常）：fail-closed（GAR-34）——`GARRISON_TRUSTED_PROXIES` 含非法字面量
+/// 或公网 IP（可被路径中间设备伪造，不得进入 XFF 信任边界）时拒绝启动。
+#[cfg(feature = "auth-server")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_031_auth_server_exits_with_invalid_trusted_proxies() {
+    let external_port = probe_free_port().to_string();
+    let internal_port = probe_free_port().to_string();
+    let mut env = [
+        ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
+        ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
+        ("GARRISON_INTERNAL_API_KEY", TEST_API_KEY),
+    ]
+    .to_vec();
+
+    // 非法字面量
+    env.push(("GARRISON_TRUSTED_PROXIES", "not-an-ip"));
+    let mut child = spawn_auth_server_process(&env, &[]);
+    let status = wait_for_exit(&mut child).await;
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "非法 GARRISON_TRUSTED_PROXIES 应以退出码 1 拒绝启动（fail-closed）"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+
+    // 公网地址（与框架 AuthServerConfig::validate 同策略）
+    env.pop();
+    env.push(("GARRISON_TRUSTED_PROXIES", "10.0.0.1,8.8.8.8"));
+    let mut child = spawn_auth_server_process(&env, &[]);
+    let status = wait_for_exit(&mut child).await;
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "公网可信代理 IP 应以退出码 1 拒绝启动（fail-closed）"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// （异常 + 正常）：GAR-03 分层收口——外网登录开启且外网绑定为非回环地址时，
+/// 未提供 `GARRISON_EXTERNAL_LOGIN_ACK`（或值非精确匹配）即拒绝启动；
+/// 精确匹配 `i-understand-no-credential-check` 后方可启动。
+#[cfg(feature = "auth-server")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_032_auth_server_external_login_non_loopback_requires_ack() {
+    let external_port = probe_free_port().to_string();
+    let internal_port = probe_free_port().to_string();
+    let mut env = [
+        ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
+        ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
+        ("GARRISON_INTERNAL_API_KEY", TEST_API_KEY),
+        ("GARRISON_FIELD_ENCRYPTION_KEYS", TEST_FIELD_ENCRYPTION_KEYS),
+        ("GARRISON_EXTERNAL_LOGIN_ENABLED", "true"),
+        ("GARRISON_EXTERNAL_BIND", "0.0.0.0"),
+    ]
+    .to_vec();
+
+    // 1. 无 ACK（显式移除，防父环境已有）→ 拒绝启动
+    let mut child = spawn_auth_server_process(&env, &["GARRISON_EXTERNAL_LOGIN_ACK"]);
+    let status = wait_for_exit(&mut child).await;
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "非回环绑定 + 外网登录开启且无 ACK 应以退出码 1 拒绝启动（fail-closed）"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+
+    // 2. ACK 大小写不匹配（精确匹配语义）→ 拒绝启动
+    env.push((
+        "GARRISON_EXTERNAL_LOGIN_ACK",
+        "I-UNDERSTAND-NO-CREDENTIAL-CHECK",
+    ));
+    let mut child = spawn_auth_server_process(&env, &[]);
+    let status = wait_for_exit(&mut child).await;
+    assert_eq!(
+        status.code(),
+        Some(1),
+        "ACK 值非精确匹配应以退出码 1 拒绝启动"
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+
+    // 3. ACK 精确匹配 → 进程存活并对外网端口响应 HTTP
+    env.pop();
+    env.push((
+        "GARRISON_EXTERNAL_LOGIN_ACK",
+        "i-understand-no-credential-check",
+    ));
+    let mut child = spawn_auth_server_process(&env, &[]);
+    let external_health = format!("http://127.0.0.1:{}/api/v1/auth/health", external_port);
+    assert!(
+        poll_http_alive(&external_health).await,
+        "提供精确 ACK 后 auth_server 应在 30s 内于外网端口 {} 响应 HTTP",
+        external_port
+    );
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// （正常）：GAR-03 分层收口的回环豁免——外网登录开启但绑定保持默认回环
+/// （127.0.0.1）时，无需 `GARRISON_EXTERNAL_LOGIN_ACK` 即可启动。
+#[cfg(feature = "auth-server")]
+#[tokio::test]
+#[serial]
+async fn acc_srv_033_auth_server_external_login_loopback_starts_without_ack() {
+    let external_port = probe_free_port().to_string();
+    let internal_port = probe_free_port().to_string();
+
+    let mut child = spawn_auth_server_process(
+        &[
+            ("GARRISON_EXTERNAL_PORT", external_port.as_str()),
+            ("GARRISON_INTERNAL_PORT", internal_port.as_str()),
+            ("GARRISON_INTERNAL_API_KEY", TEST_API_KEY),
+            ("GARRISON_FIELD_ENCRYPTION_KEYS", TEST_FIELD_ENCRYPTION_KEYS),
+            ("GARRISON_EXTERNAL_LOGIN_ENABLED", "true"),
+        ],
+        // 显式移除绑定地址与 ACK，防父环境污染（语义依赖「缺省回环 + 无 ACK」）
+        &["GARRISON_EXTERNAL_BIND", "GARRISON_EXTERNAL_LOGIN_ACK"],
+    );
+    let external_health = format!("http://127.0.0.1:{}/api/v1/auth/health", external_port);
+    assert!(
+        poll_http_alive(&external_health).await,
+        "回环绑定 + 外网登录开启应无需 ACK 正常启动（外网端口 {}）",
+        external_port
+    );
+    let _ = child.kill();
+    let _ = child.wait();
 }

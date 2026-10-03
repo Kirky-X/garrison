@@ -3774,3 +3774,737 @@ mod firewall_tests {
         );
     }
 }
+
+// ============================================================================
+// 会话-租户绑定一致性校验（渗透-租户隔离-会话绑定-1 / FINDING-025 演变）
+// ============================================================================
+
+#[cfg(test)]
+mod tenant_binding_tests {
+    use crate::config::GarrisonConfig;
+    use crate::context::tenant::{TenantContext, TenantSource, TENANT};
+    use crate::dao::GarrisonDao;
+    use crate::error::GarrisonError;
+    use crate::session::GarrisonSession;
+    use crate::stp::mock::{MockDao, MockFirewall};
+    use crate::stp::session::SessionLogic;
+    use crate::stp::{with_current_token, GarrisonLogicDefault, LoginParams};
+    use std::sync::Arc;
+
+    fn tenant_ctx(tenant_id: i64) -> TenantContext {
+        TenantContext {
+            tenant_id,
+            resolved_from: TenantSource::Header,
+        }
+    }
+
+    fn make_logic() -> GarrisonLogicDefault {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
+        let mut config = GarrisonConfig::default_config();
+        config.throw_on_not_login = false;
+        config.token_style = "uuid".to_string();
+        let firewall: Arc<dyn crate::strategy::GarrisonPermissionStrategy> =
+            Arc::new(MockFirewall {
+                has_permission: true,
+                has_role: true,
+            });
+        GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(dao)),
+        )
+    }
+
+    /// 租户上下文内登录：会话绑定登录租户，同租户 check_login 放行。
+    #[tokio::test]
+    async fn login_under_tenant_scope_binds_session_and_same_tenant_passes() {
+        let logic = make_logic();
+        let token = TENANT
+            .scope(tenant_ctx(0), async {
+                logic
+                    .login("tb-user-1", &LoginParams::default())
+                    .await
+                    .unwrap()
+            })
+            .await;
+
+        // 绑定 attr 已写入
+        let bound = logic
+            .session
+            .get(&token, crate::context::tenant::SESSION_TENANT_ATTR_KEY)
+            .await
+            .unwrap();
+        assert_eq!(bound.as_deref(), Some("0"), "登录租户上下文应绑定到会话");
+
+        // 同租户校验放行
+        let ok = with_current_token(token.clone(), async {
+            TENANT.scope(tenant_ctx(0), logic.check_login()).await
+        })
+        .await
+        .unwrap();
+        assert!(ok, "同租户 check_login 应放行（隔离锚点）");
+    }
+
+    /// 绑定会话跨租户 check_login 拒绝（客户端可控 X-Tenant-Id 不得复用他人会话）。
+    #[tokio::test]
+    async fn check_login_cross_tenant_binding_rejected() {
+        let logic = make_logic();
+        let token = TENANT
+            .scope(tenant_ctx(0), async {
+                logic
+                    .login("tb-user-2", &LoginParams::default())
+                    .await
+                    .unwrap()
+            })
+            .await;
+
+        let result = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(1), logic.check_login()).await
+        })
+        .await;
+        match result {
+            Err(GarrisonError::Session(msg)) => {
+                assert!(
+                    msg.contains("stp-check-login-tenant-mismatch"),
+                    "应返回租户不匹配的显性拒绝，实际: {msg}"
+                );
+            },
+            other => panic!("跨租户 check_login 应被拒绝，实际: {:?}", other.map(|_| ())),
+        }
+    }
+
+    /// 无绑定会话（旧会话/非多租户部署创建）在租户上下文内仍放行（向后兼容）。
+    #[tokio::test]
+    async fn check_login_unbound_session_under_tenant_context_allowed() {
+        let logic = make_logic();
+        // 无租户上下文登录 → 会话无绑定
+        let token = logic
+            .login("tb-user-3", &LoginParams::default())
+            .await
+            .unwrap();
+        let bound = logic
+            .session
+            .get(&token, crate::context::tenant::SESSION_TENANT_ATTR_KEY)
+            .await
+            .unwrap();
+        assert!(bound.is_none(), "无租户上下文登录不应写绑定");
+
+        let ok = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(0), logic.check_login()).await
+        })
+        .await
+        .unwrap();
+        assert!(ok, "无绑定会话在租户上下文内应放行（升级兼容对照）");
+    }
+
+    /// 无租户上下文时行为不变：绑定会话在无上下文请求中照常放行。
+    #[tokio::test]
+    async fn check_login_without_tenant_context_unchanged() {
+        let logic = make_logic();
+        let token = TENANT
+            .scope(tenant_ctx(0), async {
+                logic
+                    .login("tb-user-4", &LoginParams::default())
+                    .await
+                    .unwrap()
+            })
+            .await;
+
+        let ok = with_current_token(token, logic.check_login()).await;
+        assert!(
+            ok.is_ok() && ok.unwrap(),
+            "无租户上下文 check_login 行为不变"
+        );
+    }
+}
+
+// ============================================================================
+// 安全审计修复回归测试（渗透-会话与令牌 / 认证绕过 / 竞态 / 注入）
+// ============================================================================
+#[cfg(test)]
+mod session_token_security_tests {
+    use crate::config::GarrisonConfig;
+    use crate::context::tenant::{TenantContext, TenantSource, TENANT};
+    use crate::dao::GarrisonDao;
+    use crate::error::GarrisonError;
+    use crate::session::GarrisonSession;
+    use crate::stp::core::GarrisonCore;
+    use crate::stp::mock::{MockDao, MockFirewall};
+    use crate::stp::session::SessionLogic;
+    use crate::stp::{with_current_token, GarrisonLogicDefault, JwtMode, LoginParams};
+    use crate::strategy::GarrisonPermissionStrategy;
+    use std::sync::Arc;
+
+    fn tenant_ctx(tenant_id: i64) -> TenantContext {
+        TenantContext {
+            tenant_id,
+            resolved_from: TenantSource::Header,
+        }
+    }
+
+    /// 构造 logic + 共享 MockDao，config 经 mutator 定制。
+    fn make_logic_custom(
+        mutate: impl FnOnce(&mut GarrisonConfig),
+    ) -> (GarrisonLogicDefault, Arc<MockDao>) {
+        let dao = Arc::new(MockDao::new());
+        // 第 4 参对齐生产装配（manager builder 传 config.remember_me_timeout 默认 90 天）
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 7_776_000));
+        let mut config = GarrisonConfig::default_config();
+        config.throw_on_not_login = false;
+        config.token_style = "uuid".to_string();
+        mutate(&mut config);
+        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+            has_permission: true,
+            has_role: true,
+        });
+        let logic = GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        );
+        (logic, dao)
+    }
+
+    /// JWT（Stateless + 撤销）模式 logic，供踢出竞态与租户吊销测试。
+    #[cfg(feature = "protocol-jwt")]
+    fn make_jwt_stateless_logic(
+        mutate: impl FnOnce(&mut GarrisonConfig),
+    ) -> (GarrisonLogicDefault, Arc<MockDao>) {
+        let dao = Arc::new(MockDao::new());
+        let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 7_776_000));
+        let mut config = GarrisonConfig::default_config();
+        config.throw_on_not_login = false;
+        config.token_style = "jwt".to_string();
+        config.jwt_secret = "session-token-security-test-32bytes".to_string().into();
+        config.enable_jwt_revocation = true;
+        mutate(&mut config);
+        let firewall: Arc<dyn GarrisonPermissionStrategy> = Arc::new(MockFirewall {
+            has_permission: true,
+            has_role: true,
+        });
+        let logic = GarrisonLogicDefault::new(
+            session,
+            Arc::new(config),
+            firewall,
+            Arc::new(crate::account::disable::DefaultDisableRepository::new(
+                dao.clone(),
+            )),
+        )
+        .with_jwt_mode(JwtMode::Stateless);
+        (logic, dao)
+    }
+
+    // ------------------------------------------------------------------------
+    // 渗透-会话与令牌-1：remember_me_enabled=false 必须在 stp login 调用链生效
+    // ------------------------------------------------------------------------
+
+    /// 开关关闭 + 客户端提交 remember_me=true → effective_timeout 为 None
+    /// （旧实现直接取 remember_me_timeout，长会话禁用形同虚设）。
+    #[tokio::test]
+    async fn login_remember_me_ignored_when_config_disabled() {
+        let (logic, _dao) = make_logic_custom(|c| {
+            c.remember_me_enabled = false;
+            c.remember_me_timeout = 7_776_000;
+        });
+        let params = LoginParams {
+            remember_me: true,
+            ..LoginParams::default()
+        };
+        let token = logic.login("sec-remember-1", &params).await.unwrap();
+        let ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .expect("会话应存在");
+        assert!(
+            ts.effective_timeout.is_none(),
+            "remember_me_enabled=false 时 remember_me=true 不得写 effective_timeout，实际: {:?}",
+            ts.effective_timeout
+        );
+    }
+
+    /// 开关开启 + remember_me=true → 90 天扩展保持（既有行为回归锚点）。
+    #[tokio::test]
+    async fn login_remember_me_applies_when_config_enabled() {
+        let (logic, _dao) = make_logic_custom(|c| {
+            c.remember_me_enabled = true;
+            c.remember_me_timeout = 7_776_000;
+        });
+        let params = LoginParams {
+            remember_me: true,
+            ..LoginParams::default()
+        };
+        let token = logic.login("sec-remember-2", &params).await.unwrap();
+        let ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .expect("会话应存在");
+        assert_eq!(
+            ts.effective_timeout,
+            Some(7_776_000),
+            "remember_me_enabled=true 时应写 90 天 effective_timeout"
+        );
+    }
+
+    /// 开关关闭 + remember_me=false → effective_timeout None（对照组）。
+    #[tokio::test]
+    async fn login_remember_me_false_stays_default_timeout() {
+        let (logic, _dao) = make_logic_custom(|c| {
+            c.remember_me_enabled = true;
+        });
+        let token = logic
+            .login("sec-remember-3", &LoginParams::default())
+            .await
+            .unwrap();
+        let ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .expect("会话应存在");
+        assert!(ts.effective_timeout.is_none());
+    }
+
+    // ------------------------------------------------------------------------
+    // 渗透-认证绕过-3 / 会话与令牌-5：seed_primary_amr=false 不播种 pwd 账本
+    // ------------------------------------------------------------------------
+
+    /// 默认 seed_primary_amr=true → 行为不变（账本播种 pwd/aal:1，auth_time 有值）。
+    #[tokio::test]
+    async fn login_seeds_primary_amr_by_default() {
+        let (logic, _dao) = make_logic_custom(|_| {});
+        assert!(logic.config().seed_primary_amr, "配置默认应为 true");
+        let token = logic
+            .login("sec-amr-1", &LoginParams::default())
+            .await
+            .unwrap();
+        let ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .expect("会话应存在");
+        assert_eq!(ts.amr_ledger.len(), 1, "默认应播种主因子");
+        assert_eq!(ts.amr_ledger[0].method, "pwd");
+        assert_eq!(ts.amr_ledger[0].aal, 1);
+        assert!(ts.auth_time.is_some(), "默认应写 auth_time");
+    }
+
+    /// seed_primary_amr=false → 会话无 amr_ledger 条目、auth_time 为 None。
+    #[tokio::test]
+    async fn login_skips_amr_seeding_when_disabled() {
+        let (logic, _dao) = make_logic_custom(|c| {
+            c.seed_primary_amr = false;
+        });
+        let token = logic
+            .login("sec-amr-2", &LoginParams::default())
+            .await
+            .unwrap();
+        let ts = logic
+            .session
+            .get_token_session(&token)
+            .await
+            .unwrap()
+            .expect("会话应存在");
+        assert!(
+            ts.amr_ledger.is_empty(),
+            "开关关闭时不得播种 pwd 账本，实际: {:?}",
+            ts.amr_ledger
+        );
+        assert!(ts.auth_time.is_none(), "开关关闭时 auth_time 应为 None");
+    }
+
+    /// seed_primary_amr=false + token_style=jwt → 签发 token 不携带 amr/auth_time claim。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn jwt_login_skips_amr_claims_when_seeding_disabled() {
+        let (logic, _dao) = make_jwt_stateless_logic(|c| {
+            c.seed_primary_amr = false;
+        });
+        let token = logic
+            .login("sec-amr-3", &LoginParams::default())
+            .await
+            .unwrap();
+        let handler = crate::protocol::jwt::JwtHandler::new("session-token-security-test-32bytes");
+        let claims = crate::protocol::jwt::tests::verify_ok(&handler, &token);
+        assert!(claims.amr.is_none(), "开关关闭时 JWT 不得携带 amr claim");
+        assert!(
+            claims.auth_time.is_none(),
+            "开关关闭时 JWT 不得携带 auth_time claim"
+        );
+    }
+
+    /// seed_primary_amr=true（默认）+ jwt → amr claim 与账本同源（行为不变对照）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn jwt_login_keeps_amr_claims_when_seeding_default() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let token = logic
+            .login("sec-amr-4", &LoginParams::default())
+            .await
+            .unwrap();
+        let handler = crate::protocol::jwt::JwtHandler::new("session-token-security-test-32bytes");
+        let claims = crate::protocol::jwt::tests::verify_ok(&handler, &token);
+        assert_eq!(claims.amr, Some(vec!["pwd".to_string()]));
+        assert!(claims.auth_time.is_some());
+    }
+
+    // ------------------------------------------------------------------------
+    // 渗透-注入-login_id 无长度上限-2 / 会话与令牌-2 / 限流与爆破-1：
+    // login_id 输入不变量（非空 / 无控制字符 / 长度上限）
+    // ------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn login_rejects_empty_login_id() {
+        let (logic, _dao) = make_logic_custom(|_| {});
+        let result = logic.login("", &LoginParams::default()).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("stp-login-id-empty")),
+            "空 login_id 应拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn login_rejects_whitespace_only_login_id() {
+        let (logic, _dao) = make_logic_custom(|_| {});
+        let result = logic.login("   ", &LoginParams::default()).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("stp-login-id-whitespace")),
+            "纯空白 login_id 应拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn login_rejects_unit_separator_login_id() {
+        let (logic, _dao) = make_logic_custom(|_| {});
+        let result = logic.login("\x1fadmin", &LoginParams::default()).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("stp-login-id-sep")),
+            "含 \\x1f 的 login_id 应拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn login_rejects_control_char_login_id() {
+        let (logic, _dao) = make_logic_custom(|_| {});
+        let result = logic.login("admin\nroot", &LoginParams::default()).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("stp-login-id-control-char")),
+            "含控制字符的 login_id 应拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// 默认上限 255：256 字节拒绝（错误不含输入回显）。
+    #[tokio::test]
+    async fn login_rejects_login_id_over_default_max_len() {
+        let (logic, _dao) = make_logic_custom(|_| {});
+        let long_id = "L".repeat(256);
+        let result = logic.login(&long_id, &LoginParams::default()).await;
+        match result {
+            Err(GarrisonError::InvalidParam(m)) => {
+                assert!(
+                    m.contains("stp-login-id-too-long"),
+                    "256 字节 login_id 应拒绝，实际: {m}"
+                );
+                assert!(!m.contains(&long_id), "错误信息不得回显超长输入内容");
+            },
+            other => panic!("256 字节 login_id 应拒绝，实际: {:?}", other.map(|_| ())),
+        }
+    }
+
+    /// 默认上限内 255 字节通过。
+    #[tokio::test]
+    async fn login_accepts_login_id_at_default_max_len() {
+        let (logic, _dao) = make_logic_custom(|_| {});
+        let id = "L".repeat(255);
+        let result = logic.login(&id, &LoginParams::default()).await;
+        assert!(
+            result.is_ok(),
+            "255 字节 login_id 应通过，实际: {:?}",
+            result.err()
+        );
+    }
+
+    /// login_id_max_len=0 → 框架层不限制（长度上限解除，其余不变量仍生效）。
+    #[tokio::test]
+    async fn login_unlimited_when_max_len_zero() {
+        let (logic, _dao) = make_logic_custom(|c| {
+            c.login_id_max_len = 0;
+        });
+        let id = "L".repeat(2000);
+        let result = logic.login(&id, &LoginParams::default()).await;
+        assert!(
+            result.is_ok(),
+            "login_id_max_len=0 时不限长度，实际: {:?}",
+            result.err()
+        );
+    }
+
+    /// 自定义收紧上限：login_id_max_len=8 时 9 字节拒绝。
+    #[tokio::test]
+    async fn login_respects_custom_max_len() {
+        let (logic, _dao) = make_logic_custom(|c| {
+            c.login_id_max_len = 8;
+        });
+        let result = logic.login("123456789", &LoginParams::default()).await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref m)) if m.contains("stp-login-id-too-long")),
+            "超出自定上限应拒绝，实际: {:?}",
+            result
+        );
+    }
+
+    /// login_with_token 同族收口：空白/超限 login_id 拒绝。
+    #[tokio::test]
+    async fn login_with_token_rejects_invalid_login_id() {
+        let (logic, _dao) = make_logic_custom(|_| {});
+        let r1 = logic.login_with_token("   ", "token-abc-123").await;
+        assert!(
+            matches!(r1, Err(GarrisonError::InvalidParam(ref m)) if m.contains("stp-login-id-whitespace")),
+            "login_with_token 空白 login_id 应拒绝，实际: {:?}",
+            r1
+        );
+        let long_id = "L".repeat(300);
+        let r2 = logic.login_with_token(&long_id, "token-abc-123").await;
+        assert!(
+            matches!(r2, Err(GarrisonError::InvalidParam(ref m)) if m.contains("stp-login-id-too-long")),
+            "login_with_token 超限 login_id 应拒绝，实际: {:?}",
+            r2
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // 渗透-竞态-踢出黑名单-1：kickout 黑名单写入与 session 删除同锁串行
+    // ------------------------------------------------------------------------
+
+    /// 并发 login + kickout 交错下，被删除 session 的 token 必须已被拉黑
+    /// （恶性交错判据 = session 已删除 且 check_login 仍 Ok(true)——修复前
+    /// 真实并发 500 次命中 478 次，复现工程 temp/security-pentest/repro-kickout-toctou/）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn kickout_blacklist_races_with_login_are_closed() {
+        let (logic, dao) = make_jwt_stateless_logic(|_| {});
+        let logic = Arc::new(logic);
+        const ITERATIONS: usize = 200;
+        for i in 0..ITERATIONS {
+            let login_logic = Arc::clone(&logic);
+            let kick_logic = Arc::clone(&logic);
+            let login_task = tokio::spawn(async move {
+                login_logic
+                    .login("race-victim", &LoginParams::default())
+                    .await
+            });
+            let kick_task = tokio::spawn(async move { kick_logic.kickout("race-victim").await });
+            let token = login_task.await.unwrap().expect("login 应成功");
+            kick_task.await.unwrap().expect("kickout 应成功");
+
+            // 判据：session 已被 kickout 删除时，check_login 必须不通过（已拉黑）
+            let session_alive = dao
+                .get(&format!("token:session:{}", token))
+                .await
+                .unwrap()
+                .is_some();
+            let check =
+                with_current_token(token.clone(), async { logic.check_login().await }).await;
+            if !session_alive {
+                assert!(
+                    !matches!(check, Ok(true)),
+                    "迭代 {}：token session 已被踢出删除但 check_login 仍有效（TOCTOU 未闭合）",
+                    i
+                );
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // 渗透-租户隔离-会话绑定-1 Stateless 补口：换 X-Tenant-Id 头不得逃逸吊销
+    // ------------------------------------------------------------------------
+
+    /// 登录租户内 kickout 后：同租户 check_login 拒绝（黑名单命中）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn stateless_revoked_token_rejected_in_same_tenant() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let token = TENANT
+            .scope(tenant_ctx(7), async {
+                logic.login("sec-tenant-1", &LoginParams::default()).await
+            })
+            .await
+            .unwrap();
+        TENANT
+            .scope(tenant_ctx(7), async { logic.kickout("sec-tenant-1").await })
+            .await
+            .unwrap();
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(7), logic.check_login()).await
+        })
+        .await;
+        assert!(
+            matches!(check, Err(GarrisonError::TokenRevoked(_))),
+            "同租户已吊销 token 应拒绝，实际: {:?}",
+            check
+        );
+    }
+
+    /// 吊销后换租户头校验仍拒绝（tid 绑定：token 只归属签发租户）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn stateless_revoked_token_rejected_under_switched_tenant_header() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let token = TENANT
+            .scope(tenant_ctx(7), async {
+                logic.login("sec-tenant-2", &LoginParams::default()).await
+            })
+            .await
+            .unwrap();
+        TENANT
+            .scope(tenant_ctx(7), async { logic.kickout("sec-tenant-2").await })
+            .await
+            .unwrap();
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(8), logic.check_login()).await
+        })
+        .await;
+        match check {
+            Err(GarrisonError::Session(msg)) => assert!(
+                msg.contains("stp-check-login-tenant-mismatch"),
+                "换租户头应命中租户绑定拒绝，实际: {msg}"
+            ),
+            Err(GarrisonError::TokenRevoked(_)) => {}, // 直接命中黑名单同样成立
+            other => panic!("换租户头不得逃逸吊销，实际: {:?}", other.map(|_| ())),
+        }
+    }
+
+    /// 未吊销 token 换租户头同样拒绝（绑定校验独立于吊销状态）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn stateless_live_token_rejected_under_other_tenant_header() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let token = TENANT
+            .scope(tenant_ctx(7), async {
+                logic.login("sec-tenant-3", &LoginParams::default()).await
+            })
+            .await
+            .unwrap();
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(8), logic.check_login()).await
+        })
+        .await;
+        assert!(
+            matches!(check, Err(GarrisonError::Session(ref m)) if m.contains("stp-check-login-tenant-mismatch")),
+            "存活 token 换租户头应被绑定校验拒绝，实际: {:?}",
+            check
+        );
+    }
+
+    /// 无租户签发的 token（无 tid 绑定）在租户上下文内仍放行（升级兼容对照）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn stateless_unbound_token_allowed_under_tenant_context() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let token = logic
+            .login("sec-tenant-4", &LoginParams::default())
+            .await
+            .unwrap();
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(7), logic.check_login()).await
+        })
+        .await;
+        assert!(
+            matches!(check, Ok(true)),
+            "无绑定 token 应向后兼容放行，实际: {:?}",
+            check
+        );
+    }
+
+    /// 非租户上下文行为不变：tid 绑定 token 在无上下文请求中照常放行。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn stateless_tenant_bound_token_unchanged_without_tenant_context() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        let token = TENANT
+            .scope(tenant_ctx(7), async {
+                logic.login("sec-tenant-5", &LoginParams::default()).await
+            })
+            .await
+            .unwrap();
+        let check = with_current_token(token, logic.check_login()).await;
+        assert!(
+            matches!(check, Ok(true)),
+            "无租户上下文 check_login 行为不变，实际: {:?}",
+            check
+        );
+    }
+
+    /// kickout 后在原租户内重新登录可用（踢出只废止旧 token，不封禁主体）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn stateless_relogin_after_kickout_works_in_same_tenant() {
+        let (logic, _dao) = make_jwt_stateless_logic(|_| {});
+        TENANT
+            .scope(tenant_ctx(7), async { logic.kickout("sec-tenant-6").await })
+            .await
+            .unwrap();
+        let token = TENANT
+            .scope(tenant_ctx(7), async {
+                logic.login("sec-tenant-6", &LoginParams::default()).await
+            })
+            .await
+            .unwrap();
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(7), logic.check_login()).await
+        })
+        .await;
+        assert!(
+            matches!(check, Ok(true)),
+            "踢出后同租户新登录应可用，实际: {:?}",
+            check
+        );
+    }
+}
+
+/// `TenantBoundJwtClaims` 签发的 token 必须能被 `GarrisonJwtClaims::verify`
+/// 解析且全部既有 claim 一致（字段漂移守护：上游 claim 结构新增必填字段时
+/// 本测试编译期/断言期失败，提示同步 parity 结构）。
+#[cfg(test)]
+#[cfg(feature = "protocol-jwt")]
+mod jwt_tenant_claims_parity_tests {
+    use crate::stp::session::helpers::TenantBoundJwtClaims;
+
+    #[test]
+    fn tenant_bound_claims_parse_as_garrison_jwt_claims() {
+        let claims = TenantBoundJwtClaims::new(
+            "parity-user",
+            3600,
+            &["pwd".to_string()],
+            Some(1_234_567),
+            7,
+        )
+        .expect("构造应成功");
+        let secret = "session-token-security-test-32bytes";
+        let handler = crate::protocol::jwt::JwtHandler::new(secret);
+        let token = handler.sign_custom(&claims).expect("签发应成功");
+        let parsed = crate::protocol::jwt::tests::verify_ok(&handler, &token);
+        assert_eq!(parsed.login_id, "parity-user");
+        assert_eq!(parsed.sub, "parity-user");
+        assert_eq!(parsed.iat, claims.iat);
+        assert_eq!(parsed.exp, claims.exp);
+        assert_eq!(parsed.nbf, claims.nbf);
+        assert_eq!(parsed.jti, claims.jti);
+        assert_eq!(parsed.device, None);
+        assert_eq!(parsed.amr, Some(vec!["pwd".to_string()]));
+        assert_eq!(parsed.auth_time, Some(1_234_567));
+    }
+}

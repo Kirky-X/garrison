@@ -50,6 +50,33 @@ impl PermissionChecker for PermissionCheckerDefault {
         Ok(roles.contains(&normalized))
     }
 
+    async fn has_permission_in_tenant(
+        &self,
+        tenant_id: i64,
+        login_id: &str,
+        permission: &str,
+    ) -> GarrisonResult<bool> {
+        // NFC 规范化 + 长度校验与 has_permission 同口径（同形异义字 / DoS 防护）。
+        let normalized = permission.nfc().collect::<String>();
+        if normalized.is_empty() {
+            return Err(GarrisonError::InvalidParam("core-perm-empty::".to_string()));
+        }
+        if normalized.len() > 256 {
+            return Err(GarrisonError::InvalidParam(format!(
+                "permission-name-too-long::{}",
+                normalized.len()
+            )));
+        }
+        // 租户感知数据源：interface 覆写 get_permission_list_in_tenant 时
+        // 按租户过滤（跨租户重名 login_id 不互染）；未覆写时默认实现
+        // 委托全局方法，行为与 has_permission 一致。
+        let perms = self
+            .interface
+            .get_permission_list_in_tenant(tenant_id, login_id)
+            .await?;
+        Ok(perms.iter().any(|p| p == &normalized))
+    }
+
     // check_permission / check_role 使用 trait 默认实现（委托 authorize / has_role），
     // 保持与决策溯源路径一致。
 

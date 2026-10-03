@@ -62,11 +62,46 @@ pub trait PermissionChecker: Send + Sync {
     /// 校验主体是否持有指定角色。
     async fn has_role(&self, login_id: &str, role: &str) -> GarrisonResult<bool>;
 
+    /// 校验主体在指定租户下是否持有指定权限（租户感知数据源）。
+    ///
+    /// # 默认实现
+    ///
+    /// 默认实现委托 [`has_permission`](Self::has_permission)（忽略 `tenant_id`），
+    /// 数据源未按租户隔离的实现者无需覆写、行为不变。
+    ///
+    /// # 生产接线（渗透-RBAC-租户维度-1 修复）
+    ///
+    /// [`authorize`](Self::authorize) 默认实现消费 `AuthRequest.tenant_id`：
+    /// `tenant_id != 0` 时改走本方法。`PermissionCheckerDefault` 覆写为委托
+    /// `GarrisonInterface::get_permission_list_in_tenant`——覆写了该回调的
+    /// 业务方获得真实租户作用域判定；未覆写时行为与全局判定一致。
+    ///
+    /// # 参数
+    /// - `tenant_id`: 租户 ID（0 表示单租户/未隔离，此时语义等同 `has_permission`）。
+    /// - `login_id`: 登录主体标识（租户内标识）。
+    /// - `permission`: 权限标识字符串。
+    async fn has_permission_in_tenant(
+        &self,
+        _tenant_id: i64,
+        login_id: &str,
+        permission: &str,
+    ) -> GarrisonResult<bool> {
+        self.has_permission(login_id, permission).await
+    }
+
     /// 鉴权决策：基于 [`AuthRequest`] 返回完整 [`Decision`]。
     ///
     /// 默认实现调用 [`has_permission`](Self::has_permission) 并构造 [`Decision`]：
     /// - 持有权限 → `Decision { allowed: true, reason: ExplicitAllow, .. }`
     /// - 未持有权限 → `Decision { allowed: false, reason: NoMatchingPermission, .. }`
+    ///
+    /// # 租户维度（渗透-RBAC-租户维度-1 修复）
+    ///
+    /// 默认实现消费 `request.tenant_id`：非 0 时改调
+    /// [`has_permission_in_tenant`](Self::has_permission_in_tenant)
+    /// （默认委托 `has_permission`，行为不变；`PermissionCheckerDefault` 覆写为
+    /// 租户感知数据源）。`tenant_id == 0`（单租户/未隔离）时行为与旧版完全一致。
+    /// 实现者若覆写 `authorize`，应自行消费 `tenant_id` 或在文档声明租户语义边界。
     ///
     /// `decision-trace` feature 启用时，默认实现自动生成 UUID v7（时间有序）作为
     /// `trace_id`；不启用时 `trace_id` 为 `None`（性能优先）。
@@ -84,9 +119,15 @@ pub trait PermissionChecker: Send + Sync {
         #[cfg(not(feature = "core-advanced"))]
         let trace_id: Option<String> = None;
 
-        let allowed = self
-            .has_permission(&request.login_id, &request.action)
-            .await?;
+        // 消费 request.tenant_id：非 0 时走租户感知路径（默认委托 has_permission，
+        // 无租户维度数据源时行为不变；0 = 单租户/未隔离，与旧版完全一致）。
+        let allowed = if request.tenant_id != 0 {
+            self.has_permission_in_tenant(request.tenant_id, &request.login_id, &request.action)
+                .await?
+        } else {
+            self.has_permission(&request.login_id, &request.action)
+                .await?
+        };
         let decision = if allowed {
             Decision {
                 allowed: true,

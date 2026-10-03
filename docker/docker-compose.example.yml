@@ -4,7 +4,8 @@
 # Garrison Auth Server 单机部署示例（本地构建镜像）。
 #
 # 用法：
-#   export GARRISON_INTERNAL_API_KEY='<强随机密钥>'   # 必填，缺失即失败（fail-loud）
+#   export GARRISON_INTERNAL_API_KEY='<强随机密钥>'   # 必填，缺失或不足 32 字节即失败（fail-loud）
+#                                                     # 生成建议：openssl rand -hex 32
 #   docker compose -f docker-compose.example.yml up -d
 #   docker compose -f docker-compose.example.yml ps   # STATUS 应为 healthy
 #
@@ -32,13 +33,28 @@ services:
       - "127.0.0.1:8081:8081"
     environment:
       # 内网 API Key：auth_server fail-closed，未配置拒绝启动；
+      # 长度强制 ≥32 字节（管理面唯一凭证，建议 `openssl rand -hex 32` 生成）；
       # `:?required` 让 compose 在变量缺失/为空时直接报错，不静默起容器
       GARRISON_INTERNAL_API_KEY: ${GARRISON_INTERNAL_API_KEY:?required}
       # 端口覆盖（默认 8080/8081，改动后需同步 ports 映射）：
       # GARRISON_EXTERNAL_PORT: 8080
       # GARRISON_INTERNAL_PORT: 8081
-      # 外网登录端点默认关闭（secure-by-default），业务方注入凭证校验后再开启：
+      # 绑定地址：镜像已内置 GARRISON_EXTERNAL_BIND/GARRISON_INTERNAL_BIND=0.0.0.0
+      # （容器内必须绑 0.0.0.0 才能被 ports 映射）；对外暴露面由上方 ports 控制
+      # （内网端口已收敛为 127.0.0.1 宿主回环映射），勿改容器内绑定
+      # GARRISON_EXTERNAL_BIND: 0.0.0.0
+      # GARRISON_INTERNAL_BIND: 0.0.0.0
+      # 并发会话策略：同账号最多 10 个在线会话，超出踢最早会话（0 = 不限制）：
+      # GARRISON_MAX_LOGIN_COUNT: 10
+      # 可信代理：仅当本容器部署在可信反代（nginx/traefik 等）之后才配置，
+      # 逗号分隔的内网/回环 IP；配置后 XFF 解析（限速键/客户端 IP）才启用：
+      # GARRISON_TRUSTED_PROXIES: 10.0.0.1
+      # 外网登录端点默认关闭（secure-by-default）。
+      # ⚠️ 业务层必须先注入凭证校验再开启（框架 login 零凭证校验）；
+      #    开启后（镜像绑定 0.0.0.0，非回环）还须同时设置显式风险确认，
+      #    否则容器 fail-closed 拒绝启动：
       # GARRISON_EXTERNAL_LOGIN_ENABLED: "true"
+      # GARRISON_EXTERNAL_LOGIN_ACK: "i-understand-no-credential-check"
     restart: unless-stopped
     healthcheck:
       # 探测本容器外网端口的 sdforge liveness 探针（进程存活恒 200），

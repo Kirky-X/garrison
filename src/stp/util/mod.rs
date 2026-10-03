@@ -690,11 +690,14 @@ impl GarrisonUtil {
 
     /// 检查二级认证（MFA）状态。
     ///
-    /// 委托 `MfaLogic::check_safe()`，默认实现返回 `Ok(())`（未启用 MFA）。
+    /// 委托 `MfaLogic::check_safe()`：先验会话（无效/已撤销 token →
+    /// `Err(GarrisonError::Session)`，与 check-login 的 SESSION_ERROR 语义对齐），
+    /// 后判 safe——有效会话未启用 MFA 时返回 `Ok(())`。
     ///
     /// # 返回
-    /// - `Ok(())`: 已通过二级认证或未启用 MFA。
-    /// - `Err(GarrisonError::Session)`: 未通过二级认证。
+    /// - `Ok(())`: 会话有效且已通过二级认证（或未启用 MFA）。
+    /// - `Err(GarrisonError::Session)`: 会话无效（token 不存在/已过期/被踢）。
+    /// - `Err(GarrisonError::NotSafe)`: 未通过二级认证。
     ///
     /// # 错误
     /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
@@ -717,11 +720,13 @@ impl GarrisonUtil {
 
     /// 检查账号是否被禁用。
     ///
-    /// 委托 `MfaLogic::check_disable()`，默认实现返回 `Ok(())`（未实现禁用账号库）。
+    /// 委托 `MfaLogic::check_disable()`：先验会话（无效/已撤销 token →
+    /// `Err(GarrisonError::Session)`，「token 无效」不与「未封禁」合并），后判封禁。
     ///
     /// # 返回
-    /// - `Ok(())`: 账号未禁用。
-    /// - `Err(GarrisonError::Session)`: 账号已禁用。
+    /// - `Ok(())`: 会话有效且账号未禁用。
+    /// - `Err(GarrisonError::Session)`: 会话无效（token 不存在/已过期/被踢）。
+    /// - `Err(GarrisonError::DisableService)`: 账号已禁用。
     ///
     /// # 错误
     /// - `GarrisonManager` 未初始化：`GarrisonError::Session`。
