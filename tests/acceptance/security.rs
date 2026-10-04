@@ -568,6 +568,30 @@ async fn hibp_available() -> bool {
     reachable
 }
 
+/// HIBP 查询出口抖动重试（acc_sec_014/015 共用）：偶发失败（TLS 重置等）会被
+/// 实现的 fail-open 语义吞成 `service_available=false` + `pwned=false`，对
+/// 「服务不可用」做有界重试，连续失败才按真实断言处理（离线环境已被探活门控跳过）。
+#[cfg(feature = "policy-hibp")]
+async fn hibp_check_with_retry(
+    rule: &garrison::account::policy::rules::NistComplianceRule,
+    password: &str,
+) -> garrison::account::policy::rules::HibpVerdict {
+    let mut verdict = None;
+    for _ in 0..3 {
+        let v = rule
+            .check_hibp_with_base(password, "https://api.pwnedpasswords.com/range")
+            .await
+            .expect("check_hibp 不应出错");
+        let available = v.service_available;
+        verdict = Some(v);
+        if available {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+    verdict.expect("重试循环至少执行一次")
+}
+
 /// （异常）：HIBP 泄露密码拒绝（真实 api.pwnedpasswords.com）——
 /// 公认泄露密码「password」判定 pwned=true 且泄漏次数 > 0（k-anonymity：
 /// 实现仅上传 SHA-1 前缀 5 hex，无隐私风险）。离线环境 `[SKIP]`。
@@ -583,23 +607,7 @@ async fn acc_sec_014_hibp_leaked_password_pwned() {
     }
 
     let rule = NistComplianceRule::new(8);
-    // 出口链路偶发抖动（TLS 重置等）会被实现的 fail-open 语义吞成
-    // service_available=false + pwned=false；对「服务不可用」做有界重试，
-    // 连续失败才按真实断言处理（真离线环境已被上方探活门控跳过）。
-    let mut verdict = None;
-    for _ in 0..3 {
-        let v = rule
-            .check_hibp_with_base("password", "https://api.pwnedpasswords.com/range")
-            .await
-            .expect("check_hibp 不应出错");
-        let available = v.service_available;
-        verdict = Some(v);
-        if available {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    }
-    let verdict = verdict.expect("重试循环至少执行一次");
+    let verdict = hibp_check_with_retry(&rule, "password").await;
     assert!(
         verdict.service_available,
         "3 次重试后服务仍不可用：本环境出口链路持续失败，应人工核查"
@@ -623,21 +631,7 @@ async fn acc_sec_015_hibp_clean_password_passes() {
     let rule = NistComplianceRule::new(8);
     // 高熵密码：随机后缀保证不在泄露库（命中概率可忽略）
     let password = format!("totally_clean_{}_{}", std::process::id(), "x9QmV2tL");
-    // 同 acc_sec_014：对出口抖动的 fail-open 结果做有界重试
-    let mut verdict = None;
-    for _ in 0..3 {
-        let v = rule
-            .check_hibp_with_base(&password, "https://api.pwnedpasswords.com/range")
-            .await
-            .expect("check_hibp 不应出错");
-        let available = v.service_available;
-        verdict = Some(v);
-        if available {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-    }
-    let verdict = verdict.expect("重试循环至少执行一次");
+    let verdict = hibp_check_with_retry(&rule, &password).await;
     assert!(
         verdict.service_available,
         "3 次重试后服务仍不可用：应人工核查出口链路"

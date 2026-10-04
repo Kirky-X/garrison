@@ -311,7 +311,7 @@ mod tests {
     // mask_value 测试
     // ========================================================================
 
-    /// 手机号 "13812341234" → "1381234"。
+    /// 手机号 "13812341234" → "138****1234"。
     #[test]
     fn mask_phone_returns_138_1234() {
         let masker = SensitiveDataMasker::new();
@@ -319,7 +319,7 @@ mod tests {
         assert_eq!(result, "138****1234");
     }
 
-    /// 身份证 "110101199001011234" → "110***1234"。
+    /// 身份证 "110101199001011234" → "110***********1234"。
     #[test]
     fn mask_id_card_returns_masked() {
         let masker = SensitiveDataMasker::new();
@@ -335,7 +335,7 @@ mod tests {
         assert_eq!(result, "a***@example.com");
     }
 
-    /// 银行卡 "6222021234567890" → "622202**7890"（PCI-DSS first 6 + last 4）。
+    /// 银行卡 "6222021234567890" → "622202******7890"（PCI-DSS first 6 + last 4）。
     #[test]
     fn mask_bank_card_returns_masked() {
         let masker = SensitiveDataMasker::new();

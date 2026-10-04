@@ -136,17 +136,32 @@ mod tests {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
 
-    /// 内层 service 桩：回显 extensions 中的 RequestId（200），或按 mode 返回错误。
+    /// 内层 service 桩：回显 extensions 中的 RequestId（200）、scope 内渲染错误
+    /// （`failing`），或向外传播 `Err`（`propagating`——生产中 handler Err 的
+    /// 真实路径，覆盖中间件 Err 分支）。
     struct EchoService {
         fail: bool,
+        propagate: bool,
     }
 
     impl EchoService {
         fn ok() -> Self {
-            Self { fail: false }
+            Self {
+                fail: false,
+                propagate: false,
+            }
         }
         fn failing() -> Self {
-            Self { fail: true }
+            Self {
+                fail: true,
+                propagate: false,
+            }
+        }
+        fn propagating() -> Self {
+            Self {
+                fail: true,
+                propagate: true,
+            }
         }
     }
 
@@ -164,6 +179,10 @@ mod tests {
             if self.fail {
                 let (http_req, _payload) = req.into_parts();
                 let err = GarrisonError::NotLogin("web-not-login::".to_string());
+                if self.propagate {
+                    // actix handler Err 传播路径：Err 交给中间件 Err 分支处理
+                    return Box::pin(async move { Err(actix_web::Error::from(err)) });
+                }
                 // 错误响应在 EchoService 内（即 request id scope 内）渲染，
                 // 与真实链路中 ResponseError 由 scope 内渲染的行为对齐
                 return Box::pin(async move {
@@ -186,6 +205,21 @@ mod tests {
         fail: bool,
         header: Option<(&str, &str)>,
     ) -> ServiceResponse<EitherBody<BoxBody, BoxBody>> {
+        run_call_with(
+            if fail {
+                EchoService::failing()
+            } else {
+                EchoService::ok()
+            },
+            header,
+        )
+        .await
+    }
+
+    async fn run_call_with(
+        service: EchoService,
+        header: Option<(&str, &str)>,
+    ) -> ServiceResponse<EitherBody<BoxBody, BoxBody>> {
         let mut builder = TestRequest::get().uri("/ping");
         if let Some((name, value)) = header {
             builder = builder.insert_header((name, value));
@@ -193,17 +227,13 @@ mod tests {
         let req = builder.to_srv_request();
         let middleware = RequestIdMiddleware;
         let service = middleware
-            .new_transform(if fail {
-                EchoService::failing()
-            } else {
-                EchoService::ok()
-            })
+            .new_transform(service)
             .await
             .expect("transform 初始化应成功");
         service
             .call(req)
             .await
-            .expect("request_id service 不应向外传播 Err")
+            .expect("request_id service 不应向外传播 Err（Err 分支在中间件内渲染）")
     }
 
     /// 入站合法 id 原样回传，且内层经 extensions 取到同值。
@@ -219,6 +249,31 @@ mod tests {
         assert_eq!(header, "actix-corr-001");
         let body = test::read_body(res).await;
         assert_eq!(String::from_utf8_lossy(&body), "actix-corr-001");
+    }
+
+    /// 内层 service 向外传播 Err（生产中 handler `Err(actix_web::Error)` 的真实
+    /// 路径）：中间件 Err 分支同样注入 `X-Request-ID`，错误体携带同值
+    /// `request_id` 字段，且不向外传播 Err（三框架 in-scope 渲染一致性保证）。
+    #[tokio::test]
+    async fn propagated_err_rendered_with_request_id() {
+        let res = run_call_with(
+            EchoService::propagating(),
+            Some(("X-Request-ID", "actix-err-001")),
+        )
+        .await;
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        let header = res
+            .headers()
+            .get(X_REQUEST_ID.as_str())
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert_eq!(header, "actix-err-001");
+        let body = test::read_body(res).await;
+        let body = String::from_utf8_lossy(&body);
+        assert!(
+            body.contains("request_id") && body.contains("actix-err-001"),
+            "错误体应含 request_id 字段与同值，实际: {body}"
+        );
     }
 
     /// 超长入站值（> 128 字节，http 层可构造的唯一非法类）重新生成合法 UUID。

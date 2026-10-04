@@ -83,7 +83,7 @@ fn make_handler() -> TempCredentialHandler {
 // TempCredentialHandler 构造测试
 // ========================================================================
 
-/// 构造 handler）。
+/// 构造 handler。
 #[test]
 fn new_creates_handler() {
     let _handler = make_handler();
@@ -93,7 +93,7 @@ fn new_creates_handler() {
 // issue 测试
 // ========================================================================
 
-/// 成功签发，key 前缀正确）。
+/// 成功签发，key 前缀正确。
 #[tokio::test]
 async fn issue_returns_key_with_correct_prefix() {
     let handler = make_handler();
@@ -101,7 +101,7 @@ async fn issue_returns_key_with_correct_prefix() {
     assert!(key.starts_with("garrison:temp:invite:"));
 }
 
-/// 复用同一 handler 多次签发返回不同 key）。
+/// 复用同一 handler 多次签发返回不同 key。
 #[tokio::test]
 async fn issue_multiple_times_returns_different_keys() {
     let handler = make_handler();
@@ -110,7 +110,7 @@ async fn issue_multiple_times_returns_different_keys() {
     assert_ne!(k1, k2);
 }
 
-/// 不同 prefix 产生不同命名空间）。
+/// 不同 prefix 产生不同命名空间。
 #[tokio::test]
 async fn issue_different_prefix_different_namespace() {
     let handler = make_handler();
@@ -120,7 +120,7 @@ async fn issue_different_prefix_different_namespace() {
     assert!(k2.starts_with("garrison:temp:reset:"));
 }
 
-/// ttl_seconds <= 0 返回错误）。
+/// ttl_seconds <= 0 返回错误。
 #[tokio::test]
 async fn issue_zero_ttl_returns_error() {
     let handler = make_handler();
@@ -132,7 +132,7 @@ async fn issue_zero_ttl_returns_error() {
     }
 }
 
-/// prefix 包含冒号返回错误）。
+/// prefix 包含冒号返回错误。
 #[tokio::test]
 async fn issue_prefix_with_colon_returns_error() {
     let handler = make_handler();
@@ -144,7 +144,7 @@ async fn issue_prefix_with_colon_returns_error() {
     }
 }
 
-/// value 为空字符串允许存储）。
+/// value 为空字符串允许存储。
 #[tokio::test]
 async fn issue_empty_value_allowed() {
     let dao = Arc::new(MockDao::new());
@@ -158,7 +158,7 @@ async fn issue_empty_value_allowed() {
 // get 测试
 // ========================================================================
 
-/// 读取存在的凭据，多次读取不删除）。
+/// 读取存在的凭据，多次读取不删除。
 #[tokio::test]
 async fn get_returns_value_without_deleting() {
     let handler = make_handler();
@@ -169,7 +169,7 @@ async fn get_returns_value_without_deleting() {
     assert_eq!(v2, Some("data".to_string()));
 }
 
-/// 读取不存在的凭据返回 None）。
+/// 读取不存在的凭据返回 None。
 #[tokio::test]
 async fn get_nonexistent_returns_none() {
     let handler = make_handler();
@@ -184,7 +184,7 @@ async fn get_nonexistent_returns_none() {
 // revoke 测试
 // ========================================================================
 
-/// 撤销存在的凭据）。
+/// 撤销存在的凭据。
 #[tokio::test]
 async fn revoke_existing_returns_ok() {
     let handler = make_handler();
@@ -211,7 +211,7 @@ async fn revoke_nonexistent_returns_ok() {
 // consume 测试
 // ========================================================================
 
-/// 成功消费存在的凭据）。
+/// 成功消费存在的凭据。
 #[tokio::test]
 async fn consume_returns_value_and_deletes() {
     let handler = make_handler();
@@ -222,7 +222,7 @@ async fn consume_returns_value_and_deletes() {
     assert_eq!(again, None);
 }
 
-/// 重复消费返回 None）。
+/// 重复消费返回 None。
 #[tokio::test]
 async fn consume_twice_returns_none_second_time() {
     let handler = make_handler();
@@ -233,7 +233,7 @@ async fn consume_twice_returns_none_second_time() {
     assert_eq!(v2, None);
 }
 
-/// 消费不存在的凭据返回 None）。
+/// 消费不存在的凭据返回 None。
 #[tokio::test]
 async fn consume_nonexistent_returns_none() {
     let handler = make_handler();
@@ -244,7 +244,7 @@ async fn consume_nonexistent_returns_none() {
     assert_eq!(value, None);
 }
 
-/// revoke 后 consume 失败返回 None）。
+/// revoke 后 consume 失败返回 None。
 #[tokio::test]
 async fn consume_after_revoke_returns_none() {
     let handler = make_handler();
@@ -320,7 +320,7 @@ async fn consume_atomic_still_one_time_use() {
 // Key 命名空间隔离测试
 // ========================================================================
 
-/// temp key 与 apikey 命名空间隔离）。
+/// temp key 与 apikey 命名空间隔离。
 #[tokio::test]
 async fn temp_namespace_isolated() {
     let dao = Arc::new(MockDao::new());

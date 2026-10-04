@@ -75,17 +75,14 @@ fn decode_invalid_base64_errors() {
 /// 解码后缺失冒号分隔符失败。
 #[test]
 fn decode_missing_colon_errors() {
-    // 钉住 locale：断言依赖中文模板文案（42b7675 起默认语言为英文，guard 随测试作用域恢复）
-    let _locale_guard = crate::i18n::set_locale(crate::i18n::GarrisonLocale::Zh);
     // "usernocolon" 的 Base64
     let result = HttpBasicAuth::decode("dXNlcm5hbWVub2NvbG9u");
-    assert!(result.is_err());
+    // 断言错误码（locale 无关）而非本地化文案（对齐本文件其他测试惯例）
     assert!(
-        matches!(result, Err(GarrisonError::InvalidParam(_))),
-        "缺失冒号分隔符应返回 InvalidParam，实际: {:?}",
+        matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("secure-cred-missing-colon")),
+        "缺失冒号分隔符应返回 InvalidParam（secure-cred-missing-colon），实际: {:?}",
         result
     );
-    assert!(result.unwrap_err().to_string().contains("冒号分隔符"));
 }
 
 /// 密码中包含冒号：split_once 在第一个冒号处分割，密码含 `:` 应正确往返。

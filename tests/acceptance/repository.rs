@@ -684,7 +684,7 @@ async fn acc_repo_010_user_device_register_list_block_unblock_count() {
     let devices = repo.list_user_devices(TENANT_A, login_id).await.unwrap();
     assert!(
         devices[0].is_blocked,
-        "跨租户 unblock 亦不得改动他租户设备状态（仍为本租户 block 后的 true）"
+        "跨租户 block 不得改动他租户设备状态（仍为本租户 block 后的 true）"
     );
     repo.unblock_device(TENANT_A, &device_id)
         .await
