@@ -1241,6 +1241,17 @@ fn apply_rate_limit_env_override(config: &mut GarrisonConfig) -> GarrisonResult<
 
 /// 构造 confers FileSource（TOML 文件安全加载配置单点维护）：
 /// 路径遍历/symlink 防护、特殊文件拒绝、10MB 上限 + take 双保险、错误路径脱敏。
+///
+/// 显式钉 `Format::Toml`（confers 0.6.0-rc.6 起扩展名白名单门在路径校验之前
+/// 执行，无扩展名/未知扩展名的文件源会被先行拒绝；显式 format 覆盖是其文档化
+/// 豁免通道）。钉死格式后 garrison 自身的安全检查次序恢复 rc.5 原貌
+/// （路径遍历/目录/特殊文件校验先于格式解析）；代价是 `.yaml`/`.json`/`.ini`
+/// 等扩展名不再按各自格式解析（一律按 TOML，fail-closed）——garrison 文件
+/// 配置承诺格式即 TOML（见 CONFIGURATION.md），收窄符合承诺。
+///
+/// format 钉定内嵌在 `LoaderConfig` 链上而非 `FileSource::with_format`：
+/// 后者与 `with_loader_config` 存在整体替换的顺序耦合（先设会被抹掉），
+/// 内嵌可从根上消除该陷阱。
 fn confers_file_source(path: &str, max_size: usize) -> confers::config::FileSource {
     confers::config::FileSource::new(path)
         .with_priority(10)
@@ -1248,7 +1259,8 @@ fn confers_file_source(path: &str, max_size: usize) -> confers::config::FileSour
             confers::loader::LoaderConfig::new()
                 .allow_absolute()
                 .max_size(max_size)
-                .redact_error_paths(),
+                .redact_error_paths()
+                .with_format(confers::loader::Format::Toml),
         )
 }
 

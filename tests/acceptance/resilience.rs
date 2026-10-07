@@ -744,10 +744,10 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
     // 熔断打开：携带错误 API Key 的对照 remote（同一熔断器）快速拒绝——
     // 若请求漏过熔断器到达真实服务器，错误应为 Network("HTTP 401: …")；
     // 熔断拦截时错误含「熔断器」标记且不出现 HTTP 状态码。
-    // 注：limiteron 打开态经 `CircuitBreakerWrapper` 映射为
-    // `GarrisonError::FirewallBlocked("circuit-limited::...")`
-    // （src/limiteron/circuit.rs `to_garrison_error`），Network("circuit-open")
-    // 为 Guard 变体，二者均为熔断拒绝语义。
+    // 注：limiteron 0.3.0-rc.6 打开态经 `CircuitBreakerWrapper` 映射为
+    // `GarrisonError::Network("circuit-open::...")`
+    // （src/limiteron/circuit.rs，`CircuitCallError::Open` 分支），熔断拒绝语义；
+    // rc.5 时代的 FirewallBlocked("circuit-limited::...") 变体已不存在。
     let probe_wrong_key = BackendRemote::new(&internal_url, "wrong-key", Duration::from_secs(5))
         .unwrap()
         .with_circuit_breaker(breaker.clone());

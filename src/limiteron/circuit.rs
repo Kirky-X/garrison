@@ -25,7 +25,11 @@
 //! - 无前缀的 `Network` 错误才是真正的网络层失败，可按常规退避重试。
 
 use crate::error::{GarrisonError, GarrisonResult};
-use limiteron::circuit::{CircuitBreaker, CircuitBreakerConfig, ErrorClassifier};
+// limiteron 0.3.0-rc.6：ErrorClassifier 更名为泛型 FailureClassifier<E>；
+// Garrison 分类器仍以 LimiteronError 为错误域（execute 前经 to_limiteron_error 映射）。
+use limiteron::circuit::{
+    CircuitBreaker, CircuitBreakerConfig, CircuitCallError, FailureClassifier,
+};
 use limiteron::error::LimiteronError;
 use std::sync::Arc;
 
@@ -37,10 +41,14 @@ use std::sync::Arc;
 /// - `Dao` 错误 → 失败（底层存储异常）
 /// - `InvalidParam` / `NotFound` → 不计入（客户端错误，不应触发熔断）
 /// - 其他 → 计入（保守策略）
+///
+/// 判定体当前与 limiteron `DefaultFailureClassifier` 等价（rc.5 时代即如此），
+/// 刻意保留自定义实现：隔离上游默认语义漂移（分类口径变化不影响 garrison
+/// 的熔断行为契约），演进需显式过本文件 diff。
 #[derive(Debug)]
 struct GarrisonErrorClassifier;
 
-impl ErrorClassifier for GarrisonErrorClassifier {
+impl FailureClassifier<LimiteronError> for GarrisonErrorClassifier {
     fn is_counted_as_failure(&self, error: &LimiteronError) -> bool {
         match error {
             // 存储/网络临时错误 → 算失败
@@ -78,6 +86,12 @@ fn to_limiteron_error(e: GarrisonError) -> LimiteronError {
 }
 
 /// 将 `LimiteronError` 映射回 `GarrisonError`。
+///
+/// 仅消费 `CircuitCallError::Inner` 携带的原始错误（`to_limiteron_error` 的
+/// 产物：StorageError/ValidationError/Other）；`CircuitBreakerError`/
+/// `LimitError` 两臂在 rc.6 execute 流中不可达（打开拒绝已独立为
+/// `CircuitCallError::Open`，见 [`CircuitBreakerWrapper::execute`]），
+/// 保留以维持对 `LimiteronError` 的全量映射（防御上游语义变化）。
 fn to_garrison_error(e: LimiteronError) -> GarrisonError {
     match &e {
         // 熔断器打开 → 远程服务不可达语义
@@ -132,7 +146,14 @@ impl CircuitBreakerWrapper {
         self.inner
             .execute(|| async { operation().await.map_err(to_limiteron_error) })
             .await
-            .map_err(to_garrison_error)
+            .map_err(|call_err| match call_err {
+                // limiteron rc.6：熔断打开为独立 variant（闭包未执行），
+                // 映射保持 `circuit-open::` 前缀契约（见模块文档「错误语义」）
+                CircuitCallError::Open => {
+                    GarrisonError::Network("circuit-open::circuit breaker is open".to_string())
+                },
+                CircuitCallError::Inner(e) => to_garrison_error(e),
+            })
     }
 
     /// 查询熔断器是否打开。
@@ -224,6 +245,13 @@ mod tests {
             .execute(|| async { Ok::<_, GarrisonError>(42) })
             .await;
         assert!(result.is_err(), "熔断器打开时应拒绝请求");
+        // 核心契约锁定：拒绝错误必须是 `circuit-open::` 前缀的 Network
+        // （调用方据此区分熔断拒绝与可重试的瞬时网络错误，见模块文档「错误语义」）
+        let err = result.unwrap_err();
+        assert!(
+            matches!(&err, GarrisonError::Network(m) if m.starts_with("circuit-open::")),
+            "熔断拒绝应为 circuit-open:: 前缀的 Network 错误，实际: {err:?}"
+        );
     }
 
     /// InvalidParam 错误不计入失败（客户端错误不应触发熔断）。

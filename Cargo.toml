@@ -41,8 +41,8 @@ axum = { version = "0.8", default-features = false, features = ["json"] }
 actix-web = { version = "4.12", default-features = false }
 warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
-oxcache = { version = "0.5.0-rc.5", default-features = false }
-dbnexus = { version = "0.6.0-rc.5", default-features = false }
+oxcache = { version = "0.5.0-rc.6", default-features = false }
+dbnexus = { version = "0.6.0-rc.6", default-features = false }
 md5 = { version = "0.8" }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "env-filter"] }
 rand = { version = "0.10" }
@@ -65,7 +65,7 @@ path = "src/lib.rs"
 # === Required dependencies ===
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-confers = { version = "0.6.0-rc.5" }
+confers = { version = "0.6.0-rc.6" }
 tokio = { version = "1.53", features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 inventory = "0.3"
 thiserror = "2.0"
@@ -106,7 +106,7 @@ zeroize = { version = "1.9", optional = true, default-features = false, features
 regex = { version = "1.13", optional = true, default-features = false }
 # optional 化：唯一常驻使用点 three-tier-cache（src/cache/three_tier.rs）显式 dep:oxcache；
 # dao/oxcache_impl（cache-memory|cache-redis）与 abac（经 cache-memory）经 oxcache/* 引用自动激活。
-oxcache = { version = "0.5.0-rc.5", default-features = false, optional = true }
+oxcache = { version = "0.5.0-rc.6", default-features = false, optional = true }
 # dbnexus 0.4+ 在 src/lib.rs#L51 设置 compile_error!，强制至少启用一个数据库驱动 feature
 # （sqlite/postgres/mysql/duckdb/ladybug/neo4j）。因此 dbnexus 必须 optional，由 db-base feature
 # 透传 dbnexus/<driver> 启用对应驱动。这并非手写绕过，而是 dbnexus 0.4 API 设计的硬性约束。
@@ -152,8 +152,8 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true }
 # optional 化：唯一使用点 observability/inklog（audit-inklog 门控），其 inklog/* 引用自动激活。
-inklog = { version = "0.3.0-rc.5", default-features = false, optional = true }
-limiteron = { version = "0.3.0-rc.5", default-features = false, features = ["distributed"] }
+inklog = { version = "0.3.0-rc.7", default-features = false, optional = true }
+limiteron = { version = "0.3.0-rc.6", default-features = false, features = ["distributed"] }
 # sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
 # 始终可用（`server_impl.rs` 无条件调用 `sdforge::http::build()`）。
 # 但 `#[forge]` 宏生成的 `inventory::submit!` 被 `#[cfg(feature = "http")]` 保护，
@@ -162,8 +162,8 @@ limiteron = { version = "0.3.0-rc.5", default-features = false, features = ["dis
 # 2026-09-19 审计 optional 化：sdforge 仅被 auth-server 门控的 src/server 使用；
 # 由 auth-server-sdforge（dep:sdforge）与 api-docs（sdforge/openapi）按需激活。
 # default 构建不再白编译 axum/tower 栈，也不再要求 sdforge build.rs 的 protoc。
-sdforge = { version = "0.5.0-rc.5", default-features = false, features = ["http"], optional = true }
-trait-kit = { version = "0.5.0-rc.6", default-features = false, features = ["async"] }
+sdforge = { version = "0.5.0-rc.6", default-features = false, features = ["http"], optional = true }
+trait-kit = { version = "0.5.0-rc.7", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.13", default-features = false, optional = true }
 icu_plurals = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
 icu_datetime = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
