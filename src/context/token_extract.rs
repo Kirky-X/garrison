@@ -225,36 +225,51 @@ pub fn extract_token_from_request_parts(
     }
     // 3. Body 提取（C7: 仅 POST/PUT/PATCH 允许）
     if config.is_read_body && !body_bytes.is_empty() {
-        if !is_body_token_allowed_method(method) {
-            tracing::warn!(
-                method = method,
-                "C7: HTTP method does not allow extracting token from body, skipping body read"
-            );
-            return Ok(None);
-        }
-        // DoS 防护：解析前限制 body 大小。超大 body（数十 MB JSON）
-        // 会在 token 校验前引发过量堆分配；超过上限直接跳过 body 提取。
-        // 上限固定 1MB（与常见网关 body 限制对齐）；如需调整请修改本常量。
-        const MAX_BODY_TOKEN_PARSE_BYTES: usize = 1024 * 1024; // 1MB
-        if body_bytes.len() > MAX_BODY_TOKEN_PARSE_BYTES {
-            tracing::warn!(
-                size = body_bytes.len(),
-                limit = MAX_BODY_TOKEN_PARSE_BYTES,
-                "request body exceeds token-extraction parse limit, skipping body token read"
-            );
-            return Ok(None);
-        }
-        let content_type = header_fn("Content-Type")?.unwrap_or_default();
-        // 大小写不敏感匹配（RFC 9110：media type 不区分大小写），
-        // `Application/JSON` 等非常规大小写不应静默跳过 body 提取
-        if content_type
-            .to_ascii_lowercase()
-            .contains("application/json")
-        {
-            if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
-                if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
-                    return Ok(Some(token.to_string()));
-                }
+        return extract_token_from_body(config, body_bytes, method, header_fn);
+    }
+    Ok(None)
+}
+
+/// Body 级 token 提取子流程（C7 方法限制 → 大小护栏 → JSON 字段提取）。
+///
+/// 仅在 `is_read_body` 且 body 非空时由 [`extract_token_from_request_parts`] 调用；
+/// 任何不可提取条件（方法受限 / 超 1MB 解析护栏 / 非 JSON / 无目标字段）
+/// 一律 `Ok(None)` fail-closed 跳过；仅 Content-Type 读取失败透传错误。
+fn extract_token_from_body(
+    config: &GarrisonConfig,
+    body_bytes: &[u8],
+    method: &str,
+    mut header_fn: impl FnMut(&str) -> GarrisonResult<Option<String>>,
+) -> GarrisonResult<Option<String>> {
+    if !is_body_token_allowed_method(method) {
+        tracing::warn!(
+            method = method,
+            "C7: HTTP method does not allow extracting token from body, skipping body read"
+        );
+        return Ok(None);
+    }
+    // DoS 防护：解析前限制 body 大小。超大 body（数十 MB JSON）
+    // 会在 token 校验前引发过量堆分配；超过上限直接跳过 body 提取。
+    // 上限固定 1MB（与常见网关 body 限制对齐）；如需调整请修改本常量。
+    const MAX_BODY_TOKEN_PARSE_BYTES: usize = 1024 * 1024; // 1MB
+    if body_bytes.len() > MAX_BODY_TOKEN_PARSE_BYTES {
+        tracing::warn!(
+            size = body_bytes.len(),
+            limit = MAX_BODY_TOKEN_PARSE_BYTES,
+            "request body exceeds token-extraction parse limit, skipping body token read"
+        );
+        return Ok(None);
+    }
+    let content_type = header_fn("Content-Type")?.unwrap_or_default();
+    // 大小写不敏感匹配（RFC 9110：media type 不区分大小写），
+    // `Application/JSON` 等非常规大小写不应静默跳过 body 提取
+    if content_type
+        .to_ascii_lowercase()
+        .contains("application/json")
+    {
+        if let Ok(value) = serde_json::from_slice::<serde_json::Value>(body_bytes) {
+            if let Some(token) = value.get(&config.token_name).and_then(|v| v.as_str()) {
+                return Ok(Some(token.to_string()));
             }
         }
     }

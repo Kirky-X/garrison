@@ -269,7 +269,9 @@ pub trait OidcProvider: Send + Sync {
 ///
 /// 表示从 `jwks_uri` 拉取的公钥集合中的一个条目。
 /// 仅声明 RS256 验签所需字段；其他字段（如 `use` / `alg`）在反序列化时被忽略。
-#[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
+// protocol-sso 恒含 protocol-jwt（feature 链），JWKS 仅被验签路径（jwt 门控）消费，
+// cfg 全隔离：无 jwt 的构建不编译本结构。
+#[cfg(feature = "protocol-jwt")]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct Jwk {
     /// 公钥标识（Key ID），与 JWT header 的 `kid` 匹配以选择验签公钥。
@@ -281,7 +283,7 @@ struct Jwk {
 }
 
 /// JWKS 公钥集合响应。
-#[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
+#[cfg(feature = "protocol-jwt")]
 #[derive(Debug, Clone, Deserialize, Serialize)]
 struct JwksResponse {
     /// 公钥列表。

@@ -50,7 +50,6 @@ impl GarrisonSession {
     ///   `cache-redis` feature 启用时）
     /// - `GarrisonLogicDefault::blacklist_jwt_jti` / `check_login_stateless`
     ///   （`protocol-jwt` feature）
-    #[allow(dead_code)]
     pub(crate) fn dao(&self) -> &Arc<dyn GarrisonDao> {
         &self.dao
     }

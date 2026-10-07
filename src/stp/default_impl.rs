@@ -6,25 +6,22 @@
 use super::*;
 
 impl GarrisonLogicDefault {
-    /// 获取底层 DAO 引用（跨模块逻辑如 firewall 计数/封禁 / JWT 黑名单使用）。
+    /// 获取底层 DAO 引用（JWT 黑名单读写 / firewall 计数封禁使用）。
     ///
-    /// 调用方分布随 feature 组合变化幅度大，无法用 cfg 精确枚举，
-    /// 参照同 impl 块 `firewall_hook_injected` 先例以 allow(dead_code) 处理。
-    #[cfg(any(
-        feature = "protocol-apikey",
-        feature = "db-postgres",
-        feature = "db-mysql",
-        feature = "cache-redis",
-        feature = "protocol-jwt",
-        feature = "firewall-bruteforce"
-    ))]
-    #[allow(dead_code)]
+    /// cfg 与调用方严格对齐（编译矩阵已验证）：黑名单路径
+    /// （helpers.rs blacklist_* / check_login_stateless）在 protocol-jwt 下，
+    /// 封禁计数（session/mod.rs login）在 firewall-bruteforce 下；
+    /// protocol-apikey / db-* / cache-redis 的消费方直接走 `session.dao()`。
+    #[cfg(any(feature = "protocol-jwt", feature = "firewall-bruteforce"))]
     pub(crate) fn dao(&self) -> std::sync::Arc<dyn crate::dao::GarrisonDao> {
         self.session.dao().clone()
     }
 
     /// 诊断：builder 是否已将防火墙 hook 注入（自检）。
-    #[allow(dead_code)]
+    ///
+    /// 唯一调用方为 firewall_tests::builder_auto_wires_firewall_hook
+    /// （`cfg(all(test, firewall-bruteforce))`），按调用方同款 cfg 全隔离。
+    #[cfg(all(test, feature = "firewall-bruteforce"))]
     pub(crate) fn firewall_hook_injected(&self) -> bool {
         self.firewall.firewall_hook_injected()
     }

@@ -311,10 +311,6 @@ pub use helpers::{effective_is_read_cookie, effective_is_read_header};
 /// # 错误
 ///
 /// - `GarrisonError::Context`：name 或 value 含非法字符时返回。
-#[cfg_attr(
-    not(any(feature = "web-axum", feature = "web-actix", feature = "web-warp")),
-    allow(dead_code)
-)]
 pub(crate) fn validate_cookie_name_value(name: &str, value: &str) -> GarrisonResult<()> {
     let name_ok = !name.is_empty()
         && name.bytes().all(|b| {

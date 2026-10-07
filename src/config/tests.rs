@@ -2155,7 +2155,6 @@ fn load_rejects_directory() {
 // ========================================================================
 
 /// 测试专用 RSA 2048 私钥（PKCS#8，非真实凭证）。
-#[allow(dead_code)]
 // nosemgrep: generic.secrets.security.detected-private-key.detected-private-key —— CI 已验证的测试夹具 PEM（假钥，非真实凭证）
 const TEST_ASYM_RSA_PEM: &str = "-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDMQoXOvmvs4kpj

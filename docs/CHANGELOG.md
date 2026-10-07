@@ -49,6 +49,11 @@
 - **多租户 Stateless `check_login` 消除二次 JWT 验签**：租户绑定 `tid` 收敛为 `GarrisonJwtClaims` 的 `#[serde(default)] pub tid: Option<i64>` 字段（`JwtHandler::with_tid` 签发接线，旧 token 解析为 `None`、无租户上下文签发载荷不含 `tid`、`verify` 对旧 token 行为不变），`check_login_stateless` 从首次验签的 claims 直接读 `tid`——删除 `verify_custom::<JwtTenantProbe>` 第二次完整验签与 `TenantBoundJwtClaims` 镜像结构（原 ~2-10µs 双验签与 parity 测试守护的第二实现张力一并消除，字段漂移由单一结构在编译期排除）。
 - **会话模式 `check_login` 租户绑定校验复用会话快照**：`check_login_simple` / `check_login_mixin` 将 `is_valid_with_session` 已取的 Token-Session 快照透传给 `validate_session_tenant_binding`，消除同一请求内对同一 token 的第二次整读（原 +1 次 DAO 读 + 反序列化；快照不可达的 Stateless 模式保持原读取路径，行为零变化）。
 
+### Changed
+
+- **死代码清理与 `dead_code` 豁免收口（codenexus + 编译矩阵联合审查）**：删除 `protocol::oauth2` 无生产调用方的 `read_limited_text`（错误路径刻意不读响应体——防 `client_secret` 借恶意服务器回显泄露，`sso::oidc` 本地副本保留且在用）及其 E2 测试；`#[allow(dead_code)]` 按真实调用面收敛——`stp/default_impl` 的 `dao()` cfg 列表收窄至真实调用方（`protocol-jwt` / `firewall-bruteforce`，其余 feature 的消费方直接走 `session.dao()`）、`firewall_hook_injected` 改 `cfg(all(test, firewall-bruteforce))` 全隔离、`auth_server` bin 的 `parse_field_encryption_keys` 与 `sso::oidc` 的 `Jwk` / `JwksResponse` 从 `cfg_attr` 豁免升级为 `cfg` 特性全隔离（无关构建不编译）、`core/token` 的 `secret` 字段豁免精确到 `secure-simple-token`（HMAC 路径唯一消费方）；移除三处失效豁免（`session::dao()` 实际存在全 feature 调用方、`context::validate_cookie_name_value` 由恒编译的 `pub` cookie 写侧消费、`config` 测试 RSA 夹具恒被消费）。行为零变化，多 feature 组合（默认 / jwt / apikey / db 系列 / cache-redis / firewall / qrlogin / sso / web 系列 / production）编译零警告。
+- **复杂度热点重构（行为不变，测试锁定）**：`convert_placeholders`（SQL 占位符方言转换，认知复杂度 41→4）主循环只识别词法上下文起点，字符串字面量 / 行注释 / 嵌套块注释整体复制拆为三个原子 helper；`UserLockoutStrategy::record_failure`（39→20）CAS 重试循环与状态推进分离——抽离纯函数 `advance_failure_state`（窗口重置 → 计数自增 → 阈值触发），锁定类型以 `LockoutTrigger` 枚举显性化替代 cfg 门控双布尔标记；`extract_token_from_request_parts`（38→23）body 提取子流程（C7 方法限制 → 1MB 解析护栏 → JSON 字段提取）拆为 `extract_token_from_body`。SAML/JWT/Keycloak 协议解析热点（`parse_tag_inner` / `validate_id_token_impl` / `verify_id_token`）经评估维持原状：安全关键路径刚完成渗透测试修复，重构回归风险大于收益。
+
 ### Breaking
 
 - **auth_server 绑定默认 `127.0.0.1`**（原 `0.0.0.0`）：宿主直跑需外部访问须显式 `GARRISON_EXTERNAL_BIND=0.0.0.0`（镜像已内置 ENV）；显式配置非 IPv4/IPv6 字面量拒绝启动。

@@ -4016,17 +4016,25 @@ mod tenant_binding_tests {
 #[cfg(test)]
 mod session_token_security_tests {
     use crate::config::GarrisonConfig;
-    use crate::context::tenant::{TenantContext, TenantSource, TENANT};
+    #[cfg(feature = "protocol-jwt")]
+    use crate::context::tenant::TENANT;
+    use crate::context::tenant::{TenantContext, TenantSource};
+    #[cfg(feature = "protocol-jwt")]
     use crate::dao::GarrisonDao;
     use crate::error::GarrisonError;
     use crate::session::GarrisonSession;
     use crate::stp::core::GarrisonCore;
     use crate::stp::mock::{MockDao, MockFirewall};
     use crate::stp::session::SessionLogic;
-    use crate::stp::{with_current_token, GarrisonLogicDefault, JwtMode, LoginParams};
+    #[cfg(feature = "protocol-jwt")]
+    use crate::stp::{with_current_token, JwtMode};
+    use crate::stp::{GarrisonLogicDefault, LoginParams};
     use crate::strategy::GarrisonPermissionStrategy;
     use std::sync::Arc;
 
+    /// 构造租户上下文（仅 protocol-jwt 租户绑定测试消费；无 jwt 组合下
+    /// 调用方不编译，按仓库 cfg_attr 先例定向豁免）。
+    #[cfg_attr(not(feature = "protocol-jwt"), allow(dead_code))]
     fn tenant_ctx(tenant_id: i64) -> TenantContext {
         TenantContext {
             tenant_id,

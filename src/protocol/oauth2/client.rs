@@ -86,23 +86,6 @@ pub(crate) async fn read_limited_bytes(resp: reqwest::Response) -> GarrisonResul
     Ok(buf)
 }
 
-/// 读取响应体为 UTF-8 字符串，强制大小上限（E2 修复）。
-///
-/// 组合 [`read_limited_bytes`] + `String::from_utf8`，替代 `resp.text()` 的无界读取。
-/// 主要用于错误响应体读取（保留原有 `unwrap_or_default` 语义由调用方决定）。
-///
-/// # 死代码说明
-///
-/// 当前 `protocol::oauth2` 模块内的错误响应路径直接用 `resp.status().to_string()`
-/// 构造错误消息（不读取 body），因此本函数在生产路径未被调用。保留为 `pub(crate)`
-/// 是为了：(1) 与 `protocol::sso::oidc` 的本地副本保持 API 对称；
-/// (2) 后续若需读取错误响应体（如 Keycloak 错误 JSON 解析）可直接复用。
-#[allow(dead_code)]
-pub(crate) async fn read_limited_text(resp: reqwest::Response) -> GarrisonResult<String> {
-    let bytes = read_limited_bytes(resp).await?;
-    String::from_utf8(bytes).map_err(|e| GarrisonError::Network(format!("oauth2-body-utf8::{}", e)))
-}
-
 /// URL 编码字符集。
 ///
 /// 与原自实现 `encode` 行为等价：保留 `A-Z a-z 0-9 - _ . ~`，
@@ -960,29 +943,6 @@ mod tests {
             .expect("请求必须成功");
         let bytes = read_limited_bytes(resp).await.expect("小响应必须通过");
         assert_eq!(bytes, b"hello world");
-    }
-
-    /// E2 行为测试：`read_limited_text` 正确解码 UTF-8。
-    #[tokio::test]
-    async fn e2_read_limited_text_decodes_utf8() {
-        use wiremock::matchers::{method, path};
-        use wiremock::{Mock, MockServer, ResponseTemplate};
-
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path("/utf8"))
-            .respond_with(ResponseTemplate::new(200).set_body_string("错误响应体"))
-            .mount(&server)
-            .await;
-
-        let client = build_safe_http_client().expect("client 构建成功");
-        let resp = client
-            .get(format!("{}/utf8", server.uri()))
-            .send()
-            .await
-            .expect("请求必须成功");
-        let text = read_limited_text(resp).await.expect("UTF-8 解码必须成功");
-        assert_eq!(text, "错误响应体");
     }
 
     /// E2 集成测试：OAuth2Client::post_token_request 拒绝超大 token 响应。

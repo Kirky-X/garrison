@@ -199,7 +199,6 @@ async fn poll_endpoint(
 }
 
 /// 采集 App 端请求上下文（ip, ua）：事件审计用，采集失败不阻断主流程。
-#[cfg_attr(not(feature = "listener"), allow(dead_code))]
 fn app_context(
     ip_ext: Option<axum::Extension<crate::server::middleware::ClientIp>>,
     headers: &HeaderMap,

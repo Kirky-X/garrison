@@ -2060,9 +2060,11 @@ mod tests {
 
     /// 422 rejection 测试目标类型（触发类型不匹配诊断，回显结构体名）。
     #[derive(serde::Deserialize)]
-    #[allow(dead_code)]
     struct SanitizeProbeBody {
-        token: String,
+        /// 仅参与反序列化类型校验（wire 名 `token`），构造后不被读取；
+        /// 下划线前缀豁免 dead_code，serde rename 保持 wire 契约不变。
+        #[serde(rename = "token")]
+        _token: String,
     }
 
     /// 类型错误（422 text/plain，含内部类型名/字段名/字节偏移）被改写为

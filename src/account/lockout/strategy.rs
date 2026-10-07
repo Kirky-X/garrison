@@ -70,6 +70,17 @@ fn calculate_lock_seconds(strategy: &WaitStrategy, n: u32) -> u64 {
 /// CAS 并发重试上限（`record_failure` / `record_success` 读改写冲突时重试次数）。
 const MAX_STATE_CAS_RETRIES: u32 = 5;
 
+/// 单次失败记录触发的锁定类型（[`UserLockoutStrategy::record_failure`] 的
+/// 状态推进结果，metrics 在 CAS 成功后按此分类记录）。
+enum LockoutTrigger {
+    /// 未达阈值，仅计数累积。
+    None,
+    /// 触发临时锁定（按退避策略延长）。
+    Temporary,
+    /// 触发永久锁定。
+    Permanent,
+}
+
 impl UserLockoutStrategy {
     /// 创建用户级锁定策略实例。
     ///
@@ -171,67 +182,19 @@ impl UserLockoutStrategy {
                 None => LockoutState::default(),
             };
 
-            // 2. 检查 failure_window_seconds 窗口：若首次失败距今超过窗口，重置计数
-            match state.first_failure_at {
-                Some(first_at) => {
-                    let window = self.config.failure_window_seconds as i64;
-                    if now - first_at > window {
-                        // 窗口过期，重置失败计数
-                        state.failure_count = 0;
-                        state.first_failure_at = Some(now);
-                    }
-                    // 窗口内：继续累积计数，不更新 first_failure_at
-                },
-                None => {
-                    state.first_failure_at = Some(now);
-                },
-            }
-
-            state.failure_count = state.failure_count.saturating_add(1);
-
-            // 锁定触发标记（指标在 CAS 成功后记录，避免重试导致重复计数）。
-            // 仅 metrics-prometheus 消费——特性面关闭时变量与赋值同步剥离，
-            // 否则空.feature 组合下产生 unused_variables/unused_assignments 告警。
-            #[cfg(feature = "metrics-prometheus")]
-            let mut locked_permanent = false;
-            #[cfg(feature = "metrics-prometheus")]
-            let mut locked_temporary = false;
-
-            if state.failure_count >= self.config.max_failure_factor {
-                if self.config.permanent_lockout
-                    && state.temporary_lockout_count.saturating_add(1)
-                        > self.config.max_temporary_lockouts
-                {
-                    state.permanent_locked = true;
-                    #[cfg(feature = "metrics-prometheus")]
-                    {
-                        locked_permanent = true;
-                    }
-                } else {
-                    state.temporary_lockout_count = state.temporary_lockout_count.saturating_add(1);
-                    let lock_seconds = calculate_lock_seconds(
-                        &self.config.wait_strategy,
-                        state.temporary_lockout_count,
-                    );
-                    // u64 → i64 用饱和转换（`as` 会把 u64::MAX 回绕为 -1，
-                    // 使 locked_until 落在过去、锁定即刻失效），并用 saturating_add 防溢出
-                    let lock_seconds_i64 = i64::try_from(lock_seconds).unwrap_or(i64::MAX);
-                    state.locked_until = now.saturating_add(lock_seconds_i64);
-                    #[cfg(feature = "metrics-prometheus")]
-                    {
-                        locked_temporary = true;
-                    }
-                }
-            }
+            // 2. 纯状态推进：窗口重置 → 计数自增 → 阈值触发锁定
+            #[cfg_attr(not(feature = "metrics-prometheus"), allow(unused_variables))]
+            let trigger = self.advance_failure_state(&mut state, now);
 
             // 3. CAS 原子写回；冲突则重试（读取-修改基于最新状态重新计算）
             if self.cas_state(user_id, old_json.as_deref(), &state).await? {
+                // 指标在 CAS 成功后记录，避免重试导致重复计数
                 #[cfg(feature = "metrics-prometheus")]
                 if let Some(metrics) = &self.metrics {
-                    if locked_permanent {
-                        metrics.record_lockout(true);
-                    } else if locked_temporary {
-                        metrics.record_lockout(false);
+                    match trigger {
+                        LockoutTrigger::Permanent => metrics.record_lockout(true),
+                        LockoutTrigger::Temporary => metrics.record_lockout(false),
+                        LockoutTrigger::None => {},
                     }
                 }
                 return Ok(());
@@ -247,6 +210,47 @@ impl UserLockoutStrategy {
             "account-lockout-cas-retry-exhausted::{}",
             user_id
         )))
+    }
+
+    /// 单次失败的锁定状态推进（纯函数，持久化由调用方 CAS 负责）。
+    ///
+    /// 窗口过期则重置计数；自增后达 `max_failure_factor` 触发锁定：
+    /// 永久条件满足走永久锁定，否则按退避策略延长临时锁定。
+    /// 返回本次推进触发的锁定类型（metrics 记录用）。
+    fn advance_failure_state(&self, state: &mut LockoutState, now: i64) -> LockoutTrigger {
+        match state.first_failure_at {
+            // 窗口过期：重置失败计数并重新起算窗口
+            Some(first_at) if now - first_at > self.config.failure_window_seconds as i64 => {
+                state.failure_count = 0;
+                state.first_failure_at = Some(now);
+            },
+            None => {
+                state.first_failure_at = Some(now);
+            },
+            // 窗口内：继续累积计数，不更新 first_failure_at
+            Some(_) => {},
+        }
+
+        state.failure_count = state.failure_count.saturating_add(1);
+        if state.failure_count < self.config.max_failure_factor {
+            return LockoutTrigger::None;
+        }
+
+        if self.config.permanent_lockout
+            && state.temporary_lockout_count.saturating_add(1) > self.config.max_temporary_lockouts
+        {
+            state.permanent_locked = true;
+            return LockoutTrigger::Permanent;
+        }
+
+        // u64 → i64 用饱和转换（`as` 会把 u64::MAX 回绕为 -1，
+        // 使 locked_until 落在过去、锁定即刻失效），并用 saturating_add 防溢出
+        state.temporary_lockout_count = state.temporary_lockout_count.saturating_add(1);
+        let lock_seconds =
+            calculate_lock_seconds(&self.config.wait_strategy, state.temporary_lockout_count);
+        let lock_seconds_i64 = i64::try_from(lock_seconds).unwrap_or(i64::MAX);
+        state.locked_until = now.saturating_add(lock_seconds_i64);
+        LockoutTrigger::Temporary
     }
 
     /// 记录登录成功，重置失败计数和临时锁定状态。

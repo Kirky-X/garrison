@@ -287,7 +287,9 @@ fn assemble_garrison_config(max_login_count: u32, seed_primary_amr: bool) -> Gar
 ///
 /// 空串 → 空表目；表目缺 `:` / key_id 或钥材为空 → 显性报错
 /// （钥材 hex 合法性由 `FieldCipher::from_key_entries` 装配期校验）。
-#[cfg_attr(not(feature = "field-encryption"), allow(dead_code))]
+// 唯一调用方 setup_garrison_manager 在 field-encryption 块内，cfg 全隔离：
+// 非 field-encryption 构建不编译本函数，无需 dead_code 豁免。
+#[cfg(feature = "field-encryption")]
 fn parse_field_encryption_keys(spec: &str) -> GarrisonResult<Vec<(String, String)>> {
     if spec.is_empty() {
         return Ok(vec![]);

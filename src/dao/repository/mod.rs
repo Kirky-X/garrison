@@ -1094,92 +1094,92 @@ pub mod role_hierarchy;
 #[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
 pub fn convert_placeholders(sql: &str, backend: dbnexus::sea_orm::DbBackend) -> String {
     use dbnexus::sea_orm::DbBackend;
+    use std::fmt::Write as _;
     if backend != DbBackend::Postgres {
         return sql.to_string();
     }
     let mut result = String::with_capacity(sql.len() + 16);
     let mut n = 0u32;
-    // 状态机：跳过字符串字面量与注释内的 `?`，避免参数序号错位。
-    // - `''` 在 SQL 标准中是字符串内转义单引号（一个字面 `'`），保持 in_string=true。
-    // - `--` 行注释：跳过至行尾（含换行符）。
-    // - `/* */` 块注释：支持嵌套（PostgreSQL 语义），首个未匹配的 `*/` 结束最内层。
-    let mut in_string = false;
-    let mut in_line_comment = false;
-    let mut in_block_comment = false;
-    let mut block_depth = 0usize;
+    // 主循环只识别三种词法上下文起点（行注释 `--`、块注释 `/*`、字符串 `'`），
+    // 上下文整体交给对应 helper 原样复制；`?` 在 helper 内天然不被替换，
+    // 参数序号不会错位。
     let mut chars = sql.chars().peekable();
     while let Some(c) = chars.next() {
-        if in_line_comment {
-            // 行注释：原样输出直到行尾
-            if c == '\n' {
-                in_line_comment = false;
-            }
-            result.push(c);
-            continue;
-        }
-        if in_block_comment {
-            // 块注释：原样输出，支持嵌套
-            if c == '/' && chars.peek() == Some(&'*') {
-                result.push('/');
-                result.push('*');
-                chars.next();
-                block_depth += 1;
-            } else if c == '*' && chars.peek() == Some(&'/') {
-                result.push('*');
-                result.push('/');
-                chars.next();
-                block_depth -= 1;
-                if block_depth == 0 {
-                    in_block_comment = false;
-                }
-            } else {
-                result.push(c);
-            }
-            continue;
-        }
         match c {
-            '-' if !in_string && chars.peek() == Some(&'-') => {
-                // 行注释开始：`--` 至行尾，注释内的 `?` 不替换
-                result.push('-');
-                result.push('-');
+            '-' if chars.peek() == Some(&'-') => {
+                result.push_str("--");
                 chars.next();
-                in_line_comment = true;
+                copy_until_line_end(&mut chars, &mut result);
             },
-            '/' if !in_string && chars.peek() == Some(&'*') => {
-                // 块注释开始：`/*` 至匹配的 `*/`，注释内的 `?` 不替换
-                result.push('/');
-                result.push('*');
+            '/' if chars.peek() == Some(&'*') => {
+                result.push_str("/*");
                 chars.next();
-                in_block_comment = true;
-                block_depth = 1;
-            },
-            '\'' if in_string => {
-                // 在字符串内遇 `'`，look-ahead 判断是否为 `''` 转义
-                if chars.peek() == Some(&'\'') {
-                    // `''` 转义：保留两个 `'`，仍在字符串内
-                    result.push('\'');
-                    result.push('\'');
-                    chars.next();
-                } else {
-                    // 字符串字面量结束
-                    result.push('\'');
-                    in_string = false;
-                }
+                copy_block_comment(&mut chars, &mut result);
             },
             '\'' => {
-                // 进入字符串字面量
                 result.push('\'');
-                in_string = true;
+                copy_string_literal(&mut chars, &mut result);
             },
-            '?' if !in_string => {
+            '?' => {
                 n += 1;
-                result.push('$');
-                result.push_str(&n.to_string());
+                // write! 直写避免 to_string() 的临时小字符串分配（热路径：每占位符一次）
+                let _ = write!(result, "${n}");
             },
             c => result.push(c),
         }
     }
     result
+}
+
+/// 行注释剩余部分原样复制至行尾（含换行符；无换行则复制至串尾）。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+fn copy_until_line_end(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, out: &mut String) {
+    for c in chars.by_ref() {
+        out.push(c);
+        if c == '\n' {
+            return;
+        }
+    }
+}
+
+/// 块注释剩余部分原样复制；支持嵌套（PostgreSQL 语义），
+/// 与首个未配对的 `*/` 一同结束。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+fn copy_block_comment(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, out: &mut String) {
+    let mut depth = 1usize;
+    while let Some(c) = chars.next() {
+        if c == '/' && chars.peek() == Some(&'*') {
+            out.push_str("/*");
+            chars.next();
+            depth += 1;
+        } else if c == '*' && chars.peek() == Some(&'/') {
+            out.push_str("*/");
+            chars.next();
+            depth -= 1;
+            if depth == 0 {
+                return;
+            }
+        } else {
+            out.push(c);
+        }
+    }
+}
+
+/// 字符串字面量剩余部分原样复制至结束引号；
+/// `''` 为 SQL 标准的字面转义（一个 `'`），复制两个引号并留在字面量内。
+#[cfg(any(feature = "db-sqlite", feature = "db-postgres", feature = "db-mysql"))]
+fn copy_string_literal(chars: &mut std::iter::Peekable<std::str::Chars<'_>>, out: &mut String) {
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if c == '\'' {
+            if chars.peek() == Some(&'\'') {
+                out.push('\'');
+                chars.next();
+            } else {
+                return;
+            }
+        }
+    }
 }
 
 /// 构造 backend-agnostic 的 [`dbnexus::sea_orm::Statement`]，根据 conn 的 backend 自动转换占位符。
