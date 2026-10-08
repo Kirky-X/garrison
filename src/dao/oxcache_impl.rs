@@ -145,7 +145,11 @@ impl GarrisonDaoOxcache {
     /// # 错误
     /// - `GarrisonError::Dao`：oxcache 初始化失败（消息含 "oxcache 初始化失败"）。
     pub async fn new() -> GarrisonResult<Self> {
-        let builder = Cache::builder().sync_mode(true);
+        // 钉定 TTL 精确语义（ttl_jitter(0.0)）：oxcache rc.6 起 builder 默认
+        // ±10% 抖动（rc.5 默认为 0.0），而 DAO 层契约要求 TTL 精确——conformance
+        // 套件断言 get_with_ttl ≤ 请求值，且限流窗口 / 锁定窗口等安全敏感 TTL
+        // 提前过期会放宽限制。抖动仅在三层缓存 L1（three_tier）显式启用。
+        let builder = Cache::builder().sync_mode(true).ttl_jitter(0.0);
         // cache-audit：缓存操作审计事件（hit/miss/set/delete/evict/expired，键名自动脱敏）
         // 经 TracingAuditPublisher 桥接 tracing（→ inklog / metrics-prometheus 采集链）
         #[cfg(feature = "cache-audit")]
@@ -1481,5 +1485,23 @@ mod tests {
                 vec!["[unsupported redis value type]"]
             );
         }
+    }
+    /// TTL 精确性回归锁（升级回归修复）：DAO 显式钉定 `ttl_jitter(0.0)`，
+    /// `get_timeout` 不得超过请求 TTL——oxcache rc.6 默认 ±10% 抖动会以约
+    /// 1/2 概率违反单条断言，20 键取样把漏检率压到 ~1e-6。
+    #[tokio::test(flavor = "multi_thread")]
+    async fn ttl_exact_after_jitter_pin() {
+        let dao = GarrisonDaoOxcache::new().await.unwrap();
+        let mut max_seen = Duration::ZERO;
+        for i in 0..20 {
+            let k = format!("jitter_pin_{i}");
+            dao.set(&k, "v", 60).await.unwrap();
+            let ttl = dao.get_timeout(&k).await.unwrap().expect("TTL 键应可读");
+            max_seen = max_seen.max(ttl);
+        }
+        assert!(
+            max_seen <= Duration::from_secs(60),
+            "DAO TTL 必须精确（ttl_jitter(0.0) 钉定）：实测最大 {max_seen:?} > 60s，抖动回归？"
+        );
     }
 }

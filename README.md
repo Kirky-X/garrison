@@ -342,7 +342,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ## 📊 性能
 
-基准场景与目标定义于 [`benches/garrison_benchmark.rs`](benches/garrison_benchmark.rs)（`login_flow` / `token_verify_stateless` / `permission_check` / `oxcache_backend_switch` 四个 Criterion 场景），以 `cargo bench` 在本机复现；验收层另有 HTTP 性能基线（P99 < 200ms / 1000 RPS），经 `scripts/e2e_run.sh` 采集并聚合报告。性能设计要点（单例无锁化、慢哈希 `spawn_blocking` 下沉、请求内快照复用、缓存 TTL 抖动、全量 feature 门控）与逐项优化建议见 [⚡ 性能指南](docs/PERFORMANCE.md)。
+基准场景与目标定义于 [`benches/garrison_benchmark.rs`](benches/garrison_benchmark.rs)（`login_flow` / `token_verify_stateless` / `permission_check` / `oxcache_backend_switch` / `convert_placeholders` / `circuit_execute_closed_passthrough` 六个 Criterion 场景），以 `cargo bench` 在本机复现；验收层另有 HTTP 性能基线（P99 < 200ms / 1000 RPS），经 `scripts/e2e_run.sh` 采集并聚合报告。性能设计要点（单例无锁化、慢哈希 `spawn_blocking` 下沉、请求内快照复用、缓存 TTL 抖动、全量 feature 门控）与逐项优化建议见 [⚡ 性能指南](docs/PERFORMANCE.md)。
 
 ---
 

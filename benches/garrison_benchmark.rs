@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Garrison Benchmark Suite
-//! 覆盖 4 个基准场景：
+//! 覆盖 6 个基准场景：
 //!
 //! | Bench | 目标 |
 //! |-------|------|
@@ -10,6 +10,8 @@
 //! | `token_verify_stateless` | ≤ 5ms（20000 TPS） |
 //! | `permission_check` | ≤ 5ms（20000 TPS） |
 //! | `oxcache_backend_switch` | 切换开销 = 0 |
+//! | `convert_placeholders` | SQL 方言转换微基准（自研依赖升级适配面，db-* feature 门控） |
+//! | `circuit_execute_closed_passthrough` | 熔断包装器直通开销微基准（backend-remote 门控） |
 //!
 //! ## 运行方式
 //!
@@ -422,6 +424,68 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
 }
 
 // ============================================================================
+// Bench 5: convert_placeholders（SQL 方言转换，每次 Statement 构造必经路径）
+// ============================================================================
+
+/// 基准 SQL 占位符方言转换（自研依赖升级适配面的热路径锁定）。
+///
+/// PostgreSQL 口径：含字符串字面量（`''` 转义）/ 行注释 / 块注释与多个 `?`
+/// 的真实查询形态；SQLite 口径为直通。
+// 无 cfg 门控：本 target 的 required-features = ["full"] 恒含 db-* 与 backend-remote，
+// 条件编译只会制造不可达分支（criterion_group 无条件引用）。
+fn bench_convert_placeholders(c: &mut Criterion) {
+    use dbnexus::sea_orm::DbBackend;
+    use garrison::dao::repository::convert_placeholders;
+
+    let sql = "SELECT u.id, u.name /* block ? */ FROM users u WHERE u.status = ? \
+               AND u.name <> 'literal ? ''escaped''' -- line ? comment\n\
+               AND u.created_at > ? AND u.tenant_id = ? AND u.role = ?";
+
+    let mut group = c.benchmark_group("convert_placeholders");
+    group.bench_function("postgres", |b| {
+        b.iter(|| convert_placeholders(std::hint::black_box(sql), DbBackend::Postgres))
+    });
+    group.bench_function("sqlite_passthrough", |b| {
+        b.iter(|| convert_placeholders(std::hint::black_box(sql), DbBackend::Sqlite))
+    });
+    group.finish();
+}
+
+// ============================================================================
+// Bench 6: circuit_execute（熔断包装器直通开销，backend-remote 远程调用必经路径）
+// ============================================================================
+
+/// 基准 `CircuitBreakerWrapper::execute` 关闭态直通开销（自研依赖升级适配面
+/// 锁定：limiteron rc.6 CircuitCallError 迁移后的包装成本）。
+///
+/// 操作体为立即就绪的 `Ok`；整个迭代循环包在一次 block_on 内（iter_custom），
+/// 避免每迭代 ~130ns 的 executor 常量项稀释被测的包装器开销。
+fn bench_circuit_execute(c: &mut Criterion) {
+    use garrison::limiteron::CircuitBreakerWrapper;
+    use limiteron::circuit::CircuitBreakerConfig;
+    use std::time::Duration;
+
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let wrapper =
+        CircuitBreakerWrapper::new(CircuitBreakerConfig::new(5, 2, Duration::from_secs(30)));
+
+    c.bench_function("circuit_execute_closed_passthrough", |b| {
+        b.iter_custom(|iters| {
+            rt.block_on(async {
+                let start = Instant::now();
+                for _ in 0..iters {
+                    wrapper
+                        .execute(|| async { Ok::<u32, garrison::error::GarrisonError>(1) })
+                        .await
+                        .unwrap();
+                }
+                start.elapsed()
+            })
+        });
+    });
+}
+
+// ============================================================================
 // criterion_group + criterion_main
 // ============================================================================
 
@@ -430,6 +494,8 @@ criterion_group!(
     bench_login_flow,
     bench_token_verify_stateless,
     bench_permission_check,
-    bench_oxcache_backend_switch
+    bench_oxcache_backend_switch,
+    bench_convert_placeholders,
+    bench_circuit_execute
 );
 criterion_main!(benches);

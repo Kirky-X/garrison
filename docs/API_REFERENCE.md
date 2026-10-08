@@ -245,7 +245,7 @@ GarrisonManager::builder()
 
 | 类型 | Feature | 说明 |
 |------|---------|------|
-| `GarrisonDaoOxcache` | `cache-memory` / `cache-redis` | L1 内存（per-entry TTL + 写入抖动）+ L2 redis |
+| `GarrisonDaoOxcache` | `cache-memory` / `cache-redis` | L1 内存（per-entry TTL，精确语义：显式 `ttl_jitter(0.0)`）+ L2 redis |
 | dbnexus DAO | `db-sqlite` / `db-postgres` / `db-mysql` | SQL 持久化 + Repository 层（见下） |
 | 内存 Mock DAO | — | `src/stp/mock.rs`（测试用） |
 

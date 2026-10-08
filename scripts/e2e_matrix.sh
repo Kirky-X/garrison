@@ -276,7 +276,7 @@ else
             grep -iB2 -A2 "regressed" "${LOG_DIR}/S6.log" | head -40
             record_fail "S6"
         else
-            grep -E "^(login_flow|token_verify|permission_check|oxcache|change|Benchmarking .*: Collecting)" "${LOG_DIR}/S6.log" \
+            grep -E "^(login_flow|token_verify|permission_check|oxcache|convert_placeholders|circuit_execute|change|Benchmarking .*: Collecting)" "${LOG_DIR}/S6.log" \
                 | tail -20 || true
             record_pass "S6"
         fi

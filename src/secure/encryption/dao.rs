@@ -423,7 +423,8 @@ mod tests {
     use crate::secure::encryption::cipher::StaticFieldKeyProvider;
     use crate::secure::encryption::crypto_value::KEY_LEN;
 
-    const K1: [u8; KEY_LEN] = [1u8; KEY_LEN];
+    /// 非退化测试钥材（单点：`crypto_value::test_key`）。
+    const K1: [u8; KEY_LEN] = crate::secure::encryption::crypto_value::test_key(1);
 
     fn fixture() -> (FieldEncryptionDao, Arc<dyn GarrisonDao>) {
         let inner: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());

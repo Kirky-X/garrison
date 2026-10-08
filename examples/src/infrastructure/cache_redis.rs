@@ -26,7 +26,7 @@ const DEFAULT_REDIS_URL: &str = "redis://127.0.0.1:6379";
 
 /// 创建默认的 L1(内存) DAO 实例（无需 Redis 连接）。
 ///
-/// `GarrisonDaoOxcache::new()` 内部使用 `oxcache::Cache::builder().sync_mode(true).build()`，
+/// `GarrisonDaoOxcache::new()` 内部使用 `oxcache::Cache::builder().sync_mode(true).ttl_jitter(0.0).build()`，
 /// 仅启用 L1 oxcache 内存缓存，适合开发/测试环境。
 pub async fn create_l1_dao() -> GarrisonDaoOxcache {
     GarrisonDaoOxcache::new()

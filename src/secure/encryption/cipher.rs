@@ -55,7 +55,19 @@ impl StaticFieldKeyProvider {
             .map(|(id, _)| id.clone())
             .ok_or_else(|| config_err("no-keys-configured"))?;
         let mut map = HashMap::with_capacity(keys.len());
-        for (id, key) in keys {
+        for (idx, (id, key)) in keys.into_iter().enumerate() {
+            if is_degenerate_key(&key) {
+                // 主钥（首项，新写入一律使用）严格拒绝；非主钥（仅解密存量密文）
+                // 降级 warn 放行——否则含退役弱钥的部署无法经 garrison-cli
+                // change-key 携旧钥重加密后摘除（迁移出口被 fail-closed 锁死）。
+                if idx == 0 {
+                    return Err(config_err(&format!("weak-key:{id}")));
+                }
+                tracing::warn!(
+                    key_id = %id,
+                    "field-encryption: non-primary key is degenerate (single repeated byte);                      allowed for legacy decryption only — rotate it away via change-key"
+                );
+            }
             if map.insert(id.clone(), key).is_some() {
                 return Err(config_err(&format!("duplicate-key-id:{id}")));
             }
@@ -63,10 +75,14 @@ impl StaticFieldKeyProvider {
         Ok(Self { keys: map, primary })
     }
 
-    /// 切换主钥（目标 key_id 必须已注册）。
+    /// 切换主钥（目标 key_id 必须已注册且非退化钥）。
     pub fn with_primary(mut self, key_id: &str) -> GarrisonResult<Self> {
-        if !self.keys.contains_key(key_id) {
-            return Err(config_err(&format!("key-not-found:{key_id}")));
+        let key = self
+            .keys
+            .get(key_id)
+            .ok_or_else(|| config_err(&format!("key-not-found:{key_id}")))?;
+        if is_degenerate_key(key) {
+            return Err(config_err(&format!("weak-primary-key:{key_id}")));
         }
         self.primary = key_id.to_string();
         Ok(self)
@@ -86,6 +102,14 @@ impl FieldKeyProvider for StaticFieldKeyProvider {
     }
 }
 
+/// 退化钥检测（confers `is_weak_key` 的等价本地检查：上游该函数所在模块
+/// `pub(crate)` 不可跨 crate 调用）：`[u8; KEY_LEN]` 非空，退化形态即
+/// **单字节重复**（全零 / 全 0xFF / 单字符填充）——此类钥熵不足，
+/// 装配期 fail-fast 而非静默接受。
+fn is_degenerate_key(key: &[u8; KEY_LEN]) -> bool {
+    key.iter().all(|&b| b == key[0])
+}
+
 /// 字段加解密门面：多 key_id 取钥 + 迁移期双读。
 ///
 /// - `encrypt`：主钥加密，产出 `enc:v1:<key_id>:<...>` 编码串
@@ -97,10 +121,15 @@ pub struct FieldCipher {
 }
 
 impl FieldCipher {
-    /// 装配：探测主钥可取（未配密钥 / 取钥失败 → 装配期显性失败）。
+    /// 装配：探测主钥可取（未配密钥 / 取钥失败 → 装配期显性失败）；
+    /// 主钥为退化形态（单字节重复）同样装配期拒绝——静态 provider 已在
+    /// 注册时逐钥拒绝，此处兜底自定义 provider。
     pub fn new(provider: Arc<dyn FieldKeyProvider>) -> GarrisonResult<Self> {
         let primary = provider.primary_key_id()?;
-        provider.key_for(&primary)?;
+        let primary_key = provider.key_for(&primary)?;
+        if is_degenerate_key(&primary_key) {
+            return Err(config_err(&format!("weak-primary-key:{primary}")));
+        }
         Ok(Self { provider })
     }
 
@@ -208,8 +237,17 @@ fn hex_decode_32(s: &str) -> Option<[u8; KEY_LEN]> {
 mod tests {
     use super::*;
 
-    const K1: [u8; KEY_LEN] = [1u8; KEY_LEN];
-    const K2: [u8; KEY_LEN] = [2u8; KEY_LEN];
+    /// 测试钥材（非退化单点：`crypto_value::test_key`，seed 1/2）。
+    const K1: [u8; KEY_LEN] = crate::secure::encryption::crypto_value::test_key(1);
+    const K2: [u8; KEY_LEN] = crate::secure::encryption::crypto_value::test_key(2);
+
+    /// seed 的 hex 表达（与 [`crate::secure::encryption::crypto_value::test_key`] 同源）。
+    fn key_hex(seed: u8) -> String {
+        crate::secure::encryption::crypto_value::test_key(seed)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
+    }
 
     fn provider(primary_k1: bool) -> Arc<dyn FieldKeyProvider> {
         let p = StaticFieldKeyProvider::new(vec![("k1".to_string(), K1), ("k2".to_string(), K2)])
@@ -273,8 +311,8 @@ mod tests {
     /// 空表目 / 坏 hex / 长度非 32 字节 / 含冒号 key_id 逐项显性拒绝。
     #[test]
     fn from_key_entries_config_surface() {
-        let hex1 = "01".repeat(32);
-        let hex2 = "02".repeat(32);
+        let hex1 = key_hex(1);
+        let hex2 = key_hex(2);
         let entries = vec![("k1".to_string(), hex1.clone()), ("k2".to_string(), hex2)];
         let cipher = FieldCipher::from_key_entries(&entries).unwrap();
         assert_eq!(cipher.primary_key_id().unwrap(), "k1");
@@ -283,11 +321,8 @@ mod tests {
 
         // k2 的钥材与 StaticFieldKeyProvider 直接装配一致（同一 hex 表达）
         let direct = FieldCipher::new(Arc::new(
-            StaticFieldKeyProvider::new(vec![
-                ("k1".to_string(), [1u8; 32]),
-                ("k2".to_string(), [2u8; 32]),
-            ])
-            .unwrap(),
+            StaticFieldKeyProvider::new(vec![("k1".to_string(), K1), ("k2".to_string(), K2)])
+                .unwrap(),
         ))
         .unwrap();
         assert_eq!(
@@ -333,16 +368,30 @@ mod tests {
 
         let registry = Arc::new(KeyRegistry::new(KeyRotationConfig::default()));
         registry
-            .register_key("v1".to_string(), SecretBytes::new(vec![1u8; 32]), true)
+            .register_key(
+                "v1".to_string(),
+                SecretBytes::new(crate::secure::encryption::crypto_value::test_key(3).to_vec()),
+                true,
+            )
             .unwrap();
         registry
-            .register_key("v2".to_string(), SecretBytes::new(vec![2u8; 32]), false)
+            .register_key(
+                "v2".to_string(),
+                SecretBytes::new(crate::secure::encryption::crypto_value::test_key(4).to_vec()),
+                false,
+            )
             .unwrap();
 
         let adapter = ConfersFieldKeyProvider::new(registry.clone());
         assert_eq!(adapter.primary_key_id().unwrap(), "v1");
-        assert_eq!(adapter.key_for("v1").unwrap(), [1u8; 32]);
-        assert_eq!(adapter.key_for("v2").unwrap(), [2u8; 32]);
+        assert_eq!(
+            adapter.key_for("v1").unwrap(),
+            crate::secure::encryption::crypto_value::test_key(3)
+        );
+        assert_eq!(
+            adapter.key_for("v2").unwrap(),
+            crate::secure::encryption::crypto_value::test_key(4)
+        );
         assert!(adapter.key_for("v-missing").is_err());
 
         // 非 32 字节钥材显性拒绝（AES-256 硬约束）
@@ -350,5 +399,85 @@ mod tests {
             .register_key("short".to_string(), SecretBytes::new(vec![1u8; 16]), false)
             .unwrap();
         assert!(adapter.key_for("short").is_err());
+    }
+
+    // ========================================================================
+    // 退化密钥 fail-fast（confers is_weak_key 的等价本地检查：
+    // 上游该函数所在模块 pub(crate) 不可跨 crate 调用）
+    // ========================================================================
+
+    /// 全零（单字节重复）钥被 StaticFieldKeyProvider::new 拒绝，错误含 key_id。
+    #[test]
+    fn static_provider_rejects_all_zero_key() {
+        let err =
+            StaticFieldKeyProvider::new(vec![("k1".to_string(), [0u8; KEY_LEN])]).unwrap_err();
+        assert!(
+            matches!(&err, GarrisonError::Config(m) if m.contains("weak-key:k1")),
+            "全零钥应被拒绝且错误含 key_id，实际: {err:?}"
+        );
+    }
+
+    /// 单字节重复钥（全 0xFF 填充）同样被拒绝。
+    #[test]
+    fn static_provider_rejects_repeated_byte_fill() {
+        let err =
+            StaticFieldKeyProvider::new(vec![("kf".to_string(), [0xFFu8; KEY_LEN])]).unwrap_err();
+        assert!(
+            matches!(&err, GarrisonError::Config(m) if m.contains("weak-key:kf")),
+            "单字节重复填充钥应被拒绝，实际: {err:?}"
+        );
+    }
+
+    /// 非主钥的退化钥降级 warn 放行（保留退役弱钥的解密与 change-key 轮换出口）；
+    /// 但它不得被提升为主钥。
+    #[test]
+    fn weak_non_primary_key_allowed_but_not_promotable() {
+        let provider = StaticFieldKeyProvider::new(vec![
+            ("k1".to_string(), K1),
+            ("k2".to_string(), [3u8; KEY_LEN]),
+        ])
+        .expect("非主钥退化钥应放行（warn）");
+        assert_eq!(provider.key_for("k2").unwrap(), [3u8; KEY_LEN]);
+
+        let err = provider.with_primary("k2").unwrap_err();
+        assert!(
+            matches!(&err, GarrisonError::Config(m) if m.contains("weak-primary-key:k2")),
+            "退化钥不得提升为主钥，实际: {err:?}"
+        );
+    }
+
+    /// 配置面 hex 表达的单字节重复键（全零 hex）被拒绝。
+    #[test]
+    fn from_key_entries_rejects_repeated_byte_hex() {
+        let err = match FieldCipher::from_key_entries(&[("kz".to_string(), "00".repeat(32))]) {
+            Err(e) => e,
+            Ok(_) => panic!("全零 hex 钥应被拒绝"),
+        };
+        assert!(
+            matches!(&err, GarrisonError::Config(m) if m.contains("weak-key:kz")),
+            "全零 hex 钥应被拒绝，实际: {err:?}"
+        );
+    }
+
+    /// 自定义 provider 返回退化主钥时 FieldCipher::new 拒绝（防御非静态 provider 路径）。
+    #[test]
+    fn field_cipher_rejects_degenerate_primary_from_custom_provider() {
+        struct ZeroProvider;
+        impl FieldKeyProvider for ZeroProvider {
+            fn key_for(&self, _key_id: &str) -> GarrisonResult<[u8; KEY_LEN]> {
+                Ok([0u8; KEY_LEN])
+            }
+            fn primary_key_id(&self) -> GarrisonResult<String> {
+                Ok("zp".to_string())
+            }
+        }
+        let err = match FieldCipher::new(Arc::new(ZeroProvider)) {
+            Err(e) => e,
+            Ok(_) => panic!("退化主钥应被拒绝"),
+        };
+        assert!(
+            matches!(&err, GarrisonError::Config(m) if m.contains("weak-primary-key:zp")),
+            "自定义 provider 的退化主钥应被拒绝，实际: {err:?}"
+        );
     }
 }

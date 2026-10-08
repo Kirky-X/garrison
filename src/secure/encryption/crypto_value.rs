@@ -28,6 +28,19 @@ pub const CRYPTO_VALUE_PREFIX: &str = "enc:v1:";
 /// AES-256 密钥长度（字节）。
 pub const KEY_LEN: usize = 32;
 
+/// 测试钥材单点（非退化：字节递增序列 `seed + i`；装配期弱钥检测会拒绝
+/// 单字节重复形态）。跨测试模块共享，避免同一材料多份 const 块漂移。
+#[cfg(test)]
+pub(crate) const fn test_key(seed: u8) -> [u8; KEY_LEN] {
+    let mut k = [0u8; KEY_LEN];
+    let mut i = 0;
+    while i < KEY_LEN {
+        k[i] = seed.wrapping_add(i as u8);
+        i += 1;
+    }
+    k
+}
+
 /// GCM nonce 长度（字节，NIST SP 800-38D §5.2.1.1 推荐 96 bit）。
 pub const NONCE_LEN: usize = 12;
 
@@ -217,8 +230,8 @@ fn nonce_view(nonce: &[u8; NONCE_LEN]) -> &Nonce<Aes256Gcm> {
 mod tests {
     use super::*;
 
-    const KEY: [u8; KEY_LEN] = [7u8; KEY_LEN];
-    const OTHER_KEY: [u8; KEY_LEN] = [9u8; KEY_LEN];
+    const KEY: [u8; KEY_LEN] = test_key(7);
+    const OTHER_KEY: [u8; KEY_LEN] = test_key(9);
 
     fn row_aad(row: &str) -> AadBinding {
         AadBinding::new("tenant-1", "oauth2:atoken", row)

@@ -66,7 +66,7 @@
 | 合计 | — | **约 5645** |
 
 > 单元与验收两列为 `cargo test --features full --lib -- --list` / `cargo test --test acceptance --features "full testing" -- --list` 实测计数；示例与过程宏为测试属性静态计数。
-| Criterion 基准 | `benches/garrison_benchmark.rs` | 4 场景 |
+| Criterion 基准 | `benches/garrison_benchmark.rs` | 6 场景 |
 | 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 85`（当前行覆盖率约 95.8%，见 CHANGELOG 0.8.1 TEST-01 记录） |
 
 ---

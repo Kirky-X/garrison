@@ -258,8 +258,9 @@ mod tests {
     use crate::secure::encryption::cipher::{FieldCipher, StaticFieldKeyProvider};
     use crate::secure::encryption::crypto_value::KEY_LEN;
 
-    const K1: [u8; KEY_LEN] = [1u8; KEY_LEN];
-    const K2: [u8; KEY_LEN] = [2u8; KEY_LEN];
+    /// 非退化测试钥材（单点：`crypto_value::test_key`，seed 1/2）。
+    const K1: [u8; KEY_LEN] = crate::secure::encryption::crypto_value::test_key(1);
+    const K2: [u8; KEY_LEN] = crate::secure::encryption::crypto_value::test_key(2);
 
     fn cipher(primary: &str) -> FieldCipher {
         let provider =

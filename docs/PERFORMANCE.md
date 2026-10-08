@@ -25,6 +25,8 @@
 | `token_verify_stateless` | ≤ 5ms（20000 TPS 口径） |
 | `permission_check` | ≤ 5ms（20000 TPS 口径） |
 | `oxcache_backend_switch` | 后端切换开销 = 0 |
+| `convert_placeholders` | SQL 方言转换微基准（自研依赖升级适配面，无阈值目标） |
+| `circuit_execute_closed_passthrough` | 熔断包装器直通开销微基准（backend-remote 路径，无阈值目标） |
 
 验收层另有 HTTP 端到端性能基线：**P99 < 200ms / 1000 RPS**（见下文「验收性能基线」）。
 
@@ -32,7 +34,7 @@
 
 ## 📊 基准测试
 
-Criterion 基准位于 `benches/garrison_benchmark.rs`（`[[bench]]` 注册，`harness = false`），覆盖 4 个场景：`login_flow`、`token_verify_stateless`、`permission_check`、`oxcache_backend_switch`（memory ↔ redis_mock 后端切换）。
+Criterion 基准位于 `benches/garrison_benchmark.rs`（`[[bench]]` 注册，`harness = false`），覆盖 6 个场景：`login_flow`、`token_verify_stateless`、`permission_check`、`oxcache_backend_switch`（memory ↔ redis_mock 后端切换）、`convert_placeholders`、`circuit_execute_closed_passthrough`（末两项为升级适配面微基准，无阈值目标）。
 
 ```bash
 # 编译检查（不运行）

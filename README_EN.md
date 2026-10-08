@@ -341,7 +341,7 @@ About 5645 tests (5117 lib unit + 404 acceptance / integration / UI + 116 exampl
 
 ## 📊 Performance
 
-Benchmark scenarios and targets are defined in [`benches/garrison_benchmark.rs`](benches/garrison_benchmark.rs) (four Criterion scenarios: `login_flow` / `token_verify_stateless` / `permission_check` / `oxcache_backend_switch`), reproduced locally with `cargo bench`; the acceptance layer additionally carries an HTTP performance baseline (P99 < 200ms / 1000 RPS) captured and aggregated by `scripts/e2e_run.sh`. Performance design highlights (lock-free singleton reads, slow hashing offloaded via `spawn_blocking`, per-request snapshot reuse, cache TTL jitter, full feature gating) and itemized optimization advice live in the [⚡ Performance guide](docs/PERFORMANCE.md).
+Benchmark scenarios and targets are defined in [`benches/garrison_benchmark.rs`](benches/garrison_benchmark.rs) (six Criterion scenarios: `login_flow` / `token_verify_stateless` / `permission_check` / `oxcache_backend_switch` / `convert_placeholders` / `circuit_execute_closed_passthrough`), reproduced locally with `cargo bench`; the acceptance layer additionally carries an HTTP performance baseline (P99 < 200ms / 1000 RPS) captured and aggregated by `scripts/e2e_run.sh`. Performance design highlights (lock-free singleton reads, slow hashing offloaded via `spawn_blocking`, per-request snapshot reuse, cache TTL jitter, full feature gating) and itemized optimization advice live in the [⚡ Performance guide](docs/PERFORMANCE.md).
 
 ---
 
