@@ -501,8 +501,9 @@ firewall-anomalous = ["firewall"]
 firewall-geoip = ["firewall", "limiteron/geo-matching"]
 # limiteron 0.2.10 曾将 adaptive-limiting /
 # priority-queue 改为 no-op 占位（模块移除），故回落到固定阈值 fixed window counter。
-# limiteron 0.3.0-rc.4 起 adaptive-limiting 已恢复为真实 AIMD 实现（可评估重新接入），
-# 但 priority-queue / admission-control 仍为 no-op 占位
+# rc.6 起 adaptive-limiting / priority-queue / admission-control 均已恢复真实实现
+# （admission-control 已由 firewall-admission 接入；adaptive-limiting 与
+# priority-queue 为可用原语，接线评估见 CHANGELOG 2026-10 吸收轮记录）。
 firewall-ddos = ["firewall"]
 firewall-waf = ["firewall", "web-axum"]
 # 后端已迁移至 limiteron GeoMatcher（geo-matching），maxminddb 直读依赖移除；
