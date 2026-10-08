@@ -980,21 +980,9 @@ mod tests {
                 }
             }));
         }
-        assert_eq!(
-            handles.remove(0).await.unwrap().unwrap(),
-            true,
-            "正确密码应通过"
-        );
-        assert_eq!(
-            handles.remove(0).await.unwrap().unwrap(),
-            false,
-            "错误密码应拒绝"
-        );
-        assert_eq!(
-            handles.remove(0).await.unwrap().unwrap(),
-            true,
-            "正确密码应通过"
-        );
+        assert!(handles.remove(0).await.unwrap().unwrap(), "正确密码应通过");
+        assert!(!handles.remove(0).await.unwrap().unwrap(), "错误密码应拒绝");
+        assert!(handles.remove(0).await.unwrap().unwrap(), "正确密码应通过");
     }
 
     /// `PasswordCredential` 在 `account-credential-zeroize` feature 启用时仍正确工作。
@@ -1141,9 +1129,8 @@ mod tests {
         release_tx.send(()).expect("release 通道应存活");
 
         for h in handles {
-            assert_eq!(
+            assert!(
                 h.await.expect("任务不应 panic").expect("verify 应成功"),
-                true,
                 "排队不拒绝，3 个 verify 结果全对"
             );
         }

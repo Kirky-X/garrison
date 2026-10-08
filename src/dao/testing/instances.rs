@@ -10,9 +10,9 @@
 //! - `in_memory`：`[basic, atomic, concurrent, ttl, keys]`（无 feature 依赖）
 //! - `oxcache_memory`：`[basic, atomic, concurrent, ttl]`（`cache-memory`）
 //!   + `oxcache_memory_keys` 独立块挂 `keys`（`dao-key-index`，由
-//!   `protocol-apikey` / `anomalous-detector-dual` 传递；`full` 自动含，
-//!   `production` 无此 feature 时不编译，`keys()` 的 `NotImplemented` 行为
-//!   由既有 `dao::tests` 的分层断言覆盖）
+//!     `protocol-apikey` / `anomalous-detector-dual` 传递；`full` 自动含，
+//!     `production` 无此 feature 时不编译，`keys()` 的 `NotImplemented` 行为
+//!     由既有 `dao::tests` 的分层断言覆盖）
 //! - `dbnexus_sqlite`：`[basic, atomic, concurrent, ttl]`（`db-sqlite`）——
 //!   KV 委托进程内 `InMemoryDao`，不触 SQL 表故不跑迁移
 //! - `dbnexus_postgres`：同 caps（`#[ignore]` + `DATABASE_URL`，`#[serial]`）

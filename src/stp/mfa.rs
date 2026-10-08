@@ -3351,9 +3351,9 @@ mod tests {
             .split(';')
             .next()
             .unwrap()
-            .splitn(2, '=')
-            .nth(1)
-            .unwrap();
+            .split_once('=')
+            .unwrap()
+            .1;
         let now = chrono::Utc::now().timestamp();
         assert!(
             verify_mfa_remember_cookie(secret, jwt, "login", "user-rc", "cred-1", now),
@@ -3373,9 +3373,9 @@ mod tests {
             .split(';')
             .next()
             .unwrap()
-            .splitn(2, '=')
-            .nth(1)
-            .unwrap();
+            .split_once('=')
+            .unwrap()
+            .1;
         let now = chrono::Utc::now().timestamp();
         assert!(
             !verify_mfa_remember_cookie(secret, jwt, "login", "user-rc", "cred-2", now),
@@ -3399,9 +3399,9 @@ mod tests {
             .split(';')
             .next()
             .unwrap()
-            .splitn(2, '=')
-            .nth(1)
-            .unwrap();
+            .split_once('=')
+            .unwrap()
+            .1;
         let now = chrono::Utc::now().timestamp();
         assert!(
             !verify_mfa_remember_cookie(secret, jwt, "login", "user-b", "cred-1", now),
@@ -3451,9 +3451,9 @@ mod tests {
             .split(';')
             .next()
             .unwrap()
-            .splitn(2, '=')
-            .nth(1)
-            .unwrap();
+            .split_once('=')
+            .unwrap()
+            .1;
         let now = chrono::Utc::now().timestamp();
         assert!(!verify_mfa_remember_cookie(
             "ffffffffffffffffffffffffffffffff",

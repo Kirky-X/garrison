@@ -55,6 +55,46 @@ pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     (len_eq & byte_eq).unwrap_u8() == 1
 }
 
+/// 去除单行中的注释（`//` 与 `///`/`//!` 起始），供源码扫描守卫使用。
+///
+/// 仅做行首裁剪（守卫目标标识符不会出现在行中注释尾部），不处理块注释。
+#[cfg(test)]
+fn strip_rust_comment(line: &str) -> &str {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("//") {
+        ""
+    } else {
+        line
+    }
+}
+
+/// 递归收集目录下全部 `.rs` 源文件，返回 `(相对 src_root 的路径, 源码)` 列表。
+///
+/// 仅用 `std::fs` 实现（避免为测试引入 walkdir 新依赖），路径分隔符统一为 `/`。
+#[cfg(test)]
+fn collect_rs_sources(dir: &std::path::Path, src_root: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return out;
+    };
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(collect_rs_sources(&path, src_root));
+        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+            if let Ok(source) = std::fs::read_to_string(&path) {
+                let rel = path
+                    .strip_prefix(src_root)
+                    .unwrap_or(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                out.push((rel, source));
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -205,44 +245,4 @@ mod tests {
             violations.join("\n")
         );
     }
-}
-
-/// 去除单行中的注释（`//` 与 `///`/`//!` 起始），供源码扫描守卫使用。
-///
-/// 仅做行首裁剪（守卫目标标识符不会出现在行中注释尾部），不处理块注释。
-#[cfg(test)]
-fn strip_rust_comment(line: &str) -> &str {
-    let trimmed = line.trim_start();
-    if trimmed.starts_with("//") {
-        ""
-    } else {
-        line
-    }
-}
-
-/// 递归收集目录下全部 `.rs` 源文件，返回 `(相对 src_root 的路径, 源码)` 列表。
-///
-/// 仅用 `std::fs` 实现（避免为测试引入 walkdir 新依赖），路径分隔符统一为 `/`。
-#[cfg(test)]
-fn collect_rs_sources(dir: &std::path::Path, src_root: &str) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let Ok(read_dir) = std::fs::read_dir(dir) else {
-        return out;
-    };
-    for entry in read_dir.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            out.extend(collect_rs_sources(&path, src_root));
-        } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
-            if let Ok(source) = std::fs::read_to_string(&path) {
-                let rel = path
-                    .strip_prefix(src_root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                out.push((rel, source));
-            }
-        }
-    }
-    out
 }

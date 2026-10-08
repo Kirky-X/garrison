@@ -803,7 +803,7 @@ async fn acc_srv_027_internal_api_key_lockout_after_threshold() {
         // 阈值 2：两次失败即锁定，便于验收断言
         .with_api_key_lockout(2, 300);
 
-    let external_url = format!("http://127.0.0.1:{}", external_port);
+    let _external_url = format!("http://127.0.0.1:{}", external_port);
     let internal_url = format!("http://127.0.0.1:{}", internal_port);
     let external_router = server.external_router();
     let internal_router = server.internal_router();

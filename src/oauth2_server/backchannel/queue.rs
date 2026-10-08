@@ -347,7 +347,7 @@ mod tests {
             "入队行初始即到期，不得自带退避"
         );
         assert!(
-            row.max_ttl_at >= row.created_at + 3600_000 - 1000,
+            row.max_ttl_at >= row.created_at + 3_600_000 - 1_000,
             "max_ttl_at 应为入队时刻 + 窗口，实际: {:?}",
             row
         );

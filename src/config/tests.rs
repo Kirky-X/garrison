@@ -2189,20 +2189,24 @@ dzWfBsm+KAfTJuqbV7VnJL3G
 /// RS256 + RSA 私钥 PEM：合法配置通过校验。
 #[test]
 fn validate_accepts_rs256_with_rsa_pem() {
-    let mut config = GarrisonConfig::default();
-    config.token_style = "jwt".to_string();
-    config.jwt_algorithm = "RS256".to_string();
-    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
+    let config = GarrisonConfig {
+        token_style: "jwt".to_string(),
+        jwt_algorithm: "RS256".to_string(),
+        jwt_rsa_private_key_pem: Some(TEST_ASYM_RSA_PEM.to_string()),
+        ..GarrisonConfig::default()
+    };
     assert!(config.validate().is_ok(), "RS256 + rsa pem 应通过校验");
 }
 
 /// RS256 缺 RSA 私钥 PEM：拒绝。
 #[test]
 fn validate_rejects_rs256_without_rsa_pem() {
-    let mut config = GarrisonConfig::default();
-    config.token_style = "jwt".to_string();
-    config.jwt_algorithm = "RS256".to_string();
-    config.jwt_secret = "0123456789abcdef0123456789abcdef".to_string().into();
+    let config = GarrisonConfig {
+        token_style: "jwt".to_string(),
+        jwt_algorithm: "RS256".to_string(),
+        jwt_secret: "0123456789abcdef0123456789abcdef".to_string().into(),
+        ..GarrisonConfig::default()
+    };
     let err = config.validate().unwrap_err();
     assert!(err.to_string().contains("config-jwt-key-missing"));
 }
@@ -2210,10 +2214,12 @@ fn validate_rejects_rs256_without_rsa_pem() {
 /// 同时配置两类私钥 PEM：拒绝（防配置歧义）。
 #[test]
 fn validate_rejects_multiple_key_types() {
-    let mut config = GarrisonConfig::default();
-    config.jwt_algorithm = "RS256".to_string();
-    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
-    config.jwt_ec_private_key_pem = Some("dummy".to_string());
+    let config = GarrisonConfig {
+        jwt_algorithm: "RS256".to_string(),
+        jwt_rsa_private_key_pem: Some(TEST_ASYM_RSA_PEM.to_string()),
+        jwt_ec_private_key_pem: Some("dummy".to_string()),
+        ..GarrisonConfig::default()
+    };
     let err = config.validate().unwrap_err();
     assert!(err.to_string().contains("config-jwt-key-multiple-types"));
 }
@@ -2221,10 +2227,12 @@ fn validate_rejects_multiple_key_types() {
 /// HS 系算法配置任何非对称私钥：拒绝。
 #[test]
 fn validate_rejects_asymmetric_key_for_hs() {
-    let mut config = GarrisonConfig::default();
-    config.jwt_algorithm = "HS256".to_string();
-    config.jwt_secret = "0123456789abcdef0123456789abcdef".to_string().into();
-    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
+    let config = GarrisonConfig {
+        jwt_algorithm: "HS256".to_string(),
+        jwt_secret: "0123456789abcdef0123456789abcdef".to_string().into(),
+        jwt_rsa_private_key_pem: Some(TEST_ASYM_RSA_PEM.to_string()),
+        ..GarrisonConfig::default()
+    };
     let err = config.validate().unwrap_err();
     assert!(err.to_string().contains("config-jwt-key-unexpected-for-hs"));
 }
@@ -2232,8 +2240,10 @@ fn validate_rejects_asymmetric_key_for_hs() {
 /// 非对称私钥字段 Debug 输出脱敏。
 #[test]
 fn debug_redacts_asymmetric_pem_fields() {
-    let mut config = GarrisonConfig::default();
-    config.jwt_rsa_private_key_pem = Some(TEST_ASYM_RSA_PEM.to_string());
+    let config = GarrisonConfig {
+        jwt_rsa_private_key_pem: Some(TEST_ASYM_RSA_PEM.to_string()),
+        ..GarrisonConfig::default()
+    };
     let debug = format!("{:?}", config);
     assert!(!debug.contains("MIIEvg"), "Debug 输出不得包含 PEM 内容");
     assert!(debug.contains("<redacted>"));
@@ -2355,9 +2365,14 @@ fn validate_rejects_bcrypt_cost_out_of_range() {
             err
         );
     }
-    let mut config = GarrisonConfig::default();
-    config.password_hasher.algorithm = "bcrypt".to_string();
-    config.password_hasher.bcrypt_cost = 10;
+    let mut config = GarrisonConfig {
+        password_hasher: PasswordHasherConfig {
+            algorithm: "bcrypt".to_string(),
+            bcrypt_cost: 10,
+            ..PasswordHasherConfig::default()
+        },
+        ..GarrisonConfig::default()
+    };
     assert!(config.validate().is_ok());
     config.password_hasher.bcrypt_cost = 15;
     assert!(config.validate().is_ok());
@@ -2367,11 +2382,14 @@ fn validate_rejects_bcrypt_cost_out_of_range() {
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_argon2id_uses_configured_params() {
-    let mut ph = PasswordHasherConfig::default();
-    ph.argon2_m_cost = 32768;
-    ph.argon2_t_cost = 3;
-    ph.argon2_p_cost = 2;
-    let hasher = ph.build_hasher().unwrap();
+    let hasher = PasswordHasherConfig {
+        argon2_m_cost: 32768,
+        argon2_t_cost: 3,
+        argon2_p_cost: 2,
+        ..PasswordHasherConfig::default()
+    }
+    .build_hasher()
+    .unwrap();
     let hash = hasher.hash("password").unwrap();
     assert!(
         hash.starts_with("$argon2id$v=19$m=32768,t=3,p=2"),
@@ -2384,10 +2402,13 @@ fn build_hasher_argon2id_uses_configured_params() {
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_bcrypt_uses_configured_cost() {
-    let mut ph = PasswordHasherConfig::default();
-    ph.algorithm = "bcrypt".to_string();
-    ph.bcrypt_cost = 10;
-    let hasher = ph.build_hasher().unwrap();
+    let hasher = PasswordHasherConfig {
+        algorithm: "bcrypt".to_string(),
+        bcrypt_cost: 10,
+        ..PasswordHasherConfig::default()
+    }
+    .build_hasher()
+    .unwrap();
     let hash = hasher.hash("password").unwrap();
     assert!(
         hash.starts_with("$2b$10$"),
@@ -2400,8 +2421,10 @@ fn build_hasher_bcrypt_uses_configured_cost() {
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_rejects_unknown_algorithm() {
-    let mut ph = PasswordHasherConfig::default();
-    ph.algorithm = "scrypt".to_string();
+    let ph = PasswordHasherConfig {
+        algorithm: "scrypt".to_string(),
+        ..PasswordHasherConfig::default()
+    };
     let err = match ph.build_hasher() {
         Err(e) => e,
         Ok(_) => panic!("非法算法名应返回 Err"),
@@ -2483,8 +2506,10 @@ fn argon2_pool_size_env_mapping() {
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_argon2_wires_pool_size() {
-    let mut ph = PasswordHasherConfig::default();
-    ph.argon2_pool_size = 3;
+    let ph = PasswordHasherConfig {
+        argon2_pool_size: 3,
+        ..PasswordHasherConfig::default()
+    };
     let hasher = ph.build_hasher().unwrap();
     let gate = hasher.concurrency_gate().expect("argon2id 分支应装配池");
     assert_eq!(gate.available_permits(), 3, "permit 数应等于配置池大小");
@@ -2497,9 +2522,11 @@ fn build_hasher_argon2_wires_pool_size() {
 #[cfg(feature = "account-credential")]
 #[test]
 fn build_hasher_bcrypt_has_no_pool() {
-    let mut ph = PasswordHasherConfig::default();
-    ph.algorithm = "bcrypt".to_string();
-    ph.bcrypt_cost = 12;
+    let ph = PasswordHasherConfig {
+        algorithm: "bcrypt".to_string(),
+        bcrypt_cost: 12,
+        ..PasswordHasherConfig::default()
+    };
     let hasher = ph.build_hasher().unwrap();
     assert!(
         hasher.concurrency_gate().is_none(),

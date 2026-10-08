@@ -437,7 +437,7 @@ pub async fn run_atomic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
 /// 2. get_and_delete 16 任务同键：恰 1 个 `Some`（GETDEL 一次性消费，防票券双花）；
 /// 3. incr 32 任务：返回值恰为 `1..=32` 的一个排列（无丢失更新）；
 /// 4. decr 16 任务（预置 16）：返回值（递减后的新值）恰为 `0..=15` 的排列
-///   （无跨越式递减——SMS 限速 flaky 的回归特征签名），终态键被删除；
+///    （无跨越式递减——SMS 限速 flaky 的回归特征签名），终态键被删除；
 /// 5. compare_and_update_if_greater 16 任务互异值：终值恰为 max（并发下更大值
 ///    永不被更小值覆盖——Digest nc 单调性）；
 /// 6. compare_and_swap 16 任务同 expected：恰 1 个 true，终值等于唯一赢家。
@@ -819,11 +819,11 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
             let session = pool
                 .get_session("admin")
                 .await
-                .map_err(|e| dao_err(e))
+                .map_err(dao_err)
                 .unwrap_or_else(|e| panic!("[{prefix}] get_session 不应失败: {e}"));
             let conn = session
                 .connection()
-                .map_err(|e| dao_err(e))
+                .map_err(dao_err)
                 .unwrap_or_else(|e| panic!("[{prefix}] connection 不应失败: {e}"));
             let stmt = Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -833,7 +833,7 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
             let row = conn
                 .query_one_raw(stmt)
                 .await
-                .map_err(|e| dao_err(e))
+                .map_err(dao_err)
                 .unwrap_or_else(|e| panic!("[{prefix}] 查询不应失败: {e}"))
                 .unwrap_or_else(|| panic!("[{prefix}] 查询应有结果行: {sql}"));
             row.try_get::<i64>("", "val")
@@ -847,16 +847,16 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
             let session = pool
                 .get_session("admin")
                 .await
-                .map_err(|e| dao_err(e))
+                .map_err(dao_err)
                 .unwrap_or_else(|e| panic!("[{prefix}] get_session 不应失败: {e}"));
             let conn = session
                 .connection()
-                .map_err(|e| dao_err(e))
+                .map_err(dao_err)
                 .unwrap_or_else(|e| panic!("[{prefix}] connection 不应失败: {e}"));
             let stmt = Statement::from_sql_and_values(DbBackend::Sqlite, sql, vec![]);
             conn.execute_raw(stmt)
                 .await
-                .map_err(|e| dao_err(e))
+                .map_err(dao_err)
                 .unwrap_or_else(|e| panic!("[{prefix}] execute 不应失败: {e}"));
         }
     };
