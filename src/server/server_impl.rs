@@ -27,6 +27,36 @@ use crate::error::{GarrisonError, GarrisonResult};
 /// 非 TLS 路径（axum::serve 无内建 drain 上限）消费本常量实现同等语义。
 const SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 30;
 
+/// 生产 drain 上限（两站点经此取参；取值由 graceful_shutdown_tests 锁定）。
+#[cfg(feature = "server-graceful-shutdown")]
+fn drain_timeout() -> std::time::Duration {
+    std::time::Duration::from_secs(SHUTDOWN_DRAIN_TIMEOUT_SECS)
+}
+
+/// 在 drain 上限内驱动 serve future：`serve` 先完成返回 `Some(输出)`；
+/// 停机信号到达后超过 `timeout` 仍未完成返回 `None`。
+///
+/// 外/内网两条非 TLS 路径共用（timeout 注入使回归测试无需真实等待 30s）。
+#[cfg(feature = "server-graceful-shutdown")]
+async fn drive_with_drain_deadline<S, D>(
+    serve: S,
+    drain_signal: D,
+    timeout: std::time::Duration,
+) -> Option<S::Output>
+where
+    S: std::future::Future,
+    D: std::future::Future<Output = ()>,
+{
+    tokio::pin!(serve);
+    tokio::select! {
+        result = &mut serve => Some(result),
+        _ = async move {
+            drain_signal.await;
+            tokio::time::sleep(timeout).await;
+        } => None,
+    }
+}
+
 /// 将 `GarrisonResult<T>` 转换为 `ApiResponse<T>`。
 ///
 /// Ok → `ApiResponse::ok(data)`
@@ -703,37 +733,34 @@ impl GarrisonAuthServer {
             #[cfg(feature = "server-graceful-shutdown")]
             {
                 let drain_notify = std::sync::Arc::clone(&shutdown_notify);
-                // axum Serve 实现 IntoFuture 而非 Future：select 前显式转换
+                // axum Serve 实现 IntoFuture 而非 Future：驱动前显式转换
                 let serve = std::future::IntoFuture::into_future(serve.with_graceful_shutdown(
                     async move {
                         shutdown_notify.notified().await;
                     },
                 ));
-                tokio::pin!(serve);
-                tokio::select! {
-                    result = &mut serve => {
-                        if let Err(e) = result {
-                            tracing::error!(error = %e, "external server error");
-                            return Err(GarrisonError::Internal(format!(
-                                "server-external-server-error::{}",
-                                e
-                            )));
-                        }
-                        Ok(())
-                    }
-                    _ = async move {
-                        drain_notify.notified().await;
-                        tokio::time::sleep(std::time::Duration::from_secs(
-                            SHUTDOWN_DRAIN_TIMEOUT_SECS,
-                        ))
-                        .await;
-                    } => {
+                match drive_with_drain_deadline(
+                    serve,
+                    async move { drain_notify.notified().await },
+                    drain_timeout(),
+                )
+                .await
+                {
+                    Some(Err(e)) => {
+                        tracing::error!(error = %e, "external server error");
+                        Err(GarrisonError::Internal(format!(
+                            "server-external-server-error::{}",
+                            e
+                        )))
+                    },
+                    None => {
                         tracing::warn!(
                             timeout_secs = SHUTDOWN_DRAIN_TIMEOUT_SECS,
                             "external server graceful drain timeout exceeded, stopping to wait for in-flight requests"
                         );
                         Ok(())
-                    }
+                    },
+                    Some(Ok(())) => Ok(()),
                 }
             }
             #[cfg(not(feature = "server-graceful-shutdown"))]
@@ -804,37 +831,34 @@ impl GarrisonAuthServer {
             #[cfg(feature = "server-graceful-shutdown")]
             {
                 let drain_notify = std::sync::Arc::clone(&shutdown_notify);
-                // axum Serve 实现 IntoFuture 而非 Future：select 前显式转换
+                // axum Serve 实现 IntoFuture 而非 Future：驱动前显式转换
                 let serve = std::future::IntoFuture::into_future(serve.with_graceful_shutdown(
                     async move {
                         shutdown_notify.notified().await;
                     },
                 ));
-                tokio::pin!(serve);
-                tokio::select! {
-                    result = &mut serve => {
-                        if let Err(e) = result {
-                            tracing::error!(error = %e, "internal server error");
-                            return Err(GarrisonError::Internal(format!(
-                                "server-internal-server-error::{}",
-                                e
-                            )));
-                        }
-                        Ok(())
-                    }
-                    _ = async move {
-                        drain_notify.notified().await;
-                        tokio::time::sleep(std::time::Duration::from_secs(
-                            SHUTDOWN_DRAIN_TIMEOUT_SECS,
-                        ))
-                        .await;
-                    } => {
+                match drive_with_drain_deadline(
+                    serve,
+                    async move { drain_notify.notified().await },
+                    drain_timeout(),
+                )
+                .await
+                {
+                    Some(Err(e)) => {
+                        tracing::error!(error = %e, "internal server error");
+                        Err(GarrisonError::Internal(format!(
+                            "server-internal-server-error::{}",
+                            e
+                        )))
+                    },
+                    None => {
                         tracing::warn!(
                             timeout_secs = SHUTDOWN_DRAIN_TIMEOUT_SECS,
                             "internal server graceful drain timeout exceeded, stopping to wait for in-flight requests"
                         );
                         Ok(())
-                    }
+                    },
+                    Some(Ok(())) => Ok(()),
                 }
             }
             #[cfg(not(feature = "server-graceful-shutdown"))]
@@ -958,6 +982,58 @@ mod graceful_shutdown_tests {
         assert!(
             new_conn.is_err() || new_conn.unwrap().is_err(),
             "shutdown 后新请求应失败（监听已停止）"
+        );
+    }
+
+    /// 接线锁定：生产 drain 上限为 30s（两站点经 `drain_timeout()` 取参，
+    /// 常量被改动时本测试显性失败）。
+    #[test]
+    fn drain_timeout_wires_thirty_seconds() {
+        assert_eq!(drain_timeout(), std::time::Duration::from_secs(30));
+    }
+
+    /// serve 先完成且无停机信号：即使 timeout=0 也返回 Some——timeout 仅从信号起算。
+    #[tokio::test]
+    async fn drain_deadline_serve_completes_without_signal() {
+        let out = drive_with_drain_deadline(
+            async { Ok::<u32, &'static str>(42) },
+            std::future::pending::<()>(),
+            std::time::Duration::from_secs(0),
+        )
+        .await;
+        assert_eq!(out, Some(Ok(42)));
+    }
+
+    /// 停机信号到达且 serve 在限时内完成：正常路径返回 Some（drain 未被 select 破坏）。
+    #[tokio::test]
+    async fn drain_deadline_completes_before_timeout() {
+        let out = drive_with_drain_deadline(
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                Ok::<u32, &'static str>(7)
+            },
+            async {},
+            std::time::Duration::from_secs(5),
+        )
+        .await;
+        assert_eq!(out, Some(Ok(7)));
+    }
+
+    /// 停机信号后 serve 卡死：超过注入的短 timeout 返回 None（不再无限等待在途连接）。
+    #[tokio::test]
+    async fn drain_deadline_times_out_on_hung_serve() {
+        let started = std::time::Instant::now();
+        let out = drive_with_drain_deadline(
+            std::future::pending::<Result<(), std::io::Error>>(),
+            async {},
+            std::time::Duration::from_millis(30),
+        )
+        .await;
+        assert!(out.is_none(), "卡死 serve 应返回 None（停止等待）");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "应在注入的短 timeout 附近返回，实际 {:?}",
+            started.elapsed()
         );
     }
 }

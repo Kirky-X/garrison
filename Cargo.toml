@@ -265,7 +265,12 @@ manager-explicit = ["authorize-api"]
 
 # === 核心扩展：多租户逻辑隔离 ===
 # Repository SQL 过滤不门控此 feature（始终生效，安全优先）。
-tenant-isolation = ["limiteron/multi-tenant"]
+# [INTERNAL] limiteron/ban-manager 是编译期伴随 feature：rc.6 governor.rs 的
+# `use crate::matchers::Identifier` 被 cfg(any(parallel-checker, ban-manager)) 门控，
+# 而 multi-tenant 块使用该类型——单独启用 multi-tenant 时导入缺失（上游缺陷）。
+# ban-manager 零依赖且 garrison 已有 firewall-bruteforce 在用，故选作载体；
+# 上游修复（multi-tenant 纳入 import 门控）后可移除。
+tenant-isolation = ["limiteron/multi-tenant", "limiteron/ban-manager"]
 
 # === 配置增强（confers 0.5 透传） ===
 config-encryption = ["confers/encryption"]

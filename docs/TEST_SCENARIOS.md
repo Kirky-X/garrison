@@ -151,7 +151,7 @@ dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与 server-side（postgr
                    session / config / context / json / exception / manager / plugin
 
 核心扩展 ── core-advanced ← authorize-api ← manager-explicit
-         └─ tenant-isolation ⇒ limiteron/multi-tenant
+         └─ tenant-isolation ⇒ limiteron/multi-tenant + limiteron/ban-manager（伴随 feature，修复上游 Identifier 导入门控断点，理由见 Cargo.toml）
 
 配置增强 ── config-{encryption,validation,hot-reload,interpolation,dynamic,
              toggle,yaml,audit,consul,etcd,distributed,schema} → confers/* 透传
