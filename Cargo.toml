@@ -297,6 +297,9 @@ cache-lock = ["cache-redis", "oxcache/lock"]
 cache-batch = ["cache-memory", "oxcache/batch"]
 # 跨实例缓存一致性：oxcache 键空间通知失效（多实例部署下 L1 自动同步）
 cache-invalidation = ["cache-redis", "oxcache/invalidation"]
+# 缓存热 key 采样观测（吸收 oxcache/hotkey）：进程内 HotKeyTracker，独立于读写路径；
+# three_tier L1 埋点 + hot_keys_top(k) top-k 诊断。默认关闭（可选观测面）
+cache-hotkey = ["oxcache/hotkey"]
 # 封禁记录跨实例同步：limiteron 经 oxcache Pub/Sub 广播封禁变更
 ban-sync = ["limiteron/ban-sync", "cache-invalidation"]
 
@@ -504,15 +507,14 @@ anomalous-detector-dual = ["firewall", "listener", "dao-key-index"]
 # 防护增强特性（透传 limiteron 高级能力）
 firewall-gcra = ["firewall", "limiteron/gcra"]
 firewall-tower = ["firewall", "limiteron/tower-middleware"]
-# [INTERNAL] admission-control 在 limiteron 0.3.0-rc.4 仍为 no-op 占位（无对应模块），
-# 改接已恢复真实实现的 adaptive-limiting（AIMD 自适应并发限流，错误率/慢调用反馈调窗）
-firewall-admission = ["firewall", "limiteron/adaptive-limiting"]
-# [INTERNAL] firewall-event 额外启用 limiteron/webhook 是编译期 workaround：
-# limiteron 0.3.0-rc.4 的 event-system 在未启用 webhook 时编译失败
-# （dispatcher.rs 调用点未按 cfg(feature = "webhook") 门控，E0061/E0425）。
-# garrison 不注册 webhook URL 时分发器不会外发任何请求，功能惰性；
-# 上游发布修复（rc.5+）后移除 limiteron/webhook。
-firewall-event = ["firewall", "limiteron/event-system", "limiteron/webhook"]
+# admission-control 在 limiteron 0.3.0-rc.4 曾为 no-op 占位（当时改接 adaptive-limiting
+# 权宜对齐）；rc.6 起真实实现恢复（AdmissionController：并发+速率双门准入），名实相符
+firewall-admission = ["firewall", "limiteron/admission-control"]
+# [INTERNAL] firewall-event 曾额外启用 limiteron/webhook 作编译期 workaround
+# （limiteron 0.3.0-rc.4 的 event-system 在未启用 webhook 时编译失败）；
+# rc.6 起 dispatcher 的 webhook 调用点已按 cfg(feature = "webhook") 门控，
+# workaround 已按既定计划移除——event-system 不再牵入 reqwest/hmac/sha2/hex 依赖链。
+firewall-event = ["firewall", "limiteron/event-system"]
 firewall-monitoring = ["firewall", "limiteron/monitoring"]
 firewall-parallel = ["firewall", "limiteron/parallel-checker"]
 # [INTERNAL] dao-key-index：为 GarrisonDaoOxcache 维护 key 索引以提供 keys() 生产实现
@@ -568,7 +570,9 @@ abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:getrandom", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
 
 # === inklog 结构化审计日志 ===
-audit-inklog = ["inklog/fast-masking", "inklog/compression"]
+# secret-scan：sink 写出前的高熵密钥/secret 形态扫描掩码门（inklog rc.7），
+# 与 garrison 自有 mask_metadata 审计脱敏双层防御（前者守日志文本，后者守事件 metadata）
+audit-inklog = ["inklog/fast-masking", "inklog/compression", "inklog/secret-scan"]
 audit-inklog-http = ["audit-inklog", "inklog/http"]
 # SIEM/SOC 实时外送（吸收 inklog/net-sink）：TCP（可 TLS）+ UDP 转发，断线缓冲重连。
 # TLS 为上游 MVP（支持 danger_accept_invalid_certs 豁免项，生产慎用）
@@ -771,5 +775,5 @@ required-features = ["full"]
 # 将 unexpected_cfgs 保持为 warn 级别（而非 allow）以便发现真正的意外 cfg。
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
-    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-password-reset", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backchannel-logout", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-invalidation", "cache-memory", "cache-redis", "cli", "cli-ops", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "field-encryption", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "mfa-recovery", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-qrlogin", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-webauthn", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-warp"))',
+    'cfg(feature, values("abac", "account-authflow", "account-credential", "account-lockout", "account-password-reset", "account-policy", "alone-cache", "annotation-macros", "anomalous-detector-dual", "audit-inklog", "audit-inklog-http", "audit-inklog-siem", "audit-log", "authorize-api", "auth-server", "auth-server-sdforge", "backchannel-logout", "backend-embedded", "backend-kit", "backend-remote", "ban-sync", "cache-audit", "cache-batch", "cache-hotkey", "cache-invalidation", "cache-memory", "cache-redis", "cli", "cli-ops", "config-audit", "config-consul", "config-distributed", "config-etcd", "config-schema", "config-security-rules", "config-yaml", "core-advanced", "credential-zeroize", "credit-metering", "dao-key-index", "db-mysql", "db-postgres", "db-replica", "db-saga", "db-sharding", "db-sqlite", "device-binding", "embedded-migrations", "field-encryption", "firewall", "firewall-admission", "firewall-anomalous", "firewall-bruteforce", "firewall-ddos", "firewall-event", "firewall-geoip", "firewall-gcra", "firewall-maxminddb", "firewall-monitoring", "firewall-parallel", "firewall-ratelimit", "firewall-tower", "firewall-waf", "full", "garrison-testing", "grpc", "i18n", "i18n-icu", "keycloak-oidc", "listener", "manager-explicit", "mcp", "mfa-recovery", "metrics-prometheus", "miette", "oauth2-scope-handler", "oauth2-server", "openapi", "otlp", "parameter-query", "policy-hibp", "protocol-apikey", "protocol-httpbasic", "protocol-httpdigest", "protocol-jwt", "protocol-oauth2", "protocol-oidc", "protocol-qrlogin", "protocol-saml", "protocol-sign", "protocol-sso", "protocol-sso-server", "protocol-temp", "protocol-webauthn", "protocol-zeroize", "rate-limit-redis", "secure-confusable", "secure-ct-eq", "secure-masking", "secure-sanitize", "secure-sign", "secure-simple-token", "secure-totp", "secure-xss", "security-extra", "session-extra", "session-hijack-detection", "sms-rate-limit", "social-alipay", "social-wechat", "tenant-isolation", "testing", "three-tier-cache", "tls", "tracing-log", "web-actix", "web-axum", "web-cors", "web-csrf", "web-security-headers", "web-warp"))',
 ] }

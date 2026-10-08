@@ -55,6 +55,14 @@ pub struct UserCacheService {
     /// 通过 double-check 从 L1 读取（已被首个任务回填）。
     /// 不同 key 的锁互相独立，不会跨 key 阻塞。
     singleflight_locks: DashMap<String, Arc<RwLock<()>>>,
+    /// 热 key 采样观测（cache-hotkey feature）：L1 访问路径埋点，
+    /// 经 [`Self::hot_keys_top`] 导出 top-k 诊断。进程内组件，不影响读写语义。
+    ///
+    /// 内存义务（上游契约）：条目仅在 `snapshot_top`（半衰 + 清零项回收）或
+    /// `reset` 时清理——启用方应定期调用 `hot_keys_top`（如运维/监控导出），
+    /// 长时间不导出则 entry 随去重键空间增长。
+    #[cfg(feature = "cache-hotkey")]
+    hot_keys: oxcache::features::HotKeyTracker,
 }
 
 impl UserCacheService {
@@ -135,8 +143,9 @@ impl UserCacheService {
                 "cache-l1-capacity-must-positive".to_string(),
             ));
         }
-        // L1 雪崩防护由 oxcache builder 的 ttl_jitter 在写入时自动应用（±10%），
-        // garrison 侧不再手写 L1 TTL 抖动；L2 DAO 写入仍走 [`Self::l2_ttl_with_jitter`]。
+        // L1 雪崩防护由 oxcache builder 的 ttl_jitter 在写入时自动应用；此处的
+        // .ttl_jitter(0.1) 与 oxcache rc.6 默认值（DEFAULT_TTL_JITTER_FACTOR=0.1）
+        // 一致，显式钉定防御上游默认漂移。L2 DAO 写入仍走 [`Self::l2_ttl_with_jitter`]。
         let l1 = Cache::builder()
             .capacity(l1_capacity)
             .ttl_jitter(0.1)
@@ -149,7 +158,28 @@ impl UserCacheService {
             l1_ttl_secs,
             l2_ttl_secs,
             singleflight_locks: DashMap::new(),
+            #[cfg(feature = "cache-hotkey")]
+            hot_keys: oxcache::features::HotKeyTracker::new(64),
         })
+    }
+
+    /// L1 访问埋点（cache-hotkey）：命中与未命中都计入，反映键访问频次。
+    /// feature 关闭时为空实现，调用点无需 cfg。
+    #[cfg(not(feature = "cache-hotkey"))]
+    fn record_hot_key(&self, _key: &str) {}
+
+    /// L1 访问埋点（cache-hotkey 启用时）。
+    #[cfg(feature = "cache-hotkey")]
+    fn record_hot_key(&self, key: &str) {
+        self.hot_keys.record(key);
+    }
+
+    /// 热 key top-k 诊断（cache-hotkey）：返回访问计数降序的前 k 个键。
+    ///
+    /// 上游 `HotKeyTracker` 为分片采样计数器（半衰），结果是诊断视角而非精确计数。
+    #[cfg(feature = "cache-hotkey")]
+    pub fn hot_keys_top(&self, k: usize) -> Vec<(String, u64)> {
+        self.hot_keys.snapshot_top(k)
     }
 
     /// 获取（或创建）指定 key 的 singleflight 锁。
@@ -243,6 +273,7 @@ impl UserCacheService {
     /// - 缓存反序列化失败：`GarrisonError::Internal`。
     pub async fn get_permissions(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let key = DaoKeyPrefix::PermissionCache.build_key(login_id);
+        self.record_hot_key(&key);
 
         // L1 check（无锁快路径）
         if let Some(cached) = self
@@ -322,6 +353,7 @@ impl UserCacheService {
     /// - 缓存反序列化失败：`GarrisonError::Internal`。
     pub async fn get_roles(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let key = DaoKeyPrefix::RoleCache.build_key(login_id);
+        self.record_hot_key(&key);
 
         // L1 check（无锁快路径）
         if let Some(cached) = self
@@ -404,6 +436,7 @@ impl UserCacheService {
     /// - L3 interface 回调失败：透传 `GarrisonError`。
     pub async fn get_user(&self, login_id: &str) -> GarrisonResult<Option<String>> {
         let key = DaoKeyPrefix::UserCache.build_key(login_id);
+        self.record_hot_key(&key);
 
         // L1 check（无锁快路径）
         if let Some(cached) = self
@@ -2599,5 +2632,47 @@ mod tests {
     #[test]
     fn accepts_positive_params() {
         assert!(build_with_capacity(30, 300, 128).is_ok());
+    }
+
+    // ------------------------------------------------------------------------
+    // cache-hotkey 热 key 观测（T006）
+    // ------------------------------------------------------------------------
+
+    /// L1 读写路径经 record 埋点：两次 get_permissions 后 top-k 含权限缓存键且计数 ≥2。
+    #[cfg(feature = "cache-hotkey")]
+    #[tokio::test]
+    async fn hot_keys_top_records_l1_accesses() {
+        let (_dao, _interface, service) = make_service(300, 600);
+        let _ = service.get_permissions("u1").await.unwrap();
+        let _ = service.get_permissions("u1").await.unwrap();
+
+        let key = DaoKeyPrefix::PermissionCache.build_key("u1");
+        let top = service.hot_keys_top(10);
+        let (_, count) = top
+            .iter()
+            .find(|(k, _)| k == &key)
+            .unwrap_or_else(|| panic!("权限缓存键应被记录，实际 top: {top:?}"));
+        assert!(*count >= 2, "两次访问计数应 ≥2，实际 {count}");
+    }
+
+    /// 无访问时空 tracker 返回空 top-k。
+    #[cfg(feature = "cache-hotkey")]
+    #[tokio::test]
+    async fn hot_keys_top_empty_returns_empty() {
+        let (_dao, _interface, service) = make_service(300, 600);
+        assert!(service.hot_keys_top(10).is_empty());
+    }
+
+    /// top-k 截断：记录 3 个不同键时 hot_keys_top(2) 至多返回 2 条。
+    #[cfg(feature = "cache-hotkey")]
+    #[tokio::test]
+    async fn hot_keys_top_respects_k_limit() {
+        let (_dao, _interface, service) = make_service(300, 600);
+        let _ = service.get_permissions("u1").await.unwrap();
+        let _ = service.get_roles("u1").await.unwrap();
+        let _ = service.get_user("u1").await.unwrap();
+
+        let top = service.hot_keys_top(2);
+        assert_eq!(top.len(), 2, "k=2 应截断为 2 条，实际: {top:?}");
     }
 }

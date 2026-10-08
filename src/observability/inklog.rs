@@ -32,7 +32,12 @@ impl InklogInit {
 ///
 /// # 行为
 /// - 读取 `RUST_LOG` 环境变量（默认 `info`）
-/// - 启用 console 输出
+/// - 启用 console 输出，并启用 secret 扫描门（高熵密钥/secret 形态出站掩码）——
+///   与 garrison 审计层的 `mask_metadata` 双层防御：前者守经 console sink 写出的
+///   日志文本，后者守审计事件 metadata
+/// - **显式关闭内置 file 通道**：inklog 默认启用 `logs/app.log` 落盘，但其 file
+///   masker 无 secret-scan 门（上游仅 console sink 组装扫描门），未扫描文本落盘
+///   与本函数的脱敏语义相悖；上游 file 通道支持扫描门后再评估启用
 /// - 返回 `LoggerManager` guard，调用方须保持存活以维持日志输出
 ///
 /// # 错误
@@ -43,6 +48,8 @@ pub async fn init_inklog_logging() -> Result<::inklog::LoggerManager, ::inklog::
     ::inklog::LoggerManager::builder()
         .level(level)
         .console(true)
+        .console_secret_scan(true)
+        .file_enabled(false)
         .build()
         .await
 }

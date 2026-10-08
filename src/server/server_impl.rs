@@ -22,6 +22,11 @@ use crate::backend::types::ApiResponse;
 use crate::backend::AuthBackend;
 use crate::error::{GarrisonError, GarrisonResult};
 
+/// 优雅停机 drain 上限（秒）：信号后等待在途请求完成的最长时间，超时强制中止。
+/// 与 TLS 路径 `axum_server::Handle::graceful_shutdown(Some(30s))` 的既有上限对齐；
+/// 非 TLS 路径（axum::serve 无内建 drain 上限）消费本常量实现同等语义。
+const SHUTDOWN_DRAIN_TIMEOUT_SECS: u64 = 30;
+
 /// 将 `GarrisonResult<T>` 转换为 `ApiResponse<T>`。
 ///
 /// Ok → `ApiResponse::ok(data)`
@@ -665,7 +670,9 @@ impl GarrisonAuthServer {
                     let notify = Arc::clone(&shutdown_notify);
                     tokio::spawn(async move {
                         notify.notified().await;
-                        h2.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
+                        h2.graceful_shutdown(Some(std::time::Duration::from_secs(
+                            SHUTDOWN_DRAIN_TIMEOUT_SECS,
+                        )));
                     });
                     handle
                 };
@@ -690,19 +697,56 @@ impl GarrisonAuthServer {
                 external_listener,
                 external_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
             );
-            // 信号触发后停止接收新连接并 drain 在途请求
+            // 信号触发后停止接收新连接并 drain 在途请求；drain 最长 30s（与 TLS 路径
+            // axum_server 上限对齐，同一常量）。超时后停止等待并返回：本调用不再被
+            // 卡死连接无限拖延（随附 bin 场景下进程退出收尾在途连接任务）
             #[cfg(feature = "server-graceful-shutdown")]
-            let serve = serve.with_graceful_shutdown(async move {
-                shutdown_notify.notified().await;
-            });
-            if let Err(e) = serve.await {
-                tracing::error!(error = %e, "external server error");
-                return Err(GarrisonError::Internal(format!(
-                    "server-external-server-error::{}",
-                    e
-                )));
+            {
+                let drain_notify = std::sync::Arc::clone(&shutdown_notify);
+                // axum Serve 实现 IntoFuture 而非 Future：select 前显式转换
+                let serve = std::future::IntoFuture::into_future(serve.with_graceful_shutdown(
+                    async move {
+                        shutdown_notify.notified().await;
+                    },
+                ));
+                tokio::pin!(serve);
+                tokio::select! {
+                    result = &mut serve => {
+                        if let Err(e) = result {
+                            tracing::error!(error = %e, "external server error");
+                            return Err(GarrisonError::Internal(format!(
+                                "server-external-server-error::{}",
+                                e
+                            )));
+                        }
+                        Ok(())
+                    }
+                    _ = async move {
+                        drain_notify.notified().await;
+                        tokio::time::sleep(std::time::Duration::from_secs(
+                            SHUTDOWN_DRAIN_TIMEOUT_SECS,
+                        ))
+                        .await;
+                    } => {
+                        tracing::warn!(
+                            timeout_secs = SHUTDOWN_DRAIN_TIMEOUT_SECS,
+                            "external server graceful drain timeout exceeded, stopping to wait for in-flight requests"
+                        );
+                        Ok(())
+                    }
+                }
             }
-            Ok(())
+            #[cfg(not(feature = "server-graceful-shutdown"))]
+            {
+                if let Err(e) = serve.await {
+                    tracing::error!(error = %e, "external server error");
+                    return Err(GarrisonError::Internal(format!(
+                        "server-external-server-error::{}",
+                        e
+                    )));
+                }
+                Ok(())
+            }
         });
 
         let mut internal_handle = tokio::spawn(async move {
@@ -724,7 +768,9 @@ impl GarrisonAuthServer {
                     let notify = Arc::clone(&shutdown_notify);
                     tokio::spawn(async move {
                         notify.notified().await;
-                        h2.graceful_shutdown(Some(std::time::Duration::from_secs(30)));
+                        h2.graceful_shutdown(Some(std::time::Duration::from_secs(
+                            SHUTDOWN_DRAIN_TIMEOUT_SECS,
+                        )));
                     });
                     handle
                 };
@@ -752,19 +798,56 @@ impl GarrisonAuthServer {
                 // 内网非 TLS 路径同样注入 ConnectInfo（与外网对齐）
                 internal_router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
             );
-            // 信号触发后停止接收新连接并 drain 在途请求
+            // 信号触发后停止接收新连接并 drain 在途请求；drain 最长 30s（与 TLS 路径
+            // axum_server 上限对齐，同一常量）。超时后停止等待并返回：本调用不再被
+            // 卡死连接无限拖延（随附 bin 场景下进程退出收尾在途连接任务）
             #[cfg(feature = "server-graceful-shutdown")]
-            let serve = serve.with_graceful_shutdown(async move {
-                shutdown_notify.notified().await;
-            });
-            if let Err(e) = serve.await {
-                tracing::error!(error = %e, "internal server error");
-                return Err(GarrisonError::Internal(format!(
-                    "server-internal-server-error::{}",
-                    e
-                )));
+            {
+                let drain_notify = std::sync::Arc::clone(&shutdown_notify);
+                // axum Serve 实现 IntoFuture 而非 Future：select 前显式转换
+                let serve = std::future::IntoFuture::into_future(serve.with_graceful_shutdown(
+                    async move {
+                        shutdown_notify.notified().await;
+                    },
+                ));
+                tokio::pin!(serve);
+                tokio::select! {
+                    result = &mut serve => {
+                        if let Err(e) = result {
+                            tracing::error!(error = %e, "internal server error");
+                            return Err(GarrisonError::Internal(format!(
+                                "server-internal-server-error::{}",
+                                e
+                            )));
+                        }
+                        Ok(())
+                    }
+                    _ = async move {
+                        drain_notify.notified().await;
+                        tokio::time::sleep(std::time::Duration::from_secs(
+                            SHUTDOWN_DRAIN_TIMEOUT_SECS,
+                        ))
+                        .await;
+                    } => {
+                        tracing::warn!(
+                            timeout_secs = SHUTDOWN_DRAIN_TIMEOUT_SECS,
+                            "internal server graceful drain timeout exceeded, stopping to wait for in-flight requests"
+                        );
+                        Ok(())
+                    }
+                }
             }
-            Ok(())
+            #[cfg(not(feature = "server-graceful-shutdown"))]
+            {
+                if let Err(e) = serve.await {
+                    tracing::error!(error = %e, "internal server error");
+                    return Err(GarrisonError::Internal(format!(
+                        "server-internal-server-error::{}",
+                        e
+                    )));
+                }
+                Ok(())
+            }
         });
 
         // 任一服务器异常即返回错误， 显式 abort 另一个 task 避免资源泄漏
