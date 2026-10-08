@@ -65,8 +65,9 @@ use tokio::sync::Mutex;
 
 /// 滑动窗口 Lua 脚本（limiteron 维护，Sorted Set 版）。
 ///
-/// 约定：`KEYS[1]`=key，`ARGV[1]`=窗口大小(ms)，`ARGV[2]`=最大请求数，
-/// `ARGV[3]`=当前时间戳(ms)；返回 `{allowed(0/1), current_count, reset_time}`。
+/// 约定（rc.6）：`KEYS[1]`=窗口键，`KEYS[2]`=seq 键（成员唯一化），
+/// `ARGV[1]`=窗口大小(ms)，`ARGV[2]`=最大请求数——时钟源在脚本内取 Redis
+/// TIME（rc.5 的 `ARGV[3]=now` 已移除）；返回 `{allowed(0/1), current_count, reset_time}`。
 /// MockDao / InMemoryDao 模拟器以脚本中的 `ZREMRANGEBYSCORE` 特征识别此模式。
 fn sliding_window_lua() -> &'static str {
     limiteron::oxcache_lua::SLIDING_WINDOW_SCRIPT
@@ -344,11 +345,6 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
         // 阈值 0 会恒拦截，显性返回 InvalidParam（fail-fast）
         self.config.validate()?;
         let (key, scope_id) = self.build_key(ctx)?;
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| GarrisonError::Dao(format!("strategy-system-time::{}", e)))?
-            .as_millis() as u64;
-        let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
         // 阈值提前读取（Lua 路径与降级路径共用）
         // 已知限制（同族 TOCTOU）：阈值读取在 eval_lua 原子边界之外，
@@ -362,12 +358,14 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
         // 参数按 limiteron SLIDING_WINDOW_SCRIPT 契约（rc.6）：KEYS=[窗口键, seq 键]、
         // ARGV=[window_ms, threshold]——时钟源在脚本内取 Redis TIME（rc.5 的第三参
         // now_ms 已移除；seq 键唯一化同毫秒成员，修复同毫秒覆盖绕过限流）。
+        // seq 键用 `{<key>}` hash tag 包裹：Redis Cluster 下 EVAL 要求全部键同
+        // slot，tag 使 seq 键与窗口键共置（standalone/sentinel 下仅是键名字面量）。
         // Redis 后端 / MockDao 支持此模式，在单次原子操作内完成 read-filter-check-write。
         let lua_result = self
             .dao
             .eval_lua(
                 sliding_window_lua(),
-                vec![key.clone(), format!("{key}:seq")],
+                vec![key.clone(), format!("{{{key}}}:seq")],
                 vec![
                     (self.config.window_seconds * 1000).to_string(),
                     threshold.to_string(),
@@ -394,8 +392,7 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
                 tracing::debug!(
                     "rate_limit: eval_lua unavailable, falling back to atomic_lock path (in-process atomic only)"
                 );
-                self.check_fallback(&key, &scope_id, now_ms, window_start, threshold)
-                    .await
+                self.check_fallback(&key, &scope_id, threshold).await
             },
             Err(e) => {
                 // 其他错误（Dao / InvalidParam）显性抛出
@@ -420,13 +417,18 @@ impl RateLimitStrategy {
         &self,
         key: &str,
         scope_id: &str,
-        now_ms: u64,
-        window_start: u64,
         threshold: usize,
     ) -> GarrisonResult<()> {
         // 进程内原子锁：保护 read-modify-write
         // tokio::sync::Mutex 可跨 await 持有（parking_lot::Mutex 不可跨 await）。
         let _guard = self.atomic_lock.lock().await;
+
+        // 降级路径时钟（仅降级路径消费；Lua 主路径时钟由脚本内 Redis TIME 承担）
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| GarrisonError::Dao(format!("strategy-system-time::{}", e)))?
+            .as_millis() as u64;
+        let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
         // 读取已有时间戳列表（limiteron Storage.get 替换 dao.get）
         let stored = self
@@ -632,10 +634,10 @@ mod tests {
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
 
-        // 消耗 8/10 = 80% 配额
+        // 消耗 8/10 = 80% 配额（每次失败都显性 panic 并携带错误上下文）
         for k in 0..8 {
             if let Err(e) = strategy.check(&ctx).await {
-                panic!("DEBUG 第 {k} 次调用失败: {e:?}");
+                panic!("第 {k} 次调用失败: {e:?}");
             }
         }
 

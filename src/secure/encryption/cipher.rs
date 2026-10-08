@@ -185,12 +185,13 @@ impl FieldCipher {
 ///
 /// # 弱钥门禁的不对称性（已记录的残留缺口）
 ///
-/// 退化钥（单字节重复）拦检只在 [`StaticFieldKeyProvider::new`]（配置面逐钥）
-/// 与 [`FieldCipher::new`]（主钥兜底）生效；本适配器直连 confers KeyRegistry
-///（其 `register_key` 不做弱钥校验），**非主钥的退化钥不被拦检**——新写入
-/// 恒用受门禁主钥，退化历史钥仅可解密存量密文，暴露面不扩大。下游经
-/// config-encryption 注册钥时请自行保证钥材质量（如 garrison-cli key-rotate
-/// 产出 OS CSPRNG 钥）。
+/// 退化钥（单字节重复）拦检的覆盖边界：[`StaticFieldKeyProvider::new`]
+/// 仅严格拒绝退化**主钥**（首项），非主钥退化钥 warn 放行（保留轮换出口）；
+/// [`FieldCipher::new`] 兜底校验当前主钥。本适配器直连 confers KeyRegistry
+///（其 `register_key` 不做弱钥校验），故经 config-encryption 注册的退化钥
+///（含运行期 `rotate_to` 切换的退化主钥）不被本仓门禁拦截——注意 `encrypt`
+/// 每次实时读取主钥，运行期切换到退化钥会使新写入使用弱钥，下游注册钥时
+/// 请自行保证钥材质量（如 garrison-cli key-rotate 产出 OS CSPRNG 钥）。
 #[cfg(feature = "config-encryption")]
 pub struct ConfersFieldKeyProvider {
     registry: Arc<confers::secret::KeyRegistry>,

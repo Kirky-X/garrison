@@ -437,12 +437,14 @@ impl GarrisonDao for InMemoryDao {
     /// 2. **ZREMRANGEBYSCORE**（limiteron `SLIDING_WINDOW_SCRIPT`，RateLimitStrategy 用）：
     /// 识别脚本中含 `ZREMRANGEBYSCORE`，在单次 `lock()` 作用域内原子执行
     /// remove-outdated → count → check → add（消除 TOCTOU）。
-    /// - `KEYS[1]`：Sorted Set key（member=score=毫秒时间戳）
+    /// - `KEYS[1]`：Sorted Set key（score=毫秒时间戳，member=时间戳:seq）
+    /// - `KEYS[2]`：seq 键（rc.6 起脚本内 INCR 生成成员唯一序号；模拟器不消费）
     /// - `ARGV[1]`：窗口大小 ms（u64）
     /// - `ARGV[2]`：最大请求数（usize，>= 即拦截）
-    /// - `ARGV[3]`：当前时间戳 ms（u64）
-    /// - 返回 `vec![allowed, count, reset_time]`（allowed "1"/"0"，
-    /// 与 limiteron 脚本返回 `{allowed, current_count, reset_time}` 对齐）
+    /// - 时钟：rc.6 起脚本内取 Redis TIME；模拟器取系统墙钟
+    /// - 返回 `vec![allowed, count, reset_time]`（allowed "1"/"0"；reset_time
+    ///   模拟器返回近似值 window_start+window，与脚本的最早成员+window 有差异，
+    ///   调用方 rate_limit 仅消费 allowed 位）
     async fn eval_lua(
         &self,
         script: &str,
@@ -454,6 +456,10 @@ impl GarrisonDao for InMemoryDao {
         // 生成唯一序号——脚本同时含 INCR+EXPIRE 与 ZREMRANGEBYSCORE 两种特征，
         // 必须先判滑窗，否则会被误派发到 INCR 模式（BruteForceStrategy 的
         // INCR+EXPIRE 脚本不含 ZREMRANGEBYSCORE，反转判序不影响其派发）。
+        // 注意：上游 FIXED_WINDOW_SCRIPT 同样含 INCR+EXPIRE 且无滑窗特征——
+        // 未来 garrison 若消费它，会与 BruteForce 共享模式 2 派发（行为恰为
+        // INCR 语义，恰巧正确）；新增消费任何 oxcache_lua 脚本前须先核对
+        // 本派发特征表。
         if script.contains("ZREMRANGEBYSCORE") {
             return self.eval_lua_sliding_window_mode(&keys, &args).await;
         }

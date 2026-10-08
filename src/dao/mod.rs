@@ -3098,6 +3098,38 @@ pub mod tests {
             ("0", "2"),
             "达到阈值后应拦截（count 保持，不追加）"
         );
+
+        // 返回契约形状锁：reset_time 位解析为 u64 且非零（系统墙钟下不作精确断言）
+        let reset: u64 = out[2].parse().expect("reset_time 应为可解析的 u64");
+        assert!(reset > 0, "reset_time 应非零");
+    }
+
+    /// 同毫秒成员不覆盖（rc.6 修复的限流绕过回归锁）：预置同一毫秒的两个成员、
+    /// max=2，首调 eval_lua 即应拦截（"0","2"）——若模拟器退化为同键覆盖语义
+    /// （rc.5 的 ZADD member=timestamp 行为），count 只会到 1，本测试确定性失败。
+    #[tokio::test]
+    async fn in_memory_eval_lua_sliding_window_same_ms_no_overwrite() {
+        let dao = MockDao::new();
+        let script = "ZREMRANGEBYSCORE";
+        let now: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let key = "lua_same_ms".to_string();
+        dao.set_permanent(&key, &format!("{now},{now}"))
+            .await
+            .unwrap();
+        let keys = vec![key.clone(), format!("{key}:seq")];
+
+        let out = dao
+            .eval_lua(script, keys, vec!["5000".to_string(), "2".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(
+            (out[0].as_str(), out[1].as_str()),
+            ("0", "2"),
+            "同毫秒两个成员都应计数（max=2 即拦），覆盖语义会使 count 只到 1"
+        );
     }
 
     /// eval_lua：sliding window 模式参数校验（rc.6 契约）——缺 KEYS[1]/KEYS[2]、
