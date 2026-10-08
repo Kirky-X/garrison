@@ -359,17 +359,18 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
         let threshold = self.current_threshold(ctx).await?;
 
         // 优先尝试 eval_lua 原子路径。
-        // 参数按 limiteron SLIDING_WINDOW_SCRIPT 约定：ARGV=[window_ms, max, now_ms]。
+        // 参数按 limiteron SLIDING_WINDOW_SCRIPT 契约（rc.6）：KEYS=[窗口键, seq 键]、
+        // ARGV=[window_ms, threshold]——时钟源在脚本内取 Redis TIME（rc.5 的第三参
+        // now_ms 已移除；seq 键唯一化同毫秒成员，修复同毫秒覆盖绕过限流）。
         // Redis 后端 / MockDao 支持此模式，在单次原子操作内完成 read-filter-check-write。
         let lua_result = self
             .dao
             .eval_lua(
                 sliding_window_lua(),
-                vec![key.clone()],
+                vec![key.clone(), format!("{key}:seq")],
                 vec![
                     (self.config.window_seconds * 1000).to_string(),
                     threshold.to_string(),
-                    now_ms.to_string(),
                 ],
             )
             .await;
@@ -632,8 +633,10 @@ mod tests {
         let ctx = FirewallContext::new("192.168.1.1");
 
         // 消耗 8/10 = 80% 配额
-        for _ in 0..8 {
-            assert!(strategy.check(&ctx).await.is_ok());
+        for k in 0..8 {
+            if let Err(e) = strategy.check(&ctx).await {
+                panic!("DEBUG 第 {k} 次调用失败: {e:?}");
+            }
         }
 
         let should = strategy

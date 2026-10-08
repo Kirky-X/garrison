@@ -182,6 +182,15 @@ impl FieldCipher {
 ///
 /// confers KeyRegistry 的 version 即 garrison 的 key_id；密钥材料必须恰好
 /// 32 字节（AES-256），非 32 字节显性报错。
+///
+/// # 弱钥门禁的不对称性（已记录的残留缺口）
+///
+/// 退化钥（单字节重复）拦检只在 [`StaticFieldKeyProvider::new`]（配置面逐钥）
+/// 与 [`FieldCipher::new`]（主钥兜底）生效；本适配器直连 confers KeyRegistry
+///（其 `register_key` 不做弱钥校验），**非主钥的退化钥不被拦检**——新写入
+/// 恒用受门禁主钥，退化历史钥仅可解密存量密文，暴露面不扩大。下游经
+/// config-encryption 注册钥时请自行保证钥材质量（如 garrison-cli key-rotate
+/// 产出 OS CSPRNG 钥）。
 #[cfg(feature = "config-encryption")]
 pub struct ConfersFieldKeyProvider {
     registry: Arc<confers::secret::KeyRegistry>,

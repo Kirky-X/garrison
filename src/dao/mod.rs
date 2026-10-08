@@ -3059,42 +3059,49 @@ pub mod tests {
         // 识别标记：limiteron 脚本中的 ZREMRANGEBYSCORE 特征（合成最小脚本即可触发模拟器）
         let script = "redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', window_start)";
         let key = "lua_sliding_key".to_string();
-        let keys = vec![key.clone()];
+        // rc.6 契约：KEYS=[窗口键, seq 键]、ARGV=[window_ms, max]——时钟源在脚本内
+        // 取 Redis TIME（模拟器取系统墙钟）；预置时间戳（epoch 毫秒尺度远早于当前）
+        // 必落窗外被过滤。
+        let keys = vec![key.clone(), format!("{key}:seq")];
         let window_ms: u64 = 5_000;
         // max=2：第 1、2 次请求放行，第 3 次拦截
-        let args = |now: u64| -> Vec<String> {
-            vec![window_ms.to_string(), "2".to_string(), now.to_string()]
-        };
+        let args = vec![window_ms.to_string(), "2".to_string()];
 
-        // 窗口外旧时间戳（<= now - window_ms = 5000）应被过滤
         dao.set_permanent(&key, "1,5000,4999").await.unwrap();
-        // 首次：预置时间戳全部 <= window_start（5000）被过滤，count=0 < 2 → 放行并追加；
-        // reset = (now - window) + window = now
 
+        // 第 1 次：预置时间戳全部在窗外被过滤，count=0 < 2 → 放行并追加
+        let out = dao
+            .eval_lua(script, keys.clone(), args.clone())
+            .await
+            .unwrap();
         assert_eq!(
-            dao.eval_lua(script, keys.clone(), args(10_000))
-                .await
-                .unwrap(),
-            vec!["1".to_string(), "0".to_string(), "10000".to_string()],
-            "旧时间戳被过滤后未达阈值应放行（返回 allowed/count/reset 三元组）"
+            (out[0].as_str(), out[1].as_str()),
+            ("1", "0"),
+            "旧时间戳被过滤后未达阈值应放行（allowed/count）"
         );
+
+        // 第 2 次：窗口内第 2 个时间戳仍放行（count=1 < max=2）
+        let out = dao
+            .eval_lua(script, keys.clone(), args.clone())
+            .await
+            .unwrap();
         assert_eq!(
-            dao.eval_lua(script, keys.clone(), args(10_001))
-                .await
-                .unwrap(),
-            vec!["1".to_string(), "1".to_string(), "10001".to_string()],
-            "窗口内第 2 个时间戳仍应放行（count=1 < max=2）"
+            (out[0].as_str(), out[1].as_str()),
+            ("1", "1"),
+            "窗口内第 2 个时间戳仍应放行"
         );
+
+        // 第 3 次：达到阈值应拦截（count=2 保持，不追加）
+        let out = dao.eval_lua(script, keys, args).await.unwrap();
         assert_eq!(
-            dao.eval_lua(script, keys.clone(), args(10_002))
-                .await
-                .unwrap(),
-            vec!["0".to_string(), "2".to_string(), "10002".to_string()],
-            "达到阈值后应拦截（count=2 保持，不追加）"
+            (out[0].as_str(), out[1].as_str()),
+            ("0", "2"),
+            "达到阈值后应拦截（count 保持，不追加）"
         );
     }
 
-    /// eval_lua：sliding window 模式参数校验——缺 KEYS[1] / 缺任一 ARGV / 非数字均报错。
+    /// eval_lua：sliding window 模式参数校验（rc.6 契约）——缺 KEYS[1]/KEYS[2]、
+    /// ARGV 非数字均报错。
     #[tokio::test]
     async fn in_memory_eval_lua_sliding_window_param_validation() {
         let dao = MockDao::new();
@@ -3102,11 +3109,7 @@ pub mod tests {
 
         // 缺 KEYS[1]
         let result = dao
-            .eval_lua(
-                script,
-                vec![],
-                vec!["1".to_string(), "1".to_string(), "1".to_string()],
-            )
+            .eval_lua(script, vec![], vec!["1".to_string(), "1".to_string()])
             .await;
         assert!(
             matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("rl-missing-keys-1")),
@@ -3114,7 +3117,7 @@ pub mod tests {
             result
         );
 
-        // 缺最后一个 ARGV[3]（仅 2 个参数）
+        // 缺 KEYS[2]（rc.6 seq 键为必需）
         let result = dao
             .eval_lua(
                 script,
@@ -3123,8 +3126,8 @@ pub mod tests {
             )
             .await;
         assert!(
-            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("rl-argv-3-now-ms")),
-            "缺 ARGV[3] 应返回 InvalidParam，实际: {:?}",
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("rl-missing-keys-2-seq")),
+            "缺 KEYS[2] 应返回 InvalidParam，实际: {:?}",
             result
         );
 
@@ -3132,18 +3135,27 @@ pub mod tests {
         let result = dao
             .eval_lua(
                 script,
-                vec!["k".to_string()],
-                vec![
-                    "nan".to_string(),
-                    "1".to_string(),
-                    "1".to_string(),
-                    "1".to_string(),
-                ],
+                vec!["k".to_string(), "k:seq".to_string()],
+                vec!["nan".to_string(), "1".to_string()],
             )
             .await;
         assert!(
             matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("parse-failed")),
             "ARGV[1] 非数字应返回 parse-failed InvalidParam，实际: {:?}",
+            result
+        );
+
+        // ARGV[2] 非数字
+        let result = dao
+            .eval_lua(
+                script,
+                vec!["k".to_string(), "k:seq".to_string()],
+                vec!["1".to_string(), "nan".to_string()],
+            )
+            .await;
+        assert!(
+            matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg.contains("rl-argv-2-max")),
+            "ARGV[2] 非数字应返回 InvalidParam，实际: {:?}",
             result
         );
     }
@@ -3175,14 +3187,13 @@ pub mod tests {
     async fn in_memory_eval_lua_sliding_window_sets_window_ttl() {
         let dao = MockDao::new();
         let script = "ZREMRANGEBYSCORE";
-        let keys = vec!["lua_sliding_perm".to_string()];
+        let keys = vec![
+            "lua_sliding_perm".to_string(),
+            "lua_sliding_perm:seq".to_string(),
+        ];
         // max=u64::MAX 保证永不拦截，仅验证写入路径；
         // limiteron 脚本约定 TTL 由窗口推导：ceil(window_ms / 1000) + 1 = 6s
-        let args = vec![
-            "5000".to_string(),
-            u64::MAX.to_string(),
-            "10000".to_string(),
-        ];
+        let args = vec!["5000".to_string(), u64::MAX.to_string()];
 
         assert_eq!(
             dao.eval_lua(script, keys, args).await.unwrap()[0],

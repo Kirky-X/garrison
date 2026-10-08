@@ -449,14 +449,18 @@ impl GarrisonDao for InMemoryDao {
         keys: Vec<String>,
         args: Vec<String>,
     ) -> GarrisonResult<Vec<String>> {
-        // 模式 1：INCR + EXPIRE（limiteron BruteForceStrategy）
-        if script.contains("INCR") && script.contains("EXPIRE") {
-            return self.eval_lua_incr_mode(&keys, &args).await;
-        }
-
-        // 模式 2：ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT）
+        // 模式 1（先判）：ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT）。
+        // rc.6 起滑窗脚本为修复「同毫秒成员互相覆盖绕过限流」改用 INCR seq_key
+        // 生成唯一序号——脚本同时含 INCR+EXPIRE 与 ZREMRANGEBYSCORE 两种特征，
+        // 必须先判滑窗，否则会被误派发到 INCR 模式（BruteForceStrategy 的
+        // INCR+EXPIRE 脚本不含 ZREMRANGEBYSCORE，反转判序不影响其派发）。
         if script.contains("ZREMRANGEBYSCORE") {
             return self.eval_lua_sliding_window_mode(&keys, &args).await;
+        }
+
+        // 模式 2：INCR + EXPIRE（limiteron BruteForceStrategy）
+        if script.contains("INCR") && script.contains("EXPIRE") {
+            return self.eval_lua_incr_mode(&keys, &args).await;
         }
 
         Err(GarrisonError::NotImplemented(format!(
@@ -481,7 +485,12 @@ impl InMemoryDao {
         Ok(vec![count.to_string()])
     }
 
-    /// ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT）模式：原子 remove→count→check→add。
+    /// ZREMRANGEBYSCORE（limiteron SLIDING_WINDOW_SCRIPT，rc.6 契约）：
+    /// 原子 remove→count→check→add。
+    ///
+    /// rc.6 契约：`KEYS = [窗口键, seq 键]`、`ARGV = [window_ms, max_requests]`——
+    /// 时钟源在脚本内取 Redis TIME（不再经 ARGV 传 now）；seq 键生成成员唯一
+    /// 序号，模拟器以「追加时间戳列表」计数，天然区分同毫秒请求，无需 seq 语义。
     async fn eval_lua_sliding_window_mode(
         &self,
         keys: &[String],
@@ -490,9 +499,18 @@ impl InMemoryDao {
         let key = keys.first().ok_or_else(|| {
             GarrisonError::InvalidParam("dao-eval-lua-rl-missing-keys-1".to_string())
         })?;
+        if keys.len() < 2 {
+            return Err(GarrisonError::InvalidParam(
+                "dao-eval-lua-rl-missing-keys-2-seq".to_string(),
+            ));
+        }
         let window_ms: u64 = parse_lua_arg(args, 0, "dao-eval-lua-rl-argv-1-window-ms")?;
         let max_requests: usize = parse_lua_arg(args, 1, "dao-eval-lua-rl-argv-2-max")?;
-        let now_ms: u64 = parse_lua_arg(args, 2, "dao-eval-lua-rl-argv-3-now-ms")?;
+        // 时钟源对齐 rc.6 脚本语义（Redis TIME → 模拟器取系统墙钟毫秒）
+        let now_ms: u64 = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
         let window_start_ms = now_ms.saturating_sub(window_ms);
 
         // 原子 remove-outdated → count → check → add（单次 lock 作用域内）。
