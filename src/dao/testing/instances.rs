@@ -60,7 +60,7 @@ crate::dao_conformance_tests! {
         let pool = // cache=shared 命名内存库：池的多个连接共享同一库（`sqlite::memory:` 在
 // Windows 下池开新连接会得到空库，迁移建表后查询报 no such table——
 // 2026-10-08 Windows CI 实证；shared cache 使全部连接看到迁移产物）。
-    crate::dao::init_dbnexus("sqlite:file:garrison_instance_mem?mode=memory&cache=shared").await?;
+    crate::dao::init_dbnexus("sqlite:file:garrison_dao_conformance_mem?mode=memory&cache=shared").await?;
         Ok(::std::sync::Arc::new(crate::dao::GarrisonDaoDbnexus::new(
             pool,
             ::std::sync::Arc::new(crate::dao::InMemoryDao::new()),
@@ -99,7 +99,7 @@ async fn refresh_token_rotation_contract_dbnexus_sqlite() {
     let pool = // cache=shared 命名内存库：池的多个连接共享同一库（`sqlite::memory:` 在
 // Windows 下池开新连接会得到空库，迁移建表后查询报 no such table——
 // 2026-10-08 Windows CI 实证；shared cache 使全部连接看到迁移产物）。
-    crate::dao::init_dbnexus("sqlite:file:garrison_instance_mem?mode=memory&cache=shared")
+    crate::dao::init_dbnexus("sqlite:file:garrison_refresh_rotation_mem?mode=memory&cache=shared")
         .await
         .expect("init_dbnexus 应成功");
     let migration = crate::dao::GarrisonMigration::with_base_dir(
@@ -137,7 +137,7 @@ async fn webauthn_credential_repository_contract_dbnexus_sqlite() {
     let pool = // cache=shared 命名内存库：池的多个连接共享同一库（`sqlite::memory:` 在
 // Windows 下池开新连接会得到空库，迁移建表后查询报 no such table——
 // 2026-10-08 Windows CI 实证；shared cache 使全部连接看到迁移产物）。
-    crate::dao::init_dbnexus("sqlite:file:garrison_instance_mem?mode=memory&cache=shared")
+    crate::dao::init_dbnexus("sqlite:file:garrison_webauthn_mem?mode=memory&cache=shared")
         .await
         .expect("init_dbnexus 应成功");
     let migration = crate::dao::GarrisonMigration::with_base_dir(
