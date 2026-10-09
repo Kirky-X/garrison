@@ -629,6 +629,10 @@ async fn test_listen_starts_and_runs() {
 /// 判别式：占住 `127.0.0.1:P` 后，`with_external_bind(127.0.0.2)` + 端口 P
 /// 应能成功绑定并持续运行——若 listen 仍硬编码 0.0.0.0（通配），bind 会与
 /// 既有 specific-address 绑定冲突（EADDRINUSE）并立即返回错误。
+#[cfg_attr(
+    target_os = "macos",
+    ignore = "macOS lo0 默认仅含 127.0.0.1，无法绑定 127.0.0.2（平台能力差异，非缺陷）"
+)]
 #[tokio::test]
 async fn test_listen_uses_configured_external_bind() {
     // 占住 127.0.0.1 上的端口（specific-address 绑定，与通配绑定互斥）
