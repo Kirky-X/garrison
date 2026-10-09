@@ -494,7 +494,7 @@ jobs:
             GIT_SHA=${{ github.sha }}
       - name: Validate compose example
         # 与本地校验同口径：API Key 缺失时 compose 的 `:?required` 应直接报错
-        run: GARRISON_INTERNAL_API_KEY=ci-smoke-key-0123456789abcdef0123456789abcdef docker compose -f docker/docker-compose.example.yml config -q
+        run: GARRISON_INTERNAL_API_KEY=ci-smoke-key-garrison0000000000000000000000000000000000000000000000000000000000 docker compose -f docker/docker-compose.example.yml config -q
       - name: Smoke test (debian-slim)
         # HEALTHCHECK --interval=30s --start-period=10s 下 healthy 最早约 t≈10-40s
         # 才出现，探活成功后立即单次断言几乎必读 starting——改为有界轮询
@@ -503,7 +503,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name smoke-debian \
-            -e GARRISON_INTERNAL_API_KEY=ci-smoke-key-0123456789abcdef0123456789abcdef \
+            -e GARRISON_INTERNAL_API_KEY=ci-smoke-key-garrison0000000000000000000000000000000000000000000000000000000000 \
             -p 127.0.0.1:8080:8080 garrison-auth:ci
           status=""
           for _ in $(seq 1 30); do
@@ -541,7 +541,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name smoke-distroless \
-            -e GARRISON_INTERNAL_API_KEY=ci-smoke-key-0123456789abcdef0123456789abcdef garrison-auth:ci-distroless
+            -e GARRISON_INTERNAL_API_KEY=ci-smoke-key-garrison0000000000000000000000000000000000000000000000000000000000 garrison-auth:ci-distroless
           status=""
           for _ in $(seq 1 30); do
             status="$(docker inspect -f '{{.State.Health.Status}}' smoke-distroless)"
