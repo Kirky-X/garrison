@@ -55,23 +55,15 @@
 
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
+use crate::limiteron::distributed::GarrisonDaoDistributedLimiter;
 use crate::limiteron::GarrisonDaoStorage;
 use crate::strategy::firewall::{CaptchaChallenge, FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
+use limiteron::error::LimiteronError;
 use limiteron::storage::Storage;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
-
-/// 滑动窗口 Lua 脚本（limiteron 维护，Sorted Set 版）。
-///
-/// 约定（rc.6）：`KEYS[1]`=窗口键，`KEYS[2]`=seq 键（成员唯一化），
-/// `ARGV[1]`=窗口大小(ms)，`ARGV[2]`=最大请求数——时钟源在脚本内取 Redis
-/// TIME（rc.5 的 `ARGV[3]=now` 已移除）；返回 `{allowed(0/1), current_count, reset_time}`。
-/// MockDao / InMemoryDao 模拟器以脚本中的 `ZREMRANGEBYSCORE` 特征识别此模式。
-fn sliding_window_lua() -> &'static str {
-    limiteron::oxcache_lua::SLIDING_WINDOW_SCRIPT
-}
 
 /// 速率限制作用域。
 ///
@@ -165,9 +157,10 @@ pub struct RateLimitStrategy {
     config: RateLimitConfig,
     /// 存储（limiteron Storage 适配器，替换 dao 的 get/set/delete）。
     storage: Arc<dyn Storage>,
-    /// DAO 引用：用于调用 `eval_lua` 执行原子滑动窗口。
-    /// 与 `storage` 指向同一底层 DAO，仅用于 `eval_lua` 路径。
-    dao: Arc<dyn GarrisonDao>,
+    /// 滑窗判定桥接（limiteron `DistributedLimiter` 适配器的
+    /// `allow_sliding_window`）：Lua 主路径的脚本契约（KEYS/ARGV 形状、
+    /// hash-tag seq 键、响应解析）收敛在此，策略层不再直连裸 `eval_lua`。
+    limiter: Arc<GarrisonDaoDistributedLimiter>,
     /// 进程内原子锁（降级路径）：保护 `eval_lua` 不可用时的
     /// read-modify-write。仅进程内原子，跨进程仍存在 TOCTOU（见模块文档）。
     ///
@@ -177,14 +170,15 @@ pub struct RateLimitStrategy {
     /// （不同 IP/用户/租户）的降级路径检查相互**串行阻塞**，高吞吐下
     /// 丧失并发能力。这是正确性换吞吐的取舍：按 key 分锁（如 keyed mutex 池）
     /// 可缓解，但会显著增加复杂度，当前版本不做（保持降级路径简单可靠）。
-    /// 需要并发吞吐的场景应启用支持 Lua 的后端（走原子 `eval_lua` 路径，无锁）。
+    /// 需要并发吞吐的场景应启用支持 Lua 的后端（走原子滑窗路径，无锁）。
     atomic_lock: Mutex<()>,
 }
 
 impl RateLimitStrategy {
     /// 创建速率限制策略实例。
     ///
-    /// 内部创建 [`GarrisonDaoStorage`] 适配器，将 `dao` 桥接到 limiteron `Storage` trait。
+    /// 内部创建 [`GarrisonDaoStorage`] 适配器（get/set/delete）与
+    /// [`GarrisonDaoDistributedLimiter`] 桥接（滑窗 Lua 判定）。
     ///
     /// # 参数
     /// - `config`: 配置（阈值 + 窗口 + 作用域 + 动态阈值上限）。
@@ -194,7 +188,7 @@ impl RateLimitStrategy {
         Self {
             config,
             storage,
-            dao,
+            limiter: Arc::new(GarrisonDaoDistributedLimiter::new(dao)),
             atomic_lock: Mutex::new(()),
         }
     }
@@ -354,48 +348,35 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
         // 当前版本保留该窗口（与 adjust_threshold 的 同类处理一致：文档声明，不修复）。
         let threshold = self.current_threshold(ctx).await?;
 
-        // 优先尝试 eval_lua 原子路径。
-        // 参数按 limiteron SLIDING_WINDOW_SCRIPT 契约（rc.6）：KEYS=[窗口键, seq 键]、
-        // ARGV=[window_ms, threshold]——时钟源在脚本内取 Redis TIME（rc.5 的第三参
-        // now_ms 已移除；seq 键唯一化同毫秒成员，修复同毫秒覆盖绕过限流）。
-        // seq 键用 `{<key>}` hash tag 包裹：Redis Cluster 下 EVAL 要求全部键同
-        // slot，tag 使 seq 键与窗口键共置（standalone/sentinel 下仅是键名字面量）。
-        // Redis 后端 / MockDao 支持此模式，在单次原子操作内完成 read-filter-check-write。
+        // 滑窗判定经桥接件（`allow_sliding_window`）：脚本契约（KEYS=[窗口键,
+        // {窗口键}:seq]、ARGV=[window_ms, threshold]、响应 {allowed,count,reset}）
+        // 与 hash tag 共置语义收敛在 `GarrisonDaoDistributedLimiter`，策略层
+        // 不再直连裸 `eval_lua`。Redis 后端 / MockDao 支持此模式，在单次
+        // 原子操作内完成 read-filter-check-write。
         let lua_result = self
-            .dao
-            .eval_lua(
-                sliding_window_lua(),
-                vec![key.clone(), format!("{{{key}}}:seq")],
-                vec![
-                    (self.config.window_seconds * 1000).to_string(),
-                    threshold.to_string(),
-                ],
-            )
+            .limiter
+            .allow_sliding_window(&key, self.config.window_seconds * 1000, threshold as u64)
             .await;
         match lua_result {
-            Ok(vals) => {
-                // eval_lua 成功：返回值 "1" 表示允许，"0" 表示拦截。
-                // 空结果 unwrap_or(false)：fail-close——解析异常时宁可误拦不误放（文档化设计）。
-                let allowed = vals.first().map(|s| s == "1").unwrap_or(false);
-                if allowed {
-                    return Ok(());
-                }
-                return Err(GarrisonError::FirewallBlocked(format!(
+            Ok((true, _, _)) => Ok(()),
+            Ok((false, _, _)) => {
+                // 空结果/解析异常由桥接件 fail-close（allowed=false），不误放行
+                Err(GarrisonError::FirewallBlocked(format!(
                     "strategy-firewall-ratelimit-blocked::{}::{}::lua::{}",
                     scope_id,
                     format!("{:?}", self.config.scope).to_lowercase(),
                     threshold
-                )));
+                )))
             },
-            Err(GarrisonError::NotImplemented(_)) => {
+            Err(e) if is_lua_unsupported(&e) => {
                 // 后端不支持 Lua：降级到 atomic_lock 保护的非原子路径（进程内原子）
                 tracing::debug!(
-                    "rate_limit: eval_lua unavailable, falling back to atomic_lock path (in-process atomic only)"
+                    "rate_limit: sliding window unsupported by backend, falling back to atomic_lock path (in-process atomic only)"
                 );
                 self.check_fallback(&key, &scope_id, threshold).await
             },
             Err(e) => {
-                // 其他错误（Dao / InvalidParam）显性抛出
+                // 其他错误（存储/配置）显性抛出
                 Err(GarrisonError::Dao(format!(
                     "strategy-limiter-eval-lua::{}",
                     e
@@ -403,6 +384,15 @@ impl GarrisonFirewallStrategy for RateLimitStrategy {
             },
         }
     }
+}
+
+/// 判定桥接错误是否为「后端不支持 Lua」。
+///
+/// `map_to_limiter_err` 将 `GarrisonError::NotImplemented` 压平为
+/// `LimiteronError::StorageError(QueryError)`（Debug 形式保留在消息内），
+/// 故按消息特征识别——策略层据此选择 atomic_lock 降级路径。
+fn is_lua_unsupported(e: &LimiteronError) -> bool {
+    matches!(e, LimiteronError::StorageError(_)) && format!("{e}").contains("NotImplemented")
 }
 
 impl RateLimitStrategy {
@@ -423,35 +413,7 @@ impl RateLimitStrategy {
         // tokio::sync::Mutex 可跨 await 持有（parking_lot::Mutex 不可跨 await）。
         let _guard = self.atomic_lock.lock().await;
 
-        // 降级路径时钟（仅降级路径消费；Lua 主路径时钟由脚本内 Redis TIME 承担）
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| GarrisonError::Dao(format!("strategy-system-time::{}", e)))?
-            .as_millis() as u64;
-        let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
-
-        // 读取已有时间戳列表（limiteron Storage.get 替换 dao.get）
-        let stored = self
-            .storage
-            .get(key)
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
-        // parse 失败时 warn 记录脏数据，不静默丢弃
-        let mut timestamps: Vec<u64> = stored
-            .as_deref()
-            .unwrap_or("")
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .filter_map(|s| match s.parse::<u64>() {
-                Ok(v) => Some(v),
-                Err(_) => {
-                    tracing::warn!(key = %key, raw = %s, "rate_limit: timestamp parse failed, skipping entry (possible storage layer concurrent write truncation)");
-                    None
-                }
-            })
-            .collect();
-
-        timestamps.retain(|&t| t > window_start);
+        let timestamps = self.read_window(key).await?;
 
         // 剩余数量 >= 当前阈值 → 拦截
         if timestamps.len() >= threshold {
@@ -464,7 +426,10 @@ impl RateLimitStrategy {
             )));
         }
 
-        // 追加当前时间戳，回写（TTL=window_seconds，窗口无请求时自动过期）
+        // 追加当前时间戳，回写（TTL=window_seconds，窗口无请求时自动过期）。
+        // 时钟与 Lua 主路径同源语义（墙钟毫秒；Redis 后端下脚本内 TIME）。
+        let now_ms = self.now_ms()?;
+        let mut timestamps = timestamps;
         timestamps.push(now_ms);
         let serialized: String = timestamps
             .iter()
@@ -477,6 +442,44 @@ impl RateLimitStrategy {
             .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
         Ok(())
     }
+
+    /// 读取窗口内未过期的时间戳列表（降级路径与验证码挑战共用的唯一计数实现）。
+    ///
+    /// 存储格式与 Lua 主路径一致（逗号分隔毫秒时间戳，`storage` 读写同一 key），
+    /// 降级路径追加写、`should_challenge` 只读计数——两份消费方共享本方法，
+    /// 不再各自维护一份过滤/解析逻辑。
+    async fn read_window(&self, key: &str) -> GarrisonResult<Vec<u64>> {
+        let now_ms = self.now_ms()?;
+        let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
+        let stored = self
+            .storage
+            .get(key)
+            .await
+            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
+        // parse 失败时 warn 记录脏数据，不静默丢弃
+        Ok(stored
+            .as_deref()
+            .unwrap_or("")
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .filter_map(|s| match s.parse::<u64>() {
+                Ok(v) => Some(v),
+                Err(_) => {
+                    tracing::warn!(key = %key, raw = %s, "rate_limit: timestamp parse failed, skipping entry (possible storage layer concurrent write truncation)");
+                    None
+                }
+            })
+            .filter(|&t| t > window_start)
+            .collect())
+    }
+
+    /// 当前墙钟毫秒（降级路径时钟；Lua 主路径时钟由脚本内 Redis TIME 承担）。
+    fn now_ms(&self) -> GarrisonResult<u64> {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .map_err(|e| GarrisonError::Dao(format!("strategy-system-time::{}", e)))
+    }
 }
 
 #[async_trait]
@@ -485,26 +488,10 @@ impl CaptchaChallenge for RateLimitStrategy {
         // 同 check：0 值配置显性拒绝
         self.config.validate()?;
         let (key, _) = self.build_key(ctx)?;
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| GarrisonError::Dao(format!("strategy-system-time::{}", e)))?
-            .as_millis() as u64;
-        let window_start = now_ms.saturating_sub(self.config.window_seconds * 1000);
 
-        // 读取窗口内时间戳并过滤过期项（不修改状态，与 check 共享算法）
-        let stored = self
-            .storage
-            .get(&key)
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
-        let count: usize = stored
-            .as_deref()
-            .unwrap_or("")
-            .split(',')
-            .filter(|s| !s.is_empty())
-            .filter_map(|s| s.parse::<u64>().ok())
-            .filter(|&t| t > window_start)
-            .count();
+        // 与降级路径共用唯一的窗口计数实现（read_window，只读不消费配额）；
+        // 早期此处曾维护第三份时间戳解析/过滤副本，已收敛。
+        let count = self.read_window(&key).await?.len();
 
         let threshold = self.current_threshold(ctx).await?;
         // 80% 阈值触发挑战（整数运算避免浮点）
@@ -563,8 +550,33 @@ mod tests {
 
         let result = strategy.check(&ctx).await;
         assert!(
-            matches!(result, Err(GarrisonError::FirewallBlocked(_))),
-            "第 11 次应返回 FirewallBlocked，实际: {:?}",
+            matches!(&result, Err(GarrisonError::FirewallBlocked(msg)) if msg.contains("strategy-firewall-ratelimit-blocked")),
+            "第 11 次应返回 FirewallBlocked（错误串含 strategy-firewall-ratelimit-blocked），实际: {:?}",
+            result
+        );
+    }
+
+    /// 滑窗桥接路径的错误串契约：被拒时含作用域标识与 `lua` 路径标记
+    /// （`strategy-firewall-ratelimit-blocked::{scope_id}::{scope}::lua::{threshold}`）。
+    #[tokio::test]
+    async fn ratelimit_block_error_string_contract() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 2,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: None,
+        };
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("203.0.113.9");
+
+        strategy.check(&ctx).await.unwrap();
+        strategy.check(&ctx).await.unwrap();
+        let result = strategy.check(&ctx).await;
+        assert!(
+            matches!(&result, Err(GarrisonError::FirewallBlocked(msg))
+                if msg.contains("strategy-firewall-ratelimit-blocked::203.0.113.9::ip::lua::2")),
+            "错误串应含 scope_id/scope/lua/阈值，实际: {:?}",
             result
         );
     }

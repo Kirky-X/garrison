@@ -19,6 +19,8 @@ use crate::dao::GarrisonDao;
 use crate::error::GarrisonError;
 use async_trait::async_trait;
 use limiteron::error::LimiteronError;
+#[cfg(feature = "firewall-ratelimit")]
+use limiteron::error::StorageError;
 use limiteron::limiters::{DistributedLimiter, Limiter};
 use std::sync::Arc;
 use std::time::Duration;
@@ -130,6 +132,70 @@ impl GarrisonDaoDistributedLimiter {
                 Ok(count <= threshold)
             },
             Err(e) => Err(map_to_limiter_err(e)),
+        }
+    }
+
+    /// `limiteron::oxcache_lua` 由 limiteron 的 `lua-script` feature 门控，
+    ///  garrison 侧仅 `firewall-ratelimit` 传递启用（`Cargo.toml` `[features]`），
+    /// 故本方法随该 feature 编译；策略层（同 feature 门控）是唯一调用方。
+    #[cfg(feature = "firewall-ratelimit")]
+    /// 滑动窗口判定（镜像 limiteron `RedisDistributedLimiter::allow_sliding_window`
+    /// 的脚本契约，供 garrison 防火墙限流策略直连滑窗判定）。
+    ///
+    /// 以 `limiteron::oxcache_lua::SLIDING_WINDOW_SCRIPT` 经
+    /// [`GarrisonDao::eval_lua`] 执行原子 read-filter-check-write：
+    /// `KEYS=[窗口键, {窗口键}:seq]`（hash tag 共置，Redis Cluster 同 slot）、
+    /// `ARGV=[window_ms, max_requests]`，返回 `{allowed, count, reset_time}`
+    /// （时钟源在脚本内）。`eval_lua` 返回 `NotImplemented`（非 Redis 后端，
+    /// 如 oxcache）时错误**透传**，由调用方（策略层）决定降级路径——
+    /// 本方法不做内部降级，避免第二份滑动窗口实现。
+    ///
+    /// # 参数
+    /// - `key`: 窗口键（调用方构造，如 `rl:ip:{ip}`）。
+    /// - `window_ms`: 窗口大小（毫秒）。
+    /// - `max_requests`: 窗口内最大请求数（达到即拦截）。
+    ///
+    /// # 返回
+    /// `(allowed, current_count, reset_time)`。
+    ///
+    /// # 错误
+    /// - `ConfigError`：key 为空或响应形状不符。
+    /// - 透传 `eval_lua` 的错误（含 `NotImplemented`）。
+    pub async fn allow_sliding_window(
+        &self,
+        key: &str,
+        window_ms: u64,
+        max_requests: u64,
+    ) -> Result<(bool, u64, u64), LimiteronError> {
+        if key.is_empty() {
+            return Err(LimiteronError::ConfigError(
+                "strategy-sliding-window-key-empty::".to_string(),
+            ));
+        }
+        let seq_key = format!("{{{key}}}:seq");
+        let vals = self
+            .dao
+            .eval_lua(
+                limiteron::oxcache_lua::SLIDING_WINDOW_SCRIPT,
+                vec![key.to_string(), seq_key],
+                vec![window_ms.to_string(), max_requests.to_string()],
+            )
+            .await
+            .map_err(map_to_limiter_err)?;
+        match vals.as_slice() {
+            [allowed, count, reset] => {
+                let count = count.parse::<u64>().map_err(|_| {
+                    LimiteronError::StorageError(StorageError::QueryError(format!(
+                        "strategy-sliding-window-count-parse::{}",
+                        count
+                    )))
+                })?;
+                let reset = reset.parse::<u64>().unwrap_or(0);
+                Ok((allowed == "1", count, reset))
+            },
+            _ => Err(LimiteronError::StorageError(StorageError::QueryError(
+                "strategy-sliding-window-response-length::".to_string(),
+            ))),
         }
     }
 }
@@ -402,6 +468,86 @@ mod tests {
         assert!(
             matches!(result, Err(GarrisonError::NotImplemented(_))),
             "eval_lua 默认实现应返回 NotImplemented，实际: {:?}",
+            result
+        );
+    }
+
+    // --- allow_sliding_window：滑窗判定（防火墙限流直连入口，随 feature 门控） ---
+
+    /// 同窗内前 max_requests 个请求放行、第 max_requests+1 个被拒
+    /// （MockDao 模拟器识别 ZREMRANGEBYSCORE 模式；count 为判定时窗口计数，
+    /// 即 add 前计数，与模拟器/脚本的 check-then-add 语义一致）。
+    #[tokio::test]
+    #[cfg(feature = "firewall-ratelimit")]
+    async fn sliding_window_allows_then_blocks_at_threshold() {
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
+
+        for expected_count in 0..3 {
+            let (allowed, count, _reset) = limiter
+                .allow_sliding_window("rl:ip:10.0.0.1", 60_000, 3)
+                .await
+                .unwrap();
+            assert!(allowed, "计数 {expected_count} 时应放行");
+            assert_eq!(count, expected_count, "判定时计数应为 {expected_count}");
+        }
+        let (allowed, count, _reset) = limiter
+            .allow_sliding_window("rl:ip:10.0.0.1", 60_000, 3)
+            .await
+            .unwrap();
+        assert!(!allowed, "第 4 个请求应被拒（达到阈值）");
+        assert_eq!(count, 3, "被拒时判定计数应为 3（已达上限）");
+    }
+
+    /// 不同 key 相互独立（作用域隔离）。
+    #[tokio::test]
+    #[cfg(feature = "firewall-ratelimit")]
+    async fn sliding_window_keys_are_independent() {
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
+        let (a1, _, _) = limiter
+            .allow_sliding_window("rl:ip:a", 60_000, 1)
+            .await
+            .unwrap();
+        let (b1, _, _) = limiter
+            .allow_sliding_window("rl:ip:b", 60_000, 1)
+            .await
+            .unwrap();
+        assert!(a1 && b1, "不同 key 的首个请求都应放行");
+        let (a2, _, _) = limiter
+            .allow_sliding_window("rl:ip:a", 60_000, 1)
+            .await
+            .unwrap();
+        assert!(!a2, "key a 达限后被拒");
+        let (b2, _, _) = limiter
+            .allow_sliding_window("rl:ip:b", 60_000, 1)
+            .await
+            .unwrap();
+        assert!(!b2, "key b 达限后被拒");
+    }
+
+    /// 空 key 拒绝（fail-fast，镜像库侧 ConfigError 语义）。
+    #[tokio::test]
+    #[cfg(feature = "firewall-ratelimit")]
+    async fn sliding_window_empty_key_rejected() {
+        let limiter = GarrisonDaoDistributedLimiter::new(make_dao());
+        let result = limiter.allow_sliding_window("", 60_000, 1).await;
+        assert!(
+            matches!(result, Err(LimiteronError::ConfigError(_))),
+            "空 key 应返回 ConfigError，实际: {:?}",
+            result
+        );
+    }
+
+    /// eval_lua 返回 NotImplemented 时透传（策略层据此走降级路径）。
+    #[tokio::test]
+    #[cfg(feature = "firewall-ratelimit")]
+    async fn sliding_window_not_implemented_passthrough() {
+        use crate::dao::tests::MinimalDao;
+
+        let limiter = GarrisonDaoDistributedLimiter::new(Arc::new(MinimalDao::new()));
+        let result = limiter.allow_sliding_window("rl:ip:x", 60_000, 1).await;
+        assert!(
+            matches!(result, Err(LimiteronError::StorageError(_))),
+            "NotImplemented 应经 map_to_limiter_err 透传为 StorageError，实际: {:?}",
             result
         );
     }
