@@ -605,7 +605,7 @@ pub struct GarrisonConfig {
     /// 在 stp 登录收口（`login` / `login_with_token` / `login_by_token`）强制：
     /// 超限返回 `InvalidParam`（拒绝签发会话，封住未认证内存增长源头）。
     /// HTTP 请求层 `LoginRequest` 反序列化另有硬上限
-    /// [`DEFAULT_LOGIN_ID_MAX_LEN`](crate::config::DEFAULT_LOGIN_ID_MAX_LEN)
+    /// [`DEFAULT_LOGIN_ID_MAX_LEN`]
     /// （wire 层不读运行时配置）；本配置只可收紧该上限，设为 0 时框架层不限
     /// 但 wire 层仍按默认常量封顶。
     pub login_id_max_len: u32,
@@ -769,6 +769,22 @@ pub struct GarrisonConfig {
     /// 上下文部署不受影响；仅 `token_style="jwt"` + `jwt_mode=Stateless` 有实际效果。
     /// 开启前应确认存量 token 已轮替（或可接受其显性失效）。
     pub require_tenant_bound_jwt: bool,
+
+    /// 严格收口：会话模式在租户上下文内必须持有租户绑定。默认 `false`。
+    ///
+    /// `false`（默认）：无绑定 attr（`SESSION_TENANT_ATTR_KEY`）的存量会话在租户
+    /// 上下文内放行（向后兼容；绑定仅在登录时刻写入，存量会话只能靠 TTL 自然过期
+    /// 收敛——`remember_me` 会话最长 90 天）。
+    /// `true`：`check_login` 在租户上下文存在且会话无绑定时显性拒绝
+    /// （`stp-check-login-session-tenant-unbound`）——封住旧会话不受租户约束的窗口。
+    ///
+    /// 覆盖范围与 [`require_tenant_bound_jwt`](Self::require_tenant_bound_jwt) 互补：
+    /// 本字段作用于 `jwt_mode = Simple` / `Mixin`（读会话绑定 attr）；`Stateless` 无会话
+    /// 存储，由 `require_tenant_bound_jwt` 读 `tid` claim——开启本项**不影响 Stateless
+    /// 部署**（无会话存储不等于无绑定，否则 Stateless 会在租户上下文内全量报错）。两者
+    /// 各覆盖一半，开启其一不代表全部收紧（覆盖矩阵见 docs/CONFIGURATION.md）。无租户
+    /// 上下文部署不受影响；开启前应确认存量无绑定会话已轮替（或可接受其显性失效）。
+    pub require_session_tenant_binding: bool,
 
     /// 审计日志脱敏模式。默认 `Partial`。
     ///

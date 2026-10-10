@@ -524,6 +524,221 @@ fn test_auth_server_config_default() {
     );
 }
 
+/// 严格档两条拒绝 + 通配绑定不误伤 + 非严格档只告警不拒绝（TDD 红测试）。
+#[test]
+fn test_strict_security_tiers() {
+    let wildcard = std::net::IpAddr::from([0, 0, 0, 0]);
+    let loopback = std::net::IpAddr::from([127, 0, 0, 1]);
+    // 严格档：12 字节短密钥拒绝。
+    let strict_short = AuthServerConfig {
+        internal_api_key: "short-key-12".to_string(),
+        strict_security: true,
+        ..AuthServerConfig::default()
+    };
+    assert!(
+        matches!(strict_short.validate(), Err(m) if m.contains("server-internal-api-key-too-short")),
+        "严格档短密钥应拒绝，实际: {:?}",
+        strict_short.validate()
+    );
+    // 严格档：外网登录暴露未确认拒绝。
+    let strict_unacked = AuthServerConfig {
+        internal_api_key: "0123456789abcdef0123456789abcdef".to_string(),
+        strict_security: true,
+        external_login_enabled: true,
+        external_bind: wildcard,
+        ..AuthServerConfig::default()
+    };
+    assert!(
+        matches!(strict_unacked.validate(), Err(m) if m.contains("server-external-login-unacknowledged")),
+        "严格档未确认的外网登录暴露应拒绝，实际: {:?}",
+        strict_unacked.validate()
+    );
+    // 严格档：精确确认串放行。
+    let strict_acked = AuthServerConfig {
+        external_login_ack: Some(EXTERNAL_LOGIN_ACK.to_string()),
+        ..strict_unacked.clone()
+    };
+    assert!(
+        strict_acked.validate().is_ok(),
+        "严格档精确确认串应放行，实际: {:?}",
+        strict_acked.validate()
+    );
+    // 严格档：通配绑定不误伤（容器场景）。
+    let strict_wildcard = AuthServerConfig {
+        internal_api_key: "0123456789abcdef0123456789abcdef".to_string(),
+        strict_security: true,
+        external_bind: wildcard,
+        internal_bind: wildcard,
+        ..AuthServerConfig::default()
+    };
+    assert!(
+        strict_wildcard.validate().is_ok(),
+        "严格档通配绑定不应误伤，实际: {:?}",
+        strict_wildcard.validate()
+    );
+    // 非严格档（默认）：上述四组全部 Ok（只告警不拒绝）。
+    for cfg in [
+        AuthServerConfig {
+            strict_security: false,
+            ..strict_short.clone()
+        },
+        AuthServerConfig {
+            strict_security: false,
+            ..strict_unacked.clone()
+        },
+        AuthServerConfig {
+            strict_security: false,
+            ..strict_acked.clone()
+        },
+        AuthServerConfig {
+            strict_security: false,
+            ..strict_wildcard.clone()
+        },
+    ] {
+        assert!(
+            cfg.validate().is_ok(),
+            "非严格档应只告警不拒绝，实际: {:?}",
+            cfg.validate()
+        );
+    }
+    let _ = loopback;
+}
+
+// ========================================================================
+// 非严格档告警锁定（R-auth-server-guardrails-003：只告警不拒绝，且逐条可观测）
+//
+// 范式沿用 `src/oauth2_server/token.rs` 的 LogCapture（fmt layer + with_writer），
+// `set_default` 为线程局部，与并行测试不互干（validate() 为同步调用）。
+// ========================================================================
+
+/// 进程内日志捕获 writer（收集格式化后的行）。
+#[derive(Clone)]
+struct ServerLogCapture(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for ServerLogCapture {
+    type Writer = ServerLogCaptureWriter;
+    fn make_writer(&'a self) -> Self::Writer {
+        ServerLogCaptureWriter(self.0.clone())
+    }
+}
+
+struct ServerLogCaptureWriter(Arc<std::sync::Mutex<Vec<String>>>);
+
+impl std::io::Write for ServerLogCaptureWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("日志缓冲锁应可用")
+            .push(String::from_utf8_lossy(buf).to_string());
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// 统计含指定子串的 warn 行数。
+fn count_warn(lines: &[String], needle: &str) -> usize {
+    lines
+        .iter()
+        .filter(|l| l.contains("WARN") && l.contains(needle))
+        .count()
+}
+
+/// 三条非严格档告警各恰好输出一次，且文案含错误码与 1.0 迁移指引；
+/// 严格档同输入直接拒绝，不产生这三条告警。
+#[test]
+fn non_strict_tier_emits_each_warning_exactly_once() {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let capture = ServerLogCapture(Arc::new(std::sync::Mutex::new(Vec::new())));
+    let subscriber = tracing_subscriber::registry().with(
+        tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(capture.clone()),
+    );
+    let _guard = subscriber.set_default();
+
+    // 一次 validate() 同时命中三个条件：短密钥 + 外网登录未 ACK + 双端通配绑定
+    let relaxed = AuthServerConfig {
+        internal_api_key: "short-key-12".to_string(),
+        strict_security: false,
+        external_login_enabled: true,
+        external_bind: std::net::IpAddr::from([0, 0, 0, 0]),
+        internal_bind: std::net::IpAddr::from([0, 0, 0, 0]),
+        external_login_ack: None,
+        ..AuthServerConfig::default()
+    };
+    assert!(relaxed.validate().is_ok(), "非严格档应放行");
+
+    let lines = capture.0.lock().expect("日志缓冲锁应可用").clone();
+    // 短密钥：含错误码 + 下限 + 1.0 转为拒绝的迁移动作
+    assert_eq!(
+        count_warn(&lines, "server-internal-api-key-too-short"),
+        1,
+        "短密钥告警应恰好一次，实际捕获: {:?}",
+        lines
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("server-internal-api-key-too-short")
+                && l.contains("1.0")
+                && l.contains("min=32")),
+        "短密钥告警应含 1.0 迁移说明与下限，实际: {:?}",
+        lines
+    );
+    // 外网登录未 ACK：含错误码 + 绑定地址 + 确认串字段名
+    assert_eq!(
+        count_warn(&lines, "server-external-login-unacknowledged"),
+        1,
+        "外网登录未 ACK 告警应恰好一次，实际捕获: {:?}",
+        lines
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("server-external-login-unacknowledged")
+                && l.contains("external_login_ack")
+                && l.contains("1.0")),
+        "未 ACK 告警应含 external_login_ack 与 1.0 迁移说明，实际: {:?}",
+        lines
+    );
+    // 通配绑定：含两个 builder 修复动作
+    assert_eq!(
+        count_warn(&lines, "server-wildcard-bind-default"),
+        1,
+        "通配绑定告警应恰好一次（双端均通配也只一行），实际捕获: {:?}",
+        lines
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("server-wildcard-bind-default")
+                && l.contains("with_external_bind")
+                && l.contains("with_internal_bind")
+                && l.contains("1.0")),
+        "通配绑定告警应同时给出 with_external_bind / with_internal_bind 与 1.0 迁移，实际: {:?}",
+        lines
+    );
+
+    // 严格档：同输入直接拒绝，不输出上述任何一条告警
+    let strict_lines_base = capture.0.lock().expect("日志缓冲锁应可用").len();
+    let strict = AuthServerConfig {
+        strict_security: true,
+        ..relaxed.clone()
+    };
+    assert!(strict.validate().is_err(), "严格档应拒绝");
+    let lines_after = capture.0.lock().expect("日志缓冲锁应可用").clone();
+    assert_eq!(
+        lines_after.len(),
+        strict_lines_base,
+        "严格档不得追加告警（它走拒绝分支），新增: {:?}",
+        &lines_after[strict_lines_base..]
+    );
+}
+
 /// 测试 with_external_bind / with_internal_bind builder 注入绑定地址并保持链式语义。
 #[test]
 fn test_with_bind_builders() {

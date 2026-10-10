@@ -918,6 +918,63 @@ mod tests {
             );
         }
 
+        /// 哈希格式非法分支也执行一次 dummy verify（H-1 时序对齐），锁定不因重构静默丢失。
+        ///
+        /// 畸形哈希在解析处即失败（毫秒级），与「密码错误」分支（完整 Argon2 开销）形成
+        /// 耗时双峰——该分支可区分「账号存在但哈希畸形」与「密码错误」，故必须补齐等价开销。
+        #[tokio::test]
+        async fn login_with_password_bad_hash_format_performs_dummy_verify() {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+
+            /// 计数哈希器：对畸形存量哈希返回数据类错误（对齐 Argon2Hasher 的 PHC
+            /// 解析失败语义），其余输入记一次 verify 调用并返回不匹配。
+            struct FormatErrorCountingHasher {
+                verify_calls: AtomicUsize,
+            }
+
+            impl PasswordHasher for FormatErrorCountingHasher {
+                fn hash(&self, _password: &str) -> GarrisonResult<String> {
+                    Ok("$argon2id$v=19$m=19456,t=2,p=1$dummy$dummy".to_string())
+                }
+                fn verify(&self, _password: &str, hash: &str) -> GarrisonResult<bool> {
+                    self.verify_calls.fetch_add(1, Ordering::Relaxed);
+                    if hash.starts_with("$argon2") {
+                        Ok(false)
+                    } else {
+                        Err(GarrisonError::InvalidParam(
+                            "unsupported hash format".to_string(),
+                        ))
+                    }
+                }
+            }
+
+            let logic = make_logic_without_creds();
+            let counter = Arc::new(FormatErrorCountingHasher {
+                verify_calls: AtomicUsize::new(0),
+            });
+            let hasher: Arc<dyn PasswordHasher> = counter.clone();
+            let mock_repo = MockUserRepository::new();
+            mock_repo.insert(make_user_row("1002", "not-a-valid-hash-format"));
+            let repo: Arc<dyn UserRepository> = Arc::new(mock_repo);
+
+            let logic = logic
+                .with_password_hasher(hasher)
+                .with_user_repository(repo);
+
+            let result = logic.login_with_password("1002", "any-password").await;
+            assert!(
+                matches!(result, Err(GarrisonError::InvalidParam(ref msg)) if msg == "stp-invalid-password::"),
+                "哈希格式非法应统一返回 stp-invalid-password，实际: {:?}",
+                result
+            );
+            assert_eq!(
+                counter.verify_calls.load(Ordering::Relaxed),
+                2,
+                "哈希格式非法分支应恰好执行 1 次真实校验 + 1 次 dummy verify（共 2 次），实际: {}",
+                counter.verify_calls.load(Ordering::Relaxed)
+            );
+        }
+
         /// 用户存在 + 密码正确 → 返回 Ok(token)。
         ///
         /// 覆盖 password.rs 第 158-160 行成功登录路径（调用 login 签发 token）。

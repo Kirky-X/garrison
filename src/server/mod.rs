@@ -70,6 +70,11 @@ pub mod qrlogin_routes;
 mod server_impl;
 
 pub use api_key_lockout::ApiKeyLockout;
+/// 可信代理内网地址判定（回环 / RFC1918 / link-local / IPv6 ULA）。
+///
+/// 库层单一实现：`AuthServerConfig::validate` 与参考部署 bin 的
+/// `parse_trusted_proxies` 共用本函数，bin 不再自带副本（规则 14）。
+pub use config::is_private_proxy_addr;
 pub use middleware::{
     api_key_auth_middleware, audit_log_middleware, external_path_filter, inject_client_ip,
     inject_login_client_ip, inject_user_agent, internal_path_filter, rate_limit_middleware,
@@ -78,6 +83,17 @@ pub use middleware::{
 #[cfg(feature = "session-hijack-detection")]
 pub use middleware::{current_client_ip, current_user_agent};
 pub use server_impl::to_api_response;
+
+/// 内网 API Key 最小长度（字节）。
+///
+/// 管理面承载 check-*/kickout 等特权端点，下限对齐 HS256 密钥 32 字节。
+/// 由库层统一强制（`AuthServerConfig::validate`），参考部署 bin 不再自带副本。
+pub const MIN_INTERNAL_API_KEY_LEN: usize = 32;
+
+/// 外网登录暴露确认串。
+///
+/// 外网 login 端点不校验任何凭证，开启时须显式声明已知风险并传入本确认串。
+pub const EXTERNAL_LOGIN_ACK: &str = "i-understand-no-credential-check";
 
 /// Auth Server 配置。
 ///
@@ -131,6 +147,16 @@ pub struct AuthServerConfig {
     /// name/healthy。经 `GARRISON_HEALTH_DETAILS=true` 或
     /// `with_health_details(true)` 显式开启。
     pub health_details_enabled: bool,
+    /// 严格安全档（默认 **false**，只告警不拒绝，1.0 翻转）。
+    ///
+    /// `true` 时短内网 API Key 与未确认的外网登录暴露在 `validate()` 直接
+    /// 返回错误；`false` 时同样条件只输出带迁移指引的 `tracing::warn!`。
+    pub strict_security: bool,
+    /// 外网登录暴露确认串（默认 `None`）。
+    ///
+    /// 启用外网登录端点且绑定非回环时，须传入与
+    /// [`EXTERNAL_LOGIN_ACK`] 完全相等的确认串，非机密，原样输出。
+    pub external_login_ack: Option<String>,
 }
 
 impl std::fmt::Debug for AuthServerConfig {
@@ -159,6 +185,8 @@ impl std::fmt::Debug for AuthServerConfig {
                 &self.api_key_lockout_window_secs,
             )
             .field("health_details_enabled", &self.health_details_enabled)
+            .field("strict_security", &self.strict_security)
+            .field("external_login_ack", &self.external_login_ack)
             .finish()
     }
 }

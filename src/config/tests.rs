@@ -3226,6 +3226,51 @@ fn config_env_require_tenant_bound_jwt_invalid_type_rejected() {
     );
 }
 
+// ========================================================================
+// require_session_tenant_binding 配置测试（棘轮：会话侧租户绑定严格收口开关，
+// 与 require_tenant_bound_jwt 覆盖 Simple/Mixin 与 Stateless 两半）
+// ========================================================================
+
+/// `default_config()`：require_session_tenant_binding 默认 false（存量无绑定会话兼容）。
+#[test]
+fn config_default_require_session_tenant_binding_is_false() {
+    let config = GarrisonConfig::default_config();
+    assert!(
+        !config.require_session_tenant_binding,
+        "require_session_tenant_binding 默认应为 false（存量无绑定会话放行，安全敏感部署显式开启）"
+    );
+}
+
+/// `GARRISON_REQUIRE_SESSION_TENANT_BINDING=true` 环境变量覆盖生效。
+#[serial]
+#[test]
+fn config_env_override_require_session_tenant_binding_true() {
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_REQUIRE_SESSION_TENANT_BINDING",
+        "true",
+    )];
+    let config = GarrisonConfig::load(None).expect("合法 env 覆盖应加载成功");
+    assert!(
+        config.require_session_tenant_binding,
+        "env 覆盖 true 应生效"
+    );
+}
+
+/// `GARRISON_REQUIRE_SESSION_TENANT_BINDING` 非布尔值 → 加载期类型校验拒绝（fail-closed）。
+#[serial]
+#[test]
+fn config_env_require_session_tenant_binding_invalid_type_rejected() {
+    let _env_guards = [EnvVarGuard::set(
+        "GARRISON_REQUIRE_SESSION_TENANT_BINDING",
+        "not-a-bool",
+    )];
+    let result = GarrisonConfig::load(None);
+    assert!(
+        result.is_err(),
+        "非布尔 require_session_tenant_binding 应在加载期拒绝"
+    );
+}
+
 /// `GARRISON_LOGIN_ID_MAX_LEN=128` 环境变量覆盖生效。
 #[serial]
 #[test]

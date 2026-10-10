@@ -246,6 +246,33 @@ impl GarrisonAuthServer {
         self
     }
 
+    /// 是否启用严格安全档（默认 **false**，只告警不拒绝，1.0 翻转）。
+    ///
+    /// `true` 时短内网 API Key 与未确认的外网登录暴露在 `validate()`
+    /// 直接返回错误；参考部署 bin 缺省 `true`（fail-closed）。
+    pub fn with_strict_security(mut self, enabled: bool) -> Self {
+        self.config.strict_security = enabled;
+        self
+    }
+
+    /// 设置外网登录暴露确认串（默认 `None`）。
+    ///
+    /// 启用外网登录端点且绑定非回环时，须传入与
+    /// [`crate::server::EXTERNAL_LOGIN_ACK`] 完全相等的确认串。
+    pub fn with_external_login_ack(mut self, ack: Option<String>) -> Self {
+        self.config.external_login_ack = ack;
+        self
+    }
+
+    /// 整体注入 `AuthServerConfig`（与逐项 builder 等价）。
+    ///
+    /// 用于配置对象整体注入，避免字段清单在多处重复（如参考部署
+    /// bin 的引导装配）。与逐项 builder 混用时后调用者生效。
+    pub fn with_config(mut self, config: crate::server::AuthServerConfig) -> Self {
+        self.config = config;
+        self
+    }
+
     /// 设置外网请求体大小上限（字节，默认 256KB）。
     ///
     /// 超过此限制的请求返回 `413 Payload Too Large`。

@@ -760,10 +760,14 @@ impl GarrisonLogicDefault {
     ///   原样透传——行为与旧版完全一致；
     /// - 租户上下文存在且会话**已绑定**租户：绑定租户 ≠ 请求租户 → 拒绝
     ///   （`Session("stp-check-login-tenant-mismatch::")`，显性失败不降级）；
-    /// - 会话**无绑定**（升级前旧会话、非多租户部署创建的会话）：原样放行
-    ///   （向后兼容，绑定只对新生效会话逐步收敛）；
+    /// - 会话**无绑定**（升级前旧会话、非多租户部署创建的会话）：缺省原样放行
+    ///   （向后兼容，绑定只对新生效会话逐步收敛）；`require_session_tenant_binding`
+    ///   为 `true` 时显性拒绝（`stp-check-login-session-tenant-unbound`），封住旧会话
+    ///   不受租户约束的窗口（开启前应确认存量无绑定会话已轮替，`remember_me` 最长 90 天）。
     /// - Stateless 模式无 session 存储（无可校验绑定）：原样放行——Stateless
-    ///   的租户强制属 `stp/session/helpers.rs` JWT 层职责，本机制不覆盖。
+    ///   的租户强制属 `stp/session/helpers.rs` JWT 层职责（`require_tenant_bound_jwt`），
+    ///   本机制不覆盖；严格档同样不适用（否则无会话可读会被误判为无绑定，
+    ///   导致 Stateless 部署开启会话侧开关后在租户上下文内全量报错）。
     ///
     /// # 快照复用与 DAO 读取
     ///
@@ -805,7 +809,17 @@ impl GarrisonLogicDefault {
             Some(_) => Err(GarrisonError::Session(
                 "stp-check-login-tenant-mismatch::".to_string(),
             )),
-            // 无绑定（旧会话/非多租户部署创建）：向后兼容放行
+            // 无绑定（旧会话/非多租户部署创建）：严格档显性拒绝，缺省向后兼容放行。
+            // 不做惰性补绑（X-Tenant-Id 客户端可控，补绑等于把豁免面换成钉定型 DoS）。
+            // Stateless 不纳入：无会话存储时本读恒为 None，若一并拦下会让 Stateless
+            // 部署开开关后全量报错（其租户强制由 `require_tenant_bound_jwt` 覆盖）。
+            None if self.config.require_session_tenant_binding
+                && self.jwt_mode != JwtMode::Stateless =>
+            {
+                Err(GarrisonError::Session(
+                    "stp-check-login-session-tenant-unbound::".to_string(),
+                ))
+            },
             None => result,
         }
     }

@@ -3799,11 +3799,17 @@ mod tenant_binding_tests {
     }
 
     fn make_logic() -> GarrisonLogicDefault {
+        make_logic_with(|_| {})
+    }
+
+    /// `make_logic` 的可配版：测试内按需调整 `GarrisonConfig` 字段（如严格档开关）。
+    fn make_logic_with(configure: impl FnOnce(&mut GarrisonConfig)) -> GarrisonLogicDefault {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
         let session = Arc::new(GarrisonSession::new(dao.clone(), 3600, 86400, 0));
         let mut config = GarrisonConfig::default_config();
         config.throw_on_not_login = false;
         config.token_style = "uuid".to_string();
+        configure(&mut config);
         let firewall: Arc<dyn crate::strategy::GarrisonPermissionStrategy> =
             Arc::new(MockFirewall {
                 has_permission: true,
@@ -3897,6 +3903,54 @@ mod tenant_binding_tests {
         .await
         .unwrap();
         assert!(ok, "无绑定会话在租户上下文内应放行（升级兼容对照）");
+    }
+
+    /// 严格档（`require_session_tenant_binding=true`）：无绑定会话在租户上下文内
+    /// 显性报错，封住旧会话不受租户约束的窗口。错误码与 Stateless 侧的
+    /// `stp-check-login-tenant-unbound`（轮换 token）及跨租户的
+    /// `stp-check-login-tenant-mismatch` 区分，运维处置动作可从错误码判定。
+    #[tokio::test]
+    async fn check_login_unbound_session_rejected_when_binding_required() {
+        let logic = make_logic_with(|c| c.require_session_tenant_binding = true);
+        // 无租户上下文登录 → 会话无绑定（唯一被本开关拦下的形态）
+        let token = logic
+            .login("tb-user-5", &LoginParams::default())
+            .await
+            .unwrap();
+        assert!(
+            logic
+                .session
+                .get(&token, crate::context::tenant::SESSION_TENANT_ATTR_KEY)
+                .await
+                .unwrap()
+                .is_none(),
+            "前置：无租户上下文登录应不写绑定"
+        );
+
+        let result = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(0), logic.check_login()).await
+        })
+        .await;
+        match result {
+            Err(GarrisonError::Session(msg)) => assert!(
+                msg.contains("stp-check-login-session-tenant-unbound"),
+                "应为会话侧未绑定的显性报错，实际: {msg}"
+            ),
+            other => panic!("严格档下无绑定会话不得放行，实际: {:?}", other.map(|_| ())),
+        }
+
+        // 档位对比：开关关闭（缺省）时同样形态的会话仍放行（棘轮非破坏）
+        let relaxed = make_logic();
+        let relaxed_token = relaxed
+            .login("tb-user-6", &LoginParams::default())
+            .await
+            .unwrap();
+        let ok = with_current_token(relaxed_token, async {
+            TENANT.scope(tenant_ctx(0), relaxed.check_login()).await
+        })
+        .await
+        .unwrap();
+        assert!(ok, "非严格档（默认）无绑定会话应继续放行");
     }
 
     /// 无租户上下文时行为不变：绑定会话在无上下文请求中照常放行。
@@ -4654,6 +4708,31 @@ mod session_token_security_tests {
         assert!(
             matches!(check, Err(GarrisonError::Session(ref m)) if m.contains("stp-check-login-tenant-unbound")),
             "开启严格开关后无 tid token 应显性拒绝，实际: {:?}",
+            check
+        );
+    }
+
+    /// 会话侧开关不得作用于 Stateless（收敛缺口 CRITICAL）：
+    /// `check_login` 对 Stateless 也会走 `validate_session_tenant_binding`，而无会话
+    /// 存储时绑定读恒为 `None`——若严格档一并拦下，Stateless 部署开启
+    /// `require_session_tenant_binding` 后会在租户上下文内全量报错。Stateless 的
+    /// 未绑定收口只由 `require_tenant_bound_jwt` 承担（对照见上方用例）。
+    #[cfg(feature = "protocol-jwt")]
+    #[tokio::test]
+    async fn require_session_tenant_binding_does_not_affect_stateless() {
+        let (logic, _dao) = make_jwt_stateless_logic(|c| c.require_session_tenant_binding = true);
+        // 无租户上下文签发：既无 tid claim 也无会话绑定
+        let token = logic
+            .login("sec-unbound-5", &LoginParams::default())
+            .await
+            .unwrap();
+        let check = with_current_token(token, async {
+            TENANT.scope(tenant_ctx(7), logic.check_login()).await
+        })
+        .await;
+        assert!(
+            matches!(check, Ok(true)),
+            "会话侧开关不应作用于 Stateless（无会话存储不等于无绑定），实际: {:?}",
             check
         );
     }

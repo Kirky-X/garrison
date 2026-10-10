@@ -9,6 +9,7 @@
 //! 3. `issue_ticket` + `validate_ticket` 往返（验证 center_id 转换）
 //! 4. 演示 `SsoServer` 与 `SsoClient` 通过共享 DAO 间接通信
 //! 5. 实现自定义 `SsoChannel`（`CountingChannel` 计数 push 调用）
+//! 6. pub/sub 消息信封的订阅侧验签消费（`verify_sso_message`，含重放拒绝）
 //!
 //! 运行方式：
 //! ```sh
@@ -18,7 +19,9 @@
 use async_trait::async_trait;
 use garrison::dao::GarrisonDao;
 use garrison::error::{GarrisonError, GarrisonResult};
-use garrison::protocol::sso::server::{CenterIdConverter, DefaultSsoServer, SsoChannel, SsoServer};
+use garrison::protocol::sso::server::{
+    verify_sso_message, CenterIdConverter, DefaultSsoServer, SsoChannel, SsoServer,
+};
 use garrison::protocol::sso::SsoClient;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -125,15 +128,20 @@ impl CenterIdConverter for OffsetConverter {
     }
 }
 
-/// 计数通道：记录 push 调用次数（演示自定义 SsoChannel 实现）。
+/// 计数通道：记录 push 调用次数并留存消息原文（演示自定义 SsoChannel 实现
+/// 与订阅侧验签消费）。
 struct CountingChannel {
     count: AtomicUsize,
+    messages: Mutex<Vec<String>>,
 }
 
 #[async_trait]
 impl SsoChannel for CountingChannel {
-    async fn push(&self, _topic: &str, _message: &str) -> GarrisonResult<()> {
+    async fn push(&self, _topic: &str, message: &str) -> GarrisonResult<()> {
         self.count.fetch_add(1, Ordering::SeqCst);
+        // 生产环境的订阅者从这里（或真实 pub/sub 回调）拿到消息原文，
+        // 该原文是 `push_message` 自动封装的 HMAC 信封 JSON，不是业务消息
+        self.messages.lock().push(message.to_string());
         Ok(())
     }
 
@@ -160,6 +168,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let channel = Arc::new(CountingChannel {
         count: AtomicUsize::new(0),
+        messages: Mutex::new(Vec::new()),
     });
     let server = DefaultSsoServer::new(dao.clone(), "test-sso-secret-key-for-unit-tests-01")?
         .with_ticket_ttl(120)
@@ -245,7 +254,39 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(push_count, 2);
 
     // ----------------------------------------------------------------
-    // 6. 销毁 ticket（幂等）
+    // 6. 订阅侧验签消费（R2-3：pub/sub 通道无传输层认证，原文不可信）
+    //
+    // push_message 发布侧已自动封装 HMAC-SHA256 信封 {payload, hmac, seq}，
+    // 订阅侧必须经 verify_sso_message 验签取回 payload（secret 与票据签名密钥一致）。
+    // ----------------------------------------------------------------
+    println!("\n[验签] 订阅侧 verify_sso_message 消费信封:");
+    let secret = "test-sso-secret-key-for-unit-tests-01";
+    let received = channel.messages.lock().clone();
+    assert_eq!(received.len(), 2, "channel 应收到两封消息");
+    // last_seq 从 0 起算（发布侧 seq 从 1 开始递增）
+    let mut last_seq = 0u64;
+    for raw in &received {
+        let payload = verify_sso_message(secret, raw, &mut last_seq)?;
+        println!(
+            "    验签通过（last_seq={}），取回业务消息 = {}",
+            last_seq, payload
+        );
+    }
+
+    // 重放：同一封信再次投递（seq 不大于已见 last_seq）→ 验签返回 Err，不可消费
+    match verify_sso_message(secret, &received[0], &mut last_seq) {
+        Err(e) => println!("    重放同一封 → 拒绝（{}）", e),
+        Ok(payload) => panic!("重放的信封消息应验签失败，实际取回: {}", payload),
+    }
+
+    // 未封装的裸消息（任意发布者伪造）→ 信封格式校验失败
+    match verify_sso_message(secret, "permission change", &mut last_seq) {
+        Err(e) => println!("    裸消息（无信封）→ 拒绝（{}）", e),
+        Ok(payload) => panic!("未封装的裸消息应被拒，实际取回: {}", payload),
+    }
+
+    // ----------------------------------------------------------------
+    // 7. 销毁 ticket（幂等）
     // ----------------------------------------------------------------
     let ticket3 = server.issue_ticket(login_id, client_id).await?;
     server.destroy_ticket(&ticket3).await?;
