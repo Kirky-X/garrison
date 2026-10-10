@@ -24,7 +24,7 @@ Garrison 仅对已发布版本提供安全修复，开发分支（`main`）不�
 
 | 版本 | 支持状态 | 说明 |
 |------|---------|------|
-| 0.9.x（当前 `0.9.0-rc.2`） | 🚧 pre-release | rc 阶段，接受安全反馈与修复 |
+| 0.9.x（当前 `0.9.0-rc.3`） | 🚧 pre-release | rc 阶段，接受安全反馈与修复 |
 | 0.8.x | ✅ 维护中 | 当前稳定版本，接受安全修复 |
 | 0.7.x | 🔶 有限维护 | 仅修复严重漏洞 |
 | < 0.7 | ❌ 不支持 | 不提供安全修复 |
@@ -157,7 +157,7 @@ Garrison 的 API Key（`protocol-apikey`）采用以下安全设计：
   - 说明：API Key 为高熵随机值（244-bit），采用确定性 SHA-256 而非 Argon2，以保持 O(1) 查询并避免每请求慢哈希开销；此选择的前提是生成期锁定的高熵不变量。
 - **IP 级失败限速（CWE-307）**：同时启用 `firewall-bruteforce` 并在 Web middleware 通过 `with_current_ip` 注入客户端 IP 后，`check_api_key` 会在校验失败时按 IP 计入暴力破解防护（仅失败计数，成功零写入），超阈值封禁。IP 应使用 `extract_client_ip`（含 trusted_proxies 防 X-Forwarded-For 伪造）提取。
 - **多租户隔离（IDOR）**：`verify_with_namespace` 强制校验 key 归属的 namespace，namespace A 的 key 无法在 namespace B 通过；启用 `tenant-isolation` 后 DAO 层按租户自动加 key 前缀，提供物理隔离。`ApiKeyInfo.owner_id` 记录归属主体（默认等于 `login_id`）供审计。
-- **持久化**：API Key 存储于 DAO 后端。生产环境**必须启用 `cache-redis`** 而非 `cache-memory`（后者进程重启即丢失全部 key）；Redis 建议启用 AOF（`appendfsync everysec`），不要仅依赖 RDB 快照，以免崩溃丢失最近的生成/吊销操作。如需 ACID 与外键约束级持久化，参见 `docs/decisions/` 中的 DB-of-record 评估。
+- **持久化**：API Key 存储于 DAO 后端。生产环境**必须启用 `cache-redis`** 而非 `cache-memory`（后者进程重启即丢失全部 key）；Redis 建议启用 AOF（`appendfsync everysec`），不要仅依赖 RDB 快照，以免崩溃丢失最近的生成/吊销操作。如需 ACID 与外键约束级持久化，可改用关系型数据库后端（`db-postgres` / `db-mysql`，经 `GarrisonDaoDbnexus`），由业务方将 API Key 落关系库。
 - **密钥管理**：支持 `last_used_at` 使用追踪（`with_last_used_tracking(true)` 启用，节流写入）、`get_keys_older_than` 陈旧 key 识别（轮换策略）、每 key `rate_limit`，以及 `with_allowed_scopes` 生成期 scope 白名单校验。
 - **向后兼容**：旧格式单 token（v0.4.1/v0.4.2，无 `secret_hash`）仍可校验（按存在性），随其 TTL 自然过期淘汰，建议尽快轮换为新双段格式。
 

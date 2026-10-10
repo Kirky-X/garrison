@@ -1263,7 +1263,7 @@ pub mod tests {
 
         /// Scenario: update 更新值（保留 TTL）。
         ///
-        /// oxcache 0.3 的 Cache<K,V> 暴露了 ttl() 方法，update 用 ttl() + set_with_ttl 保留原 TTL。
+        /// oxcache 的 Cache<K,V> 暴露了 ttl() 方法，update 用 ttl() + set_with_ttl 保留原 TTL。
         ///
         /// 参见：dao-oxcache-basic spec Requirement "GarrisonDao 抽象 trait" Scenario "update 更新值（保留 TTL）"
         #[tokio::test(flavor = "multi_thread")]

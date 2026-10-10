@@ -195,8 +195,8 @@ impl GarrisonRouter {
 /// `pattern` 为注册时的路径模式，`path` 为实际请求路径。
 /// 每段按 `/` 分割后比对：
 /// - 静态段：精确相等
-/// - `:param`（旧语法）与 `{param}`（axum 0.8 语法）：匹配任意非空单段
-/// - `{*wildcard}`（axum 0.8 通配）：匹配剩余所有段（含零段，前缀保护语义，
+/// - `:param`（旧语法）与 `{param}`（axum 语法）：匹配任意非空单段
+/// - `{*wildcard}`（axum 通配）：匹配剩余所有段（含零段，前缀保护语义，
 ///   如 `/api/{*rest}` 覆盖 `/api` 与 `/api/a/b`）
 /// - 段数不一致（除尾部通配外）不匹配——未命中规则时 middleware 跳过
 ///   `pre_handle`（fail-closed 由注册侧保证：需要保护的路径必须注册；
@@ -229,12 +229,12 @@ fn route_matches(pattern: &str, path: &str) -> bool {
     }
 }
 
-/// 参数段：`:xxx`（旧语法）或 `{xxx}`（axum 0.8 语法，空 `{}` 不算参数）。
+/// 参数段：`:xxx`（旧语法）或 `{xxx}`（axum 语法，空 `{}` 不算参数）。
 fn is_param_segment(seg: &str) -> bool {
     seg.starts_with(':') || (seg.starts_with('{') && seg.ends_with('}') && seg.len() > 2)
 }
 
-/// 尾部通配段：`{*xxx}`（axum 0.8 语法，最短 `{*x}` 为 4 字节）。
+/// 尾部通配段：`{*xxx}`（axum 语法，最短 `{*x}` 为 4 字节）。
 fn is_wildcard_segment(seg: &str) -> bool {
     seg.len() > 3 && seg.starts_with("{*") && seg.ends_with('}')
 }
@@ -444,7 +444,7 @@ mod tests {
         assert!(!route_matches("/users/:id/extra", "/users/123"));
     }
 
-    /// axum 0.8 `{param}` 语法应与 `:param` 语义一致（匹配任意非空单段）。
+    /// axum `{param}` 语法应与 `:param` 语义一致（匹配任意非空单段）。
     #[test]
     fn route_matches_axum_brace_param() {
         assert!(route_matches("/users/{id}", "/users/123"));
@@ -461,7 +461,7 @@ mod tests {
         ));
     }
 
-    /// axum 0.8 `{*wildcard}` 通配段匹配剩余所有段（含零段，前缀保护语义）。
+    /// axum `{*wildcard}` 通配段匹配剩余所有段（含零段，前缀保护语义）。
     #[test]
     fn route_matches_axum_wildcard_suffix() {
         assert!(route_matches("/api/{*rest}", "/api"));

@@ -79,9 +79,9 @@ fn strip_prefix(prefixed: &str) -> String {
     prefixed.to_string()
 }
 
-/// oxcache 0.3 默认实现，包装 `oxcache::Cache<String, String>`。
+/// oxcache 默认实现，包装 `oxcache::Cache<String, String>`。
 ///
-/// - L1（内存）+ L2（redis）由 oxcache 0.3 自动管理（oxcache 0.3 支持 per-entry TTL）。
+/// - L1（内存）+ L2（redis）由 oxcache 自动管理（oxcache 支持 per-entry TTL）。
 /// - Garrison 自身不实现任何缓存逻辑，全部委托给 oxcache。
 /// - 启用 `sync_mode(true)` 后使用 `_sync` API，
 ///   要求调用方在 multi_thread tokio runtime 中执行。
@@ -290,7 +290,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
     }
 
     async fn expire(&self, key: &str, seconds: u64) -> GarrisonResult<()> {
-        // oxcache 0.3 的 Cache<K,V> 暴露了 expire_sync(key, ttl) 方法（原子更新 TTL，不触碰 value）。
+        // oxcache 的 Cache<K,V> 暴露了 expire_sync(key, ttl) 方法（原子更新 TTL，不触碰 value）。
         // expire_sync 返回 bool：true=更新成功，false=键不存在。
         // 注意：seconds=0 表示永久驻留，需要用 get_sync + set_with_ttl_sync(None) 实现
         // （cache.expire_sync(key, Duration::from_secs(0)) 会让键立即过期，不符合 spec 的 0=永久语义）。
@@ -346,7 +346,7 @@ impl GarrisonDao for GarrisonDaoOxcache {
 
     /// get_timeout 用 ttl_sync 查询剩余 TTL。
     ///
-    /// oxcache 0.3 的 `ttl_sync(key)` 返回 `Option<Duration>`：
+    /// oxcache 的 `ttl_sync(key)` 返回 `Option<Duration>`：
     /// - `Some(remaining)`: 键存在且设置了 TTL
     /// - `None`: 键不存在，或键存在但未设置 TTL（永久驻留）
     async fn get_timeout(&self, key: &str) -> GarrisonResult<Option<Duration>> {

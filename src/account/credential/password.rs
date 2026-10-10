@@ -8,8 +8,8 @@
 //!
 //! - `PasswordHasher` trait 定义 `hash` / `verify` / `verify_and_rehash` 抽象
 //!   （后者默认 = verify + None，Argon2Hasher 覆写为登录期惰性升级）
-//! - `Argon2Hasher` 使用 argon2 0.5 crate（Argon2id, m=19456, t=2, p=1）
-//! - `BcryptHasher` 使用 bcrypt 0.19 crate（默认 cost=12）
+//! - `Argon2Hasher` 使用 argon2 crate（Argon2id, m=19456, t=2, p=1）
+//! - `BcryptHasher` 使用 bcrypt crate（默认 cost=12）
 //! - `PasswordVerifier` 根据 hash 前缀自动选择算法校验
 //!
 //! ## 迁移说明
@@ -100,7 +100,7 @@ pub trait PasswordHasher: Send + Sync {
 
 /// Argon2id 密码哈希器。
 ///
-/// 使用 argon2 0.5 crate，默认参数：Argon2id, m=19456 KiB, t=2, p=1。
+/// 使用 argon2 crate，默认参数：Argon2id, m=19456 KiB, t=2, p=1。
 /// 可通过 `with_params` 自定义参数、`with_pool` 装配并发令牌池
 /// （内存 DoS 防护，经 [`verify_pooled`] 生效）。
 pub struct Argon2Hasher {
@@ -247,7 +247,7 @@ impl PasswordHasher for Argon2Hasher {
 
 /// Bcrypt 密码哈希器。
 ///
-/// 使用 bcrypt 0.19 crate，默认 cost=12。
+/// 使用 bcrypt crate，默认 cost=12。
 pub struct BcryptHasher {
     /// cost 参数（4-31），默认 12。
     cost: u32,

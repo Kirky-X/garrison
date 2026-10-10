@@ -4,7 +4,7 @@
 //! dbnexus 集成模块。
 //!
 //! 对应 二级持久化层（DB），
-//! 通过 dbnexus 0.2 提供 SQLite/PostgreSQL/MySQL 连接池、Session、迁移能力。
+//! 通过 dbnexus 提供 SQLite/PostgreSQL/MySQL 连接池、Session、迁移能力。
 //!
 //! Garrison 不定义 `GarrisonDb` trait，直接复用 `dbnexus::DbPool`：
 //! - dbnexus 本身就是 DB 适配库，通过特性切换后端

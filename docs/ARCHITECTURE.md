@@ -2,7 +2,7 @@
 
 > Garrison 是面向 Rust 生态的身份认证鉴权框架。
 >
-> - 版本：0.9.0-rc.2（发布候选：验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层）
+> - 版本：0.9.0-rc.3（发布候选，开发验证中：统一错误模型 request-id/Retry-After + 字段静态加密 + WebAuthn/Passkey + 密码找回 + MFA/step-up 编排 + OIDC back-channel logout + 多租户强化 + 参考部署安全基线收紧）
 > - 运行时：tokio 1.x
 > - Web 适配：axum 0.8 / actix-web 4 / warp 0.4
 > - 存储：dbnexus 0.6（SQLite / PostgreSQL / MySQL / DuckDB + auto-migrate）+ Repository 层（13 trait + `Dbnexus*Repository` 实现，tenant_id 隔离）。例外与补口：`app_user_identifier`（登录标识防重）以 `(id_type, id_value)` 为全局主键，租户维度经 `find_owner_in_tenant` 租户作用域回查——注册唯一约束冲突时同租户返回 `Taken { by_user_id }`、命中他租户行返回中性 `Registered`（不泄露他租户 user_id）；找回密码（`account-password-reset`）签发 token 时写入 code-tenant 绑定，reset 校验请求租户与签发租户一致（绑定缺失 fail-closed 拒绝）
@@ -52,6 +52,12 @@ Garrison 同时维护两种会话维度：
 ## 🧩 模块划分
 
 Garrison 分为四层模块，由 feature flag 控制编译裁剪：
+
+<div align="center">
+
+<img src="assets/module-layers.svg" alt="模块分层" width="800">
+
+</div>
 
 ```mermaid
 graph TB
@@ -171,7 +177,7 @@ graph TB
 
 | 模块 | Feature | 说明 | 引入版本 |
 |------|---------|------|---------|
-| `protocol/jwt` | `protocol-jwt` | JWT 签发与验证（HS256/HS512 + refresh） | 0.2.0 |
+| `protocol/jwt` | `protocol-jwt` | JWT 签发与验证（HS256/384/512、RS256/384/512、ES256/384、EdDSA + refresh） | 0.2.0 |
 | `protocol/oauth2` | `protocol-oauth2` | OAuth2 四种模式（授权码 / 客户端凭证 / 密码 / RefreshToken） | 0.2.0（0.4.0 扩展 RefreshToken） |
 | `protocol/sso` | `protocol-sso` | SSO 单点登录 ticket（一次性 60s TTL） | 0.2.0 |
 | `protocol/sign` | `protocol-sign` | API 签名 + nonce 防重放 | 0.2.0 |
@@ -232,6 +238,12 @@ MFA 编排的核心抽象与数据流：
 
 Garrison 的核心抽象通过 trait 解耦，业务方实现 trait 即可接入：
 
+<div align="center">
+
+<img src="assets/architecture-overview.svg" alt="架构总览" width="800">
+
+</div>
+
 ```mermaid
 graph LR
     BC[GarrisonCore<br/>base trait]
@@ -288,6 +300,12 @@ graph LR
 ## 🔄 数据流：请求处理链路
 
 以 axum 集成为例，一个受保护请求的完整处理链路：
+
+<div align="center">
+
+<img src="assets/request-flow.svg" alt="请求处理流程" width="800">
+
+</div>
 
 ```mermaid
 sequenceDiagram

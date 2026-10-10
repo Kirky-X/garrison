@@ -17,6 +17,12 @@
 
 ## 📊 版本总览
 
+<div align="center">
+
+<img src="assets/roadmap-timeline.svg" alt="版本路线图" width="800">
+
+</div>
+
 | 版本 | 状态 | 计划完成 | 主要内容 |
 |------|------|---------|---------|
 | 0.1.0 | ✅ 已完成 | 2026-06-30 | 核心基础设施 |
@@ -43,8 +49,9 @@
 | 0.7.3 | ✅ 已完成 | 2026-07-22 | `#[check_disable]` 过程宏 + `check_disable_sync()` 同步 API + `dao_session!` 宏消除 53 处样板 + garrison-macros 版本对齐 |
 | 0.8.0 | ✅ 已完成 | 2026-07-24 | 安全加固版：常量时间比较公共原语 + JWT 弱密钥拒绝 + CSPRNG 统一 + API Key 安全迁移（CWE-916 哈希存储 + IP 级暴力破解防护 + IDOR 多租户隔离）+ tech-review 修复批次（健康检查真实探测 / singleflight 锁清理 / SQL 占位符转换）+ CodeQL 误报清理 |
 | 0.8.1 | ✅ 已完成 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532）：6 类事件 live token 截断 + TokenRefresh 内置黑名单 + TempCredential 仅记 value_len + SAML 64KB 输入上限 |
-| 0.9.0-rc.1 | ✅ 已完成 | 2026-09-07 | 自研库特性吸收 + 依赖批量升级（oxcache 0.5 / dbnexus 0.6 / sdforge 0.5 / trait-kit 0.5 / confers 0.6 / limiteron 0.3）+ 配置增强特性（config-yaml/audit/consul/etcd/distributed/schema）+ 数据库增强（db-sharding/replica/saga）+ 防火墙增强（gcra/tower/quota/admission/event/monitoring/parallel）+ 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ i18n 硬编码修复 + 函数覆盖率 89.87% → 92.77% |
+| 0.9.0-rc.1 | ✅ 已完成 | 2026-08-25 | 自研库特性吸收 + 依赖批量升级（oxcache 0.5 / dbnexus 0.6 / sdforge 0.5 / trait-kit 0.5 / confers 0.6 / limiteron 0.3）+ 配置增强特性（config-yaml/audit/consul/etcd/distributed/schema）+ 数据库增强（db-sharding/replica/saga）+ 防火墙增强（gcra/tower/quota/admission/event/monitoring/parallel）+ 协议域统一重命名（secure-httpbasic/httpdigest → protocol-*）+ i18n 硬编码修复 + 函数覆盖率 89.87% → 92.77% |
 | 0.9.0-rc.2 | ✅ 已完成 | 2026-08-26 | fail-closed 安全加固：`check_api_key` / `check_abac_with_policy` 缺依赖时拒绝放行而非默认放行；防火墙自动装配；`session::dao` crate 内可见性扩展；`firewall_hook_injected` 标记 |
+| 0.9.0-rc.3 | 🚧 开发验证 | 未发布（2026-10） | 安全审计整改批次 R01–R18：统一错误模型（request-id / Retry-After / 模块前缀码）+ Argon2 并发令牌池 + 字段静态加密（AES-256-GCM）+ WebAuthn/Passkey + 密码找回 + MFA/step-up 编排基座 + OIDC back-channel logout + OIDC discovery/JWKS 多 kid 轮换 + Refresh 重用三级分类 + 多租户强化（会话-租户绑定/标识符注册表/设备接口）+ Set-Cookie 单一构建点 + garrison-cli 运维面 + 参考部署安全基线收紧 |
 | 1.0.0 | 📋 待规划 | 2027 Q2 | 稳定版 |
 
 ---
@@ -523,12 +530,38 @@ ParameterQuery 五大能力就位，Garrison 协议层从"能用"走向"完整"�
 
 ---
 
+### v0.9.0-rc.3 安全审计整改批次（🚧 开发验证中）
+
+发布日期：未发布（2026-10 开发验证中）
+
+以外部安全审计结论驱动的大规模加固批次 R01–R18，已合入 main、待随 rc.3 发布：
+
+- ✅ 统一错误模型（R04）：`RateLimited`（429）+ `prefixed_code()` + `retry_after_secs()`；响应体 `error_id` / `request_id`；三框架 `X-Request-ID` 中间件
+- ✅ Argon2 并发令牌池（R02）内存 DoS 防护 + 登录期惰性重哈希（R11）
+- ✅ 字段静态加密（R17）：AES-256-GCM + AAD 租户/表/键绑定 + 迁移期双读；garrison-cli `change-key` / `check-key`（R16）
+- ✅ WebAuthn/Passkey 凭据 SPI 与注册/认证仪式（R07）
+- ✅ OIDC discovery 端点 + JWKS 多 kid 密钥轮换（R08）
+- ✅ Refresh token 重用三级分类与并发竞态容忍（R06）
+- ✅ MFA/step-up 编排基座（R09）：因子账本 + per-client chain + RequiredActionProvider + 恢复码
+- ✅ 找回密码流程（R14）：防枚举 / ActionToken 一次性消费 / 两段式防竞态
+- ✅ OIDC Back-Channel Logout 持久化投递（R15）
+- ✅ authorize 两段式票据 + consent 记忆（R18）
+- ✅ Set-Cookie 单一构建点（R01）+ 事件派发事务绑定 OnCommit 语义（R05）
+- ✅ 多租户强化：会话-租户绑定 / 标识符注册表租户回查 / 设备接口租户隔离
+- ✅ 弃用配置键注册表（R12）：0.x→1.0 平滑升级
+- ✅ 参考部署（auth_server bin）安全基线收紧 + credit 活跃度写路径节流聚合（R13）
+- ✅ 常量时间比较统一原语收口（ADR-0003 决策 2）
+
+**里程碑意义**：聚焦 fail-closed 语义、静态加密、多租户隔离、协议完整运维面与参考部署基线收紧。逐项细节见 [docs/CHANGELOG.md](CHANGELOG.md) · 0.9.0-rc.3。
+
+---
+
 ### 候选池（Backlog，未排期）
 
 以下条目来自安全自评与审计结论，作为后续变更候选记录：
 
 - **Web 适配层 Cookie safe-by-default**：`cookie_same_site` / HttpOnly / Secure 提供更完整的安全默认组合（OWASP ASVS 自评 V3.4 待增强项，见 `docs/SECURITY_ASVS.md`）。
-- **MFA 编排基座抽象**：TOTP 原语已备（`secure-totp`），多因子编排流程抽象（ASVS 自评 V2.7 待增强项）。
+- **MFA 编排基座抽象**：已交付（R09，`stp::mfa` 因子账本 + per-client chain + RequiredActionProvider + 恢复码），TOTP/WebAuthn provider 已接线；剩余为更多认证因子 provider 扩展。
 - **FIDO2/WebAuthn（Passkey）正式认证**：`protocol-webauthn` 已合入（`src/protocol/webauthn/`，challenge / credential / service 齐备）；剩余工作是 FIDO Alliance 认可实验室的正式认证（企业采购高频问项）。
 - **OIDC discovery 端点**：已交付——`/oauth2/jwks.json` 与 `/.well-known/openid-configuration` 元数据端点均已注册路由（`src/server/oauth2_routes.rs`，后者由 `enable_openid_configuration` 开关控制）。
 - **JWKS 多 kid 轮换**：已交付——`JwksKeystore`（`src/oauth2_server/jwks.rs`）提供多 kid 密钥库账本，注入后 JWKS 端点优先从库发布（单密钥 `jwks_source` 为退化路径）。

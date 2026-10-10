@@ -194,6 +194,12 @@ garrison/
 
 ## 🔄 TDD 工作流
 
+<div align="center">
+
+<img src="assets/tdd-workflow.svg" alt="TDD 工作流" width="800">
+
+</div>
+
 Garrison 强制采用测试驱动开发（TDD）。每个任务必须严格按以下 5 步执行，不得跳步：
 
 ### 3.1 五步流程

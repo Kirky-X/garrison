@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 900 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="mod-layers-title mod-layers-desc" id="module-layers-root">
+        <title id="mod-layers-title">Garrison Module Layers</title>
+        <desc id="mod-layers-desc">Four-layer module structure showing always-on Core layer and feature-gated Protocol, Extension, Security, Server, Web, and Observability layers above Infrastructure.</desc>
+        <defs>
+      <style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Serif:ital@0;1&amp;family=Noto+Sans+KR:wght@400;500;600&amp;family=Noto+Serif+KR:wght@400&amp;family=Noto+Sans+TC:wght@400;500;600&amp;family=Noto+Serif+TC:wght@400&amp;display=swap');
+      #module-layers-root { --color-paper: #f5f5f5;
+      --color-ink: #1a2332;
+      --color-muted: #4a5568;
+      --color-accent: #c0392b;
+      --color-link: #2c5282;
+      --font-sans: 'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif;
+      --font-serif: 'Instrument Serif', 'Noto Serif TC', serif;
+      --font-mono: 'Geist Mono', ui-monospace, monospace; }
+      #module-layers-root { font-family: var(--font-sans); color: var(--color-ink); }
+      #module-layers-root .diagram-container { width: 100%; overflow-x: auto; }
+      #module-layers-root .diagram-container { overflow-x: visible; }</style>
+          <marker id="module-layers-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4a5568"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+        <!-- Direction indicator -->
+        <text x="24" y="60" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em" transform="rotate(-90 24 60)">ABSTRACTION</text>
+        <line x1="28" y1="100" x2="28" y2="460" stroke="#4a5568" stroke-width="1" marker-end="url(#module-layers-arrow)"/>
+        <!-- Layer 1: Observability (top) -->
+        <rect x="60" y="40" width="800" height="48" rx="4" fill="#f5f5f5" stroke="#1a2332" stroke-opacity="0.12" stroke-width="1"/>
+        <text x="76" y="68" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L7</text>
+        <text x="110" y="68" fill="#1a2332" font-size="14" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Observability</text>
+        <text x="836" y="68" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">listener · metrics · tracing · otlp — FEATURE-GATED</text>
+        <!-- Layer 2: Web -->
+        <rect x="60" y="92" width="800" height="48" rx="4" fill="#f5f5f5" stroke="#1a2332" stroke-opacity="0.12" stroke-width="1"/>
+        <text x="76" y="120" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L6</text>
+        <text x="110" y="120" fill="#1a2332" font-size="14" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Web</text>
+        <text x="836" y="120" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">axum · actix · warp · cors · csrf · waf — FEATURE-GATED</text>
+        <!-- Layer 3: Server -->
+        <rect x="60" y="144" width="800" height="48" rx="4" fill="#f5f5f5" stroke="#1a2332" stroke-opacity="0.12" stroke-width="1"/>
+        <text x="76" y="172" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L5</text>
+        <text x="110" y="172" fill="#1a2332" font-size="14" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Server</text>
+        <text x="836" y="172" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">auth-server · oauth2-server · grpc — FEATURE-GATED</text>
+        <!-- Layer 4: Security -->
+        <rect x="60" y="196" width="800" height="48" rx="4" fill="#f5f5f5" stroke="#1a2332" stroke-opacity="0.12" stroke-width="1"/>
+        <text x="76" y="224" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L4</text>
+        <text x="110" y="224" fill="#1a2332" font-size="14" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Security</text>
+        <text x="836" y="224" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">totp · sign · httpbasic · sms · email · xss — FEATURE-GATED</text>
+        <!-- Layer 5: Extension -->
+        <rect x="60" y="248" width="800" height="48" rx="4" fill="#f5f5f5" stroke="#1a2332" stroke-opacity="0.12" stroke-width="1"/>
+        <text x="76" y="276" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L3</text>
+        <text x="110" y="276" fill="#1a2332" font-size="14" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Extension</text>
+        <text x="836" y="276" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">alone-cache · parameter-query — FEATURE-GATED</text>
+        <!-- Layer 6: Protocol -->
+        <rect x="60" y="300" width="800" height="48" rx="4" fill="#f5f5f5" stroke="#1a2332" stroke-opacity="0.12" stroke-width="1"/>
+        <text x="76" y="328" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L2</text>
+        <text x="110" y="328" fill="#1a2332" font-size="14" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Protocol</text>
+        <text x="836" y="328" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">jwt · oauth2 · sso · oidc · sign · apikey — FEATURE-GATED</text>
+        <!-- Layer 7: Core (focal) -->
+        <rect x="60" y="352" width="800" height="56" rx="4" fill="#c0392b" fill-opacity="0.08" stroke="#c0392b" stroke-width="1.2"/>
+        <text x="76" y="384" fill="#c0392b" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L1</text>
+        <text x="110" y="384" fill="#1a2332" font-size="14" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Core</text>
+        <text x="836" y="380" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">core · stp · dao · session · config · manager — ALWAYS ON</text>
+        <!-- Layer 8: Infrastructure -->
+        <rect x="60" y="412" width="800" height="48" rx="4" fill="#1a2332" fill-opacity="0.05" stroke="#4a5568" stroke-width="1"/>
+        <text x="76" y="440" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">L0</text>
+        <text x="110" y="440" fill="#1a2332" font-size="14" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Infrastructure</text>
+        <text x="836" y="440" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="end">oxcache · dbnexus · sdforge · trait-kit — EXTERNAL</text>
+      </svg>

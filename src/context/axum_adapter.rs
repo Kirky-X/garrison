@@ -4,7 +4,7 @@
 //! axum 适配器模块。
 //!
 //! 实现 `GarrisonContext` / `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` trait，
-//! 将 Garrison 鉴权逻辑与 axum 0.7 Web 框架解耦。
+//! 将 Garrison 鉴权逻辑与 axum Web 框架解耦。
 //!
 //! ## 设计
 //!

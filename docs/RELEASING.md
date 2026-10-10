@@ -14,6 +14,12 @@
 
 ## 🔄 发布流程图
 
+<div align="center">
+
+<img src="assets/release-flow.svg" alt="发布流程" width="800">
+
+</div>
+
 ```mermaid
 flowchart TD
     TagPush["开发者本地推送 tag<br/>git push origin v0.7.1"] --> Stage1

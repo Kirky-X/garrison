@@ -71,12 +71,12 @@
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>高可观测</b><br><span style="color:#64748B"><code>tracing</code> 日志 + <code>listener</code> 事件订阅 + <code>prometheus</code> 指标（可选）</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">5600+ 个测试（lib 约 5100 + 验收/集成/示例约 520），95%+ 行覆盖率，clippy 零警告</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>高覆盖</b><br><span style="color:#64748B">5900+ 个测试（lib 约 5360 + 验收/集成/示例约 540），95%+ 行覆盖率，clippy 零警告</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web 框架适配</b><br><span style="color:#64748B">axum/actix/warp 三框架注解式 extractor + 过程宏</span></td>
 </tr>
 </table>
 
-除上述核心能力外，其余能力（认证协议、防火墙、账号安全、多租户、可观测性、微服务组件等）也均以独立特性标志提供、按需编译；完整的逐项功能矩阵见 [🎨 特性标志](#-特性标志) 一节。
+除上述核心能力外，其余能力（认证协议、防火墙、账号安全、多租户、可观测性、微服务组件等）也均以独立特性标志提供、按需编译；按能力域汇总的功能矩阵见 [🎨 特性标志](#-特性标志) 一节（完整清单以 `Cargo.toml` 的 `[features]` 为准）。
 
 ---
 
@@ -88,7 +88,7 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.2", features = ["development"] }
+garrison = { version = "0.9.0-rc.3", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -178,7 +178,7 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 
 ### 📋 功能矩阵
 
-下表逐项对应 `Cargo.toml` 的 `[features]` 定义，`default = ["backend-embedded"]`。
+下表按能力域汇总 `Cargo.toml` 的 `[features]` 主要特性（100+ 个 flag，完整清单以 `Cargo.toml` 的 `[features]` 为准），`default = ["backend-embedded"]`。
 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:left">特性</th><th style="text-align:center">默认</th><th style="text-align:left">说明</th></tr>
@@ -205,6 +205,8 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>protocol-temp</code></td><td align="center">❌</td><td>临时凭证</td></tr>
 <tr><td><code>protocol-qrlogin</code></td><td align="center">❌</td><td>第一方扫码登录（Web 扫码 + App 确认，两票分离）</td></tr>
 <tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td>OIDC id_token 签发/验证 + discovery</td></tr>
+<tr><td><code>protocol-invitation</code></td><td align="center">❌</td><td>邀请码定向注册（一次性/N 次、TTL、吊销、防爆破）</td></tr>
+<tr><td><code>oauth2-scope-handler</code></td><td align="center">❌</td><td>OAuth2 Scope Handler 注册表（ScopeHandler trait + ScopeRegistry）</td></tr>
 <tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td>HTTP Basic / Digest 认证</td></tr>
 <tr><td><code>protocol-saml</code></td><td align="center">❌</td><td>SAML 2.0 骨架</td></tr>
 <tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td>协议层密钥零化</td></tr>
@@ -223,6 +225,30 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td>邮箱验证码</td></tr>
 <tr><td><code>config-*</code></td><td align="center">❌</td><td>配置文件加密/校验/热更新/插值/动态/开关（confers 透传）</td></tr>
 <tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td>国际化</td></tr>
+<tr><td><code>protocol-webauthn</code></td><td align="center">❌</td><td>WebAuthn / Passkey 凭据注册与认证仪式（challenge 防重放 / sign_count 克隆检测）</td></tr>
+<tr><td><code>backchannel-logout</code></td><td align="center">❌</td><td>OIDC Back-Channel Logout（logout token 签发 + 持久化投递队列）</td></tr>
+<tr><td><code>keycloak-oidc</code></td><td align="center">❌</td><td>Keycloak OIDC 依赖方（RP）集成</td></tr>
+<tr><td><code>field-encryption</code></td><td align="center">❌</td><td>落库敏感字段 AES-256-GCM 静态加密（AAD 租户/表/键绑定 + 迁移期双读）</td></tr>
+<tr><td><code>mfa-recovery</code></td><td align="center">❌</td><td>MFA 恢复码管理器（SHA-256 哈希落库 + 原子消费）</td></tr>
+<tr><td><code>account-password-reset</code></td><td align="center">❌</td><td>找回密码流程（防枚举 / ActionToken 一次性消费 / 两段式防竞态）</td></tr>
+<tr><td><code>policy-hibp</code></td><td align="center">❌</td><td>HIBP 泄露密码检查（k-anonymity range search）</td></tr>
+<tr><td><code>credential-zeroize</code></td><td align="center">❌</td><td>凭据密钥零化（Drop 清零）</td></tr>
+<tr><td><code>tls</code></td><td align="center">❌</td><td>HTTPS/TLS 终止（axum-server + rustls）</td></tr>
+<tr><td><code>server-health-check</code> / <code>server-graceful-shutdown</code></td><td align="center">❌</td><td>健康/就绪探针 / 优雅停机</td></tr>
+<tr><td><code>web-security</code> / <code>web-security-headers</code></td><td align="center">❌</td><td>Web 安全中间件聚合（CORS+CSRF+响应头）/ 独立安全响应头</td></tr>
+<tr><td><code>cache-lock</code> / <code>cache-batch</code> / <code>cache-invalidation</code> / <code>cache-audit</code> / <code>cache-hotkey</code> / <code>ban-sync</code></td><td align="center">❌</td><td>缓存增强：分布式锁 / 批量 / 跨实例失效 / 审计事件流 / 热 key 观测 / 封禁同步（oxcache 透传）</td></tr>
+<tr><td><code>db-retry</code> / <code>db-sharding</code> / <code>db-replica</code> / <code>db-saga</code></td><td align="center">❌</td><td>数据库增强：重试 / 分片 / 读写分离 / Saga（dbnexus 透传）</td></tr>
+<tr><td><code>three-tier-cache</code></td><td align="center">❌</td><td>三层缓存架构（L1 本地 + L2 redis + DB）</td></tr>
+<tr><td><code>security-alert</code> / <code>device-binding</code> / <code>session-hijack-detection</code></td><td align="center">❌</td><td>安全告警系统 / 设备绑定 / 会话劫持检测</td></tr>
+<tr><td><code>grpc</code></td><td align="center">❌</td><td>gRPC async 鉴权层（tonic 拦截器）</td></tr>
+<tr><td><code>credit-metering</code></td><td align="center">❌</td><td>信用/配额计量（活跃度写路径节流聚合）</td></tr>
+<tr><td><code>audit-log</code></td><td align="center">❌</td><td>审计日志（落库 + HMAC 防篡改事件链）</td></tr>
+<tr><td><code>audit-inklog</code> / <code>audit-inklog-http</code> / <code>audit-inklog-siem</code></td><td align="center">❌</td><td>inklog 结构化审计日志 / HTTP / SIEM 外送</td></tr>
+<tr><td><code>alone-cache</code> / <code>parameter-query</code></td><td align="center">❌</td><td>DAO 单飞缓存（防击穿）/ STP 参数化查询</td></tr>
+<tr><td><code>api-docs</code> / <code>cli-ops</code></td><td align="center">❌</td><td>OpenAPI 文档 / garrison-cli 运维子命令</td></tr>
+<tr><td><code>data-erasure</code></td><td align="center">❌</td><td>数据主体擦除编排（GDPR / 个保法删除权）</td></tr>
+<tr><td><code>authorize-api</code> / <code>manager-explicit</code></td><td align="center">❌</td><td>核心扩展：请求对象式授权 API / 显式 Manager API</td></tr>
+<tr><td><code>miette</code> / <code>embedded-migrations</code></td><td align="center">❌</td><td>富诊断错误（miette::Diagnostic）/ 嵌入式迁移文件</td></tr>
 <tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td>聚合特性</td></tr>
 </table>
 
@@ -336,7 +362,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 测试规模
 
-约 5645 个测试（lib 单元 5117 + 验收 / 集成 / UI 404 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数）与 4 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 85%（当前约 95.8%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
+约 5901 个测试（lib 单元 5361 + 验收 / 集成 416 + 示例级 116 + 过程宏 8；lib 与验收数为 `cargo test --list` 实测，示例与过程宏为属性静态计数）与 6 个 Criterion 基准场景；覆盖率门禁为行覆盖率不低于 85%（当前约 95.8%）。统计口径与明细见 [🧪 测试场景矩阵 · 测试规模统计](docs/TEST_SCENARIOS.md#-测试规模统计)。
 
 ---
 
@@ -371,7 +397,7 @@ CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / �
 <tr><td align="center">✅</td><td>安全与防护</td><td>账号安全引擎 / 安全防护套件 / 防火墙 / 多租户 / 审计日志</td></tr>
 <tr><td align="center">✅</td><td>微服务架构</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
 <tr><td align="center">✅</td><td>可观测性</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
-<tr><td align="center">🚧</td><td>下一版本安全加固</td><td>外网登录端点暴露确认 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试、绑定地址缺省收敛 127.0.0.1、内网 API Key 强制 ≥32 字节、SAML Destination/Audience 缺省 strict、SSO secret ≥32 字节 + pub/sub 消息 HMAC 信封、check_safe/check_disable 会话前置校验、多租户隔离强化（会话-租户绑定 / 标识符注册表 / 设备接口）（见 [docs/CHANGELOG.md](docs/CHANGELOG.md) · Unreleased）</td></tr>
+<tr><td align="center">✅</td><td>安全加固（已落地，随下一版本发布）</td><td>外网登录端点暴露确认 fail-closed、密码登录时序侧信道对齐、OAuth2 password grant 限流 fail-closed、JWT 黑名单写失败重试、SAML Destination/Audience 缺省 strict、SSO secret ≥32 字节 + pub/sub 消息 HMAC 信封、check_safe/check_disable 会话前置校验、多租户隔离强化（会话-租户绑定 / 标识符注册表 / 设备接口）。作用域提示：绑定地址缺省收敛 127.0.0.1 与内网 API Key 强制 ≥32 字节仅约束参考部署 <code>auth_server</code> bin，库层 <code>AuthServerConfig</code> 默认仍为 0.0.0.0 且只拒绝空 Key，须自行显式收口（见 [docs/CHANGELOG.md](docs/CHANGELOG.md) · 0.9.0-rc.3）</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 稳定版</td><td>API 冻结 + 性能基准 + 生产案例</td></tr>
 </table>
 
@@ -426,6 +452,7 @@ CI 与发布流程内置三道供应链门禁：`cargo deny check`（漏洞 / �
 
 | 版本 | 日期 | 要点 |
 |------|------|------|
+| 0.9.0-rc.3 | 开发验证中 | 安全审计整改 R01–R18：统一错误模型（request-id / Retry-After）/ 字段静态加密 / WebAuthn / 密码找回 / MFA 编排 / back-channel logout / 多租户强化 / garrison-cli |
 | 0.9.0-rc.2 | 2026-08-26 | fail-closed 安全加固（check_api_key / check_abac） |
 | 0.9.0-rc.1 | 2026-08-25 | 验收测试体系 + DAO 原子契约收严 + gRPC async 鉴权层 |
 | 0.8.1 | 2026-07-24 | 审计日志 token 泄漏修复（CWE-532） |

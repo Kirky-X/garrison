@@ -6,9 +6,17 @@
 
 > **定位声明**：映射是能力对照而非认证；标注「框架」表示框架内建机制（附证据链接），标注「业务方/部署方」表示该风险的完整处置需应用或部署层配合。
 >
-> 适用版本：0.9.0-rc.2。
+> 适用版本：0.9.0-rc.3。
 
 ---
+
+## OWASP Top 10 映射总览
+
+<div align="center">
+
+<img src="assets/owasp-mapping.svg" alt="OWASP 映射" width="800">
+
+</div>
 
 ## A01 – Broken Access Control（失效的访问控制）
 

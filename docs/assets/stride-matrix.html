@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>STRIDE Threat Model</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper: #f5f5f5;
+      --color-ink: #1a2332;
+      --color-muted: #4a5568;
+      --color-accent: #c0392b;
+      --color-link: #2c5282;
+      --font-sans: 'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif;
+      --font-serif: 'Instrument Serif', 'Noto Serif TC', serif;
+      --font-mono: 'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1100px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1000px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Threat Model · Diagram Design</p>
+    <h1>STRIDE 威胁模型</h1>
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 560" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="stride-title stride-desc">
+        <title id="stride-title">STRIDE Threat Model Matrix</title>
+        <desc id="stride-desc">STRIDE threat model showing six categories (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege) with framework defenses and business responsibilities.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4a5568"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+        <!-- Column headers -->
+        <rect x="120" y="24" width="420" height="32" rx="4" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1"/>
+        <text x="330" y="44" fill="#c0392b" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle" letter-spacing="0.08em">FRAMEWORK DEFENSE</text>
+        <rect x="560" y="24" width="420" height="32" rx="4" fill="rgba(26,35,50,0.05)" stroke="#4a5568" stroke-width="1"/>
+        <text x="770" y="44" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle" letter-spacing="0.08em">BUSINESS RESPONSIBILITY</text>
+        <!-- Row S: Spoofing -->
+        <rect x="20" y="64" width="80" height="72" rx="4" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1"/>
+        <text x="60" y="96" fill="#c0392b" font-size="16" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">S</text>
+        <text x="60" y="116" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">SPOOFING</text>
+        <rect x="120" y="64" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="136" y="88" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">JWT 签名验证 · alg confusion 对抗</text>
+        <text x="136" y="104" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">TOTP (RFC 6238) · API Key 哈希存储</text>
+        <text x="136" y="120" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">OAuth2 state/nonce · 登录暴破防护</text>
+        <rect x="560" y="64" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="576" y="88" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">JWT 密钥托管 · 90 天轮换</text>
+        <text x="576" y="104" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">下游身份源 (LDAP/用户库) 账号安全</text>
+        <text x="576" y="120" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">反向代理传递真实客户端 IP</text>
+        <!-- Row T: Tampering -->
+        <rect x="20" y="144" width="80" height="72" rx="4" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1"/>
+        <text x="60" y="176" fill="#c0392b" font-size="16" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">T</text>
+        <text x="60" y="196" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">TAMPERING</text>
+        <rect x="120" y="144" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="136" y="168" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">CSRF token (CSPRNG 32B) · API 签名 HMAC</text>
+        <text x="136" y="184" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">审计日志链式哈希 (AuditEventChain)</text>
+        <text x="136" y="200" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">响应安全头 · 配置防漂移校验</text>
+        <rect x="560" y="144" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="576" y="168" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">HTTPS 强制 (HSTS · 禁用旧版 TLS)</text>
+        <text x="576" y="184" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">审计日志外部归档 (WORM/SIEM)</text>
+        <text x="576" y="200" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">数据库/Redis 访问控制与传输加密</text>
+        <!-- Row R: Repudiation -->
+        <rect x="20" y="224" width="80" height="72" rx="4" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1"/>
+        <text x="60" y="256" fill="#c0392b" font-size="16" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">R</text>
+        <text x="60" y="276" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">REPUDIATION</text>
+        <rect x="120" y="224" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="136" y="248" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">全事件审计 (30+ 事件类型) · token 统一掩码</text>
+        <text x="136" y="264" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">API Key last_used_at 追踪 + owner_id 归属</text>
+        <text x="136" y="280" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">SIEM 外送 (TCP/UDP 断线缓冲重连)</text>
+        <rect x="560" y="224" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="576" y="248" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">审计日志保留周期与外部不可变存储</text>
+        <text x="576" y="264" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">关键业务操作的应用层业务审计</text>
+        <text x="576" y="280" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">SIEM 侧完整性与告警规则配置</text>
+        <!-- Row I: Information Disclosure -->
+        <rect x="20" y="304" width="80" height="72" rx="4" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1"/>
+        <text x="60" y="336" fill="#c0392b" font-size="16" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">I</text>
+        <text x="60" y="356" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">INFO DISC</text>
+        <rect x="120" y="304" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="136" y="328" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Token 掩码 (CWE-532) · 密钥零化 (zeroize)</text>
+        <text x="136" y="344" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">API Key secret 一次性返回 · 落库仅哈希</text>
+        <text x="136" y="360" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">CORS allowlist · 密码策略 + HIBP 检查</text>
+        <rect x="560" y="304" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="576" y="328" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">日志聚合系统访问控制</text>
+        <text x="576" y="344" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">生产部署显式启用 zeroize feature</text>
+        <text x="576" y="360" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">密码策略阈值按业务风险设定</text>
+        <!-- Row D: Denial of Service -->
+        <rect x="20" y="384" width="80" height="72" rx="4" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1"/>
+        <text x="60" y="416" fill="#c0392b" font-size="16" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">D</text>
+        <text x="60" y="436" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">DOS</text>
+        <rect x="120" y="384" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="136" y="408" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">限流 (滑动窗口/GCRA) · 分布式 rate-limit-redis</text>
+        <text x="136" y="424" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">暴破封禁 (IP 级计数 + ban-sync 跨实例)</text>
+        <text x="136" y="440" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Argon2 并发令牌池 · 解析器 fuzz 回归</text>
+        <rect x="560" y="384" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="576" y="408" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">上游基础设施 (CDN/云 WAF/SYN 防护)</text>
+        <text x="576" y="424" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">Redis/数据库容量规划与高可用</text>
+        <text x="576" y="440" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">新增解析入口时同步扩展 fuzz target</text>
+        <!-- Row E: Elevation of Privilege -->
+        <rect x="20" y="464" width="80" height="72" rx="4" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1"/>
+        <text x="60" y="496" fill="#c0392b" font-size="16" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">E</text>
+        <text x="60" y="516" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">ELEV PRIV</text>
+        <rect x="120" y="464" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="136" y="488" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">RBAC + ABAC (cedar-policy) · forbid 优先语义</text>
+        <text x="136" y="504" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">多租户隔离 (tenant-isolation) · 会话-租户绑定</text>
+        <text x="136" y="520" fill="#1a2332" font-size="10" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">会话劫持检测 · 账号锁定 + 条件求值</text>
+        <rect x="560" y="464" width="420" height="72" rx="4" fill="#f5f5f5" stroke="rgba(26,35,50,0.12)" stroke-width="1"/>
+        <text x="576" y="488" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">权限模型配置正确性 (最小权限原则)</text>
+        <text x="576" y="504" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">租户边界的业务定义 · 覆写租户数据源回调</text>
+        <text x="576" y="520" fill="#4a5568" font-size="10" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif">管理员账号额外保护 (MFA 强制)</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

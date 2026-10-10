@@ -723,7 +723,7 @@ const PAYLOAD_TOO_LARGE_BODY: &str =
 
 /// Json extractor rejection 清洗中间件 — 统一改写 axum 默认 rejection 响应。
 ///
-/// axum 0.8 的 `Json` extractor rejection（`JsonDataError` 422 / `JsonSyntaxError`
+/// axum 的 `Json` extractor rejection（`JsonDataError` 422 / `JsonSyntaxError`
 /// 400 / `MissingJsonContentType` 415）以 `text/plain` 回显序列化诊断信息：
 /// 内部 Rust 类型名（"expected struct LoginRequest"）、字段名与攻击者输入的
 /// 字节偏移，可用于指纹识别与字段枚举。`DefaultBodyLimit` 的 body 超限

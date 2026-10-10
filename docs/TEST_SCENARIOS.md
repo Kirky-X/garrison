@@ -1,6 +1,6 @@
 # 🧪 Garrison 测试场景矩阵
 
-> 适用版本：Garrison **0.9.0-rc.2**（MSRV 1.85；`rust-toolchain.toml` 锁定的是 `stable` 通道，1.85.1 仅在 CI workflow 侧 pin）
+> 适用版本：Garrison **0.9.0-rc.3**（MSRV 1.85；`rust-toolchain.toml` 锁定的是 `stable` 通道，1.85.1 仅在 CI workflow 侧 pin）
 > 编写依据（只读核对）：`Cargo.toml [features]` 与 `[[test]]` 注册、`tests/acceptance.rs` 域入口、`tests/acceptance/*.rs`、`tests/acceptance/migrated/*.rs`、`examples/tests/`、`.github/workflows/ci.yml`、`.github/workflows/feature-matrix.yml`、`scripts/e2e_matrix.sh`、`scripts/e2e_run.sh`、`benches/garrison_benchmark.rs`。
 > 本文合并自原《E2E 特性组合测试套件》文档（`E2E_TESTING.md` 已删除），并补入基于真实测试套件的场景穷举。
 > 规模数字均为 `#[test]` / `#[tokio::test]` 属性的 grep 统计（含 `#[tokio::test(flavor = ...)]` 形态），截至 2026-09-15。
@@ -31,6 +31,12 @@
 
 ## 🗺️ 测试体系总览
 
+<div align="center">
+
+<img src="assets/testing-pyramid.svg" alt="测试金字塔" width="800">
+
+</div>
+
 测试金字塔与三层质量防线：
 
 | 层 | 位置 | 特性面 | 触发 |
@@ -55,19 +61,19 @@
 
 ## 📊 测试规模统计
 
-> 规模为 `#[test]` / `#[tokio::test]` 属性的 grep 统计，截至 2026-09-15（v0.9.0-rc.1 工作区）。
+> 单元与验收两列为 `cargo test -- --list` 在 CI 特性面（full / full+testing）下的实测计数，示例与过程宏为 `#[test]` / `#[tokio::test]` 属性静态计数；截至 2026-10-09（v0.9.0-rc.3 开发验证态工作区）。
 
 | 类别 | 位置 | 数量 |
 |------|------|------|
-| 单元测试 | `src/` 内联（265 个 `#[cfg(test)]` 模块） | 5117 |
-| 验收 / 集成 / UI 测试 | `tests/`（acceptance 20 域 + migrated 11 文件 + db 专用 target + macros_ui） | 404 |
+| 单元测试 | `src/` 内联（`cargo test --features full --lib -- --list`） | 5361 |
+| 验收 / 集成 / UI 测试 | `tests/`（`cargo test --test acceptance --features "full testing" -- --list`） | 416 |
 | 示例级集成测试 | `examples/tests/`（65 个文件，与示例 bin 一一对应） | 约 116 |
 | 过程宏测试 | `macros/` | 8 |
-| 合计 | — | **约 5645** |
-
-> 单元与验收两列为 `cargo test --features full --lib -- --list` / `cargo test --test acceptance --features "full testing" -- --list` 实测计数；示例与过程宏为测试属性静态计数。
+| 合计 | — | **约 5901** |
 | Criterion 基准 | `benches/garrison_benchmark.rs` | 6 场景 |
-| 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 85`（当前行覆盖率约 95.8%，见 CHANGELOG 0.8.1 TEST-01 记录） |
+| 行覆盖率门禁 | `ci.yml` coverage job | `--fail-under-lines 85`（当前行覆盖率约 95.8%） |
+
+> 覆盖率沿用既有记录值；本轮已实测刷新测试计数（full 面 5361 / acceptance 面 416），行覆盖率未重测。
 
 ---
 

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 960 480" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="arch-overview-title arch-overview-desc" id="architecture-overview-root">
+        <title id="arch-overview-title">Garrison Architecture Overview</title>
+        <desc id="arch-overview-desc">Dual-abstraction-layer architecture showing delegation from GarrisonUtil through GarrisonManager and GarrisonLogicDefault to GarrisonDao and backend storage systems.</desc>
+        <defs>
+      <style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Serif:ital@0;1&amp;family=Noto+Sans+KR:wght@400;500;600&amp;family=Noto+Serif+KR:wght@400&amp;family=Noto+Sans+TC:wght@400;500;600&amp;family=Noto+Serif+TC:wght@400&amp;display=swap');
+      #architecture-overview-root { --color-paper: #f5f5f5;
+      --color-ink: #1a2332;
+      --color-muted: #4a5568;
+      --color-accent: #c0392b;
+      --color-link: #2c5282;
+      --font-sans: 'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif;
+      --font-serif: 'Instrument Serif', 'Noto Serif TC', serif;
+      --font-mono: 'Geist Mono', ui-monospace, monospace; }
+      #architecture-overview-root { font-family: var(--font-sans); color: var(--color-ink); }
+      #architecture-overview-root .diagram-container { width: 100%; overflow-x: auto; }
+      #architecture-overview-root .diagram-container { overflow-x: visible; }</style>
+          <marker id="architecture-overview-arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4a5568"/></marker>
+          <marker id="architecture-overview-arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c0392b"/></marker>
+          <marker id="architecture-overview-arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2c5282"/></marker>
+        </defs>
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+        <!-- Arrows -->
+        <line x1="180" y1="232" x2="236" y2="232" stroke="#4a5568" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+        <line x1="400" y1="232" x2="456" y2="232" stroke="#4a5568" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+        <line x1="560" y1="180" x2="560" y2="120" stroke="#4a5568" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+        <line x1="660" y1="232" x2="716" y2="232" stroke="#c0392b" stroke-width="1.2" marker-end="url(#architecture-overview-arrow-accent)"/>
+        <line x1="760" y1="200" x2="760" y2="140" stroke="#4a5568" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+        <line x1="840" y1="264" x2="840" y2="316" stroke="#4a5568" stroke-width="1.2" marker-end="url(#architecture-overview-arrow)"/>
+        <!-- Arrow labels -->
+        <rect x="192" y="212" width="36" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="210" y="221" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CALL</text>
+        <rect x="412" y="212" width="36" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="430" y="221" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">HOLD</text>
+        <rect x="568" y="148" width="36" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="586" y="157" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CALL</text>
+        <rect x="672" y="212" width="36" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="690" y="221" fill="#c0392b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CALL</text>
+        <rect x="728" y="168" width="40" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="748" y="177" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CACHE</text>
+        <rect x="848" y="288" width="44" height="12" rx="2" fill="#f5f5f5"/>
+        <text x="870" y="297" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">STORE</text>
+        <!-- Nodes -->
+        <!-- GarrisonUtil (focal) -->
+        <rect x="40" y="200" width="140" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="40" y="200" width="140" height="64" rx="6" fill="#c0392b" fill-opacity="0.08" stroke="#c0392b" stroke-width="1.2"/>
+        <rect x="48" y="206" width="32" height="12" rx="2" fill="none" stroke="#c0392b" stroke-opacity="0.40" stroke-width="0.8"/>
+        <text x="64" y="215" fill="#c0392b" fill-opacity="0.8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">FACADE</text>
+        <text x="110" y="228" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">GarrisonUtil</text>
+        <text x="110" y="246" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">static facade</text>
+        <!-- GarrisonManager -->
+        <rect x="240" y="200" width="160" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="240" y="200" width="160" height="64" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <rect x="248" y="206" width="32" height="12" rx="2" fill="none" stroke="#1a2332" stroke-opacity="0.40" stroke-width="0.8"/>
+        <text x="264" y="215" fill="#1a2332" fill-opacity="0.8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">SINGLE</text>
+        <text x="320" y="228" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">GarrisonManager</text>
+        <text x="320" y="246" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">global singleton</text>
+        <!-- GarrisonLogicDefault (focal) -->
+        <rect x="460" y="180" width="200" height="80" rx="6" fill="#f5f5f5"/>
+        <rect x="460" y="180" width="200" height="80" rx="6" fill="#c0392b" fill-opacity="0.08" stroke="#c0392b" stroke-width="1.2"/>
+        <rect x="468" y="186" width="36" height="12" rx="2" fill="none" stroke="#c0392b" stroke-opacity="0.40" stroke-width="0.8"/>
+        <text x="486" y="195" fill="#c0392b" fill-opacity="0.8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">LOGIC</text>
+        <text x="560" y="214" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">GarrisonLogicDefault</text>
+        <text x="560" y="232" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">5 subtraits aggregated</text>
+        <text x="560" y="248" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">Session · Permission · Token · Mfa · Password</text>
+        <!-- GarrisonInterface -->
+        <rect x="460" y="60" width="200" height="56" rx="6" fill="#f5f5f5"/>
+        <rect x="460" y="60" width="200" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <rect x="468" y="66" width="32" height="12" rx="2" fill="none" stroke="#1a2332" stroke-opacity="0.40" stroke-width="0.8"/>
+        <text x="484" y="75" fill="#1a2332" fill-opacity="0.8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">TRAIT</text>
+        <text x="560" y="94" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">GarrisonInterface</text>
+        <text x="560" y="108" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">business data source</text>
+        <!-- GarrisonDao -->
+        <rect x="720" y="200" width="160" height="64" rx="6" fill="#f5f5f5"/>
+        <rect x="720" y="200" width="160" height="64" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <rect x="728" y="206" width="28" height="12" rx="2" fill="none" stroke="#1a2332" stroke-opacity="0.40" stroke-width="0.8"/>
+        <text x="742" y="215" fill="#1a2332" fill-opacity="0.8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DAO</text>
+        <text x="800" y="228" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">GarrisonDao</text>
+        <text x="800" y="246" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">persistence trait</text>
+        <!-- oxcache (store) -->
+        <rect x="720" y="80" width="140" height="56" rx="6" fill="#f5f5f5"/>
+        <rect x="720" y="80" width="140" height="56" rx="6" fill="#1a2332" fill-opacity="0.05" stroke="#4a5568" stroke-width="1"/>
+        <rect x="728" y="86" width="44" height="12" rx="2" fill="none" stroke="#4a5568" stroke-opacity="0.40" stroke-width="0.8"/>
+        <text x="750" y="95" fill="#4a5568" fill-opacity="0.8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">CACHE</text>
+        <text x="790" y="114" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">oxcache</text>
+        <text x="790" y="128" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">L1 memory + L2 redis</text>
+        <!-- dbnexus (store) -->
+        <rect x="720" y="320" width="140" height="56" rx="6" fill="#f5f5f5"/>
+        <rect x="720" y="320" width="140" height="56" rx="6" fill="#1a2332" fill-opacity="0.05" stroke="#4a5568" stroke-width="1"/>
+        <rect x="728" y="326" width="28" height="12" rx="2" fill="none" stroke="#4a5568" stroke-opacity="0.40" stroke-width="0.8"/>
+        <text x="742" y="335" fill="#4a5568" fill-opacity="0.8" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.08em">DB</text>
+        <text x="790" y="354" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', 'Noto Sans TC', 'PingFang TC', 'Microsoft Jhei', sans-serif" text-anchor="middle">dbnexus</text>
+        <text x="790" y="368" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">SQLite / PG / MySQL</text>
+      </svg>

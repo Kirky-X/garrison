@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg viewBox="0 0 1080 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="reliability-scenarios-title reliability-scenarios-desc" id="reliability-scenarios-root">
+        <title id="reliability-scenarios-title">Redis Fault Drill Scenarios</title>
+        <desc id="reliability-scenarios-desc">Four Redis fault injection drill scenarios in columns: container pause/resume, network disconnect/reconnect, force restart, and Sentinel failover, each with injection method and expected behavior.</desc>
+  <defs>
+      <style>@import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&amp;family=Geist:wght@400;500;600&amp;family=Geist+Mono:wght@400;500;600&amp;family=Noto+Serif:ital@0;1&amp;family=Noto+Sans+KR:wght@400;500;600&amp;family=Noto+Serif+KR:wght@400&amp;family=Noto+Sans+TC:wght@400;500;600&amp;family=Noto+Serif+TC:wght@400&amp;display=swap');
+      #reliability-scenarios-root { --color-paper:   #f5f5f5;
+      --color-ink:     #1a2332;
+      --color-muted:   #4a5568;
+      --color-accent:  #c0392b;
+      --color-link:    #2c5282;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace; }
+      #reliability-scenarios-root { font-family: var(--font-sans); color: var(--color-ink); }
+      #reliability-scenarios-root .diagram-container { width: 100%; overflow-x: auto; }
+      #reliability-scenarios-root .diagram-container { overflow-x: visible; }</style>
+  </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- Column 1: Container Pause/Resume -->
+        <rect x="30" y="60" width="240" height="420" rx="6" fill="#1a2332" fill-opacity="0.02"/>
+        <text x="50" y="92" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif">Container Pause/Resume</text>
+        <line x1="30" y1="104" x2="270" y2="104" stroke="#1a2332" stroke-opacity="0.12" stroke-width="0.8"/>
+
+        <!-- Card: Injection -->
+        <rect x="44" y="120" width="212" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="56" y="140" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">INJECTION</text>
+        <text x="56" y="160" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">docker pause / unpause</text>
+
+        <!-- Card: Simulates -->
+        <rect x="44" y="188" width="212" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="56" y="208" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">SIMULATES</text>
+        <text x="56" y="228" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">OOM freeze / VM suspend</text>
+
+        <!-- Card: Expected -->
+        <rect x="44" y="256" width="212" height="80" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="56" y="276" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">EXPECTED</text>
+        <text x="56" y="296" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">No panic; ops return error</text>
+        <text x="56" y="312" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">or timeout; reconnect after</text>
+        <text x="56" y="328" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">resume (60s healthy)</text>
+
+        <!-- Column 2: Network Disconnect/Reconnect -->
+        <rect x="290" y="60" width="240" height="420" rx="6" fill="#1a2332" fill-opacity="0.02"/>
+        <text x="310" y="92" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif">Network Disconnect</text>
+        <line x1="290" y1="104" x2="530" y2="104" stroke="#1a2332" stroke-opacity="0.12" stroke-width="0.8"/>
+
+        <rect x="304" y="120" width="212" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="316" y="140" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">INJECTION</text>
+        <text x="316" y="160" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">docker network disconnect</text>
+
+        <rect x="304" y="188" width="212" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="316" y="208" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">SIMULATES</text>
+        <text x="316" y="228" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">Switch failure / net partition</text>
+
+        <rect x="304" y="256" width="212" height="80" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="316" y="276" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">EXPECTED</text>
+        <text x="316" y="296" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">Protocol PING no response;</text>
+        <text x="316" y="312" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">container PING still PONG</text>
+        <text x="316" y="328" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">(process alive)</text>
+
+        <!-- Column 3: Force Restart -->
+        <rect x="550" y="60" width="240" height="420" rx="6" fill="#1a2332" fill-opacity="0.02"/>
+        <text x="570" y="92" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif">Force Restart</text>
+        <line x1="550" y1="104" x2="790" y2="104" stroke="#1a2332" stroke-opacity="0.12" stroke-width="0.8"/>
+
+        <rect x="564" y="120" width="212" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="576" y="140" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">INJECTION</text>
+        <text x="576" y="160" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">docker restart</text>
+
+        <rect x="564" y="188" width="212" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="576" y="208" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">SIMULATES</text>
+        <text x="576" y="228" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">Crash / kernel upgrade</text>
+
+        <rect x="564" y="256" width="212" height="80" rx="6" fill="#c0392b" fill-opacity="0.05" stroke="#c0392b" stroke-width="1"/>
+        <text x="576" y="276" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">EXPECTED</text>
+        <text x="576" y="296" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">Canary survives restart</text>
+        <text x="576" y="312" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">(/data volume); sessions</text>
+        <text x="576" y="328" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">still valid via DAO</text>
+
+        <!-- Column 4: Sentinel Failover -->
+        <rect x="810" y="60" width="240" height="420" rx="6" fill="#1a2332" fill-opacity="0.02"/>
+        <text x="830" y="92" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif">Sentinel Failover</text>
+        <line x1="810" y1="104" x2="1050" y2="104" stroke="#1a2332" stroke-opacity="0.12" stroke-width="0.8"/>
+
+        <rect x="824" y="120" width="212" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="836" y="140" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">INJECTION</text>
+        <text x="836" y="160" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">docker pause master</text>
+
+        <rect x="824" y="188" width="212" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="836" y="208" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">SIMULATES</text>
+        <text x="836" y="228" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">Master crash + auto-failover</text>
+
+        <rect x="824" y="256" width="212" height="80" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="836" y="276" fill="#4a5568" font-size="8" font-weight="500" font-family="'Geist Mono', monospace" letter-spacing="0.10em">EXPECTED</text>
+        <text x="836" y="296" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">Replica promoted in 120s;</text>
+        <text x="836" y="312" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">old master demoted in 60s;</text>
+        <text x="836" y="328" fill="#1a2332" font-size="11" font-family="'Geist', sans-serif">canary readable post-switch</text>
+
+        <!-- Legend -->
+        <line x1="30" y1="504" x2="1050" y2="504" stroke="#1a2332" stroke-opacity="0.10" stroke-width="0.8"/>
+        <text x="30" y="516" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" letter-spacing="0.14em">PROTOCOL-LEVEL PING JUDGES AVAILABILITY — NOT TCP CONNECTIVITY</text>
+      </svg>

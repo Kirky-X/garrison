@@ -2,7 +2,7 @@
 
 **Garrison** 是面向 Rust 生态的一站式身份认证鉴权框架：登录认证 → 权限校验 → 会话管理 → 路由拦截开箱即用。业务方实现一个 `GarrisonInterface` 回调、注入一个 `GarrisonDao` 存储后端，即可获得完整的认证鉴权能力；全部可选能力（协议层、防火墙、账号安全等）均以独立 feature 门控，编译产物只包含启用的部分。
 
-> 适用版本：0.9.0-rc.2（MSRV 1.85）。本文只讲「怎么用」；架构设计见 [🏗️ 架构文档](ARCHITECTURE.md)，配置项全表见 [⚙️ 配置指南](CONFIGURATION.md)。
+> 适用版本：0.9.0-rc.3（MSRV 1.85）。本文只讲「怎么用」；架构设计见 [🏗️ 架构文档](ARCHITECTURE.md)，配置项全表见 [⚙️ 配置指南](CONFIGURATION.md)。
 
 ## 📋 目录
 
@@ -34,7 +34,7 @@
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.2", features = ["development"] }
+garrison = { version = "0.9.0-rc.3", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -195,7 +195,7 @@ async fn admin_write() -> &'static str { "ok" }
 
 | 协议 | Feature | 能力要点 | 示例 |
 |------|---------|----------|------|
-| JWT | `protocol-jwt` | HS256/HS512 三种模式 + refresh 轮换 | `jwt_login.rs` / `jwt_modes.rs` |
+| JWT | `protocol-jwt` | HS256/384/512、RS256/384/512、ES256/384、EdDSA + refresh 轮换 | `jwt_login.rs` / `jwt_modes.rs` |
 | OAuth2 客户端 | `protocol-oauth2` | 四种 grant、PKCE（OAuth 2.1）、token introspection | `oauth2_flow.rs` / `oauth2_pkce.rs` |
 | OAuth2 Server | `oauth2-server` | 完整 Server 4 端点 | `oauth2_server_flow.rs` |
 | OIDC | `protocol-oidc` | id_token 签发/验证 + discovery + 三重防重放 | `oidc_handler.rs` |
@@ -204,6 +204,7 @@ async fn admin_write() -> &'static str { "ok" }
 | SAML | `protocol-saml` | SAML 2.0（XML 签名验证） | — |
 | API Key | `protocol-apikey` | 命名空间管理、安全存储 | `apikey_management.rs` / `apikey_namespace.rs` |
 | 临时凭证 | `protocol-temp` | 临时 token 签发 | `temp_credential.rs` |
+| 扫码登录 | `protocol-qrlogin` | 第一方扫码登录（Web 扫码 + App 确认）：两票分离状态机（qr_ticket 经 HMAC-SHA256 签名，secret ≥32 字节；confirm_token 一次性短 TTL）；固有 login CSRF 风险——任意已登录 App 用户可扫他人二维码致受害者登录进攻击者账号，scan 响应下发待登录端脱敏摘要（设备标签 + 创建时间）供扫码者核对 | — |
 | API 签名 | `protocol-sign` | HMAC 签名 + nonce 防重放 | `sign_protocol.rs` |
 | TOTP | `secure-totp` | RFC 6238 动态验证码 | `totp_login.rs` |
 | Basic / Digest | `protocol-httpbasic` / `protocol-httpdigest` | HTTP 标准认证 | `httpbasic_login.rs` / `httpdigest_login.rs` |
@@ -250,6 +251,22 @@ async fn admin_write() -> &'static str { "ok" }
 - **i18n**（`i18n` / `i18n-icu`）：错误消息按 locale 切换中英文（fluent + FTL 资源，`locales/` 目录）。示例 [`i18n_usage.rs`](../examples/src/bin/i18n_usage.rs)。
 - **健康检查**（`server-health-check`）：`DbHealthCheck::with_pool` 执行真实 SQL 往返探测。示例 [`health_check.rs`](../examples/src/bin/health_check.rs)。
 - **微服务**：`backend-remote`（HTTP 调用远程 Auth Server + limiteron 熔断）、`auth-server`（独立认证服务器，sdforge 声明式路由 + TLS + 优雅停机）。示例 [`backend_remote.rs`](../examples/src/bin/backend_remote.rs)、[`auth_server.rs`](../examples/src/bin/auth_server.rs)。
+
+---
+
+## 🧬 进阶认证能力（0.9.0-rc.3）
+
+以下能力随 rc.3 安全审计整改批次合入，按 feature 独立门控；配置项见 [⚙️ 配置指南](CONFIGURATION.md) 对应小节，公开 API 见 [📘 API 参考·rc.3 新增能力](API_REFERENCE.md)，端到端用法见 [examples/](../examples/)。
+
+| 能力 | Feature | 模块 | 配置节 |
+|------|---------|------|--------|
+| 落库敏感字段静态加密 | `field-encryption` | `secure::encryption` | §2.9 |
+| WebAuthn / Passkey 认证 | `protocol-webauthn` | `protocol::webauthn` | §2.10 |
+| MFA / step-up 编排与恢复码 | `mfa-recovery` | `stp::mfa` | §2.11 |
+| 找回密码流程 | `account-password-reset` | `account::password_reset` | §2.12 |
+| OIDC Back-Channel Logout | `backchannel-logout` | `oauth2_server::backchannel` | 架构文档 |
+| Refresh Token 重用检测/宽限 | `oauth2-server` | `protocol::jwt::refresh` | §2.14 |
+| 统一错误模型（request-id / Retry-After） | always-on | `context::request_id` / `error` | API「统一错误响应体（R04）」 |
 
 ---
 

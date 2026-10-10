@@ -71,12 +71,12 @@ Inject your dependencies into `GarrisonManager` once at startup — from login t
 <td width="50%" style="vertical-align:top; padding: 12px">📊 <b>High Observability</b><br><span style="color:#64748B"><code>tracing</code> logging + <code>listener</code> event subscriptions + <code>prometheus</code> metrics (optional)</span></td>
 </tr>
 <tr>
-<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">5600+ tests (≈5100 lib + ≈520 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
+<td width="50%" style="vertical-align:top; padding: 12px">🧪 <b>High Coverage</b><br><span style="color:#64748B">5900+ tests (≈5360 lib + ≈540 acceptance/integration/examples), 95%+ line coverage, clippy zero warnings</span></td>
 <td width="50%" style="vertical-align:top; padding: 12px">🌐 <b>Web Framework Adapters</b><br><span style="color:#64748B">axum/actix/warp annotation-style extractors + proc macros</span></td>
 </tr>
 </table>
 
-Beyond the core capabilities above, everything else (auth protocols, firewall, account security, multi-tenancy, observability, microservice building blocks, etc.) ships as independent, opt-in feature flags — see the [🎨 Feature Flags](#-feature-flags) section for the complete per-flag matrix.
+Beyond the core capabilities above, everything else (auth protocols, firewall, account security, multi-tenancy, observability, microservice building blocks, etc.) ships as independent, opt-in feature flags — see the [🎨 Feature Flags](#-feature-flags) section for a domain-grouped matrix (the full list is authoritative in `Cargo.toml`'s `[features]`).
 
 ---
 
@@ -88,7 +88,7 @@ Add the following to your `Cargo.toml` (`development` preset = in-memory cache D
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.2", features = ["development"] }
+garrison = { version = "0.9.0-rc.3", features = ["development"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -178,7 +178,7 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 
 ### 📋 Feature Matrix
 
-The table below mirrors the `[features]` section of `Cargo.toml`, where `default = ["backend-embedded"]`.
+The table below summarizes the main `[features]` of `Cargo.toml` grouped by capability domain (100+ flags; the full list is authoritative in `Cargo.toml`'s `[features]`), where `default = ["backend-embedded"]`.
 
 <table style="width:100%; border-collapse: collapse">
 <tr><th style="text-align:left">Feature</th><th style="text-align:center">Default</th><th style="text-align:left">Description</th></tr>
@@ -203,7 +203,10 @@ The table below mirrors the `[features]` section of `Cargo.toml`, where `default
 <tr><td><code>protocol-sign</code></td><td align="center">❌</td><td>API signing + nonce anti-replay</td></tr>
 <tr><td><code>protocol-apikey</code></td><td align="center">❌</td><td>API Key auth</td></tr>
 <tr><td><code>protocol-temp</code></td><td align="center">❌</td><td>Temporary credentials</td></tr>
+<tr><td><code>protocol-qrlogin</code></td><td align="center">❌</td><td>First-party QR-code login (Web displays QR + App confirms, two-ticket separation)</td></tr>
 <tr><td><code>protocol-oidc</code></td><td align="center">❌</td><td>OIDC id_token issuance/validation + discovery</td></tr>
+<tr><td><code>protocol-invitation</code></td><td align="center">❌</td><td>Invitation-code directed registration (one-shot / multi-use, TTL, revocation, brute-force protection)</td></tr>
+<tr><td><code>oauth2-scope-handler</code></td><td align="center">❌</td><td>OAuth2 scope handler registry (ScopeHandler trait + ScopeRegistry)</td></tr>
 <tr><td><code>protocol-httpbasic</code> / <code>protocol-httpdigest</code></td><td align="center">❌</td><td>HTTP Basic / Digest auth</td></tr>
 <tr><td><code>protocol-saml</code></td><td align="center">❌</td><td>SAML 2.0 skeleton</td></tr>
 <tr><td><code>protocol-zeroize</code></td><td align="center">❌</td><td>Protocol-layer key zeroization</td></tr>
@@ -222,6 +225,30 @@ The table below mirrors the `[features]` section of `Cargo.toml`, where `default
 <tr><td><code>email-verification</code> / <code>email-verification-smtp</code></td><td align="center">❌</td><td>Email verification codes</td></tr>
 <tr><td><code>config-*</code></td><td align="center">❌</td><td>Config file encryption/validation/hot-reload/interpolation/dynamic/toggle (confers passthrough)</td></tr>
 <tr><td><code>i18n</code> / <code>i18n-icu</code></td><td align="center">❌</td><td>Internationalization</td></tr>
+<tr><td><code>protocol-webauthn</code></td><td align="center">❌</td><td>WebAuthn / Passkey credential registration &amp; authentication ceremony (challenge replay-guard / sign_count clone detection)</td></tr>
+<tr><td><code>backchannel-logout</code></td><td align="center">❌</td><td>OIDC Back-Channel Logout (logout token issuance + persistent delivery queue)</td></tr>
+<tr><td><code>keycloak-oidc</code></td><td align="center">❌</td><td>Keycloak OIDC Relying Party (RP) integration</td></tr>
+<tr><td><code>field-encryption</code></td><td align="center">❌</td><td>AES-256-GCM at-rest encryption of sensitive DB fields (AAD tenant/table/key binding + migration-time dual-read)</td></tr>
+<tr><td><code>mfa-recovery</code></td><td align="center">❌</td><td>MFA recovery-code manager (SHA-256 hashed at rest + atomic consumption)</td></tr>
+<tr><td><code>account-password-reset</code></td><td align="center">❌</td><td>Password-reset flow (enumeration-safe / ActionToken one-time consumption / two-phase race guard)</td></tr>
+<tr><td><code>policy-hibp</code></td><td align="center">❌</td><td>HIBP breached-password check (k-anonymity range search)</td></tr>
+<tr><td><code>credential-zeroize</code></td><td align="center">❌</td><td>Credential key zeroization (zeroized on Drop)</td></tr>
+<tr><td><code>tls</code></td><td align="center">❌</td><td>HTTPS/TLS termination (axum-server + rustls)</td></tr>
+<tr><td><code>server-health-check</code> / <code>server-graceful-shutdown</code></td><td align="center">❌</td><td>Liveness/readiness probes / graceful shutdown</td></tr>
+<tr><td><code>web-security</code> / <code>web-security-headers</code></td><td align="center">❌</td><td>Web security middleware bundle (CORS+CSRF+headers) / standalone security response headers</td></tr>
+<tr><td><code>cache-lock</code> / <code>cache-batch</code> / <code>cache-invalidation</code> / <code>cache-audit</code> / <code>cache-hotkey</code> / <code>ban-sync</code></td><td align="center">❌</td><td>Cache enhancements: distributed lock / batch / cross-instance invalidation / audit event stream / hot-key observability / ban sync (oxcache passthrough)</td></tr>
+<tr><td><code>db-retry</code> / <code>db-sharding</code> / <code>db-replica</code> / <code>db-saga</code></td><td align="center">❌</td><td>Database enhancements: retry / sharding / read-replica / Saga (dbnexus passthrough)</td></tr>
+<tr><td><code>three-tier-cache</code></td><td align="center">❌</td><td>Three-tier cache architecture (L1 local + L2 redis + DB)</td></tr>
+<tr><td><code>security-alert</code> / <code>device-binding</code> / <code>session-hijack-detection</code></td><td align="center">❌</td><td>Security alerting / device binding / session hijack detection</td></tr>
+<tr><td><code>grpc</code></td><td align="center">❌</td><td>gRPC async auth layer (tonic interceptor)</td></tr>
+<tr><td><code>credit-metering</code></td><td align="center">❌</td><td>Credit/quota metering (throttled write-path aggregation for activity)</td></tr>
+<tr><td><code>audit-log</code></td><td align="center">❌</td><td>Audit logging (DB persistence + HMAC tamper-evident event chain)</td></tr>
+<tr><td><code>audit-inklog</code> / <code>audit-inklog-http</code> / <code>audit-inklog-siem</code></td><td align="center">❌</td><td>inklog structured audit logging / HTTP / SIEM export</td></tr>
+<tr><td><code>alone-cache</code> / <code>parameter-query</code></td><td align="center">❌</td><td>DAO single-flight cache (breakdown protection) / STP parameterized query</td></tr>
+<tr><td><code>api-docs</code> / <code>cli-ops</code></td><td align="center">❌</td><td>OpenAPI docs / garrison-cli ops subcommands</td></tr>
+<tr><td><code>data-erasure</code></td><td align="center">❌</td><td>Data-subject erasure orchestration (GDPR / PIPL right-to-delete)</td></tr>
+<tr><td><code>authorize-api</code> / <code>manager-explicit</code></td><td align="center">❌</td><td>Core extensions: request-object authorization API / explicit Manager API</td></tr>
+<tr><td><code>miette</code> / <code>embedded-migrations</code></td><td align="center">❌</td><td>Rich diagnostic errors (miette::Diagnostic) / embedded migration files</td></tr>
 <tr><td><code>full</code> / <code>production</code> / <code>development</code></td><td align="center">❌</td><td>Aggregate features</td></tr>
 </table>
 
@@ -335,7 +362,7 @@ cargo bench --bench garrison_benchmark --features full --locked -- --quick
 
 ### 📊 Test Scale
 
-About 5645 tests (5117 lib unit + 404 acceptance / integration / UI + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute) and 4 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (currently about 95.8%). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
+About 5901 tests (5361 lib unit + 416 acceptance / integration + 116 example-level + 8 proc macros; lib and acceptance counts measured via `cargo test --list`, examples and proc macros counted statically by attribute) and 6 Criterion benchmark scenarios; the coverage gate is line coverage no lower than 85% (currently about 95.8%). For the counting methodology and details, see [🧪 Test Scenarios · Test Scale](docs/TEST_SCENARIOS.md#-测试规模统计).
 
 ---
 
@@ -370,7 +397,7 @@ Please do not report security vulnerabilities through public issues. Use the Git
 <tr><td align="center">✅</td><td>Security and protection</td><td>Account security engine / firewall suite / multi-tenant / audit logging</td></tr>
 <tr><td align="center">✅</td><td>Microservice architecture</td><td>backend-remote / Auth Server / ABAC / OAuth2 Server / gRPC</td></tr>
 <tr><td align="center">✅</td><td>Observability</td><td>tracing / metrics-prometheus / OTLP / i18n</td></tr>
-<tr><td align="center">🚧</td><td>Next-release security hardening</td><td>Fail-closed acknowledgement for external login endpoints, password-login timing side-channel alignment, OAuth2 password grant rate-limit fail-closed, JWT blacklist write retry, default bind address tightened to 127.0.0.1, internal API key enforced at ≥32 bytes, SAML Destination/Audience strict by default, SSO secret ≥32 bytes + HMAC message envelope for pub/sub, check_safe/check_disable session precondition, multi-tenant isolation hardening (session-tenant binding / identifier registry / device APIs) (see [docs/CHANGELOG.md](docs/CHANGELOG.md) · Unreleased)</td></tr>
+<tr><td align="center">✅</td><td>Security hardening (landed, shipping with next release)</td><td>Fail-closed acknowledgement for external login endpoints, password-login timing side-channel alignment, OAuth2 password grant rate-limit fail-closed, JWT blacklist write retry, SAML Destination/Audience strict by default, SSO secret ≥32 bytes + HMAC message envelope for pub/sub, check_safe/check_disable session precondition, multi-tenant isolation hardening (session-tenant binding / identifier registry / device APIs). Scope note: the 127.0.0.1 default bind address and the ≥32-byte internal API key only constrain the reference <code>auth_server</code> binary - the library-level <code>AuthServerConfig</code> still defaults to 0.0.0.0 and only rejects an empty key, so tighten it explicitly (see [docs/CHANGELOG.md](docs/CHANGELOG.md) · 0.9.0-rc.3)</td></tr>
 <tr><td align="center">📋</td><td>v1.0.0 Stable</td><td>API freeze + performance benchmarks + production case studies</td></tr>
 </table>
 
@@ -425,6 +452,7 @@ For the full version history, see the [📋 Changelog](docs/CHANGELOG.md) (follo
 
 | Version | Date | Highlights |
 |---------|------|------------|
+| 0.9.0-rc.3 | In development | Security-audit remediation R01–R18: unified error model (request-id / Retry-After) / at-rest field encryption / WebAuthn / password reset / MFA orchestration / back-channel logout / multi-tenant hardening / garrison-cli |
 | 0.9.0-rc.2 | 2026-08-26 | Fail-closed security hardening (check_api_key / check_abac) |
 | 0.9.0-rc.1 | 2026-08-25 | Acceptance test system + DAO atomic contract + gRPC async auth layer |
 | 0.8.1 | 2026-07-24 | Audit log token leakage fix (CWE-532) |

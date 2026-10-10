@@ -3,7 +3,7 @@
 本文件汇总 Garrison 框架在设计、使用与部署过程中最常被问到的问题。如果你是初次接触 Garrison，建议先阅读本文件再查阅 API 文档。
 
 > 项目仓库：<https://github.com/Kirky-X/garrison>
-> 当前版本：0.9.0-rc.2（发布候选）｜下一版本：1.0.0（规划中）
+> 当前版本：0.9.0-rc.3（发布候选，开发验证中）｜下一版本：1.0.0（规划中）
 
 ## 📋 目录
 
@@ -199,10 +199,10 @@ A: 推荐使用聚合 feature `production`，它包含以下子特性：
 
 ```toml
 [dependencies]
-garrison = { version = "0.9.0-rc.2", features = ["production"] }
+garrison = { version = "0.9.0-rc.3", features = ["production"] }
 ```
 
-`production` 聚合下列 43 个特性（权威列表见 `Cargo.toml` 的 `[features] production`）：
+`production` 聚合下列 41 个特性（权威列表见 `Cargo.toml` 的 `[features] production`）：
 
 - `cache-redis`（Redis 缓存后端，含 `cache-memory`）、`three-tier-cache`（三层缓存架构）、`cache-batch`、`cache-audit`
 - `db-postgres`（PostgreSQL 持久化）、`db-sharding`、`db-replica`

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Roadmap Timeline</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #1a2332;
+      --color-muted:   #4a5568;
+      --color-accent:  #c0392b;
+      --color-link:    #2c5282;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1200px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1000px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Timeline · Roadmap</p>
+    <h1>Version Roadmap — 2026 to 2027</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1100 480" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="roadmap-timeline-title roadmap-timeline-desc">
+        <title id="roadmap-timeline-title">Version Roadmap Timeline</title>
+        <desc id="roadmap-timeline-desc">Horizontal timeline of Garrison releases from 0.1.0 in June 2026 through 0.9.0-rc.3 in October 2026, with 1.0.0 planned for 2027 Q2.</desc>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- Baseline -->
+        <line x1="60" y1="220" x2="1060" y2="220" stroke="#1a2332" stroke-width="1"/>
+
+        <!-- ======== 2026 milestones (labels above) ======== -->
+
+        <!-- 0.1.0 — 2026-06-30 -->
+        <circle cx="100" cy="220" r="6" fill="#c0392b"/>
+        <line x1="100" y1="214" x2="100" y2="140" stroke="#4a5568" stroke-width="0.8"/>
+        <text x="100" y="128" fill="#c0392b" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">0.1.0</text>
+        <text x="100" y="112" fill="#1a2332" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Core infrastructure</text>
+        <text x="100" y="252" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">2026-06-30</text>
+
+        <!-- 0.2.0 — 2026-07-01 -->
+        <circle cx="210" cy="220" r="4" fill="#1a2332"/>
+        <line x1="210" y1="226" x2="210" y2="300" stroke="#4a5568" stroke-width="0.8"/>
+        <text x="210" y="316" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">0.2.0</text>
+        <text x="210" y="332" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Protocols &amp; security</text>
+        <text x="210" y="352" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">2026-07-01</text>
+
+        <!-- 0.5.0 — 2026-07-06 -->
+        <circle cx="340" cy="220" r="4" fill="#1a2332"/>
+        <line x1="340" y1="214" x2="340" y2="140" stroke="#4a5568" stroke-width="0.8"/>
+        <text x="340" y="128" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">0.5.0</text>
+        <text x="340" y="112" fill="#1a2332" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Production-ready</text>
+        <text x="340" y="252" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">2026-07-06</text>
+
+        <!-- 0.6.0 — 2026-07-09 -->
+        <circle cx="450" cy="220" r="4" fill="#1a2332"/>
+        <line x1="450" y1="226" x2="450" y2="300" stroke="#4a5568" stroke-width="0.8"/>
+        <text x="450" y="316" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">0.6.0</text>
+        <text x="450" y="332" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Account security</text>
+        <text x="450" y="352" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">2026-07-09</text>
+
+        <!-- 0.7.0 — 2026-07-17 -->
+        <circle cx="570" cy="220" r="4" fill="#1a2332"/>
+        <line x1="570" y1="214" x2="570" y2="140" stroke="#4a5568" stroke-width="0.8"/>
+        <text x="570" y="128" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">0.7.0</text>
+        <text x="570" y="112" fill="#1a2332" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Microservices</text>
+        <text x="570" y="252" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">2026-07-17</text>
+
+        <!-- 0.8.0 — 2026-07-24 -->
+        <circle cx="680" cy="220" r="4" fill="#1a2332"/>
+        <line x1="680" y1="226" x2="680" y2="300" stroke="#4a5568" stroke-width="0.8"/>
+        <text x="680" y="316" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">0.8.0</text>
+        <text x="680" y="332" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Security hardening</text>
+        <text x="680" y="352" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">2026-07-24</text>
+
+        <!-- 0.9.0-rc.3 — 2026-10 (current — focal) -->
+        <circle cx="830" cy="220" r="6" fill="#c0392b"/>
+        <line x1="830" y1="214" x2="830" y2="140" stroke="#4a5568" stroke-width="0.8"/>
+        <text x="830" y="128" fill="#c0392b" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">0.9.0-rc.3</text>
+        <text x="830" y="112" fill="#1a2332" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Security audit R01–R18</text>
+        <text x="830" y="252" fill="#c0392b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">2026-10 · current</text>
+
+        <!-- 1.0.0 — 2027 Q2 (planned — hollow) -->
+        <circle cx="1000" cy="220" r="6" fill="#f5f5f5" stroke="#4a5568" stroke-width="1.2"/>
+        <line x1="1000" y1="226" x2="1000" y2="300" stroke="#4a5568" stroke-width="0.8"/>
+        <text x="1000" y="316" fill="#4a5568" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">1.0.0</text>
+        <text x="1000" y="332" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif" text-anchor="middle">Stable release</text>
+        <text x="1000" y="352" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle">2027 Q2 · planned</text>
+
+        <!-- Arrowhead at end of timeline -->
+        <polygon points="1060,220 1048,214 1048,226" fill="#1a2332"/>
+
+        <!-- Legend -->
+        <line x1="60" y1="420" x2="1060" y2="420" stroke="rgba(26,35,50,0.10)" stroke-width="0.8"/>
+        <circle cx="100" cy="436" r="4" fill="#c0392b"/>
+        <text x="112" y="439" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace">MILESTONE</text>
+        <circle cx="220" cy="436" r="4" fill="#1a2332"/>
+        <text x="232" y="439" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace">COMPLETED</text>
+        <circle cx="340" cy="436" r="4" fill="#f5f5f5" stroke="#4a5568" stroke-width="1.2"/>
+        <text x="352" y="439" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace">PLANNED</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

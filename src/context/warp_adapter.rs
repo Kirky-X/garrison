@@ -4,7 +4,7 @@
 //! warp 适配器模块。
 //!
 //! 实现 `GarrisonContext` / `GarrisonRequest` / `GarrisonResponse` / `GarrisonStorage` trait，
-//! 将 Garrison 鉴权逻辑与 warp 0.4 Web 框架解耦。
+//! 将 Garrison 鉴权逻辑与 warp Web 框架解耦。
 //!
 //! ## 设计
 //!

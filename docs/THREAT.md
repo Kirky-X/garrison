@@ -2,7 +2,7 @@
 
 本文档描述 Garrison 的威胁模型：以 **STRIDE** 六维分类，逐维说明**哪些攻击由框架防御**、**哪些责任留给业务方/部署方**。这是项目专业度与免责边界的正式声明——框架不会替代部署方的安全责任，双方边界必须清晰。
 
-> 适用版本：0.9.0-rc.2。威胁模型随版本演进更新；攻击面变化的变更（新协议、新解析入口）应在同一变更中更新本文档。
+> 适用版本：0.9.0-rc.3。威胁模型随版本演进更新；攻击面变化的变更（新协议、新解析入口）应在同一变更中更新本文档。
 >
 > 相关文档：[SECURITY.md](../SECURITY.md)（漏洞披露与 SLA）｜[OWASP_TOP10.md](./OWASP_TOP10.md)（Top 10 逐类映射）｜[ARCHITECTURE.md](./ARCHITECTURE.md)（分层架构）｜[DEPLOYMENT.md](./DEPLOYMENT.md)（部署加固）
 
@@ -27,6 +27,12 @@
 | 客户端输入 | **完全不信任**——所有外部输入（HTTP 头/XML/JSON/JWT/SAML）按恶意输入处理 |
 
 ## 🔴 STRIDE 矩阵
+
+<div align="center">
+
+<img src="assets/stride-matrix.svg" alt="STRIDE 威胁模型" width="800">
+
+</div>
 
 ### S — Spoofing（仿冒）
 

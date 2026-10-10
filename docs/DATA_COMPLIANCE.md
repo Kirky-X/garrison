@@ -24,6 +24,12 @@
 
 ### 2.1 框架侧编排（`data-erasure` feature）
 
+<div align="center">
+
+<img src="assets/data-erasure-flow.svg" alt="数据擦除流程" width="800">
+
+</div>
+
 启用 feature 后，`compliance::DataErasureService` 按主体擦除框架管辖内可定位数据并产出留档报告：
 
 ```rust,ignore

@@ -8,6 +8,12 @@ Garrison 的会话/缓存链路支持 Redis 后端（`cache-redis` / `rate-limit
 
 ## 1. 覆盖场景
 
+<div align="center">
+
+<img src="assets/reliability-scenarios.svg" alt="故障演练场景" width="800">
+
+</div>
+
 | # | 场景 | 故障注入 | 模拟的真实故障 |
 |---|------|----------|----------------|
 | 1 | 容器暂停 → 恢复 | `docker pause` / `unpause` | 宿主机内存压力 / OOM 冻结 / 虚拟机挂起 |

@@ -2,7 +2,7 @@
 
 > Garrison 配置由 `GarrisonConfig` 统一管理，支持三级配置源合并与 `tokio::sync::watch` 热更新能力。
 >
-> - 适用版本：0.9.0-rc.2（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
+> - 适用版本：0.9.0-rc.3（核心配置 + JWT / 签名 / SSO / remember-me / Redis 部署模式 / 多租户 / 账号安全引擎 / 微服务架构 / ABAC / OAuth2 Server 等扩展配置）
 > - 配置类型：`GarrisonConfig`，实现 `serde::Serialize / Deserialize`
 > 架构设计详见 [🏗️ 架构文档](./ARCHITECTURE.md)；部署配置详见 [🚀 部署指南](./DEPLOYMENT.md)。
 
@@ -17,6 +17,12 @@
 ---
 
 ## 🎯 配置源优先级
+
+<div align="center">
+
+<img src="assets/config-priority.svg" alt="配置优先级" width="800">
+
+</div>
 
 Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）：
 
@@ -65,13 +71,26 @@ Garrison 配置按以下优先级合并（**高优先级覆盖低优先级**）�
 | `audit_mask_mode` | `String` | `"partial"` | `GARRISON_AUDIT_MASK_MODE` | 审计日志脱敏模式 |
 | `seed_primary_amr` | `bool` | `true` | `GARRISON_SEED_PRIMARY_AMR` | 登录是否向会话播种主认证因子（`amr=["pwd"]` / AAL 1 / `auth_time`）。默认 `true` 保持「login 即主认证」既有契约；**安全敏感部署建议显式 `false`**——凭证委托 / 零凭证 login 路径并未发生密码校验，播种 `pwd` 会向 amr_ledger 与 JWT claim 断言一次从未发生的认证，误导下游 step-up 判定（`assert_freshness` / `ledger_max_aal`）。关闭后会话 `amr_ledger` 为空、`auth_time` 为 `None`、JWT 不携带 `amr`/`auth_time` claim（MFA step-up 追加不受影响） |
 | `login_id_max_len` | `u32` | `255` | `GARRISON_LOGIN_ID_MAX_LEN` | stp 登录收口（`login` / `login_with_token` / `login_by_token`）的 login_id 字节长度上限，超限拒绝签发会话；`0` = 框架层不限。HTTP 请求层 `LoginRequest` 反序列化恒按 255 封顶（wire 层不读运行时配置），本配置只可进一步收紧 |
-| `require_tenant_bound_jwt` | `bool` | `false` | `GARRISON_REQUIRE_TENANT_BOUND_JWT` | 严格收口：Stateless JWT（`token_style="jwt"` + `jwt_mode=Stateless`）在租户上下文内必须携带签发租户绑定 claim `tid`。默认 `false`——无 `tid` 的存量 token（无租户上下文签发 / 历史签发）放行（向后兼容，绑定语义随 token 自然轮替收敛）；`true` 时 `check_login_stateless` 对无 `tid` token 显性拒绝（`stp-check-login-tenant-unbound`），封住存量无绑定 token 不受租户约束的窗口（jti 黑名单跨请求租户命名空间 miss 的吊销逃逸面）。无租户上下文部署不受影响；开启前应确认存量 token 已轮替（或可接受其显性失效） |
+| `require_tenant_bound_jwt` | `bool` | `false` | `GARRISON_REQUIRE_TENANT_BOUND_JWT` | 严格收口：Stateless JWT（`token_style="jwt"` + `jwt_mode=Stateless`）在租户上下文内必须携带签发租户绑定 claim `tid`。默认 `false`——无 `tid` 的存量 token（无租户上下文签发 / 历史签发）放行（向后兼容，绑定语义随 token 自然轮替收敛）；`true` 时 `check_login_stateless` 对无 `tid` token 显性拒绝（`stp-check-login-tenant-unbound`），封住存量无绑定 token 不受租户约束的窗口（jti 黑名单跨请求租户命名空间 miss 的吊销逃逸面）。无租户上下文部署不受影响；开启前应确认存量 token 已轮替（或可接受其显性失效）。覆盖范围见下方「租户绑定严格开关覆盖矩阵」：本项仅作用于 Stateless，会话模式由 `require_session_tenant_binding` 覆盖 |
+| `require_session_tenant_binding` | `bool` | `false` | `GARRISON_REQUIRE_SESSION_TENANT_BINDING` | 严格收口：会话模式（`jwt_mode=Simple` / `Mixin`）在租户上下文内必须持有会话租户绑定（attr `__garrison_tenant_id`）。默认 `false`——无绑定的存量会话（本字段与绑定机制引入前登录产生，含 `remember_me` 90 天长会话）放行（向后兼容；绑定只在登录时刻写入，存量会话只能靠 TTL 自然过期收敛）；`true` 时 `check_login` 对无绑定会话显性报错（`stp-check-login-session-tenant-unbound`），封住旧会话不受租户约束的窗口。无租户上下文部署不受影响；开启前应确认存量无绑定会话已轮替（或可接受其显性失效）。覆盖范围见下方「租户绑定严格开关覆盖矩阵」：本项不覆盖 Stateless（由 `require_tenant_bound_jwt` 覆盖） |
+
+#### 租户绑定严格开关覆盖矩阵
+
+两个开关各覆盖一半，**开启其一不代表全部收紧**：
+
+| `jwt_mode` | token 绑定校验 | 会话绑定校验 |
+|---|---|---|
+| `Stateless` | `require_tenant_bound_jwt`（读 `tid` claim） | 不适用（无会话存储） |
+| `Mixin` | 不校验 `tid`（仅验签） | `require_session_tenant_binding` |
+| `Simple` | 不适用 | `require_session_tenant_binding` |
+
+绑定只在登录时刻写入（`create_token_session_inner` 在 `TENANT` 上下文存在时写 attr），框架**不做惰性补绑**——`X-Tenant-Id` 为客户端可控输入，补绑等于把「豁免面」换成「钉定型 DoS」。
 
 ### 2.2 扩展配置（0.2.0 新增）
 
 | 字段名 | 类型 | 默认值 | 环境变量 | 说明 |
 |--------|------|--------|----------|------|
-| `jwt_algorithm` | `String` | `"HS256"` | `GARRISON_JWT_ALGORITHM` | JWT 签名算法，可选 `HS256` / `HS512` 等 |
+| `jwt_algorithm` | `String` | `"HS256"` | `GARRISON_JWT_ALGORITHM` | JWT 签名算法，白名单 6 值：`HS256` / `HS384` / `HS512` / `RS256` / `ES256` / `EdDSA`（非对称算法需配套对应私钥 PEM 字段） |
 | `jwt_secret` | `String` | `""` | `GARRISON_JWT_SECRET` | JWT 签名密钥（启用 `protocol-jwt` 时必填） |
 | `sign_window_seconds` | `i64` | `300` | `GARRISON_SIGN_WINDOW_SECONDS` | API 签名时间窗口（秒），防重放 |
 | `sso_ticket_ttl_seconds` | `u64` | `60` | `GARRISON_SSO_TICKET_TTL_SECONDS` | SSO ticket 有效期（秒） |
@@ -198,6 +217,26 @@ recovery_misuse_tolerance = 0       # 恢复码误用豁免额度（默认 0，�
 
 **运维提示**：`app_password_history` 表随 `016_password_history.sql` 迁移创建；注册/常规改密路径的追加由 host 责任接入（保证「上一代密码」在历史中可查）。
 
+### 2.13 JWT 撤销与限流后端配置（0.9.x 新增）
+
+| 字段名 | 类型 | 默认值 | 环境变量 | 说明 |
+|--------|------|--------|----------|------|
+| `enable_jwt_revocation` | `bool` | `false` | `GARRISON_ENABLE_JWT_REVOCATION` | 启用 JWT 撤销黑名单：`logout` / `kickout` 时将 `jti` 写入 DAO（TTL = 剩余有效期），`check_login_stateless` 验签后前置检查，已撤销返回 `TokenRevoked`；仅 `protocol-jwt` + `token_style="jwt"` 时生效 |
+| `allow_stateless_jwt_no_revocation` | `bool` | `false` | `GARRISON_ALLOW_STATELESS_JWT_NO_REVOCATION` | 显式风险接受：允许 `token_style="jwt"` + `JwtMode::Stateless` + 不启用撤销的组合（不可吊销的永久 JWT 凭证；`jwt_mode` 为代码注入的 `JwtMode` 枚举，非配置字段）；正常部署应使用 `enable_jwt_revocation=true` 或 `JwtMode::Mixin` |
+| `rate_limit_backend` | `String` | `"memory"` | `GARRISON_RATE_LIMIT_BACKEND` | 限流后端（`memory` / `redis`）；`redis` 需 `rate-limit-redis` Cargo feature，连接 URL 取 `GARRISON_REDIS_URL`，未知值配置报错（fail-closed） |
+
+---
+
+### 2.14 Refresh Token 重用检测与宽限窗口配置（oauth2-server，R06）
+
+驱动 `RefreshTokenRotation`（`TokenHandler::with_refresh_rotation`）的重用检测与并发双刷容忍。重用三级分类：`RecentPrev`（命中存活链头 parent，回溯 1 跳）/ `OrphanedBranch`（回溯 >1 跳）/ `StaleLineage`（无存活血缘，恒按盗用吊销整条 chain，不受本组配置影响）。三项均从 `garrison.toml` 加载。
+
+| 字段名 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `recent_reuse_behaviour` | `RecentReuseBehaviour` | `TheftDetected`（toml 值 `theft_detected`） | `RecentPrev` / `OrphanedBranch` 的处置分派：`TheftDetected`（默认，吊销整条 chain + `TokenRevoked`）/ `Unauthorised`（仅拒绝本次请求 401，不吊销 chain）；非法值启动期 fail-fast |
+| `refresh_grace_period_secs` | `i64` | `0` | 并发双刷宽限窗口秒数（`0` = 关闭）。窗口内已轮换的旧 token 再次呈现时返回轮换签发的既有新 token（不重旋转）；兑现凭据进程内暂存不落库，多实例仅签发实例可命中，其余退化为既有重用处置。负值配置校验拒绝 |
+| `refresh_grace_max_uses` | `u32` | `1` | 宽限窗口内同一旧 token 的最大兑现次数；预算耗尽后的窗口内重放按 `recent_reuse_behaviour` 处置。仅当 `refresh_grace_period_secs > 0` 时生效；`0` 配置校验拒绝（窗口形同虚设） |
+
 ---
 
 ## 📝 配置文件示例
@@ -291,6 +330,11 @@ GARRISON_SSO_TICKET_TTL_SECONDS=60
 # === 0.6.0 remember-me ===
 GARRISON_REMEMBER_ME_ENABLED=false
 GARRISON_REMEMBER_ME_TIMEOUT=7776000
+
+# === 0.9.x JWT 撤销与限流后端 ===
+GARRISON_ENABLE_JWT_REVOCATION=false
+GARRISON_ALLOW_STATELESS_JWT_NO_REVOCATION=false
+GARRISON_RATE_LIMIT_BACKEND=memory
 
 # === 会话管理 ===
 GARRISON_SESSION_HOVER_TIMEOUT=-1
@@ -461,7 +505,7 @@ Garrison 通过 feature flag 在编译期裁剪，不同 feature 下需要的配
 ```toml
 # Cargo.toml
 [dependencies]
-garrison = { version = "0.9.0-rc.2", features = ["web-axum"] } # 或 web-actix / web-warp
+garrison = { version = "0.9.0-rc.3", features = ["web-axum"] } # 或 web-actix / web-warp
 ```
 
 ```rust,ignore
@@ -493,7 +537,7 @@ delta-seconds 整数秒，下限 1）。
 ```toml
 [dependencies]
 garrison = {
-    version = "0.9.0-rc.2",
+    version = "0.9.0-rc.3",
     features = [
         "cache-memory",
         "cache-redis",
@@ -527,6 +571,7 @@ GARRISON_REDIS_URL=redis://127.0.0.1:6379/0
 | `GARRISON_RATE_LIMIT` | 100 | 外网每 IP 限速（必须 > 0，0 拒绝启动） |
 | `GARRISON_INTERNAL_API_KEY` | 无（必填） | 内网 API Key，缺失或为空时 fail-closed 拒绝启动 |
 | `GARRISON_EXTERNAL_LOGIN_ENABLED` | **false** | **是否启用外网登录端点**。框架 login 不校验凭证（Sa-Token 模型：业务层先验密码、框架只签发会话），默认对 `POST /api/v1/auth/login` 返回 404（secure-by-default）。业务方注入凭证校验后才设为 `true`；开启时启动输出 warn 提醒 |
+| `GARRISON_STRICT_SECURITY` | **true** | 严格安全档：内网 API Key 长度下限（库层 `MIN_INTERNAL_API_KEY_LEN` = 32 字节）与外网登录暴露未 ACK 均在启动期由库层 `AuthServerConfig::validate()` 拒绝（早于建库与迁移）。`false` 仅作为密钥尚未轮换时的一次性逃生阀，同条件降级为库层告警。本路径经 confers 只接受 `true`/`false`（大小写不敏感），非法值拒绝启动（库层 `AuthServerConfig::default()` 读同名变量时语义不同：非法值告警后回退缺省 `false`） |
 
 对应库级配置：`AuthServerConfig::external_login_enabled`（`with_external_login_enabled(bool)`）。
 

@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OWASP Top 10 Mapping</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #1a2332;
+      --color-muted:   #4a5568;
+      --color-accent:  #c0392b;
+      --color-link:    #2c5282;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1400px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 1200px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Security Matrix · OWASP Top 10</p>
+    <h1>OWASP Top 10 (2021) — Garrison Defense Mapping</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1280 800" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="owasp-mapping-title owasp-mapping-desc">
+        <title id="owasp-mapping-title">OWASP Top 10 Mapping</title>
+        <desc id="owasp-mapping-desc">A ten-row matrix mapping OWASP Top 10 2021 risks A01 through A10 to Garrison framework defenses and business responsibilities.</desc>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- Header Row -->
+        <rect x="20" y="60" width="1240" height="40" rx="6" fill="#1a2332"/>
+        <text x="40" y="84" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Risk</text>
+        <text x="220" y="84" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Framework Defense</text>
+        <text x="760" y="84" fill="#f5f5f5" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Business Responsibility</text>
+
+        <!-- A01 — Broken Access Control (focal) -->
+        <rect x="20" y="108" width="1240" height="56" rx="4" fill="rgba(192,57,43,0.07)" stroke="#c0392b" stroke-width="1.2"/>
+        <text x="40" y="132" fill="#c0392b" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A01</text>
+        <text x="220" y="132" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Broken Access Control</text>
+        <text x="220" y="150" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">RBAC · ABAC/Cedar · tenant isolation · API Key namespace · WAF</text>
+        <text x="760" y="132" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">Role/policy data modeling; least-privilege grant;</text>
+        <text x="760" y="150" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">tenant resolver wiring; object-level authz in app layer</text>
+
+        <!-- A02 — Cryptographic Failures -->
+        <rect x="20" y="172" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="196" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A02</text>
+        <text x="220" y="196" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Cryptographic Failures</text>
+        <text x="220" y="214" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">Argon2id · CSPRNG · constant-time eq · sha256 API keys · JWT whitelist</text>
+        <text x="760" y="196" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">TLS termination; JWT key strength + 90-day rotation;</text>
+        <text x="760" y="214" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">sensitive field encryption at rest in downstream stores</text>
+
+        <!-- A03 — Injection -->
+        <rect x="20" y="236" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="260" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A03</text>
+        <text x="220" y="260" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Injection</text>
+        <text x="220" y="278" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">dbnexus parameterized queries · XSS escaping · input sanitize · WAF</text>
+        <text x="760" y="260" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">Business SQL/ORM parameterization; template context-</text>
+        <text x="760" y="278" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">aware escaping; third-party injection review</text>
+
+        <!-- A04 — Insecure Design -->
+        <rect x="20" y="300" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="324" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A04</text>
+        <text x="220" y="324" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Insecure Design</text>
+        <text x="220" y="342" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">STRIDE threat model · ADR crypto rationale · ASVS 4.0 · secure-by-default</text>
+        <text x="760" y="324" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">Business-flow threat modeling (forgot-password / invite);</text>
+        <text x="760" y="342" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">design review when composing framework mechanisms</text>
+
+        <!-- A05 — Security Misconfiguration -->
+        <rect x="20" y="364" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="388" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A05</text>
+        <text x="220" y="388" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Security Misconfiguration</text>
+        <text x="220" y="406" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">validate_core fail-fast · config-security-rules · safe defaults</text>
+        <text x="760" y="388" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">Production hardening checklist; secrets management</text>
+        <text x="760" y="406" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">(Vault/K8s Secret); config adaptation on version upgrades</text>
+
+        <!-- A06 — Vulnerable Components -->
+        <rect x="20" y="428" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="452" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A06</text>
+        <text x="220" y="452" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Vulnerable Components</text>
+        <text x="220" y="470" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">cargo deny + audit + vet + Semgrep + SBOM + SLSA attestations</text>
+        <text x="760" y="452" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">Transitive dependency gating (SBOM comparison);</text>
+        <text x="760" y="470" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">framework version tracking and upgrade cadence</text>
+
+        <!-- A07 — Auth Failures -->
+        <rect x="20" y="492" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="516" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A07</text>
+        <text x="220" y="516" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Identification &amp; Auth Failures</text>
+        <text x="220" y="534" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">brute-force + account-lockout + GCRA · password policy + HIBP · TOTP vectors</text>
+        <text x="760" y="516" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">Uniform auth-failure messaging (anti-enumeration);</text>
+        <text x="760" y="534" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">MFA orchestration composition; session credential custody</text>
+
+        <!-- A08 — Integrity Failures -->
+        <rect x="20" y="556" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="580" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A08</text>
+        <text x="220" y="580" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Software &amp; Data Integrity</text>
+        <text x="220" y="598" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">Audit hash-chain · atomic get_and_delete · Lua atomic · release gates</text>
+        <text x="760" y="580" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">Trusted update source (crates.io / GitHub attestation);</text>
+        <text x="760" y="598" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">business data integrity constraints (DB FK / unique) in schema</text>
+
+        <!-- A09 — Logging Failures -->
+        <rect x="20" y="620" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="644" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A09</text>
+        <text x="220" y="644" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Security Logging &amp; Monitoring</text>
+        <text x="220" y="662" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">listener events · audit-inklog + SIEM · Prometheus · OTLP · anomalous detector</text>
+        <text x="760" y="644" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">Centralized log collection / alerting / retention (SIEM);</text>
+        <text x="760" y="662" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">WORM archival; monitoring dashboard setup</text>
+
+        <!-- A10 — SSRF -->
+        <rect x="20" y="684" width="1240" height="56" rx="4" fill="#ffffff" stroke="rgba(26,35,50,0.12)" stroke-width="0.8"/>
+        <text x="40" y="708" fill="#4a5568" font-size="10" font-weight="600" font-family="'Geist Mono', monospace">A10</text>
+        <text x="220" y="708" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif">Server-Side Request Forgery</text>
+        <text x="220" y="726" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace">Egress pinned to configured IdP URLs (OIDC / SAML) · WAF host filter</text>
+        <text x="760" y="708" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">App-built egress (webhook / URL preview) SSRF defense</text>
+        <text x="760" y="726" fill="#4a5568" font-size="9" font-family="'Geist', sans-serif">is app-layer; IdP reachability via deployment network policy</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

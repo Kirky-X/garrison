@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deployment Modes</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #1a2332;
+      --color-muted:   #4a5568;
+      --color-accent:  #c0392b;
+      --color-link:    #2c5282;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1100px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 960px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Architecture · Deployment</p>
+    <h1>Two Deployment Modes</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 1000 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="deployment-modes-title deployment-modes-desc">
+        <title id="deployment-modes-title">Deployment Modes</title>
+        <desc id="deployment-modes-desc">Two deployment modes side by side: embedded mode with Garrison library linked into the application process, and remote auth server mode with business apps calling a standalone auth server over HTTP or gRPC.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4a5568"/></marker>
+          <marker id="arrow-link" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#2c5282"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- Zone: Embedded Mode -->
+        <rect x="30" y="60" width="440" height="400" rx="8" fill="rgba(26,35,50,0.02)" stroke="rgba(26,35,50,0.10)" stroke-width="0.8"/>
+        <rect x="44" y="68" width="160" height="16" rx="2" fill="#f5f5f5"/>
+        <text x="124" y="80" fill="rgba(26,35,50,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">EMBEDDED MODE</text>
+
+        <!-- Zone: Remote Auth Server Mode -->
+        <rect x="520" y="60" width="440" height="400" rx="8" fill="rgba(26,35,50,0.02)" stroke="rgba(26,35,50,0.10)" stroke-width="0.8"/>
+        <rect x="534" y="68" width="216" height="16" rx="2" fill="#f5f5f5"/>
+        <text x="642" y="80" fill="rgba(26,35,50,0.40)" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.14em">REMOTE AUTH SERVER</text>
+
+        <!-- Connectors: Embedded -->
+        <!-- App → Garrison lib -->
+        <line x1="200" y1="200" x2="260" y2="200" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Garrison lib → DB -->
+        <line x1="340" y1="224" x2="340" y2="300" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Garrison lib → Redis -->
+        <line x1="380" y1="224" x2="380" y2="300" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- Connectors: Remote -->
+        <!-- App B → Auth Server -->
+        <path d="M 620 200 H 720" fill="none" stroke="#2c5282" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- App C → Auth Server -->
+        <path d="M 620 260 H 680 V 240 H 720" fill="none" stroke="#2c5282" stroke-width="1.2" marker-end="url(#arrow-link)"/>
+        <!-- Auth Server → PostgreSQL -->
+        <line x1="800" y1="240" x2="800" y2="300" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- Auth Server → Redis Cluster -->
+        <line x1="860" y1="240" x2="860" y2="300" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- HTTP/gRPC label on remote connectors -->
+        <rect x="644" y="186" width="52" height="14" rx="2" fill="#f5f5f5"/>
+        <text x="670" y="196" fill="#2c5282" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">HTTP/gRPC</text>
+
+        <!-- Embedded Nodes -->
+        <!-- App A -->
+        <rect x="80" y="176" width="120" height="48" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="140" y="204" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Business App A</text>
+
+        <!-- Garrison Library (focal) -->
+        <rect x="260" y="176" width="140" height="48" rx="6" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1.4"/>
+        <text x="330" y="204" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Garrison Library</text>
+
+        <!-- DB store -->
+        <rect x="280" y="300" width="120" height="56" rx="6" fill="rgba(26,35,50,0.05)" stroke="#4a5568" stroke-width="1"/>
+        <text x="340" y="324" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">SQLite</text>
+        <text x="340" y="342" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">PostgreSQL · MySQL</text>
+
+        <!-- Redis store -->
+        <rect x="280" y="376" width="120" height="48" rx="6" fill="rgba(26,35,50,0.05)" stroke="#4a5568" stroke-width="1"/>
+        <text x="340" y="404" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Redis</text>
+
+        <!-- Remote Nodes -->
+        <!-- App B -->
+        <rect x="560" y="176" width="80" height="48" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="600" y="204" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">App B</text>
+
+        <!-- App C -->
+        <rect x="560" y="236" width="80" height="48" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="600" y="264" fill="#1a2332" font-size="11" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">App C</text>
+
+        <!-- Auth Server (focal) -->
+        <rect x="720" y="192" width="120" height="56" rx="6" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1.4"/>
+        <text x="780" y="220" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Auth Server</text>
+        <text x="780" y="236" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">auth-server bin</text>
+
+        <!-- PostgreSQL store -->
+        <rect x="740" y="300" width="120" height="56" rx="6" fill="rgba(26,35,50,0.05)" stroke="#4a5568" stroke-width="1"/>
+        <text x="800" y="324" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">PostgreSQL</text>
+        <text x="800" y="342" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">persistent store</text>
+
+        <!-- Redis Cluster store -->
+        <rect x="800" y="376" width="120" height="48" rx="6" fill="rgba(26,35,50,0.05)" stroke="#4a5568" stroke-width="1"/>
+        <text x="860" y="404" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Redis Cluster</text>
+
+        <!-- Feature tags -->
+        <rect x="44" y="432" width="180" height="16" rx="2" fill="transparent" stroke="rgba(26,35,50,0.20)" stroke-width="0.8"/>
+        <text x="134" y="443" fill="#4a5568" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">FEATURE: backend-embedded</text>
+
+        <rect x="534" y="432" width="220" height="16" rx="2" fill="transparent" stroke="rgba(26,35,50,0.20)" stroke-width="0.8"/>
+        <text x="644" y="443" fill="#4a5568" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">FEATURE: backend-remote + auth-server</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

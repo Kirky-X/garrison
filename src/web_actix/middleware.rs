@@ -91,7 +91,7 @@ fn route_matches_rule(pattern: &str, path: &str) -> bool {
     }
 }
 
-/// `{xxx}` 形式的单段参数（actix / axum0.8 风格）。
+/// `{xxx}` 形式的单段参数（actix / axum 风格）。
 fn is_param_segment(seg: &str) -> bool {
     seg.starts_with(':') || (seg.starts_with('{') && seg.ends_with('}') && seg.len() > 2)
 }

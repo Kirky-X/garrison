@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Data Erasure Flow</title>
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --color-paper:   #f5f5f5;
+      --color-ink:     #1a2332;
+      --color-muted:   #4a5568;
+      --color-accent:  #c0392b;
+      --color-link:    #2c5282;
+      --font-sans:     'Geist', system-ui, sans-serif;
+      --font-serif:    'Instrument Serif', serif;
+      --font-mono:     'Geist Mono', ui-monospace, monospace;
+    }
+    body {
+      font-family: var(--font-sans);
+      background: var(--color-paper);
+      color: var(--color-ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3rem 2rem;
+    }
+    .frame { max-width: 1000px; width: 100%; }
+    .diagram-container { width: 100%; overflow-x: auto; }
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 0.66rem;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--color-muted);
+      margin-bottom: 0.5rem;
+    }
+    h1 {
+      font-family: var(--font-serif);
+      font-size: clamp(1.5rem, 2.4vw + 0.75rem, 2rem);
+      font-weight: 400;
+      letter-spacing: -0.02em;
+      line-height: 1.15;
+      color: var(--color-ink);
+      margin-bottom: 1.5rem;
+    }
+    svg { width: 100%; min-width: 880px; display: block; }
+    @media print {
+      .diagram-container { overflow-x: visible; }
+      svg { min-width: 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="frame">
+    <p class="eyebrow">Data Flow · Compliance</p>
+    <h1>Data Erasure Flow — GDPR / PIPL</h1>
+
+    <div class="diagram-container">
+      <svg viewBox="0 0 920 520" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="data-erasure-flow-title data-erasure-flow-desc">
+        <title id="data-erasure-flow-title">Data Erasure Flow</title>
+        <desc id="data-erasure-flow-desc">DataErasureService orchestrates subject erasure by delegating to logout_by_login_id for cascading session and token deletion, then produces a report; a separate path erases IP artifacts.</desc>
+        <defs>
+          <marker id="arrow" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#4a5568"/></marker>
+          <marker id="arrow-accent" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto"><polygon points="0 0, 8 3, 0 6" fill="#c0392b"/></marker>
+        </defs>
+
+        <rect width="100%" height="100%" fill="#f5f5f5"/>
+
+        <!-- Main flow connectors (top row, left to right) -->
+        <!-- Service → erase_subject -->
+        <path d="M 200 140 H 248" fill="none" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- erase_subject → delegate -->
+        <path d="M 400 140 H 448" fill="none" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+        <!-- delegate → cascade -->
+        <path d="M 600 140 H 648" fill="none" stroke="#c0392b" stroke-width="1.2" marker-end="url(#arrow-accent)"/>
+
+        <!-- Cascade → Report (bends down) -->
+        <path d="M 760 172 V 240 H 760 V 288" fill="none" stroke="#4a5568" stroke-width="1.2" marker-end="url(#arrow)"/>
+
+        <!-- IP artifacts path (below, separate) -->
+        <path d="M 200 380 H 248" fill="none" stroke="#4a5568" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+        <path d="M 400 380 H 448" fill="none" stroke="#4a5568" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+
+        <!-- Label: delegate arrow -->
+        <rect x="452" y="126" width="140" height="14" rx="2" fill="#f5f5f5"/>
+        <text x="522" y="136" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">CLOSURE DELEGATION</text>
+
+        <!-- Label: cascade arrow -->
+        <rect x="652" y="126" width="100" height="14" rx="2" fill="#f5f5f5"/>
+        <text x="702" y="136" fill="#c0392b" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.06em">PER-LOGIN LOCK</text>
+
+        <!-- Node 1: DataErasureService -->
+        <rect x="80" y="112" width="120" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="140" y="136" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">DataErasure</text>
+        <text x="140" y="154" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">Service</text>
+
+        <!-- Node 2: erase_subject -->
+        <rect x="248" y="112" width="152" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="324" y="136" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">erase_subject</text>
+        <text x="324" y="154" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">subject: "1001"</text>
+
+        <!-- Node 3: logout_by_login_id -->
+        <rect x="448" y="112" width="152" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="524" y="136" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">logout_by_login_id</text>
+        <text x="524" y="154" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">StpLogic trait</text>
+
+        <!-- Node 4: Cascade delete (focal) -->
+        <rect x="648" y="112" width="152" height="56" rx="6" fill="rgba(192,57,43,0.08)" stroke="#c0392b" stroke-width="1.4"/>
+        <text x="724" y="136" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Cascade Delete</text>
+        <text x="724" y="154" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">sessions · tokens</text>
+
+        <!-- Node 5: Report -->
+        <rect x="648" y="288" width="152" height="80" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="724" y="312" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">Report</text>
+        <text x="724" y="330" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">erased_keys</text>
+        <text x="724" y="346" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">session_erasure_delegated</text>
+        <text x="724" y="362" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">residual_guidance</text>
+
+        <!-- Divider label -->
+        <text x="460" y="240" fill="#4a5568" font-size="8" font-family="'Geist Mono', monospace" text-anchor="middle" letter-spacing="0.10em">IP DIMENSION — GDPR RECITAL 30</text>
+        <line x1="80" y1="256" x2="560" y2="256" stroke="rgba(26,35,50,0.10)" stroke-width="0.8"/>
+
+        <!-- IP artifacts path nodes -->
+        <rect x="80" y="352" width="120" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="140" y="376" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">erase_ip_</text>
+        <text x="140" y="394" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">artifacts</text>
+
+        <rect x="248" y="352" width="152" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="324" y="376" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">bf:{ip}:count</text>
+        <text x="324" y="394" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">brute-force counters</text>
+
+        <rect x="448" y="352" width="120" height="56" rx="6" fill="#ffffff" stroke="#1a2332" stroke-width="1"/>
+        <text x="508" y="376" fill="#1a2332" font-size="12" font-weight="600" font-family="'Geist', sans-serif" text-anchor="middle">IP Report</text>
+        <text x="508" y="394" fill="#4a5568" font-size="9" font-family="'Geist Mono', monospace" text-anchor="middle">erase result</text>
+
+        <!-- Feature tag -->
+        <rect x="648" y="404" width="152" height="16" rx="2" fill="transparent" stroke="rgba(26,35,50,0.20)" stroke-width="0.8"/>
+        <text x="724" y="415" fill="#4a5568" font-size="7" font-family="'Geist Mono', monospace" text-anchor="middle">FEATURE: data-erasure</text>
+      </svg>
+    </div>
+  </div>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 本参考文档收录 Garrison 的公开 API：全局管理器与静态门面、业务回调 trait、存储层 trait、注解宏、错误类型以及特性门控模块。文档假设启用了相应 feature；未启用时对应 API 不参与编译。在线文档（docs.rs 自动生成）：<https://docs.rs/garrison>。
 
-> 适用版本：0.9.0-rc.2。完整签名以 rustdoc 为准，本文按「模块 → trait/类型 → 方法表」组织，供快速定位。
+> 适用版本：0.9.0-rc.3。完整签名以 rustdoc 为准，本文按「模块 → trait/类型 → 方法表」组织，供快速定位。
 
 ## 📋 目录
 
@@ -26,6 +26,12 @@
 ---
 
 ## 🎯 概述
+
+<div align="center">
+
+<img src="assets/api-structure.svg" alt="API 结构" width="800">
+
+</div>
 
 ### API 设计原则
 
@@ -505,6 +511,7 @@ Display 行为：未启用 `i18n` 时硬编码中文；启用 `i18n` 后按线�
 | `secure`（`secure-*`） | 安全工具集 |
 | `account`（`account-*`） | 账号安全引擎 |
 | `protocol`（`protocol-*`） | 认证协议层 |
+| `protocol::qrlogin`（`protocol-qrlogin`） | 第一方扫码登录（两票分离状态机 + HMAC 签名票据） |
 | `abac`（`abac`） | Cedar 属性访问控制 |
 | `compliance`（`data-erasure`） | 数据擦除服务与擦除报告 |
 | `web` / `web_actix` / `web_warp`（`web-*`） | Web 框架适配 |
@@ -516,6 +523,45 @@ Display 行为：未启用 `i18n` 时硬编码中文；启用 `i18n` 后按线�
 | `health` | 健康检查 |
 | `i18n` | 国际化（基础层无条件编译） |
 | `testing`（`testing`） | 测试辅助（验收矩阵配套） |
+
+`protocol::qrlogin`（`protocol-qrlogin`）经 `GarrisonAuthServer::with_qrlogin` 装配后暴露 4 个 HTTP 端点（create / poll 匿名，scan / confirm 需 Bearer App 会话 token）：
+
+| 端点 | 认证 | 说明 |
+|------|------|------|
+| `POST /qrlogin/create` | 匿名 | Web 端创建扫码会话（响应含 qr_id + bind_token 双票） |
+| `POST /qrlogin/poll` | 匿名 | 双票轮询，Confirmed 时原子消费 bind_token 兑换并签发会话 |
+| `POST /qrlogin/scan` | Bearer App token | App 扫码，服务端锁定扫码者身份（失败 401） |
+| `POST /qrlogin/confirm` | Bearer App token | App 确认（强制确认者与扫码者一致，不信任请求体） |
+
+---
+
+## 🆕 rc.3 安全审计整改新增能力 API
+
+> 以下为 0.9.0-rc.3 新增/扩充的公开 API 速览（完整签名以 rustdoc 为准），按能力域归并。
+
+### 落库字段静态加密（`secure::encryption`，`field-encryption`）
+
+`CryptoValue`（`enc:v1:<key_id>:<base64(nonce|ciphertext)>` 编解码：`encode` / `decode` / `is_clean` / `is_digest_form`）· `AadBinding`（绑定 `garrison:{tenant}:{table}:{key}`）· `FieldCipher`（`encrypt` / `decrypt` / `seal` / `open`）· 密钥提供者 `StaticFieldKeyProvider`（`new` / `with_primary`）与 `ConfersFieldKeyProvider`（`from_key_entries`）· `FieldEncryptionDao`（透明加解密切换 DAO）· 运维报告 `ChangeKeyReport` / `CheckKeyReport`。
+
+### WebAuthn / Passkey（`protocol::webauthn`，`protocol-webauthn`）
+
+`WebauthnService`（注册/认证仪式编排）· `RelyingParty`（从 issuer 派生 rp_id/origins）· `WebauthnCredential`（`to_row` / `from_row` / `to_passkey`）· `ChallengeStore`（一次性消费防重放）· `ChallengePayload` / `FactorPurpose` / `FactorPolicy` / `WebauthnConfig`（passwordless / second_factor 双 policy）· `WebauthnAuthentication` · `WebauthnCeremonyError`。
+
+### 找回密码（`account::password_reset`，`account-password-reset`）
+
+`ActionTokenService`（`issue` / `verify` / `with_ttl` / `with_rate_limit`）· `ActionTokenClaims` · `ActionTokenConsumer`（一次性消费）· `IssuedActionToken` · `EmailResetMailSender`（防枚举，复用 email-verification 设施）。
+
+### OIDC Back-Channel Logout（`oauth2_server::backchannel`，`backchannel-logout`）
+
+`BackChannelLogoutListener`（挂 session 登出事件入队）· `BackChannelDeliverer`（`queue` / `issue` / `spawn_drain_loop` / `has_activity` / `retry_backoff_millis` / `with_backoff` / `with_queue`；禁止跟随重定向 + 指数退避）。
+
+### MFA / step-up 编排基座（`stp::mfa`，`mfa-recovery` 等）
+
+`AmrEntry`（会话因子账本）· `RequiredActionProvider`（三段式 trait：evaluate→challenge→process）及其 `TotpRequiredActionProvider` / `WebauthnRequiredActionProvider` 实现 · `RequiredActionChallenge` / `RequiredActionContext` · `RecoveryCodeManager`（verify/consume 分离、CAS 原子消费）· `MfaChainDecision` · `resolve_mfa_chain` / `validate_mfa_chains` / `first_unmet_chain_factor` / `ledger_max_aal` / `assert_freshness` / `amr_claim`。
+
+### 弃用配置键注册表（`config::deprecation`，always-on）
+
+`Deprecation`（`key` / `since_version` / `new_key` / `auto_map` / `map_fn`）· `apply_deprecations`（加载期迁移/告警，`current_version ≥ 1.0.0` 起 fail-closed）· `is_mappable`。
 
 ---
 

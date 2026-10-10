@@ -137,10 +137,11 @@ let client = OAuth2Client::new(
 use garrison::protocol::sso::server::{DefaultSsoServer, IdentityCenterIdConverter};
 use std::sync::Arc;
 
-// DefaultSsoServer::new 接收 dao + HMAC secret（与 SsoClient 必须一致，禁止空字符串）
+// DefaultSsoServer::new 接收 dao + HMAC secret（与 SsoClient 必须一致，长度 ≥32 字节，
+// 短于此构造返回 InvalidParam——安全审计 GAR-15：短 secret 可被离线爆破后伪造票据签名）
 // converter 通过 with_converter 注入（默认 IdentityCenterIdConverter）
 let dao: Arc<dyn garrison::dao::GarrisonDao> = /* ... */;
-let server = DefaultSsoServer::new(dao, "sso-hmac-secret")?
+let server = DefaultSsoServer::new(dao, "sso-hmac-secret-must-be-at-least-32-bytes!!")?
     .with_converter(Arc::new(IdentityCenterIdConverter));  // identity 直通映射
 
 // 签发 ticket（login_id 为 &str，client_id 为 i64）
@@ -155,6 +156,20 @@ let login_id = server.validate_ticket(&ticket, 2001).await?;
 - `CenterIdConverter` trait：center_id ↔ login_id 映射（`IdentityCenterIdConverter` 直通实现）
 - `SsoChannel` trait：服务端推送通道（`NoopSsoChannel` 空实现）
 - `DefaultSsoServer`：默认实现，通过共享 `GarrisonDao` 与 `SsoClient` 间接通信
+
+#### pub/sub 消息验签消费（GAR-15 / R2-3）
+
+`push_message` 发布侧**自动**把业务消息封装为 HMAC-SHA256 信封 `SsoMessageEnvelope{payload, hmac, seq}`（seq 在发布实例内单调递增）后写入通道——pub/sub 通道对任意订阅者/发布者开放且无传输层认证，因此订阅侧**必须**经 `verify_sso_message` 验签消费，不得直接解析原文：
+
+```rust
+use garrison::protocol::sso::server::verify_sso_message;
+
+// secret 与票据签名密钥一致；last_seq 由订阅方按 topic × 发布实例 维度维护
+let mut last_seq = 0u64;
+let payload = verify_sso_message(secret, raw_message, &mut last_seq)?; // Err = 不可信，丢弃
+```
+
+信封格式非法、HMAC 不匹配、`seq <= last_seq`（重放）三类情形一律返回 `Err`（fail-closed，先验签后查 seq）。跨实例部署各实例 seq 独立计数，共用一个 `last_seq` 会把后发实例的消息误判为重放。
 
 ## Sign（HMAC-SHA256 防重放）
 
