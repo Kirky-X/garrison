@@ -975,11 +975,11 @@ version = "0.23.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.garrison]]
-version = "0.9.0-rc.2"
+version = "0.9.0-rc.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.garrison-macros]]
-version = "0.9.0-rc.2"
+version = "0.9.0-rc.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.generator]]
