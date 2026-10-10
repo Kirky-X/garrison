@@ -142,8 +142,7 @@ impl EmailVerificationService {
         // 验证码定长 6 位（`generate_code` 保证）：长度不符必然不等，提前短路——
         // 用户可控的输入长度不得进入比较循环（超长输入 CPU DoS）。长度是公开
         // 参数，提前拒绝不泄露任何秘密；不等时走失败分支计入尝试次数。
-        let matched = code.len() == 6
-            && crate::secure::ct_eq::constant_time_eq(stored.as_bytes(), code.as_bytes());
+        let matched = code.len() == 6 && constant_time_eq(stored.as_bytes(), code.as_bytes());
         if matched {
             // 验证成功：删除验证码 + 清零未验证计数 + 清零尝试次数
             self.dao.delete(&code_key).await?;

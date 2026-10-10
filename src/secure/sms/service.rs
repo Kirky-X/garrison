@@ -159,8 +159,7 @@ impl SmsVerificationService {
         // 验证码定长 6 位（`generate_code` 保证）：长度不符必然不等，提前短路——
         // 用户可控的输入长度不得进入比较循环（与 email 侧同型防线）。长度是
         // 公开参数，提前拒绝不泄露任何秘密；不等时走失败分支计入尝试次数。
-        let matched = code.len() == 6
-            && crate::secure::ct_eq::constant_time_eq(stored.as_bytes(), code.as_bytes());
+        let matched = code.len() == 6 && constant_time_eq(stored.as_bytes(), code.as_bytes());
         if matched {
             // 验证成功：删除验证码 + 清零未验证计数 + 清零尝试次数。
             // 聚合执行三个 delete（首个失败不中断剩余清理），返回首个错误：
