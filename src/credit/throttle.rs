@@ -20,7 +20,7 @@
 //!   条目批量落库并清理；条目带截止时间（入队时间 + debounce），flush 只
 //!   处理到期条目——即使长期不落库，条目数也受 `max_size` 硬约束，到期
 //!   flush 保证已入队条目最终被清理，不泄漏。
-//! - **写超时**：flush 对每次落库写施加 timeout 上限（[`Self::run_flush_loop`]
+//! - **写超时**：flush 对每次落库写施加 timeout 上限（[`ActivityWriteThrottle::run_flush_loop`](crate::credit::throttle::ActivityWriteThrottle::run_flush_loop)
 //!   后台任务串行执行，单条挂起不阻塞消费调用方）；写失败/超时的条目同样
 //!   被清理并以 warn 显性化（不重试占用容量，窗口外活跃度重新入队）。
 //! - **可观测**：每次丢弃即时 warn；后台循环每个周期对窗口内丢弃做汇总
@@ -84,7 +84,7 @@ struct ThrottleEntry<W> {
 /// 高频活跃度写路径节流聚合器。
 ///
 /// 同 key 在去抖窗口内仅保留首条待落库载荷（后续调用去重）；后台
-/// [`Self::run_flush_loop`] 每个周期批量落库到期 key。待落库条目数受
+/// [`ActivityWriteThrottle::run_flush_loop`](crate::credit::throttle::ActivityWriteThrottle::run_flush_loop) 每个周期批量落库到期 key。待落库条目数受
 /// `max_size` 约束，超限时非阻塞丢弃并 `tracing::warn!` 计数显性化
 /// （丢弃 = 跳过本次落库，窗口外重写，不静默）。
 ///

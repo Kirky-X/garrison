@@ -6,15 +6,15 @@
 //! 密钥来源抽象为 [`FieldKeyProvider`]（按 key_id 取钥 + 主钥 id），多 key_id
 //! 共存：密文中嵌入加密所用的 key_id，解密按嵌入 id 取钥——轮换期间旧密文
 //! 仍可解。注入路径二选一：
-//! - **生产配置面**（不依赖额外 feature）：[`FieldCipher::from_key_entries`]
+//! - **生产配置面**（不依赖额外 feature）：[`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries)
 //!   从 (key_id, hex32) 配置表目装配（如 auth_server
 //!   `GARRISON_FIELD_ENCRYPTION_KEYS` 环境变量），内部用
 //!   [`StaticFieldKeyProvider`]
 //! - **config-encryption 既有密钥设施**（`config-encryption` feature 门控）：
-//!   [`ConfersFieldKeyProvider`] 包装 confers `KeyRegistry`（version 即 key_id）
+//!   `ConfersFieldKeyProvider` 包装 confers `KeyRegistry`（version 即 key_id）
 //!
 //! fail-closed：启用 `field-encryption` 但未配置任何密钥时，装配期
-//! （[`FieldCipher::new`] / [`FieldCipher::from_key_entries`]）即报错
+//! （[`FieldCipher::new`] / [`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries)）即报错
 //! （启动失败），绝不允许无钥明文运行。
 
 use std::collections::HashMap;
@@ -37,7 +37,7 @@ pub trait FieldKeyProvider: Send + Sync {
 
 /// [`FieldKeyProvider`] 的静态实现：内存 key_id → 密钥表。
 ///
-/// [`FieldCipher::from_key_entries`] 生产配置面的底层载体（配置解析产物），
+/// [`FieldCipher::from_key_entries`](crate::secure::encryption::FieldCipher::from_key_entries) 生产配置面的底层载体（配置解析产物），
 /// 亦供测试与直连装配。首个注册项为主钥；
 /// [`StaticFieldKeyProvider::with_primary`] 可切换（主钥切换后旧密文仍按
 /// 嵌入 key_id 可解）。
@@ -178,7 +178,7 @@ impl FieldCipher {
     }
 }
 
-/// config-encryption 既有密钥设施（confers [`KeyRegistry`]）适配器。
+/// config-encryption 既有密钥设施（confers `KeyRegistry`）适配器。
 ///
 /// confers KeyRegistry 的 version 即 garrison 的 key_id；密钥材料必须恰好
 /// 32 字节（AES-256），非 32 字节显性报错。

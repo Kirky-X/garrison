@@ -139,7 +139,7 @@ impl GarrisonPermissionStrategyDefault {
     ///
     /// 注入后权限缓存键形如
     /// `garrison:perm:cache:v{ver}:{tenant_id}:{enc(login_id)}:{enc(permission)}`
-    /// （分量经 [`encode_key_component`] 歧义消除编码），不同租户相同 `login_id`
+    /// （分量经 `encode_key_component` 歧义消除编码），不同租户相同 `login_id`
     /// 的权限判定结果互不污染。
     /// 不注入（`None`）时缓存键租户段使用占位符 `_`（未配置租户隔离，所有租户共享缓存键）。
     pub fn with_tenant_id(mut self, tenant_id: i64) -> Self {

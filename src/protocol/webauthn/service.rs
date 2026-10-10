@@ -21,7 +21,7 @@
 //!
 //! ## RP 配置派生
 //!
-//! [`RelyingParty::derive`]：`rp_id` = issuer URL host，`origins` = [issuer]。
+//! `RelyingParty::derive`（外部 `webauthn-rs`）：`rp_id` = issuer URL host，`origins` = 该 issuer URL。
 //! issuer 变更后 rp_id 自动跟随（新凭据绑定新 rp_id；既有凭据的 rpIdHash
 //! 由 authenticator 侧绑定旧 rp_id，更换 issuer 属迁移事项，不在本模块处理）。
 

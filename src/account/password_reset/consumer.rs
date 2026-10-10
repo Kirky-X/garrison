@@ -37,8 +37,8 @@ impl ActionTokenConsumer {
     /// - `Ok(false)`：消费失败——jti 已被消费过（二次消费/并发竞争败者）。
     ///
     /// # 错误
-    /// - jti 结构非法（空/超长/含 `:`，DAO key 注入防护）：[`GarrisonError::InvalidToken`]
-    /// - DAO 故障：透传 [`GarrisonError::Dao`]
+    /// - jti 结构非法（空/超长/含 `:`，DAO key 注入防护）：[`GarrisonError::InvalidToken`](crate::error::GarrisonError::InvalidToken)
+    /// - DAO 故障：透传 [`GarrisonError::Dao`](crate::error::GarrisonError::Dao)
     pub async fn consume(&self, jti: &str, ttl_seconds: u64) -> GarrisonResult<bool> {
         validate_jti(jti)?;
         let key = jti_key(jti);

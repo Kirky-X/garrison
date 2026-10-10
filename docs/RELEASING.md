@@ -56,10 +56,15 @@ flowchart TD
 | Clippy | `cargo clippy --features full --lib --tests -- -D warnings` | 0 warnings | 规则 18 |
 | Lib 测试 | `cargo test --features full --lib` | 0 failed | project_memory |
 | E2E 测试 | `cargo test --features full --test '*'` | 0 failed | project_memory |
-| 文档构建 | `cargo doc --features full --no-deps` | 0 warnings | project_memory |
+| 文档构建 | `RUSTDOCFLAGS="-D warnings" cargo doc --features full --no-deps` | 0 errors（`scripts/release.sh` 第 6 步执行的即此命令） | project_memory |
 | 安全审计 | `cargo audit` | 0 CRITICAL | 规则 19 |
 | 依赖审计 | `cargo deny check` | 0 failures | 规则 18 |
 | 版本一致性 | `scripts/release.sh check-version` | Cargo.toml == CHANGELOG，tag 不存在 | 规则 21 |
+
+> **文档内链漂移只有发布链路能发现**：`ci.yml` 的 doc job 跑的是不带 `-D warnings` 的
+> `cargo doc --no-deps --features full`，rustdoc 的 `unresolved link` / `links to private item`
+> / `redundant explicit link target` 在 CI 上表现为警告而被忽略；一旦改动了 `///` / `//!`
+> 中的内链（新增类型、移动模块、把内部项写进公开文档），发布前必须本地跑上表那条命令。
 
 ## 🔍 本地预检查
 

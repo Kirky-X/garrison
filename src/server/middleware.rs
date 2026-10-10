@@ -729,8 +729,8 @@ const PAYLOAD_TOO_LARGE_BODY: &str =
 /// 字节偏移，可用于指纹识别与字段枚举。`DefaultBodyLimit` 的 body 超限
 /// rejection（`LengthLimitError`）同为 413 + text/plain 非空诊断体。本中间件
 /// 识别「4xx + text/plain + 非空 body」的 rejection 响应，将 body 改写为统一
-/// JSON 错误体，状态码保持原值（413 用 [`PAYLOAD_TOO_LARGE_BODY`]，与 login
-/// 读体限幅同体；其余用 [`REJECTION_BODY`]）。
+/// JSON 错误体，状态码保持原值（413 用 `PAYLOAD_TOO_LARGE_BODY`，与 login
+/// 读体限幅同体；其余用 `REJECTION_BODY`）。
 ///
 /// # 误伤排除
 ///

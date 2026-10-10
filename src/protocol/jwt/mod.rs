@@ -122,9 +122,9 @@ pub struct JwtHandler {
     pub algorithm: Algorithm,
     /// 可选设备标识（签发时写入 claims）。
     pub device: Option<String>,
-    /// 可选 `amr` claim（RFC 8176 认证方法引用，builder [`with_amr`](JwtHandler::with_amr) 设置）。
+    /// 可选 `amr` claim（RFC 8176 认证方法引用，经 [`sign_with_amr`](crate::protocol::jwt::JwtHandler::sign_with_amr) 写入）。
     pub amr: Option<Vec<String>>,
-    /// 可选 `auth_time` claim（OIDC 主认证时刻，builder [`with_auth_time`](JwtHandler::with_auth_time) 设置）。
+    /// 可选 `auth_time` claim（OIDC 主认证时刻，经 [`sign_with_amr`](crate::protocol::jwt::JwtHandler::sign_with_amr) 写入）。
     pub auth_time: Option<i64>,
     /// 可选签发租户绑定（签发时写入 claims `tid`，builder [`with_tid`](JwtHandler::with_tid) 设置）。
     ///

@@ -25,7 +25,7 @@
 //!
 //! ## 会话签发
 //!
-//! 本模块只管理票据状态机；兑换出的会话通过 [`QrLoginSessionIssuer`] 端口
+//! 本模块只管理票据状态机；兑换出的会话通过 [`QrLoginSessionIssuer`](crate::protocol::qrlogin::issuer::QrLoginSessionIssuer) 端口
 //! （DIP）由调用方实现（server 层提供基于 Stp 的默认实现），协议层不依赖 stp/server。
 //!
 //! ## 安全语义与固有风险

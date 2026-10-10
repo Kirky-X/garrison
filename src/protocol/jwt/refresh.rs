@@ -890,7 +890,7 @@ mod service {
         /// - `Ok(Some(StaleLineage))`: 无存活血缘（无子代，或后代全部已吊销）
         /// - `Err(GarrisonError::Dao)`: SQL 查询失败
         ///
-        /// 回溯深度封顶 [`REUSE_LINEAGE_MAX_DEPTH`]：达到上限仍存在子代链时按
+        /// 回溯深度封顶 `REUSE_LINEAGE_MAX_DEPTH`：达到上限仍存在子代链时按
         /// `OrphanedBranch` 处置——能沿子代链走这么深本身就证明血缘存在。
         pub async fn detect_reuse(
             &self,

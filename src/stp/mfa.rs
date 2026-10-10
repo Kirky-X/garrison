@@ -99,7 +99,7 @@ pub trait MfaLogic: SessionLogic {
     /// [`check_safe`](Self::check_safe) 默认先执行本检查再走 safe-service
     /// 逻辑——authflow 的 Mfa 步骤与 `/auth/check-safe` 端点经此路径自动
     /// 获得链强制；challenge 的产出与完成由
-    /// [`RequiredActionProvider`](crate::stp::mfa::RequiredActionProvider)
+    /// [`RequiredActionProvider`]
     /// 承载（业务侧编排 provider 并经
     /// [`GarrisonSession::append_amr_entry`](crate::session::GarrisonSession::append_amr_entry)
     /// 升级账本）。
@@ -597,7 +597,7 @@ pub fn ledger_max_aal(entries: &[AmrEntry]) -> u8 {
 // ============================================================================
 
 /// TOTP Required Action provider：evaluate 依新鲜度门槛判定、challenge 产出
-/// 静态提示、process 委托 [`TotpHandler::validate_and_consume`]（DAO 原子防重放）。
+/// 静态提示、process 委托 [`TotpHandler::validate_and_consume`](crate::secure::totp::TotpHandler::validate_and_consume)（DAO 原子防重放）。
 ///
 /// secret 由集成方按 login_id 查询凭证库后构造 provider（或为其注入查询回调）；
 /// 本基座只承载三段式编排，不做凭证存储。
@@ -1319,10 +1319,10 @@ impl MfaLogic for GarrisonLogicDefault {
 /// MFA 编排基座交付；本接线点只暴露「给 MFA 层一个可调用的 WebAuthn
 /// assertion 校验函数」这一最小缝：
 ///
-/// - [`WebauthnFactorVerifier`]：包装 [`WebauthnService`] 的校验入口，
+/// - [`WebauthnFactorVerifier`](crate::stp::mfa::webauthn_factor::WebauthnFactorVerifier)：包装 [`WebauthnService`](crate::protocol::webauthn::service::WebauthnService) 的校验入口，
 ///   把模块自有错误词汇表映射为 [`GarrisonError`]（`InvalidParam` 携带
 ///   显性 detail，不静默吞错）；
-/// - [`register_webauthn_factor`] / [`webauthn_factor`]：进程级注册表，
+/// - [`register_webauthn_factor`](crate::stp::mfa::webauthn_factor::register_webauthn_factor) / [`webauthn_factor`]：进程级注册表，
 ///   装配方注入一次，MFA 编排层按 `webauthn` 方法名取用（未注册返回
 ///   `None`——编排层据此走「因子未配置」分支，不视为错误）。
 #[cfg(feature = "protocol-webauthn")]

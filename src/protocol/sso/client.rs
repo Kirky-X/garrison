@@ -65,7 +65,7 @@ impl SsoClient {
     /// # 参数
     /// - `dao`: DAO 抽象层实例。
     /// - `secret`: HMAC 签名密钥（用于 ticket 防伪造，禁止空字符串，
-    ///   且长度不得少于 [`MIN_SECRET_LEN`] 32 字节）。
+    ///   且长度不得少于 `MIN_SECRET_LEN`（32 字节）。
     ///
     /// # 错误
     /// - `secret` 为空时返回 `GarrisonError::InvalidParam`（`sso-client-secret-empty`）；

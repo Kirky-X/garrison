@@ -7,13 +7,13 @@
 //!
 //! 1. **签发**（[`token`]）：复用 `protocol::jwt` 密钥材料签发仅含会话标识
 //!    （`sub` / 可选 `sid`）与 `events` 声明的 logout token，不携带身份资料。
-//! 2. **入队**（[`listener`]）：`GarrisonEvent::Logout` 触发，逐 RP 写入
+//! 2. **入队**（[`listener`](crate::oauth2_server::backchannel::listener)）：`GarrisonEvent::Logout` 触发，逐 RP 写入
 //!    `oauth2_backchannel_queue` 持久化队列。两档派发语义：
 //!    - OnCommit 档：事务内登出经 `GarrisonEventTx::on_commit` 缓冲 Logout
 //!      事件，commit 成功后派发入队，回滚/丢弃 guard 不入队（与业务写同生共死）；
 //!    - Immediately 档：session 登出路径为 auto-commit 会话写、无事务上下文，
 //!      登出完成后直接广播（入队时点会话写已持久）。
-//! 3. **投递**（[`deliver`]）：后台任务从队列 drain，向 RP 的 back-channel
+//! 3. **投递**（[`deliver`](crate::oauth2_server::backchannel::deliver)）：后台任务从队列 drain，向 RP 的 back-channel
 //!    端点 POST `logout_token`；单 RP 超时 5s 封顶、禁止跟随重定向（302 按
 //!    未投递处理，防 POST 降 GET 丢 token）；失败重试计数递增并按指数退避
 //!    推后下次投递时刻（退避未到期不进批，失败行不阻塞健康行），超 MaxTtl

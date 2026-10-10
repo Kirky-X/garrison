@@ -3,12 +3,12 @@
 
 //! ActionToken（找回密码动作令牌）：自包含 JWT（sub / purpose / jti / exp）。
 //!
-//! 复用 [`JwtHandler`](crate::protocol::jwt::JwtHandler) 的密钥材料与校验语义
+//! 复用 [`JwtHandler`] 的密钥材料与校验语义
 //! （`sign_custom` / `verify_custom`），claims 增加 `purpose` 扩展字段：purpose
 //! 与 [`PURPOSE_PASSWORD_RESET`] 不符的 token 一律拒绝，防止其他用途签发的
 //! JWT 被挪用为改密凭据。
 //!
-//! jti（RFC 7519 §4.1.7）是一次性消费登记的主键，由 [`ActionTokenConsumer`]
+//! jti（RFC 7519 §4.1.7）是一次性消费登记的主键，由 [`ActionTokenConsumer`](super::ActionTokenConsumer)
 //! 经 DAO `set_if_absent` 原子消费（见 `consumer` 模块）。
 
 use crate::error::{GarrisonError, GarrisonResult};
@@ -51,7 +51,7 @@ pub struct IssuedActionToken {
 
 /// ActionToken 签发/校验服务。
 ///
-/// 持有 [`JwtHandler`](crate::protocol::jwt::JwtHandler)（密钥材料复用方），无独立状态；一次性消费语义在
+/// 持有 [`JwtHandler`]（密钥材料复用方），无独立状态；一次性消费语义在
 /// [`ActionTokenConsumer`](super::ActionTokenConsumer)。
 #[derive(Clone)]
 pub struct ActionTokenService {

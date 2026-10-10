@@ -20,7 +20,7 @@
 //! - **防重放**：jti 经 `GarrisonDao::set_if_absent` 原子消费，二次消费与并发
 //!   消费恰一成功。
 //! - **最小授权**：恢复会话打 restricted 标记，仅可访问改密端点，其余端点
-//!   一律 [`GarrisonError::NotPermission`]（HTTP 403）；标记在 reset 返回后
+//!   一律 [`GarrisonError::NotPermission`](crate::error::GarrisonError::NotPermission)（HTTP 403）；标记在 reset 返回后
 //!   保留（fail-safe），宿主显式清除。
 //!
 //! # Key 空间

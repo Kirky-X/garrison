@@ -5,11 +5,11 @@
 //!
 //! 处理顺序（与 [`crate::stp`] 的 token task-local 同层机制）：
 //!
-//! 1. 从请求头提取入站 `X-Request-ID`，经 [`propagate_or_generate`] 校验
+//! 1. 从请求头提取入站 `X-Request-ID`，经 [`propagate_or_generate`](crate::context::request_id::propagate_or_generate) 校验
 //!    （合法原样传播，非法丢弃重新生成 UUID v4——入站 id 是不可信输入）；
-//! 2. 将 [`RequestId`] 注入 `request.extensions()`（handler 经
+//! 2. 将 [`RequestId`](crate::context::request_id::RequestId) 注入 `request.extensions()`（handler 经
 //!    `Extension<RequestId>` 读取），并在
-//!    [`scope`] 内执行内层服务——统一错误响应体（`request_id` 字段）与
+//!    [`scope`](crate::context::request_id::scope) 内执行内层服务——统一错误响应体（`request_id` 字段）与
 //!    `X-Request-ID` 响应头均从该 task-local 读取，保证 body 与 header 一致；
 //! 3. 以 `tracing` span（`request_id` 字段）instrument 内层 future，日志可关联；
 //! 4. 响应设置 `X-Request-ID` 头回传调用方。
@@ -22,7 +22,7 @@
 //!     .layer(axum::middleware::from_fn(garrison::web::request_id::request_id_middleware));
 //! ```
 //!
-//! 头名 `X-Request-ID` 为固定常量（[`REQUEST_ID_HEADER`]），非配置项。
+//! 头名 `X-Request-ID` 为固定常量（[`REQUEST_ID_HEADER`](crate::context::request_id::REQUEST_ID_HEADER)），非配置项。
 
 use crate::context::request_id::{propagate_or_generate, scope, RequestId, REQUEST_ID_HEADER};
 use axum::extract::Request;

@@ -69,7 +69,7 @@ pub trait PasswordHasher: Send + Sync {
     /// 并发闸门探针：返回哈希执行的并发许可池（Argon2 内存 DoS 防护扩展点）。
     ///
     /// 默认 `None`（不限并发，向后兼容——自定义实现零改动）。返回 `Some` 的
-    /// hasher 由 [`verify_pooled`] 统一封装「async 取 permit →
+    /// hasher 由 `verify_pooled` 统一封装「async 取 permit →
     /// spawn_blocking → permit 移入闭包」：permit 存活期 == 哈希执行期，调用方
     /// future 被取消时孤儿 blocking 任务继续持有 permit 直至完成，内存上界在
     /// 任何取消时序下恒等于 permits × m_cost（Argon2id 单次执行驻留 ≈ m_cost KiB），
@@ -102,7 +102,7 @@ pub trait PasswordHasher: Send + Sync {
 ///
 /// 使用 argon2 crate，默认参数：Argon2id, m=19456 KiB, t=2, p=1。
 /// 可通过 `with_params` 自定义参数、`with_pool` 装配并发令牌池
-/// （内存 DoS 防护，经 [`verify_pooled`] 生效）。
+/// （内存 DoS 防护，经 `verify_pooled` 生效）。
 pub struct Argon2Hasher {
     /// 内存成本（KiB），默认 19456（19 MiB）。
     m_cost: u32,

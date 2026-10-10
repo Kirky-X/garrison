@@ -5,20 +5,20 @@
 //!
 //! 基于 `webauthn-rs` 0.5 提供 Passkey 凭据的注册与认证两大仪式，职责边界：
 //!
-//! - [`challenge`]：仪式态（`PasskeyRegistration` / `PasskeyAuthentication`）
+//! - [`challenge`](crate::protocol::webauthn::challenge)：仪式态（`PasskeyRegistration` / `PasskeyAuthentication`）
 //!   经 [`crate::dao::GarrisonDao`] `set_if_absent`+TTL 暂存，消费用原子读删
 //!   （`get_and_delete`），键不存在即判重放——challenge 一次性是整个协议的
 //!   反重放根基（assertion 重放 = challenge 已消费）。
-//! - [`credential`]：凭据领域模型（公钥/sign_count/backup flags/attestation）
+//! - [`credential`](crate::protocol::webauthn::credential)：凭据领域模型（公钥/sign_count/backup flags/attestation）
 //!   与 SQL 行的双向映射。
-//! - [`service`]：仪式编排。注册侧 `ExcludeCredentials` 防同 authenticator
+//! - [`service`](crate::protocol::webauthn::service)：仪式编排。注册侧 `ExcludeCredentials` 防同 authenticator
 //!   重复绑定（叠加 `credential_id` 唯一约束兜底）；认证侧 sign_count 单调性
 //!  （count ≤ 上次 → 克隆嫌疑拒绝）与 backup flags 更新落库。
 //!
 //! ## RP 配置派生
 //!
 //! Relying Party 配置从 issuer URL 派生：`rp_id` = URL host，`origins` =
-//! [issuer]。issuer 变更后 rp_id 自动跟随，无需独立 RP 配置项。
+//! `origins` 取该 issuer URL。issuer 变更后 rp_id 自动跟随，无需独立 RP 配置项。
 //!
 //! ## key 命名空间
 //!
@@ -78,12 +78,12 @@ pub struct FactorPolicy {
 /// WebAuthn/Passkey 配置。
 ///
 /// 经 [`service::WebauthnService`] 注入，构造后不可变。
-/// RP 配置（rp_id/origins）不自立配置项，从 [`WebauthnConfig::issuer`] 派生。
+/// RP 配置（rp_id/origins）不自立配置项，从 [`WebauthnConfig`] 的 `issuer` 字段派生。
 #[derive(Debug, Clone)]
 pub struct WebauthnConfig {
     /// RP 派生源：issuer URL（如 `https://sso.example.com`）。
     ///
-    /// `rp_id` = URL host，`origins` = [issuer]。issuer 变更后 rp_id 跟随。
+    /// `rp_id` = URL host，`origins` = 该 issuer URL。issuer 变更后 rp_id 跟随。
     pub issuer: String,
 
     /// 仪式态 challenge 暂存 TTL（秒），默认 120。
