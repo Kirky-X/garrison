@@ -164,7 +164,7 @@ async fn missing_code_returns_not_found() {
     );
 }
 
-/// 测试 8：限速 key 格式验证（sms:rate:{phone}:hour:{bucket}）。
+/// 测试 8：限速账本 key 格式验证（quota:hour:sms:{phone}）。
 #[tokio::test]
 async fn rate_key_format_hour() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -176,10 +176,11 @@ async fn rate_key_format_hour() {
         3,
     );
     service.send_code("13800138007").await.unwrap();
-    let keys = dao.keys("sms:rate:13800138007:hour:*").await.unwrap();
+    // 账本模型：小时窗 key 形如 quota:hour:sms:{phone}（无时间桶成分）
+    let value = dao.get("quota:hour:sms:13800138007").await.unwrap();
     assert!(
-        !keys.is_empty(),
-        "应存在 sms:rate:{{phone}}:hour:{{bucket}} 格式的 key"
+        value.is_some(),
+        "应存在 quota:hour:sms:{{phone}} 格式的限速账本 key"
     );
 }
 
@@ -565,23 +566,17 @@ impl GarrisonDao for FaultDao {
     }
 }
 
-/// 读取指定手机号当前小时/天窗口计数器值（不存在返回 None）。
+/// 读取指定手机号当前小时/天窗口账本值（不存在返回 None）。
+///
+/// 账本键形 `quota:{hour,day}:sms:{phone}`（QuotaStorage 模型，无时间成分）。
 async fn window_counter_value(
     dao: &Arc<dyn GarrisonDao>,
     phone: &str,
     window: &str,
 ) -> Option<String> {
-    let pattern = format!("sms:rate:{}:{}:*", phone, window);
-    let keys = dao.keys(&pattern).await.unwrap();
-    assert!(
-        keys.len() <= 1,
-        "同窗口至多 1 个计数器 key，实际: {:?}",
-        keys
-    );
-    match keys.first() {
-        Some(k) => dao.get(k).await.unwrap(),
-        None => None,
-    }
+    dao.get(&format!("quota:{}:sms:{}", window, phone))
+        .await
+        .unwrap()
 }
 
 /// 小时窗口超限应回滚本次 incr（计数回到拒绝前的值），返回 hourly 限流错误。
@@ -773,19 +768,19 @@ async fn check_and_increment_normalizes_phone_whitespace() {
         .await
         .unwrap();
     // key 使用归一化后的手机号（无空白）
-    let keys = dao.keys("sms:rate:15800000010:hour:*").await.unwrap();
+    let value = dao.get("quota:hour:sms:15800000010").await.unwrap();
     assert!(
-        !keys.is_empty(),
-        "归一化手机号应生成 sms:rate:15800000010:hour:* 的 key"
+        value.is_some(),
+        "归一化手机号应生成 quota:hour:sms:15800000010 的账本 key"
     );
     // 带空白填充的重复请求命中同一个 key（计数 2），而非生成新 key
     limiter.check_and_increment("15800000010").await.unwrap();
     let value = window_counter_value(&dao, "15800000010", "hour")
         .await
         .expect("两个请求应命中同一归一化 key");
-    assert_eq!(value, "2", "空白填充与裸手机号应共用同一计数器");
+    assert_eq!(value, "2", "空白填充与裸手机号应共用同一账本");
     // 不存在含空白填充的 key（任何以空白开头的手机号 key）
-    let padded_keys = dao.keys("sms:rate: *").await.unwrap();
+    let padded_keys = dao.keys("quota:*:sms: *").await.unwrap();
     assert!(
         padded_keys.is_empty(),
         "不应存在含空白填充的限速 key，实际: {:?}",

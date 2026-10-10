@@ -1,28 +1,33 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! SmsRateLimiter 实现：双窗口（小时/天）渐进式限速。
+//! SmsRateLimiter 薄包装：双窗口（小时/天）渐进式限速。
 //!
-//! 使用 limiteron `DistributedLimiter` trait 实现原子计数，保留 `dao` 用于
-//! `decrement_counter`（limiteron 无 decrement 方法）。
+//! 窗口判定与补偿委托泛型内核 [`DualWindowQuota`]（limiteron `QuotaStorage`
+//! 账本），本文件只保留 SMS 特有面：手机号 normalize/validate、`sms:` 账本
+//! 命名空间、`SmsRateLimitExceeded` 错误变体与窗口桶快照类型。
+//!
+//! 键形说明：账本键 `quota:{hour,day}:sms:{phone}`（窗口滚动由 TTL 表达），
+//! 与旧时间桶键 `sms:rate:{phone}:{hour:{bucket},day:{date}}` 不同——旧 key
+//! 依赖 TTL 自然过期，无迁移需求（见 CHANGELOG）。
 
 use super::{GarrisonDao, GarrisonResult, SmsRateLimiter};
 use crate::error::GarrisonError;
-use crate::limiteron::GarrisonDaoDistributedLimiter;
+use crate::limiteron::storage::GarrisonDaoQuotaStorage;
+use crate::secure::dual_window::{DualWindowError, DualWindowQuota};
 use std::sync::Arc;
-use std::time::Duration;
 
-/// 每小时秒数（用于时间桶计算与 TTL）。
+/// 每小时秒数（用于时间桶快照计算）。
 const SECONDS_PER_HOUR: u64 = 3600;
-/// 每天秒数（用于日窗口 TTL）。
-const SECONDS_PER_DAY: u64 = 86400;
 
-/// 限速窗口桶信息（`check_and_increment_with` 返回，供 `rollback_with` 精确回滚）。
+/// SMS 账本命名空间（与 email 账本隔离，键形 `quota:{hour,day}:sms:{phone}`）。
+const LEDGER_NAMESPACE: &str = "sms";
+
+/// 限速窗口桶信息（`check_and_increment_with` 返回，供 `rollback_with` 传回）。
 ///
-/// check 与 rollback **不得**各自用当前时间重算桶键：若 DAO 往返跨越小时/天边界，
-/// rollback 按当前时间重算会得到不同的桶索引，递减到错误的 key，原计数器膨胀
-/// 直至 TTL 自然过期。调用方必须把 [`check_and_increment_with`](SmsRateLimiter::check_and_increment_with)
-/// 返回的窗口信息原样传给 [`rollback_with`](SmsRateLimiter::rollback_with)。
+/// 账本模型下窗口滚动由存储 TTL 表达、键名不含时间成分，跨小时/天边界的
+/// 回滚命中同一账本；本快照保留为公开 API 兼容与观测用途，
+/// [`rollback_with`](SmsRateLimiter::rollback_with) 不再需要按它重算键。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SmsRateWindows {
     /// 小时桶索引（Unix 秒 / 3600）。
@@ -73,18 +78,23 @@ pub(super) fn validate_phone(phone: &str) -> GarrisonResult<()> {
     Ok(())
 }
 
+/// 账本身份标识（命名空间 + 规范化手机号，与 email 账本隔离）。
+fn ledger_identity(phone: &str) -> String {
+    format!("{LEDGER_NAMESPACE}:{phone}")
+}
+
 impl SmsRateLimiter {
     /// 创建限速器实例。
     ///
-    /// 内部创建 [`GarrisonDaoDistributedLimiter`] 适配器，将 `dao` 桥接到
-    /// limiteron `DistributedLimiter` trait，用于原子 `incr_with_ttl`。
+    /// 内部以 [`GarrisonDaoQuotaStorage`] 把 `dao` 桥接为 limiteron
+    /// `QuotaStorage` 账本，双窗口判定委托 [`DualWindowQuota`]。
     pub fn new(dao: Arc<dyn GarrisonDao>, hourly_limit: u32, daily_limit: u32) -> Self {
-        let limiter = Arc::new(GarrisonDaoDistributedLimiter::new(dao.clone()));
         Self {
-            dao,
-            limiter,
-            hourly_limit,
-            daily_limit,
+            kernel: DualWindowQuota::new(
+                GarrisonDaoQuotaStorage::new(dao),
+                hourly_limit,
+                daily_limit,
+            ),
         }
     }
 
@@ -92,6 +102,9 @@ impl SmsRateLimiter {
     ///
     /// 委托 [`GarrisonDao::decr`] 在单次 DAO 调用内完成 get → parse → update/delete，
     /// 消除原三步组合的 TOCTOU 竞态（fix-refresh-race-and-test-contracts /）。
+    /// 限速窗口补偿已由 `QuotaStorage::refund` 账本原语承载
+    /// （见 [`DualWindowQuota`]）；本方法保留给非窗口计数器
+    /// （`sms:unverified:{phone}` 连续未验证计数）使用。
     ///
     /// 语义（与 `dao.decr` 一致）：
     /// - key 不存在或已过期：返回 Ok(())（dao.decr 返回 0，无副作用）
@@ -105,7 +118,7 @@ impl SmsRateLimiter {
         dao.decr(key).await.map(|_| ())
     }
 
-    /// 计算当前窗口桶信息。
+    /// 计算当前窗口桶快照（公开 API 兼容与观测用途；账本键不含时间成分）。
     fn current_windows() -> GarrisonResult<SmsRateWindows> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -118,12 +131,13 @@ impl SmsRateLimiter {
 
     /// 检查并递增限速计数器。
     ///
-    /// 超限时回滚已递增的计数器，避免拒绝的请求消耗配额。
+    /// 超限时账本自回滚（`QuotaStorage` 适配器内部 `decr` 补偿），
+    /// 拒绝的请求不消耗配额。
     ///
     /// # 回滚错误处理策略（统一约定）
     ///
     /// 回滚是 best-effort 修正：失败记录 `tracing::warn`（含 key 与错误）并继续，
-    /// 不覆盖本次调用的主错误（限流拒绝）。代价是计数器可能残留膨胀至 TTL
+    /// 不覆盖本次调用的主错误（限流拒绝）。代价是账本可能残留膨胀至 TTL
     /// 自然过期（小时窗口最多 1h、天窗口最多 24h），运维通过 warn 告警感知。
     /// [`rollback`](Self::rollback) / [`rollback_with`](Self::rollback_with) 无主错误可保留，
     /// 故聚合后返回首个回滚错误——两条路径均全程 warn，观测语义一致。
@@ -133,119 +147,50 @@ impl SmsRateLimiter {
 
     /// [`check_and_increment`](Self::check_and_increment) 的窗口信息携带版本。
     ///
-    /// 返回本次递增命中的窗口桶信息，发送失败时应将其原样传给
-    /// [`rollback_with`](Self::rollback_with)，保证跨小时/天边界时递减的是
-    /// 递增时的同一个桶。
+    /// 返回本次递增的窗口桶快照；账本模型下回滚不依赖它（键无时间成分），
+    /// 发送失败路径仍可将其原样传给
+    /// [`rollback_with`](Self::rollback_with)（公开 API 兼容）。
     pub async fn check_and_increment_with(&self, phone: &str) -> GarrisonResult<SmsRateWindows> {
         let phone = normalize_phone(phone);
         validate_phone(&phone)?;
         let windows = Self::current_windows()?;
 
-        // 小时窗口：1 小时 TTL（limiteron DistributedLimiter.incr_with_ttl 替换 dao.incr）
-        let hour_key = format!("sms:rate:{}:hour:{}", phone, windows.hour_bucket);
-        let hour_count = self
-            .limiter
-            .incr_with_ttl(&hour_key, 1, Duration::from_secs(SECONDS_PER_HOUR))
+        self.kernel
+            .consume_and_check(&ledger_identity(&phone))
             .await
-            .map_err(|e| GarrisonError::Internal(format!("secure-limiter-incr::{}", e)))?;
-        if hour_count > self.hourly_limit as u64 {
-            // 超限，回滚 incr
-            if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
-                tracing::warn!(error = %e, key = %hour_key, "rollback hourly window counter failed");
-            }
-            return Err(GarrisonError::SmsRateLimitExceeded {
-                window: "hourly".to_string(),
-            });
-        }
-
-        // 天窗口：24 小时 TTL（limiteron DistributedLimiter.incr_with_ttl 替换 dao.incr）
-        let day_key = format!("sms:rate:{}:day:{}", phone, windows.date);
-        // 天窗口递增失败时必须回滚已递增的小时计数，否则小时配额泄漏
-        // （每次失败遗留 +1，直至 TTL 过期）
-        let day_count = match self
-            .limiter
-            .incr_with_ttl(&day_key, 1, Duration::from_secs(SECONDS_PER_DAY))
-            .await
-        {
-            Ok(count) => count,
-            Err(e) => {
-                if let Err(re) = Self::decrement_counter(&*self.dao, &hour_key).await {
-                    tracing::warn!(
-                        error = %re,
-                        key = %hour_key,
-                        "rollback hourly window counter failed after day incr failure"
-                    );
-                }
-                return Err(GarrisonError::Internal(format!(
-                    "secure-limiter-incr::{}",
-                    e
-                )));
-            },
-        };
-        if day_count > self.daily_limit as u64 {
-            // 超限，回滚 day 和 hour。
-            // 回滚失败仅 warn：不覆盖主错误（daily 限流拒绝），计数器残留至 TTL
-            // 过期（最长 1h/24h），运维通过 warn 告警感知（统一回滚错误策略，见方法文档）。
-            if let Err(e) = Self::decrement_counter(&*self.dao, &day_key).await {
-                tracing::warn!(error = %e, key = %day_key, "rollback daily window counter failed");
-            }
-            if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
-                tracing::warn!(error = %e, key = %hour_key, "rollback hourly window counter failed");
-            }
-            return Err(GarrisonError::SmsRateLimitExceeded {
-                window: "daily".to_string(),
-            });
-        }
-
+            .map_err(|e| match e {
+                DualWindowError::Exceeded(w) => GarrisonError::SmsRateLimitExceeded {
+                    window: w.as_str().to_string(),
+                },
+                DualWindowError::Storage(msg) => GarrisonError::Internal(msg),
+            })?;
         Ok(windows)
     }
 
     /// 回滚限速计数器（发送失败时调用）。
     ///
-    /// 注意：本方法按**当前时间**重算窗口桶，若 check 与 rollback 之间跨越
-    /// 小时/天边界会递减错误的 key。发送失败路径应改用
-    /// [`rollback_with`](Self::rollback_with) 并传入
-    /// [`check_and_increment_with`](Self::check_and_increment_with) 返回的窗口信息。
+    /// 账本模型下键名不含时间成分，本方法按当前身份退还两个窗口账本；
+    /// 跨小时/天边界时命中的仍是 check 时的同一账本（已随窗口过期即 no-op）。
     ///
     /// # 错误
-    /// 聚合执行小时 + 天两次递减（首个失败不中断第二个），返回首个错误。
+    /// 聚合执行小时 + 天两次退还（首个失败不中断第二个），返回首个错误。
     pub async fn rollback(&self, phone: &str) -> GarrisonResult<()> {
         let phone = normalize_phone(phone);
         validate_phone(&phone)?;
-        let windows = Self::current_windows()?;
-        self.rollback_inner(&phone, &windows).await
+        self.kernel.refund_windows(&ledger_identity(&phone)).await
     }
 
     /// [`rollback`](Self::rollback) 的窗口信息携带版本（优先使用）。
     ///
-    /// 使用 check 时返回的窗口桶信息，跨窗口边界也不会递减错误的 key。
-    pub async fn rollback_with(&self, phone: &str, windows: &SmsRateWindows) -> GarrisonResult<()> {
+    /// 账本模型下 `windows` 不参与键定位（保留为公开 API 兼容参数）；
+    /// 退还语义与 [`rollback`](Self::rollback) 一致。
+    pub async fn rollback_with(
+        &self,
+        phone: &str,
+        _windows: &SmsRateWindows,
+    ) -> GarrisonResult<()> {
         let phone = normalize_phone(phone);
         validate_phone(&phone)?;
-        self.rollback_inner(&phone, windows).await
-    }
-
-    /// 回滚实现：聚合两次递减，首个失败不中断第二个，最终返回首个错误。
-    async fn rollback_inner(&self, phone: &str, windows: &SmsRateWindows) -> GarrisonResult<()> {
-        let mut first_err: Option<GarrisonError> = None;
-
-        // 递减小时窗口计数（失败不中断天窗口回滚——rollback 是 best-effort，
-        // 只回滚一半比完全不回滚更糟）
-        let hour_key = format!("sms:rate:{}:hour:{}", phone, windows.hour_bucket);
-        if let Err(e) = Self::decrement_counter(&*self.dao, &hour_key).await {
-            tracing::warn!(error = %e, key = %hour_key, "rollback hourly window counter failed");
-            first_err.get_or_insert(e);
-        }
-
-        let day_key = format!("sms:rate:{}:day:{}", phone, windows.date);
-        if let Err(e) = Self::decrement_counter(&*self.dao, &day_key).await {
-            tracing::warn!(error = %e, key = %day_key, "rollback daily window counter failed");
-            first_err.get_or_insert(e);
-        }
-
-        match first_err {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
+        self.kernel.refund_windows(&ledger_identity(&phone)).await
     }
 }

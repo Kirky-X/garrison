@@ -164,6 +164,13 @@ pub mod masking;
 #[cfg(feature = "secure-xss")]
 pub mod xss;
 
+/// 泛型双窗口限速内核子模块（sms/email 验证码限速共用）。
+///
+/// 以 limiteron `QuotaStorage` 账本承载 hour/day 双窗口判定与补偿，
+/// sms/email 收敛为薄包装（normalize/validate + key 命名空间 + 错误变体）。
+#[cfg(any(feature = "sms-rate-limit", feature = "email-verification"))]
+pub(crate) mod dual_window;
+
 /// SMS 验证码渐进式限速子模块。
 ///
 /// 提供 [`SmsVerificationService`](sms::SmsVerificationService) 三层抽象：

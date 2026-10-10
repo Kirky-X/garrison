@@ -411,19 +411,17 @@ async fn missing_code_returns_not_found() {
     );
 }
 
-/// 测试 8：限速 key 格式验证（email:rate:{addr}:hour:{bucket}）。
+/// 测试 8：限速账本 key 格式验证（quota:hour:email:{addr}）。
 #[tokio::test]
 async fn rate_key_format_hour() {
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let service = make_service_with(dao.clone(), 3, 3);
     service.send_code("user6@example.com").await.unwrap();
-    let keys = dao
-        .keys("email:rate:user6@example.com:hour:*")
-        .await
-        .unwrap();
+    // 账本模型：小时窗 key 形如 quota:hour:email:{addr}（无时间桶成分）
+    let value = dao.get("quota:hour:email:user6@example.com").await.unwrap();
     assert!(
-        !keys.is_empty(),
-        "应存在 email:rate:{{addr}}:hour:{{bucket}} 格式的 key"
+        value.is_some(),
+        "应存在 quota:hour:email:{{addr}} 格式的限速账本 key"
     );
 }
 
@@ -517,11 +515,20 @@ async fn send_failure_rolls_back_all_state() {
             .is_none(),
         "发送失败后验证码应被删除"
     );
-    let hour_keys = dao
-        .keys("email:rate:user10@example.com:hour:*")
-        .await
-        .unwrap();
-    assert!(hour_keys.is_empty(), "发送失败后小时限速计数应回滚删除");
+    assert!(
+        dao.get("quota:hour:email:user10@example.com")
+            .await
+            .unwrap()
+            .is_none(),
+        "发送失败后小时限速账本应回滚删除"
+    );
+    assert!(
+        dao.get("quota:day:email:user10@example.com")
+            .await
+            .unwrap()
+            .is_none(),
+        "发送失败后天限速账本应回滚删除"
+    );
     assert!(
         dao.get("email:unverified:user10@example.com")
             .await

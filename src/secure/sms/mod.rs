@@ -10,8 +10,8 @@
 //!
 //! | key | TTL | 用途 |
 //! |-----|-----|------|
-//! | `sms:rate:{phone}:hour:{bucket}` | 3600s | 小时限速计数器 |
-//! | `sms:rate:{phone}:day:{date}` | 86400s | 天限速计数器 |
+//! | `quota:hour:sms:{phone}` | 3600s | 小时限速账本（limiteron QuotaStorage） |
+//! | `quota:day:sms:{phone}` | 86400s | 天限速账本（limiteron QuotaStorage） |
 //! | `sms:code:{phone}` | 300s | 验证码 |
 //! | `sms:attempts:{phone}` | 300s | 验证尝试次数 |
 //! | `sms:unverified:{phone}` | 86400s | 连续未验证计数器 |
@@ -21,12 +21,14 @@
 //!
 //! - phone 不能包含 ':'（防止 key 注入）
 //! - 验证码使用 `rand::rng()`（ThreadRng，ChaCha12 CSPRNG）密码学安全随机数
-//! - 所有计数器通过 `GarrisonDao::incr` 原子递增
+//! - 限速账本经 `GarrisonDao::incr`/`decr` 原子增减（QuotaStorage 适配器），
+//!   未验证计数器经 `GarrisonDao::incr` 原子递增
 
 use crate::dao::GarrisonDao;
 use crate::error::GarrisonResult;
+use crate::limiteron::storage::GarrisonDaoQuotaStorage;
+use crate::secure::dual_window::DualWindowQuota;
 use async_trait::async_trait;
-use limiteron::limiters::DistributedLimiter;
 use std::sync::Arc;
 
 pub mod rate_limiter;
@@ -47,18 +49,14 @@ pub trait SmsSender: Send + Sync {
 #[cfg(test)]
 pub struct NoopSmsSender;
 
-/// SMS 限速器。
+/// SMS 限速器（双窗口：小时 + 天）。
 ///
-/// 使用 limiteron `DistributedLimiter` trait 实现原子计数（替换 `dao.incr`），
-/// 保留 `dao` 用于 `decrement_counter`（limiteron 无 decrement 方法，需通过
-/// `dao.get/update/delete` 实现回滚，且 `dao.update` 保留原 TTL 语义）。
+/// 窗口判定与补偿委托泛型内核 [`DualWindowQuota`]（limiteron `QuotaStorage`
+/// 账本，经 `GarrisonDaoQuotaStorage` 落 DAO）；本类型只保留 SMS 特有面：
+/// normalize/validate、`sms:` 命名空间与 `SmsRateLimitExceeded` 错误变体。
 pub struct SmsRateLimiter {
-    /// DAO（用于 decrement_counter 的回滚操作，保留原 TTL 语义）。
-    dao: Arc<dyn GarrisonDao>,
-    /// 分布式限流器（limiteron DistributedLimiter 适配器，替换 dao.incr）。
-    limiter: Arc<dyn DistributedLimiter>,
-    hourly_limit: u32,
-    daily_limit: u32,
+    /// 双窗口账本内核（hour/day 判定与补偿）。
+    kernel: DualWindowQuota<GarrisonDaoQuotaStorage>,
 }
 
 /// SMS 验证码服务。
