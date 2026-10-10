@@ -153,7 +153,9 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 mimalloc = { version = "0.1", optional = true }
 # optional 化：唯一使用点 observability/inklog（audit-inklog 门控），其 inklog/* 引用自动激活。
 inklog = { version = "0.3.0-rc.7", default-features = false, optional = true }
-limiteron = { version = "0.3.0-rc.6", default-features = false, features = ["distributed"] }
+# "retry" 供 stp 会话 JWT 黑名单退避调度（delay_for_attempt，空 feature 零依赖）；
+# "distributed" 供防火墙限流/双窗口限速的分布式滑窗桥接。
+limiteron = { version = "0.3.0-rc.6", default-features = false, features = ["distributed", "retry"] }
 # sdforge 运行时：`features = ["http"]` 让 `sdforge::http::build()` / `RouteRegistration`
 # 始终可用（`server_impl.rs` 无条件调用 `sdforge::http::build()`）。
 # 但 `#[forge]` 宏生成的 `inventory::submit!` 被 `#[cfg(feature = "http")]` 保护，
@@ -479,7 +481,9 @@ cli-ops = ["dep:clap"]
 
 # === 审计日志 ===
 # dep:getrandom：AuditEventChain 链首随机盐（吸收自 inklog ArchiveChain，防换盐重放）
-audit-log = ["listener", "dep:sha2", "dep:hmac", "dep:getrandom", "secure-masking", "secure-ct-eq"]
+# limiteron/audit-log：审计链 HMAC 内核（AuditLogEntry::chain_onto/verify_chain），
+# 传递 telemetry+hmac+sha2+hex，均为 garrison 既有依赖，无新增第三方。
+audit-log = ["listener", "dep:sha2", "dep:hmac", "dep:getrandom", "secure-masking", "secure-ct-eq", "limiteron/audit-log"]
 
 # === 常量时间比较原语（CWE-208 防御）===
 # 提供 `secure::ct_eq::constant_time_eq` 公共函数，基于 subtle::ConstantTimeEq。

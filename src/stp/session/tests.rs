@@ -3658,6 +3658,25 @@ mod suite {
                 "enable_jwt_revocation=false 时 logout 不应写入黑名单"
             );
         }
+
+        /// 退避调度纯函数：attempt=1→100ms、attempt=2→300ms，与被替换的
+        /// `[100, 300]` 退避表逐毫秒相等（jitter=0 确定性）。
+        #[test]
+        fn jwt_blacklist_retry_delay_matches_legacy_schedule() {
+            use crate::stp::session::helpers::jwt_blacklist_retry_delay;
+            use std::time::Duration;
+
+            assert_eq!(
+                jwt_blacklist_retry_delay(1),
+                Duration::from_millis(100),
+                "第 1 次重试前应等 100ms"
+            );
+            assert_eq!(
+                jwt_blacklist_retry_delay(2),
+                Duration::from_millis(300),
+                "第 2 次重试前应等 300ms"
+            );
+        }
     }
 }
 

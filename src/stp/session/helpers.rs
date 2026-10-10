@@ -1089,25 +1089,42 @@ impl GarrisonLogicDefault {
         // （撤销传播延迟上界 = 剩余有效期）；重试消化瞬时抖动，最终失败升级为
         // error 日志供部署侧告警监控该窗口。对外仍保持幂等成功（logout 不因
         // 撤销存储故障而报错——用户以为登出失败比实际未撤销更危险）。
-        const RETRY_DELAYS_MS: [u64; 2] = [100, 300];
+        const RETRY_ATTEMPTS: u32 = 3; // 1 首次 + 2 重试
         let mut result = self.dao().set(&key, "1", ttl_secs as u64).await;
-        for delay_ms in RETRY_DELAYS_MS {
+        for attempt in 1..RETRY_ATTEMPTS {
             if result.is_ok() {
                 break;
             }
-            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            tokio::time::sleep(jwt_blacklist_retry_delay(attempt)).await;
             result = self.dao().set(&key, "1", ttl_secs as u64).await;
         }
         if let Err(e) = result {
             tracing::error!(
                 error = %e,
                 jti = &jti[..jti.len().min(16)],
-                attempts = RETRY_DELAYS_MS.len() + 1,
+                attempts = RETRY_ATTEMPTS,
                 "JWT blacklist write failed after retries; \
                  revoked token may remain valid until natural expiry"
             );
         }
     }
+}
+
+/// JWT 黑名单写入重试的退避调度（attempt 从 1 起）。
+///
+/// 调度契约：第 1 次重试前等 100ms、第 2 次重试前等 300ms（共 3 次尝试），
+/// 与历史手写退避表（100/300ms 两档）逐毫秒相等。委托 limiteron
+/// `retry::delay_for_attempt`（initial=100ms、factor=3.0、max_delay=300ms 封顶、
+/// jitter=0 保持确定性——调度可被测试逐值钉住）。
+#[cfg(feature = "protocol-jwt")]
+pub(super) fn jwt_blacklist_retry_delay(attempt: u32) -> std::time::Duration {
+    limiteron::retry::delay_for_attempt(
+        attempt,
+        std::time::Duration::from_millis(100),
+        3.0,
+        std::time::Duration::from_millis(300),
+        0.0,
+    )
 }
 
 // ============================================================================
