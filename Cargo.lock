@@ -2739,6 +2739,7 @@ dependencies = [
  "futures",
  "garrison-macros",
  "getrandom 0.4.3",
+ "hex",
  "hkdf 0.13.0",
  "hmac 0.13.0",
  "http 1.5.0",

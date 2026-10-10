@@ -91,6 +91,8 @@ reqwest = { optional = true, default-features = false, features = ["json", "rust
 totp-rs = { version = "6.0", optional = true }
 sha2 = { version = "0.11", optional = true }
 hmac = { version = "0.13", optional = true }
+# 审计链盐/链哈希的 hex 编解码（经 limiteron/audit-log 传递引入，非新增 crate）
+hex = { version = "0.4", optional = true }
 subtle = { version = "2.6", optional = true, default-features = false, features = ["std"] }
 base64 = { version = "0.23", optional = true }
 md5 = { version = "0.8", optional = true }
@@ -483,7 +485,7 @@ cli-ops = ["dep:clap"]
 # dep:getrandom：AuditEventChain 链首随机盐（吸收自 inklog ArchiveChain，防换盐重放）
 # limiteron/audit-log：审计链 HMAC 内核（AuditLogEntry::chain_onto/verify_chain），
 # 传递 telemetry+hmac+sha2+hex，均为 garrison 既有依赖，无新增第三方。
-audit-log = ["listener", "dep:sha2", "dep:hmac", "dep:getrandom", "secure-masking", "secure-ct-eq", "limiteron/audit-log"]
+audit-log = ["listener", "dep:sha2", "dep:hmac", "dep:hex", "dep:getrandom", "secure-masking", "secure-ct-eq", "limiteron/audit-log"]
 
 # === 常量时间比较原语（CWE-208 防御）===
 # 提供 `secure::ct_eq::constant_time_eq` 公共函数，基于 subtle::ConstantTimeEq。

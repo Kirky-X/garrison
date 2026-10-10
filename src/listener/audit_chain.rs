@@ -1,13 +1,29 @@
 // Copyright (c) 2026 Kirky.X🌠
 // SPDX-License-Identifier: Apache-2.0
 
-//! 审计事件防篡改 HMAC 链（吸收自 inklog `ArchiveChain`，与 dbnexus 权限审计链同构）。
+//! 审计事件防篡改 HMAC 链（内核：limiteron `AuditLogEntry::chain_onto` /
+//! `verify_chain`；链首盐折入密钥派生）。
 //!
 //! 链条以**每次 [`AuditEventChain::new`] 生成的随机盐**为链首——
-//! `hmac_0 = HMAC(key, salt)`，`hmac_n = HMAC(key, salt || prev_hash_n || event_n)`。
-//! 盐随条目存储（secret 由使用方持有），校验方重算整条链：任一事件被
-//! 篡改、删除、重排或伪造即校验失败。合规场景（等保审计取证）可将条目
-//! JSONL 落盘（与审计日志分库存储），事后用 [`AuditEventChain::verify_entries`] 验证。
+//! garrison 侧派生 `chain_key = HMAC-SHA256(key, salt)`，链哈希由库原语
+//! `AuditLogEntry::chain_onto(chain_key, prev)` 计算（GENESIS 起步）。
+//! 盐随每个条目冗余存储（secret 由使用方持有），校验方以「盐 + 密钥」重算
+//! 派生密钥后 `verify_chain` 重算整链：任一事件被篡改、删除、重排或伪造
+//! 即校验失败。合规场景（等保审计取证）可将条目 JSONL 落盘（与审计日志
+//! 分库存储），事后用 [`AuditEventChain::verify_entries`] 验证。
+//!
+//! **载荷适配（闭集枚举）**：garrison 事件是任意规范化 JSON 字符串，limiteron
+//! `AuditEvent` 是闭集枚举。事件经 `AuditEvent::SystemEvent { name:
+//! "garrison-audit", details }` 承载，`details` 字节级保真。limiteron 的
+//! 签名消息（`timestamp|operation|target|result`）**不含**
+//! `SystemEvent.details`，因此 garrison 侧把 `details` 的 SHA-256 摘要绑入
+//! 被签名的 `level` 槽位（`info:{摘要}`）——篡改事件 JSON 会同时破坏
+//! `level` 与链哈希，防篡改性质不受库侧签名面缺口影响（不修改库约束下的
+//! 适配，见 CHANGELOG）。
+//!
+//! **归档格式声明**：JSONL 形态为本结构（`index` + `salt` + limiteron
+//! `AuditLogEntry` serde 视图）。旧平铺格式（`index/salt/prev_hash/event/
+//! hmac`）**不做读取兼容**——取证是重算语义，格式切换见 CHANGELOG。
 //!
 //! 与 [`super::audit::AuditConfig::signing_key`](crate::listener::audit::AuditConfig)
 //! 的导出签名链互补：后者为导出文件的逐行签名，本模块为**活动事件链**。
@@ -20,15 +36,19 @@
 //! chain.append(r#"{"event":"logout","login_id":1}"#);
 //! assert!(chain.verify());
 //!
-//! // 篡改任一事件 → 校验失败
-//! let mut entries = chain.entries().to_vec();
-//! entries[0].event = r#"{"event":"login","login_id":999}"#.to_string();
+//! // 篡改落盘 JSONL 中任一事件 → 校验失败
+//! let mut jsonl = AuditEventChain::to_jsonl(chain.entries());
+//! jsonl = jsonl.replace("login_id", "evil_id");
+//! let entries = AuditEventChain::from_jsonl(&jsonl).unwrap();
 //! assert!(!AuditEventChain::verify_entries(&entries, b"audit-chain-key"));
 //! ```
 
+use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
+
+pub use limiteron::logging::audit::{AuditEvent, AuditLogEntry};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -38,19 +58,22 @@ pub const CHAIN_HASH_LEN: usize = 32;
 /// 链首随机盐长度（字节）。
 pub const CHAIN_SALT_LEN: usize = 16;
 
-/// 审计链条目（JSONL 友好：哈希以 hex 存储，可直接落盘）。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// garrison 审计事件在 limiteron 闭集枚举中的载体名（`SystemEvent.name`）。
+const GARRISON_AUDIT_NAME: &str = "garrison-audit";
+
+/// 审计链条目（JSONL 友好：链哈希以 hex 存储，可直接落盘）。
+///
+/// 条目由 garrison 侧元数据（`index` 序号、`salt` 链首盐）包装 limiteron
+/// [`AuditLogEntry`]（事件经 `SystemEvent.details` 承载规范化 JSON，链哈希
+/// `chain_prev`/`chain_hash` 由库原语计算）构成。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditChainEntry {
-    /// 链内序号（0 起，严格递增）。
+    /// 链内序号（0 起，严格递增；库层无序号字段，garrison 侧保留）。
     pub index: u64,
-    /// 链首随机盐（hex；每个条目冗余携带，支持独立校验）。
+    /// 链首随机盐（hex；每个条目冗余携带，支持独立校验与防换盐重放）。
     pub salt: String,
-    /// 上一条目的 HMAC（hex；首条为全零）。
-    pub prev_hash: String,
-    /// 事件规范化 JSON（建议由调用方先经审计脱敏）。
-    pub event: String,
-    /// HMAC-SHA256(key, salt || prev_hash || event)（hex）。
-    pub hmac: String,
+    /// limiteron 审计条目（事件载荷 + 库计算的链哈希）。
+    pub entry: AuditLogEntry,
 }
 
 /// 审计事件防篡改 HMAC 链。
@@ -65,7 +88,10 @@ pub struct AuditChainEntry {
 pub struct AuditEventChain {
     key: Vec<u8>,
     salt: [u8; CHAIN_SALT_LEN],
-    prev_hash: [u8; CHAIN_HASH_LEN],
+    /// 链密钥 = `HMAC-SHA256(key, salt)`（hex）——盐折入派生，链间不可链接。
+    chain_key: String,
+    /// 前一链哈希（首条为 [`AuditLogEntry::GENESIS`]）。
+    prev_hash: String,
     entries: Vec<AuditChainEntry>,
 }
 
@@ -79,8 +105,9 @@ impl AuditEventChain {
         getrandom::fill(&mut salt).expect("OS CSPRNG 不可用");
         Self {
             key: key.to_vec(),
+            chain_key: derive_chain_key(key, &salt),
             salt,
-            prev_hash: [0u8; CHAIN_HASH_LEN],
+            prev_hash: AuditLogEntry::GENESIS.to_string(),
             entries: Vec::new(),
         }
     }
@@ -91,22 +118,14 @@ impl AuditEventChain {
     /// 链条只保证**完整性**（防篡改），不处理机密性。
     pub fn append(&mut self, canonical_event: &str) -> u64 {
         let index = self.entries.len() as u64;
-        let hmac = Self::compute_hmac(
-            &self.key,
-            &self.salt,
-            &self.prev_hash,
-            canonical_event.as_bytes(),
-        );
-
-        let entry = AuditChainEntry {
+        let mut entry = AuditLogEntry::new(Self::to_audit_event(canonical_event));
+        let hash = entry.chain_onto(&self.chain_key, &self.prev_hash);
+        self.prev_hash = hash;
+        self.entries.push(AuditChainEntry {
             index,
-            salt: hex_encode(&self.salt),
-            prev_hash: hex_encode(&self.prev_hash),
-            event: canonical_event.to_string(),
-            hmac: hex_encode(&hmac),
-        };
-        self.prev_hash = hmac;
-        self.entries.push(entry);
+            salt: hex::encode(self.salt),
+            entry,
+        });
         index
     }
 
@@ -120,44 +139,43 @@ impl AuditEventChain {
         Self::verify_entries(self.entries(), &self.key)
     }
 
-    /// 校验完整链条：重算每条 HMAC 并核对 prev_hash 链与序号连续性。
+    /// 校验完整链条：序号连续 + 全链盐一致 + 载荷绑定 + 库原语重算链哈希。
     ///
-    /// 任一事件被篡改、删除、重排或伪造（prev_hash 链断裂 / hmac 不匹配 /
-    /// 序号跳跃 / 盐不一致）即返回 `false`。
+    /// 任一事件被篡改、删除、重排或伪造（链断裂 / 序号跳跃 / 盐不一致 /
+    /// 载荷绑定破坏）即返回 `false`。
     pub fn verify_entries(entries: &[AuditChainEntry], key: &[u8]) -> bool {
-        let mut prev_hash = [0u8; CHAIN_HASH_LEN];
-        let mut salt: Option<[u8; CHAIN_SALT_LEN]> = None;
-        for (expected_index, entry) in entries.iter().enumerate() {
-            if entry.index != expected_index as u64 {
+        let mut salt_bytes: Option<[u8; CHAIN_SALT_LEN]> = None;
+        let mut chain_key = String::new();
+        for (expected_index, item) in entries.iter().enumerate() {
+            if item.index != expected_index as u64 {
                 return false;
             }
-            let Some(entry_salt) = hex_decode_fixed::<CHAIN_SALT_LEN>(&entry.salt) else {
+            // garrison 载荷绑定：details 的摘要必须与 level 槽位一致——
+            // 库签名消息（timestamp|operation|target|result）不含
+            // SystemEvent.details，只改事件 JSON 不改 level 时链哈希不变，
+            // 故 garrison 侧必须显式核对绑定（改 level 则破坏链哈希，两道防线）。
+            if !details_binding_ok(&item.entry.event) {
+                return false;
+            }
+            let Ok(salt_vec) = hex::decode(&item.salt) else {
+                return false;
+            };
+            let Ok(salt) = <[u8; CHAIN_SALT_LEN]>::try_from(salt_vec) else {
                 return false;
             };
             // 链首盐在整条链中必须一致（防换盐重放）
-            match salt {
-                None => salt = Some(entry_salt),
-                Some(s) if s != entry_salt => return false,
+            match salt_bytes {
+                None => {
+                    chain_key = derive_chain_key(key, &salt);
+                    salt_bytes = Some(salt);
+                },
+                Some(s) if s != salt => return false,
                 Some(_) => {},
             }
-            let Some(prev) = hex_decode_fixed::<CHAIN_HASH_LEN>(&entry.prev_hash) else {
-                return false;
-            };
-            if prev != prev_hash {
-                return false;
-            }
-            let expected = Self::compute_hmac(key, &entry_salt, &prev_hash, entry.event.as_bytes());
-            let Some(actual) = hex_decode_fixed::<CHAIN_HASH_LEN>(&entry.hmac) else {
-                return false;
-            };
-            // 常量时间比较统一走公共原语（ADR-0003 决策 2/3：审计链哈希校验）；
-            // 长度不等在上面的定长解码已失败——长度本身非秘密
-            if !crate::secure::ct_eq::constant_time_eq(&expected, &actual) {
-                return false;
-            }
-            prev_hash = expected;
         }
-        true
+        let inner: Vec<AuditLogEntry> = entries.iter().map(|e| e.entry.clone()).collect();
+        // 库原语：首条 chain_prev==GENESIS、逐条重算 HMAC(key, prev‖payload)
+        matches!(AuditLogEntry::verify_chain(&inner, &chain_key), Ok(true))
     }
 
     /// 条目序列化为 JSONL（每行一个 JSON 对象，无尾随换行）。
@@ -180,41 +198,46 @@ impl AuditEventChain {
             .ok()
     }
 
-    fn compute_hmac(
-        key: &[u8],
-        salt: &[u8],
-        prev_hash: &[u8],
-        event: &[u8],
-    ) -> [u8; CHAIN_HASH_LEN] {
-        let mut mac = HmacSha256::new_from_slice(key).expect("HMAC 接受任意长度 key");
-        mac.update(salt);
-        mac.update(prev_hash);
-        mac.update(event);
-        let mut out = [0u8; CHAIN_HASH_LEN];
-        out.copy_from_slice(&mac.finalize().into_bytes());
-        out
+    /// garrison 规范化 JSON 事件 → limiteron `SystemEvent` 载荷。
+    ///
+    /// `level` 槽位绑入 `details` 的 SHA-256 摘要：库签名消息不含
+    /// `SystemEvent.details`，摘要使「篡改事件 JSON」必然破坏链哈希
+    /// （防篡改性质不依赖库侧签名面，见模块头说明）。
+    fn to_audit_event(canonical_event: &str) -> AuditEvent {
+        AuditEvent::SystemEvent {
+            timestamp: Utc::now(),
+            level: format!("info:{}", details_digest(canonical_event)),
+            name: GARRISON_AUDIT_NAME.to_string(),
+            details: canonical_event.to_string(),
+        }
     }
 }
 
-/// 十六进制编码（小写）。
-fn hex_encode(bytes: &[u8]) -> String {
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        out.push_str(&format!("{b:02x}"));
-    }
-    out
+/// 链密钥派生：`HMAC-SHA256(key, salt)`（hex）——盐折入密钥派生，
+/// 同密钥不同链的链哈希互不相关（链间不可链接）。
+fn derive_chain_key(key: &[u8], salt: &[u8]) -> String {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC 接受任意长度 key");
+    mac.update(salt);
+    hex::encode(mac.finalize().into_bytes())
 }
 
-/// 十六进制解码到定长数组（奇数长度/非 hex 字符/长度不符返回 None）。
-fn hex_decode_fixed<const N: usize>(raw: &str) -> Option<[u8; N]> {
-    if raw.len() != N * 2 {
-        return None;
+/// 事件 JSON 的 SHA-256 摘要（hex）——绑入被签名的 `level` 槽位。
+fn details_digest(details: &str) -> String {
+    hex::encode(Sha256::digest(details.as_bytes()))
+}
+
+/// 校验 `SystemEvent` 载荷绑定：`details` 的 SHA-256 摘要须与 `level`
+/// 槽位（`info:{摘要}`）一致。
+///
+/// garrison 只产出 `SystemEvent` 形态，其他变体一律拒绝（闭集枚举的
+/// 未知形态视为伪造入口）。
+fn details_binding_ok(event: &AuditEvent) -> bool {
+    match event {
+        AuditEvent::SystemEvent { level, details, .. } => {
+            level == &format!("info:{}", details_digest(details))
+        },
+        _ => false,
     }
-    let mut out = [0u8; N];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&raw[i * 2..i * 2 + 2], 16).ok()?;
-    }
-    Some(out)
 }
 
 #[cfg(test)]
@@ -237,6 +260,14 @@ mod tests {
         assert_eq!(chain.entries()[2].index, 2);
         // 链首盐为 32-hex（16 字节）
         assert_eq!(chain.entries()[0].salt.len(), CHAIN_SALT_LEN * 2);
+        // 载荷经 SystemEvent.details 字节级保真
+        match &chain.entries()[0].entry.event {
+            AuditEvent::SystemEvent { name, details, .. } => {
+                assert_eq!(name, "garrison-audit");
+                assert_eq!(details, &event("login", 1));
+            },
+            other => panic!("事件应承载为 SystemEvent，实际: {other:?}"),
+        }
     }
 
     #[test]
@@ -245,7 +276,10 @@ mod tests {
         chain.append(&event("login", 1));
         chain.append(&event("logout", 1));
         let mut entries = chain.entries().to_vec();
-        entries[0].event = event("login", 999);
+        // 模拟拿到 JSONL 后改写事件 JSON（details 槽位）
+        if let AuditEvent::SystemEvent { details, .. } = &mut entries[0].entry.event {
+            *details = event("login", 999);
+        }
         assert!(
             !AuditEventChain::verify_entries(&entries, b"key-1"),
             "tampered event must be detected"
@@ -273,14 +307,12 @@ mod tests {
             "reorder must break the chain"
         );
 
-        // 伪造（追加一条非链上条目）
+        // 伪造（追加一条未串链条目：chain_hash 缺失）
         let mut entries = chain.entries().to_vec();
         entries.push(AuditChainEntry {
             index: 3,
             salt: entries[0].salt.clone(),
-            prev_hash: entries[2].hmac.clone(),
-            event: event("forged", 4),
-            hmac: hex_encode(&[0u8; 32]),
+            entry: AuditLogEntry::new(AuditEventChain::to_audit_event(&event("forged", 4))),
         });
         assert!(
             !AuditEventChain::verify_entries(&entries, b"key-1"),
@@ -297,9 +329,9 @@ mod tests {
             b"wrong-key"
         ));
 
-        // 换盐重放：修改盐 → 链断裂
+        // 换盐重放：修改盐 → 派生密钥变化，链断裂
         let mut entries = chain.entries().to_vec();
-        entries[0].salt = hex_encode(&[9u8; CHAIN_SALT_LEN]);
+        entries[0].salt = hex::encode(&[9u8; CHAIN_SALT_LEN]);
         assert!(
             !AuditEventChain::verify_entries(&entries, b"key-1"),
             "salt swap must be detected"
@@ -321,20 +353,35 @@ mod tests {
     }
 
     #[test]
+    fn same_key_same_events_chain_hashes_differ() {
+        // 链间不可链接性：同密钥、同事件序列的两条链，链哈希序列互不相同
+        let mut a = AuditEventChain::new(b"k");
+        let mut b = AuditEventChain::new(b"k");
+        a.append(&event("a", 1));
+        b.append(&event("a", 1));
+        assert_ne!(
+            a.entries()[0].entry.chain_hash,
+            b.entries()[0].entry.chain_hash,
+            "同密钥同事件的链哈希必须互不相同（盐折入密钥派生）"
+        );
+    }
+
+    #[test]
     fn jsonl_roundtrip_preserves_verifiability() {
         // JSONL 落盘 → 读回校验（与审计日志分库存储的取证路径）
         let mut chain = AuditEventChain::new(b"key-1");
         chain.append(&event("login", 1));
         chain.append(&event("logout", 1));
         let jsonl = AuditEventChain::to_jsonl(chain.entries());
-
         let parsed = AuditEventChain::from_jsonl(&jsonl).expect("JSONL 解析应成功");
         assert_eq!(parsed.len(), 2);
         assert!(AuditEventChain::verify_entries(&parsed, b"key-1"));
 
         // 篡改条目后重新落盘 → 校验失败（模拟拿到 JSONL 后改写事件）
         let mut tampered_entries = AuditEventChain::from_jsonl(&jsonl).unwrap();
-        tampered_entries[0].event = r#"{"event":"login_evil","login_id":1}"#.to_string();
+        if let AuditEvent::SystemEvent { details, .. } = &mut tampered_entries[0].entry.event {
+            *details = r#"{"event":"login_evil","login_id":1}"#.to_string();
+        }
         let tampered = AuditEventChain::to_jsonl(&tampered_entries);
         let reparsed = AuditEventChain::from_jsonl(&tampered).unwrap();
         assert!(!AuditEventChain::verify_entries(&reparsed, b"key-1"));
