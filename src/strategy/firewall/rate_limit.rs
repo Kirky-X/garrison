@@ -60,10 +60,20 @@ use crate::limiteron::GarrisonDaoStorage;
 use crate::strategy::firewall::{CaptchaChallenge, FirewallContext, GarrisonFirewallStrategy};
 use async_trait::async_trait;
 use limiteron::error::LimiteronError;
+use limiteron::limiters::adaptive_threshold::{
+    AdaptiveThresholdConfig, AdaptiveThresholdLimiter, Feedback,
+};
 use limiteron::storage::Storage;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
+
+/// 自适应阈值观测窗样本数（错误率/延迟分位的统计基数）。
+const ADAPTIVE_WINDOW_SAMPLES: usize = 20;
+/// 触发调整所需最小样本数（冷启动期不抖动；1..=window_samples）。
+const ADAPTIVE_MIN_SAMPLES: usize = 5;
+/// 调整后冷却样本数（防振荡； garrison 原规则无冷却，库侧最小防抖）。
+const ADAPTIVE_COOLDOWN_SAMPLES: usize = 5;
 
 /// 速率限制作用域。
 ///
@@ -161,6 +171,11 @@ pub struct RateLimitStrategy {
     /// `allow_sliding_window`）：Lua 主路径的脚本契约（KEYS/ARGV 形状、
     /// hash-tag seq 键、响应解析）收敛在此，策略层不再直连裸 `eval_lua`。
     limiter: Arc<GarrisonDaoDistributedLimiter>,
+    /// 动态阈值内核（limiteron `AdaptiveThresholdLimiter`，AIMD）：
+    /// `dynamic_threshold=Some` 时构造并承载阈值观测环与调整；`None` 时
+    /// 为 None，阈值恒为 `max_requests`。进程内语义（per-instance 本地
+    /// 视图），H-5 TOCTOU 窗口随 DAO RMW 的删除而消除。
+    adaptive: Option<AdaptiveThresholdLimiter>,
     /// 进程内原子锁（降级路径）：保护 `eval_lua` 不可用时的
     /// read-modify-write。仅进程内原子，跨进程仍存在 TOCTOU（见模块文档）。
     ///
@@ -185,10 +200,41 @@ impl RateLimitStrategy {
     /// - `dao`: DAO（oxcache 抽象，用于时间戳列表存储）。
     pub fn new(config: RateLimitConfig, dao: Arc<dyn GarrisonDao>) -> Self {
         let storage = Arc::new(GarrisonDaoStorage::new(dao.clone()));
+        let adaptive = config.dynamic_threshold.map(|upper| {
+            AdaptiveThresholdConfig {
+                base_limit: u64::from(config.max_requests),
+                // 下界/上界钉死配置区间； garrison 80%/20% 交通量带映射为
+                // 库 Feedback 的 ok 槽位（见 adjust_threshold 文档）。
+                min_limit: u64::from(config.max_requests),
+                max_limit: upper as u64,
+                window_samples: ADAPTIVE_WINDOW_SAMPLES,
+                min_samples_for_adjust: ADAPTIVE_MIN_SAMPLES,
+                // error_rate = 低负载样本比：≥0.8 持续低负载 → 降；
+                // ≤0.2 持续高负载 → 升（与 garrison 20%/80% 带对应）。
+                error_rate_increase_threshold: 0.8,
+                error_rate_decrease_threshold: 0.2,
+                // 无延迟信号：延迟通道恒不触发调整（latency_ms 恒 0）。
+                latency_increase_ms: u64::MAX,
+                latency_decrease_ms: u64::MAX,
+                // garrison 线性步长（max/10，至少 1）；乘性减取 0.9 近似
+                // 其降步区间 [upper/10, max/10]，防振荡由冷却期承载。
+                increase_step: (u64::from(config.max_requests) / 10).max(1),
+                decrease_ratio: 0.9,
+                cooldown_samples: ADAPTIVE_COOLDOWN_SAMPLES,
+            }
+        });
         Self {
             config,
             storage,
             limiter: Arc::new(GarrisonDaoDistributedLimiter::new(dao)),
+            adaptive: adaptive
+                .map(AdaptiveThresholdLimiter::with_validation)
+                .transpose()
+                .unwrap_or_else(|e| {
+                    // 配置由 garrison 侧显式构造（区间已保证 min<=base<=max），
+                    // 库校验失败属配置构造缺陷，fail-loud 不静默降级。
+                    panic!("rate_limit: AdaptiveThresholdConfig invalid: {e}")
+                }),
             atomic_lock: Mutex::new(()),
         }
     }
@@ -218,94 +264,70 @@ impl RateLimitStrategy {
     /// 返回当前生效的速率阈值。
     ///
     /// - `dynamic_threshold=None` 时恒返回 `max_requests`。
-    /// - `dynamic_threshold=Some(_)` 时返回 DAO 中持久化的当前阈值
-    ///   （区间 `[max_requests, dynamic_threshold]`），缺省回退到 `max_requests`。
+    /// - `dynamic_threshold=Some(_)` 时返回自适应阈值器当前限额
+    ///   （区间 `[max_requests, dynamic_threshold]`，由 limiteron
+    ///   `AdaptiveThresholdLimiter` 的配置校验承载钳制）。
+    ///
+    /// 进程内语义：阈值为策略实例的本地视图（多实例部署各节点按自身流量
+    /// 调整，与 Envoy / Netflix concurrency-limits 的 per-node 口径一致）；
+    /// 调整由 [`adjust_threshold`](Self::adjust_threshold) 的反馈驱动。
     pub async fn current_threshold(&self, ctx: &FirewallContext) -> GarrisonResult<usize> {
         let max = self.config.max_requests as usize;
-        let Some(upper) = self.config.dynamic_threshold else {
+        let Some(_upper) = self.config.dynamic_threshold else {
             return Ok(max);
         };
-        let (key, _) = self.build_key(ctx)?;
-        let threshold_key = format!("{}:threshold", key);
-        let stored = self
-            .storage
-            .get(&threshold_key)
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
-        let raw: usize = stored
-            .as_deref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(max);
-        // 钳制到 [max, upper]，防止历史脏数据越界
-        Ok(raw.clamp(max, upper))
+        let (_, _) = self.build_key(ctx)?;
+        // `ctx` 仅用于签名兼容与调用方校验（scope 缺省仍显性失败）；
+        // 阈值不再按 key 持久化（进程内自适应），故不参与取值。
+        Ok(self
+            .adaptive
+            .as_ref()
+            .map_or(max, |a| a.current_limit() as usize))
     }
 
-    /// 根据观测到的历史流量调整阈值。
+    /// 根据观测到的历史流量调整阈值（委托 limiteron `AdaptiveThresholdLimiter`）。
     ///
-    /// 调整规则（确定性）：
-    /// - `traffic_count >= current * 80%`（高负载）：阈值上调一步，封顶 `dynamic_threshold`。
-    /// - `traffic_count < current * 20%`（低负载）：阈值下调一步，下限 `max_requests`。
-    /// - 其余区间：不变。
+    /// garrison 历史规则（`traffic_count >= current × 80%` 升一步、`< 20%`
+    /// 降一步，步长 `max/10`）映射为库的 AIMD 反馈：**`ok` 槽位借用 garrison
+    /// 高负载带语义**——`ok = traffic_count >= current × 80%`；`latency_ms`
+    /// 恒 0（garrison 限流路径无延迟信号，交付纯交通量驱动）。据此：
+    /// - 「低负载样本比」= 库的 `error_rate`；`error_rate ≥ 0.8`
+    ///   （持续低负载）→ 降，`error_rate ≤ 0.2`（持续高负载）→ 升，
+    ///   与 garrison 80%/20% 带逐带对应；
+    /// - `increase_step = max(1, max_requests/10)`（ garrison 步长原值），
+    ///   `decrease_ratio = 0.9`（乘性减，近似 garrison 线性降步的
+    ///   `[upper/10, max/10]` 步长区间，防振荡语义由库冷却期承载）。
     ///
-    /// 仅在 `dynamic_threshold=Some(_)` 时生效；`None` 时直接返回 `max_requests`。
+    /// **行为差异（显式声明）**：调整节拍从 garrison 的「每次调用即判」
+    /// 变为库的「每 `min_samples_for_adjust` 个样本 + 冷却期」——平滑性
+    /// 增强、单次调用到生效有采样滞后，测试按新节拍语义钉住。
     ///
-    /// # 已知限制：TOCTOU 竞争窗口
-    ///
-    /// 此方法使用 read-modify-write（`current_threshold → 计算 → storage.set`），
-    /// 高并发下存在 TOCTOU 竞争：两个并发调用可能读到相同的 `current` 值，
-    /// 各自计算 `new_threshold` 后最后一次写入覆盖前一次。
-    /// 与 `check` 方法的 TOCTOU 处理方式一致（文档说明，保留语义）。
+    /// H-5 TOCTOU 窗口随 DAO read-modify-write 的删除而消除（进程内原子
+    /// 观测环；`AdaptiveThresholdLimiter::report` 单锁完成入环与判定）。
     ///
     /// # 返回
-    /// 调整后的当前阈值。
+    /// 调整后的当前阈值（`dynamic_threshold=None` 时恒为 `max_requests`）。
     pub async fn adjust_threshold(
         &self,
         ctx: &FirewallContext,
         traffic_count: usize,
     ) -> GarrisonResult<usize> {
         let max = self.config.max_requests as usize;
-        let Some(upper) = self.config.dynamic_threshold else {
+        let Some(adaptive) = &self.adaptive else {
             return Ok(max);
         };
-        let (key, _) = self.build_key(ctx)?;
-        let threshold_key = format!("{}:threshold", key);
+        // scope 缺省仍显性失败（与 check/current_threshold 一致的前置校验）
+        let (_, _) = self.build_key(ctx)?;
 
-        // 以下 read-modify-write（current_threshold → 计算 → set）
-        // 无任何同步保护，动态阈值启用时并发调用存在末写覆盖竞争窗口（保留语义，
-        // 见下方方法文档）。每次实际调整时 warn 提示运维该非原子语义。
-        tracing::warn!(
-            key = %threshold_key,
-            traffic_count,
-            "rate_limit: dynamic threshold adjust uses unsynchronized read-modify-write (H-5), last write wins under concurrency"
-        );
-
-        let current = self.current_threshold(ctx).await?;
-
-        // 步长：max_requests 的 10%，至少 1（确定性）
-        let step = (max / 10).max(1);
-
-        // 用整数比较替代浮点，避免精度问题
-        // 高负载：traffic_count * 5 >= current * 4 <=> traffic_count >= current * 0.8
-        // 低负载：traffic_count * 5 < current * 1 <=> traffic_count < current * 0.2
-        let new_threshold = if traffic_count.saturating_mul(5) >= current.saturating_mul(4) {
-            (current + step).min(upper)
-        } else if traffic_count.saturating_mul(5) < current {
-            current.saturating_sub(step).max(max)
-        } else {
-            current
+        let current = adaptive.current_limit() as usize;
+        // garrison 高负载带（`traffic_count × 5 >= current × 4`，整数运算免浮点）
+        // 映射为库 Feedback 的 ok 槽位（借用语义，见方法文档）。
+        let feedback = Feedback {
+            ok: traffic_count.saturating_mul(5) >= current.saturating_mul(4),
+            latency_ms: 0,
         };
-
-        // 持久化（TTL=window_seconds，与计数器同窗口）
-        self.storage
-            .set(
-                &threshold_key,
-                &new_threshold.to_string(),
-                Some(self.config.window_seconds),
-            )
-            .await
-            .map_err(|e| GarrisonError::Dao(format!("strategy-limiter-storage::{}", e)))?;
-
-        Ok(new_threshold)
+        adaptive.report(feedback);
+        Ok(adaptive.current_limit() as usize)
     }
 
     /// 根据作用域构造计数 key 并返回作用域标识（用于错误消息）。
@@ -755,10 +777,10 @@ mod tests {
         );
     }
 
-    /// 流量持续高时阈值上调。
+    /// 流量持续高时阈值上调（limiteron AIMD 节拍：每 min_samples+冷却一次调整）。
     ///
-    /// max_requests=10, dynamic_threshold=Some(20)。
-    /// 初始阈值 10，传入 traffic_count >= 80% 应上调，封顶 20。
+    /// max_requests=10, dynamic_threshold=Some(20)。初始阈值 10；持续高负载
+    /// 反馈（ok=true，error_rate=0 ≤ 0.2）经库判定点逐步升到上限 20。
     #[tokio::test]
     async fn dynamic_threshold_increases_when_traffic_high() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -778,40 +800,52 @@ mod tests {
             .expect("current_threshold 不应报错");
         assert_eq!(initial, 10, "初始阈值应为 max_requests");
 
-        // 高流量（9 >= 80% of 10 = 8）应触发上调
-        let after_high = strategy
-            .adjust_threshold(&ctx, 9)
-            .await
-            .expect("adjust_threshold 不应报错");
-        assert!(after_high > 10, "高流量后阈值应上调，实际: {}", after_high);
-        assert!(
-            after_high <= 20,
-            "阈值不应超过 dynamic_threshold 上限，实际: {}",
-            after_high
-        );
-
-        // 持续高流量直到封顶 20
-        let mut current = after_high;
-        for i in 0..20 {
+        // 高负载带持续反馈直到封顶 20：feedback 的 traffic 取当前阈值本身
+        //（threshold >= 80% of threshold 恒成立，模拟「负载随容量同比」的
+        // 高负载带）；节拍为采样驱动（min_samples=5 + 冷却 5，每 5 样本判定）。
+        let mut current = initial;
+        for _ in 0..300 {
             current = strategy
                 .adjust_threshold(&ctx, current)
                 .await
                 .expect("adjust_threshold 不应报错");
-            if current >= 20 {
-                break;
-            }
-            assert!(current <= 20, "第 {} 次调整后阈值越界: {}", i, current);
+            assert!(current <= 20, "阈值不得超过 dynamic_threshold 上限");
         }
-        assert_eq!(
-            current, 20,
-            "持续高流量应封顶到 dynamic_threshold，实际: {}",
-            current
+        assert_eq!(current, 20, "持续高负载应最终封顶到 20，实际: {}", current);
+    }
+
+    /// AIMD 节拍契约：冷启动 min_samples 内不调整，判定点才升/降。
+    ///
+    /// min_samples_for_adjust=5：前 4 次反馈不产生调整，第 5 次（判定点）
+    /// 高负载样本触发第一次上调。
+    #[tokio::test]
+    async fn dynamic_threshold_adjusts_only_at_decision_points() {
+        let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
+        let config = RateLimitConfig {
+            max_requests: 10,
+            window_seconds: 60,
+            scope: RateLimitScope::Ip,
+            dynamic_threshold: Some(20),
+        };
+        let strategy = RateLimitStrategy::new(config, dao);
+        let ctx = FirewallContext::new("192.168.1.1");
+
+        for i in 1..=4 {
+            let t = strategy.adjust_threshold(&ctx, 9).await.unwrap();
+            assert_eq!(t, 10, "第 {i} 次反馈（< min_samples）不应调整");
+        }
+        let at_decision = strategy.adjust_threshold(&ctx, 9).await.unwrap();
+        assert!(
+            at_decision > 10,
+            "第 5 次反馈（判定点）高负载应上调，实际: {}",
+            at_decision
         );
     }
 
     /// 流量持续低时阈值下调。
     ///
-    /// 先用高流量把阈值推到高位，再用低流量下调，下限 max_requests。
+    /// 先用高负载把阈值推到上限，再用低负载（traffic=0）持续反馈，
+    /// 乘性减（×0.9）+ 下限钳制（max_requests）最终触底。
     #[tokio::test]
     async fn dynamic_threshold_decreases_when_traffic_low() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -824,62 +858,28 @@ mod tests {
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
 
-        // 先用高流量把阈值推到封顶 20
-        let mut current = strategy
-            .current_threshold(&ctx)
-            .await
-            .expect("current_threshold 不应报错");
-        for _ in 0..20 {
-            current = strategy
-                .adjust_threshold(&ctx, current)
-                .await
-                .expect("adjust_threshold 不应报错");
-            if current >= 20 {
-                break;
-            }
+        // 先用高负载把阈值推到封顶 20（traffic 取当前阈值：恒在高负载带）
+        let mut current = 10;
+        for _ in 0..300 {
+            current = strategy.adjust_threshold(&ctx, current).await.unwrap();
         }
-        let peaked = current;
-        assert_eq!(peaked, 20, "高流量应将阈值推到上限");
+        let peaked = strategy.current_threshold(&ctx).await.unwrap();
+        assert_eq!(peaked, 20, "高负载应将阈值推到上限，实际: {}", peaked);
 
-        // 低流量（0 << 20% of 20 = 4）应触发下调
-        let after_low = strategy
-            .adjust_threshold(&ctx, 0)
-            .await
-            .expect("adjust_threshold 不应报错");
-        assert!(
-            after_low < peaked,
-            "低流量后阈值应下调，实际: {}",
-            after_low
-        );
-        assert!(
-            after_low >= 10,
-            "阈值不应低于 max_requests，实际: {}",
-            after_low
-        );
-
-        // 持续低流量直到下限 max_requests
-        let mut current = after_low;
-        for _ in 0..20 {
-            current = strategy
-                .adjust_threshold(&ctx, 0)
-                .await
-                .expect("adjust_threshold 不应报错");
-            if current <= 10 {
-                break;
-            }
+        // 低负载（0 < 20% of 20）持续反馈直到下限 10
+        let mut current = peaked;
+        for _ in 0..300 {
+            current = strategy.adjust_threshold(&ctx, 0).await.unwrap();
+            assert!(current >= 10, "阈值不得低于 max_requests");
         }
-        assert_eq!(
-            current, 10,
-            "持续低流量应触底到 max_requests，实际: {}",
-            current
-        );
+        assert_eq!(current, 10, "持续低负载应触底到 10，实际: {}", current);
     }
 
     /// 动态阈值上调后 check 使用新阈值而非 max_requests（回归测试）。
     ///
-    /// max_requests=10, dynamic_threshold=Some(20)。先用 adjust_threshold 把阈值推到 20，
-    /// 再调用 check 11 次——若 check 仍用 max_requests=10，第 11 次会被拦截（bug）；
-    /// 修复后 check 应使用 current_threshold=20，第 11 次仍通过。
+    /// max_requests=10, dynamic_threshold=Some(20)。持续高负载反馈把阈值推到
+    /// 20 后，check 应使用 current_threshold=20：前 20 次通过、第 21 次拦截
+    /// （旧 bug：check 恒用 max_requests=10 会提前拦截）。
     #[tokio::test]
     async fn check_uses_dynamic_threshold_not_max_requests() {
         let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
@@ -892,40 +892,19 @@ mod tests {
         let strategy = RateLimitStrategy::new(config, dao);
         let ctx = FirewallContext::new("192.168.1.1");
 
-        // 把阈值推到封顶 20
-        let mut current = strategy
-            .current_threshold(&ctx)
-            .await
-            .expect("current_threshold 不应报错");
-        for _ in 0..20 {
-            current = strategy
-                .adjust_threshold(&ctx, current)
-                .await
-                .expect("adjust_threshold 不应报错");
-            if current >= 20 {
-                break;
-            }
+        // 持续高负载反馈直到阈值封顶 20（traffic 取当前阈值：恒在高负载带）
+        let mut current = 10;
+        for _ in 0..300 {
+            current = strategy.adjust_threshold(&ctx, current).await.unwrap();
         }
-        assert_eq!(current, 20, "阈值应已上调到 20");
+        let current = strategy.current_threshold(&ctx).await.unwrap();
+        assert_eq!(current, 20, "阈值应已上调到 20，实际: {}", current);
 
-        // 用新阈值 20 的 80%（=16）触发 should_challenge
-        // 先消耗 16 次（应全部通过，因为 16 < 20）
-        for i in 1..=16 {
+        // 前 20 次 check 全部通过（第 N 次成功后列表 N 个时间戳，N<20 通过）
+        for i in 1..=20 {
             assert!(
                 strategy.check(&ctx).await.is_ok(),
                 "动态阈值=20 时第 {} 次 check 应通过（旧 bug 会在此拦截）",
-                i
-            );
-        }
-
-        // 第 17~20 次仍应通过（20 是阈值，< 20 才通过，==20 时第 20 次的 timestamps.len()=19<20 通过，
-        // 但第 21 次 timestamps.len()=20 >= 20 拦截）
-        // 注意：check 每次成功后追加时间戳，所以第 N 次成功后列表有 N 个时间戳
-        // 第 17 次 check 时列表有 16 个，16 < 20 通过；第 21 次时列表有 20 个，20 >= 20 拦截
-        for i in 17..=20 {
-            assert!(
-                strategy.check(&ctx).await.is_ok(),
-                "动态阈值=20 时第 {} 次 check 应通过",
                 i
             );
         }
