@@ -502,7 +502,8 @@ firewall = []
 firewall-bruteforce = ["firewall", "firewall-ddos", "limiteron/ban-manager"]
 # lua-script：滑动窗口 Lua 脚本取自 limiteron oxcache_lua（Sorted Set 版，
 # 替代 garrison 手写逗号时间戳串脚本）
-firewall-ratelimit = ["firewall", "dep:rand", "limiteron/lua-script"]
+# adaptive-threshold：动态阈值内核（limiteron AdaptiveThresholdLimiter，AIMD）
+firewall-ratelimit = ["firewall", "dep:rand", "limiteron/lua-script", "limiteron/adaptive-threshold"]
 # 启用后可在配置中选择 Memory/Redis 限流后端（RateLimitBackend enum）
 rate-limit-redis = ["firewall-ratelimit", "cache-redis"]
 firewall-anomalous = ["firewall"]
@@ -554,7 +555,8 @@ session-hijack-detection = ["security-alert", "auth-server"]
 session-extra = []
 
 # === 三层缓存架构 ===
-three-tier-cache = ["dep:oxcache"]
+# oxcache/memory：ChainCache 的 L1 内存后端（DashMapMemoryBackend）
+three-tier-cache = ["dep:oxcache", "oxcache/memory"]
 
 # === 社交登录 ===
 social-wechat = ["protocol-oauth2"]

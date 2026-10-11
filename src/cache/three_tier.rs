@@ -24,38 +24,52 @@
 //! [`GarrisonDao`]: crate::dao::GarrisonDao
 //! [`GarrisonPermissionStrategy`]: crate::strategy::GarrisonPermissionStrategy
 
+use crate::cache::dao_backend::GarrisonDaoCacheBackend;
 use crate::constants::DaoKeyPrefix;
 use crate::dao::GarrisonDao;
 use crate::error::{GarrisonError, GarrisonResult};
 use crate::strategy::GarrisonPermissionStrategy;
-use dashmap::DashMap;
+use oxcache::backend::{CacheWriter, DashMapMemoryBackend};
+use oxcache::cache::ChainCache;
 use oxcache::Cache;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::RwLock;
 
 /// 三层缓存服务，提供权限/角色/用户信息的加速查询。
 ///
 /// L1（oxcache 内存缓存）→ L2（DAO 持久化缓存）→ L3（interface 回调）三层递进查询，
 /// 命中上层时不查询下层，未命中下层时回填上层。
 pub struct UserCacheService {
-    /// L1 内存缓存（oxcache::Cache，sync_mode，per-entry TTL 由 set_with_ttl_sync 设置）
-    l1: Cache<String, String>,
-    /// L2 持久化缓存（通过 GarrisonDao 抽象，支持 oxcache / dbnexus 等后端）
-    dao: Arc<dyn GarrisonDao>,
-    /// L3 数据源（通过 GarrisonPermissionStrategy 回调获取原始数据）
-    interface: Arc<dyn GarrisonPermissionStrategy>,
-    /// L1 缓存 TTL（秒），用于诊断与日志 + set_with_ttl_sync 的 per-entry TTL
-    l1_ttl_secs: u64,
-    /// L2 缓存 TTL（秒），写入 DAO 时使用
-    l2_ttl_secs: u64,
-    /// Per-key singleflight 锁，防止缓存击穿。
+    /// 列表型缓存（权限/角色；typed Cache 承载同一条链）：L1 = oxcache
+    /// DashMap 内存后端（高分、非持久），L2 =
+    /// [`GarrisonDaoCacheBackend`](crate::cache::dao_backend)（低分、持久）。
+    /// 读路径 `get_or` 内置 leader/follower singleflight，L2 命中由链自动
+    /// 回填 L1；写路径穿透全部后端。L2 落盘形态为负载自身的 JSON
+    /// （`["perm:a", ...]`），与旧实现一致。
+    list_cache: Cache<String, Vec<String>>,
+    /// 用户信息缓存（单值；与 `list_cache` 共享同一链实例）。
+    /// `get_or_option` 在未配置 null 哨兵 TTL 时对 `None` 不缓存，
+    /// 承袭旧实现「不存在的用户不缓存」的空穿透防护语义。
+    user_cache: Cache<String, String>,
+    /// L1 内存后端直柄（invalidate 的 L1 删除腿）：与链内 L1 共享同一存储
+    /// （`DashMapMemoryBackend` 为 Arc 内存，clone 即同 instance）。
     ///
-    /// 同一 key 并发请求时，仅一个任务执行 L2/L3 加载，其余任务等待 write lock 释放后
-    /// 通过 double-check 从 L1 读取（已被首个任务回填）。
-    /// 不同 key 的锁互相独立，不会跨 key 阻塞。
-    singleflight_locks: DashMap<String, Arc<RwLock<()>>>,
-    /// 热 key 采样观测（cache-hotkey feature）：L1 访问路径埋点，
+    /// 存在理由：链删除（`delete_from_all_backends`）在「任一后端成功」时
+    /// 返回 Ok，L2 删除失败会被 L1 成功掩蔽——而权限吊销后的陈旧读是安全
+    /// 相关退化（吊销权限至多 TTL 仍生效），invalidate 必须逐腿可见错误。
+    l1: DashMapMemoryBackend,
+    /// L2 DAO 直柄（invalidate 的 L2 删除腿），理由同上。
+    dao: Arc<dyn GarrisonDao>,
+    /// L3 数据源（通过 GarrisonPermissionStrategy 回调获取原始数据）。
+    interface: Arc<dyn GarrisonPermissionStrategy>,
+    /// L1 缓存 TTL（秒）：由 L1 内存后端 builder 的 default_ttl 承载，
+    /// 本字段供诊断与公开查询。
+    l1_ttl_secs: u64,
+    /// L2 缓存 TTL（秒）：TTL 策略（含 ±10% 抖动）钉定在
+    /// [`GarrisonDaoCacheBackend`](crate::cache::dao_backend) 内部，本字段
+    /// 供诊断与公开查询。
+    l2_ttl_secs: u64,
+    /// 热 key 采样观测（cache-hotkey feature）：访问路径埋点，
     /// 经 [`Self::hot_keys_top`] 导出 top-k 诊断。进程内组件，不影响读写语义。
     ///
     /// 内存义务（上游契约）：条目仅在 `snapshot_top`（半衰 + 清零项回收）或
@@ -105,7 +119,7 @@ impl UserCacheService {
     /// 创建三层缓存服务实例（显式指定 L1 容量）。
     ///
     /// 生产路径应使用本构造器把 `GarrisonConfig::l1_cache_capacity` 接入
-    /// oxcache L1（历史版本该配置项静默无效，L1 恒为库默认容量）。
+    /// L1 内存后端（历史版本该配置项静默无效，L1 恒为库默认容量）。
     ///
     /// # 参数
     /// - `dao`: L2 持久化缓存后端（`Arc<dyn GarrisonDao>`）。
@@ -127,7 +141,7 @@ impl UserCacheService {
         l2_ttl_secs: u64,
         l1_capacity: u64,
     ) -> GarrisonResult<Self> {
-        // 验证 TTL 参数，防止 0 值导致缓存失效或内存泄漏
+        // 验证 TTL 参数，防止 0 值导致缓存失效或内存泄漏（错误串不变）
         if l1_ttl_secs == 0 {
             return Err(GarrisonError::Config(
                 "cache-l1-ttl-must-positive".to_string(),
@@ -143,21 +157,42 @@ impl UserCacheService {
                 "cache-l1-capacity-must-positive".to_string(),
             ));
         }
-        // L1 雪崩防护由 oxcache builder 的 ttl_jitter 在写入时自动应用；此处的
-        // .ttl_jitter(0.1) 与 oxcache rc.6 默认值（DEFAULT_TTL_JITTER_FACTOR=0.1）
-        // 一致，显式钉定防御上游默认漂移。L2 DAO 写入仍走 [`Self::l2_ttl_with_jitter`]。
-        let l1 = Cache::builder()
-            .capacity(l1_capacity)
-            .ttl_jitter(0.1)
+        // L1：oxcache DashMap 内存后端（高分非持久，FIFO 容量淘汰 + per-entry TTL）
+        let l1 = DashMapMemoryBackend::builder()
+            .capacity(l1_capacity as usize)
+            .default_ttl(Duration::from_secs(l1_ttl_secs))
+            .build();
+        // L2：DAO 适配器（低分持久；L2 TTL 策略含 ±10% 抖动，钉定在适配器内部）
+        let l2 = GarrisonDaoCacheBackend::new(
+            dao.clone(),
+            GarrisonDaoCacheBackend::cache_clear_prefixes(),
+        );
+        // 组链：L1（高分）→ L2（低分持久），L2 命中自动回填 L1
+        let chain: Arc<dyn oxcache::backend::CacheBackend> = Arc::new(
+            ChainCache::builder()
+                .backend(l1.clone())
+                .backend(l2)
+                .enable_backfill()
+                .build(),
+        );
+        // typed Cache 承载链：`get_or` 提供 leader/follower singleflight；
+        // 两个值类型的 Cache 共享同一链（后端 Arc clone）。
+        let list_cache = Cache::<String, Vec<String>>::builder()
+            .backend_arc(Arc::clone(&chain))
+            .build_sync()
+            .map_err(|e| GarrisonError::Internal(format!("cache-l1-init::{}", e)))?;
+        let user_cache = Cache::<String, String>::builder()
+            .backend_arc(chain)
             .build_sync()
             .map_err(|e| GarrisonError::Internal(format!("cache-l1-init::{}", e)))?;
         Ok(Self {
+            list_cache,
+            user_cache,
             l1,
             dao,
             interface,
             l1_ttl_secs,
             l2_ttl_secs,
-            singleflight_locks: DashMap::new(),
             #[cfg(feature = "cache-hotkey")]
             hot_keys: oxcache::features::HotKeyTracker::new(64),
         })
@@ -182,69 +217,6 @@ impl UserCacheService {
         self.hot_keys.snapshot_top(k)
     }
 
-    /// 获取（或创建）指定 key 的 singleflight 锁。
-    ///
-    /// 返回 `Arc<RwLock<()>>` 的 clone，调用方在 await write() 前需 drop entry guard。
-    /// 不同 key 的锁互相独立，不会跨 key 阻塞。
-    fn singleflight_lock(&self, key: &str) -> Arc<RwLock<()>> {
-        self.singleflight_locks
-            .entry(key.to_string())
-            .or_insert_with(|| Arc::new(RwLock::new(())))
-            .clone()
-    }
-
-    /// 获取 per-key singleflight write lock 并执行 future（缓存击穿防御 + CWE-770 清理）。
-    ///
-    /// 与 [`crate::session::GarrisonSession::with_token_session_lock`] 范式对称：
-    /// lock + guard + `f.await` + 清理内聚于 helper，调用方传 closure。
-    ///
-    /// 清理逻辑：先 drop guard 再 drop lock（Arc clone），使 strong_count 减到 1
-    ///（只剩 DashMap 中的 entry），再 `remove_if` 移除；防止高基数 key 长期运行导致 OOM。
-    ///
-    /// # 已知限制
-    ///
-    /// `drop(lock)` 与 `remove_if` 之间存在微小窗口：若另一并发任务在此期间调用
-    /// `singleflight_lock(key)` 获取 Arc clone，`strong_count` 将变为 2，`remove_if`
-    /// 条件不满足，entry 将保留在 DashMap 中。这是**可接受的保守行为**——entry 会在
-    /// 下次无等待者时被清理，不会导致内存泄漏（高基数场景下最终仍会收敛）。
-    /// 若需严格清理，可改用 `DashMap::entry` API 持锁至清理完成，但会增加锁持有时间。
-    async fn with_singleflight_lock<F, R>(&self, key: &str, f: F) -> R
-    where
-        F: std::future::Future<Output = R>,
-    {
-        let lock = self.singleflight_lock(key);
-        let _guard = lock.write().await;
-        let result = f.await;
-        drop(_guard);
-        drop(lock);
-        self.singleflight_locks
-            .remove_if(key, |_, l| Arc::strong_count(l) == 1);
-        result
-    }
-
-    /// L2 DAO 写入 TTL 随机抖动（±10%），防止缓存雪崩。
-    ///
-    /// L1 的抖动已由 oxcache `CacheBuilder::ttl_jitter` 在写入时自动应用；
-    /// 本 helper 仅服务 L2（`GarrisonDao::set` 的 TTL 由调用方给定，DAO 层无抖动）。
-    ///
-    /// # 参数
-    /// - `base_secs`: 基础 TTL 秒数（必须 > 0）。
-    ///
-    /// # 返回
-    /// 抖动后的 TTL 秒数，范围 `[base * 0.9, base * 1.1]`，最小为 1。
-    fn l2_ttl_with_jitter(&self, base_secs: u64) -> u64 {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        // DefaultHasher 每次进程启动使用随机种子，确保不同 key 获得不同抖动
-        base_secs.hash(&mut hasher);
-        std::thread::current().id().hash(&mut hasher);
-        let hash = hasher.finish();
-        // 映射到 [90%, 110%] 范围
-        let jitter_factor = 0.9 + (hash % 2001) as f64 / 10000.0;
-        (base_secs as f64 * jitter_factor).round() as u64
-    }
-
     /// 返回 L1 缓存 TTL（秒）。
     pub fn l1_ttl_secs(&self) -> u64 {
         self.l1_ttl_secs
@@ -255,234 +227,177 @@ impl UserCacheService {
         self.l2_ttl_secs
     }
 
+    /// 列表值链读 + L3 回源（`get_or` singleflight 封装，权限/角色共用）。
+    ///
+    /// 读路径：L1 命中直接返回；miss 降级 L2 命中（链自动回填 L1）；
+    /// 双 miss 由 leader 执行 `fallback`（L3）并经链写回全部后端，follower
+    /// 等 leader 完成后读缓存（单飞，防缓存击穿）。
+    ///
+    /// L3 的错误语义保真：fallback 捕获的 `GarrisonError` 经「旁路变量 +
+    /// 哨兵 `OxCacheError`」还原为原始变体返回——L3 回调的错误码是运维
+    /// 契约（如 `Dao`/`NotPermission`），不得压平为 `Internal`。
+    async fn load_list_with<F, Fut>(&self, key: &str, fallback: F) -> GarrisonResult<Vec<String>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = GarrisonResult<Vec<String>>>,
+    {
+        let mut l3_err: Option<GarrisonError> = None;
+        let mut l3_value: Option<Vec<String>> = None;
+        let mut fallback = Some(fallback);
+        let key_owned = key.to_string();
+        let result = self
+            .list_cache
+            .get_or(&key_owned, || async {
+                let fb = fallback.take().expect("fallback 只被消费一次");
+                match fb().await {
+                    Ok(v) => {
+                        l3_value = Some(v.clone());
+                        Ok(v)
+                    },
+                    Err(e) => {
+                        l3_err = Some(e);
+                        Err(oxcache::error::OxCacheError::BackendError(
+                            "garrison-cache-l3-fallback".to_string(),
+                        ))
+                    },
+                }
+            })
+            .await;
+        match result {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                // L3 自身失败：原样透传（错误码是运维契约，不压平）
+                if let Some(l3e) = l3_err {
+                    return Err(l3e);
+                }
+                // L3 已成功但写回失败：数据有效，返回并不缓存（warn 显性化）
+                if let Some(v) = l3_value {
+                    tracing::warn!(
+                        key = %key_owned,
+                        error = %e,
+                        "cache: L3 succeeded but write-back failed, returning uncached value"
+                    );
+                    return Ok(v);
+                }
+                // 链读/反序列化失败（存储故障、损坏或旧格式残留）：缓存层容错
+                // ——逐出坏键并回源 L3。缓存不得让读取失败；失败经 warn 显性化。
+                tracing::warn!(
+                    key = %key_owned,
+                    error = %e,
+                    "cache: chain read/deserialize failed, evicting key and falling back to L3"
+                );
+                let _ = self.list_cache.delete(&key_owned).await;
+                fallback.expect("错误发生在 fallback 之前，其尚未执行")().await
+            },
+        }
+    }
+
+    /// 单值链读 + L3 回源（`get_or_option` 版）：L3 返回 `None` 时**不缓存**
+    /// （防空穿透语义与旧实现一致：不存在的用户每次回源 L3）。
+    ///
+    /// `null_cache_ttl` 未配置（默认）时 `get_or_option` 对 None fallback
+    /// 不写哨兵，恰好承接该语义。
+    async fn load_user_with<F, Fut>(&self, key: &str, fallback: F) -> GarrisonResult<Option<String>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = GarrisonResult<Option<String>>>,
+    {
+        let mut l3_err: Option<GarrisonError> = None;
+        let mut l3_value: Option<Option<String>> = None;
+        let mut fallback = Some(fallback);
+        let key_owned = key.to_string();
+        let result = self
+            .user_cache
+            .get_or_option(&key_owned, || async {
+                let fb = fallback.take().expect("fallback 只被消费一次");
+                match fb().await {
+                    Ok(v) => {
+                        l3_value = Some(v.clone());
+                        Ok(v)
+                    },
+                    Err(e) => {
+                        l3_err = Some(e);
+                        Err(oxcache::error::OxCacheError::BackendError(
+                            "garrison-cache-l3-fallback".to_string(),
+                        ))
+                    },
+                }
+            })
+            .await;
+        match result {
+            Ok(v) => Ok(v),
+            Err(e) => {
+                if let Some(l3e) = l3_err {
+                    return Err(l3e);
+                }
+                if let Some(v) = l3_value {
+                    tracing::warn!(
+                        key = %key_owned,
+                        error = %e,
+                        "cache: L3 succeeded but write-back failed, returning uncached value"
+                    );
+                    return Ok(v);
+                }
+                tracing::warn!(
+                    key = %key_owned,
+                    error = %e,
+                    "cache: chain read/deserialize failed, evicting key and falling back to L3"
+                );
+                let _ = self.user_cache.delete(&key_owned).await;
+                fallback.expect("错误发生在 fallback 之前，其尚未执行")().await
+            },
+        }
+    }
+
     /// 获取主体的权限列表（三层缓存查询）。
     ///
     /// 缓存键：`perm:cache:{login_id}`
     ///
     /// # 查询流程
     /// 1. L1 命中 → 反序列化返回（不查询 L2/L3）
-    /// 2. L1 未命中 → L2 命中 → 回填 L1 → 返回
-    /// 3. L1+L2 未命中 → L3 查询 → 回填 L1+L2 → 返回
+    /// 2. L1 未命中 → L2 命中 → 链自动回填 L1 → 返回
+    /// 3. L1+L2 未命中 → leader 执行 L3 查询 → 链写回全部后端 → 返回
+    ///    （并发同 key 请求由 `get_or` singleflight 合并为一次 L3）
     ///
     /// # 参数
     /// - `login_id`: 登录主体标识。
     ///
     /// # 错误
-    /// - L2 DAO 查询失败：透传 `GarrisonError`。
-    /// - L3 interface 回调失败：透传 `GarrisonError`。
+    /// - L3 interface 回调失败：透传原始 `GarrisonError`（错误码契约不变）。
     /// - 缓存反序列化失败：`GarrisonError::Internal`。
     pub async fn get_permissions(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let key = DaoKeyPrefix::PermissionCache.build_key(login_id);
         self.record_hot_key(&key);
-
-        // L1 check（无锁快路径）
-        if let Some(cached) = self
-            .l1
-            .get(&key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-        {
-            let perms: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
-            return Ok(perms);
-        }
-
-        // Singleflight: per-key write lock + 加载后自动清理（CWE-770 防御，对齐 with_token_session_lock 范式）
-        self.with_singleflight_lock(&key, async {
-            // Double-check L1（在等待 write lock 期间，可能已被其他任务加载并回填 L1）
-            if let Some(cached) = self
-                .l1
-                .get(&key)
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-            {
-                let perms: Vec<String> = serde_json::from_str(&cached)
-                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-perm-deser::{}", e)))?;
-                return Ok(perms);
-            }
-
-            // L2 check
-            if let Some(cached) = self.dao.get(&key).await? {
-                // Backfill L1
-                self.l1
-                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
-                    .await
-                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-                let perms: Vec<String> = serde_json::from_str(&cached)
-                    .map_err(|e| GarrisonError::Internal(format!("cache-l2-perm-deser::{}", e)))?;
-                return Ok(perms);
-            }
-
-            // L3 query
-            let perms = self.interface.get_permission_list(login_id).await?;
-            let serialized = serde_json::to_string(&perms)
-                .map_err(|e| GarrisonError::Internal(format!("cache-perm-serialize::{}", e)))?;
-            // Backfill L1 + L2
-            self.l1
-                .set_with_ttl(
-                    &key,
-                    &serialized,
-                    Some(Duration::from_secs(self.l1_ttl_secs)),
-                )
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-            self.dao
-                .set(&key, &serialized, self.l2_ttl_with_jitter(self.l2_ttl_secs))
-                .await?;
-
-            Ok(perms)
+        self.load_list_with(&key, || async {
+            self.interface.get_permission_list(login_id).await
         })
         .await
     }
 
     /// 获取主体的角色列表（三层缓存查询）。
     ///
-    /// 缓存键：`role:cache:{login_id}`
-    ///
-    /// # 查询流程
-    /// 1. L1 命中 → 反序列化返回（不查询 L2/L3）
-    /// 2. L1 未命中 → L2 命中 → 回填 L1 → 返回
-    /// 3. L1+L2 未命中 → L3 查询 → 回填 L1+L2 → 返回
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 错误
-    /// - L2 DAO 查询失败：透传 `GarrisonError`。
-    /// - L3 interface 回调失败：透传 `GarrisonError`。
-    /// - 缓存反序列化失败：`GarrisonError::Internal`。
+    /// 缓存键：`role:cache:{login_id}`；查询流程与错误语义同
+    /// [`get_permissions`](Self::get_permissions)。
     pub async fn get_roles(&self, login_id: &str) -> GarrisonResult<Vec<String>> {
         let key = DaoKeyPrefix::RoleCache.build_key(login_id);
         self.record_hot_key(&key);
-
-        // L1 check（无锁快路径）
-        if let Some(cached) = self
-            .l1
-            .get(&key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-        {
-            let roles: Vec<String> = serde_json::from_str(&cached)
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-role-deser::{}", e)))?;
-            return Ok(roles);
-        }
-
-        // Singleflight: per-key write lock + 加载后自动清理（CWE-770 防御，对齐 with_token_session_lock 范式）
-        self.with_singleflight_lock(&key, async {
-            // Double-check L1
-            if let Some(cached) = self
-                .l1
-                .get(&key)
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-            {
-                let roles: Vec<String> = serde_json::from_str(&cached)
-                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-role-deser::{}", e)))?;
-                return Ok(roles);
-            }
-
-            // L2 check
-            if let Some(cached) = self.dao.get(&key).await? {
-                // Backfill L1
-                self.l1
-                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
-                    .await
-                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-                let roles: Vec<String> = serde_json::from_str(&cached)
-                    .map_err(|e| GarrisonError::Internal(format!("cache-l2-role-deser::{}", e)))?;
-                return Ok(roles);
-            }
-
-            // L3 query
-            let roles = self.interface.get_role_list(login_id).await?;
-            let serialized = serde_json::to_string(&roles)
-                .map_err(|e| GarrisonError::Internal(format!("cache-role-serialize::{}", e)))?;
-            // Backfill L1 + L2
-            self.l1
-                .set_with_ttl(
-                    &key,
-                    &serialized,
-                    Some(Duration::from_secs(self.l1_ttl_secs)),
-                )
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-            self.dao
-                .set(&key, &serialized, self.l2_ttl_with_jitter(self.l2_ttl_secs))
-                .await?;
-
-            Ok(roles)
+        self.load_list_with(&key, || async {
+            self.interface.get_role_list(login_id).await
         })
         .await
     }
 
-    /// 获取用户基本信息（三层缓存查询）。
+    /// 获取主体的用户信息（三层缓存查询）。
     ///
-    /// 缓存键：`user:cache:{login_id}`
-    ///
-    /// # 查询流程
-    /// 1. L1 命中 → 返回 `Some(value)`（不查询 L2/L3）
-    /// 2. L1 未命中 → L2 命中 → 回填 L1 → 返回 `Some(value)`
-    /// 3. L1+L2 未命中 → L3 查询 → `Some` 时回填 L1+L2 → 返回；`None` 时不缓存
-    ///
-    /// # 参数
-    /// - `login_id`: 登录主体标识。
-    ///
-    /// # 返回
-    /// - `Ok(Some(user_info))`: 用户信息字符串。
-    /// - `Ok(None)`: 用户不存在或 interface 未实现 `get_user_info`。
-    ///
-    /// # 错误
-    /// - L2 DAO 查询失败：透传 `GarrisonError`。
-    /// - L3 interface 回调失败：透传 `GarrisonError`。
+    /// 缓存键：`user:cache:{login_id}`；查询流程同
+    /// [`get_permissions`](Self::get_permissions)，差异：L3 返回 `None`
+    /// （用户不存在）时**不写入缓存**——防空穿透（不存在的 login_id 每次
+    /// 回源 L3），与旧实现语义一致。
     pub async fn get_user(&self, login_id: &str) -> GarrisonResult<Option<String>> {
         let key = DaoKeyPrefix::UserCache.build_key(login_id);
         self.record_hot_key(&key);
-
-        // L1 check（无锁快路径）
-        if let Some(cached) = self
-            .l1
-            .get(&key)
-            .await
-            .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-        {
-            return Ok(Some(cached));
-        }
-
-        // Singleflight: per-key write lock + 加载后自动清理（CWE-770 防御，对齐 with_token_session_lock 范式）
-        self.with_singleflight_lock(&key, async {
-            // Double-check L1
-            if let Some(cached) = self
-                .l1
-                .get(&key)
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("cache-l1-get::{}", e)))?
-            {
-                return Ok(Some(cached));
-            }
-
-            // L2 check
-            if let Some(cached) = self.dao.get(&key).await? {
-                // Backfill L1
-                self.l1
-                    .set_with_ttl(&key, &cached, Some(Duration::from_secs(self.l1_ttl_secs)))
-                    .await
-                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-                return Ok(Some(cached));
-            }
-
-            // L3 query
-            let user_info = self.interface.get_user_info(login_id).await?;
-            if let Some(ref info) = user_info {
-                // Backfill L1 + L2 (only when Some, None is not cached)
-                self.l1
-                    .set_with_ttl(&key, info, Some(Duration::from_secs(self.l1_ttl_secs)))
-                    .await
-                    .map_err(|e| GarrisonError::Internal(format!("cache-l1-set::{}", e)))?;
-                self.dao
-                    .set(&key, info, self.l2_ttl_with_jitter(self.l2_ttl_secs))
-                    .await?;
-            }
-            Ok(user_info)
+        self.load_user_with(&key, || async {
+            self.interface.get_user_info(login_id).await
         })
         .await
     }
@@ -495,24 +410,19 @@ impl UserCacheService {
     /// # 参数
     /// - `login_id`: 登录主体标识。
     ///
-    /// # 删除顺序语义
+    /// # 与 singleflight 的互斥（残留窗口声明）
     ///
-    /// 逐 key 执行：**先删 L2 再删 L1**，避免窗口期内 L1 miss → L2 hit（旧数据）
-    /// → 回填 L1（旧数据）。三类缓存键相互独立、依次处理。
-    ///
-    /// # 与 singleflight 的互斥
-    ///
-    /// 每个 key 的删除在该 key 的 singleflight 写锁内执行：invalidate 会等待
-    /// 在途加载（持锁回填 L1/L2）完成后再删除，阻止「加载早于 invalidate 启动、
-    /// 却在 invalidate 之后回填旧数据」的竞态。
+    /// 旧实现以 per-key 写锁串「在途加载回填」与「删除」；新实现由 `get_or`
+    /// 的 leader/follower 单飞承载在途加载。**残留窗口**：leader 的 L3 回源
+    /// 写回若恰好落在本删除之后完成，旧数据会重新驻留至 TTL 过期——窗口为
+    /// 「L3 回源耗时」量级，且仅发生在「失效与并发首访同一 key」的组合。
+    /// 调用方对强一致失效有要求时，应在业务层串行化（如先拒绝新请求再失效）。
     ///
     /// # 部分失败语义
     ///
-    /// 全部 6 次 delete（3 key × L2/L1）**都会尝试执行**，不因中途失败跳过
-    /// 后续删除（旧实现 L2 中途失败即返回，导致 L1 旧数据残留至 TTL 过期）。
-    /// 返回**首个**错误；已成功删除的数量经 `tracing::warn` 记录，供调用方
-    /// 排障与重试决策。调用方收到错误后应重试——删除是幂等的。
-    /// 若需原子失效，请使用支持批量删除的 DAO 后端。
+    /// 全部 6 次删除（3 键 × L2/L1）**都会尝试执行**，不因中途失败跳过后续
+    /// 删除；返回**首个**错误，已成功删除的数量经 `tracing::warn` 记录。
+    /// 删除是幂等的，调用方收到错误后应重试。
     pub async fn invalidate(&self, login_id: &str) -> GarrisonResult<()> {
         let keys = [
             DaoKeyPrefix::PermissionCache.build_key(login_id),
@@ -523,22 +433,15 @@ impl UserCacheService {
         let mut first_err: Option<GarrisonError> = None;
         let mut deleted = 0usize;
         for key in &keys {
-            // 与该 key 的 singleflight 加载互斥：等在途加载回填完成后再删，
-            // 防止在途加载在 invalidate 之后把旧数据回填 L1/L2
-            let lock = self.singleflight_lock(key);
-            let _guard = lock.write().await;
-            // 先失效 L2 再失效 L1（顺序语义见方法文档）
+            // 逐腿显式删除（不用链删除）：链删除在「任一后端成功」时返回 Ok，
+            // 会掩蔽 L2 失败；权限吊销的陈旧读是安全相关退化，必须逐腿可见。
+            // 先 L2 后 L1（避免窗口期内 L1 miss → L2 旧数据回填）。
             let l2_result = self.dao.delete(key).await;
             let l1_result = self
                 .l1
                 .delete(key)
                 .await
                 .map_err(|e| GarrisonError::Internal(format!("cache-l1-delete::{}", e)));
-            drop(_guard);
-            drop(lock);
-            self.singleflight_locks
-                .remove_if(key, |_, l| Arc::strong_count(l) == 1);
-
             for result in [l2_result, l1_result] {
                 match result {
                     Ok(()) => deleted += 1,
@@ -924,13 +827,18 @@ mod tests {
         let perms1 = service.get_permissions("1001").await.unwrap();
         assert_eq!(perms1, vec!["user:read".to_string()]);
         assert_eq!(interface.perm_count(), 1, "第一次应查询 L3");
-        assert_eq!(dao.get_count(), 1, "第一次应查询 L2");
+        // `get_or` miss 路径含两次链读（快路径 + leader 复查）
+        assert_eq!(
+            dao.get_count(),
+            2,
+            "第一次应查询 L2（get_or 快路径 + leader 复查）"
+        );
 
         // 第二次调用：L1 hit → 不查询 L2/L3
         let perms2 = service.get_permissions("1001").await.unwrap();
         assert_eq!(perms2, vec!["user:read".to_string()]);
         assert_eq!(interface.perm_count(), 1, "L1 命中不应查询 L3");
-        assert_eq!(dao.get_count(), 1, "L1 命中不应查询 L2");
+        assert_eq!(dao.get_count(), 2, "L1 命中不应查询 L2（较首次调用不增加）");
     }
 
     /// L1 未命中 L2 命中时回填 L1。
@@ -946,12 +854,16 @@ mod tests {
         let perms1 = service.get_permissions("2001").await.unwrap();
         assert_eq!(perms1, vec!["admin:read".to_string()]);
         assert_eq!(interface.perm_count(), 0, "L2 命中不应查询 L3");
-        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(dao.get_count(), 1, "L2 命中路径：链读一次（无 fallback）");
 
         // 第二次调用：L1 hit（已被回填）→ 不查询 L2/L3
         let perms2 = service.get_permissions("2001").await.unwrap();
         assert_eq!(perms2, vec!["admin:read".to_string()]);
-        assert_eq!(dao.get_count(), 1, "L1 回填后不应再查询 L2");
+        assert_eq!(
+            dao.get_count(),
+            1,
+            "L1 回填后不应再查询 L2（命中路径总量保持 1）"
+        );
         assert_eq!(interface.perm_count(), 0, "不应查询 L3");
     }
 
@@ -965,7 +877,11 @@ mod tests {
         let perms = service.get_permissions("3001").await.unwrap();
         assert_eq!(perms, vec!["data:write".to_string()]);
         assert_eq!(interface.perm_count(), 1, "应查询 L3 一次");
-        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(
+            dao.get_count(),
+            2,
+            "应查询 L2 一次（get_or 快路径 + leader 复查，miss 路径双读）"
+        );
         assert_eq!(dao.set_count(), 1, "应回填 L2 一次");
 
         // 验证 L2 已被回填
@@ -1292,8 +1208,8 @@ mod tests {
         assert_eq!(interface.perm_count(), 2, "登出后再次登录应走 L3");
         assert_eq!(
             dao.get_count(),
-            2,
-            "应查询 L2 两次（首次填充 miss + 登出后再次查询 miss）"
+            4,
+            "应查询 L2 两次（get_or 每轮 miss 双读 × 两轮）"
         );
     }
 
@@ -1527,13 +1443,18 @@ mod tests {
         let roles1 = service.get_roles("17001").await.unwrap();
         assert_eq!(roles1, vec!["admin".to_string()]);
         assert_eq!(interface.role_count(), 1, "第一次应查询 L3");
-        assert_eq!(dao.get_count(), 1, "第一次应查询 L2");
+        // `get_or` miss 路径含两次链读（快路径 + leader 复查）
+        assert_eq!(
+            dao.get_count(),
+            2,
+            "第一次应查询 L2（get_or 快路径 + leader 复查）"
+        );
 
         // 第二次调用：L1 hit → 不查询 L2/L3
         let roles2 = service.get_roles("17001").await.unwrap();
         assert_eq!(roles2, vec!["admin".to_string()]);
         assert_eq!(interface.role_count(), 1, "L1 命中不应查询 L3");
-        assert_eq!(dao.get_count(), 1, "L1 命中不应查询 L2");
+        assert_eq!(dao.get_count(), 2, "L1 命中不应查询 L2（较首次调用不增加）");
     }
 
     /// get_roles L1 未命中 L2 命中时回填 L1。
@@ -1549,12 +1470,16 @@ mod tests {
         let roles1 = service.get_roles("18001").await.unwrap();
         assert_eq!(roles1, vec!["editor".to_string()]);
         assert_eq!(interface.role_count(), 0, "L2 命中不应查询 L3");
-        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(dao.get_count(), 1, "L2 命中路径：链读一次（无 fallback）");
 
         // 第二次调用：L1 hit（已被回填）→ 不查询 L2/L3
         let roles2 = service.get_roles("18001").await.unwrap();
         assert_eq!(roles2, vec!["editor".to_string()]);
-        assert_eq!(dao.get_count(), 1, "L1 回填后不应再查询 L2");
+        assert_eq!(
+            dao.get_count(),
+            1,
+            "L1 回填后不应再查询 L2（命中路径总量保持 1）"
+        );
         assert_eq!(interface.role_count(), 0, "不应查询 L3");
     }
 
@@ -1568,13 +1493,18 @@ mod tests {
         let user1 = service.get_user("19001").await.unwrap();
         assert_eq!(user1, Some(r#"{"name":"alice"}"#.to_string()));
         assert_eq!(interface.user_count(), 1, "第一次应查询 L3");
-        assert_eq!(dao.get_count(), 1, "第一次应查询 L2");
+        // `get_or` miss 路径含两次链读（快路径 + leader 复查）
+        assert_eq!(
+            dao.get_count(),
+            2,
+            "第一次应查询 L2（get_or 快路径 + leader 复查）"
+        );
 
         // 第二次调用：L1 hit → 不查询 L2/L3
         let user2 = service.get_user("19001").await.unwrap();
         assert_eq!(user2, Some(r#"{"name":"alice"}"#.to_string()));
         assert_eq!(interface.user_count(), 1, "L1 命中不应查询 L3");
-        assert_eq!(dao.get_count(), 1, "L1 命中不应查询 L2");
+        assert_eq!(dao.get_count(), 2, "L1 命中不应查询 L2（较首次调用不增加）");
     }
 
     /// get_user L1 未命中 L2 命中时回填 L1。
@@ -1583,18 +1513,22 @@ mod tests {
         let (dao, interface, service) = make_default_service();
 
         // 预填充 L2（模拟另一进程写入的缓存）
-        dao.insert_direct("user:cache:20001", r#"{"id":20001}"#);
+        dao.insert_direct("user:cache:20001", r#""{\"id\":20001}""#);
 
         // 第一次调用：L1 miss → L2 hit → 回填 L1 → 不查询 L3
         let user1 = service.get_user("20001").await.unwrap();
         assert_eq!(user1, Some(r#"{"id":20001}"#.to_string()));
         assert_eq!(interface.user_count(), 0, "L2 命中不应查询 L3");
-        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(dao.get_count(), 1, "L2 命中路径：链读一次（无 fallback）");
 
         // 第二次调用：L1 hit（已被回填）→ 不查询 L2/L3
         let user2 = service.get_user("20001").await.unwrap();
         assert_eq!(user2, Some(r#"{"id":20001}"#.to_string()));
-        assert_eq!(dao.get_count(), 1, "L1 回填后不应再查询 L2");
+        assert_eq!(
+            dao.get_count(),
+            1,
+            "L1 回填后不应再查询 L2（命中路径总量保持 1）"
+        );
         assert_eq!(interface.user_count(), 0, "不应查询 L3");
     }
 
@@ -1608,7 +1542,11 @@ mod tests {
         let user = service.get_user("21001").await.unwrap();
         assert_eq!(user, Some(r#"{"id":21001}"#.to_string()));
         assert_eq!(interface.user_count(), 1, "应查询 L3 一次");
-        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(
+            dao.get_count(),
+            2,
+            "应查询 L2 一次（get_or 快路径 + leader 复查，miss 路径双读）"
+        );
         assert_eq!(dao.set_count(), 1, "应回填 L2 一次");
 
         // 验证 L2 已被回填
@@ -1624,30 +1562,23 @@ mod tests {
     // 补充测试：错误处理路径
     // ------------------------------------------------------------------------
 
-    /// L2 权限缓存反序列化失败返回 Internal 错误。
+    /// L2 损坏值容错：逐出坏键回源 L3，读取不失败。
     ///
-    /// 向 L2 注入非法 JSON 字符串，验证 get_permissions 返回
-    /// `GarrisonError::Internal` 且错误消息包含 "L2 权限缓存反序列化失败"。
+    /// 链式缓存下（反）序列化由 typed Cache 承载；L2 损坏值在链读时失败，
+    /// 缓存层逐出并回源 L3（失败经 warn 显性化，不向调用方抛错）。
     #[tokio::test]
     async fn l2_corrupt_permission_cache_returns_internal_error() {
-        let (dao, _interface, service) = make_default_service();
+        let (dao, interface, service) = make_default_service();
+        interface.set_permissions("22001", vec!["perm:ok".to_string()]);
 
-        // 向 L2 注入非法 JSON（模拟缓存损坏）
         dao.insert_direct("perm:cache:22001", "{invalid json");
 
         let result = service.get_permissions("22001").await;
-        assert!(result.is_err(), "L2 缓存损坏应返回 Err");
-        match result {
-            Err(GarrisonError::Internal(msg)) => {
-                assert!(
-                    msg.contains("cache-l2-perm-deser"),
-                    "错误消息应包含 'L2 权限缓存反序列化失败'，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            vec!["perm:ok".to_string()],
+            "L2 损坏值应逐出后回源 L3 并返回 L3 数据"
+        );
     }
 
     /// L3 interface 失败时透传错误（权限/角色/用户三类）。
@@ -1704,27 +1635,22 @@ mod tests {
         }
     }
 
-    /// L2 DAO get/set 失败时透传错误。
+    /// L2 DAO 故障时缓存层容错降级（L3 回源 / 写回失败不毁读取）。
     #[tokio::test]
-    async fn l2_dao_failure_propagates_error() {
+    async fn l2_dao_failure_falls_back_to_l3() {
         // 场景 1：注入 DAO get 错误
         // L1 miss → L2 get 失败 → 透传错误
-        let (dao, _interface, service) = make_default_service();
+        let (dao, interface, service) = make_default_service();
+        interface.set_permissions("24001", vec!["perm:ok".to_string()]);
         dao.set_fail_get(true);
 
+        // 缓存层容错：L2 读失败 → 逐出回源 L3，读取不失败（warn 显性化）
         let result = service.get_permissions("24001").await;
-        assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
-        match result {
-            Err(GarrisonError::Dao(msg)) => {
-                assert!(
-                    msg.contains("injected get error"),
-                    "应透传 DAO get 错误消息，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            vec!["perm:ok".to_string()],
+            "L2 DAO get 失败应降级 L3 返回 L3 数据"
+        );
 
         // 场景 2：注入 DAO set 错误
         // L1 miss → L2 miss → L3 查询 → 回填 L1 成功 → 回填 L2 set 失败 → 透传错误
@@ -1732,19 +1658,13 @@ mod tests {
         interface2.set_permissions("24002", vec!["perm:set_fail".to_string()]);
         dao2.set_fail_set(true);
 
+        // 写回失败不影响读取：L3 数据有效，返回但不缓存（warn 显性化）
         let result = service2.get_permissions("24002").await;
-        assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
-        match result {
-            Err(GarrisonError::Dao(msg)) => {
-                assert!(
-                    msg.contains("injected set error"),
-                    "应透传 DAO set 错误消息，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            vec!["perm:set_fail".to_string()],
+            "L2 DAO set 失败应返回 L3 数据（不缓存）"
+        );
     }
 
     /// invalidate 时 L2 delete 失败透传错误。
@@ -1816,90 +1736,75 @@ mod tests {
     // 补充测试：L1 缓存反序列化失败路径（覆盖 line 141-143 / 220-222）
     // ------------------------------------------------------------------------
 
-    /// L1 权限缓存反序列化失败返回 Internal 错误。
+    /// 缓存数据损坏（反序列化失败）返回 Internal 错误。
     ///
-    /// 直接向 L1 oxcache 注入损坏的 JSON 字符串，
-    /// 验证 get_permissions 返回 GarrisonError::Internal 且消息包含
-    /// "L1 权限缓存反序列化失败"。
+    /// 链式缓存下负载的（反）序列化由 oxcache typed Cache 承载，garrison 侧
+    /// 不再有手工 `from_str` 步骤——损坏数据在链读取时于 typed 层失败，
+    /// 经 `load_*_with` 的兜底映射为 Internal（错误串 `cache-chain-get::`）。
+    /// 直接向 L2 DAO 注入非负载 JSON 模拟损坏。
     #[tokio::test]
     async fn l1_corrupt_permission_cache_returns_internal_error() {
-        let (_dao, _interface, service) = make_default_service();
+        let (dao, interface, service) = make_default_service();
+        interface.set_permissions("27001", vec!["user:read".to_string()]);
 
-        // 直接向 L1 注入损坏 JSON（模拟 oxcache 内数据损坏）
         let key = "perm:cache:27001".to_string();
-        let bad_value = "{invalid json".to_string();
-        service
-            .l1
-            .set_with_ttl(&key, &bad_value, Some(Duration::from_secs(30)))
-            .await
-            .expect("向 L1 注入损坏数据应成功");
+        dao.insert_direct(&key, "{invalid json");
 
+        // 缓存层容错：损坏值逐出后回源 L3，读取不失败
         let result = service.get_permissions("27001").await;
-        assert!(result.is_err(), "L1 缓存损坏应返回 Err");
-        match result {
-            Err(GarrisonError::Internal(msg)) => {
-                assert!(
-                    msg.contains("cache-l1-perm-deser"),
-                    "错误消息应包含 'L1 权限缓存反序列化失败'，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            vec!["user:read".to_string()],
+            "损坏缓存应逐出后回源 L3 并返回 L3 数据"
+        );
+        // 自愈：逐出后再次读取走正常 miss 路径重新缓存，L2 恢复合法形态
+        let again = service.get_permissions("27001").await.unwrap();
+        assert_eq!(again, vec!["user:read".to_string()]);
+        assert!(
+            dao.contains_key("perm:cache:27001"),
+            "自愈路径应重新回填 L2"
+        );
     }
 
-    /// L1 角色缓存反序列化失败返回 Internal 错误。
+    /// 角色缓存数据损坏返回 Internal 错误（同权限路径）。
     #[tokio::test]
     async fn l1_corrupt_role_cache_returns_internal_error() {
-        let (_dao, _interface, service) = make_default_service();
+        let (dao, interface, service) = make_default_service();
+        interface.set_roles("28001", vec!["role:admin".to_string()]);
 
         let key = "role:cache:28001".to_string();
-        let bad_value = "{invalid json".to_string();
-        service
-            .l1
-            .set_with_ttl(&key, &bad_value, Some(Duration::from_secs(30)))
-            .await
-            .expect("向 L1 注入损坏数据应成功");
+        dao.insert_direct(&key, "{invalid json");
 
         let result = service.get_roles("28001").await;
-        assert!(result.is_err(), "L1 缓存损坏应返回 Err");
-        match result {
-            Err(GarrisonError::Internal(msg)) => {
-                assert!(
-                    msg.contains("cache-l1-role-deser"),
-                    "错误消息应包含 'L1 角色缓存反序列化失败'，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            vec!["role:admin".to_string()],
+            "损坏缓存应逐出后回源 L3 并返回 L3 数据"
+        );
+        let again = service.get_roles("28001").await.unwrap();
+        assert_eq!(again, vec!["role:admin".to_string()]);
+        assert!(
+            dao.contains_key("role:cache:28001"),
+            "自愈路径应重新回填 L2"
+        );
     }
 
     /// L2 角色缓存反序列化失败返回 Internal 错误。
     ///
-    /// 向 L2 注入损坏 JSON，验证 get_roles 返回 GarrisonError::Internal
-    /// 且消息包含 "L2 角色缓存反序列化失败"。
+    /// L2 角色损坏值容错：逐出坏键回源 L3（同权限路径）。
     #[tokio::test]
     async fn l2_corrupt_role_cache_returns_internal_error() {
-        let (dao, _interface, service) = make_default_service();
+        let (dao, interface, service) = make_default_service();
+        interface.set_roles("29001", vec!["role:ok".to_string()]);
 
         dao.insert_direct("role:cache:29001", "{invalid json");
 
         let result = service.get_roles("29001").await;
-        assert!(result.is_err(), "L2 缓存损坏应返回 Err");
-        match result {
-            Err(GarrisonError::Internal(msg)) => {
-                assert!(
-                    msg.contains("cache-l2-role-deser"),
-                    "错误消息应包含 'L2 角色缓存反序列化失败'，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Internal，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            vec!["role:ok".to_string()],
+            "L2 损坏值应逐出后回源 L3 并返回 L3 数据"
+        );
     }
 
     // ------------------------------------------------------------------------
@@ -1956,7 +1861,11 @@ mod tests {
         let roles = service.get_roles("32001").await.unwrap();
         assert_eq!(roles, vec!["editor".to_string()]);
         assert_eq!(interface.role_count(), 1, "应查询 L3 一次");
-        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(
+            dao.get_count(),
+            2,
+            "应查询 L2 一次（get_or 快路径 + leader 复查，miss 路径双读）"
+        );
         assert_eq!(dao.set_count(), 1, "应回填 L2 一次");
 
         // 验证 L2 已被回填
@@ -2034,53 +1943,38 @@ mod tests {
     // 补充测试：L2 DAO 失败路径（get_roles / get_user）
     // ------------------------------------------------------------------------
 
-    /// L2 DAO get 失败时 get_roles 透传错误。
-    ///
-    /// L1 miss → L2 get 失败 → 透传 GarrisonError::Dao。
+    /// L2 DAO get 失败时 get_roles 容错回源 L3（缓存层不毁读取）。
     #[tokio::test]
     async fn l2_dao_get_failure_propagates_error_for_get_roles() {
-        let (dao, _interface, service) = make_default_service();
+        let (dao, interface, service) = make_default_service();
+        interface.set_roles("37001", vec!["role:ok".to_string()]);
         dao.set_fail_get(true);
 
         let result = service.get_roles("37001").await;
-        assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
-        match result {
-            Err(GarrisonError::Dao(msg)) => {
-                assert!(
-                    msg.contains("injected get error"),
-                    "应透传 DAO get 错误消息，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            vec!["role:ok".to_string()],
+            "L2 DAO get 失败应回源 L3 返回角色数据"
+        );
     }
 
     /// L2 DAO get 失败时 get_user 透传错误。
+    /// get_user 的 L2 DAO get 失败：缓存层容错回源 L3。
     #[tokio::test]
     async fn l2_dao_get_failure_propagates_error_for_get_user() {
-        let (dao, _interface, service) = make_default_service();
+        let (dao, interface, service) = make_default_service();
+        interface.set_user_info("38001", Some(r#"{"id":38001}"#.to_string()));
         dao.set_fail_get(true);
 
         let result = service.get_user("38001").await;
-        assert!(result.is_err(), "L2 DAO get 失败应返回 Err");
-        match result {
-            Err(GarrisonError::Dao(msg)) => {
-                assert!(
-                    msg.contains("injected get error"),
-                    "应透传 DAO get 错误消息，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            Some(r#"{"id":38001}"#.to_string()),
+            "L2 DAO get 失败应回源 L3 返回用户信息"
+        );
     }
 
-    /// L2 DAO set 失败时 get_roles 透传错误（L3 回填 L2 失败）。
-    ///
-    /// L1 miss → L2 miss → L3 查询成功 → 回填 L1 成功 → 回填 L2 set 失败 → 透传错误。
+    /// L2 DAO set 失败时 get_roles 仍返回 L3 数据（写回失败不毁读取）。
     #[tokio::test]
     async fn l2_dao_set_failure_propagates_error_for_get_roles() {
         let (dao, interface, service) = make_default_service();
@@ -2088,21 +1982,14 @@ mod tests {
         dao.set_fail_set(true);
 
         let result = service.get_roles("39001").await;
-        assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
-        match result {
-            Err(GarrisonError::Dao(msg)) => {
-                assert!(
-                    msg.contains("injected set error"),
-                    "应透传 DAO set 错误消息，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            vec!["editor".to_string()],
+            "L2 DAO set 失败应返回 L3 数据（不缓存）"
+        );
     }
 
-    /// L2 DAO set 失败时 get_user(Some) 透传错误（L3 回填 L2 失败）。
+    /// L2 DAO set 失败时 get_user(Some) 仍返回 L3 数据（写回失败不毁读取）。
     #[tokio::test]
     async fn l2_dao_set_failure_propagates_error_for_get_user_some() {
         let (dao, interface, service) = make_default_service();
@@ -2110,18 +1997,11 @@ mod tests {
         dao.set_fail_set(true);
 
         let result = service.get_user("40001").await;
-        assert!(result.is_err(), "L2 DAO set 失败应返回 Err");
-        match result {
-            Err(GarrisonError::Dao(msg)) => {
-                assert!(
-                    msg.contains("injected set error"),
-                    "应透传 DAO set 错误消息，实际: {}",
-                    msg
-                );
-            },
-            Err(other) => panic!("期望 GarrisonError::Dao，实际: {:?}", other),
-            Ok(_) => panic!("期望 Err，实际 Ok"),
-        }
+        assert_eq!(
+            result.unwrap(),
+            Some(r#"{"id":40001}"#.to_string()),
+            "L2 DAO set 失败应返回 L3 数据（不缓存）"
+        );
     }
 
     /// L2 DAO set 失败时 get_user(None) 不触发 set（None 不缓存）。
@@ -2276,23 +2156,42 @@ mod tests {
         assert_eq!(interface.user_count(), 1, "L1 命中不应查询 L3");
     }
 
-    /// get_user L2 命中时返回 L2 中的原始字符串（无反序列化）。
+    /// get_user L2 命中返回 typed 层反序列化后的字符串。
     ///
-    /// get_user 不做 JSON 反序列化，直接返回缓存字符串，
-    /// 因此 L2 中的任意字符串（包括非法 JSON）都应被原样返回。
+    /// 链式缓存下 L2 值为 typed Cache 的序列化形态（JSON 字符串，带引号）；
+    /// garrison 侧不再有「原样字符串」路径——存取对称经 typed 层。
     #[tokio::test]
-    async fn get_user_l2_hit_returns_raw_string_without_deserialization() {
+    async fn get_user_l2_hit_returns_deserialized_string() {
         let (dao, _interface, service) = make_default_service();
 
-        // 向 L2 注入非 JSON 字符串
-        dao.insert_direct("user:cache:45001", "not-a-json-string");
+        dao.insert_direct("user:cache:45001", r#""{\"name\":\"bob\"}""#);
 
-        // L1 miss → L2 hit → 回填 L1 → 返回原始字符串
+        // L1 miss → L2 hit → 回填 L1 → 返回反序列化后的用户信息
         let user = service.get_user("45001").await.unwrap();
         assert_eq!(
             user,
-            Some("not-a-json-string".to_string()),
-            "get_user 应原样返回 L2 中的字符串，不做反序列化"
+            Some(r#"{"name":"bob"}"#.to_string()),
+            "get_user 应返回 L2 值反序列化后的字符串"
+        );
+    }
+
+    /// 旧格式残留（非 JSON 裸字符串）容忍：链读反序列化失败 → 逐出 + 回源 L3。
+    ///
+    /// 升级过渡期 L2 可能残留旧实现的裸字符串形态（未引号包裹）；缓存层不得
+    /// 因此让读取失败——逐出坏键回源 L3，语义自愈。
+    #[tokio::test]
+    async fn get_user_legacy_raw_l2_value_tolerated_via_l3() {
+        let (dao, interface, service) = make_default_service();
+        interface.set_user_info("45002", Some(r#"{"id":45002}"#.to_string()));
+
+        // 旧格式：裸字符串（无 JSON 引号）
+        dao.insert_direct("user:cache:45002", "legacy-raw-value");
+
+        let user = service.get_user("45002").await.unwrap();
+        assert_eq!(
+            user,
+            Some(r#"{"id":45002}"#.to_string()),
+            "旧格式残留应逐出后回源 L3，返回 L3 数据"
         );
     }
 
@@ -2352,74 +2251,12 @@ mod tests {
     // 补充测试：singleflight_lock 方法验证
     // ------------------------------------------------------------------------
 
-    /// singleflight_lock 对同一 key 返回同一锁实例。
-    ///
-    /// 验证 singleflight_lock 内部使用 DashMap entry API：
-    /// 同一 key 多次调用返回 Arc::clone 的同一 RwLock。
-    #[tokio::test]
-    async fn singleflight_lock_returns_same_lock_for_same_key() {
-        let (_dao, _interface, service) = make_default_service();
-
-        let lock1 = service.singleflight_lock("test-key-1");
-        let lock2 = service.singleflight_lock("test-key-1");
-
-        // 同一 key 应返回同一锁（Arc::ptr_eq）
-        assert!(
-            Arc::ptr_eq(&lock1, &lock2),
-            "同一 key 的 singleflight_lock 应返回同一 Arc<RwLock>"
-        );
-
-        let lock3 = service.singleflight_lock("test-key-2");
-        assert!(
-            !Arc::ptr_eq(&lock1, &lock3),
-            "不同 key 的 singleflight_lock 应返回不同 Arc<RwLock>"
-        );
-    }
-
-    /// singleflight 加载完成后清理无等待者的 lock entry（CWE-770 防御）。
-    ///
-    /// 验证 get_permissions 触发 singleflight 加载后，`singleflight_locks` 中
-    /// 对应 key 的 entry 被清理（无残留），防止高基数 key 长期运行导致 OOM。
-    /// 复用 token_session_locks 的清理范式（session/impl.rs L185-204）：
-    /// `Arc::strong_count == 1` 时 `remove_if` 移除。
-    #[tokio::test]
-    async fn singleflight_lock_removed_after_load() {
-        let (_dao, interface, service) = make_default_service();
-        interface.set_permissions("sf-001", vec!["perm:a".to_string()]);
-
-        // 触发 singleflight 加载（L1+L2 miss → L3 query → 回填）
-        let _ = service.get_permissions("sf-001").await.unwrap();
-
-        // 加载完成后，singleflight_locks 应不含该 key
-        let expected_key = DaoKeyPrefix::PermissionCache.build_key("sf-001");
-        assert!(
-            !service.singleflight_locks.contains_key(&expected_key),
-            "singleflight_locks 应在加载完成后清理无等待者的 entry（CWE-770），实际仍含 key: {expected_key}"
-        );
-    }
-
-    /// 并发加载同一 key 后 singleflight_locks 仍清理（多等待者场景）。
-    ///
-    /// 验证并发场景下，所有等待者释放 lock 后 entry 被清理。
-    #[tokio::test]
-    async fn singleflight_lock_removed_after_concurrent_load() {
-        let (_dao, interface, service) = make_default_service();
-        interface.set_permissions("sf-002", vec!["perm:b".to_string()]);
-
-        // 并发触发同一 key 的加载（service.get_permissions 接受 &self，可多次借用）
-        let r1 = service.get_permissions("sf-002");
-        let r2 = service.get_permissions("sf-002");
-        let (r1, r2) = tokio::join!(r1, r2);
-        let _ = r1.unwrap();
-        let _ = r2.unwrap();
-
-        // 并发加载完成后，singleflight_locks 应不含该 key
-        let expected_key = DaoKeyPrefix::PermissionCache.build_key("sf-002");
-        assert!(
-            !service.singleflight_locks.contains_key(&expected_key),
-            "并发加载完成后 singleflight_locks 应清理 entry（CWE-770），实际仍含 key: {expected_key}"
-        );
-    }
+    // ------------------------------------------------------------------------
+    // singleflight 内部件（DashMap per-key RwLock）测试已随实现删除而移除：
+    // 单飞由 oxcache `Cache::get_or` 的 leader/follower 承载，锁身份与
+    // CWE-770 entry 清理义务移入库侧（库自有测试覆盖）；garrison 侧保留
+    // 行为级契约 `singleflight_prevents_cache_stampede` 等（见上）。
+    // ------------------------------------------------------------------------
 
     // ------------------------------------------------------------------------
     // 补充测试：UserCacheService::new 边缘条件
@@ -2525,22 +2362,30 @@ mod tests {
     #[tokio::test]
     async fn get_user_l2_hit_backfills_l1_no_repeat_l2_query() {
         let (dao, _interface, service) = make_default_service();
-        dao.insert_direct("user:cache:54001", r#"{"id":54001}"#);
+        dao.insert_direct("user:cache:54001", r#""{\"id\":54001}""#);
 
         // 第一次调用：L1 miss → L2 hit → 回填 L1
         let user1 = service.get_user("54001").await.unwrap();
         assert_eq!(user1, Some(r#"{"id":54001}"#.to_string()));
-        assert_eq!(dao.get_count(), 1, "应查询 L2 一次");
+        assert_eq!(dao.get_count(), 1, "L2 命中路径：链读一次（无 fallback）");
 
         // 第二次调用：L1 hit → 不查询 L2
         let user2 = service.get_user("54001").await.unwrap();
         assert_eq!(user2, Some(r#"{"id":54001}"#.to_string()));
-        assert_eq!(dao.get_count(), 1, "L1 回填后不应再查询 L2");
+        assert_eq!(
+            dao.get_count(),
+            1,
+            "L1 回填后不应再查询 L2（命中路径总量保持 1）"
+        );
 
         // 第三次调用：L1 hit → 不查询 L2
         let user3 = service.get_user("54001").await.unwrap();
         assert_eq!(user3, Some(r#"{"id":54001}"#.to_string()));
-        assert_eq!(dao.get_count(), 1, "L1 仍命中，不应查询 L2");
+        assert_eq!(
+            dao.get_count(),
+            1,
+            "L1 仍命中，不应查询 L2（命中路径总量保持 1）"
+        );
     }
 
     /// 调用 CountingMockDao 的 atomic + 默认 trait 方法以覆盖 async_trait wrapper。

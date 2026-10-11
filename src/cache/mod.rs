@@ -18,4 +18,7 @@
 /// 三层缓存服务（L1 oxcache + L2 DAO + L3 interface）。
 pub mod three_tier;
 
+/// DAO 缓存后端（oxcache `CacheBackend` 适配器）：ChainCache 组链的 L2 持久层。
+pub(crate) mod dao_backend;
+
 pub use three_tier::UserCacheService;
