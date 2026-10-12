@@ -200,7 +200,8 @@ dbnexus 以 `compile_error!` 禁止 embedded（sqlite）与 server-side（postgr
 Web 适配 ── web-axum / web-actix / web-warp（三框架独立可共存）
          ├─ web-cors / csrf / security-headers ⇒ web-security（聚合）
          ├─ annotation-macros ⇒ web-axum（宏 wrapper 生成 axum Response）
-         └─ tls ⇒ axum-server + auth-server
+         ├─ tls ⇒ axum-server + rustls + auth-server
+         └─ tls-cert-watch ⇒ tls + confers/watch（证书/私钥文件热重载）
 
 防火墙 ── firewall（基座）
        ├─ bruteforce(⇒ddos+limiteron/ban-manager) / ratelimit / anomalous
@@ -245,7 +246,7 @@ i18n ── i18n（基础层无条件编译，feature 仅门控测试）⇒ i18n
 | `protocol-sso` ⇒ `protocol-jwt` | OIDC `exchange_code` 必须验签 `id_token`（安全审计 fail-open → fail-closed 修复） |
 | `http` 桥接 feature 不可改名 | sdforge `#[forge]` 宏硬编码 `#[cfg(feature = "http")]`，改名 = 全部动态路由 404 |
 | `security-alert` 必须落地 `security-extra` | 历史上为零依赖死 feature，导致 device-binding 单独启用编译失败 |
-| MSRV | Cargo.toml 声明 1.85，但兄弟生态 crate（oxcache / dbnexus / confers / sdforge / limiteron / inklog 的 rc.5、trait-kit rc.6）要求 rustc ≥1.97.1——实际开发工具链需按后者 |
+| MSRV | Cargo.toml 声明 1.85，但兄弟生态 crate（oxcache / dbnexus / confers / sdforge / limiteron / inklog / trait-kit 的 rc 线，rc.7–rc.10）要求 rustc ≥1.97.1——实际开发工具链需按后者 |
 
 ---
 
@@ -380,8 +381,8 @@ EXAMPLE_INTERNAL_API_KEY=$(openssl rand -hex 16) bash scripts/e2e_run.sh
 
 ## 📝 已知问题与处置记录
 
-- **工具链**：兄弟生态 crate（confers / dbnexus / oxcache / sdforge / limiteron / inklog 的
-  rc.5 与 trait-kit rc.6）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable
+- **工具链**：兄弟生态 crate（confers / dbnexus / oxcache / sdforge / limiteron / inklog /
+  trait-kit 的 rc 线，rc.7–rc.10）要求 rustc ≥1.97.1；aliyun 镜像源可能滞后，需从官方源更新 stable
   （`RUSTUP_DIST_SERVER=https://static.rust-lang.org rustup update stable`）。
 - **e2e target 残留**：迁移删除了 examples 的 `--test e2e`
   target，但 `scripts/e2e_run.sh` 仍引用之——已重写指向现行 `tests/acceptance`

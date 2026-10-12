@@ -135,6 +135,18 @@ garrison = { version = "0.9.0-rc.3", features = ["tls", "auth-server"] }
 // 支持 PEM 证书 + PKCS8 私钥
 ```
 
+### 证书热重载（`tls-cert-watch`）
+
+在 `tls` 之上再启用 `tls-cert-watch` 后，框架监视证书与私钥文件（去抖 200ms）并在文件变更后换入新配置：
+
+```toml
+garrison = { version = "0.9.0-rc.3", features = ["tls-cert-watch", "auth-server"] }
+```
+
+- 覆盖「原地覆盖写」与「写临时文件 + rename」两种换证手法；外网与内网端口共用同一配置，新握手同时使用新证书，既有连接不中断、进程不重启。
+- 半写或非法 PEM 不换入：旧证书继续服务，失败记 `error`，等下一次文件事件再试。
+- 监视路径先归一化（相对路径转绝对、父目录取 canonical、文件名原样），故相对路径与含符号链接前缀的路径均可用；叶子为符号链接时监视其目录项，链接重指向可被捕获。
+
 > 生产环境建议在反向代理（Nginx / Envoy）层终止 TLS，Auth Server 仅监听内部网络。
 
 ---

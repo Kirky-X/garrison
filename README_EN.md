@@ -234,6 +234,7 @@ The table below summarizes the main `[features]` of `Cargo.toml` grouped by capa
 <tr><td><code>policy-hibp</code></td><td align="center">❌</td><td>HIBP breached-password check (k-anonymity range search)</td></tr>
 <tr><td><code>credential-zeroize</code></td><td align="center">❌</td><td>Credential key zeroization (zeroized on Drop)</td></tr>
 <tr><td><code>tls</code></td><td align="center">❌</td><td>HTTPS/TLS termination (axum-server + rustls)</td></tr>
+<tr><td><code>tls-cert-watch</code></td><td align="center">❌</td><td>In-process TLS certificate hot reload (no restart; both ports pick up new handshakes)</td></tr>
 <tr><td><code>server-health-check</code> / <code>server-graceful-shutdown</code></td><td align="center">❌</td><td>Liveness/readiness probes / graceful shutdown</td></tr>
 <tr><td><code>web-security</code> / <code>web-security-headers</code></td><td align="center">❌</td><td>Web security middleware bundle (CORS+CSRF+headers) / standalone security response headers</td></tr>
 <tr><td><code>cache-lock</code> / <code>cache-batch</code> / <code>cache-invalidation</code> / <code>cache-audit</code> / <code>cache-hotkey</code> / <code>ban-sync</code></td><td align="center">❌</td><td>Cache enhancements: distributed lock / batch / cross-instance invalidation / audit event stream / hot-key observability / ban sync (oxcache passthrough)</td></tr>

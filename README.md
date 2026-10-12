@@ -234,6 +234,7 @@ cargo run -p garrison-examples --bin readme_quickstart --features "cache-memory"
 <tr><td><code>policy-hibp</code></td><td align="center">❌</td><td>HIBP 泄露密码检查（k-anonymity range search）</td></tr>
 <tr><td><code>credential-zeroize</code></td><td align="center">❌</td><td>凭据密钥零化（Drop 清零）</td></tr>
 <tr><td><code>tls</code></td><td align="center">❌</td><td>HTTPS/TLS 终止（axum-server + rustls）</td></tr>
+<tr><td><code>tls-cert-watch</code></td><td align="center">❌</td><td>TLS 证书进程内热重载（换证不重启进程，两端口新握手同时生效）</td></tr>
 <tr><td><code>server-health-check</code> / <code>server-graceful-shutdown</code></td><td align="center">❌</td><td>健康/就绪探针 / 优雅停机</td></tr>
 <tr><td><code>web-security</code> / <code>web-security-headers</code></td><td align="center">❌</td><td>Web 安全中间件聚合（CORS+CSRF+响应头）/ 独立安全响应头</td></tr>
 <tr><td><code>cache-lock</code> / <code>cache-batch</code> / <code>cache-invalidation</code> / <code>cache-audit</code> / <code>cache-hotkey</code> / <code>ban-sync</code></td><td align="center">❌</td><td>缓存增强：分布式锁 / 批量 / 跨实例失效 / 审计事件流 / 热 key 观测 / 封禁同步（oxcache 透传）</td></tr>
