@@ -7,6 +7,7 @@ use crate::abac::EntityLoader;
 use crate::core::permission::{Decision, DecisionReason};
 use crate::error::{GarrisonError, GarrisonResult};
 use cedar_policy::{Authorizer, Context, EntityUid, Policy, PolicyId, PolicySet, Request, Schema};
+use oxcache::canonical_json_string;
 use oxcache::traits::CacheKey;
 use oxcache::Cache;
 use sha2::{Digest, Sha256};
@@ -17,14 +18,22 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
 
-/// 计算 context 成分的缓存 key 分量：`context_json` 取 SHA-256 前 16 字节（128-bit）hex，`None` 用固定占位 `"none"`。
+/// 计算 context 成分的缓存 key 分量：`context_json` 先按 JSON 解析并 `canonical_json_string` 归一化（对象键字典序重排、去空白），再取 SHA-256 前 16 字节（128-bit）hex；`None` 用固定占位 `"none"`。
 ///
 /// context 必须参与 key：否则同一 (principal, action, resource) 下不同 context 共享条目，context 敏感策略（如时间窗校验）返回陈旧决策；128-bit 摘要碰撞概率在 10^4 容量下可忽略。
+/// 归一化令 key 派生口径与求值输入口径一致（`Context::from_json_str` 读的是 JSON 语义而非字节形态）：键序/空白不同但语义相同的 context 命中同一条目，不会各占一条、各求值一次，key 空间也不受调用方字符串形态支配。
+/// 解析失败退回原始字节摘要：错误面不变——解析错误仍在未命中路径由 `Context::from_json_str` 以 `InvalidParam` 显性返回，此处只负责 key 派生。
 fn context_key_component(context_json: Option<&str>) -> String {
     match context_json {
         None => "none".to_string(),
         Some(json) => {
-            let digest = Sha256::digest(json.as_bytes());
+            let normalized = serde_json::from_str::<serde_json::Value>(json)
+                .map(|value| canonical_json_string(&value));
+            let bytes = normalized
+                .as_deref()
+                .map(str::as_bytes)
+                .unwrap_or(json.as_bytes());
+            let digest = Sha256::digest(bytes);
             let mut hex = String::with_capacity(32);
             for byte in &digest[..16] {
                 let _ = write!(hex, "{byte:02x}");
@@ -104,7 +113,7 @@ impl AbacEngine {
 
     /// 求值策略：principal/action/resource 为 EntityUid 字符串（如 `User::"alice"`），`context_json` 可选；EntityUid/Context/Request 解析失败返回 `InvalidParam`。
     ///
-    /// 缓存 key 为 (principal, action, resource, context 摘要) 四元组，不同 context 不共享条目；实体属性状态不参与 key，实体变更时需 [`Self::invalidate_entities`]。
+    /// 缓存 key 为 (principal, action, resource, context 归一化摘要) 四元组：不同 context 不共享条目，语义相同（键序/空白不同）的 context 共享条目；实体属性状态不参与 key，实体变更时需 [`Self::invalidate_entities`]。
     pub async fn evaluate(
         &self,
         principal: &str,
@@ -347,20 +356,31 @@ mod tests {
     use crate::abac::{EmptyEntityLoader, StaticEntityLoader};
     use cedar_policy::Entities;
 
-    /// 测试辅助：判断 (principal, action, resource) 决策是否已缓存（无 context）；用 `get()` 而非 `len()`（len 为最终一致估算，写入后未必立即可见）。
+    /// 测试辅助：判断 (principal, action, resource, context) 决策是否已缓存；用 `get()` 而非 `len()`（len 为最终一致估算，写入后未必立即可见）。
+    async fn cache_has_entry_with_context(
+        engine: &AbacEngine,
+        principal: &str,
+        action: &str,
+        resource: &str,
+        context_json: Option<&str>,
+    ) -> bool {
+        let key = DecisionKey(
+            principal.to_string(),
+            action.to_string(),
+            resource.to_string(),
+            context_key_component(context_json),
+        );
+        engine.cache.get(&key).await.unwrap_or(None).is_some()
+    }
+
+    /// 测试辅助：判断 (principal, action, resource) 决策是否已缓存（无 context）。
     async fn cache_has_entry(
         engine: &AbacEngine,
         principal: &str,
         action: &str,
         resource: &str,
     ) -> bool {
-        let key = DecisionKey(
-            principal.to_string(),
-            action.to_string(),
-            resource.to_string(),
-            context_key_component(None),
-        );
-        engine.cache.get(&key).await.unwrap_or(None).is_some()
+        cache_has_entry_with_context(engine, principal, action, resource, None).await
     }
 
     /// 测试用 Cedar schema：User/Resource 实体与 access 动作（空 namespace，EntityUid 直接用 `User::"alice"` 格式）。
@@ -1479,6 +1499,192 @@ mod tests {
             .await
             .expect("evaluate level=5 again");
         assert!(allow_again.allowed, "level=5 缓存条目应保持 Allow");
+    }
+
+    // context key 归一化（canonical JSON）
+
+    /// 归一化在 key 分量层面生效：键序/空白不同但语义相同的 context 派生同一分量，语义不同（数组序、值）仍区分。
+    #[test]
+    fn context_key_component_normalizes_json_semantics() {
+        assert_eq!(
+            context_key_component(Some(r#"{"b": 2, "a": {"d": 4, "c": 3}}"#)),
+            context_key_component(Some(r#"{ "a": { "c": 3, "d": 4 }, "b": 2 }"#)),
+            "键序/空白不同但语义相同的 context 应派生同一分量"
+        );
+        assert_ne!(
+            context_key_component(Some(r#"{"a": [1, 2]}"#)),
+            context_key_component(Some(r#"{"a": [2, 1]}"#)),
+            "数组有序，元素顺序不同是不同语义，应区分"
+        );
+        assert_ne!(
+            context_key_component(Some(r#"{"a": 1}"#)),
+            context_key_component(Some(r#"{"a": 2}"#)),
+            "值不同应区分"
+        );
+        assert_ne!(
+            context_key_component(None),
+            context_key_component(Some(r#"null"#)),
+            "None 与显式 null context 应区分"
+        );
+    }
+
+    /// 非法 JSON 退回原始字节摘要：不做归一化（含仅空白差异也区分），不引入新错误面。
+    #[test]
+    fn context_key_component_falls_back_to_raw_bytes_on_invalid_json() {
+        assert_eq!(
+            context_key_component(Some(r#"{"a":1}"#)),
+            context_key_component(Some(r#"{ "a" : 1 }"#)),
+            "合法 JSON 的空白差异应被归一化抹平"
+        );
+        assert_ne!(
+            context_key_component(Some(r#"{"a":}"#)),
+            context_key_component(Some(r#"{ "a":}"#)),
+            "解析失败时应按原始字节区分，空白差异不得被抹平"
+        );
+    }
+
+    /// 多属性 context schema：两个属性才能构造键序差异。
+    const MULTI_ATTR_CONTEXT_SCHEMA_JSON: &str = r#"{
+        "": {
+            "entityTypes": {
+                "User": {},
+                "Resource": {}
+            },
+            "actions": {
+                "access": {
+                    "appliesTo": {
+                        "principalTypes": ["User"],
+                        "resourceTypes": ["Resource"],
+                        "context": {
+                            "type": "Record",
+                            "attributes": {
+                                "level": { "type": "Long" },
+                                "region": { "type": "String" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }"#;
+
+    /// 语义相同的两种键序只产生一个缓存条目：键序 B 从未提交求值即可读到键序 A 写入的条目，且再次求值命中缓存不再触发 EntityLoader（未回落到 Cedar 求值）。
+    #[tokio::test]
+    async fn t016_equivalent_context_key_orders_share_one_cache_entry() {
+        struct CountingEntityLoader {
+            calls: std::sync::atomic::AtomicUsize,
+        }
+
+        #[async_trait::async_trait]
+        impl crate::abac::EntityLoader for CountingEntityLoader {
+            async fn load_entities(&self) -> GarrisonResult<Entities> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Entities::empty())
+            }
+        }
+
+        let loader = Arc::new(CountingEntityLoader {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let engine = AbacEngine::new(MULTI_ATTR_CONTEXT_SCHEMA_JSON, loader.clone())
+            .await
+            .expect("schema valid");
+        engine
+            .load_policy(
+                "p1",
+                r#"permit(principal, action, resource) when { context.level >= 3 };"#,
+            )
+            .await
+            .expect("load");
+
+        let principal = r#"User::"alice""#;
+        let action = r#"Action::"access""#;
+        let resource = r#"Resource::"doc1""#;
+        let order_a = r#"{"level": 5, "region": "cn"}"#;
+        let order_b = r#"{ "region": "cn", "level": 5 }"#;
+
+        let first = engine
+            .evaluate(principal, action, resource, Some(order_a))
+            .await
+            .expect("evaluate 键序 A");
+        assert!(first.allowed, "level=5 应 Allow");
+        assert_eq!(
+            loader.calls.load(Ordering::SeqCst),
+            1,
+            "首次求值未命中缓存，应调用一次 EntityLoader"
+        );
+
+        // 键序 B 从未提交过求值：其 key 存在即证明与键序 A 是同一条目（各占一条时此处为 false）
+        assert!(
+            cache_has_entry_with_context(&engine, principal, action, resource, Some(order_b)).await,
+            "语义相同的另一种键序应命中键序 A 写入的同一条目"
+        );
+
+        let second = engine
+            .evaluate(principal, action, resource, Some(order_b))
+            .await
+            .expect("evaluate 键序 B");
+        assert!(second.allowed, "键序 B 应命中缓存并返回 Allow");
+        assert_eq!(
+            loader.calls.load(Ordering::SeqCst),
+            1,
+            "第二次求值应命中缓存，不得再次调用 EntityLoader"
+        );
+
+        // 归一化不得越界合并：语义不同（region 不同）仍是独立条目，需重新求值
+        engine
+            .evaluate(
+                principal,
+                action,
+                resource,
+                Some(r#"{"level": 5, "region": "us"}"#),
+            )
+            .await
+            .expect("evaluate region=us");
+        assert_eq!(
+            loader.calls.load(Ordering::SeqCst),
+            2,
+            "region 不同的 context 是另一条目，应重新求值"
+        );
+    }
+
+    /// 非法 context JSON：key 派生不改动错误面——evaluate 仍显性返回 InvalidParam，且失败路径不写缓存。
+    #[tokio::test]
+    async fn t016_invalid_context_json_returns_invalid_param_without_cache_write() {
+        let engine = AbacEngine::new(CONTEXT_SCHEMA_JSON, Arc::new(EmptyEntityLoader))
+            .await
+            .expect("schema valid");
+        engine
+            .load_policy("p1", r#"permit(principal, action, resource);"#)
+            .await
+            .expect("load");
+
+        let principal = r#"User::"alice""#;
+        let action = r#"Action::"access""#;
+        let resource = r#"Resource::"doc1""#;
+        let invalid_context = r#"{"level": }"#;
+
+        let result = engine
+            .evaluate(principal, action, resource, Some(invalid_context))
+            .await;
+        match result {
+            Err(GarrisonError::InvalidParam(_)) => {},
+            other => panic!(
+                "非法 context JSON 应显性返回 InvalidParam，实际: {:?}",
+                other
+            ),
+        }
+        assert!(
+            !cache_has_entry_with_context(
+                &engine,
+                principal,
+                action,
+                resource,
+                Some(invalid_context)
+            )
+            .await,
+            "解析失败路径不得写入缓存"
+        );
     }
 
     #[tokio::test]
