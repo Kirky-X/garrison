@@ -18,9 +18,7 @@ use axum::response::IntoResponse;
 use serial_test::serial;
 use std::sync::Arc;
 
-// ----------------------------------------------------------------
 // 测试用 marker 类型
-// ----------------------------------------------------------------
 
 struct AdminRole;
 impl RoleName for AdminRole {
@@ -32,9 +30,7 @@ impl PermissionName for UserRead {
     const NAME: &'static str = "user:read";
 }
 
-// ----------------------------------------------------------------
 // 辅助函数
-// ----------------------------------------------------------------
 
 /// 创建测试配置（throw_on_not_login 可配置）。
 fn make_config(throw_on_not_login: bool) -> crate::config::GarrisonConfig {
@@ -122,9 +118,7 @@ fn make_parts_with_cookie_token(token: &str) -> axum::http::request::Parts {
     req.into_parts().0
 }
 
-// ----------------------------------------------------------------
 // CheckLogin 测试
-// ----------------------------------------------------------------
 
 /// 已登录时 CheckLogin 返回 Ok。
 #[tokio::test]
@@ -173,9 +167,7 @@ async fn check_login_not_logged_in_returns_session() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // CheckRole<R> 测试
-// ----------------------------------------------------------------
 
 /// 持有角色时 CheckRole<AdminRole> 返回 Ok。
 #[tokio::test]
@@ -220,9 +212,7 @@ async fn check_role_not_held_returns_not_role() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // CheckPermission<P> 测试
-// ----------------------------------------------------------------
 
 /// 持有权限时 CheckPermission<UserRead> 返回 Ok。
 #[tokio::test]
@@ -267,9 +257,7 @@ async fn check_permission_not_held_returns_not_permission() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // Ignore 测试
-// ----------------------------------------------------------------
 
 /// Ignore 总是返回 Ok（不校验）。
 #[tokio::test]
@@ -283,9 +271,7 @@ async fn ignore_always_returns_ok() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // Mode<M> 测试
-// ----------------------------------------------------------------
 
 /// Mode<Strict> 未登录时抛 NotLogin。
 #[tokio::test]
@@ -314,9 +300,7 @@ async fn mode_loose_not_logged_in_returns_ok() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // IntoResponse for GarrisonError 测试
-// ----------------------------------------------------------------
 
 /// NotLogin 映射为 401。
 #[test]
@@ -374,9 +358,7 @@ fn session_error_returns_500() {
     assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
 }
 
-// ----------------------------------------------------------------
 // Annotation::name 测试
-// ----------------------------------------------------------------
 
 /// Annotation::name 返回注解变体名称（16 个变体）。
 ///
@@ -416,9 +398,7 @@ fn annotation_name_returns_variant_string() {
     assert_eq!(Annotation::CheckClientToken.name(), "CheckClientToken");
 }
 
-// ----------------------------------------------------------------
 // AnnotationMode Display / Debug / Clone / PartialEq 测试
-// ----------------------------------------------------------------
 
 /// AnnotationMode::And 的 Display 输出 "AND"，AnnotationMode::Or 输出 "OR"。
 #[test]
@@ -472,9 +452,7 @@ fn check_api_key_namespace_equality() {
     );
 }
 
-// ----------------------------------------------------------------
 // Display / FromStr 测试
-// ----------------------------------------------------------------
 
 /// CheckAccessToken Display 格式化为 "CheckAccessToken"。
 #[test]
@@ -559,9 +537,7 @@ fn display_matches_name_for_all_unit_variants() {
     }
 }
 
-// ----------------------------------------------------------------
 // token 提取（header / cookie）分支测试
-// ----------------------------------------------------------------
 
 /// CheckLogin 从 Authorization: Bearer header 提取 token 并校验通过。
 #[tokio::test]
@@ -643,9 +619,7 @@ async fn check_login_extracts_token_from_host_prefixed_cookie() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // extractor 通过 header 提取 token 的 if-let-Some 分支测试
-// ----------------------------------------------------------------
 
 /// CheckRole<AdminRole> 从 Bearer header 提取 token 并校验角色通过。
 #[tokio::test]
@@ -712,9 +686,7 @@ async fn mode_loose_logged_in_with_header() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // GarrisonPrincipal extractor 测试（携带 login_id）
-// ----------------------------------------------------------------
 
 /// `GarrisonPrincipal::from_request_parts` 从 Bearer header 解析出 `login_id`（与 actix/warp 提取器一致）。
 #[tokio::test]
@@ -793,9 +765,7 @@ async fn garrison_principal_returns_err_when_token_logout() {
     GarrisonManager::reset_for_test();
 }
 
-// ----------------------------------------------------------------
 // TenantContext extractor 测试（cfg tenant-isolation）
-// ----------------------------------------------------------------
 
 /// `TenantContext::from_request_parts` 从 `X-Tenant-Id` header 解析出 `tenant_id`（与 actix/warp 提取器一致）。
 #[cfg(feature = "tenant-isolation")]

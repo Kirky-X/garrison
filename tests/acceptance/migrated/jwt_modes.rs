@@ -28,9 +28,7 @@ use jsonwebtoken::Algorithm;
 use serial_test::serial;
 use std::sync::Arc;
 
-// ============================================================================
 // MockInterface：GarrisonPermissionStrategyDefault::new() 必需
-// ============================================================================
 
 struct MockInterface;
 
@@ -44,9 +42,7 @@ impl GarrisonInterface for MockInterface {
     }
 }
 
-// ============================================================================
 // 辅助：构造带指定 JwtMode + token_style=jwt 的 GarrisonLogicDefault
-// ============================================================================
 
 async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
@@ -76,9 +72,7 @@ async fn make_logic_with_mode(mode: JwtMode) -> Arc<GarrisonLogicDefault> {
     )
 }
 
-// ============================================================================
 // JwtHandler 直接 API：HS256 / HS512 / refresh
-// ============================================================================
 
 /// HS256 sign → verify roundtrip：claims 字段一致。
 #[tokio::test(flavor = "multi_thread")]
@@ -190,9 +184,7 @@ async fn sign_rejects_negative_timeout() {
     }
 }
 
-// ============================================================================
 // JwtMode::Stateless：仅 JWT verify，不查 session
-// ============================================================================
 
 /// Stateless 模式下，用 JwtHandler 直接签发的 token（无 session）也能通过 check_login。
 #[tokio::test(flavor = "multi_thread")]
@@ -227,9 +219,7 @@ async fn stateless_mode_rejects_invalid_jwt() {
     assert!(result.is_err(), "Stateless 模式无效 JWT 应被拒绝");
 }
 
-// ============================================================================
 // JwtMode::Mixin：JWT verify + session 二级校验
-// ============================================================================
 
 /// Mixin 模式：login 创建 session 后 check_login 通过。
 #[tokio::test(flavor = "multi_thread")]
@@ -267,9 +257,7 @@ async fn mixin_mode_fails_with_jwt_only_no_session() {
     );
 }
 
-// ============================================================================
 // JwtMode::Simple：仅 session 校验，不验证 JWT 签名
-// ============================================================================
 
 /// Simple 模式：login 创建 session 后 check_login 通过（不验证 JWT 签名）。
 #[tokio::test(flavor = "multi_thread")]
@@ -343,9 +331,7 @@ async fn simple_mode_fails_without_session() {
     assert!(result.is_err(), "Simple 模式无 session 应失败");
 }
 
-// ============================================================================
 // JwtMode::default() == Mixin
-// ============================================================================
 
 /// JwtMode::default() 返回 Mixin（推荐模式为默认）。
 #[test]

@@ -32,18 +32,14 @@ impl ScopeHandler for AdminScopeHandler {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison OAuth2 Scope Handler 示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 创建 ScopeRegistry 并注册 handler
-    // ----------------------------------------------------------------
     let registry = Arc::new(ScopeRegistry::new());
     registry.register("openid", Arc::new(AdminScopeHandler));
     registry.register("profile", Arc::new(AdminScopeHandler));
     registry.register("admin", Arc::new(AdminScopeHandler));
     println!("[注册] 已注册 3 个 scope handler: openid / profile / admin\n");
 
-    // ----------------------------------------------------------------
     // 2. 直接通过 ScopeRegistry 校验（三种场景）
-    // ----------------------------------------------------------------
     println!("[校验] 直接通过 ScopeRegistry 校验:");
 
     // 成功：openid 公共 scope
@@ -69,9 +65,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    // ----------------------------------------------------------------
     // 3. 注入 OAuth2Client 并通过 wiremock mock token 端点
-    // ----------------------------------------------------------------
     let server = wiremock::MockServer::start().await;
     wiremock::Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/token"))
@@ -97,9 +91,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("[集成] OAuth2Client 注入 ScopeRegistry，token 端点已 mock\n");
 
-    // ----------------------------------------------------------------
     // 4. 通过 OAuth2Client 验证 validate_scope 在 HTTP 请求前被调用
-    // ----------------------------------------------------------------
     println!("[集成] token 请求前的 scope 校验:");
 
     // 成功：openid scope 校验通过，HTTP 请求发送，获取 token

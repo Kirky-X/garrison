@@ -46,9 +46,7 @@ const UA_CHROME_WIN: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) \
 const UA_SAFARI_MAC: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) \
     AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Safari/605.1.15";
 
-// ============================================================================
 // 辅助：迁移目录 + SQLite in-memory 装配
-// ============================================================================
 
 fn project_migrations_dir() -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -121,9 +119,7 @@ async fn query_all_strings(session: &dbnexus::Session, sql: &str) -> Vec<String>
         .collect()
 }
 
-// ------------------------------------------------------------------------
 // 10 表 CRUD（正常）
-// ------------------------------------------------------------------------
 
 /// （正常）：User CRUD——create → find_by_id → find_by_username →
 /// update → list → delete（幂等）。
@@ -705,9 +701,7 @@ async fn acc_repo_010_user_device_register_list_block_unblock_count() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 迁移幂等 / 级联删除（正常）
-// ------------------------------------------------------------------------
 
 /// （正常）：迁移幂等——`migrate_core` 二次执行不报错，
 /// 且 `app_%` 表数量不重复增长（迁移历史已记录，无重建）。
@@ -924,9 +918,7 @@ async fn acc_repo_012_user_delete_cascades_relations() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 缺表错误路径（异常）
-// ------------------------------------------------------------------------
 //
 // 未迁移库上调用 repository 方法返回 `GarrisonError::Dao`（含方法/表名前缀）而非
 // panic；按表分组合并同构用例，每表至少 1 个缺表断言。
@@ -1228,9 +1220,7 @@ async fn acc_repo_022_user_device_repo_table_missing() {
     assert_dao_error(repo.block_device(TENANT_A, "d-1").await, "app-user-device");
 }
 
-// ------------------------------------------------------------------------
 // dbnexus 层语义
-// ------------------------------------------------------------------------
 
 /// （正常）：迁移产物精确断言——`migrate_core` 后 sqlite_master 恰含 13 张 `app_%`
 /// 核心表（全名单）且索引 ≥ 15 个（`idx_app_%` / `uk_app_%` 前缀；名单随迁移集递增，

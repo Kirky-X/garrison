@@ -74,7 +74,7 @@ services:
       retries: 24
       start_period: 30s
 
-  # === Redis Sentinel 故障演练拓扑（chaos profile，默认不启动）===
+  # Redis Sentinel 故障演练拓扑（chaos profile，默认不启动）
   # 单 Sentinel + quorum 1 仅用于演练提速；生产至少 3 Sentinel + quorum 2。
   # 场景脚本：scripts/chaos_redis.sh sentinel
   redis-chaos-master:

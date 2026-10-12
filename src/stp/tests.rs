@@ -203,9 +203,7 @@ async fn init_global_manager_with_perms(
         .unwrap();
 }
 
-// ------------------------------------------------------------------------
 // login 首次登录 / 重复登录 / 自定义 token 风格
-// ------------------------------------------------------------------------
 
 /// 验证 login 返回非空 token 并创建会话。
 #[serial]
@@ -308,9 +306,7 @@ async fn login_with_custom_token() {
     assert_eq!(ts.token, "custom-token-123");
 }
 
-// ------------------------------------------------------------------------
 // logout 销毁当前 / 销毁指定账号 / kickout
-// ------------------------------------------------------------------------
 
 /// 验证 logout 销毁当前 token 的会话。
 #[serial]
@@ -409,9 +405,7 @@ async fn kickout_by_token_destroys_token_session() {
         .is_none());
 }
 
-// ------------------------------------------------------------------------
 // invalidate_sessions_after_password_change
-// ------------------------------------------------------------------------
 
 /// 密码修改后失效所有会话（`invalidate_sessions_after_password_change` 清除该用户全部 Token-Session 与 Account-Session）。
 #[tokio::test]
@@ -477,9 +471,7 @@ async fn invalidate_sessions_after_password_change_destroys_all_sessions() {
     GarrisonManager::reset_for_test();
 }
 
-// ------------------------------------------------------------------------
 // check_login 有效 / 无效 / 过期 / 未登录抛异常
-// ------------------------------------------------------------------------
 
 /// 验证 check_login 有效 token 返回 true。
 #[tokio::test]
@@ -541,9 +533,7 @@ async fn check_login_returns_false_for_expired_token() {
     .await;
 }
 
-// ------------------------------------------------------------------------
 // token 类型专用校验方法
-// ------------------------------------------------------------------------
 
 /// `check_access_token` 已登录时返回 `Ok(())`（access_token 类型校验入口，默认委托 check_login）。
 #[tokio::test]
@@ -596,9 +586,7 @@ async fn check_temp_token_delegates_to_check_login() {
     .await;
 }
 
-// ------------------------------------------------------------------------
 // get_login_id
-// ------------------------------------------------------------------------
 
 /// 验证 get_login_id 返回当前 login_id。
 #[tokio::test]
@@ -633,9 +621,7 @@ async fn get_login_id_returns_none_for_invalid_token() {
     .await;
 }
 
-// ------------------------------------------------------------------------
 // task_local 上下文测试
-// ------------------------------------------------------------------------
 
 /// 验证 current_token 未设置时抛错。
 #[serial]
@@ -659,9 +645,7 @@ async fn current_token_returns_value_in_scope() {
     .await;
 }
 
-// ------------------------------------------------------------------------
 // GarrisonContext：task_local 跨 spawn 传播测试
-// ------------------------------------------------------------------------
 
 /// 验证 GarrisonContext 跨 `tokio::spawn` 传播 task_local：tokio `task_local!` 不会自动传播到 spawn 子任务，`capture()` + `within()` 提供手动传播。
 /// 步骤：父 task 设 token → capture → spawn 子任务内 `ctx.within()` 恢复 → `current_token()` 返回父 task 的 token。
@@ -710,9 +694,7 @@ async fn garrison_context_capture_without_token_propagates_none() {
     );
 }
 
-// ------------------------------------------------------------------------
 // check_permission 持有/未持有/未登录抛异常
-// ------------------------------------------------------------------------
 
 /// 已登录且 firewall 返回 true 时 check_permission 通过。
 #[serial]
@@ -771,9 +753,7 @@ async fn check_permission_not_login_throws_not_permission_when_silent() {
     );
 }
 
-// ------------------------------------------------------------------------
 // check_role 持有/未持有/未登录抛异常
-// ------------------------------------------------------------------------
 
 /// 已登录且 firewall 返回 true 时 check_role 通过。
 #[serial]
@@ -824,9 +804,7 @@ async fn check_role_not_login_throws_not_role_when_silent() {
     );
 }
 
-// ------------------------------------------------------------------------
 // GarrisonUtil 未初始化错误测试（spec Scenario: 未初始化抛错）
-// ------------------------------------------------------------------------
 
 /// 未初始化时 GarrisonUtil::logout 返回 Session 错误。
 #[tokio::test]
@@ -948,9 +926,7 @@ async fn util_check_disable_fails_when_not_initialized() {
     );
 }
 
-// ------------------------------------------------------------------------
 // GarrisonUtil::has_permission / has_role 测试
-// ------------------------------------------------------------------------
 
 /// has_permission 空字符串返回 InvalidParam（校验在 logic() 之前，不依赖全局状态）。
 #[serial]
@@ -1077,9 +1053,7 @@ async fn util_has_role_returns_false_when_not_logged_in() {
     assert!(!result.unwrap(), "未登录应返回 false");
 }
 
-// ------------------------------------------------------------------------
 // GarrisonUtil::get_permission_list / get_role_list 测试
-// ------------------------------------------------------------------------
 
 /// 未初始化时 GarrisonUtil::get_permission_list 返回 Session 错误。
 #[tokio::test]
@@ -1182,9 +1156,7 @@ async fn util_get_role_list_returns_empty_when_not_logged_in() {
     assert!(result.unwrap().is_empty(), "未登录应返回空 vec");
 }
 
-// ------------------------------------------------------------------------
 // GarrisonUtil 成功路径测试（覆盖未测试的静态方法）
-// ------------------------------------------------------------------------
 
 /// GarrisonUtil::logout_by_login_id 成功销毁指定账号的所有会话。
 #[tokio::test]
@@ -1304,9 +1276,7 @@ async fn util_check_disable_returns_ok_by_default() {
     GarrisonManager::reset_for_test();
 }
 
-// ------------------------------------------------------------------------
 // API 测试：login_by_token / verify_token / refresh_token
-// ------------------------------------------------------------------------
 
 /// `login_by_token` 对 uuid style token 返回 InvalidToken（优先 auth_logic，否则 verify_token；uuid token 不含 login_id）。
 #[serial]
@@ -1486,9 +1456,7 @@ async fn util_refresh_token_returns_not_implemented_without_jwt() {
     GarrisonManager::reset_for_test();
 }
 
-// ------------------------------------------------------------------------
 // builder 方法 + plugin/listener 触发测试
-// ------------------------------------------------------------------------
 
 /// builder 方法链式调用返回 Self（spec Scenario: 4.8 builder 方法验证）。
 #[tokio::test]
@@ -1675,9 +1643,7 @@ async fn login_by_token_with_auth_logic_delegates_to_auth() {
     assert_eq!(ts.unwrap().login_id, "6006".to_string());
 }
 
-// ------------------------------------------------------------------------
 // refresh_token 覆盖率补充测试（impl）
-// ------------------------------------------------------------------------
 
 /// refresh_token 在 token_style 非 jwt 时返回 NotImplemented。
 #[cfg(feature = "protocol-jwt")]
@@ -1748,9 +1714,7 @@ async fn refresh_token_valid_jwt_returns_new_token() {
     assert_eq!(new_claims.login_id, "7007".to_string());
 }
 
-// ------------------------------------------------------------------------
 // trait default 方法覆盖率测试（login_by_token/verify_token/refresh_token）
-// ------------------------------------------------------------------------
 
 /// 最小化子 trait mock（必需方法返回 `NotImplemented`，失败显性化不 panic），仅保留 default 方法供测试。
 struct MinimalLogic {
@@ -1966,9 +1930,7 @@ async fn minimal_logic_returns_not_implemented() {
     );
 }
 
-// ------------------------------------------------------------------------
 // login_by_token auto-wire 覆盖率补充（plugin + listener 钩子触发）
-// ------------------------------------------------------------------------
 
 /// login_by_token 注入 plugin/listener 后触发 auto-wire 钩子（simple style，token 用 `SimpleTokenStyle::new(secret).generate` 生成）。
 #[cfg(feature = "secure-simple-token")]
@@ -1992,9 +1954,7 @@ async fn login_by_token_with_managers_triggers_hooks() {
     assert_eq!(ts.unwrap().login_id, "8008".to_string());
 }
 
-// ------------------------------------------------------------------------
 // login_with_password 测试
-// ------------------------------------------------------------------------
 
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use crate::account::credential::{Argon2Hasher, PasswordHasher};
@@ -2106,9 +2066,7 @@ async fn login_with_password_unsupported_hash_format_returns_invalid_param() {
     );
 }
 
-// ------------------------------------------------------------------------
 // metrics 集成测试
-// ------------------------------------------------------------------------
 
 /// with_metrics builder 注入 GarrisonMetrics 后 login 触发 record_login(success)。
 #[cfg(feature = "metrics-prometheus")]
@@ -2170,9 +2128,7 @@ async fn login_without_metrics_does_not_panic() {
     // 不 panic 即通过
 }
 
-// ------------------------------------------------------------------------
 // login_type Multi-Account 测试
-// ------------------------------------------------------------------------
 
 /// `get_permission_list_with_type` 默认委托 `get_permission_list`（与 spec 方向相反：未按 login_type 隔离的实现者无需覆写）。
 #[tokio::test]
@@ -2272,9 +2228,7 @@ async fn with_login_type_chains_with_other_builders() {
     assert!(!token.is_empty());
 }
 
-// ------------------------------------------------------------------------
 // JwtMode 三模式（Stateless/Mixin/Simple）
-// ------------------------------------------------------------------------
 
 /// JwtMode::default() == JwtMode::Mixin（推荐模式为默认）。
 #[test]
@@ -2638,9 +2592,7 @@ async fn util_login_by_token_delegates_to_logic_after_init() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 覆盖率补充：check_access_token / check_client_token / check_temp_token
-// ------------------------------------------------------------------------
 
 /// check_access_token 未登录时返回 NotLogin（覆盖 trait 默认实现 Err 路径）。
 #[serial]
@@ -4118,9 +4070,7 @@ async fn login_rolls_back_session_when_enforce_fails() {
     );
 }
 
-// ------------------------------------------------------------------------
 // per-token dynamic active timeout（dynamic-active-timeout feature）
-// ------------------------------------------------------------------------
 
 /// per-token active_timeout=1 秒生效：等 2 秒后 token 过期（全局 active_timeout=3600 不影响）。
 #[cfg(feature = "session-extra")]

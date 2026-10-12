@@ -91,9 +91,7 @@ impl Drop for EnvGuard {
     }
 }
 
-// ------------------------------------------------------------------------
 // redis 探测辅助（正常）
-// ------------------------------------------------------------------------
 
 /// （正常）：`redis_available()` 探测语义——
 /// `GARRISON_TEST_REDIS=1` 强制可用；未设置时与 TCP 探活结果一致
@@ -124,9 +122,7 @@ async fn acc_env_001_redis_probe_helper_semantics() {
     }
 }
 
-// ------------------------------------------------------------------------
 // redis 可达 → GarrisonDaoOxcache（with_redis_config）
-// ------------------------------------------------------------------------
 
 /// （正常）：redis 可达 → `GarrisonDaoOxcache` 经 `with_redis_config` 基本读写 / TTL
 /// （set/get、get_with_ttl、update 保留 TTL、expire 缩短、set_permanent、rename、delete）。
@@ -283,9 +279,7 @@ async fn acc_env_003_redis_dao_atomic_six_fail_closed_under_config() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 基础 DAO 原子六方法（正常，内存后端，无外部服务依赖）
-// ------------------------------------------------------------------------
 
 /// （正常）：`GarrisonDaoOxcache`（未配置 redis）原子六方法成功路径：
 /// set_if_absent（SETNX 语义）、incr/decr（TTL 保留、归零删 key）、get_and_delete
@@ -396,9 +390,7 @@ async fn acc_env_004_dao_atomic_six_success_path() {
     );
 }
 
-// ------------------------------------------------------------------------
 // postgres 门控（feature = "db-postgres"）
-// ------------------------------------------------------------------------
 
 /// postgres 连接 URL：`GARRISON_TEST_POSTGRES_URL` 可覆盖（默认见 [`POSTGRES_URL`]）。
 #[cfg(feature = "db-postgres")]
@@ -593,9 +585,7 @@ async fn acc_env_006_postgres_user_repository_crud() {
     );
 }
 
-// ------------------------------------------------------------------------
 // MySQL testcontainers 门控（feature = "db-mysql"；docker 不可用即跳过，不启动容器）
-// ------------------------------------------------------------------------
 
 /// MySQL 容器配置（镜像 8.0 / 端口 3306 / 等待就绪 / 初始化库）。
 #[cfg(feature = "db-mysql")]

@@ -25,9 +25,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-// ============================================================================
 // 宏标注的 handler（模块级定义）
-// ============================================================================
 
 /// 登录校验 handler：返回纯文本。
 #[check_login]
@@ -59,9 +57,7 @@ async fn role_and_handler() -> &'static str {
     "role_and_ok"
 }
 
-// ============================================================================
 // MockDao + MockInterface（复用 annotation_macros_integration 模式）
-// ============================================================================
 
 struct MockDao {
     store: Mutex<HashMap<String, (String, Option<Instant>)>>,

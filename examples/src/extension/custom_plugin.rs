@@ -15,9 +15,7 @@ use garrison::plugin::{GarrisonPlugin, GarrisonPluginEntry, GarrisonPluginManage
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-// ============================================================================
 // 自定义插件：通过 inventory 编译期注册
-// ============================================================================
 
 /// 计数器：记录各钩子被调用的次数。
 static LOGIN_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -111,18 +109,14 @@ inventory::submit! {
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison 自定义插件示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. GarrisonPluginManager 收集所有已注册插件
-    // ----------------------------------------------------------------
     let manager = GarrisonPluginManager::new();
     println!("[1] GarrisonPluginManager::new()");
     println!("    已注册插件数量 = {}", manager.count());
     assert!(manager.count() >= 2); // AuditPlugin + FailingPlugin
     println!();
 
-    // ----------------------------------------------------------------
     // 2. on_login 钩子（登录成功后调用）
-    // ----------------------------------------------------------------
     println!("[2] on_login(1001, \"T1-uuid-token\"):");
     let before = LOGIN_CALLS.load(Ordering::SeqCst);
     manager.on_login("1001", "T1-uuid-token");
@@ -134,25 +128,19 @@ pub fn run() -> GarrisonResult<()> {
         after - before
     );
 
-    // ----------------------------------------------------------------
     // 3. on_permission_check 钩子（权限校验时调用，观测不干预）
-    // ----------------------------------------------------------------
     println!("[3] on_permission_check(1001, \"user:read\"):");
     manager.on_permission_check("1001", "user:read");
     assert!(PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
     println!();
 
-    // ----------------------------------------------------------------
     // 4. on_logout 钩子（登出后调用）
-    // ----------------------------------------------------------------
     println!("[4] on_logout(1001, \"T1-uuid-token\"):");
     manager.on_logout("1001", "T1-uuid-token");
     assert!(LOGOUT_CALLS.load(Ordering::SeqCst) >= 1);
     println!();
 
-    // ----------------------------------------------------------------
     // 5. 验证各钩子总调用次数
-    // ----------------------------------------------------------------
     println!("[5] AuditPlugin 钩子调用统计:");
     println!(
         "    on_login            = {}",
@@ -171,9 +159,7 @@ pub fn run() -> GarrisonResult<()> {
     assert!(PERM_CHECK_CALLS.load(Ordering::SeqCst) >= 1);
     println!("    ✓ 所有钩子均被调用\n");
 
-    // ----------------------------------------------------------------
     // 6. Default trait 等价于 new()
-    // ----------------------------------------------------------------
     let m1 = GarrisonPluginManager::new();
     let m2 = GarrisonPluginManager::default();
     assert_eq!(m1.count(), m2.count());

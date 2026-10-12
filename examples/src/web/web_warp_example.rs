@@ -27,9 +27,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use warp::Filter;
 
-// ============================================================================
 // InMemoryDao（HashMap + Instant 模拟 TTL，参考 alone_cache.rs 模式）
-// ============================================================================
 
 /// 最小化内存 DAO 实现（仅供示例，生产环境用 oxcache / dbnexus）。
 pub struct InMemoryDao {
@@ -113,9 +111,7 @@ impl GarrisonDao for InMemoryDao {
     }
 }
 
-// ============================================================================
 // MyInterface（预置 login_id=1001 的 admin 角色 + data:read 权限）
-// ============================================================================
 
 /// 示例接口实现，仅提供 login_id=1001 的权限与角色。
 pub struct MyInterface {
@@ -151,9 +147,7 @@ impl GarrisonInterface for MyInterface {
     }
 }
 
-// ============================================================================
 // setup / build_routes / handle_rejection / run
-// ============================================================================
 
 /// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface）并登录获取 token，返回 (config, token)。
 pub async fn setup() -> (Arc<GarrisonConfig>, String) {

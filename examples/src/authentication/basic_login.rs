@@ -22,9 +22,7 @@ use garrison::{TenantContext, TenantSource, TENANT};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ============================================================================
 // 业务方实现 GarrisonInterface：提供权限/角色数据
-// ============================================================================
 
 /// 示例接口实现：基于内存 HashMap 存储 login_id → 权限/角色列表，生产环境通常从数据库或 RBAC 系统读取。
 pub struct MyInterface {
@@ -67,9 +65,7 @@ impl GarrisonInterface for MyInterface {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 基础登录示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 准备依赖：DAO + Config + Interface
-    // ----------------------------------------------------------------
 
     // 使用 oxcache 内存后端（对应 cache-memory feature）
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
@@ -80,9 +76,7 @@ pub async fn run() -> GarrisonResult<()> {
     // 业务方接口实现（提供权限/角色数据）
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
 
-    // ----------------------------------------------------------------
     // 2. 初始化 GarrisonManager（注入全局单例）
-    // ----------------------------------------------------------------
     GarrisonManager::builder()
         .dao(dao)
         .config(config)
@@ -91,9 +85,7 @@ pub async fn run() -> GarrisonResult<()> {
         .await?;
     println!("[1] GarrisonManager 初始化完成");
 
-    // ----------------------------------------------------------------
     // 3. 执行登录：生成 token 并创建会话
-    // ----------------------------------------------------------------
     // 登录与后续权限/角色校验在 TENANT(42) scope 内执行：tenant-isolation feature
     // 启用时，check_permission/check_role 强制要求租户上下文（fail-closed），无上下文会返回 Config 错误。
     let tenant_ctx = TenantContext {
@@ -109,9 +101,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    token={}\n", token);
     assert!(!token.is_empty(), "login 应返回非空 token");
 
-    // ----------------------------------------------------------------
     // 4-6. 在 task_local 上下文中执行校验与登出
-    // ----------------------------------------------------------------
     // 注意：check_login / get_login_id / logout 依赖 task_local 中的 token，实际应用中由 Web
     // 中间件（如 axum middleware）设置，此处显式调用 with_current_token；租户上下文同理由中间件解析注入，此处用 TENANT.scope 显式模拟。
     let token_for_closure = token.clone();
@@ -143,9 +133,7 @@ pub async fn run() -> GarrisonResult<()> {
         .await;
     ctx_result?;
 
-    // ----------------------------------------------------------------
     // 7. 验证登出后校验失败
-    // ----------------------------------------------------------------
     // 登出后再次 check_login：由于默认 throw_on_not_login=true，会返回 Session 错误。
     let result =
         with_current_token(token.clone(), async { GarrisonUtil::check_login().await }).await;

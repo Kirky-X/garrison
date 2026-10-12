@@ -982,7 +982,7 @@ mod tests {
         }
     }
 
-    // === PKCE 工具函数测试 ===
+    // PKCE 工具函数测试
 
     #[test]
     fn generate_code_challenge_matches_rfc7636_example() {
@@ -1029,7 +1029,7 @@ mod tests {
         assert!(!is_valid_code_verifier_len(&"a".repeat(129)));
     }
 
-    // === authorize handler 测试 ===
+    // authorize handler 测试
 
     #[tokio::test]
     async fn authorize_success() {
@@ -1499,7 +1499,7 @@ mod tests {
         (handler, dao)
     }
 
-    // === consent 记忆测试 ===
+    // consent 记忆测试
 
     /// grant_consent 超集合并：已授集合只增不减，字典序持久化。
     #[tokio::test]
@@ -1833,7 +1833,7 @@ mod tests {
         assert!(matches!(resp, AuthorizeResponse::Redirect { .. }));
     }
 
-    // === 属性快照双粒度测试 ===
+    // 属性快照双粒度测试
 
     /// 属性名集合变化 → 重新征询（ATTRIBUTE_NAME 粒度即比名哈希）。
     #[tokio::test]
@@ -2071,7 +2071,7 @@ mod tests {
         );
     }
 
-    // === reconcile + prompt=none 测试 ===
+    // reconcile + prompt=none 测试
 
     /// 启动 reconcile：清理引用了已删除 client 的 consent 行，
     /// 存活 client 的记录原样保留。
@@ -2381,7 +2381,7 @@ mod tests {
         assert!(matches!(resp, AuthorizeResponse::Redirect { .. }));
     }
 
-    // === consume_code 测试 ===
+    // consume_code 测试
 
     #[tokio::test]
     async fn consume_code_returns_auth_data() {
@@ -2565,7 +2565,7 @@ mod tests {
     }
 }
 
-// === prompt 解析 / 错误构造 / 租户回退 单测 ===
+// prompt 解析 / 错误构造 / 租户回退 单测
 #[cfg(test)]
 mod prompt_and_error_tests {
     use super::*;

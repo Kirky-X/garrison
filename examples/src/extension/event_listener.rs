@@ -18,9 +18,7 @@ use garrison::listener::{
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-// ============================================================================
 // 自定义监听器：通过 inventory 编译期注册
-// ============================================================================
 
 /// 计数器：记录 on_event 被调用的次数。
 static EVENT_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -113,18 +111,14 @@ inventory::submit! {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 事件监听器示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. GarrisonListenerManager 收集所有已注册监听器
-    // ----------------------------------------------------------------
     let manager = GarrisonListenerManager::new();
     println!("[1] GarrisonListenerManager::new()");
     println!("    已注册监听器数量 = {}", manager.count());
     assert!(manager.count() >= 2); // AuditListener + FailingListener
     println!();
 
-    // ----------------------------------------------------------------
     // 2. 广播 Login 事件
-    // ----------------------------------------------------------------
     println!("[2] broadcast(Login):");
     let login_event = GarrisonEvent::Login {
         login_id: "1001".to_string(),
@@ -142,9 +136,7 @@ pub async fn run() -> GarrisonResult<()> {
         after - before
     );
 
-    // ----------------------------------------------------------------
     // 3. 广播 Logout / PermissionCheck / TokenExpired 事件
-    // ----------------------------------------------------------------
     println!("[3] 广播多种事件类型:");
 
     let logout_event = GarrisonEvent::Logout {
@@ -168,17 +160,13 @@ pub async fn run() -> GarrisonResult<()> {
     manager.broadcast(&expired_event).await;
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 验证监听器总调用次数
-    // ----------------------------------------------------------------
     let total_calls = EVENT_CALLS.load(Ordering::SeqCst);
     println!("[4] AuditListener 总调用次数 = {}（4 个事件）", total_calls);
     assert!(total_calls >= 4);
     println!("    ✓ 每个事件都触发了 AuditListener.on_event\n");
 
-    // ----------------------------------------------------------------
     // 5. GarrisonEvent 派生 Debug + Clone
-    // ----------------------------------------------------------------
     println!("[5] GarrisonEvent 派生 Debug + Clone:");
     let event = GarrisonEvent::Kickout {
         login_id: "2002".to_string(),

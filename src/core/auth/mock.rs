@@ -136,7 +136,7 @@ mod mock_dao_coverage_tests {
     async fn mock_dao_atomic_and_default_methods_coverage() {
         let dao = MockDao::new();
 
-        // --- 原子回退方法：组合语义断言 ---
+        // 原子回退方法：组合语义断言
         dao.set("k1", "v1", 60).await.unwrap();
 
         assert!(
@@ -203,7 +203,7 @@ mod mock_dao_coverage_tests {
         assert_eq!(v, "v2");
         assert!(ttl.is_some(), "设置了 TTL 的键应返回 Some(remaining)");
 
-        // --- trait 默认实现：NotImplemented 契约锁定 ---
+        // trait 默认实现：NotImplemented 契约锁定
         assert!(
             matches!(dao.keys("*").await, Err(GarrisonError::NotImplemented(_))),
             "keys 默认实现应返回 NotImplemented"

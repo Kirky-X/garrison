@@ -20,9 +20,7 @@ use garrison::error::GarrisonResult;
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison Token 风格示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. UUID v4 风格：标准 36 字符 UUID（无 payload，verify 返回 None）
-    // ----------------------------------------------------------------
     let uuid_style = UuidTokenStyle;
     let token = uuid_style.generate("1001", 3600)?;
     println!("[1] UuidTokenStyle:");
@@ -32,9 +30,7 @@ pub fn run() -> GarrisonResult<()> {
     assert_eq!(uuid_style.verify(&token)?, None);
     println!("    verify 返回 None（UUID 无 payload）\n");
 
-    // ----------------------------------------------------------------
     // 2. Random64 风格：64 字符随机十六进制串
-    // ----------------------------------------------------------------
     let random_style = Random64TokenStyle;
     let t1 = random_style.generate("1001", 3600)?;
     let t2 = random_style.generate("1001", 3600)?;
@@ -47,9 +43,7 @@ pub fn run() -> GarrisonResult<()> {
     assert_ne!(t1, t2);
     println!("    ✓ 全 hex 字符 + 多次调用互异\n");
 
-    // ----------------------------------------------------------------
     // 3. Simple 风格：`<login_id>-<uuid>`，可解析 login_id
-    // ----------------------------------------------------------------
     // 注意：此处 secret 为示例硬编码值，仅用于演示。
     // 生产环境必须从安全配置源（env / secret manager）读取，不可硬编码。
     let simple_style = SimpleTokenStyle::new(
@@ -68,9 +62,7 @@ pub fn run() -> GarrisonResult<()> {
         claims.login_id
     );
 
-    // ----------------------------------------------------------------
     // 4. TokenStyleFactory：按字符串创建对应风格
-    // ----------------------------------------------------------------
     println!("[4] TokenStyleFactory 按字符串创建：");
     for style_name in &["uuid", "random_64", "simple"] {
         let handler = TokenStyleFactory::new(style_name, "unused-secret-for-demo-min-32bytes!")?;

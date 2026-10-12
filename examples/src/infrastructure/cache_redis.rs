@@ -74,9 +74,7 @@ pub async fn demo_dao_operations(
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison cache-redis Redis L2 后端示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. L1 DAO（无需 Redis）
-    // ----------------------------------------------------------------
     println!("[L1] GarrisonDaoOxcache::new()（L1 内存，无需 Redis）:");
     let dao = create_l1_dao().await;
     println!("    创建 L1 DAO 实例成功");
@@ -93,9 +91,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    get(\"user:1001\")                    → None（已删除）");
     println!();
 
-    // ----------------------------------------------------------------
     // 2. Redis L2 后端配置
-    // ----------------------------------------------------------------
     println!("[L2] RedisBackend 配置:");
     let _builder = build_redis_l2_config();
     println!("    RedisBackend::builder()");
@@ -107,9 +103,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("        OXCACHE_ALLOW_INSECURE_REDIS=I_UNDERSTAND_THE_RISKS");
     println!();
 
-    // ----------------------------------------------------------------
     // 3. L1+L2 多级缓存组合
-    // ----------------------------------------------------------------
     println!("[Tiered] L1(内存) + L2(redis) 多级缓存组合:");
     println!("    // 1. 创建 Redis L2 后端");
     println!("    let redis = RedisBackend::builder()");
@@ -126,9 +120,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    如需 L2 Redis，需直接使用 oxcache async API。");
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 尝试实际连接 Redis（可选，失败不报错）
-    // ----------------------------------------------------------------
     println!("[连接] 尝试连接 Redis（可选）:");
     match create_tiered_cache().await {
         Ok(_cache) => {

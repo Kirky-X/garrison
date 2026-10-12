@@ -18,9 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-// ============================================================================
 // 测试用 Mock DAO
-// ============================================================================
 
 struct MockDao {
     data: Mutex<HashMap<String, String>>,
@@ -73,17 +71,13 @@ impl GarrisonDao for MockDao {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 临时凭证示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构建 TempCredentialHandler
-    // ----------------------------------------------------------------
     // Key 命名空间：garrison:temp:<prefix>:<random>；prefix 区分业务场景（invite / reset / verify），不可包含 ':'
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let handler = TempCredentialHandler::new(dao);
     println!("[1] TempCredentialHandler 构建完成\n");
 
-    // ----------------------------------------------------------------
     // 2. issue 签发临时凭据
-    // ----------------------------------------------------------------
     // 场景：生成邀请码，载荷为用户 ID，TTL 600 秒
     let invite_key = handler.issue("invite", "user-id-1001", 600).await?;
     println!("[2] issue（邀请码场景）:");
@@ -100,9 +94,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(reset_key.starts_with("garrison:temp:reset:"));
     println!("    ✓ 不同 prefix 产生不同命名空间\n");
 
-    // ----------------------------------------------------------------
     // 3. get 读取凭据（不删除，可多次读取）
-    // ----------------------------------------------------------------
     let v1 = handler.get(&invite_key).await?;
     let v2 = handler.get(&invite_key).await?;
     println!("[3] get（多次读取不删除）:");
@@ -112,9 +104,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(v2, Some("user-id-1001".to_string()));
     println!("    ✓ 两次读取结果一致\n");
 
-    // ----------------------------------------------------------------
     // 4. consume 消费凭据（一次性，读后即删）
-    // ----------------------------------------------------------------
     let consumed = handler.consume(&invite_key).await?;
     let again = handler.consume(&invite_key).await?;
     println!("[4] consume（一次性消费）:");
@@ -124,9 +114,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(again, None);
     println!("    ✓ 第一次返回值，第二次返回 None（已删除）\n");
 
-    // ----------------------------------------------------------------
     // 5. revoke 撤销凭据（幂等）
-    // ----------------------------------------------------------------
     let verify_key = handler.issue("verify", "email-code-123456", 60).await?;
     println!("[5] revoke（撤销，幂等）:");
     println!("    签发 key = {}...", &verify_key[..24]);
@@ -142,9 +130,7 @@ pub async fn run() -> GarrisonResult<()> {
     handler.revoke("garrison:temp:invite:nonexistent").await?;
     println!("    撤销不存在的凭据 → Ok(())（幂等语义）✓\n");
 
-    // ----------------------------------------------------------------
     // 6. 参数校验
-    // ----------------------------------------------------------------
     println!("[6] 参数校验:");
     // prefix 包含 ':' → InvalidParam
     let bad_prefix = handler.issue("inv:ite", "data", 60).await;

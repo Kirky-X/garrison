@@ -28,9 +28,7 @@ use std::time::{Duration, Instant};
 use tonic::metadata::MetadataMap;
 use tonic::service::Interceptor;
 
-// ============================================================================
 // InMemoryDao（HashMap + Instant 模拟 TTL，参考 alone_cache.rs 模式）
-// ============================================================================
 
 /// 最小化内存 DAO 实现（仅供示例，生产环境用 oxcache / dbnexus）。
 pub struct InMemoryDao {
@@ -114,9 +112,7 @@ impl GarrisonDao for InMemoryDao {
     }
 }
 
-// ============================================================================
 // MyInterface（预置 login_id=1001 的 admin 角色 + data:read 权限）
-// ============================================================================
 
 /// 示例接口实现，仅提供 login_id=1001 的权限与角色。
 pub struct MyInterface {
@@ -152,9 +148,7 @@ impl GarrisonInterface for MyInterface {
     }
 }
 
-// ============================================================================
 // setup / 演示函数 / run
-// ============================================================================
 
 /// 初始化全局 GarrisonManager（注入 InMemoryDao + MyInterface）并登录获取 token，返回 (config, token)。
 pub async fn setup() -> (Arc<GarrisonConfig>, String) {
@@ -211,9 +205,7 @@ pub async fn authenticate_request(token: String) -> GarrisonResult<()> {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison gRPC Interceptor 示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 初始化 GarrisonManager
-    // ----------------------------------------------------------------
     let (_config, token) = setup().await;
     println!("[初始化] GarrisonManager 已就绪");
     println!("    账号 1001 角色: [admin]");
@@ -221,9 +213,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    token: {}...", &token[..16.min(token.len())]);
     println!();
 
-    // ----------------------------------------------------------------
     // 2. 创建 GarrisonGrpcInterceptor
-    // ----------------------------------------------------------------
     println!("[Interceptor] GarrisonGrpcInterceptor::new():");
     let interceptor = GarrisonGrpcInterceptor::new();
     println!("    创建拦截器实例（Default + Clone + Debug）");
@@ -232,9 +222,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    Debug: {:?}", interceptor);
     println!();
 
-    // ----------------------------------------------------------------
     // 3. 从 metadata 提取 token
-    // ----------------------------------------------------------------
     println!("[extract_token] 从 gRPC metadata 提取 Authorization Bearer token:");
 
     let metadata = build_metadata_with_token(&token);
@@ -250,9 +238,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(extracted, token);
     println!();
 
-    // ----------------------------------------------------------------
     // 4. Interceptor::call() 同步拦截（仅提取 token，不执行 async 鉴权）
-    // ----------------------------------------------------------------
     println!("[Interceptor::call] 同步拦截器行为（仅提取 token）:");
 
     let mut interceptor = GarrisonGrpcInterceptor::new();
@@ -279,9 +265,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    status.code() = Unauthenticated (code=16)");
     println!();
 
-    // ----------------------------------------------------------------
     // 5. with_current_token + check_login 完整 async 鉴权
-    // ----------------------------------------------------------------
     println!("[async 鉴权] with_current_token + GarrisonUtil::check_login():");
 
     // 合法 token → 鉴权通过
@@ -300,9 +284,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    错误类型: {:?}", result.unwrap_err());
     println!();
 
-    // ----------------------------------------------------------------
     // 6. 总结：完整 gRPC 鉴权推荐模式
-    // ----------------------------------------------------------------
     println!("[总结] 完整 gRPC 鉴权推荐模式:");
     println!("    1. tonic Interceptor 提取 token（同步，仅格式校验）");
     println!("    2. tonic service handler 内 with_current_token(token, async {{");

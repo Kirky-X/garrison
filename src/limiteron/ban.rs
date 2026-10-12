@@ -385,7 +385,7 @@ mod tests {
         Arc::new(MockDao::new())
     }
 
-    // --- GarrisonDaoBanStorage 测试 ---
+    // GarrisonDaoBanStorage 测试
 
     #[tokio::test]
     async fn ban_save_and_is_banned() {
@@ -647,7 +647,7 @@ mod tests {
         );
     }
 
-    // --- 脏数据显性化测试 ---
+    // 脏数据显性化测试
 
     /// BanStorage::get_ban_times 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]
@@ -684,7 +684,7 @@ mod tests {
         );
     }
 
-    // --- 补充覆盖：ban 辅助函数与边界路径 ---
+    // 补充覆盖：ban 辅助函数与边界路径
 
     /// target_to_key_fragment 对所有 BanTarget 变体生成正确的 key 片段。
     #[test]

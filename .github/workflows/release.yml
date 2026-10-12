@@ -29,9 +29,7 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  # ============================================================================
   # 阶段 1：前置检查（并行执行，任一失败阻断发布）
-  # ============================================================================
 
   lint-check:
     name: Lint Check (fmt + clippy)
@@ -111,9 +109,7 @@ jobs:
       - name: Build docs (zero warnings)
         run: cargo doc --features full --no-deps
 
-  # ============================================================================
   # 阶段 2：版本一致性检查（依赖前置检查全部通过）
-  # ============================================================================
 
   version-consistency:
     name: Version Consistency
@@ -193,9 +189,7 @@ jobs:
           echo "$BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-  # ============================================================================
   # 阶段 3：发布到 crates.io（依赖版本一致性检查通过）
-  # ============================================================================
 
   publish-crates-io:
     name: Publish to crates.io
@@ -228,9 +222,7 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --package garrison
 
-  # ============================================================================
   # 阶段 4：创建 GitHub Release（依赖 crates.io 发布成功，避免半发布不一致）
-  # ============================================================================
 
   github-release:
     name: GitHub Release
@@ -284,9 +276,7 @@ jobs:
         with:
           subject-path: garrison.cdx.json
 
-  # ============================================================================
   # 阶段 5：发布后验证（GitHub Release + crates.io 双重验证）
-  # ============================================================================
 
   verify-release:
     name: Verify Release

@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Kirky.X🌠
 # SPDX-License-Identifier: Apache-2.0
 repos:
-  # === 通用检查 ===
+  # 通用检查
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
     hooks:
@@ -33,7 +33,7 @@ repos:
         # 引用），Python AST 解析必然失败，故排除。
         exclude: ^specmark/archive/merge_delta_spec\.py$
 
-  # === 禁止提交 temp/ 第三方参考源码（防御级，阻断 git add -f 绕过 .gitignore） ===
+  # 禁止提交 temp/ 第三方参考源码（防御级，阻断 git add -f 绕过 .gitignore）
   - repo: local
     hooks:
       - id: forbid-temp-dir
@@ -47,7 +47,7 @@ repos:
         pass_filenames: false
         always_run: true
 
-  # === Rust 格式化 ===
+  # Rust 格式化
   - repo: https://github.com/doublify/pre-commit-rust
     rev: v1.0
     hooks:
@@ -55,7 +55,7 @@ repos:
         args: [--, --check]
         pass_filenames: false
 
-  # === Rust clippy（db-sqlite 与 db-postgres 互斥，分两次检查） ===
+  # Rust clippy（db-sqlite 与 db-postgres 互斥，分两次检查）
   - repo: local
     hooks:
       - id: clippy-db-sqlite
@@ -71,7 +71,7 @@ repos:
         pass_filenames: false
         files: '^src/|^garrison-macros/src/|^Cargo.toml$'
 
-  # === cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖） ===
+  # cargo-deny（许可证 / 漏洞 / 禁用源 / 重复依赖）
   - repo: local
     hooks:
       - id: cargo-deny
@@ -82,7 +82,7 @@ repos:
         files: 'Cargo\.(toml|lock)'
         pass_filenames: false
 
-  # === 密钥扫描（gitleaks，与 detect-private-key 互补） ===
+  # 密钥扫描（gitleaks，与 detect-private-key 互补）
   # 使用系统安装的 gitleaks 二进制（避免 pre-commit 从 GitHub 下载时的网络依赖）
   - repo: local
     hooks:
@@ -92,7 +92,7 @@ repos:
         language: system
         pass_filenames: false
 
-  # === 拼写检查 ===
+  # 拼写检查
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.3
     hooks:
@@ -100,7 +100,7 @@ repos:
         exclude: '^(docs/archive|temp|vendor)/.*$|^Cargo\.lock$'
         args: ['--ignore-words-list=crate,BU,aNULL,fo,inout', --check-filenames]
 
-  # === Markdown 检查（仅检查 Garrison 文档，跳过 archive/temp） ===
+  # Markdown 检查（仅检查 Garrison 文档，跳过 archive/temp）
   - repo: https://github.com/igorshubovych/markdownlint-cli
     rev: v0.43.0
     hooks:
@@ -108,7 +108,7 @@ repos:
         args: [--disable=MD013,--disable=MD024,--disable=MD033]
         exclude: '^(docs/archive|temp|\.github|mdbook/src/SUMMARY\.md)(/.*)?$'
 
-  # === 提交完成后清理本地编译产物（post-commit 阶段；启用: pre-commit install -t post-commit） ===
+  # 提交完成后清理本地编译产物（post-commit 阶段；启用: pre-commit install -t post-commit）
   - repo: local
     hooks:
       - id: post-commit-clean

@@ -46,9 +46,7 @@ use garrison::stp::GarrisonInterface;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-// ============================================================================
 // 1. 定义 marker struct（用于泛型 extractor 的类型级参数）
-// ============================================================================
 
 /// admin 角色 marker struct（类型级 API 演示）。
 #[allow(dead_code)]
@@ -64,9 +62,7 @@ impl PermissionName for ReadPerm {
     const NAME: &'static str = "data:read";
 }
 
-// ============================================================================
 // 2. 实现 GarrisonInterface（提供权限 / 角色数据回调）
-// ============================================================================
 
 /// 业务方接口实现：login_id=1001 持有 data:read 权限 + admin 角色，其他 login_id 返回空列表（无权限 / 无角色）。
 pub struct MyInterface;
@@ -100,9 +96,7 @@ impl GarrisonInterface for MyInterface {
     }
 }
 
-// ============================================================================
 // 3. axum handlers
-// ============================================================================
 
 /// 公开接口（`Ignore` 注解，无需登录）。
 pub async fn public_handler() -> Json<Value> {
@@ -124,14 +118,12 @@ pub async fn data_query_handler() -> Json<Value> {
     Json(json!({ "data": "query", "desc": "data:read permission required" }))
 }
 
-// ============================================================================
 // 4. setup：初始化 + 路由注册（不启动服务器，便于测试）
-// ============================================================================
 
 /// 准备 axum app 与测试 token（不启动 HTTP 服务器）：创建 DAO + 配置 + Interface、builder 注入全局单例、login(1001) 生成 token、注册 4 个受保护路由。
 /// 返回 `(router, token)`；调用会覆盖全局 `GarrisonManager` 单例，多测试并行需 `#[serial_test::serial]`。
 pub async fn setup() -> GarrisonResult<(Router, String)> {
-    // --- 准备依赖：DAO + Config + Interface ---
+    // 准备依赖：DAO + Config + Interface
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
 
     // 全局配置：基于默认值调整，便于演示鉴权失败场景
@@ -143,7 +135,7 @@ pub async fn setup() -> GarrisonResult<(Router, String)> {
 
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
 
-    // --- 初始化全局 GarrisonManager ---
+    // 初始化全局 GarrisonManager
     GarrisonManager::builder()
         .dao(dao)
         .config(config.clone())
@@ -151,11 +143,11 @@ pub async fn setup() -> GarrisonResult<(Router, String)> {
         .build()
         .await?;
 
-    // --- 模拟登录获取测试 token ---
+    // 模拟登录获取测试 token
     let token = GarrisonUtil::login_simple("1001").await?;
     assert!(!token.is_empty(), "login 应返回非空 token");
 
-    // --- 创建 axum app，使用 GarrisonRouter + route_protected ---
+    // 创建 axum app，使用 GarrisonRouter + route_protected
     let app = GarrisonRouter::new(config)
         .route_protected("/api/public", public_handler, Annotation::Ignore)
         .route_protected("/api/user/info", user_info_handler, Annotation::CheckLogin)
@@ -174,9 +166,7 @@ pub async fn setup() -> GarrisonResult<(Router, String)> {
     Ok((app, token))
 }
 
-// ============================================================================
 // 5. main：setup + 启动服务器
-// ============================================================================
 
 /// 运行 axum 集成示例：调用 [`setup`] 完成初始化与路由注册，绑定 `127.0.0.1:3000` 启动 HTTP 服务器（运行至 Ctrl+C）。
 pub async fn run() -> GarrisonResult<()> {

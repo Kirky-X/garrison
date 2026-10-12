@@ -112,18 +112,14 @@ impl GarrisonDao for InMemoryDao {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison AloneCache 多 Redis 实例隔离示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 创建 InMemoryDao 并包装为 AloneCache 装饰器
-    // ----------------------------------------------------------------
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let cache = AloneCache::new(dao.clone(), "tenant-a:");
 
     println!("[配置] AloneCache::new(dao, \"tenant-a:\")");
     println!("    所有 key 自动拼接前缀 \"tenant-a:\"\n");
 
-    // ----------------------------------------------------------------
     // 2. 演示 set/get 时自动拼接 key_prefix
-    // ----------------------------------------------------------------
     cache.set("user:1001", "alice", 3600).await?;
     println!("[写入] cache.set(\"user:1001\", \"alice\")");
 
@@ -148,9 +144,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert!(missing.is_none());
 
-    // ----------------------------------------------------------------
     // 3. 创建 AloneCacheManager，注册多个 tenant
-    // ----------------------------------------------------------------
     println!("\n[Manager] AloneCacheManager 多 tenant 隔离:");
 
     let manager = AloneCacheManager::new();
@@ -166,9 +160,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cache_a = manager.get("tenant-a").expect("tenant-a 应已注册");
     let cache_b = manager.get("tenant-b").expect("tenant-b 应已注册");
 
-    // ----------------------------------------------------------------
     // 4. 验证不同 tenant 的 key 隔离
-    // ----------------------------------------------------------------
     println!("[隔离] 相同 key 在不同 tenant 下互不干扰:");
 
     // 两个 tenant 写入相同 key，不同值
@@ -192,9 +184,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert!(cross_b.is_none(), "dao_b 不应包含 tenant-a 的 key");
     println!("    交叉验证：dao_a 无 tenant-b 的 key，dao_b 无 tenant-a 的 key ✓");
 
-    // ----------------------------------------------------------------
     // 5. unregister 后 get 返回 None
-    // ----------------------------------------------------------------
     println!("\n[注销] unregister 后 get 返回 None:");
     let removed = manager.unregister("tenant-a");
     assert!(removed.is_some(), "unregister 应返回被移除的实例");

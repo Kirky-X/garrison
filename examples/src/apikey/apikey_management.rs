@@ -18,9 +18,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-// ============================================================================
 // 测试用 Mock DAO
-// ============================================================================
 
 struct MockDao {
     data: Mutex<HashMap<String, String>>,
@@ -141,9 +139,7 @@ impl GarrisonDao for MockDao {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison API Key 管理示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构建 ApiKeyHandler
-    // ----------------------------------------------------------------
     // Key 存储命名空间 garrison:apikey:<key>；示例显式放开全局 verify（安全默认为
     // 禁用：verify() 可跨 namespace 校验任意 key，生产应优先 verify_with_namespace ——
     // 见 docs/CHANGELOG Breaking 说明）。
@@ -151,9 +147,7 @@ pub async fn run() -> GarrisonResult<()> {
     let handler = ApiKeyHandler::new(dao).with_allow_global_verify(true);
     println!("[1] ApiKeyHandler 构建完成（allow_global_verify=true，示例语义）\n");
 
-    // ----------------------------------------------------------------
     // 2. generate 生成 API Key
-    // ----------------------------------------------------------------
     let key = handler
         .generate("1001", vec!["read".to_string(), "write".to_string()], 3600)
         .await?;
@@ -172,9 +166,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(key_id.chars().all(|c| c.is_ascii_hexdigit()));
     assert!(key_secret.chars().all(|c| c.is_ascii_hexdigit()));
 
-    // ----------------------------------------------------------------
     // 3. verify 校验 Key
-    // ----------------------------------------------------------------
     let info = handler.verify(&key).await?;
     println!("[3] verify:");
     println!("    login_id  = {}", info.login_id);
@@ -188,9 +180,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(invalid.is_err());
     println!("    verify(\"nonexistent-key\") → Err(InvalidToken) ✓（全局 verify 已放开）\n");
 
-    // ----------------------------------------------------------------
     // 4. revoke 吊销 Key
-    // ----------------------------------------------------------------
     handler.revoke(&key).await?;
     println!("[4] revoke:");
     println!("    吊销 key = {}...", &key[..16]);
@@ -198,9 +188,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(revoked.is_err());
     println!("    吊销后 verify → Err(InvalidToken) ✓\n");
 
-    // ----------------------------------------------------------------
     // 5. rotate 轮换 Key（保留 login_id/scopes/剩余 TTL）
-    // ----------------------------------------------------------------
     let key2 = handler
         .generate("2002", vec!["admin".to_string()], 7200)
         .await?;

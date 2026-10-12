@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
 
-# ---------- 参数解析 ----------
+# 参数解析
 FULL_MATRIX=false
 KEEP_ENV=false
 SKIP_BENCH=false
@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# ---------- 全局环境（与 CI 对齐：零告警硬门禁） ----------
+# 全局环境（与 CI 对齐：零告警硬门禁）
 export RUSTFLAGS="-D warnings"
 export CARGO_TERM_COLOR=always
 export RUST_BACKTRACE=1
@@ -59,9 +59,7 @@ run_stage() {
     return 1
 }
 
-# ==========================================================================
 # S0 环境自举
-# ==========================================================================
 log_stage "S0" "环境自举（docker compose 中间件 + Keycloak realm 供给）"
 ENV_READY=false
 if ! docker info > /dev/null 2>&1; then
@@ -110,9 +108,7 @@ if [ "${ENV_READY}" != "true" ]; then
     record_skip "S3" "外部服务未就绪（S0 未通过），验收/集成测试中的服务真实路径将退化为 [SKIP]"
 fi
 
-# ==========================================================================
 # S1 静态门禁
-# ==========================================================================
 S1_OK=true
 run_stage "S1a" "rustfmt --check" bash -c 'cargo fmt --all -- --check' || S1_OK=false
 run_stage "S1b" "clippy (default features)" \
@@ -123,9 +119,7 @@ run_stage "S1d" "cargo-deny (advisories/bans/licenses/sources, all-features)" \
     bash -c 'cargo deny --all-features --locked check' || S1_OK=false
 if ${S1_OK}; then record_pass "S1"; else record_fail "S1"; fi
 
-# ==========================================================================
 # S2 单元测试（lib，default 与 full 两极）
-# ==========================================================================
 S2_OK=true
 run_stage "S2a" "lib tests (default = backend-embedded)" \
     bash -c 'cargo test --no-default-features --features "default" --lib --locked' || S2_OK=false
@@ -133,9 +127,7 @@ run_stage "S2b" "lib tests (full features)" \
     bash -c 'cargo test --features "full" --lib --locked' || S2_OK=false
 if ${S2_OK}; then record_pass "S2"; else record_fail "S2"; fi
 
-# ==========================================================================
 # S3 验收/集成测试（tests/ 全部 target，full 特性面）
-# ==========================================================================
 if [ "${ENV_READY}" = "true" ]; then
     run_stage "S3" "integration + acceptance tests (full, real Redis/Postgres/MySQL)" \
         bash -c 'cargo test --features "full" --tests --no-fail-fast --locked'
@@ -152,15 +144,11 @@ if [ "${ENV_READY}" = "true" ]; then
         bash -c 'cargo test --test acceptance --features "full,policy-hibp,testing" --locked hibp -- --test-threads=1'
 fi
 
-# ==========================================================================
 # S4 示例套件（独立 workspace member，CI 盲区补齐）
-# ==========================================================================
 run_stage "S4" "examples tests (all features)" \
     bash -c 'cargo test -p garrison-examples --all-features --locked'
 
-# ==========================================================================
 # S5 特性组合矩阵
-# ==========================================================================
 # 组合语义：dbnexus 硬约束「embedded(sqlite) 与 server-side(postgres/mysql) 互斥」，故 web×db 网格每次只挂一个 db 后端（多 web 框架共存合法）；每组合同时验证库编译与测试代码编译（--lib --no-run），后者是测试代码 feature 门控漂移防线（ci.yml guard job）。
 MATRIX_OK=true
 
@@ -248,9 +236,7 @@ else
 fi
 if ${MATRIX_OK}; then record_pass "S5"; else record_fail "S5"; fi
 
-# ==========================================================================
 # S6 性能基准
-# ==========================================================================
 if [ "${SKIP_BENCH}" = "true" ]; then
     record_skip "S6" "--skip-bench"
 else
@@ -272,9 +258,7 @@ else
     fi
 fi
 
-# ==========================================================================
 # S7 HTTP E2E（examples auth_server_serve + e2e_run.sh）
-# ==========================================================================
 if [ "${SKIP_E2E_HTTP}" = "true" ]; then
     record_skip "S7" "--skip-e2e-http"
 else
@@ -292,9 +276,7 @@ else
     fi
 fi
 
-# ==========================================================================
 # S8 清理 + 报告
-# ==========================================================================
 if [ "${KEEP_ENV}" = "true" ]; then
     record_skip "S8-cleanup" "--keep-env：保留 garrison-e2e compose 环境（手动 down：${COMPOSE} down -v --remove-orphans）"
 elif command -v docker > /dev/null 2>&1 && docker info > /dev/null 2>&1; then
@@ -310,7 +292,7 @@ else
     record_skip "S8-cleanup" "docker 不可达，跳过清理"
 fi
 
-# ---------- 汇总报告 ----------
+# 汇总报告
 REPORT="${REPO_ROOT}/logs/e2e_matrix_report.md"
 {
     echo "# Garrison E2E 特性组合测试报告"

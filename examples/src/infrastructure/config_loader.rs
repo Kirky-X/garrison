@@ -18,9 +18,7 @@ use std::io::Write as _;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 配置加载示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 默认配置
-    // ----------------------------------------------------------------
     let config = GarrisonConfig::default_config();
     println!("[1] 默认配置:");
     println!("    token_name = {}", config.token_name);
@@ -32,9 +30,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    cookie_same_site = {}", config.cookie_same_site);
     println!();
 
-    // ----------------------------------------------------------------
     // 2. 从 TOML 文件加载配置（通过 confers）
-    // ----------------------------------------------------------------
     let toml_content = r#"token_name = "auth_token"
 timeout = 7200
 active_timeout = 86400
@@ -61,9 +57,7 @@ cookie_same_site = "Lax"
     println!("    throw_on_not_login = {}", config.throw_on_not_login);
     println!();
 
-    // ----------------------------------------------------------------
     // 3. 环境变量覆盖（GARRISON_ 前缀自动覆盖）
-    // ----------------------------------------------------------------
     println!("[3] 环境变量覆盖演示:");
     println!("    设置 GARRISON_TOKEN_NAME=custom_token");
     std::env::set_var("GARRISON_TOKEN_NAME", "custom_token");
@@ -72,9 +66,7 @@ cookie_same_site = "Lax"
     std::env::remove_var("GARRISON_TOKEN_NAME");
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 订阅配置热更新
-    // ----------------------------------------------------------------
     let config = GarrisonConfig::default_config();
     println!("[4] 配置热更新演示:");
     println!("    初始 timeout = {} 秒", config.timeout);
@@ -82,9 +74,7 @@ cookie_same_site = "Lax"
     let rx = config.watch().expect("watcher 应已启用");
     println!("    已订阅配置变更通道");
 
-    // ----------------------------------------------------------------
     // 5. 修改并广播配置变更
-    // ----------------------------------------------------------------
     config.update(|c| {
         c.timeout = 1800;
     })?;
@@ -95,9 +85,7 @@ cookie_same_site = "Lax"
     drop(latest);
     println!();
 
-    // ----------------------------------------------------------------
     // 6. 配置校验
-    // ----------------------------------------------------------------
     let mut bad_config = GarrisonConfig::default_config();
     bad_config.token_style = "invalid_style".to_string();
     println!("[6] 配置校验演示:");

@@ -1842,7 +1842,7 @@ fn validate_rejects_zero_burst_threshold() {
     );
 }
 
-// === 安全审查 load() 安全防护集成测试 ===
+// 安全审查 load() 安全防护集成测试
 
 #[test]
 fn load_rejects_empty_path() {

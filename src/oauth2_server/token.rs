@@ -1180,7 +1180,7 @@ mod tests {
         }
     }
 
-    // === 客户端认证测试 ===
+    // 客户端认证测试
 
     #[tokio::test]
     async fn handle_invalid_client_id() {
@@ -1482,7 +1482,7 @@ mod tests {
         );
     }
 
-    // === unsupported_grant_type 测试 ===
+    // unsupported_grant_type 测试
 
     #[tokio::test]
     async fn handle_unsupported_grant_type() {
@@ -1508,7 +1508,7 @@ mod tests {
         assert!(err.to_string().contains("unsupported_grant_type"));
     }
 
-    // === authorization_code grant type 测试 ===
+    // authorization_code grant type 测试
 
     #[tokio::test]
     async fn handle_authorization_code_success() {
@@ -1598,7 +1598,7 @@ mod tests {
         assert!(err.to_string().contains("invalid_grant"));
     }
 
-    // === refresh_token grant type 测试 ===
+    // refresh_token grant type 测试
 
     #[tokio::test]
     async fn handle_refresh_token_success() {
@@ -1796,7 +1796,7 @@ mod tests {
         );
     }
 
-    // === client_credentials grant type 测试 ===
+    // client_credentials grant type 测试
 
     #[tokio::test]
     async fn handle_client_credentials_success() {
@@ -1859,7 +1859,7 @@ mod tests {
         assert!(err.to_string().contains("unauthorized_client"));
     }
 
-    // === password grant type 测试 ===
+    // password grant type 测试
 
     #[tokio::test]
     async fn handle_password_success() {
@@ -2112,7 +2112,7 @@ mod tests {
         );
     }
 
-    // === OAuth2 scope 校验测试 ===
+    // OAuth2 scope 校验测试
 
     /// client_credentials 请求超出 allowed_scopes 的 scope 返回 invalid_scope。
     /// make_full_client 的 allowed_scopes = ["read", "write"]，请求 "admin" 应被拒绝。
@@ -2270,7 +2270,7 @@ mod tests {
         assert_eq!(resp.scope.as_deref(), Some("any-scope"));
     }
 
-    // === revoke / introspect 辅助方法测试 ===
+    // revoke / introspect 辅助方法测试
 
     #[tokio::test]
     async fn get_access_token_record_after_issue() {

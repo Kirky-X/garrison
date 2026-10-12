@@ -18,9 +18,7 @@ use garrison::error::GarrisonResult;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison SMS 验证码限速示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. Key 空间设计
-    // ----------------------------------------------------------------
     println!("[1] SMS 限速 Key 空间:");
     println!("    sms:rate:{{phone}}:hour:{{bucket}}  | 3600s  | 小时限速计数器");
     println!("    sms:rate:{{phone}}:day:{{date}}     | 86400s | 天限速计数器");
@@ -29,9 +27,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    sms:unverified:{{phone}}            | 86400s | 连续未验证计数器");
     println!();
 
-    // ----------------------------------------------------------------
     // 2. 限速配置
-    // ----------------------------------------------------------------
     println!("[2] 限速配置说明:");
     println!("    • hourly_limit: 每小时每号码最大发送量（如 5 条/小时）");
     println!("    • daily_limit:  每天每号码最大发送量（如 20 条/天）");
@@ -39,9 +35,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    • unverified_threshold: 连续未验证次数阈值（超过标记为可疑）");
     println!();
 
-    // ----------------------------------------------------------------
     // 3. 使用流程
-    // ----------------------------------------------------------------
     println!("[3] 典型使用流程:");
     println!("    1. 用户请求发送验证码 → SmsRateLimiter.check_rate(phone)");
     println!("       → 检查小时/天限速 → 通过则生成验证码并发送");
@@ -52,9 +46,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("       → 超过 unverified_threshold → 标记为可疑号码");
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 安全约束
-    // ----------------------------------------------------------------
     println!("[4] 安全约束:");
     println!("    • 手机号不能包含 ':'（防止 key 注入）");
     println!("    • 验证码使用密码学安全随机数生成器（ChaCha12 CSPRNG）");

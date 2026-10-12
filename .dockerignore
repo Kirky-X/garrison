@@ -1,6 +1,4 @@
-# =============================================================================
 # Garrison .dockerignore
-# =============================================================================
 # 原则：构建上下文只保留 cargo-chef recipe / 编译所需文件。
 #
 # 【绝不排除——编译必需，勿加排除项】
@@ -11,15 +9,14 @@
 #   macros/         workspace member（proc-macro 依赖）
 #   Cargo.toml / Cargo.lock / rust-toolchain.toml
 #   tests/ benches/ recipe 生成期需枚举全部 target，缺失会引入一致性风险
-# =============================================================================
 
-# --- 版本控制与 CI ---
+# 版本控制与 CI
 .git/
 .github/
 .gitignore
 .gitattributes
 
-# --- 本地构建产物与运行时数据 ---
+# 本地构建产物与运行时数据
 target/
 **/target/
 logs/
@@ -37,7 +34,7 @@ coverage/
 tarpaulin-report.html
 lcov.info
 
-# --- 规划 / 审计 / 文档工作区（不影响编译） ---
+# 规划 / 审计 / 文档工作区（不影响编译）
 temp/
 specmark/
 .mimosa/
@@ -53,13 +50,13 @@ docs/
 mdbook/
 fuzz/
 
-# --- 仓库辅助目录与编排本地配置（不参与编译，上下文瘦身） ---
+# 仓库辅助目录与编排本地配置（不参与编译，上下文瘦身）
 scripts/
 supply-chain/
 docker-compose.override.yml
 docker-compose.e2e.yml
 
-# --- 安全与本地密钥（严禁进入镜像层） ---
+# 安全与本地密钥（严禁进入镜像层）
 .env
 .env.local
 .env.*.local
@@ -79,7 +76,7 @@ deny.toml
 *.pfx
 secrets/
 
-# --- IDE / 工具链本地状态 ---
+# IDE / 工具链本地状态
 .idea/
 .vscode/
 .sccache/

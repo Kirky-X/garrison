@@ -5,9 +5,7 @@
 
 use super::*;
 
-// ----------------------------------------------------------------
 // TokenState Display 测试
-// ----------------------------------------------------------------
 
 #[test]
 fn token_state_display_outputs_uppercase() {
@@ -18,9 +16,7 @@ fn token_state_display_outputs_uppercase() {
     assert_eq!(format!("{}", TokenState::Refreshed), "REFRESHED");
 }
 
-// ----------------------------------------------------------------
 // TokenState can_transition_to 合法路径测试（6 条）
-// ----------------------------------------------------------------
 
 #[test]
 fn token_state_issued_to_active_is_valid() {
@@ -52,9 +48,7 @@ fn token_state_refreshed_to_revoked_is_valid() {
     assert!(TokenState::Refreshed.can_transition_to(TokenState::Revoked));
 }
 
-// ----------------------------------------------------------------
 // TokenState can_transition_to 非法路径测试
-// ----------------------------------------------------------------
 
 #[test]
 fn token_state_issued_to_expired_is_invalid() {
@@ -110,9 +104,7 @@ fn token_state_refreshed_to_refreshed_is_invalid() {
     assert!(!TokenState::Refreshed.can_transition_to(TokenState::Refreshed));
 }
 
-// ----------------------------------------------------------------
 // TokenState transition_to 测试
-// ----------------------------------------------------------------
 
 #[test]
 fn token_state_transition_to_valid_returns_ok() {
@@ -133,9 +125,7 @@ fn token_state_transition_to_invalid_returns_err() {
     }
 }
 
-// ----------------------------------------------------------------
 // TokenState Copy / Clone / PartialEq / Eq / Hash 测试
-// ----------------------------------------------------------------
 
 #[test]
 fn token_state_copy_semantics() {
@@ -145,9 +135,7 @@ fn token_state_copy_semantics() {
     assert_eq!(copied, TokenState::Active);
 }
 
-// ----------------------------------------------------------------
 // UserStatus Display 测试
-// ----------------------------------------------------------------
 
 #[test]
 fn user_status_display_outputs_uppercase() {
@@ -158,9 +146,7 @@ fn user_status_display_outputs_uppercase() {
     assert_eq!(format!("{}", UserStatus::Deleted), "DELETED");
 }
 
-// ----------------------------------------------------------------
 // UserStatus can_transition_to 合法路径测试（9 条）
-// ----------------------------------------------------------------
 
 #[test]
 fn user_status_pending_to_active_is_valid() {
@@ -207,9 +193,7 @@ fn user_status_inactive_to_deleted_is_valid() {
     assert!(UserStatus::Inactive.can_transition_to(UserStatus::Deleted));
 }
 
-// ----------------------------------------------------------------
 // UserStatus can_transition_to 非法路径测试
-// ----------------------------------------------------------------
 
 #[test]
 fn user_status_pending_to_inactive_is_invalid() {
@@ -258,9 +242,7 @@ fn user_status_deleted_cannot_transition_to_anything() {
     }
 }
 
-// ----------------------------------------------------------------
 // UserStatus transition_to 测试
-// ----------------------------------------------------------------
 
 #[test]
 fn user_status_transition_to_valid_returns_ok() {
@@ -281,9 +263,7 @@ fn user_status_transition_to_invalid_returns_err() {
     }
 }
 
-// ----------------------------------------------------------------
 // UserStatus Copy / Clone / PartialEq / Eq / Hash 测试
-// ----------------------------------------------------------------
 
 #[test]
 fn user_status_copy_semantics() {

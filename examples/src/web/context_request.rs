@@ -30,9 +30,7 @@ use garrison::error::GarrisonResult;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 上下文与请求示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构造 axum Request（带 Authorization: Bearer）
-    // ----------------------------------------------------------------
     let req = Request::builder()
         .method("GET")
         .uri("/api/users/1001?tab=profile")
@@ -48,9 +46,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    method() = {}", axum_req.method()?);
     println!();
 
-    // ----------------------------------------------------------------
     // 2. 从 header 提取 token（Bearer）
-    // ----------------------------------------------------------------
     let config = GarrisonConfig::default_config();
     let token = axum_req.get_token(&config)?;
     println!("[2] 从 header 提取 token:");
@@ -59,9 +55,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(token.as_deref(), Some("my_bearer_token_123"));
     println!();
 
-    // ----------------------------------------------------------------
     // 3. 从自定义 header 提取 token（回退路径）
-    // ----------------------------------------------------------------
     let req2 = Request::builder()
         .method("POST")
         .uri("/api/data")
@@ -77,9 +71,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(token2.as_deref(), Some("custom_header_token_456"));
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 从 cookie 提取 token
-    // ----------------------------------------------------------------
     let req3 = Request::builder()
         .method("GET")
         .uri("/")
@@ -95,9 +87,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(token3.as_deref(), Some("cookie_token_789"));
     println!();
 
-    // ----------------------------------------------------------------
     // 5. 设置响应状态码与 header
-    // ----------------------------------------------------------------
     let mut ctx4 = AxumContext::new(&req);
     {
         let resp = ctx4.raw_response_mut();
@@ -118,9 +108,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(trace_id, "trace-abc-123");
     println!();
 
-    // ----------------------------------------------------------------
     // 6. 设置安全 Cookie（默认 Secure; SameSite=Lax）
-    // ----------------------------------------------------------------
     let mut ctx5 = AxumContext::new(&req);
     {
         let resp = ctx5.raw_response_mut();
@@ -141,9 +129,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    ✓ 包含 HttpOnly; Secure; SameSite=Lax");
     println!();
 
-    // ----------------------------------------------------------------
     // 7. 设置自定义 Cookie（dev 模式关闭 Secure）
-    // ----------------------------------------------------------------
     let mut dev_config = GarrisonConfig::default_config();
     dev_config.cookie_secure = false;
     dev_config.cookie_same_site = "Strict".to_string();
@@ -170,9 +156,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    ✓ dev 模式：无 Secure; SameSite=Strict");
     println!();
 
-    // ----------------------------------------------------------------
     // 8. Bearer 大小写不敏感
-    // ----------------------------------------------------------------
     println!("[8] Bearer 大小写不敏感（RFC 7235）:");
     for prefix in &["Bearer", "bearer", "BEARER"] {
         let req_c = Request::builder()

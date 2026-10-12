@@ -283,9 +283,7 @@ mod tests {
         assert_eq!(msg, "token 已过期");
     }
 
-    // ------------------------------------------------------------------
     // LoginRequest.login_id 反序列化不变量（wire 层硬上限）
-    // ------------------------------------------------------------------
 
     fn deser_login_request(body: &str) -> Result<LoginRequest, serde_json::Error> {
         serde_json::from_str(body)

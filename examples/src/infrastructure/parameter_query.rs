@@ -177,9 +177,7 @@ async fn init_manager() {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison ParameterQuery 参数化查询示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 初始化 GarrisonManager
-    // ----------------------------------------------------------------
     init_manager().await;
     println!("[初始化] GarrisonManager 已就绪");
     println!("    账号 1001 权限: [user:create, user:read]");
@@ -191,9 +189,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         resolved_from: TenantSource::Header,
     };
 
-    // ----------------------------------------------------------------
     // 2. with_login_id + check_permission（持有权限 → Ok）
-    // ----------------------------------------------------------------
     println!("[login_id 上下文] check_permission:");
     let result = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -226,9 +222,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    // ----------------------------------------------------------------
     // 3. with_token + check_role（先 login 获取 token）
-    // ----------------------------------------------------------------
     println!("[token 上下文] check_role:");
     let token = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -270,9 +264,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 未设置上下文时返回 Internal 错误
-    // ----------------------------------------------------------------
     println!("[无上下文] 未设置 login_id / token:");
     let result = ParameterQueryBuilder::new()
         .check_permission("user:read")

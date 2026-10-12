@@ -19,9 +19,7 @@ use garrison::secure::httpdigest::HttpDigestAuth;
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison HTTP Digest 认证示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构造 Digest 认证工具并生成质询头
-    // ----------------------------------------------------------------
     // 默认算法为 SHA256（更安全），qop 声明支持 auth 和 auth-int，
     // nonce 格式为 base64(timestamp:uuid)，validate 时校验时间戳防过期。
     let auth = HttpDigestAuth::new("garrison@realm", "SHA256")?;
@@ -33,9 +31,7 @@ pub fn run() -> GarrisonResult<()> {
     assert!(challenge.contains(r#"qop="auth,auth-int""#));
     assert!(challenge.contains("algorithm=SHA256"));
 
-    // ----------------------------------------------------------------
     // 2. 预计算 HA1 = H(username:realm:password)
-    // ----------------------------------------------------------------
     let username = "admin";
     let password = "secret";
     let ha1 = auth.compute_ha1(username, password);
@@ -44,9 +40,7 @@ pub fn run() -> GarrisonResult<()> {
     println!("    realm    = garrison@realm");
     println!("    HA1      = {}\n", ha1);
 
-    // ----------------------------------------------------------------
     // 3. 模拟客户端构造 Authorization header 并由服务端 validate
-    // ----------------------------------------------------------------
     // 客户端从质询头提取 nonce（base64(timestamp:uuid) 格式），用 HA1 + nonce + method + uri 计算 response。
     let nonce = extract_nonce_from_challenge(&challenge).ok_or_else(|| {
         garrison::error::GarrisonError::Internal("failed to extract nonce".into())
@@ -82,18 +76,14 @@ pub fn run() -> GarrisonResult<()> {
     println!("    validate 结果 = {}\n", valid);
     assert!(valid, "合法凭证应校验通过");
 
-    // ----------------------------------------------------------------
     // 4. 错误密码校验失败
-    // ----------------------------------------------------------------
     let ha1_wrong = auth.compute_ha1(username, "wrong-password");
     let invalid = auth.validate(&client_header, method, uri, &ha1_wrong);
     println!("[4] 错误密码校验:");
     println!("    validate 结果 = {}（应为 false）\n", invalid);
     assert!(!invalid, "错误密码应校验失败");
 
-    // ----------------------------------------------------------------
     // 5. auth-int 模式（带请求体校验）
-    // ----------------------------------------------------------------
     println!("[5] auth-int 模式（带请求体校验）:");
     let auth_int = HttpDigestAuth::new("secure@realm", "SHA256")?;
     let ha1_int = auth_int.compute_ha1(username, password);

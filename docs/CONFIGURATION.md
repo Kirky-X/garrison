@@ -249,41 +249,41 @@ recovery_misuse_tolerance = 0       # 恢复码误用豁免额度（默认 0，�
 # Garrison 配置文件
 # 详见 docs/CONFIGURATION.md
 
-# === 会话策略 ===
+# 会话策略
 timeout = 2592000            # 会话超时 30 天
 active_timeout = -1          # -1 表示跟随 timeout
 is_share = true              # 同账号多端共享会话
 is_concurrent = true         # 允许并发登录
 
-# === Token 策略 ===
+# Token 策略
 token_name = "garrison_token"
 token_style = "uuid"         # 可选: uuid / random_64 / simple / jwt
 is_read_cookie = true
 is_read_header = true
 is_write_header = true
 
-# === 异常行为 ===
+# 异常行为
 throw_on_not_login = true
 
-# === Cookie 策略 ===
+# Cookie 策略
 cookie_secure = true
 cookie_same_site = "Lax"
 
-# === 0.2.0 扩展（不启用 protocol-* 时可省略）===
+# 0.2.0 扩展（不启用 protocol-* 时可省略）
 # jwt_algorithm = "HS256"
 # sign_window_seconds = 300
 # sso_ticket_ttl_seconds = 60
 
-# === 0.6.0 remember-me 扩展会话超时 ===
+# 0.6.0 remember-me 扩展会话超时
 # remember_me_enabled = false
 # remember_me_timeout = 7776000  # 90 天
 
-# === 0.5.0 多租户隔离 ===
+# 0.5.0 多租户隔离
 # [tenant_isolation]
 # enabled = false
 # resolver = "header"
 
-# === 密码哈希参数（默认即 OWASP 建议档，通常无需配置）===
+# 密码哈希参数（默认即 OWASP 建议档，通常无需配置）
 # [password_hasher]
 # algorithm = "argon2id"       # 可选: argon2id / bcrypt
 # argon2_m_cost = 19456        # KiB，下限 19456（低于需 allow_weak_argon2_params = true）
@@ -298,13 +298,13 @@ cookie_same_site = "Lax"
 通过 `.env` 或容器环境注入（生产环境建议使用容器/编排平台的环境注入）：
 
 ```env
-# === 会话策略 ===
+# 会话策略
 GARRISON_TIMEOUT=2592000
 GARRISON_ACTIVE_TIMEOUT=-1
 GARRISON_IS_SHARE=true
 GARRISON_IS_CONCURRENT=true
 
-# === Token 策略 ===
+# Token 策略
 GARRISON_TOKEN_NAME=garrison_token
 GARRISON_TOKEN_STYLE=uuid
 GARRISON_IS_READ_COOKIE=true
@@ -314,48 +314,48 @@ GARRISON_IS_READ_BODY=false
 GARRISON_IS_WRITE_COOKIE=false
 GARRISON_THROW_ON_NOT_LOGIN=true
 
-# === 前后端分离 ===
+# 前后端分离
 GARRISON_FRONTEND_SEPARATION=false
 
-# === Cookie 策略 ===
+# Cookie 策略
 GARRISON_COOKIE_SECURE=true
 GARRISON_COOKIE_SAME_SITE=Lax
 
-# === 0.2.0 扩展 ===
+# 0.2.0 扩展
 GARRISON_JWT_SECRET=change-me-in-production
 GARRISON_JWT_ALGORITHM=HS256
 GARRISON_SIGN_WINDOW_SECONDS=300
 GARRISON_SSO_TICKET_TTL_SECONDS=60
 
-# === 0.6.0 remember-me ===
+# 0.6.0 remember-me
 GARRISON_REMEMBER_ME_ENABLED=false
 GARRISON_REMEMBER_ME_TIMEOUT=7776000
 
-# === 0.9.x JWT 撤销与限流后端 ===
+# 0.9.x JWT 撤销与限流后端
 GARRISON_ENABLE_JWT_REVOCATION=false
 GARRISON_ALLOW_STATELESS_JWT_NO_REVOCATION=false
 GARRISON_RATE_LIMIT_BACKEND=memory
 
-# === 会话管理 ===
+# 会话管理
 GARRISON_SESSION_HOVER_TIMEOUT=-1
 GARRISON_AUTO_RENEWAL_THRESHOLD=-1
 GARRISON_TOKEN_MAP_CLEANUP_INTERVAL_SECS=300
 GARRISON_MAX_LOGIN_COUNT=0
 GARRISON_DEVICE_BINDING_MODE=disabled
 
-# === 多租户隔离 ===
+# 多租户隔离
 GARRISON_TENANT_ISOLATION__ENABLED=false
 GARRISON_TENANT_ISOLATION__RESOLVER=header
 
-# === 密码哈希（可选） ===
+# 密码哈希（可选）
 GARRISON_PASSWORD_HASHER__ARGON2_POOL_SIZE=1
 
-# === 数据库与缓存 ===
+# 数据库与缓存
 # 注意：数据库 URL 不走环境变量——框架不读取 GARRISON_DB_URL，须由宿主编程式传入
 # garrison::dao::init_dbnexus(&db_url)（CLI 对应 --db-url 参数）。
 GARRISON_REDIS_URL=redis://127.0.0.1:6379/0
 
-# === 日志 ===
+# 日志
 RUST_LOG=garrison=info
 ```
 

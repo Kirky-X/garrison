@@ -23,15 +23,11 @@ use std::path::PathBuf;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison DAO 操作示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 创建 oxcache DAO
-    // ----------------------------------------------------------------
     let dao = GarrisonDaoOxcache::new().await?;
     println!("[1] GarrisonDaoOxcache 创建完成（sync_mode 启用）\n");
 
-    // ----------------------------------------------------------------
     // 2. set + get 配对
-    // ----------------------------------------------------------------
     dao.set("user:1:token", "abc123", 3600).await?;
     let value = dao.get("user:1:token").await?;
     println!("[2] set + get 配对:");
@@ -40,9 +36,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(value.as_deref(), Some("abc123"));
     println!();
 
-    // ----------------------------------------------------------------
     // 3. TTL 过期（1 秒 TTL + 等待 2 秒）
-    // ----------------------------------------------------------------
     dao.set("temp_key", "temp_value", 1).await?;
     println!("[3] TTL 过期:");
     println!("    set(\"temp_key\", \"temp_value\", ttl=1)");
@@ -55,9 +49,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(after.is_none());
     println!();
 
-    // ----------------------------------------------------------------
     // 4. update 更新值（保留 TTL）
-    // ----------------------------------------------------------------
     dao.set("update_key", "old_value", 3600).await?;
     dao.update("update_key", "new_value").await?;
     let updated = dao.get("update_key").await?;
@@ -68,9 +60,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(updated.as_deref(), Some("new_value"));
     println!();
 
-    // ----------------------------------------------------------------
     // 5. expire 重置过期时间
-    // ----------------------------------------------------------------
     dao.set("expire_key", "value", 1).await?;
     dao.expire("expire_key", 3600).await?;
     println!("[5] expire 重置:");
@@ -85,9 +75,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(survived.is_some());
     println!();
 
-    // ----------------------------------------------------------------
     // 6. delete 显式删除
-    // ----------------------------------------------------------------
     dao.set("delete_key", "to_delete", 3600).await?;
     dao.delete("delete_key").await?;
     let deleted = dao.get("delete_key").await?;
@@ -98,9 +86,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(deleted.is_none());
     println!();
 
-    // ----------------------------------------------------------------
     // 7. zero TTL 永久驻留
-    // ----------------------------------------------------------------
     dao.set("permanent_key", "forever", 0).await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
     let permanent = dao.get("permanent_key").await?;
@@ -110,9 +96,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(permanent.is_some());
     println!();
 
-    // ----------------------------------------------------------------
     // 8. GarrisonMigration 数据库迁移（feature = "db-sqlite"）
-    // ----------------------------------------------------------------
     #[cfg(feature = "db-sqlite")]
     {
         println!("[8] GarrisonMigration 数据库迁移:");

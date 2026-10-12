@@ -51,11 +51,9 @@ credit-insufficient = Credit 不足: tenant={$tenant_id}, requested={$requested}
 token-revoked = Token 已吊销: {$detail}
 firewall-blocked = 防火墙拦截: {$detail}
 
-# ============================================================================
 # 社交登录异常消息（0.6.0 新增）
-# ============================================================================
 
-# --- 微信扫码登录（wechat）---
+# 微信扫码登录（wechat）
 wechat-token-request-failed = 微信 token 请求失败: {$detail}
 wechat-token-response-parse-failed = 微信 token 响应解析失败: {$detail}
 wechat-error-response = 微信错误 {$code}: {$message}
@@ -65,7 +63,7 @@ wechat-userinfo-response-parse-failed = 微信用户信息响应解析失败: {$
 wechat-userinfo-response-missing-openid = 微信用户信息响应缺少 openid 字段
 wechat-redirect-uri-must-be-https = 微信 redirect_uri 必须为 https URL
 
-# --- 第一方扫码登录（qrlogin）---
+# 第一方扫码登录（qrlogin）
 qrlogin-secret-empty = 扫码登录 HMAC 密钥不能为空
 qrlogin-secret-too-short = 扫码登录 HMAC 密钥不能为空
 qrlogin-session-not-found = 扫码登录会话不存在
@@ -81,14 +79,14 @@ qrlogin-issuer-failed = 扫码登录会话签发失败: {$detail}
 qrlogin-app-unauthorized = 扫码登录需要有效的应用会话 token
 qrlogin-action-invalid = action 必须为 "confirm" 或 "cancel"
 
-# --- 微信小程序（wechat mini-app）---
+# 微信小程序（wechat mini-app）
 wechat-mini-app-get-authorization-url-not-supported = WechatMiniAppProvider 不支持 get_authorization_url（小程序用 wx.login() 直接获取 js_code）
 wechat-mini-app-jscode2session-request-failed = 微信小程序 jscode2session 请求失败: {$detail}
 wechat-mini-app-jscode2session-response-parse-failed = 微信小程序 jscode2session 响应解析失败: {$detail}
 wechat-mini-app-error-response = 微信小程序错误 {$code}: {$message}
 wechat-mini-app-jscode2session-response-missing-openid = 微信小程序 jscode2session 响应缺少 openid 字段
 
-# --- 支付宝授权登录（alipay）---
+# 支付宝授权登录（alipay）
 alipay-rsa-key-parse-failed = 支付宝 RSA 私钥解析失败: {$detail}
 alipay-token-request-failed = 支付宝 token 请求失败: {$detail}
 alipay-token-response-parse-failed = 支付宝 token 响应解析失败: {$detail}
@@ -99,7 +97,7 @@ alipay-user-info-response-parse-failed = 支付宝用户信息响应解析失败
 alipay-response-missing-user-info-share-response = 支付宝响应缺少 alipay_user_info_share_response 字段
 alipay-http-client-build-failed = 支付宝 HTTP 客户端构建失败: {$detail}
 
-# --- Keycloak OIDC RP（keycloak）---
+# Keycloak OIDC RP（keycloak）
 keycloak-http-client-build-failed = 构建 HTTP 客户端失败: {$detail}
 keycloak-discovery-request-failed = discovery 请求失败: {$detail}
 keycloak-discovery-status-not-2xx = discovery 响应状态码非 2xx: {$detail}
@@ -119,7 +117,7 @@ keycloak-exchange-code-request-failed = exchange_code 请求失败: {$detail}
 keycloak-exchange-code-status-not-2xx = exchange_code 响应状态码非 2xx: {$detail}
 keycloak-exchange-code-response-parse-failed = exchange_code 响应解析失败: {$detail}
 
-# --- 华为 Account Kit（huawei，sinnan 自定义 provider）---
+# 华为 Account Kit（huawei，sinnan 自定义 provider）
 huawei-token-request-failed = 华为 token 请求失败: {$detail}
 huawei-token-response-parse-failed = 华为 token 响应解析失败: {$detail}
 huawei-error-response = 华为错误响应: {$detail}
@@ -130,9 +128,7 @@ huawei-userinfo-response-parse-failed = 华为用户信息响应解析失败: {$
 huawei-userinfo-business-error = 华为用户信息业务错误: {$detail}
 huawei-userinfo-response-missing-openID = 华为用户信息响应缺少 openID 字段
 
-# ============================================================================
 # DAO 错误（i18n 改造）
-# ============================================================================
 dao-app-auth-method-create-insert = app_auth_method create 插入失败: {$arg0}
 dao-app-auth-method-create-session = app_auth_method create 获取 session 失败: {$arg0}
 dao-app-auth-method-delete-delete = app_auth_method delete 删除失败: {$arg0}
@@ -626,16 +622,14 @@ account-disable-deserialize = 反序列化 DisableEntry 失败: {$arg0}
 stp-token-invalid-or-not-login = token 无效或未登录
 stp-token-invalid-or-no-login-id = token 无效或不包含 login_id
 
-# ============================================================================
 # i18n 迁移补全（2026-07-18）
-# ============================================================================
 
-# --- session mock ---
+# session mock
 session-mock-delete-failed = mock delete 失败: {$arg0}
 session-mock-read-failed = mock read 失败: {$arg0}
 session-mock-update-failed = mock update 失败: {$arg0}
 
-# --- sso 补全 ---
+# sso 补全
 sso-mock-key-not-found = key 不存在
 sso-oidc-token-status-error = token exchange 响应状态错误: {$arg0}
 sso-oidc-userinfo-status-error = userinfo 响应状态错误: {$arg0}
@@ -645,14 +639,14 @@ sso-ticket-consumed-by-concurrent = SSO ticket 被并发消费
 sso-saml-signature-not-implemented = SAML 签名验证未实现
 sso-saml-assertion-expired = SAML assertion 已过期: {$arg0}
 
-# --- sign / apikey 补全 ---
+# sign / apikey 补全
 sign-app-secret-too-short = app_secret 长度不足: 当前 {$arg0} 字节, 要求至少 {$arg1} 字节 (256 位)
 apikey-namespace-too-long = namespace 长度不能超过 64 字符, 实际: {$arg0}
 apikey-namespace-invalid-chars = namespace 仅允许 [a-zA-Z0-9_-], 实际: {$arg0}
 apikey-namespace-mismatch = API Key namespace 不匹配: 期望 {$arg0}, 实际 {$arg1}
 apikey-expired-cannot-rotate = API Key 已过期, 无法轮换
 
-# --- keycloak 补全 ---
+# keycloak 补全
 keycloak-discovery-body-read-failed = discovery 响应体读取失败: {$detail}
 keycloak-dao-not-injected = KeycloakProvider 未注入 DAO, 无法缓存 JWKS (调用 with_dao 注入 GarrisonDao)
 keycloak-jwks-body-read-failed = JWKS 响应体读取失败: {$detail}
@@ -664,12 +658,12 @@ keycloak-token-invalid-audience = token audience 无效
 keycloak-token-invalid-issuer = token issuer 无效
 keycloak-exchange-code-body-read-failed = exchange_code 响应体读取失败: {$detail}
 
-# --- server / backend 补全 ---
+# server / backend 补全
 server-caller-not-owner-kickout = caller 非属主且无 admin:sessions 权限, 禁止 kickout
 server-caller-not-owner-switch-to = caller 非属主且无 admin:sessions 权限, 禁止 switch_to
 backend-auth-logic-not-injected-renew = auth_logic 未注入, renew_to_equivalent 不可用
 
-# --- oauth2_server 补全 ---
+# oauth2_server 补全
 oauth2-server-client-invalid-scope = client 不允许请求 scope: {$arg0}
 oauth2-server-client-exists = client 已存在: {$arg0}
 oauth2-server-client-not-found = client 不存在: {$arg0}
@@ -693,15 +687,13 @@ oauth2-server-authorize-code-verifier-invalid-length = code_verifier 长度无�
 oauth2-server-introspect-invalid-client-secret = invalid_client: client_secret 错误
 oauth2-server-revoke-invalid-client-secret = invalid_client: client_secret 错误
 
-# --- account 补全 ---
+# account 补全
 account-password-unsupported-hash-format = 不支持的哈希格式: {$arg0}
 account-backup-deserialize = backup_code secret_data 反序列化失败: {$arg0}
 
-# ============================================================================
 # Stp 层错误（i18n 改造 - session.rs 硬编码中文迁移）
-# ============================================================================
 
-# --- SessionLogic trait 默认实现 + GarrisonLogicDefault impl ---
+# SessionLogic trait 默认实现 + GarrisonLogicDefault impl
 stp-revoke-all-sessions-not-implemented = revoke_all_sessions 需 GarrisonLogicDefault 实现
 stp-get-active-sessions-not-implemented = get_active_sessions 需 GarrisonLogicDefault 实现
 stp-login-by-token-feature-required = login_by_token 需启用 protocol-oauth2 或 protocol-sso feature
@@ -709,30 +701,28 @@ stp-refresh-access-token-not-implemented-db = refresh_access_token 未实现：�
 stp-refresh-access-token-no-rotation = refresh_access_token 未注入 RefreshTokenRotation
 stp-refresh-access-token-feature-required = refresh_access_token 需启用 protocol-jwt + db-sqlite feature
 
-# --- validate_login_with_token_inputs 输入校验 ---
+# validate_login_with_token_inputs 输入校验
 stp-token-length-too-short = token 长度不足: {$arg0} < 8
 stp-token-length-too-long = token 长度超限: {$arg0} > 256
 
-# --- login_inner NewDevice 模式 ---
+# login_inner NewDevice 模式
 stp-new-device-login-rejected-not-allowed = 新设备登录被拒绝：当前为 NewDevice 模式，不允许新设备登录
 
-# --- check_login_stateless / token_style feature 校验 ---
+# check_login_stateless / token_style feature 校验
 stp-jwt-token-style-requires-protocol-jwt = jwt token_style 需启用 protocol-jwt feature
 stp-stateless-requires-jwt-token-style = Stateless 模式要求 token_style=jwt
 stp-stateless-requires-protocol-jwt = Stateless 模式要求启用 protocol-jwt feature
 stp-unknown-token-style = 不支持的 token_style: {$arg0}
 
-# --- auto_renewal 续签配置校验 ---
+# auto_renewal 续签配置校验
 stp-auto-renewal-no-auth-logic = auto_renewal_threshold 启用但 auth_logic 未注入，无法续签
 stp-auto-renewal-jwt-requires-protocol-jwt = auto_renewal_threshold 启用且 token_style=jwt，但未启用 protocol-jwt feature
 
-# --- MockAnomalyDetector 失败模拟 ---
+# MockAnomalyDetector 失败模拟
 stp-mock-login-detection-failed = mock login detection 失败
 stp-mock-check-login-detection-failed = mock check_login detection 失败
 
-# ============================================================================
 # Authflow executor 错误（i18n 迁移）
-# ============================================================================
 authflow-user-locked = 用户已被锁定: {$arg0}
 authflow-login-needs-builder = Login 步骤需要 CredentialBuilder，请使用 execute_with_builder
 authflow-login-needs-user-id = Login 步骤需要 user_id
@@ -761,16 +751,12 @@ authflow-step-complete-action = 请完成必需动作: {$arg0}
 authflow-step-complete-condition = 请完成条件分支
 authflow-step-complete-subflow = 请完成子流程: {$arg0}
 
-# ============================================================================
 # Config loader 错误（i18n 迁移）
-# ============================================================================
 config-path-empty = 配置文件路径不能为空
 config-open-failed = 打开配置文件失败 [{$arg0}]：{$arg1}
 config-too-large = 配置文件过大 [{$arg0}]：{$arg1} bytes，上限 {$arg2} bytes
 
-# ============================================================================
 # Session 事件 reason / Stp 硬编码消息（i18n 迁移）
-# ============================================================================
 session-kickout-admin = 管理员强制下线
 session-overflow-kickout = 超过最大登录数限制
 session-overflow-replaced = 超过最大登录数限制，被新会话顶替
@@ -779,18 +765,16 @@ stp-refresh-token-not-implemented = refresh_token 需启用 protocol-jwt feature
 stp-refresh-token-jwt-only = refresh_token 仅在 token_style=jwt 时可用
 stp-mfa-not-passed = 二级认证未通过
 
-# ============================================================================
 # i18n 硬编码字符串修复（fix-i18n-hardcoded-strings）
-# ============================================================================
 
-# --- stp/util ---
+# stp/util
 stp-permission-empty = permission 不能为空
 stp-role-empty = role 不能为空
 
-# --- protocol/jwt ---
+# protocol/jwt
 jwt-timeout-negative = timeout 不能为负数: {$arg0}
 
-# --- secure ---
+# secure
 secure-verify-totp-not-implemented = verify_totp 未实现
 secure-generate-totp-not-implemented = generate_totp 未实现
 secure-verify-sign-not-implemented = verify_sign 未实现
@@ -798,18 +782,18 @@ secure-create-sign-not-implemented = create_sign 未实现
 sanitize-input-length-exceeded = 输入长度 {$arg0} 超过最大限制 {$arg1}
 digest-algo-unsupported = 不支持的 Digest 算法: {$arg0}，仅支持 MD5 / SHA256
 
-# --- dao ---
+# dao
 dao-decr-parse-u64 = decr: 现存值非 u64，key={$arg0}, value={$arg1}
 counter-overflow = 计数器溢出: key={$arg0}
 
-# --- strategy ---
+# strategy
 strategy-login-frequency-exceeded = 登录频率超限：IP {$arg0}
 strategy-account-locked = 账号锁定：login_id={$arg0}
 strategy-geo-anomaly = 异地登录检测：login_id={$arg0} 上次地理位置 {$arg1} 与本次不符
 strategy-token-reuse-blocked = Token 复用检测：login_id={$arg0} 的 Token 已被列入黑名单
 strategy-device-anomaly = 设备异常检测：login_id={$arg0} 的设备指纹 {$arg1} 不在已知设备列表
 
-# --- abac ---
+# abac
 abac-expr-length-exceeded = abac_expr 长度超过 {$arg0} 字符（DoS 防御）
 abac-expr-illegal-char = abac_expr 含策略终止符（疑似策略注入）
 abac-expr-no-declaration = abac_expr 不允许声明 permit/forbid 策略
@@ -818,20 +802,18 @@ abac-engine-not-init = AbacEngine 未初始化，ABAC 校验失败（fail-closed
 abac-login-id-missing = ABAC 校验时未获取到 login_id
 abac-policy-denied = ABAC 策略拒绝: action={$arg0}, resource={$arg1}
 
-# --- credit ---
+# credit
 credit-alert-thresholds-empty = alert_thresholds 不能为空
 credit-alert-thresholds-range = alert_thresholds[{$arg0}] = {$arg1} 超出范围 [0, 100]
 credit-alert-thresholds-order = alert_thresholds 必须严格升序: {$arg0} <= {$arg1}
 
-# --- web/cors ---
+# web/cors
 cors-credentials-wildcard = CORS 配置冲突：allow_credentials=true 时不允许 allowed_origins 包含通配符 "*"
 
-# --- context/tenant ---
+# context/tenant
 ctx-tenant-id-missing = X-Tenant-Id header 缺失
 
-# ============================================================================
 # response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
-# ============================================================================
 # 这些 key 用于 GarrisonError::response_parts_i18n() 方法，返回不含变体 detail
 # 的通用描述，避免泄露敏感信息（与 response_parts() 的 &'static str 一一对应）。
 not-login-msg = 未登录
@@ -870,9 +852,7 @@ exception-not-login-msg = 未登录
 exception-not-permission-msg = 无权限
 exception-default-msg = 业务异常
 
-# ============================================================================
 # 密码策略规则消息（i18n 迁移）
-# ============================================================================
 policy-length-too-short = 密码长度 {$arg0} 小于最小要求 {$arg1}
 policy-length-too-long = 密码长度 {$arg0} 超过最大限制 {$arg1}
 policy-history-duplicate = 密码与历史密码重复
@@ -885,14 +865,10 @@ policy-hibp-requires-feature = HIBP 检查需要启用 policy-hibp feature
 policy-nist-length-too-short = 密码长度 {$arg0} 小于 NIST SP 800-63B 最小要求 {$arg1}
 policy-max-age-expired = 密码已过期，请修改密码
 
-# ============================================================================
 # 会话劫持检测消息（i18n 迁移）
-# ============================================================================
 session-ip-mismatch = 会话 IP 不一致: 存储={$arg0}, 当前={$arg1}
 
-# ============================================================================
 # WAF 拦截原因消息（i18n 迁移）
-# ============================================================================
 waf-blacklist-path = 路径 {$arg0} 命中黑名单
 waf-danger-char-path = 路径包含危险字符 {$arg0}
 waf-danger-char-param = 参数值包含危险字符 {$arg0}
@@ -904,7 +880,7 @@ waf-method-not-allowed = HTTP 方法 {$arg0} 不在允许列表中
 waf-header-banned = 请求头 {$arg0} 在禁止列表中
 waf-param-banned = 参数 {$arg0} 在禁止列表中
 
-# --- WAF 危险字符描述 ---
+# WAF 危险字符描述
 waf-danger-desc-double-slash = 双斜杠 //
 waf-danger-desc-backslash = 反斜杠 \\
 waf-danger-desc-semicolon = 分号 ;
@@ -919,33 +895,23 @@ waf-danger-desc-pct-3b = 百分号编码 %3b
 waf-danger-desc-pct-0a = 百分号编码 %0a
 waf-danger-desc-pct-0d = 百分号编码 %0d
 
-# ============================================================================
 # 同形异义字检测消息（i18n 迁移）
-# ============================================================================
 confusable-suggestion = 考虑用 '{$arg0}' 替换 '{$arg1}'
 
-# ============================================================================
 # OAuth2 PKCE / state / refresh 消息（i18n 迁移）
-# ============================================================================
 oauth2-pkce-length-invalid = code_verifier 长度必须在 43-128 之间，当前 {$arg0}
 oauth2-pkce-chars-invalid = code_verifier 仅允许 [A-Z]/[a-z]/[0-9]/-/./_/~ 字符
 oauth2-state-mismatch = state 参数不匹配，可能遭受 CSRF 攻击
 oauth2-refresh-token-empty = refresh_token 不可为空
 
-# ============================================================================
 # 安全告警检测消息（i18n 迁移）
-# ============================================================================
 alert-ip-changed = IP 从 {$arg0} 变为 {$arg1}
 alert-rapid-successive = {$arg0} 个 token 同时在线（阈值 {$arg1}）
 
-# ============================================================================
 # ABAC principal 校验消息（i18n 迁移）
-# ============================================================================
 abac-principal-control-char = login_id 包含控制字符
 
-# ============================================================================
 # Core 认证 / 权限消息（i18n 迁移）
-# ============================================================================
 core-switch-to-denied = switch_to 被拒绝：未配置 SwitchToGuard，默认 deny-all
 core-switch-to-not-implemented = switch_to 未实现: {$arg0} 不支持身份切换
 core-renew-not-implemented = renew_to_equivalent 未实现: {$arg0} 不支持 token 置换
@@ -955,23 +921,17 @@ core-permission-name-empty = permission name 不能为空
 core-permission-already-registered = permission 已注册: {$arg0}
 core-permission-not-registered = 权限未在注册表中注册: {$arg0}
 
-# ============================================================================
 # Core token 风格消息（i18n 迁移）
-# ============================================================================
 core-token-parse-not-supported = {$arg0} token 风格不支持 parse（无 payload）
 core-simple-secret-too-short = SimpleTokenStyle secret 长度必须 >= 32 字节（对齐 JWT 强校验）
 core-simple-token-uuid-invalid = Simple token 格式错误：UUID 部分无效
 core-simple-token-hmac-failed = Simple token HMAC 校验失败
 core-simple-requires-feature = SimpleTokenStyle 需启用 secure-simple-token feature（A11 安全修复）
 
-# ============================================================================
 # DAO 未实现消息（i18n 迁移）
-# ============================================================================
 dao-not-implemented = {$arg0} 未实现：当前后端不支持
 
-# ============================================================================
 # 配置校验消息（i18n 迁移）
-# ============================================================================
 config-jwt-secret-empty = jwt_secret 不能为空（当 token_style=jwt 时）
 config-jwt-algorithm-unsupported = 不支持的 jwt_algorithm: {$arg0}（仅支持 HS256/HS384/HS512）
 config-jwt-secret-too-short = jwt_secret 长度不足：{$arg0}，实际 {$arg1} 字节——请用 `openssl rand -base64 48` 生成高熵密钥
@@ -994,21 +954,15 @@ config-email-ttl-invalid = email_code_ttl 必须大于 0
 config-anomalous-interval-invalid = anomalous_analyzer_interval_secs 必须 >= 60
 config-anomalous-burst-invalid = anomalous_analyzer_burst_threshold 必须大于 0
 
-# ============================================================================
 # 会话搜索消息（i18n 迁移）
-# ============================================================================
 session-search-keyword-too-long = keyword 长度超限：{$arg0} > {$arg1}
 session-search-size-exceeded = size 超限：{$arg0} > {$arg1}
 
-# ============================================================================
 # STP 模块消息（i18n 迁移）
-# ============================================================================
 stp-service-empty = service 参数不能为空
 stp-not-implemented = {$arg0} 未实现
 
-# ============================================================================
 # 策略防火墙消息（i18n 迁移）
-# ============================================================================
 firewall-anomalous-requires-login-id = AnomalousLogin 需要 login_id 但 ctx.login_id 为 None
 firewall-anomalous-geo-parse-failed = 历史 geo 坐标解析失败（key={$arg0}, value={$arg1}）
 firewall-anomalous-distance-exceeded = anomalous: 用户 {$arg0} 从 {$arg1} 登录，{$arg2}
@@ -1024,16 +978,12 @@ firewall-rate-limit-no-tenant-id = RateLimit scope=Tenant 但 ctx.tenant_id 为 
 firewall-user-locked-permanent = user-lockout: 用户 {$arg0} 已被永久锁定
 firewall-user-locked-temporary = user-lockout: 用户 {$arg0} 已被临时锁定，直到 {$arg1}
 
-# ============================================================================
 # Account 模块消息（i18n 迁移）
-# ============================================================================
 account-totp-parse-failed = TOTP secret_data 解析失败（期望 JSON 包含 secret/step/digits 字段）: {$arg0}
 account-disable-service-colon = service 不能包含冒号（避免 key 注入）: {$arg0}
 account-disable-login-id-colon = login_id 不能包含冒号（避免 key 注入）: {$arg0}
 
-# ============================================================================
 # Protocol 模块消息（i18n 迁移）
-# ============================================================================
 oidc-algorithm-unsupported = OidcHandler 仅支持 HS256/HS384/HS512 算法，当前算法不支持: {$arg0}
 oidc-iss-mismatch = OIDC iss 不匹配: token 中的 issuer 与期望不符
 oidc-aud-mismatch = OIDC aud 不匹配: token 中的 audience 不包含本客户端 client_id
@@ -1041,16 +991,12 @@ temp-prefix-colon = prefix 不可包含 ':'
 temp-ttl-invalid = ttl_seconds 必须大于 0
 sso-secret-empty = SSO secret 不能为空（依据安全审计 M5：ticket 必须签名）
 
-# ============================================================================
 # Server / HTTP 层消息（i18n 迁移）
-# ============================================================================
 server-invalid-api-key = 无效的 API Key
 server-prometheus-encode-failed = Prometheus 指标编码失败
 server-internal-api-key-missing = internal_api_key 未配置，内网 API 将拒绝所有请求。请通过 with_internal_api_key() 设置非空值
 
-# ============================================================================
 # 剩余防火墙 / 账号 / OIDC / OTel 消息（i18n 迁移）
-# ============================================================================
 firewall-anomalous-need-login-id = AnomalousLogin 需要 login_id 但 ctx.login_id 为 None
 firewall-ratelimit-user-none = RateLimit scope=User 但 ctx.login_id 为 None
 firewall-ratelimit-tenant-none = RateLimit scope=Tenant 但 ctx.tenant_id 为 None
@@ -1060,9 +1006,7 @@ oidc-timeout-negative = timeout 不能为负数: {$arg0}
 otel-exporter-failed = OTLP exporter 构造失败: {$arg0}
 otel-provider-failed = Tracer provider 设置失败: {$arg0}
 
-# ============================================================================
 # 报告遗漏（config-load / dao-repo / cache / authflow / annotation）
-# ============================================================================
 config-rate-limit-backend-unsupported = GARRISON_RATE_LIMIT_BACKEND 不支持的值 '{$arg0}'，仅支持 'memory' 或 'redis'
 dao-user-device-limit-exceeded = 用户（{$arg0}）设备数已达上限，最多 {$arg1}
 cache-l1-ttl-must-positive = UserCacheService::new: l1_ttl_secs 必须 > 0
@@ -1072,27 +1016,25 @@ annotation-parse-failed = 无法从字符串解析注解（含数据变体需显
 stp-stateless-jwt-requires-revocation = token_style=jwt 且 jwt_mode=Stateless 时必须启用 enable_jwt_revocation（三选一：1) 开启 JWT 撤销黑名单 enable_jwt_revocation=true；2) 改用 JwtMode::Mixin；3) 显式风险接受开关 allow_stateless_jwt_no_revocation=true）
 config-unknown-token-style-jwt = 不支持的 token_style: jwt（需启用 protocol-jwt feature）
 
-# ============================================================================
 # i18n 审计 2026-09：key:: 约定缺失的 FTL 消息补齐（P2）
-# ============================================================================
 
-# --- apikey ---
+# apikey
 apikey-namespace-reserved = API Key 命名空间 '{$arg0}' 为保留名称
 apikey-scope-not-allowed = API Key scope '{$arg0}' 不在允许范围内
 
-# --- authflow ---
+# authflow
 authflow-unknown-custom-condition = 未知自定义条件: {$arg0}
 ip-whitelist-parse-failed = IP 白名单条目 '{$arg0}' 解析失败: {$arg1}
 
-# --- limiteron 熔断器 ---
+# limiteron 熔断器
 circuit-open = 熔断器已打开: {$arg0}
 circuit-limited = 熔断器限流拒绝请求: {$arg0}
 circuit-breaker = 熔断器错误: {$arg0}
 
-# --- core token ---
+# core token
 core-simple-token-no-sep = Simple token 格式错误：缺少单元分隔符
 
-# --- credit 计量 ---
+# credit 计量
 credit-config-invalid = 计量配置无效: {$arg0}
 credit-dao = 计量 DAO 错误: {$arg0}
 credit-get-consumed = 读取计量已用额度失败: {$arg0}
@@ -1115,7 +1057,7 @@ credit-meta-cycle-param-parse-failed = 计量元数据周期参数解析失败: 
 credit-meta-unknown-cycle-type = 计量元数据未知周期类型: {$arg0}, {$arg1}
 credit-window-start-parse-failed = 计量窗口起点解析失败: {$arg0}, {$arg1}
 
-# --- dao ---
+# dao
 dao-role-hierarchy-add-edge-connection = 角色层级添加边 connection 失败: {$arg0}
 dao-role-hierarchy-delete-edge-session = 角色层级删除边 session 失败: {$arg0}
 dao-role-hierarchy-delete-edge-connection = 角色层级删除边 connection 失败: {$arg0}
@@ -1139,13 +1081,13 @@ dao-oxcache-cas-set-sync = oxcache CAS 写入（同步）失败: {$arg0}
 dao-oxcache-eval-lua = oxcache eval_lua 失败: {$arg0}
 dao-oxcache-sync-api-incompatible-with-redis = _sync API（set_if_absent/incr/decr/get_and_delete）与 Redis L2 后端不兼容，请改用 async API 或移除 with_redis_config 调用
 
-# --- 密码策略 / HIBP ---
+# 密码策略 / HIBP
 hibp-client-build-failed = HIBP 客户端构建失败: {$arg0}
 hibp-http-status = HIBP 请求返回异常状态: {$arg0}, {$arg1}
 hibp-request-failed = HIBP 请求失败: {$arg0}, {$arg1}
 hibp-body-read-failed = HIBP 响应体读取失败: {$arg0}
 
-# --- jwt ---
+# jwt
 jwt-secret-too-short = jwt secret 长度不足: {$arg0}, {$arg1}
 jwt-refresh-login-id-parse-failed = jwt refresh login_id 解析失败: {$arg0}, {$arg1}
 jwt-refresh-cleanup-get-session = jwt refresh 清理：读取 session 失败: {$arg0}
@@ -1153,7 +1095,7 @@ jwt-refresh-cleanup-get-conn = jwt refresh 清理：获取连接失败: {$arg0}
 jwt-refresh-cleanup-delete = jwt refresh 清理：删除失败: {$arg0}
 jwt-revoked = JWT 已被吊销: {$arg0}
 
-# --- limiteron ---
+# limiteron
 limiteron-ban-history-format-error = limiteron 封禁历史格式错误: {$arg0}, {$arg1}
 limiteron-ban-history-parse-ban-times = limiteron 封禁历史 ban_times 解析失败: {$arg0}, {$arg1}
 limiteron-ban-history-parse-last-banned = limiteron 封禁历史 last_banned 解析失败: {$arg0}, {$arg1}
@@ -1168,15 +1110,15 @@ limiteron-quota-window-end-parse-failed = limiteron 配额窗口终点解析失�
 limiteron-quota-window-start-datetime-failed = limiteron 配额窗口起点时间构造失败: {$arg0}
 limiteron-quota-window-end-datetime-failed = limiteron 配额窗口终点时间构造失败: {$arg0}
 
-# --- manager ---
+# manager
 manager-active-timeout-overflow = active_timeout 溢出 u64: {$arg0}
 
-# --- secure ---
+# secure
 secure-httpbasic-unsupported-scheme = HTTP Basic: 不支持的认证方案: {$arg0}
 secure-httpdigest-unsupported-scheme = HTTP Digest: 不支持的认证方案: {$arg0}
 secure-http-digest-missing-uri = HTTP Digest: 缺少 uri 参数
 
-# --- sso / saml ---
+# sso / saml
 sso-oidc-body-exceeds-limit = SSO OIDC 响应体超过大小限制: {$arg0}
 saml-response-too-large = SAML 响应过大: {$arg0}, {$arg1}
 sso-saml-assertion-replay = 检测到 SAML Assertion 重放: {$arg0}
@@ -1190,13 +1132,13 @@ sso-saml-signature-value-decode = SAML 签名值解码失败: {$arg0}
 sso-saml-signature-bytes-decode = SAML 签名字节解码失败: {$arg0}
 sso-saml-idp-public-key-parse-failed = SAML IdP 公钥解析失败: {$arg0}, {$arg1}
 
-# --- stp ---
+# stp
 stp-login-ip-blocked = 登录被拒绝：IP {$arg0} 已被封禁
 stp-check-login-ip-blocked = 校验登录被拒绝：IP {$arg0} 已被封禁
 stp-apikey-ip-blocked = API Key 请求被拒绝：IP {$arg0} 已被封禁
 stp-simple-token-style-requires-secure-simple-token-feature = token_style=simple 需启用 secure-simple-token feature
 
-# --- strategy / firewall ---
+# strategy / firewall
 strategy-firewall-bruteforce-reason = 爆破封禁原因：尝试 {$arg0} 次超过上限 {$arg1}
 strategy-firewall-bruteforce-locked = IP {$arg0} 因爆破已被封禁
 strategy-firewall-bruteforce-blocked = 爆破拦截：IP {$arg0}, {$arg1}
@@ -1206,16 +1148,12 @@ strategy-ddos-global-blocked = DDoS 全局限流已超限（{$arg0} req/s）
 strategy-ddos-ip-blocked = DDoS 单 IP 限流已超限：{$arg0}（{$arg1} req/s）
 strategy-analyzer-shutdown-timeout = 异常分析器关闭超时: {$arg0}
 
-# ============================================================================
 # i18n 审计 2026-09：loc! 引用了不存在的 FTL 消息（P3）
-# ============================================================================
 alipay-response-missing-oauth-token-response = alipay 响应缺少 alipay_system_oauth_token_response 字段
 alipay-response-missing-access-token = alipay 响应缺少 access_token 字段
 session-kickout-password-changed = 密码已变更
 
-# ============================================================================
 # i18n 审计 2026-09：英文裸错误消息迁移到 key:: 约定（P1）
-# ============================================================================
 abac-engine-already-initialized = AbacEngine 已初始化
 backend-unknown-error = 未知错误
 config-confers-build-failed = confers 构建失败: {$arg0}
@@ -1262,7 +1200,7 @@ stp-backend-already-init = Backend 已初始化
 stp-backend-not-init = Backend 未初始化，请先调用 init_backend()
 testing-json-parse-error = JSON 解析错误: {$arg0}
 
-# --- P1 迁移过程中发现的额外英文裸消息 ---
+# P1 迁移过程中发现的额外英文裸消息
 stp-unsupported-hash-format = 不支持的哈希格式
 ctx-auth-header-empty = Authorization header 为空
 ctx-tenant-jwt-verify-failed = JWT 验证失败: {$arg0}
@@ -1283,9 +1221,7 @@ invitation-ttl-invalid = 邀请码 TTL 值无效
 invitation-max-uses-invalid = 邀请码 max_uses 值无效
 invitation-count-invalid = 邀请码批量数量无效
 invitation-serialize-failed = 邀请码序列化失败：{$arg0}
-# ============================================================================
 # OAuth2 token 端点错误（0.9.0 i18n 收口：错误码前缀保留 RFC 用语）
-# ============================================================================
 
 oauth2-rate-limited-client = rate_limited: 客户端请求过于频繁，请稍后再试
 oauth2-client-id-missing = invalid_client: client_id 缺失（既未在 Authorization 头也未在 body 中提供）
@@ -1313,9 +1249,7 @@ oauth2-rate-limited-user = rate_limited: 用户请求过于频繁，请稍后再
 oauth2-account-temp-locked = rate_limited: 账户已被临时锁定，请稍后再试
 oauth2-invalid-credentials = invalid_grant: 用户名或密码错误
 
-# ============================================================================
 # ABAC 校验错误（0.9.0 i18n 收口）
-# ============================================================================
 
 abac-expr-too-long = abac_expr 长度超过 {$max} 字符（DoS 防御）
 abac-expr-illegal-chars = abac_expr 含非法字符 `{"{"};{"}"}`（疑似策略注入）
@@ -1323,9 +1257,7 @@ abac-expr-policy-forbidden = abac_expr 不允许声明 permit/forbid 策略
 abac-expr-must-reference-entity = abac_expr 必须引用 principal/resource/action 之一（拒绝纯字面量）
 abac-engine-not-initialized = AbacEngine 未初始化，ABAC 校验失败（fail-closed）
 
-# ============================================================================
 # Backend / 宏 / 社交注册表 / SDForge（0.9.0 i18n 收口）
-# ============================================================================
 
 backend-remote-base-url-invalid-scheme = base_url 协议非法：{$arg0}（必须为 http:// 或 https://）
 check-login-returned-false = 未登录（check_login 返回 false）
@@ -1341,9 +1273,7 @@ pwdreset-mail-body = 您请求了密码重置。请在 {$minutes} 分钟内使�
 # OAuth2 authorize/resume 端点（0.9.0 i18n 收口）
 oauth2-resume-ticket-missing = ticket 参数缺失
 
-# ============================================================================
 # 可观测性日志消息（tracing）国际化
-# ============================================================================
 
 logs-noop-sms-sender-send-code = NoopSmsSender 发送验证码（code 已省略）
 logs-csrf-set-cookie-build-failed = CSRF Set-Cookie 构建失败，已跳过
@@ -1352,36 +1282,34 @@ logs-cors-feature-disabled = frontend_separation CORS 回显任意 Origin（web-
 logs-cors-origin-not-allowed = Origin 未命中 CORS 允许列表，跳过 Allow-Origin 回显
 logs-sso-oidc-jwks-fetch-retry = sso-oidc-jwks-fetch: 传输层错误，100ms 后重试: {$error}
 
-# ============================================================================
 # 可观测性日志消息（tracing）i18n —— r2 收口
-# ============================================================================
 # 补键：调用点已迁移到 translate_detail，但 en/zh 双包均缺键，日志直接打印原始 key
 # （r2 迁移轮被中断所致）。
 
-# --- OAuth2 back-channel logout 投递（backchannel-logout）---
+# OAuth2 back-channel logout 投递（backchannel-logout）
 logs-backchannel-logout-drain-complete = backchannel-logout drain 完成
 logs-backchannel-logout-drain-failed = backchannel-logout drain 失败（下轮重试）: {$error}
 logs-backchannel-logout-max-ttl-retired = backchannel-logout 投递超过 MaxTtl，置 failed 退役（不再投递）
 logs-backchannel-logout-delivery-retried = backchannel-logout 投递失败，计入重试
 
-# --- 续签 token 写入响应（router）---
+# 续签 token 写入响应（router）
 logs-renewed-token-header-name-invalid = 续签 token 写入响应 header 失败：token_name 非法，已跳过
 logs-renewed-token-header-value-invalid = 续签 token 写入响应 header 失败：token 含非法字符，已跳过
 logs-renewed-token-cookie-value-invalid = 续签 token 写入 Set-Cookie 失败：cookie 串含非法字符，已跳过
 logs-renewed-token-cookie-build-rejected = 续签 token 写入 Set-Cookie 失败：构建点校验拒绝，已跳过
 
-# --- sdforge 内部路由（server）---
+# sdforge 内部路由（server）
 logs-sdforge-token-info-cross-user = get_token_info 所有权校验失败：跨用户访问
 logs-sdforge-session-cross-user = get_session 所有权校验失败：跨用户访问
 
-# --- 安全告警（strategy::alert）---
+# 安全告警（strategy::alert）
 logs-alert-anomaly-login = 异常登录告警
 logs-alert-new-device-login = 新设备登录告警
 logs-alert-disable-triggered = 封禁触发告警
 logs-alert-privilege-escalation = 权限提升告警
 logs-alert-sensitive-operation = 敏感操作告警
 
-# --- limiteron 封禁适配器 ---
+# limiteron 封禁适配器
 logs-limiteron-ban-record-parts-mismatch = limiteron-ban: 封禁记录段数不对，视为未封禁（fail-open）
 logs-limiteron-ban-duration-parse-failed = limiteron-ban: 封禁记录 duration 字段解析失败，视为未封禁（fail-open）
 logs-limiteron-ban-expires-at-parse-failed = limiteron-ban: 封禁记录 expires_at_ts 解析失败，视为未封禁（fail-open）
@@ -1392,7 +1320,7 @@ logs-limiteron-ban-history-key-write-failed = limiteron-ban: 封禁历史 key �
 logs-limiteron-ban-cleanup-unimplemented = limiteron-ban: cleanup_expired_bans 未实现（GarrisonDao 无 iter API），返回 0——请勿依赖本方法清理过期封禁（TTL 自动过期 + is_banned 查询时检查兜底）
 logs-limiteron-ban-list-unimplemented = limiteron-ban: list_bans 未实现（GarrisonDao 无 iter API），返回空列表——请勿依赖本方法做封禁审计/枚举（假阴性）
 
-# --- Credit 计量（multi-tenant-credit-metering）---
+# Credit 计量（multi-tenant-credit-metering）
 logs-credit-concurrent-over-limit-rollback = credit: 并发交错导致超限扣减，回滚本次消费
 logs-credit-rolling-window-start-delete-failed = credit: Rolling 周期重置后删除 window_start 失败（best-effort，残留 key 由 TTL 过期或下次重置兜底）
 logs-credit-decr-rollback-failed = credit: 回滚 decr 失败（best-effort，拒绝语义不受影响）
@@ -1403,30 +1331,26 @@ logs-credit-throttle-write-failed = credit: 活跃度落库写失败（条目已
 logs-credit-throttle-write-timeout = credit: 活跃度落库写超时（条目已清理，窗口外活跃度重新入队）
 logs-credit-throttle-window-dropped = credit: 活跃度节流窗口内丢弃汇总（丢弃=跳过本次落库，窗口外重写）
 
-# --- 指标注册（account / credit / observability）---
+# 指标注册（account / credit / observability）
 logs-metrics-already-registered = {$arg0} 已注册到 prometheus 默认 registry（重复 new 或与 register_to 混用），返回未注册的本地实例；已注册实例不受影响
 
-# --- Web 框架集成护栏 ---
+# Web 框架集成护栏
 logs-actix-config-not-registered = GarrisonConfig 未注册为 actix app_data（web::Data<Arc<GarrisonConfig>>），auth extractor 回退 default_config；安全参数可能不一致，请通过 App::app_data(web::Data::new(Arc::new(config))) 显式注册
 logs-actix-tenant-header-unverified = TenantContext 从客户端可控的 X-Tenant-Id header 提取租户且未与认证主体比对：任何调用方可声明任意租户 ID。本 extractor 仅做格式校验（数字解析），不做「主体→租户」归属授权。租户隔离请勿依赖该 header 值——应使用 ClaimTenantResolver（token claim）等服务端可信来源，或在业务层校验 principal 与租户的归属关系
 logs-backend-remote-plaintext-http = BackendRemote base_url 使用明文 http://，X-API-Key 可能被网络路径窃听；生产环境应使用 https://
 logs-router-invalid-path-protected = GarrisonRouter::route_protected 拒绝非法路径（必须非空且以 '/' 开头），该路由不会受鉴权保护
 logs-router-duplicate-path-override = GarrisonRouter::route_protected 重复注册同一路径，原注解将被覆盖（last-wins）
 
-# --- auth_server 启动配置（server::config）---
+# auth_server 启动配置（server::config）
 logs-server-internal-api-key-too-short = server-internal-api-key-too-short: 内网 API Key 短于下限，1.0 将转为拒绝；请轮换为 ≥32 字节密钥
 logs-server-external-login-unacknowledged = server-external-login-unacknowledged: 外网登录端点已暴露且未确认，1.0 将转为拒绝；请传入确认串 external_login_ack
 logs-server-wildcard-bind-default = server-wildcard-bind-default: 未显式配置的通配绑定将在 1.0 变为回环，容器部署请显式 with_external_bind(0.0.0.0) / with_internal_bind(0.0.0.0)
 logs-config-cors-wildcard-without-credentials = config security rules: cors allowed_origins=["*"] without allow_credentials — 任意源可读取响应，暴露敏感数据的部署应改为显式 origin 白名单
 
-# ============================================================================
 # CLI 帮助（garrison-cli，cli-ops feature）
-# ============================================================================
 cli-about = Garrison 运维工具
 
-# ============================================================================
 # 数据擦除残留处置提示（data-erasure）
-# ============================================================================
 compliance-erasure-residual-ip-artifacts = IP 关联的其他防护记录（GeoIP 缓存、限速窗口键）随 TTL 自然过期；若需立即清除请扩展本方法
 compliance-erasure-residual-api-key = API Key：与 owner 关联且含业务授权语义，经 ApiKeyRepository 按 owner 查询后吊销（见 protocol-apikey 文档）
 compliance-erasure-residual-audit-log = 审计日志：合规保留期优先于删除权（个保法第 47 条 / GDPR Art. 17(3)(b) 法律义务例外），到期按保留策略销毁

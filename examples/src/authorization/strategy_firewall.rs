@@ -21,9 +21,7 @@ use garrison::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyD
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ============================================================================
 // 自定义防火墙策略：基于内存 HashMap 直接提供权限/角色数据
-// ============================================================================
 
 /// 示例自定义策略：绕过 GarrisonInterface，直接从 HashMap 读取权限/角色。
 pub struct CustomFirewall {
@@ -137,9 +135,7 @@ impl GarrisonPermissionStrategy for CustomFirewall {
     }
 }
 
-// ============================================================================
 // GarrisonInterface 实现（用于 GarrisonPermissionStrategyDefault）
-// ============================================================================
 
 /// 示例 GarrisonInterface 实现，仅提供 login_id=1001 的权限/角色。
 pub struct MyInterface {
@@ -183,9 +179,7 @@ impl GarrisonInterface for MyInterface {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 防火墙策略示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 自定义策略直接使用
-    // ----------------------------------------------------------------
     let firewall = CustomFirewall::new();
     println!("[1] 自定义策略 CustomFirewall:");
 
@@ -202,9 +196,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(has_role, "1001 应持有 admin 角色");
     println!();
 
-    // ----------------------------------------------------------------
     // 2. GarrisonPermissionStrategyDefault（基于 GarrisonInterface）
-    // ----------------------------------------------------------------
     let interface = Arc::new(MyInterface::new());
     let default_fw = GarrisonPermissionStrategyDefault::new(interface);
     println!("[2] GarrisonPermissionStrategyDefault:");
@@ -222,9 +214,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(held);
     println!();
 
-    // ----------------------------------------------------------------
     // 3. check_role_any 任一匹配
-    // ----------------------------------------------------------------
     println!("[3] check_role_any:");
     let any_match = firewall
         .check_role_any("1001", &["admin", "superuser"])
@@ -245,9 +235,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(!any_no_match, "1002 不持有 admin/superuser");
     println!();
 
-    // ----------------------------------------------------------------
     // 4. check_role_all 全部匹配
-    // ----------------------------------------------------------------
     println!("[4] check_role_all:");
     let all_match = firewall.check_role_all("1001", &["admin", "user"]).await?;
     println!(
@@ -266,9 +254,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(!all_no_match, "1001 不持有 superuser");
     println!();
 
-    // ----------------------------------------------------------------
     // 5. 空字符串校验（Fail Loud）
-    // ----------------------------------------------------------------
     println!("[5] 空字符串校验:");
     let empty_perm = firewall.check_permission("1001", "").await;
     let perm_err = empty_perm.as_ref().err().map(|e| e.to_string());
@@ -281,9 +267,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(empty_role.is_err(), "空角色应返回错误（Fail Loud）");
     println!();
 
-    // ----------------------------------------------------------------
     // 6. 集成到 GarrisonManager（完整业务场景）
-    // ----------------------------------------------------------------
     println!("[6] 集成到 GarrisonManager:");
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     let config = Arc::new(GarrisonConfig::default_config());

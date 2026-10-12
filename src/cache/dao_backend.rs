@@ -302,7 +302,7 @@ mod tests {
         );
     }
 
-    // --- 链级行为（ChainCache：L1 测试内存后端 + L2 DAO 后端）---
+    // 链级行为（ChainCache：L1 测试内存后端 + L2 DAO 后端）
 
     use oxcache::cache::{ChainCache, ChainLink};
     use std::collections::HashMap;

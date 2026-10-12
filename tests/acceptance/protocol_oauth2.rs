@@ -70,9 +70,7 @@ async fn real_auth_code(
         .expect("真实登录表单流应成功获取授权码")
 }
 
-// ============================================================================
 // 四种授权流程 + introspection（正常）
-// ============================================================================
 
 /// （正常）：authorization_code + PKCE 全流程（真实 Keycloak）——授权 URL 参数
 /// 齐全、code_challenge 符合 RFC 7636 测试向量；经真实登录表单流获取授权码后
@@ -292,9 +290,7 @@ async fn acc_oauth2_005_introspect_active_token() {
     assert!(info.jti.is_some(), "active 响应应携带 jti");
 }
 
-// ============================================================================
 // 撤销后的 introspection（异常侧，客户端可观测语义）
-// ============================================================================
 
 /// （异常）：token 被撤销后 introspection 返回 active=false——fixture 直连
 /// 真实 RFC 7009 /revoke 端点吊销有效 token，验证内省状态真实翻转
@@ -349,9 +345,7 @@ async fn acc_oauth2_006_revoked_token_introspects_inactive() {
     assert!(!after.active, "撤销后 token 应 inactive（真实吊销语义）");
 }
 
-// ============================================================================
 // 异常路径
-// ============================================================================
 
 /// （异常）：授权码重放被拒（真实 Keycloak 单次消费语义）——首次交换 200
 /// 成功，同一 code 二次交换被授权服务器拒绝（400 invalid_grant），客户端返回
@@ -617,9 +611,7 @@ async fn acc_oauth2_012_scope_privilege_escalation_blocked_client_side() {
     );
 }
 
-// ============================================================================
 // 构造校验与边界
-// ============================================================================
 
 /// （正常+异常）：授权 URL 构造——`redirect_uri` 以 URL 编码查询参数出现；
 /// 空 client_id 构造期拒绝（`Config("oauth2-client-id-empty")`）。
@@ -736,9 +728,7 @@ async fn acc_oauth2_015_expires_in_positive_and_token_active() {
     assert!(info.active, "expires_in>0 的真实 token 应内省 active");
 }
 
-// ============================================================================
 // Keycloak OIDC RP 完整流程（`keycloak-oidc` 门控）
-// ============================================================================
 
 /// （正常）：Keycloak OIDC RP 完整授权码流程端到端（真实 Keycloak）——
 /// `discover` → 真实登录表单流获取授权码 → `exchange_code` →
@@ -845,10 +835,8 @@ async fn acc_oauth2_016_keycloak_oidc_rp_full_flow_e2e() {
     );
 }
 
-// ============================================================================
 // redirect_uri / state / nonce 对抗测试（审计项 2：OAuth state/nonce 绕过、
 // redirect_uri 精确匹配、token/state 重放的对抗回归锁定）
-// ============================================================================
 
 /// （对抗）：redirect_uri 白名单精确匹配锁定（garrison 自有 AS 侧，进程内真实
 /// `AuthorizeHandler`，非 mock）——白名单含 query string 的既有行为保持（精确相等

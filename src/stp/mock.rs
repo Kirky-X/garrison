@@ -16,9 +16,7 @@ use std::time::{Duration, Instant};
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
 use crate::dao::repository::{NewUser, UpdateUser, UserListRow, UserRepository, UserRow};
 
-// ------------------------------------------------------------------------
 // MockDao：复用 dao/session 测试的 HashMap + Instant 模拟 TTL
-// ------------------------------------------------------------------------
 
 pub struct MockDao {
     store: Mutex<HashMap<String, (String, Option<Instant>)>>,
@@ -110,9 +108,7 @@ impl GarrisonDao for MockDao {
     crate::atomic_test_fallback!();
 }
 
-// ------------------------------------------------------------------------
 // MockFirewall：模拟 GarrisonPermissionStrategy，控制权限/角色校验返回值
-// ------------------------------------------------------------------------
 
 /// 测试用 GarrisonPermissionStrategy mock，可控制 check_permission/check_role 返回值。
 pub struct MockFirewall {
@@ -176,9 +172,7 @@ impl GarrisonPermissionStrategy for MockFirewall {
     }
 }
 
-// ------------------------------------------------------------------------
 // MockInterface：用于 GarrisonUtil 全局管理器测试
-// ------------------------------------------------------------------------
 
 pub struct MockInterface;
 
@@ -208,9 +202,7 @@ impl GarrisonInterface for MockInterfaceWithPerms {
     }
 }
 
-// ------------------------------------------------------------------------
 // MockUserRepository：测试用 UserRepository mock（cfg-gated）
-// ------------------------------------------------------------------------
 
 /// 测试用 UserRepository mock，用 HashMap 存储 UserRow，按 username 索引。
 #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
@@ -293,9 +285,7 @@ impl UserRepository for MockUserRepository {
     }
 }
 
-// ------------------------------------------------------------------------
 // MockInterfaceWithLoginType：支持 login_type 隔离的 GarrisonInterface mock
-// ------------------------------------------------------------------------
 
 /// 测试用 GarrisonInterface mock，支持 login_type 隔离（override 新方法）。
 pub struct MockInterfaceWithLoginType {
@@ -335,9 +325,7 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
 
-    // ------------------------------------------------------------------------
     // MockDao 测试
-    // ------------------------------------------------------------------------
 
     /// 调用 MockDao 的所有 trait 默认方法 + atomic_test_fallback! 方法以覆盖 async_trait wrapper。
     #[tokio::test]
@@ -520,9 +508,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
     // MockFirewall 测试
-    // ------------------------------------------------------------------------
 
     /// MockFirewall 的 check_permission/check_role 返回构造时设置的 bool 值。
     #[tokio::test]
@@ -569,9 +555,7 @@ mod tests {
         assert_eq!(fw.get_role_list("u1").await.unwrap(), Vec::<String>::new());
     }
 
-    // ------------------------------------------------------------------------
     // MockInterface / MockInterfaceWithPerms 测试
-    // ------------------------------------------------------------------------
 
     /// MockInterface 默认返回空权限/角色列表。
     #[tokio::test]
@@ -620,9 +604,7 @@ mod tests {
             .unwrap();
     }
 
-    // ------------------------------------------------------------------------
     // MockInterfaceWithLoginType 测试
-    // ------------------------------------------------------------------------
 
     /// get_permission_list_with_type 按 login_type 隔离返回权限列表。
     #[tokio::test]
@@ -694,9 +676,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
     // MockUserRepository 测试（cfg-gated: account-credential + db-sqlite）
-    // ------------------------------------------------------------------------
 
     #[cfg(all(feature = "account-credential", feature = "db-sqlite"))]
     mod user_repo_tests {

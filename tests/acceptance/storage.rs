@@ -140,9 +140,7 @@ async fn concurrency_incr_matches_serial_expectation(backend: &str) {
     );
 }
 
-// ------------------------------------------------------------------------
 // InMemoryDao 后端
-// ------------------------------------------------------------------------
 
 /// a：InMemoryDao 并发 set_if_absent 仅一个赢家。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -162,9 +160,7 @@ async fn acc_storage_003a_in_memory_incr_serial_expectation() {
     concurrency_incr_matches_serial_expectation("in-memory").await;
 }
 
-// ------------------------------------------------------------------------
 // GarrisonDaoOxcache 后端
-// ------------------------------------------------------------------------
 
 /// b：oxcache 并发 set_if_absent 仅一个赢家。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -184,9 +180,7 @@ async fn acc_storage_003b_oxcache_incr_serial_expectation() {
     concurrency_incr_matches_serial_expectation("oxcache").await;
 }
 
-// ============================================================================
 // 三后端 CRUD 一致性 / TTL 过期 / 租户键隔离 / DAO 错误注入
-// ============================================================================
 
 /// （正常）：三后端 CRUD 语义一致 —— set/get/update/expire/delete
 /// 自洽，且 `update` 保留 TTL、`expire` 可重置 TTL（不丢值）。
@@ -387,9 +381,7 @@ async fn acc_storage_008_dao_failure_no_entry_swallowed() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 三后端 CRUD 一致性
-// ------------------------------------------------------------------------
 
 /// a：InMemoryDao CRUD 一致。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -410,9 +402,7 @@ async fn acc_storage_004c_dbnexus_crud_consistency() {
     crud_consistency("dbnexus").await;
 }
 
-// ------------------------------------------------------------------------
 // TTL 过期
-// ------------------------------------------------------------------------
 
 /// a：InMemoryDao TTL 过期后读为空。
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -433,7 +423,6 @@ async fn acc_storage_005c_dbnexus_ttl_expired_reads_empty() {
     ttl_expiry_reads_empty_after_window("dbnexus").await;
 }
 
-// ------------------------------------------------------------------------
 // 租户键隔离
 //
 // **实测差异（重要）**：`tenant:{tid}:` 前缀由各 `GarrisonDao` 实现自行附加，
@@ -441,7 +430,6 @@ async fn acc_storage_005c_dbnexus_ttl_expired_reads_empty() {
 // `GarrisonDaoDbnexus`）实现了前缀隔离；`InMemoryDao` **未实现**，跨租户同名
 // key 会互相串扰。故本场景只覆盖 oxcache / dbnexus 两个后端，InMemoryDao 的
 // 差异已记录待 converge 阶段判定（是否按缺陷修复，或明确其为测试专用后端）。
-// ------------------------------------------------------------------------
 
 /// b：oxcache 租户键隔离。
 #[cfg(feature = "tenant-isolation")]

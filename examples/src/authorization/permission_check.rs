@@ -17,9 +17,7 @@ use garrison::stp::GarrisonInterface;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ============================================================================
 // 业务方实现 GarrisonInterface：提供 login_id → 权限/角色列表
-// ============================================================================
 
 /// 示例接口实现：基于内存 HashMap 存储 login_id 的权限与角色，生产环境通常从数据库或 RBAC 系统读取。
 pub struct MyInterface {
@@ -66,18 +64,14 @@ impl GarrisonInterface for MyInterface {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 权限校验示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构建 PermissionCheckerDefault（注入 GarrisonInterface）
-    // ----------------------------------------------------------------
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
     let checker = PermissionCheckerDefault::new(interface);
     println!("[1] PermissionCheckerDefault 构建完成");
     println!("    账号 1001 权限: [user:read, user:write]");
     println!("    账号 1001 角色: [admin, user]\n");
 
-    // ----------------------------------------------------------------
     // 2. has_permission / has_role 查询
-    // ----------------------------------------------------------------
     let has_read = checker.has_permission("1001", "user:read").await?;
     let has_delete = checker.has_permission("1001", "user:delete").await?;
     println!("[2] has_permission:");
@@ -94,9 +88,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(is_admin);
     assert!(!is_super);
 
-    // ----------------------------------------------------------------
     // 3. check_permission / check_role 断言（失败抛异常）
-    // ----------------------------------------------------------------
     println!("[4] check_permission / check_role 断言:");
     checker.check_permission("1001", "user:read").await?;
     println!("    check_permission(\"user:read\")  → Ok(()) ✓");
@@ -123,9 +115,7 @@ pub async fn run() -> GarrisonResult<()> {
         other => panic!("期望 NotRole，实际: {:?}", other),
     }
 
-    // ----------------------------------------------------------------
     // 4. has_any_permission / has_all_permissions 批量校验
-    // ----------------------------------------------------------------
     let any_ok = checker
         .has_any_permission("1001", &["user:read", "user:delete"])
         .await;

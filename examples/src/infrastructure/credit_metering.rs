@@ -23,9 +23,7 @@ use std::sync::Arc;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison Credit 计量示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 配置 Credit 计量
-    // ----------------------------------------------------------------
     let mut schedule = CreditSchedule::new();
     // insert 校验 weight > 0，非法值返回 Err（示例中固定合法值，expect 即安全）
     schedule.insert("login", 1).expect("insert login schedule"); // 1 次登录 = 1 credit
@@ -48,16 +46,12 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    资源权重: login=1, sms=5, api_call=2");
     println!("    告警阈值: {:?}%\n", config.alert_thresholds);
 
-    // ----------------------------------------------------------------
     // 2. 创建计量引擎
-    // ----------------------------------------------------------------
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     let meter = CreditMeter::new(dao, config);
     println!("[2] CreditMeter 创建完成\n");
 
-    // ----------------------------------------------------------------
     // 3. 消费 credit
-    // ----------------------------------------------------------------
     let tenant_id = 42;
 
     // 登录消费（weight=1, cost=1 → 1 credit）
@@ -82,9 +76,7 @@ pub async fn run() -> GarrisonResult<()> {
         r3.consumed_credits, r3.total_consumed, r3.remaining
     );
 
-    // ----------------------------------------------------------------
     // 4. 查询使用情况
-    // ----------------------------------------------------------------
     let usage = meter.get_credit_usage(tenant_id).await?;
     println!("[4] 当前使用情况:");
     println!(
@@ -93,9 +85,7 @@ pub async fn run() -> GarrisonResult<()> {
     );
     println!("    使用率: {:.1}%\n", usage.usage_percent);
 
-    // ----------------------------------------------------------------
     // 5. 触发告警阈值
-    // ----------------------------------------------------------------
     println!("[5] 触发告警阈值:");
     // 消费到 80+ credits 触发 80% 告警
     let r4 = meter.consume_credit(tenant_id, "api_call", 35).await?;
@@ -108,9 +98,7 @@ pub async fn run() -> GarrisonResult<()> {
     }
     println!();
 
-    // ----------------------------------------------------------------
     // 6. CreditAlertConfig 独立配置
-    // ----------------------------------------------------------------
     let alert_config = CreditAlertConfig {
         thresholds: vec![50, 75, 90],
         cooldown_seconds: 1800, // 同一阈值 30 分钟内不重复告警
@@ -119,9 +107,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    告警阈值: {:?}%", alert_config.thresholds);
     println!("    冷却间隔: {}s\n", alert_config.cooldown_seconds);
 
-    // ----------------------------------------------------------------
     // 7. 手动重置
-    // ----------------------------------------------------------------
     meter.reset_credit(tenant_id).await?;
     let after_reset = meter.get_credit_usage(tenant_id).await?;
     println!("[7] 手动重置后:");

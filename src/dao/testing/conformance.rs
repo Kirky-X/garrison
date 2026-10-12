@@ -24,9 +24,7 @@ macro_rules! expect_err {
     };
 }
 
-// ---------------------------------------------------------------------------
 // basic 层：单线程 KV / 计数 / rename 契约
-// ---------------------------------------------------------------------------
 
 /// basic 层契约：核心 KV 语义 + 计数器 + rename（含各错误路径显性化；rename 缺键报 `InvalidParam`）。
 pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
@@ -273,9 +271,7 @@ pub async fn run_basic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     );
 }
 
-// ---------------------------------------------------------------------------
 // atomic 层：原子原语单线程语义
-// ---------------------------------------------------------------------------
 
 /// atomic 层契约：set_if_absent / get_and_delete / compare_and_swap 的单线程原子语义（并发竞态见 `run_concurrent`）。
 pub async fn run_atomic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
@@ -403,9 +399,7 @@ pub async fn run_atomic(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     );
 }
 
-// ---------------------------------------------------------------------------
 // concurrent 层：真并发竞态（安全属性回归门禁）
-// ---------------------------------------------------------------------------
 
 /// concurrent 层契约：multi_thread 真并发下的原子性不变式，断言精确计数（不放宽为 ≥1）：
 /// set_if_absent 16 任务恰 1 个 `Ok(true)`（SETNX 恰一赢家）／get_and_delete 16 任务恰 1 个 `Some`（GETDEL 防票券双花）／
@@ -577,9 +571,7 @@ pub async fn run_concurrent(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     );
 }
 
-// ---------------------------------------------------------------------------
 // ttl 层：墙钟过期契约（每测试仅 1 次 sleep，沿用既有惯例 set(ttl=2)+sleep(3s)）
-// ---------------------------------------------------------------------------
 
 /// ttl 层契约：过期即不存在、update/rename/incr 保留原窗口不重置、`expire(k, 0)` 转永久；
 /// 子断言共用一次 `sleep(3s)` 窗口（ttl=1 必消失、ttl=2 原窗口后消失，1s 余量）。
@@ -642,9 +634,7 @@ pub async fn run_ttl(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     );
 }
 
-// ---------------------------------------------------------------------------
 // keys 层：glob 扫描契约
-// ---------------------------------------------------------------------------
 
 /// keys 层契约：`*` 与 `?` glob 匹配精确计数、无匹配返回空 Vec、delete/rename 后扫描结果同步。
 pub async fn run_keys(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
@@ -718,9 +708,7 @@ pub async fn run_keys(dao: &Arc<dyn GarrisonDao>, prefix: &str) {
     assert_eq!(got, vec![k4.clone()], "[{prefix}] rename 后扫描应指向新键");
 }
 
-// ---------------------------------------------------------------------------
 // refresh token 轮换层契约（db-sqlite + protocol-jwt）
-// ---------------------------------------------------------------------------
 
 /// RefreshTokenRotation SQL 层契约（同一把尺子，跑 sqlite 实例）：
 /// `rotated_at` 写入（子代恒 NULL、被消费旧记录写正值时刻）／重用三级分类（RecentPrev / OrphanedBranch / StaleLineage / 存活与未知 hash 为 `None`）／
@@ -808,7 +796,7 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
         }
     };
 
-    // ---- 1. rotated_at 写入契约 ----
+    // 1. rotated_at 写入契约
     let t1 = expect_ok(
         prefix,
         "issue",
@@ -837,7 +825,7 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
     .await;
     assert_eq!(child_rotated, 0, "[{prefix}] 存活子代 rotated_at 应为 NULL");
 
-    // ---- 2. 三级分类契约 ----
+    // 2. 三级分类契约
     let subtype = expect_ok(prefix, "detect#t2", rotation.detect_reuse(&t2_hash).await);
     assert_eq!(
         subtype,
@@ -859,7 +847,7 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
     );
     assert_eq!(subtype, None, "[{prefix}] 未知 hash 不应检出重用");
 
-    // ---- 3. 宽限窗口契约（窗口内兑现同一 token；预算耗尽转盗用） ----
+    // 3. 宽限窗口契约（窗口内兑现同一 token；预算耗尽转盗用）
     let (_, graced) = expect_ok(prefix, "grace-redeem", rotation.rotate(&t2).await);
     assert_eq!(graced, t3, "[{prefix}] 窗口内重放应兑现胜者的同一新 token");
     let again = rotation.rotate(&t2).await;
@@ -868,7 +856,7 @@ pub async fn run_refresh_token_rotation(prefix: &str, pool: &dbnexus::DbPool) {
         "[{prefix}] 预算耗尽后应转盗用处置，实际 {again:?}"
     );
 
-    // ---- 4. 旋转失败补偿契约 ----
+    // 4. 旋转失败补偿契约
     // 注入目标须是未消费的存活 token（上方预算耗尽处置已吊销 t3）
     let t4 = expect_ok(
         prefix,

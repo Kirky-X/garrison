@@ -17,9 +17,7 @@ use garrison::secure::email::{EmailRateLimiter, EmailSender, EmailVerificationSe
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-// ============================================================================
 // NoopEmailSender：示例用邮件发送器（捕获发送内容，不实际投递）
-// ============================================================================
 
 /// 示例用邮件发送器，捕获发送内容供验证；生产环境实现 `EmailSender` trait 接入 SMTP / HTTP 网关，或启用 email-verification-smtp feature。
 struct NoopEmailSender {
@@ -41,9 +39,7 @@ impl EmailSender for NoopEmailSender {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 邮箱验证码示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构建 EmailVerificationService
-    // ----------------------------------------------------------------
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let sender = Arc::new(NoopEmailSender {
         sent: Mutex::new(Vec::new()),
@@ -61,9 +57,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    限速：5 次/小时、10 次/天");
     println!("    验证码 TTL：600 秒，最大验证尝试：3 次\n");
 
-    // ----------------------------------------------------------------
     // 2. send_code 发送验证码
-    // ----------------------------------------------------------------
     let email = "user@example.com";
     service.send_code(email).await?;
     println!("[2] send_code(\"{}\") → 验证码已发送", email);
@@ -80,9 +74,7 @@ pub async fn run() -> GarrisonResult<()> {
     drop(sent);
     println!("    （示例从 DAO 取出验证码: {}）\n", code);
 
-    // ----------------------------------------------------------------
     // 3. verify_code 正确码 → 成功
-    // ----------------------------------------------------------------
     service.verify_code(email, &code).await?;
     println!("[3] verify_code(\"{}\", \"{}\") → 验证成功 ✓", email, code);
     // 验证成功后验证码已从 DAO 删除
@@ -90,9 +82,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(deleted.is_none());
     println!("    验证码已从 DAO 清除\n");
 
-    // ----------------------------------------------------------------
     // 4. verify_code 错误码 → InvalidParam
-    // ----------------------------------------------------------------
     service.send_code(email).await?;
     let wrong_code = "000000";
     let err = service.verify_code(email, wrong_code).await.unwrap_err();
@@ -100,9 +90,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(matches!(err, GarrisonError::InvalidParam(_)));
     println!("    错误类型: InvalidParam（验证码错误）✓\n");
 
-    // ----------------------------------------------------------------
     // 5. 超过最大验证尝试 → EmailVerifyMaxAttempts
-    // ----------------------------------------------------------------
     // 再发一次新码，然后连续输错 3 次（已达 max_verify_attempts=3）
     service.send_code(email).await?;
     let code2 = dao
@@ -129,9 +117,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(matches!(err, GarrisonError::EmailCodeNotFound));
     println!("    此后即使提供正确码 → EmailCodeNotFound ✓\n");
 
-    // ----------------------------------------------------------------
     // 6. 邮箱规范化：大小写/空白归一防绕过
-    // ----------------------------------------------------------------
     service.send_code("  User@Example.COM  ").await?;
     println!("[6] 邮箱规范化:");
     println!("    send_code(\"  User@Example.COM  \") 已规范化为 user@example.com");

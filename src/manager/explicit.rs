@@ -173,9 +173,7 @@ mod tests {
     use std::collections::HashMap;
     use std::future::Future;
 
-    // ------------------------------------------------------------------------
     // MockInterface：权限/角色数据回调（复用 manager/mod.rs 测试模式）
-    // ------------------------------------------------------------------------
 
     struct MockInterface {
         permissions: HashMap<String, Vec<String>>,
@@ -214,9 +212,7 @@ mod tests {
         }
     }
 
-    // ------------------------------------------------------------------------
     // 辅助函数
-    // ------------------------------------------------------------------------
 
     /// 创建默认测试配置（timeout=3600，throw_on_not_login=false 便于断言）。
     fn make_config() -> GarrisonConfig {
@@ -250,9 +246,7 @@ mod tests {
         with_current_token(token, f).await
     }
 
-    // ------------------------------------------------------------------------
     // 测试 1：Manager::new 构造成功
-    // ------------------------------------------------------------------------
 
     /// `Manager::new(Arc::new(logic))` 构造成功，logic 引用计数正确。
     ///
@@ -280,9 +274,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
     // 测试 2：Manager::authorize 返回 Decision
-    // ------------------------------------------------------------------------
 
     /// `manager.authorize(&req)` 返回 `Decision`（不 panic / 不返回 Err）。
     ///
@@ -307,9 +299,7 @@ mod tests {
         let _ = decision.reason;
     }
 
-    // ------------------------------------------------------------------------
     // 测试 3：Manager::authorize allowed=true 场景
-    // ------------------------------------------------------------------------
 
     /// 持有权限时 `authorize` 返回 `Decision { allowed: true, reason: ExplicitAllow }`。
     #[tokio::test]
@@ -334,9 +324,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
     // 测试 4：Manager::authorize allowed=false 场景
-    // ------------------------------------------------------------------------
 
     /// 未持有权限时 `authorize` 返回 `Decision { allowed: false, reason: NoMatchingPermission }`。
     #[tokio::test]
@@ -361,9 +349,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
     // 测试 5：Manager::check_permission 委托 PermissionLogic 行为一致
-    // ------------------------------------------------------------------------
 
     /// `manager.check_permission(login_id, perm)` 与 `PermissionLogic::check_permission(perm)`
     /// 行为一致（同一 task_local 上下文下返回相同允许/拒绝结果）。
@@ -414,9 +400,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
     // 测试 6：Manager Drop 不影响全局单例
-    // ------------------------------------------------------------------------
 
     /// Manager Drop 后 `GarrisonManager` 全局单例状态不受影响（独立生命周期）。
     ///
@@ -466,9 +450,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    // ------------------------------------------------------------------------
     // 测试 7：build_explicit 路径 Manager Drop 后 task 被 abort
-    // ------------------------------------------------------------------------
 
     /// `GarrisonManager::builder().build_explicit().await` 返回的 Manager
     /// Drop 后，cleanup_task 与 anomalous_analyzer_task 的 JoinHandle::is_finished() 为 true。

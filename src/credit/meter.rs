@@ -214,7 +214,7 @@ impl CreditMeter {
 
         let credit_limit = config.credit_limit;
 
-        // ---- 预检：已消费 + credits 超限时直接拒绝，不递增计数 ----
+        // 预检：已消费 + credits 超限时直接拒绝，不递增计数
         let current = self.storage.get_consumed(tenant_id).await?.unwrap_or(0);
         if credit_limit != 0 && current.saturating_add(credits) > credit_limit {
             return Ok(Self::denied_result(
@@ -225,12 +225,12 @@ impl CreditMeter {
             ));
         }
 
-        // ---- 扣减：credits=0 无消耗直接复用当前值；>0 循环 incr（见 CreditMeterStorage::incr_consumed 非原子声明）----
+        // 扣减：credits=0 无消耗直接复用当前值；>0 循环 incr（见 CreditMeterStorage::incr_consumed 非原子声明）
         let new_count = if credits == 0 {
             current
         } else {
             let n = self.storage.incr_consumed(tenant_id, credits, ttl).await?;
-            // ---- 确认：并发交错导致超限时回滚本次扣减并拒绝 ----
+            // 确认：并发交错导致超限时回滚本次扣减并拒绝
             if credit_limit != 0 && n > credit_limit {
                 tracing::warn!(
                     tenant_id,

@@ -19,26 +19,20 @@ use std::sync::Arc;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 会话管理示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 创建 GarrisonSession
-    // ----------------------------------------------------------------
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     // timeout=3600 秒（1小时），active_timeout=86400 秒（1天）
     let session = GarrisonSession::new(dao, 3600, 86400, 7_776_000);
     println!("[1] GarrisonSession 创建完成 (timeout=3600s, active_timeout=86400s)\n");
 
-    // ----------------------------------------------------------------
     // 2. 创建会话（login）
-    // ----------------------------------------------------------------
     let login_id = "1001";
     let token = "session_token_abc123";
     session.create(login_id, token).await?;
     println!("[2] 会话创建: login_id={}, token={}", login_id, token);
     println!("    Token-Session + Account-Session 双模记录已写入\n");
 
-    // ----------------------------------------------------------------
     // 3. 查询 Token-Session
-    // ----------------------------------------------------------------
     let ts = session
         .get_token_session(token)
         .await?
@@ -51,9 +45,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(ts.token, token);
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 查询 Account-Session
-    // ----------------------------------------------------------------
     let as_ = session
         .get_account_session(login_id)
         .await?
@@ -68,23 +60,17 @@ pub async fn run() -> GarrisonResult<()> {
     );
     println!();
 
-    // ----------------------------------------------------------------
     // 5. 续期会话（renew）— 重置 TTL
-    // ----------------------------------------------------------------
     session.renew(token).await?;
     println!("[5] 会话续期完成（TTL 已重置为 {} 秒）", 3600);
     println!();
 
-    // ----------------------------------------------------------------
     // 6. 活跃续期（touch）— 仅更新 active_timeout
-    // ----------------------------------------------------------------
     session.touch(token).await?;
     println!("[6] 活跃续期完成（active_timeout 已更新）");
     println!();
 
-    // ----------------------------------------------------------------
     // 7. 会话临时存储（set/get）
-    // ----------------------------------------------------------------
     session.set(token, "client_ip", "192.168.1.100").await?;
     let stored = session.get(token, "client_ip").await?;
     println!("[7] 会话临时存储:");
@@ -93,17 +79,13 @@ pub async fn run() -> GarrisonResult<()> {
     assert_eq!(stored.as_deref(), Some("192.168.1.100"));
     println!();
 
-    // ----------------------------------------------------------------
     // 8. 校验会话有效性
-    // ----------------------------------------------------------------
     let valid = session.is_valid(token).await?;
     println!("[8] 会话有效性校验: is_valid = {}", valid);
     assert!(valid);
     println!();
 
-    // ----------------------------------------------------------------
     // 9. 登出单个 token
-    // ----------------------------------------------------------------
     session.logout(token).await?;
     println!("[9] 登出 token={}", token);
     let valid_after = session.is_valid(token).await?;
@@ -116,9 +98,7 @@ pub async fn run() -> GarrisonResult<()> {
     );
     println!();
 
-    // ----------------------------------------------------------------
     // 10. 多 token 登录 + 登出整个账号
-    // ----------------------------------------------------------------
     // 再次登录创建两个 token
     session.create(login_id, "token_one").await?;
     session.create(login_id, "token_two").await?;

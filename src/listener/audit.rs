@@ -53,9 +53,7 @@ pub struct AuditConfig {
     pub audit_mask_mode: AuditMaskMode,
 }
 
-// ----------------------------------------------------------------------------
 // AuditEntry + AuditLogListener（需 db-sqlite feature）
-// ----------------------------------------------------------------------------
 //
 // 设计取舍：GarrisonDao 是 cache 抽象（4 实现均不支持 SQL INSERT），强行加
 // insert_audit_log 会破坏单一职责；遵循 RefreshTokenRotation 先例，

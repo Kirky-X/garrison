@@ -20,9 +20,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-// ============================================================================
 // 测试用 Mock DAO（模拟 oxcache 的存储行为，无 TTL 过期）
-// ============================================================================
 
 /// 内存 HashMap DAO（仅供示例）；生产环境用 `GarrisonDaoOxcache`（cache-memory）或 `GarrisonDaoDbnexus`（db-sqlite）。
 pub struct MockDao {
@@ -150,9 +148,7 @@ impl GarrisonDao for MockDao {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 认证逻辑示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构建 AuthLogicDefault（注入 Session + Token 处理器）
-    // ----------------------------------------------------------------
     // AuthLogicDefault 不依赖 task_local 上下文，方法均以 token 为入参，便于 protocol-jwt 等协议层复用。
     let dao: Arc<dyn GarrisonDao> = Arc::new(MockDao::new());
     let session = Arc::new(GarrisonSession::new(dao, 3600, 86400, 7_776_000));
@@ -160,18 +156,14 @@ pub async fn run() -> GarrisonResult<()> {
     let auth = AuthLogicDefault::new(session, token_handler, 3600);
     println!("[1] AuthLogicDefault 构建完成（timeout=3600s, active_timeout=86400s）\n");
 
-    // ----------------------------------------------------------------
     // 2. login：生成 token 并建立会话
-    // ----------------------------------------------------------------
     let token = auth.login("1001", None).await?;
     println!("[2] login(1001):");
     println!("    token = {}", token);
     assert!(!token.is_empty());
     println!();
 
-    // ----------------------------------------------------------------
     // 3. is_login / get_login_id / verify_token 校验
-    // ----------------------------------------------------------------
     let logged_in = auth.is_login(&token).await?;
     println!("[3] is_login(\"{}\"):", &token[..8]);
     println!("    返回 = {}", logged_in);
@@ -195,9 +187,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("\n[6] verify_token(\"invalid-token\"):");
     println!("    返回错误（InvalidToken）✓\n");
 
-    // ----------------------------------------------------------------
     // 4. logout：销毁会话（幂等）
-    // ----------------------------------------------------------------
     auth.logout(&token).await?;
     println!("[7] logout(\"{}\"):", &token[..8]);
     println!("    完成");

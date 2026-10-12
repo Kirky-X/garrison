@@ -51,11 +51,9 @@ credit-insufficient = Credit insufficient: tenant={$tenant_id}, requested={$requ
 token-revoked = Token revoked: {$detail}
 firewall-blocked = Firewall blocked: {$detail}
 
-# ============================================================================
 # Social login exception messages (0.6.0)
-# ============================================================================
 
-# --- WeChat QR code login (wechat) ---
+# WeChat QR code login (wechat)
 wechat-token-request-failed = WeChat token request failed: {$detail}
 wechat-token-response-parse-failed = WeChat token response parse failed: {$detail}
 wechat-error-response = WeChat error {$code}: {$message}
@@ -65,7 +63,7 @@ wechat-userinfo-response-parse-failed = WeChat userinfo response parse failed: {
 wechat-userinfo-response-missing-openid = WeChat userinfo response missing openid field
 wechat-redirect-uri-must-be-https = WeChat redirect_uri must be an https URL
 
-# --- First-party QR code login (qrlogin) ---
+# First-party QR code login (qrlogin)
 qrlogin-secret-empty = QR login HMAC secret must not be empty
 qrlogin-secret-too-short = QR login HMAC secret must be at least 32 bytes
 qrlogin-session-not-found = QR login session not found
@@ -81,14 +79,14 @@ qrlogin-issuer-failed = QR login session issuance failed: {$detail}
 qrlogin-app-unauthorized = QR login requires a valid app session token
 qrlogin-action-invalid = action must be "confirm" or "cancel"
 
-# --- WeChat Mini App (wechat mini-app) ---
+# WeChat Mini App (wechat mini-app)
 wechat-mini-app-get-authorization-url-not-supported = WechatMiniAppProvider does not support get_authorization_url (mini app uses wx.login() to get js_code directly)
 wechat-mini-app-jscode2session-request-failed = WeChat mini-app jscode2session request failed: {$detail}
 wechat-mini-app-jscode2session-response-parse-failed = WeChat mini-app jscode2session response parse failed: {$detail}
 wechat-mini-app-error-response = WeChat mini-app error {$code}: {$message}
 wechat-mini-app-jscode2session-response-missing-openid = WeChat mini-app jscode2session response missing openid field
 
-# --- Alipay authorization login (alipay) ---
+# Alipay authorization login (alipay)
 alipay-rsa-key-parse-failed = Alipay RSA private key parse failed: {$detail}
 alipay-token-request-failed = Alipay token request failed: {$detail}
 alipay-token-response-parse-failed = Alipay token response parse failed: {$detail}
@@ -99,7 +97,7 @@ alipay-user-info-response-parse-failed = Alipay user info response parse failed:
 alipay-response-missing-user-info-share-response = Alipay response missing alipay_user_info_share_response field
 alipay-http-client-build-failed = Alipay HTTP client build failed: {$detail}
 
-# --- Keycloak OIDC RP (keycloak) ---
+# Keycloak OIDC RP (keycloak)
 keycloak-http-client-build-failed = Failed to build HTTP client: {$detail}
 keycloak-discovery-request-failed = Discovery request failed: {$detail}
 keycloak-discovery-status-not-2xx = Discovery response status not 2xx: {$detail}
@@ -119,7 +117,7 @@ keycloak-exchange-code-request-failed = exchange_code request failed: {$detail}
 keycloak-exchange-code-status-not-2xx = exchange_code response status not 2xx: {$detail}
 keycloak-exchange-code-response-parse-failed = exchange_code response parse failed: {$detail}
 
-# --- Huawei Account Kit (huawei, sinnan custom provider) ---
+# Huawei Account Kit (huawei, sinnan custom provider)
 huawei-token-request-failed = Huawei token request failed: {$detail}
 huawei-token-response-parse-failed = Huawei token response parse failed: {$detail}
 huawei-error-response = Huawei error response: {$detail}
@@ -130,9 +128,7 @@ huawei-userinfo-response-parse-failed = Huawei userinfo response parse failed: {
 huawei-userinfo-business-error = Huawei userinfo business error: {$detail}
 huawei-userinfo-response-missing-openID = Huawei userinfo response missing openID field
 
-# ============================================================================
 # DAO errors (i18n refactor)
-# ============================================================================
 dao-app-auth-method-create-insert = app_auth_method create insert failed: {$arg0}
 dao-app-auth-method-create-session = app_auth_method create get session failed: {$arg0}
 dao-app-auth-method-delete-delete = app_auth_method delete delete failed: {$arg0}
@@ -626,16 +622,14 @@ account-disable-deserialize = deserialize DisableEntry failed: {$arg0}
 stp-token-invalid-or-not-login = token invalid or not logged in
 stp-token-invalid-or-no-login-id = token invalid or missing login_id
 
-# ============================================================================
 # i18n migration completion (2026-07-18)
-# ============================================================================
 
-# --- session mock ---
+# session mock
 session-mock-delete-failed = mock delete failed: {$arg0}
 session-mock-read-failed = mock read failed: {$arg0}
 session-mock-update-failed = mock update failed: {$arg0}
 
-# --- sso completion ---
+# sso completion
 sso-mock-key-not-found = key not found
 sso-oidc-token-status-error = token exchange response status error: {$arg0}
 sso-oidc-userinfo-status-error = userinfo response status error: {$arg0}
@@ -645,14 +639,14 @@ sso-ticket-consumed-by-concurrent = SSO ticket consumed by concurrent request
 sso-saml-signature-not-implemented = SAML signature verification not implemented
 sso-saml-assertion-expired = SAML assertion expired: {$arg0}
 
-# --- sign / apikey completion ---
+# sign / apikey completion
 sign-app-secret-too-short = app_secret too short: current {$arg0} bytes, requires at least {$arg1} bytes (256 bits)
 apikey-namespace-too-long = namespace length cannot exceed 64 chars, actual: {$arg0}
 apikey-namespace-invalid-chars = namespace only allows [a-zA-Z0-9_-], actual: {$arg0}
 apikey-namespace-mismatch = API Key namespace mismatch: expected {$arg0}, actual {$arg1}
 apikey-expired-cannot-rotate = API Key expired, cannot rotate
 
-# --- keycloak completion ---
+# keycloak completion
 keycloak-discovery-body-read-failed = discovery body read failed: {$detail}
 keycloak-dao-not-injected = KeycloakProvider DAO not injected, cannot cache JWKS (call with_dao to inject GarrisonDao)
 keycloak-jwks-body-read-failed = JWKS body read failed: {$detail}
@@ -664,12 +658,12 @@ keycloak-token-invalid-audience = invalid audience
 keycloak-token-invalid-issuer = invalid issuer
 keycloak-exchange-code-body-read-failed = exchange_code body read failed: {$detail}
 
-# --- server / backend completion ---
+# server / backend completion
 server-caller-not-owner-kickout = Caller is not the owner and lacks admin:sessions permission; kickout is forbidden
 server-caller-not-owner-switch-to = Caller is not the owner and lacks admin:sessions permission; switch_to is forbidden
 backend-auth-logic-not-injected-renew = auth_logic is not injected; renew_to_equivalent is unavailable
 
-# --- oauth2_server completion ---
+# oauth2_server completion
 oauth2-server-client-invalid-scope = client does not allow scope: {$arg0}
 oauth2-server-client-exists = client already exists: {$arg0}
 oauth2-server-client-not-found = client not found: {$arg0}
@@ -693,15 +687,13 @@ oauth2-server-authorize-code-verifier-invalid-length = code_verifier invalid len
 oauth2-server-introspect-invalid-client-secret = invalid_client: client_secret incorrect
 oauth2-server-revoke-invalid-client-secret = invalid_client: client_secret incorrect
 
-# --- account completion ---
+# account completion
 account-password-unsupported-hash-format = unsupported hash format: {$arg0}
 account-backup-deserialize = backup_code secret_data deserialize failed: {$arg0}
 
-# ============================================================================
 # Stp layer errors (i18n refactor - session.rs hardcoded Chinese migration)
-# ============================================================================
 
-# --- SessionLogic trait default impl + GarrisonLogicDefault impl ---
+# SessionLogic trait default impl + GarrisonLogicDefault impl
 stp-revoke-all-sessions-not-implemented = revoke_all_sessions requires GarrisonLogicDefault implementation
 stp-get-active-sessions-not-implemented = get_active_sessions requires GarrisonLogicDefault implementation
 stp-login-by-token-feature-required = login_by_token requires protocol-oauth2 or protocol-sso feature
@@ -709,30 +701,28 @@ stp-refresh-access-token-not-implemented-db = refresh_access_token not implement
 stp-refresh-access-token-no-rotation = refresh_access_token missing RefreshTokenRotation injection
 stp-refresh-access-token-feature-required = refresh_access_token requires protocol-jwt + db-sqlite feature
 
-# --- validate_login_with_token_inputs input validation ---
+# validate_login_with_token_inputs input validation
 stp-token-length-too-short = token length too short: {$arg0} < 8
 stp-token-length-too-long = token length exceeds limit: {$arg0} > 256
 
-# --- login_inner NewDevice mode ---
+# login_inner NewDevice mode
 stp-new-device-login-rejected-not-allowed = new device login rejected: NewDevice mode, new device login not allowed
 
-# --- check_login_stateless / token_style feature validation ---
+# check_login_stateless / token_style feature validation
 stp-jwt-token-style-requires-protocol-jwt = jwt token_style requires protocol-jwt feature
 stp-stateless-requires-jwt-token-style = Stateless mode requires token_style=jwt
 stp-stateless-requires-protocol-jwt = Stateless mode requires protocol-jwt feature
 stp-unknown-token-style = unsupported token_style: {$arg0}
 
-# --- auto_renewal config validation ---
+# auto_renewal config validation
 stp-auto-renewal-no-auth-logic = auto_renewal_threshold enabled but auth_logic not injected, cannot renew
 stp-auto-renewal-jwt-requires-protocol-jwt = auto_renewal_threshold enabled and token_style=jwt, but protocol-jwt feature not enabled
 
-# --- MockAnomalyDetector failure simulation ---
+# MockAnomalyDetector failure simulation
 stp-mock-login-detection-failed = mock login detection failed
 stp-mock-check-login-detection-failed = mock check_login detection failed
 
-# ============================================================================
 # Authflow executor errors (i18n migration)
-# ============================================================================
 authflow-user-locked = User has been locked: {$arg0}
 authflow-login-needs-builder = Login step requires CredentialBuilder, use execute_with_builder
 authflow-login-needs-user-id = Login step requires user_id
@@ -761,16 +751,12 @@ authflow-step-complete-action = Please complete required action: {$arg0}
 authflow-step-complete-condition = Please complete conditional branch
 authflow-step-complete-subflow = Please complete sub-flow: {$arg0}
 
-# ============================================================================
 # Config loader errors (i18n migration)
-# ============================================================================
 config-path-empty = configuration file path must not be empty
 config-open-failed = failed to open configuration file [{$arg0}]: {$arg1}
 config-too-large = configuration file too large [{$arg0}]: {$arg1} bytes, limit {$arg2} bytes
 
-# ============================================================================
 # Session event reasons / Stp hardcoded messages (i18n migration)
-# ============================================================================
 session-kickout-admin = admin forced logout
 session-overflow-kickout = exceeded maximum login count
 session-overflow-replaced = exceeded maximum login count, replaced by new session
@@ -779,18 +765,16 @@ stp-refresh-token-not-implemented = refresh_token requires protocol-jwt feature 
 stp-refresh-token-jwt-only = refresh_token is only available when token_style=jwt
 stp-mfa-not-passed = second factor authentication not passed
 
-# ============================================================================
 # Hardcoded string i18n fix (fix-i18n-hardcoded-strings)
-# ============================================================================
 
-# --- stp/util ---
+# stp/util
 stp-permission-empty = permission must not be empty
 stp-role-empty = role must not be empty
 
-# --- protocol/jwt ---
+# protocol/jwt
 jwt-timeout-negative = timeout must not be negative: {$arg0}
 
-# --- secure ---
+# secure
 secure-verify-totp-not-implemented = verify_totp not implemented
 secure-generate-totp-not-implemented = generate_totp not implemented
 secure-verify-sign-not-implemented = verify_sign not implemented
@@ -798,18 +782,18 @@ secure-create-sign-not-implemented = create_sign not implemented
 sanitize-input-length-exceeded = input length {$arg0} exceeds maximum limit {$arg1}
 digest-algo-unsupported = unsupported Digest algorithm: {$arg0}, only MD5 / SHA256 supported
 
-# --- dao ---
+# dao
 dao-decr-parse-u64 = decr: existing value is not u64, key={$arg0}, value={$arg1}
 counter-overflow = counter overflow: key={$arg0}
 
-# --- strategy ---
+# strategy
 strategy-login-frequency-exceeded = login frequency exceeded: IP {$arg0}
 strategy-account-locked = account locked: login_id={$arg0}
 strategy-geo-anomaly = geo anomaly detected: login_id={$arg0} last location {$arg1} differs from current
 strategy-token-reuse-blocked = token reuse detected: login_id={$arg0} token has been blacklisted
 strategy-device-anomaly = device anomaly: login_id={$arg0} device fingerprint {$arg1} not in known device list
 
-# --- abac ---
+# abac
 abac-expr-length-exceeded = abac_expr length exceeds {$arg0} characters (DoS defense)
 abac-expr-illegal-char = abac_expr contains policy terminator (suspected policy injection)
 abac-expr-no-declaration = abac_expr must not declare permit/forbid policies
@@ -818,20 +802,18 @@ abac-engine-not-init = AbacEngine not initialized, ABAC validation failed (fail-
 abac-login-id-missing = login_id not available during ABAC validation
 abac-policy-denied = ABAC policy denied: action={$arg0}, resource={$arg1}
 
-# --- credit ---
+# credit
 credit-alert-thresholds-empty = alert_thresholds must not be empty
 credit-alert-thresholds-range = alert_thresholds[{$arg0}] = {$arg1} out of range [0, 100]
 credit-alert-thresholds-order = alert_thresholds must be strictly ascending: {$arg0} <= {$arg1}
 
-# --- web/cors ---
+# web/cors
 cors-credentials-wildcard = CORS config conflict: allow_credentials=true disallows wildcard "*" in allowed_origins
 
-# --- context/tenant ---
+# context/tenant
 ctx-tenant-id-missing = X-Tenant-Id header missing
 
-# ============================================================================
 # response_parts 专用 message keys（不含 detail，用于 HTTP 响应体）
-# ============================================================================
 # These keys are used by GarrisonError::response_parts_i18n() to return a
 # generic description without variant detail, avoiding sensitive info
 # leakage (one-to-one correspondence with response_parts() &'static str).
@@ -871,9 +853,7 @@ exception-not-login-msg = Not logged in
 exception-not-permission-msg = Permission denied
 exception-default-msg = Business exception
 
-# ============================================================================
 # Password policy rule messages (i18n migration)
-# ============================================================================
 policy-length-too-short = Password length {$arg0} is less than minimum required {$arg1}
 policy-length-too-long = Password length {$arg0} exceeds maximum limit {$arg1}
 policy-history-duplicate = Password matches a previous password
@@ -886,14 +866,10 @@ policy-hibp-requires-feature = HIBP check requires enabling the policy-hibp feat
 policy-nist-length-too-short = Password length {$arg0} is less than NIST SP 800-63B minimum required {$arg1}
 policy-max-age-expired = Password has expired, please change your password
 
-# ============================================================================
 # Session hijack detection messages (i18n migration)
-# ============================================================================
 session-ip-mismatch = Session IP mismatch: stored={$arg0}, current={$arg1}
 
-# ============================================================================
 # WAF deny reason messages (i18n migration)
-# ============================================================================
 waf-blacklist-path = Path {$arg0} matched blacklist
 waf-danger-char-path = Path contains dangerous character {$arg0}
 waf-danger-char-param = Parameter value contains dangerous character {$arg0}
@@ -905,7 +881,7 @@ waf-method-not-allowed = HTTP method {$arg0} is not in the allowed list
 waf-header-banned = Header {$arg0} is in the banned list
 waf-param-banned = Parameter {$arg0} is in the banned list
 
-# --- WAF danger character descriptions ---
+# WAF danger character descriptions
 waf-danger-desc-double-slash = Double slash //
 waf-danger-desc-backslash = Backslash \\
 waf-danger-desc-semicolon = Semicolon ;
@@ -920,33 +896,23 @@ waf-danger-desc-pct-3b = Percent-encoded %3b
 waf-danger-desc-pct-0a = Percent-encoded %0a
 waf-danger-desc-pct-0d = Percent-encoded %0d
 
-# ============================================================================
 # Confusable character detection messages (i18n migration)
-# ============================================================================
 confusable-suggestion = Consider replacing '{$arg0}' with '{$arg1}'
 
-# ============================================================================
 # OAuth2 PKCE / state / refresh messages (i18n migration)
-# ============================================================================
 oauth2-pkce-length-invalid = code_verifier length must be between 43-128, current {$arg0}
 oauth2-pkce-chars-invalid = code_verifier only allows [A-Z]/[a-z]/[0-9]/-/./_/~ characters
 oauth2-state-mismatch = state parameter mismatch, possible CSRF attack
 oauth2-refresh-token-empty = refresh_token must not be empty
 
-# ============================================================================
 # Security alert detection messages (i18n migration)
-# ============================================================================
 alert-ip-changed = IP changed from {$arg0} to {$arg1}
 alert-rapid-successive = {$arg0} tokens online simultaneously (threshold {$arg1})
 
-# ============================================================================
 # ABAC principal validation messages (i18n migration)
-# ============================================================================
 abac-principal-control-char = login_id contains control characters
 
-# ============================================================================
 # Core auth / permission messages (i18n migration)
-# ============================================================================
 core-switch-to-denied = switch_to denied: SwitchToGuard not configured, default deny-all
 core-switch-to-not-implemented = switch_to not implemented: {$arg0} does not support identity switching
 core-renew-not-implemented = renew_to_equivalent not implemented: {$arg0} does not support token renewal
@@ -956,23 +922,17 @@ core-permission-name-empty = permission name must not be empty
 core-permission-already-registered = permission already registered: {$arg0}
 core-permission-not-registered = permission not registered: {$arg0}
 
-# ============================================================================
 # Core token style messages (i18n migration)
-# ============================================================================
 core-token-parse-not-supported = {$arg0} token style does not support parse (no payload)
 core-simple-secret-too-short = SimpleTokenStyle secret must be >= 32 bytes (aligned with JWT strong validation)
 core-simple-token-uuid-invalid = Simple token format error: UUID part is invalid
 core-simple-token-hmac-failed = Simple token HMAC verification failed
 core-simple-requires-feature = SimpleTokenStyle requires secure-simple-token feature (A11 security fix)
 
-# ============================================================================
 # DAO not-implemented messages (i18n migration)
-# ============================================================================
 dao-not-implemented = {$arg0} not implemented for this backend
 
-# ============================================================================
 # Config validation messages (i18n migration)
-# ============================================================================
 config-jwt-secret-empty = jwt_secret must not be empty (when token_style=jwt)
 config-jwt-algorithm-unsupported = Unsupported jwt_algorithm: {$arg0} (only HS256/HS384/HS512)
 config-jwt-secret-too-short = jwt_secret length insufficient for {$arg0}, actual {$arg1} bytes — generate a high-entropy key with `openssl rand -base64 48`
@@ -995,21 +955,15 @@ config-email-ttl-invalid = email_code_ttl must be > 0
 config-anomalous-interval-invalid = anomalous_analyzer_interval_secs must be >= 60
 config-anomalous-burst-invalid = anomalous_analyzer_burst_threshold must be > 0
 
-# ============================================================================
 # Session search messages (i18n migration)
-# ============================================================================
 session-search-keyword-too-long = keyword length exceeded: {$arg0} > {$arg1}
 session-search-size-exceeded = size exceeded: {$arg0} > {$arg1}
 
-# ============================================================================
 # STP module messages (i18n migration)
-# ============================================================================
 stp-service-empty = service parameter must not be empty
 stp-not-implemented = {$arg0} not implemented
 
-# ============================================================================
 # Strategy firewall messages (i18n migration)
-# ============================================================================
 firewall-anomalous-requires-login-id = AnomalousLogin requires login_id but ctx.login_id is None
 firewall-anomalous-geo-parse-failed = Historical geo coordinate parse failed (key={$arg0}, value={$arg1})
 firewall-anomalous-distance-exceeded = anomalous: user {$arg0} from {$arg1}, {$arg2}
@@ -1025,16 +979,12 @@ firewall-rate-limit-no-tenant-id = RateLimit scope=Tenant but ctx.tenant_id is N
 firewall-user-locked-permanent = user-lockout: user {$arg0} has been permanently locked
 firewall-user-locked-temporary = user-lockout: user {$arg0} has been temporarily locked until {$arg1}
 
-# ============================================================================
 # Account module messages (i18n migration)
-# ============================================================================
 account-totp-parse-failed = TOTP secret_data parse failed (expected JSON with secret/step/digits fields): {$arg0}
 account-disable-service-colon = service must not contain ':' (to avoid key injection): {$arg0}
 account-disable-login-id-colon = login_id must not contain ':' (to avoid key injection): {$arg0}
 
-# ============================================================================
 # Protocol module messages (i18n migration)
-# ============================================================================
 oidc-algorithm-unsupported = OidcHandler only supports HS256/HS384/HS512, current algorithm not supported: {$arg0}
 oidc-iss-mismatch = OIDC iss mismatch: token issuer does not match expected
 oidc-aud-mismatch = OIDC aud mismatch: token audience does not include this client's client_id
@@ -1042,16 +992,12 @@ temp-prefix-colon = prefix must not contain ':'
 temp-ttl-invalid = ttl_seconds must be > 0
 sso-secret-empty = SSO secret must not be empty (per security audit M5: ticket must be signed)
 
-# ============================================================================
 # Server / HTTP layer messages (i18n migration)
-# ============================================================================
 server-invalid-api-key = Invalid API Key
 server-prometheus-encode-failed = Prometheus metrics encoding failed
 server-internal-api-key-missing = internal_api_key not configured, internal API will reject all requests. Please set a non-empty value via with_internal_api_key()
 
-# ============================================================================
 # Remaining firewall / account / OIDC / OTel messages (i18n migration)
-# ============================================================================
 firewall-anomalous-need-login-id = AnomalousLogin requires login_id but ctx.login_id is None
 firewall-ratelimit-user-none = RateLimit scope=User but ctx.login_id is None
 firewall-ratelimit-tenant-none = RateLimit scope=Tenant but ctx.tenant_id is None
@@ -1061,9 +1007,7 @@ oidc-timeout-negative = timeout must not be negative: {$arg0}
 otel-exporter-failed = OTLP exporter construction failed: {$arg0}
 otel-provider-failed = Tracer provider setup failed: {$arg0}
 
-# ============================================================================
 # Gap report leftovers (config-load / dao-repo / cache / authflow / annotation)
-# ============================================================================
 config-rate-limit-backend-unsupported = GARRISON_RATE_LIMIT_BACKEND unsupported value '{$arg0}', only 'memory' or 'redis'
 dao-user-device-limit-exceeded = user ({$arg0}) device limit reached, max {$arg1}
 cache-l1-ttl-must-positive = UserCacheService::new: l1_ttl_secs must be > 0
@@ -1073,27 +1017,25 @@ annotation-parse-failed = cannot parse annotation from string (data variants req
 stp-stateless-jwt-requires-revocation = token_style=jwt with Stateless mode requires enable_jwt_revocation (option 1: set enable_jwt_revocation=true; option 2: use JwtMode::Mixin; option 3: set allow_stateless_jwt_no_revocation=true)
 config-unknown-token-style-jwt = unknown token_style: jwt (requires protocol-jwt feature)
 
-# ============================================================================
 # i18n audit 2026-09: key:: convention keys missing from FTL (P2 fill-up)
-# ============================================================================
 
-# --- apikey ---
+# apikey
 apikey-namespace-reserved = API key namespace '{$arg0}' is reserved
 apikey-scope-not-allowed = API key scope '{$arg0}' is not allowed
 
-# --- authflow ---
+# authflow
 authflow-unknown-custom-condition = unknown custom condition: {$arg0}
 ip-whitelist-parse-failed = IP whitelist entry '{$arg0}' parse failed: {$arg1}
 
-# --- limiteron circuit breaker ---
+# limiteron circuit breaker
 circuit-open = circuit breaker open: {$arg0}
 circuit-limited = request rejected by circuit breaker (limited): {$arg0}
 circuit-breaker = circuit breaker error: {$arg0}
 
-# --- core token ---
+# core token
 core-simple-token-no-sep = Simple token format error: missing unit separator
 
-# --- credit metering ---
+# credit metering
 credit-config-invalid = credit config invalid: {$arg0}
 credit-dao = credit DAO error: {$arg0}
 credit-get-consumed = credit get consumed failed: {$arg0}
@@ -1116,7 +1058,7 @@ credit-meta-cycle-param-parse-failed = credit meta cycle param parse failed: {$a
 credit-meta-unknown-cycle-type = credit meta unknown cycle type: {$arg0}, {$arg1}
 credit-window-start-parse-failed = credit window start parse failed: {$arg0}, {$arg1}
 
-# --- dao ---
+# dao
 dao-role-hierarchy-add-edge-connection = role hierarchy add edge connection failed: {$arg0}
 dao-role-hierarchy-delete-edge-session = role hierarchy delete edge session failed: {$arg0}
 dao-role-hierarchy-delete-edge-connection = role hierarchy delete edge connection failed: {$arg0}
@@ -1140,13 +1082,13 @@ dao-oxcache-cas-set-sync = oxcache CAS set (sync) failed: {$arg0}
 dao-oxcache-eval-lua = oxcache eval_lua failed: {$arg0}
 dao-oxcache-sync-api-incompatible-with-redis = _sync API (set_if_absent/incr/decr/get_and_delete) is incompatible with the Redis L2 backend; use the async APIs or remove with_redis_config
 
-# --- password policy / HIBP ---
+# password policy / HIBP
 hibp-client-build-failed = HIBP client build failed: {$arg0}
 hibp-http-status = HIBP request returned unexpected status: {$arg0}, {$arg1}
 hibp-request-failed = HIBP request failed: {$arg0}, {$arg1}
 hibp-body-read-failed = HIBP response body read failed: {$arg0}
 
-# --- jwt ---
+# jwt
 jwt-secret-too-short = jwt secret too short: {$arg0}, {$arg1}
 jwt-refresh-login-id-parse-failed = jwt refresh login id parse failed: {$arg0}, {$arg1}
 jwt-refresh-cleanup-get-session = jwt refresh cleanup: get session failed: {$arg0}
@@ -1154,7 +1096,7 @@ jwt-refresh-cleanup-get-conn = jwt refresh cleanup: get connection failed: {$arg
 jwt-refresh-cleanup-delete = jwt refresh cleanup: delete failed: {$arg0}
 jwt-revoked = JWT has been revoked: {$arg0}
 
-# --- limiteron ---
+# limiteron
 limiteron-ban-history-format-error = limiteron ban history format error: {$arg0}, {$arg1}
 limiteron-ban-history-parse-ban-times = limiteron ban history parse ban_times failed: {$arg0}, {$arg1}
 limiteron-ban-history-parse-last-banned = limiteron ban history parse last_banned failed: {$arg0}, {$arg1}
@@ -1169,15 +1111,15 @@ limiteron-quota-window-end-parse-failed = limiteron quota window end parse faile
 limiteron-quota-window-start-datetime-failed = limiteron quota window start datetime failed: {$arg0}
 limiteron-quota-window-end-datetime-failed = limiteron quota window end datetime failed: {$arg0}
 
-# --- manager ---
+# manager
 manager-active-timeout-overflow = active_timeout overflowed u64: {$arg0}
 
-# --- secure ---
+# secure
 secure-httpbasic-unsupported-scheme = HTTP Basic: unsupported auth scheme: {$arg0}
 secure-httpdigest-unsupported-scheme = HTTP Digest: unsupported auth scheme: {$arg0}
 secure-http-digest-missing-uri = HTTP Digest: missing uri parameter
 
-# --- sso / saml ---
+# sso / saml
 sso-oidc-body-exceeds-limit = SSO OIDC response body exceeds size limit: {$arg0}
 saml-response-too-large = SAML response too large: {$arg0}, {$arg1}
 sso-saml-assertion-replay = SAML assertion replay detected: {$arg0}
@@ -1191,13 +1133,13 @@ sso-saml-signature-value-decode = SAML signature value decode failed: {$arg0}
 sso-saml-signature-bytes-decode = SAML signature bytes decode failed: {$arg0}
 sso-saml-idp-public-key-parse-failed = SAML IdP public key parse failed: {$arg0}, {$arg1}
 
-# --- stp ---
+# stp
 stp-login-ip-blocked = login blocked: IP {$arg0} is banned
 stp-check-login-ip-blocked = check-login blocked: IP {$arg0} is banned
 stp-apikey-ip-blocked = apikey request blocked: IP {$arg0} is banned
 stp-simple-token-style-requires-secure-simple-token-feature = token_style=simple requires the secure-simple-token feature
 
-# --- strategy / firewall ---
+# strategy / firewall
 strategy-firewall-bruteforce-reason = brute force ban reason: attempts {$arg0} exceeds max {$arg1}
 strategy-firewall-bruteforce-locked = IP {$arg0} is locked due to brute force
 strategy-firewall-bruteforce-blocked = brute force blocked: IP {$arg0}, {$arg1}
@@ -1207,16 +1149,12 @@ strategy-ddos-global-blocked = DDoS global rate limit exceeded ({$arg0} req/s)
 strategy-ddos-ip-blocked = DDoS per-IP rate limit exceeded for {$arg0} ({$arg1} req/s)
 strategy-analyzer-shutdown-timeout = anomalous analyzer shutdown timeout: {$arg0}
 
-# ============================================================================
 # i18n audit 2026-09: loc! keys that referenced missing FTL messages (P3)
-# ============================================================================
 alipay-response-missing-oauth-token-response = alipay response missing alipay_system_oauth_token_response field
 alipay-response-missing-access-token = alipay response missing access_token field
 session-kickout-password-changed = password changed
 
-# ============================================================================
 # i18n audit 2026-09: raw English error messages migrated to key:: convention (P1)
-# ============================================================================
 abac-engine-already-initialized = AbacEngine already initialized
 backend-unknown-error = Unknown error
 config-confers-build-failed = confers build error: {$arg0}
@@ -1263,7 +1201,7 @@ stp-backend-already-init = Backend already initialized
 stp-backend-not-init = Backend not initialized. Call init_backend() first.
 testing-json-parse-error = JSON parse error: {$arg0}
 
-# --- discovered during P1 migration (extra plain-English sites) ---
+# discovered during P1 migration (extra plain-English sites)
 stp-unsupported-hash-format = unsupported hash format
 ctx-auth-header-empty = empty Authorization header
 ctx-tenant-jwt-verify-failed = JWT verify failed: {$arg0}
@@ -1284,9 +1222,7 @@ invitation-ttl-invalid = invalid TTL value for invitation
 invitation-max-uses-invalid = invalid max_uses value for invitation
 invitation-count-invalid = invalid batch count for invitation
 invitation-serialize-failed = invitation serialization failed: {$arg0}
-# ============================================================================
 # OAuth2 token endpoint errors (0.9.0 i18n sweep: RFC error-code prefixes kept)
-# ============================================================================
 
 oauth2-rate-limited-client = rate_limited: client requests too frequent, please retry later
 oauth2-client-id-missing = invalid_client: client_id missing (provided neither in Authorization header nor body)
@@ -1314,9 +1250,7 @@ oauth2-rate-limited-user = rate_limited: user requests too frequent, please retr
 oauth2-account-temp-locked = rate_limited: account temporarily locked, please retry later
 oauth2-invalid-credentials = invalid_grant: invalid username or password
 
-# ============================================================================
 # ABAC validation errors (0.9.0 i18n sweep)
-# ============================================================================
 
 abac-expr-too-long = abac_expr exceeds {$max} characters (DoS protection)
 abac-expr-illegal-chars = abac_expr contains illegal characters `{"{"};{"}"}` (possible policy injection)
@@ -1324,9 +1258,7 @@ abac-expr-policy-forbidden = abac_expr must not declare permit/forbid policies
 abac-expr-must-reference-entity = abac_expr must reference principal/resource/action (plain literals rejected)
 abac-engine-not-initialized = AbacEngine not initialized; ABAC check failed (fail-closed)
 
-# ============================================================================
 # Backend / macros / social registry / SDForge (0.9.0 i18n sweep)
-# ============================================================================
 
 backend-remote-base-url-invalid-scheme = invalid base_url scheme: {$arg0} (must be http:// or https://)
 check-login-returned-false = Not logged in (check_login returned false)
@@ -1342,9 +1274,7 @@ pwdreset-mail-body = You requested a password reset. Use the one-time token belo
 # OAuth2 authorize/resume endpoint (0.9.0 i18n sweep)
 oauth2-resume-ticket-missing = missing ticket
 
-# ============================================================================
 # Observability log messages (tracing) internationalization
-# ============================================================================
 
 logs-noop-sms-sender-send-code = NoopSmsSender sending verification code (code omitted)
 logs-csrf-set-cookie-build-failed = CSRF Set-Cookie build failed; skipped
@@ -1353,36 +1283,34 @@ logs-cors-feature-disabled = frontend_separation CORS echoes any Origin (the web
 logs-cors-origin-not-allowed = Origin did not match the CORS allowlist; skipping Allow-Origin echo
 logs-sso-oidc-jwks-fetch-retry = sso-oidc-jwks-fetch: transport-layer error, retrying in 100ms: {$error}
 
-# ============================================================================
 # Log messages (tracing) i18n — r2 completion
-# ============================================================================
 # Completed keys: call sites were migrated to translate_detail but the keys were
 # missing from both bundles, so logs printed the raw key (interrupted r2 sweep).
 
-# --- OAuth2 back-channel logout deliverer (backchannel-logout) ---
+# OAuth2 back-channel logout deliverer (backchannel-logout)
 logs-backchannel-logout-drain-complete = backchannel-logout drain completed
 logs-backchannel-logout-drain-failed = backchannel-logout drain failed (retrying next round): {$error}
 logs-backchannel-logout-max-ttl-retired = backchannel-logout delivery exceeded MaxTtl; marked failed and retired (no further delivery)
 logs-backchannel-logout-delivery-retried = backchannel-logout delivery failed; counted as a retry
 
-# --- Renewed-token response writing (router) ---
+# Renewed-token response writing (router)
 logs-renewed-token-header-name-invalid = failed to write the renewed token into the response header: token_name is invalid, skipped
 logs-renewed-token-header-value-invalid = failed to write the renewed token into the response header: the token contains invalid characters, skipped
 logs-renewed-token-cookie-value-invalid = failed to write the renewed token into Set-Cookie: the cookie string contains invalid characters, skipped
 logs-renewed-token-cookie-build-rejected = failed to write the renewed token into Set-Cookie: rejected by build-site validation, skipped
 
-# --- sdforge internal routes (server) ---
+# sdforge internal routes (server)
 logs-sdforge-token-info-cross-user = get_token_info ownership check failed: cross-user access
 logs-sdforge-session-cross-user = get_session ownership check failed: cross-user access
 
-# --- Security alerts (strategy::alert) ---
+# Security alerts (strategy::alert)
 logs-alert-anomaly-login = anomalous login alert
 logs-alert-new-device-login = new device login alert
 logs-alert-disable-triggered = ban triggered alert
 logs-alert-privilege-escalation = privilege escalation alert
 logs-alert-sensitive-operation = sensitive operation alert
 
-# --- limiteron ban adapter ---
+# limiteron ban adapter
 logs-limiteron-ban-record-parts-mismatch = limiteron-ban: ban record segment count mismatch; treated as not banned (fail-open)
 logs-limiteron-ban-duration-parse-failed = limiteron-ban: failed to parse the ban record duration field; treated as not banned (fail-open)
 logs-limiteron-ban-expires-at-parse-failed = limiteron-ban: failed to parse the ban record expires_at_ts field; treated as not banned (fail-open)
@@ -1393,7 +1321,7 @@ logs-limiteron-ban-history-key-write-failed = limiteron-ban: failed to write the
 logs-limiteron-ban-cleanup-unimplemented = limiteron-ban: cleanup_expired_bans is not implemented (GarrisonDao has no iter API) and returns 0 — do not rely on this method to purge expired bans (TTL expiry plus the is_banned check cover it)
 logs-limiteron-ban-list-unimplemented = limiteron-ban: list_bans is not implemented (GarrisonDao has no iter API) and returns an empty list — do not rely on this method for ban audit/enumeration (false negatives)
 
-# --- Credit metering (multi-tenant-credit-metering) ---
+# Credit metering (multi-tenant-credit-metering)
 logs-credit-concurrent-over-limit-rollback = credit: concurrent interleaving pushed the count over the limit; rolling back this consumption
 logs-credit-rolling-window-start-delete-failed = credit: failed to delete window_start after a Rolling cycle reset (best-effort; the residual key is covered by TTL expiry or the next reset)
 logs-credit-decr-rollback-failed = credit: failed to roll back decr (best-effort; denial semantics are unaffected)
@@ -1404,30 +1332,26 @@ logs-credit-throttle-write-failed = credit: activity flush write failed (the ent
 logs-credit-throttle-write-timeout = credit: activity flush write timed out (the entry has been cleared; the activity is re-enqueued outside the window)
 logs-credit-throttle-window-dropped = credit: dropping the in-window activity flush summary (dropped = this flush is skipped; rewritten outside the window)
 
-# --- Metrics registration (account / credit / observability) ---
+# Metrics registration (account / credit / observability)
 logs-metrics-already-registered = {$arg0} is already registered in the prometheus default registry (duplicate new() or mixed use with register_to); returning an unregistered local instance — the registered instance is unaffected
 
-# --- Web-framework integration guards ---
+# Web-framework integration guards
 logs-actix-config-not-registered = GarrisonConfig is not registered as actix app_data (web::Data<Arc<GarrisonConfig>>); the auth extractor falls back to default_config and security parameters may be inconsistent — register it explicitly via App::app_data(web::Data::new(Arc::new(config)))
 logs-actix-tenant-header-unverified = TenantContext extracts the tenant from the client-controlled X-Tenant-Id header without comparing it against the authenticated principal: any caller can declare any tenant ID. This extractor only performs format validation (numeric parsing) and does not authorize principal-to-tenant ownership. Do not rely on this header value for tenant isolation — use a server-trusted source such as ClaimTenantResolver (token claim), or validate the principal-to-tenant relation in the business layer
 logs-backend-remote-plaintext-http = BackendRemote base_url uses plaintext http://; the X-API-Key may be eavesdropped on the network path — use https:// in production
 logs-router-invalid-path-protected = GarrisonRouter::route_protected rejected an invalid path (must be non-empty and start with '/'); this route will not be protected by authentication
 logs-router-duplicate-path-override = GarrisonRouter::route_protected registered the same path twice; the previous annotation is overridden (last-wins)
 
-# --- Auth server bootstrap config (server::config) ---
+# Auth server bootstrap config (server::config)
 logs-server-internal-api-key-too-short = server-internal-api-key-too-short: the internal API key is shorter than the minimum; 1.0 will turn this into a rejection — rotate to a key of at least 32 bytes
 logs-server-external-login-unacknowledged = server-external-login-unacknowledged: the external login endpoint is exposed without acknowledgement; 1.0 will turn this into a rejection — pass the acknowledgement string external_login_ack
 logs-server-wildcard-bind-default = server-wildcard-bind-default: unspecified wildcard binds become loopback in 1.0; for container deployments set with_external_bind(0.0.0.0) / with_internal_bind(0.0.0.0) explicitly
 logs-config-cors-wildcard-without-credentials = config security rules: cors allowed_origins=["*"] without allow_credentials — any origin can read the responses; deployments exposing sensitive data should switch to an explicit origin allowlist
 
-# ============================================================================
 # CLI help (garrison-cli, cli-ops feature)
-# ============================================================================
 cli-about = Garrison operations tool
 
-# ============================================================================
 # Data erasure residual guidance (data-erasure)
-# ============================================================================
 compliance-erasure-residual-ip-artifacts = Other protection records linked to the IP (GeoIP cache, rate-limit window keys) expire naturally via TTL; extend this method if immediate erasure is required
 compliance-erasure-residual-api-key = API keys: owned by the subject and carrying business-authorization semantics — revoke them after querying by owner through ApiKeyRepository (see the protocol-apikey document)
 compliance-erasure-residual-audit-log = Audit logs: compliance retention outranks the right to erasure (PIPL Art. 47 / GDPR Art. 17(3)(b) legal-obligation exception); destroyed per the retention policy on expiry

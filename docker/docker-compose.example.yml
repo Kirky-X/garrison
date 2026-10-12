@@ -65,7 +65,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # === Redis（可选，仅限流后端生效）===
+  # Redis（可选，仅限流后端生效）
   # ⚠️ 接线范围如实说明，勿照抄本块假设：
   #   - Redis 仅在 rate-limit-redis feature 面生效：需构建时传
   #     args: { FEATURES: "auth-server,cache-memory,server-health-check,tracing-log,rate-limit-redis" }

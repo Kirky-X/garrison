@@ -49,9 +49,7 @@ pub fn gather_metrics(registry: &garrison::observability::prometheus::Registry) 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison 可观测性配置示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. GarrisonMetrics 创建 + 指标记录
-    // ----------------------------------------------------------------
     println!("[Metrics] GarrisonMetrics::register_to(&registry):");
     let (metrics, registry) = create_metrics();
     println!("    创建 GarrisonMetrics 实例（注册到自定义 registry）");
@@ -68,9 +66,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    record_role_query(false)          → 角色查询拒绝 +1");
     println!();
 
-    // ----------------------------------------------------------------
     // 2. gather 收集 Prometheus 文本输出
-    // ----------------------------------------------------------------
     println!("[gather] 收集 Prometheus 文本格式输出:");
     let output = gather_metrics(&registry);
     for line in output.lines() {
@@ -99,17 +95,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    验证：四个指标均已在输出中 ✓");
     println!();
 
-    // ----------------------------------------------------------------
     // 3. tracing_subscriber JSON 日志（幂等）
-    // ----------------------------------------------------------------
     println!("[Logs] tracing_subscriber::fmt().json():");
     tracing_subscriber::fmt().json().try_init().ok();
     println!("    JSON 日志已初始化（幂等，重复调用安全）");
     println!();
 
-    // ----------------------------------------------------------------
     // 4. init_otlp_tracing（全局一次性）
-    // ----------------------------------------------------------------
     println!("[Traces] init_otlp_tracing(endpoint):");
     let otlp_endpoint = "http://localhost:4317";
     println!("    endpoint: {}", otlp_endpoint);

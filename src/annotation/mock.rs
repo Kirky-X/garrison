@@ -14,9 +14,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
-// ------------------------------------------------------------------------
 // MockDao（复用 manager 测试的 HashMap + Instant 模拟 TTL）
-// ------------------------------------------------------------------------
 
 /// 测试用 mock DAO，模拟 TTL 行为。
 pub struct MockDao {
@@ -96,9 +94,7 @@ impl GarrisonDao for MockDao {
     crate::atomic_test_fallback!();
 }
 
-// ------------------------------------------------------------------------
 // MockInterface（权限/角色数据回调）
-// ------------------------------------------------------------------------
 
 /// 测试用 mock GarrisonInterface，模拟权限/角色数据。
 pub struct MockInterface {
@@ -156,7 +152,7 @@ mod mock_dao_coverage_tests {
         let dao = MockDao::new();
         dao.set("k1", "v1", 60).await.unwrap();
 
-        // ---- atomic_test_fallback! 方法（组合回退语义）----
+        // atomic_test_fallback! 方法（组合回退语义）
         assert!(dao.set_if_absent("a1", "v1", 60).await.unwrap());
         assert_eq!(
             dao.get_and_delete("a1").await.unwrap().as_deref(),
@@ -172,7 +168,7 @@ mod mock_dao_coverage_tests {
             .unwrap());
         assert_eq!(dao.get("k2").await.unwrap().as_deref(), Some("v2"));
 
-        // ---- trait 默认方法：MockDao 未重写 → fail-closed NotImplemented ----
+        // trait 默认方法：MockDao 未重写 → fail-closed NotImplemented
         dao.set_permanent("p1", "val").await.unwrap();
         assert_eq!(dao.get("p1").await.unwrap().as_deref(), Some("val"));
         assert!(dao.get_with_ttl("k1").await.unwrap().is_none());

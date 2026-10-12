@@ -155,9 +155,7 @@ impl SsoChannel for CountingChannel {
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison SSO Server 示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 创建 DefaultSsoServer（注入 DAO + TTL + 自定义 converter + channel）
-    // ----------------------------------------------------------------
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let channel = Arc::new(CountingChannel {
         count: AtomicUsize::new(0),
@@ -173,9 +171,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("    converter  = OffsetConverter（login_id + 10000 = center_id）");
     println!("    channel    = CountingChannel\n");
 
-    // ----------------------------------------------------------------
     // 2. issue_ticket + validate_ticket 往返（验证 center_id 转换）
-    // ----------------------------------------------------------------
     let login_id = "1001";
     let client_id: i64 = 200;
     let ticket = server.issue_ticket(login_id, client_id).await?;
@@ -192,18 +188,14 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         "validate_ticket 应返回原始 login_id（经 converter 转回）"
     );
 
-    // ----------------------------------------------------------------
     // 3. 验证 ticket 一次性语义
-    // ----------------------------------------------------------------
     match server.validate_ticket(&ticket, client_id).await {
         Ok(_) => println!("[一次性] 不应再次校验通过"),
         Err(e) => println!("[一次性] 重复校验失败（预期）：{}", e),
     }
 
-    // ----------------------------------------------------------------
     // 4. SsoServer 与 SsoClient 通过共享 DAO 间接通信（此场景用 identity converter 的
     // server：SsoClient 不持有 CenterIdConverter，server 端不做 ID 偏移以保证往返一致）
-    // ----------------------------------------------------------------
     println!("\n[共享 DAO] SsoServer 签发的 ticket 由 SsoClient 校验:");
     let identity_server =
         DefaultSsoServer::new(dao.clone(), "test-sso-secret-key-for-unit-tests-01")?;
@@ -229,9 +221,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert_eq!(server_validated, login_id);
 
-    // ----------------------------------------------------------------
     // 5. 自定义 SsoChannel 计数 push 调用
-    // ----------------------------------------------------------------
     println!("\n[Channel] CountingChannel 计数 push 调用:");
     server.push_message(login_id, "login notification").await?;
     server.push_message(login_id, "permission change").await?;
@@ -242,10 +232,8 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     assert_eq!(push_count, 2);
 
-    // ----------------------------------------------------------------
     // 6. 订阅侧验签消费：pub/sub 通道无传输层认证、原文不可信；push_message 已自动
     // 封装 HMAC-SHA256 信封，订阅侧必须经 verify_sso_message 验签取回 payload。
-    // ----------------------------------------------------------------
     println!("\n[验签] 订阅侧 verify_sso_message 消费信封:");
     let secret = "test-sso-secret-key-for-unit-tests-01";
     let received = channel.messages.lock().clone();
@@ -272,9 +260,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Ok(payload) => panic!("未封装的裸消息应被拒，实际取回: {}", payload),
     }
 
-    // ----------------------------------------------------------------
     // 7. 销毁 ticket（幂等）
-    // ----------------------------------------------------------------
     let ticket3 = server.issue_ticket(login_id, client_id).await?;
     server.destroy_ticket(&ticket3).await?;
     server.destroy_ticket(&ticket3).await?; // 幂等

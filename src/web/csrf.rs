@@ -325,9 +325,7 @@ mod tests {
     use std::sync::Arc;
     use tower::ServiceExt;
 
-    // ----------------------------------------------------------------
     // 辅助函数
-    // ----------------------------------------------------------------
 
     fn make_app(config: CsrfConfig) -> Router {
         Router::new()

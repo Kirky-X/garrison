@@ -461,7 +461,7 @@ pub fn oauth2_internal_router(state: Arc<OAuth2State>) -> Router {
         .with_state(state)
 }
 
-// === HTTP 端点函数（薄包装，调用 handler） ===
+// HTTP 端点函数（薄包装，调用 handler）
 
 /// 请求体大小上限（防 DoS：OAuth2 端点参数均为短字符串，64KB 足够）。
 const OAUTH2_BODY_LIMIT: usize = 64 * 1024;
@@ -922,7 +922,7 @@ mod tests {
         .unwrap()
     }
 
-    // === OAuth2State 构造测试 ===
+    // OAuth2State 构造测试
 
     #[test]
     fn test_oauth2_state_construction() {
@@ -936,7 +936,7 @@ mod tests {
         assert_eq!(Arc::strong_count(&state.introspect_handler), 1);
     }
 
-    // === 路由存在性测试 ===
+    // 路由存在性测试
 
     #[tokio::test]
     async fn test_oauth2_external_router_has_authorize_route() {
@@ -1044,7 +1044,7 @@ mod tests {
         );
     }
 
-    // === 端点行为测试 ===
+    // 端点行为测试
 
     #[tokio::test]
     async fn test_authorize_endpoint_redirects_when_not_logged_in() {
@@ -1274,7 +1274,7 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::NO_CONTENT);
     }
 
-    // === /token 端点速率限制测试（B5）===
+    // /token 端点速率限制测试（B5）
 
     /// /token 端点超速率限制时返回 429 Too Many Requests（RFC 6585 §4）。
     ///
@@ -1426,7 +1426,7 @@ mod tests {
         assert_eq!(passthrough.retry_after_secs(), None);
     }
 
-    // === 表单格式（RFC 6749 §3.2）+ 错误响应 no-store 测试 ===
+    // 表单格式（RFC 6749 §3.2）+ 错误响应 no-store 测试
 
     /// token 端点接受 application/x-www-form-urlencoded 请求体（RFC 6749 §3.2）。
     #[tokio::test]

@@ -19,9 +19,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Mutex;
 
-// ============================================================================
 // 测试用 Mock DAO（用于存储 nonce，防重放）
-// ============================================================================
 
 struct MockDao {
     data: Mutex<HashMap<String, String>>,
@@ -82,9 +80,7 @@ fn now_ts() -> i64 {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison API 签名协议示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构建 SignHandler
-    // ----------------------------------------------------------------
     // 签名算法：
     // sign = base64(hmac_sha256(hkdf_key, "{method}\n{path}\n{timestamp}\n{nonce}\n{body_sha256}"))
     // 其中 hkdf_key = HKDF-SHA256(app_secret, salt=app_key, info="garrison-sign-v2")
@@ -96,9 +92,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    app_key          = {}", handler.app_key());
     println!("    timestamp_window = {}s\n", handler.timestamp_window());
 
-    // ----------------------------------------------------------------
     // 2. sign 生成签名
-    // ----------------------------------------------------------------
     let method = "POST";
     let path = "/api/v1/users";
     let timestamp = now_ts();
@@ -118,9 +112,7 @@ pub async fn run() -> GarrisonResult<()> {
     );
     assert_eq!(signature.len(), 44); // 32 字节 → 44 字符 Base64（含 padding）
 
-    // ----------------------------------------------------------------
     // 3. validate 校验签名（成功）
-    // ----------------------------------------------------------------
     let result = handler
         .validate(method, path, timestamp, nonce, body_sha256, &signature)
         .await;
@@ -128,9 +120,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(result.is_ok());
     println!("    结果 = Ok(())（签名匹配 + 时间戳在窗口内 + nonce 未使用）✓\n");
 
-    // ----------------------------------------------------------------
     // 4. nonce 重放被拒绝
-    // ----------------------------------------------------------------
     // 同一 nonce 再次校验 → InvalidToken 错误
     let replay = handler
         .validate(method, path, timestamp, nonce, body_sha256, &signature)
@@ -144,9 +134,7 @@ pub async fn run() -> GarrisonResult<()> {
         other => panic!("期望 InvalidToken，实际: {:?}", other),
     }
 
-    // ----------------------------------------------------------------
     // 5. 签名不匹配被拒绝
-    // ----------------------------------------------------------------
     let forged = handler
         .validate(
             method,
@@ -161,9 +149,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(forged.is_err());
     println!("    伪造签名 → 被拒绝 ✓\n");
 
-    // ----------------------------------------------------------------
     // 6. 时间戳超出窗口被拒绝
-    // ----------------------------------------------------------------
     let old_ts = now_ts() - 600; // 超过 300 秒窗口
     let old_sig = handler.sign(method, path, old_ts, "nonce-old", body_sha256);
     let expired = handler

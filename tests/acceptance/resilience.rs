@@ -52,9 +52,7 @@ macro_rules! assert_err {
 /// JWT 无状态降级场景的共享 secret（≥32 字节，满足 HS256 强度校验）。
 const RES_JWT_SECRET: &str = "resilience-stateless-jwt-secret-0123456789abcdef";
 
-// ------------------------------------------------------------------------
 // oxcache 故障时 JWT 无状态降级
-// ------------------------------------------------------------------------
 
 /// FailingDao：所有操作返回 `Err(GarrisonError::Dao)`（模拟 oxcache 故障）。
 ///
@@ -198,9 +196,7 @@ async fn acc_res_001_oxcache_failure_jwt_stateless_token_still_verifiable() {
     .await;
 }
 
-// ------------------------------------------------------------------------
 // 配置错误 fail-fast
-// ------------------------------------------------------------------------
 
 /// （异常）：`GarrisonConfig::validate()` 对非法值 fail-fast——
 /// 负/零 timeout、非法 token_style、空 jwt_secret、非法 jwt_algorithm、
@@ -307,10 +303,8 @@ async fn acc_res_003_builder_build_fail_fast() {
     );
 }
 
-// ------------------------------------------------------------------------
 // auth-server 内网 API Key / 限流（镜像
 // tests/auth_server_integration.rs 的 InMemoryAuthBackend 双端口装配）
-// ------------------------------------------------------------------------
 
 /// 测试服务器内嵌的内存 AuthBackend（in-memory token 表，镜像
 /// tests/auth_server_integration.rs 的已知良好装配）——真实 GarrisonAuthServer
@@ -583,9 +577,7 @@ async fn acc_res_005_auth_server_rate_limit_returns_429() {
     );
 }
 
-// ------------------------------------------------------------------------
 // BackendRemote 错误传播 / 超时 / 熔断打开与恢复
-// ------------------------------------------------------------------------
 
 /// （异常）：BackendRemote 上游错误显性传播——真实 GarrisonAuthServer 拒绝
 /// 错误的内网 API Key（401 fail-closed），`BackendRemote` 将上游非 2xx 映射为
@@ -781,10 +773,8 @@ async fn acc_res_008_backend_remote_circuit_breaker_opens_and_recovers() {
         .expect("关闭后请求应正常");
 }
 
-// ============================================================================
 // server 层输入边界 / 路径过滤 / 健康与指标场景的基础设施
 // （以下两个 server 助手供 security.rs pentest 场景复用）。
-// ============================================================================
 
 /// 构造缺省租户上下文 HTTP 客户端（`X-Tenant-Id: 0`，`tenant-isolation` 启用时）。
 ///

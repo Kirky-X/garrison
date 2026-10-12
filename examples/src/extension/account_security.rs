@@ -14,9 +14,7 @@
 
 use garrison::error::GarrisonResult;
 
-// ============================================================================
 // 1. 密码策略引擎（account-policy）
-// ============================================================================
 
 #[cfg(feature = "account-policy")]
 fn demo_password_policy() {
@@ -88,9 +86,7 @@ fn demo_password_policy() {
     println!("[1] 密码策略引擎示例跳过（需启用 account-policy feature）\n");
 }
 
-// ============================================================================
 // 2. 账号锁定配置（account-lockout）
-// ============================================================================
 
 #[cfg(feature = "account-lockout")]
 fn demo_account_lockout() {
@@ -121,9 +117,7 @@ fn demo_account_lockout() {
     println!("[2] 账号锁定配置示例跳过（需启用 account-lockout feature）\n");
 }
 
-// ============================================================================
 // 3. 认证流程 DSL（account-authflow）
-// ============================================================================
 
 #[cfg(feature = "account-authflow")]
 fn demo_auth_flow() {

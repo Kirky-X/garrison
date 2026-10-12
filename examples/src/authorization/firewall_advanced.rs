@@ -12,9 +12,7 @@
 
 use garrison::error::GarrisonResult;
 
-// ============================================================================
 // 1. 异地登录检测（firewall-anomalous）
-// ============================================================================
 
 #[cfg(feature = "firewall-anomalous")]
 fn demo_anomalous_detection() {
@@ -41,9 +39,7 @@ fn demo_anomalous_detection() {
     println!("[1] 异地登录检测示例跳过（需启用 firewall-anomalous feature）\n");
 }
 
-// ============================================================================
 // 2. GeoIP 地理位置拦截（firewall-geoip）
-// ============================================================================
 
 #[cfg(feature = "firewall-geoip")]
 fn demo_geoip_blocking() {
@@ -80,9 +76,7 @@ fn demo_geoip_blocking() {
     println!("[2] GeoIP 地理位置拦截示例跳过（需启用 firewall-geoip feature）\n");
 }
 
-// ============================================================================
 // 3. WAF 请求内容校验（firewall-waf）
-// ============================================================================
 
 #[cfg(feature = "firewall-waf")]
 fn demo_waf_inspection() {

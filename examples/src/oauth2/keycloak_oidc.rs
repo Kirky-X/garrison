@@ -20,9 +20,7 @@ use garrison::{KeycloakConfig, KeycloakProvider};
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison Keycloak OIDC RP 示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构造 KeycloakConfig
-    // ----------------------------------------------------------------
     println!("[1] 构造 KeycloakConfig:");
     // 占位值，生产环境必须从环境变量/KMS 加载
     let kc_config = KeycloakConfig {
@@ -39,9 +37,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    redirect_uri: {}", kc_config.redirect_uri);
     println!();
 
-    // ----------------------------------------------------------------
     // 2. 构造 KeycloakProvider
-    // ----------------------------------------------------------------
     println!("[2] 构造 KeycloakProvider:");
     let _provider = KeycloakProvider::new(kc_config)?;
     println!("    ✓ KeycloakProvider 已构造");
@@ -51,9 +47,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    • verify_id_token(id_token) → 验证 id_token 签名 + claims");
     println!();
 
-    // ----------------------------------------------------------------
     // 3. KeycloakClaims 结构
-    // ----------------------------------------------------------------
     println!("[3] KeycloakClaims（id_token 中的 claims）:");
     println!("    • sub: 用户唯一标识");
     println!("    • exp: token 过期时间");
@@ -62,9 +56,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    • tenant_id: 租户 ID（Garrison 扩展 claim）");
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 与其他 OIDC Provider 的关系
-    // ----------------------------------------------------------------
     println!("[4] OIDC 集成方式对比:");
     println!("    • KeycloakProvider: 内置 Keycloak OIDC RP（keycloak-oidc feature）");
     println!("    • protocol-oidc: 通用 OIDC id_token 签发/验证（protocol-oidc feature）");

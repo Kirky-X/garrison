@@ -73,7 +73,7 @@ impl Default for CacheHealthCheck {
     }
 }
 
-// -------------------- 快路径：仅 cache-memory（无 cache-redis） --------------------
+// 快路径：仅 cache-memory（无 cache-redis）
 // oxcache 内存后端无网络 I/O，进程存活即缓存可用，跳过探测避免无谓开销。
 #[cfg(all(feature = "cache-memory", not(feature = "cache-redis")))]
 impl HealthCheck for CacheHealthCheck {
@@ -89,7 +89,7 @@ impl HealthCheck for CacheHealthCheck {
     }
 }
 
-// -------------------- 探测路径：cache-redis 启用 --------------------
+// 探测路径：cache-redis 启用
 // cache-redis 经网络连接 Redis，必须真实探测以发现连接断开 / 网络分区；经 `GarrisonManager`
 // 取 dao 句柄执行 `dao.get` 最小查询（不修改 GarrisonDao trait，复用现有查询能力）。
 #[cfg(feature = "cache-redis")]
@@ -153,7 +153,7 @@ impl Default for DbHealthCheck {
     }
 }
 
-// -------------------- 快路径：仅 db-sqlite（无 db-postgres / db-mysql） --------------------
+// 快路径：仅 db-sqlite（无 db-postgres / db-mysql）
 // SQLite 是嵌入式数据库，进程存活即数据库可用，无需探测。
 #[cfg(all(
     feature = "db-sqlite",
@@ -172,7 +172,7 @@ impl HealthCheck for DbHealthCheck {
     }
 }
 
-// -------------------- 探测路径：db-postgres 或 db-mysql 启用 --------------------
+// 探测路径：db-postgres 或 db-mysql 启用
 // PG/MySQL 经网络连接数据库，必须真实探测以发现连接断开 / 池耗尽 / 网络分区；未注入
 // 连接池时返回 `Degraded`（诚实降级，不误报 `Healthy`）。
 #[cfg(any(feature = "db-postgres", feature = "db-mysql"))]

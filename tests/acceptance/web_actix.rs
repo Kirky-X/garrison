@@ -32,9 +32,7 @@ use serial_test::serial;
 #[cfg(feature = "tenant-isolation")]
 use garrison::context::tenant::TenantSource;
 
-// ============================================================================
 // 通用辅助
-// ============================================================================
 
 /// 设置默认 TENANT scope（tenant_id=0）：`tenant-isolation` 启用时权限/角色查询
 /// fail-closed（`ctx-tenant-context-missing`），需进入租户上下文。
@@ -76,9 +74,7 @@ async fn assert_actix_error_aligned<B>(
     assert_eq!(body, err.to_json_body(), "响应体应与 to_json_body() 对齐");
 }
 
-// ============================================================================
 // GarrisonRouter::into_middleware() 矩阵
-// ============================================================================
 
 /// （正常+异常）：middleware 矩阵（`GarrisonRouter::into_middleware()` +
 /// `with_header_tenant()` 生产路径）——
@@ -171,9 +167,7 @@ async fn acc_actx_001_middleware_into_middleware_matrix() {
     .await;
 }
 
-// ============================================================================
 // extractor 矩阵
-// ============================================================================
 
 /// `GarrisonPrincipal` extractor 的 handler：回显当前登录主体。
 async fn actx_principal_handler(principal: GarrisonPrincipal) -> String {
@@ -368,9 +362,7 @@ async fn acc_actx_005_extractor_check_permission_pass_and_403() {
     .await;
 }
 
-// ============================================================================
 // TenantContext extractor（tenant-isolation 门控）
-// ============================================================================
 
 /// `TenantContext` extractor 的 handler：回显租户解析结果。
 #[cfg(feature = "tenant-isolation")]
@@ -468,9 +460,7 @@ async fn acc_actx_007_tenant_context_from_request_value() {
     );
 }
 
-// ============================================================================
 // 三框架一致性（ResponseError vs response_parts/to_json_body）
-// ============================================================================
 
 /// （正常）：`GarrisonError` 经 actix `ResponseError` 的状态码 +
 /// error_code/message body 与 `response_parts()` / `to_json_body()` 对齐——

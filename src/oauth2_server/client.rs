@@ -311,7 +311,7 @@ fn verify_secret(secret: &str, hash_str: &str) -> GarrisonResult<bool> {
 mod tests {
     use super::*;
 
-    // === GrantType 测试 ===
+    // GrantType 测试
 
     #[test]
     fn grant_type_as_str() {
@@ -330,7 +330,7 @@ mod tests {
         assert_eq!(de, gt);
     }
 
-    // === FromStr trait 测试（与项目内 Annotation/DigestAlgorithm 惯例对齐） ===
+    // FromStr trait 测试（与项目内 Annotation/DigestAlgorithm 惯例对齐）
 
     #[test]
     fn grant_type_from_str_parses_all_known_types() {
@@ -379,7 +379,7 @@ mod tests {
         }
     }
 
-    // === OAuth2Client 测试 ===
+    // OAuth2Client 测试
 
     #[test]
     fn new_client_hashes_secret_and_enforces_pkce() {
@@ -466,7 +466,7 @@ mod tests {
         assert!(matches!(err, GarrisonError::InvalidParam(_)));
     }
 
-    // === redirect_uri 白名单测试 ===
+    // redirect_uri 白名单测试
 
     #[test]
     fn is_redirect_uri_allowed_exact_match() {
@@ -512,7 +512,7 @@ mod tests {
         assert!(!client.is_redirect_uri_allowed("http://app.example.com/callback"));
     }
 
-    // === grant_type / scope 校验测试 ===
+    // grant_type / scope 校验测试
 
     #[test]
     fn allows_grant_type() {
@@ -575,7 +575,7 @@ mod tests {
         assert!(!client.allows_scope("admin"));
     }
 
-    // === DaoOAuth2ClientStore 测试 ===
+    // DaoOAuth2ClientStore 测试
 
     use crate::dao::InMemoryDao;
 

@@ -23,7 +23,7 @@ env:
   RUSTFLAGS: "-D warnings"
 
 jobs:
-  # === 基础检查：默认特性（default = backend-embedded） ===
+  # 基础检查：默认特性（default = backend-embedded）
   # sdforge build script 需要 protoc；用 taiki-e/install-action 跨平台统一安装（SHA pin 防供应链攻击）
   check-default:
     name: Check (default = backend-embedded)
@@ -46,7 +46,7 @@ jobs:
       - name: Build (default features)
         run: cargo build --locked
 
-  # === 全特性检查 ===
+  # 全特性检查
   check-full:
     name: Check (full features)
     runs-on: ubuntu-latest
@@ -68,7 +68,7 @@ jobs:
       - name: Build (full)
         run: cargo build --features "full" --locked
 
-  # === 生产组合编译门禁 ===
+  # 生产组合编译门禁
   # 验证 production 聚合特性与 examples workspace 全特性均可独立编译，
   # 并强制 --locked 与已提交 Cargo.lock 一致（T31）。
   check-production:
@@ -92,7 +92,7 @@ jobs:
       - name: Check (examples, all features)
         run: cargo check -p garrison-examples --all-features --locked
 
-  # === 格式化检查 ===
+  # 格式化检查
   fmt:
     name: Rustfmt
     runs-on: ubuntu-latest
@@ -105,7 +105,7 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-  # === Clippy ===
+  # Clippy
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
@@ -127,7 +127,7 @@ jobs:
       - name: Clippy (full)
         run: cargo clippy --features "full" -- -D warnings
 
-  # === 测试矩阵 ===
+  # 测试矩阵
   # GitHub Actions 限制：uses 字段不能使用 matrix 上下文（解析期未展开 matrix）
   # 因此固定使用 1.85.1 SHA pin，通过 with.toolchain 参数切换实际工具链版本
   # protoc 用 taiki-e/install-action 跨平台统一安装（Linux/macOS/Windows 均支持）
@@ -189,7 +189,7 @@ jobs:
         run: cargo test --features "full" --lib --locked
       - name: garrison-cli bin tests (cli-ops combo)
         run: cargo test --features "cli-ops,account-credential,protocol-zeroize,db-sqlite,protocol-jwt,config-yaml,field-encryption" --bin garrison-cli --locked
-      # === 盲区补齐（2026-09-14 审计）===
+      # 盲区补齐（2026-09-14 审计）
       # 以下 feature 面此前不在任何 job 的「运行」维度：问题潜伏数月才被发现
       # （i18n 断言漂移 39 例、keycloak OsRng E0432、macros trybuild 自 8 月损坏、
       # doctest 从未运行导致 state/impls.rs 2 例失败）。仅在 Linux/MSRV 腿执行一次。
@@ -210,7 +210,7 @@ jobs:
         # 内嵌 sqlite,无服务依赖
         run: cargo test --no-default-features --features "db-sqlite" --lib --locked
 
-  # === 测试编译门禁（feature 组合下的测试代码防漂移） ===
+  # 测试编译门禁（feature 组合下的测试代码防漂移）
   # 背景（2026-09 实录）：check 不编译 #[cfg(test)] 代码，test 只覆盖 default/full
   # 两极——中间 feature 组合下的测试代码腐坏（trait 新增方法后 mock 未同步、
   # 测试引用未启用 feature 的模块、宏改名遗漏等）无法被现有 job 发现：
@@ -271,7 +271,7 @@ jobs:
           CARGO_PROFILE_DEV_DEBUG: 0
         run: cargo test --workspace --no-run --features full --locked
 
-  # === 文档构建 ===
+  # 文档构建
   doc:
     name: Documentation
     runs-on: ubuntu-latest
@@ -324,7 +324,7 @@ jobs:
             echo "✅ No new deadlinks. Known external-crate deadlinks (Context/dispatcher/Response) filtered."
           fi
 
-  # === cargo-deny（漏洞 / 许可证 / 禁用源 / 重复依赖） ===
+  # cargo-deny（漏洞 / 许可证 / 禁用源 / 重复依赖）
   # cargo-deny 已覆盖 cargo-audit 的漏洞检查功能，且配置统一在 deny.toml 管理。
   # 删除独立 audit job，避免维护两份忽略列表（audit.toml + deny.toml）。
   # 用 runner 原生 cargo-deny 而非 EmbarkStudios 容器 action：容器内
@@ -345,7 +345,7 @@ jobs:
       - name: Run cargo deny
         run: cargo deny --all-features --locked check
 
-  # === 集成测试（tests/ 目录，仅 Linux + MSRV） ===
+  # 集成测试（tests/ 目录，仅 Linux + MSRV）
   integration-test:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -397,7 +397,7 @@ jobs:
         # environment.rs 的 Redis/Postgres 用例经上方 services 真实执行（R-08）。
         run: cargo test --features "full" --tests --no-fail-fast
 
-  # === 覆盖率（仅 Linux） ===
+  # 覆盖率（仅 Linux）
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -454,7 +454,7 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./lcov.info
 
-  # === 容器镜像构建与冒烟（R03 多阶段容器化交付物） ===
+  # 容器镜像构建与冒烟（R03 多阶段容器化交付物）
   # 验证 docker/Dockerfile（debian-slim）与 docker/Dockerfile.distroless 两条产物线：
   # 构建（cargo-chef 依赖缓存 + --locked）、compose 示例语法、容器内
   # healthcheck 探针闭环（/healthz → garrison-healthcheck → healthy）。

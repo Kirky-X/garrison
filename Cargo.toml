@@ -62,7 +62,7 @@ name = "garrison"
 path = "src/lib.rs"
 
 [dependencies]
-# === Required dependencies ===
+# Required dependencies
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 confers = { version = "0.6.0-rc.6" }
@@ -81,7 +81,7 @@ http = "1.5"
 http-body-util = { optional = true, workspace = true }
 unicode-normalization = "0.1"
 
-# === Optional dependencies (feature-gated) ===
+# Optional dependencies (feature-gated)
 axum = { optional = true, default-features = false, features = ["json"], workspace = true }
 axum-server = { version = "0.8", optional = true, default-features = false }
 actix-web = { optional = true, default-features = false, workspace = true }
@@ -210,25 +210,25 @@ axum = { version = "0.8", default-features = false }
 [features]
 default = ["backend-embedded"]
 
-# === 核心模块（always on，无开关） ===
+# 核心模块（always on，无开关）
 # core / stp / annotation / router / dao / strategy / session / config / context / json / exception / manager / plugin
 # 这些模块无 feature flag，总是编译
 
-# === 核心扩展：决策溯源 / 权限注册表 / forbid 优先语义 ===
+# 核心扩展：决策溯源 / 权限注册表 / forbid 优先语义
 # 合并 decision-trace + permission-registry + safe-defaults → core-advanced
 core-advanced = []
 
-# === 核心扩展：请求对象式授权 API ===
+# 核心扩展：请求对象式授权 API
 authorize-api = ["core-advanced"]
 
-# === 核心扩展：显式 Manager API ===
+# 核心扩展：显式 Manager API
 manager-explicit = ["authorize-api"]
 
-# === 核心扩展：多租户逻辑隔离 ===
+# 核心扩展：多租户逻辑隔离
 # Repository SQL 过滤不门控此 feature（始终生效，安全优先）。[INTERNAL] ban-manager 为编译期伴随 feature：rc.6 governor.rs 的 `use crate::matchers::Identifier` 被 cfg(any(parallel-checker, ban-manager)) 门控而 multi-tenant 块使用该类型，单独启用时导入缺失（上游缺陷）；ban-manager 零依赖且 firewall-bruteforce 已在用，故选作载体，上游修复后可移除
 tenant-isolation = ["limiteron/multi-tenant", "limiteron/ban-manager"]
 
-# === 配置增强（confers 透传） ===
+# 配置增强（confers 透传）
 config-encryption = ["confers/encryption"]
 config-validation = ["confers/validation"]
 config-hot-reload = ["confers/watch"]
@@ -248,7 +248,7 @@ config-full = ["config-encryption", "config-validation", "config-hot-reload", "c
 # 内置校验器 + SecurityValidator 注册表，配置加载期 fail-fast
 config-security-rules = ["confers/security-rules"]
 
-# === 缓存后端（通过 oxcache） ===
+# 缓存后端（通过 oxcache）
 cache-memory = ["oxcache/memory", "oxcache/serialization", "oxcache/metrics", "oxcache/bloom"]
 # 缓存审计事件流（oxcache/audit）：hit/miss/set/delete/evict/expired 结构化事件经 TracingAuditPublisher 桥接 tracing，键名自动脱敏
 cache-audit = ["cache-memory", "oxcache/audit", "oxcache/telemetry"]
@@ -262,7 +262,7 @@ cache-hotkey = ["oxcache/hotkey"]
 # 封禁记录跨实例同步：limiteron 经 oxcache Pub/Sub 广播封禁变更
 ban-sync = ["limiteron/ban-sync", "cache-invalidation"]
 
-# === 数据库后端（通过 dbnexus） ===
+# 数据库后端（通过 dbnexus）
 # [INTERNAL] dbnexus 禁止 embedded 与 server-side 混用。
 db-base = [
     "dep:dbnexus",
@@ -293,7 +293,7 @@ db-saga = ["db-sharding", "dbnexus/saga"]
 # 嵌入式迁移文件：编译时 include_dir! 嵌入 postgres 迁移 SQL，消费者运行时无需访问 garrison 源码目录
 embedded-migrations = ["dep:include_dir", "dep:tempfile"]
 
-# === 协议层插件 ===
+# 协议层插件
 protocol-oauth2 = ["dep:reqwest", "dep:sha2", "dep:base64", "dep:percent-encoding"]
 # protocol-sso 隐含 protocol-jwt：OIDC exchange_code 必须验签 id_token（fail-closed）。
 protocol-sso = ["dep:reqwest", "dep:quick-xml", "dep:sha2", "dep:hmac", "dep:base64", "dep:percent-encoding", "protocol-jwt"]
@@ -325,7 +325,7 @@ protocol-saml = ["protocol-sso", "dep:rsa", "dep:base64", "dep:subtle"]
 # protocol-webauthn：WebAuthn/Passkey 凭据 SPI 与注册/认证仪式（challenge 防重放/sign_count 克隆检测/backup flags）
 protocol-webauthn = ["dep:webauthn-rs", "dep:webauthn-rs-core"]
 
-# === 安全模块 ===
+# 安全模块
 secure-totp = ["dep:totp-rs", "dep:base32"]
 # secure-ct-eq：签名校验常量时间比较统一走公共原语（ADR-0003 决策 2）
 secure-sign = ["dep:sha2", "dep:hmac", "dep:base64", "secure-ct-eq"]
@@ -352,7 +352,7 @@ email-verification-smtp = ["email-verification", "dep:lettre"]
 field-encryption = ["dep:aes-gcm", "dep:getrandom", "dep:base64", "dep:sha2"]
 mfa-recovery = ["dep:sha2"]
 
-# === 账号安全引擎 ===
+# 账号安全引擎
 # secure-ct-eq：备份码哈希比对统一走常量时间比较原语（消除本地 ct_eq_hex）
 account-credential = ["dep:argon2", "dep:bcrypt", "dep:rand", "dep:getrandom", "dep:sha2", "dep:base32", "secure-ct-eq"]
 credential-zeroize = ["account-credential", "dep:zeroize"]
@@ -364,22 +364,22 @@ account-password-reset = ["protocol-jwt", "account-credential", "account-policy"
 # HIBP 泄露密码检查（k-anonymity range search，网络调用；关闭时返回显性错误）
 policy-hibp = ["dep:reqwest", "dep:sha1"]
 
-# === Web 框架适配 ===
+# Web 框架适配
 web-axum = ["dep:axum", "axum/tokio", "axum/http1"]
 web-actix = ["dep:actix-web"]
 web-warp = ["dep:warp", "dep:http-body-util"]
 
-# === HTTPS/TLS 终止（axum-server rustls） ===
+# HTTPS/TLS 终止（axum-server rustls）
 # 依赖 auth-server（server 模块门控）
 tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
 
-# === Server 增强 ===
+# Server 增强
 # server-health-check：接线 sdforge/health 的 /healthz /readyz 探针（merge 在路由最外层，天然绕过 path_filter/rate_limit/audit/api_key_auth，符合 K8s 探针语义）；业务方可经 sdforge::health::register_readiness_check_fn 注册下游就绪检查
 server-health-check = ["auth-server", "sdforge/health"]
 # graceful shutdown：SIGTERM/SIGINT 后停止接收新连接并 drain 在途请求；auth-server 聚合默认包含
 server-graceful-shutdown = []
 
-# === Web 安全中间件 ===
+# Web 安全中间件
 web-cors = ["web-axum"]
 web-csrf = ["web-axum", "dep:rand", "dep:getrandom", "dep:base64", "secure-ct-eq"]
 # HTTP 安全响应头中间件（X-Content-Type-Options / X-Frame-Options / HSTS / Cache-Control）
@@ -387,11 +387,11 @@ web-security-headers = ["web-axum"]
 # Web 安全中间件聚合（CORS + CSRF + 安全响应头）
 web-security = ["web-cors", "web-csrf", "web-security-headers"]
 
-# === 过程宏注解（#[check_login]/#[check_permission]/#[check_role]） ===
+# 过程宏注解（#[check_login]/#[check_permission]/#[check_role]）
 # 依赖 web-axum（宏生成的 wrapper 返回 axum::response::Response）
 annotation-macros = ["dep:garrison-macros", "web-axum"]
 
-# === 扩展 ===
+# 扩展
 # AloneCache 装饰器：DAO 层单飞缓存（dao::alone_cache，未命中再加锁回源，防击穿）
 alone-cache = []
 # STP 参数化查询：strategy 层 parameter 模块（按参数占位符构造查询）
@@ -401,15 +401,14 @@ api-docs = ["sdforge/openapi"]
 # 独立运维工具门控，不进默认容器镜像；auth_server/healthcheck bin 保持零 clap（见 docs/DEVELOPMENT.md）
 cli-ops = ["dep:clap"]
 
-# === 审计日志 ===
+# 审计日志
 # audit-log：AuditEventChain 链首随机盐（防换盐重放）+ limiteron 审计链 HMAC 内核（chain_onto/verify_chain）；透传 telemetry+hmac+sha2+hex 均为既有依赖，无新增第三方
 audit-log = ["listener", "dep:sha2", "dep:hmac", "dep:hex", "dep:getrandom", "secure-masking", "secure-ct-eq", "limiteron/audit-log"]
 
-# === 常量时间比较原语（CWE-208 防御）===
-# 常量时间比较原语：secure::ct_eq::constant_time_eq（subtle::ConstantTimeEq）。需要常量时间比较的 feature（audit-log/oauth2-server/protocol-apikey/protocol-httpdigest/secure-sign/web-csrf 等）一律依赖此 feature，禁止复制本地实现或直连 dep:subtle（ADR-0003 决策 2）
+# 常量时间比较原语（CWE-208 防御）：secure::ct_eq::constant_time_eq（subtle::ConstantTimeEq）。需要它的 feature（audit-log/oauth2-server/protocol-apikey/protocol-httpdigest/secure-sign/web-csrf 等）一律依赖此 feature，禁止复制本地实现或直连 dep:subtle（ADR-0003 决策 2）
 secure-ct-eq = ["dep:subtle"]
 
-# === 安全防护套件 ===
+# 安全防护套件
 # 统一使用 limiteron GarrisonDaoDistributedLimiter，禁止手写限流实现。
 firewall = []
 # bruteforce 依赖封禁存储（GarrisonDaoBanStorage 经 firewall-ddos 导出），故隐含 firewall-ddos 保证 feature 自洽
@@ -438,7 +437,7 @@ firewall-parallel = ["firewall", "limiteron/parallel-checker"]
 # dao-key-index：为 GarrisonDaoOxcache 维护 key 索引提供 keys() 生产实现（oxcache 0.3.3 无原生 iter/keys API）；由 protocol-apikey/anomalous-detector-dual 传递启用
 dao-key-index = []
 
-# === 安全告警系统 ===
+# 安全告警系统
 # security-extra：stp safe-auth 相关门控的聚合特性。注意 strategy::alert 实际门控于 security-extra（security-alert 仅为兼容别名）
 security-extra = []
 security-alert = ["security-extra"]
@@ -446,27 +445,27 @@ device-binding = ["security-alert"]
 # 会话劫持检测：check_login 路径对比当前请求 IP 与会话创建时 IP，不一致时广播告警（AlertOnly）或踢出会话（Kickout）；依赖 security-alert（广播链路）与 auth-server（消费中间件写入的 CLIENT_IP/UA）
 session-hijack-detection = ["security-alert", "auth-server"]
 
-# === Session 增强 ===
+# Session 增强
 # 合并 anonymous-session + session-search + dynamic-active-timeout + login-token-map-persistence → session-extra
 session-extra = []
 
-# === 三层缓存架构 ===
+# 三层缓存架构
 # oxcache/memory：ChainCache 的 L1 内存后端（DashMapMemoryBackend）
 three-tier-cache = ["dep:oxcache", "oxcache/memory"]
 
-# === 社交登录 ===
+# 社交登录
 social-wechat = ["protocol-oauth2"]
 # 启用 rsa（RSA2 签名 + PEM 解析）+ base64（签名值编码）
 social-alipay = ["protocol-oauth2", "dep:rsa", "dep:base64", "protocol-zeroize"]
 
-# === Keycloak OIDC RP ===
+# Keycloak OIDC RP
 keycloak-oidc = ["protocol-oidc"]
 
-# === OIDC Back-Channel Logout（logout token 签发/持久化投递队列/禁重定向） ===
+# OIDC Back-Channel Logout（logout token 签发/持久化投递队列/禁重定向）
 # 依赖 oauth2-server：logout token 经 protocol-jwt 签发（透传启用），触发点挂 oauth2_server 模块与 session 登出事件路径
 backchannel-logout = ["oauth2-server"]
 
-# === 微服务架构 ===
+# 微服务架构
 backend-embedded = []
 backend-remote = ["dep:reqwest", "limiteron/circuit-breaker", "limiteron/fallback"]
 # secure-simple-token：SimpleTokenStyle 启用 HMAC-SHA256 签名（格式 <login_id>-<uuid>.<hmac_sha256(secret, login_id|uuid)>；未启用时 generate 返回 Err，fail-closed 杜绝无签名伪造）+ secure-ct-eq 常量时间比较（ADR-0003 决策 2/3）
@@ -477,24 +476,24 @@ abac = ["dep:cedar-policy", "cache-memory", "dep:sha2"]
 # db-sqlite 下的 RefreshTokenRotation 依赖 protocol::jwt，因此传递启用 protocol-jwt。
 oauth2-server = ["protocol-oauth2", "dep:reqwest", "dep:argon2", "dep:rand", "dep:getrandom", "dep:percent-encoding", "protocol-jwt", "secure-ct-eq"]
 
-# === inklog 结构化审计日志 ===
+# inklog 结构化审计日志
 # secret-scan：sink 写出前高熵密钥/secret 形态扫描掩码门（inklog rc.7），与自有 mask_metadata 双层防御（前者守日志文本，后者守事件 metadata）
 audit-inklog = ["inklog/fast-masking", "inklog/compression", "inklog/secret-scan"]
 audit-inklog-http = ["audit-inklog", "inklog/http"]
 # SIEM/SOC 实时外送（inklog/net-sink）：TCP（可 TLS）+ UDP 转发，断线缓冲重连；TLS 为上游 MVP（danger_accept_invalid_certs 豁免项生产慎用）
 audit-inklog-siem = ["audit-inklog", "inklog/net-sink"]
 
-# === trait-kit typestate DI 构建 ===
+# trait-kit typestate DI 构建
 backend-kit = ["backend-embedded", "trait-kit/lifecycle", "trait-kit/health", "trait-kit/observer"]
 backend-shutdown = ["backend-kit", "trait-kit/shutdown"]
 
-# === sdforge 声明式路由 ===
+# sdforge 声明式路由
 # [INTERNAL] http 是 garrison 与 sdforge 的桥接 feature（仅 cfg 开关）：#[forge] 宏生成的 inventory::submit!(RouteRegistration) 被 #[cfg(feature="http")] 保护且该 cfg 在 garrison 上下文求值；garrison 不暴露 http feature 则 submit 被剥离、sdforge::http::build() 收集不到路由 → 所有 POST 请求 404。命名必须为 http（sdforge 宏硬编码 feature = "http"），不可改名；sdforge/http 由依赖声明无条件启用
 http = []
 # dep:sdforge：auth-server 的 sdforge 面在此激活（http 为宏镜像 marker）
 auth-server-sdforge = ["http", "dep:sdforge"]
 
-# === 可观测性 ===
+# 可观测性
 listener = []
 credit-metering = ["listener"]
 tracing-log = ["tracing/log", "dep:tracing-subscriber"]
@@ -515,7 +514,7 @@ miette = ["dep:miette"]
 garrison-testing = ["authorize-api"]
 testing = []
 
-# === 聚合特性 ===
+# 聚合特性
 full = [
     "cache-memory", "cache-redis",
     "db-sqlite",
@@ -585,7 +584,7 @@ development = [
     "cache-memory", "db-sqlite", "web-axum",
 ]
 
-# === 示例文件位于独立 workspace member（examples/），详见 examples/Cargo.toml ===
+# 示例文件位于独立 workspace member（examples/），详见 examples/Cargo.toml
 
 [profile.dev]
 opt-level = 0
@@ -600,7 +599,7 @@ strip = true
 # panic 改 unwind（原 abort）：src/listener（插件广播隔离）、src/protocol/sso/channel.rs（SSO 订阅 handler）依赖 catch_unwind 隔离单任务 panic，abort 下单 listener panic 即全服务下线；unwind 恢复隔离语义，fat LTO 下体积/性能代价可接受，认证基础设施可用性优先
 panic = "unwind"
 
-# === 测试目标 ===
+# 测试目标
 
 [[test]]
 name = "acceptance"
@@ -618,7 +617,7 @@ name = "acceptance_db_mysql"
 path = "tests/acceptance_db_mysql.rs"
 required-features = ["db-mysql"]
 
-# === 二进制目标 ===
+# 二进制目标
 [[bin]]
 name = "auth_server"
 path = "src/bin/auth_server.rs"
@@ -631,7 +630,7 @@ name = "garrison-cli"
 path = "src/bin/garrison-cli.rs"
 required-features = ["cli-ops", "account-credential", "protocol-zeroize", "db-sqlite", "protocol-jwt", "config-yaml", "field-encryption"]
 
-# === 基准测试目标 ===
+# 基准测试目标
 [[bench]]
 name = "garrison_benchmark"
 path = "benches/garrison_benchmark.rs"
@@ -639,7 +638,7 @@ harness = false
 # bench 文档化用法即 --features full（见 benches/garrison_benchmark.rs 头注）；CI 的 full 口径 clippy/test 自然覆盖 bench 目标
 required-features = ["full"]
 
-# === Lint 配置 ===
+# Lint 配置
 # sdforge #[forge] 宏展开生成 #[cfg(feature="mcp")]/"cli"/"openapi" 等 garrison 不具备的 cfg，经 check-cfg 显式登记这些外部 cfg 值，将 unexpected_cfgs 保持 warn（而非 allow）以便发现真正的意外 cfg
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [

@@ -20,9 +20,7 @@ use crate::strategy::{GarrisonPermissionStrategy, GarrisonPermissionStrategyDefa
 use async_trait::async_trait;
 use serial_test::serial;
 
-// ------------------------------------------------------------------------
 // 辅助函数
-// ------------------------------------------------------------------------
 
 /// 创建默认测试配置（timeout=3600，throw_on_not_login=false 便于断言）。
 fn make_config() -> GarrisonConfig {
@@ -38,9 +36,7 @@ async fn with_token<R>(token: String, f: impl std::future::Future<Output = R>) -
     crate::stp::with_current_token(token, f).await
 }
 
-// ------------------------------------------------------------------------
 // 未初始化场景测试
-// ------------------------------------------------------------------------
 
 /// 验证未初始化时 `GarrisonManager::logic()` 返回 Session 错误。
 #[test]
@@ -63,9 +59,7 @@ fn is_initialized_returns_false_when_not_initialized() {
     assert!(!GarrisonManager::is_initialized());
 }
 
-// ------------------------------------------------------------------------
 // 初始化场景测试
-// ------------------------------------------------------------------------
 
 /// 验证 init 后 `is_initialized()` 返回 true。
 #[tokio::test]
@@ -130,9 +124,7 @@ async fn init_handles_negative_active_timeout() {
     GarrisonManager::reset_for_test();
 }
 
-// ------------------------------------------------------------------------
 // 端到端流程测试（login → check_login → check_permission → logout）
-// ------------------------------------------------------------------------
 
 /// 验证完整端到端流程：init → login → check_login → logout → check_login 失败。
 #[tokio::test]
@@ -364,9 +356,7 @@ async fn default_factory_builds_working_logic() {
     assert!(!token.is_empty());
 }
 
-// ------------------------------------------------------------------------
 // init 配置分支补充测试
-// ------------------------------------------------------------------------
 
 // 验证 builder 处理 active_timeout > 0 的非负值（覆盖 `build_logic` 中 else 分支，不走 timeout 兜底）。
 #[tokio::test]
@@ -451,9 +441,7 @@ async fn init_rejects_invalid_token_style() {
     GarrisonManager::reset_for_test();
 }
 
-// ------------------------------------------------------------------------
 // builder 兜底路径测试
-// ------------------------------------------------------------------------
 
 // 验证 builder 构建成功且后续 login 可正常工作（兜底路径由 `build_logic_via_builder_chain` 单测覆盖）。
 #[tokio::test]
@@ -483,9 +471,7 @@ async fn builder_build_succeeds_and_login_works() {
     GarrisonManager::reset_for_test();
 }
 
-// ------------------------------------------------------------------------
 // MockDao 方法覆盖测试
-// ------------------------------------------------------------------------
 
 // 验证 MockDao::expire 和 delete 方法可正常调用（补充此前未直接调用的 trait 方法覆盖）。
 #[tokio::test]
@@ -509,9 +495,7 @@ async fn mock_dao_expire_and_delete_work() {
     assert!(got.is_none());
 }
 
-// ------------------------------------------------------------------------
 // Strategy 注册表集成测试
-// ------------------------------------------------------------------------
 
 /// 验证未初始化时 `GarrisonManager::strategy()` 返回 Session 错误。
 #[tokio::test]
@@ -667,9 +651,7 @@ async fn runtime_strategy_replacement_takes_effect_immediately() {
     GarrisonManager::reset_for_test();
 }
 
-// ------------------------------------------------------------------------
 // GarrisonManager 注册 DisableRepository 集成测试
-// ------------------------------------------------------------------------
 
 // 验证 init 后 `disable_repository()` 返回 Some，未注册时返回 None。
 #[tokio::test]
@@ -797,9 +779,7 @@ async fn test_manager_disable_repository_persists() {
     GarrisonManager::reset_for_test();
 }
 
-// ------------------------------------------------------------------------
 // spawn_cleanup_task 集成到 GarrisonManager::builder()
-// ------------------------------------------------------------------------
 
 // 验证 interval > 0 时 init 后 cleanup task 启动（`cleanup_task_handle` 为 Some）。
 #[tokio::test]

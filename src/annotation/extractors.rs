@@ -14,9 +14,7 @@ use axum::http::header;
 use axum::http::request::Parts;
 use std::marker::PhantomData;
 
-// ----------------------------------------------------------------
 // 辅助函数：从请求 parts 提取 token（按 config 决定提取顺序与字段名）
-// ----------------------------------------------------------------
 
 /// 从请求 parts 提取 token：header 与 cookie 的提取顺序及字段名受 config 开关控制；
 /// cookie 解析名在 production + Secure 上下文为 `__Host-` 前缀名，与写侧同名。
@@ -52,9 +50,7 @@ fn extract_token_from_parts(parts: &Parts, config: &GarrisonConfig) -> Option<St
     None
 }
 
-// ----------------------------------------------------------------
 // 辅助函数：执行登录校验（严格模式，未登录返回 NotLogin）
-// ----------------------------------------------------------------
 
 /// 执行登录校验：调用 `GarrisonUtil::check_login()`；`throw_on_not_login=true` 时未登录
 /// 以 `Err(Session)` 透传，`false` 时统一转为 `Err(NotLogin)`。
@@ -68,9 +64,7 @@ async fn enforce_login() -> Result<(), GarrisonError> {
     Ok(())
 }
 
-// ----------------------------------------------------------------
 // CheckLogin
-// ----------------------------------------------------------------
 
 /// 登录校验 extractor：从请求提取 token 并校验登录状态，失败返回 `GarrisonError`。
 pub struct CheckLogin;
@@ -91,9 +85,7 @@ impl<S: Send + Sync> FromRequestParts<S> for CheckLogin {
     }
 }
 
-// ----------------------------------------------------------------
 // CheckRole<R>
-// ----------------------------------------------------------------
 
 /// 角色校验 extractor：经泛型参数 `R: RoleName` 指定角色名，校验当前用户是否持有该角色。
 pub struct CheckRole<R: RoleName>(PhantomData<R>);
@@ -118,9 +110,7 @@ impl<R: RoleName, S: Send + Sync> FromRequestParts<S> for CheckRole<R> {
     }
 }
 
-// ----------------------------------------------------------------
 // CheckPermission<P>
-// ----------------------------------------------------------------
 
 /// 权限校验 extractor：经泛型参数 `P: PermissionName` 指定权限名，校验当前用户是否持有该权限。
 pub struct CheckPermission<P: PermissionName>(PhantomData<P>);
@@ -145,9 +135,7 @@ impl<P: PermissionName, S: Send + Sync> FromRequestParts<S> for CheckPermission<
     }
 }
 
-// ----------------------------------------------------------------
 // Ignore
-// ----------------------------------------------------------------
 
 /// 忽略鉴权 extractor：不执行任何校验，直接返回 `Ok`。
 pub struct Ignore;
@@ -160,9 +148,7 @@ impl<S: Send + Sync> FromRequestParts<S> for Ignore {
     }
 }
 
-// ----------------------------------------------------------------
 // Mode<M>
-// ----------------------------------------------------------------
 
 /// 模式 extractor：`Mode<Strict>` 未登录抛 `NotLogin`，`Mode<Loose>` 未登录不抛错、允许匿名访问。
 pub struct Mode<M: ModeSpec>(PhantomData<M>);
@@ -194,9 +180,7 @@ impl<M: ModeSpec, S: Send + Sync> FromRequestParts<S> for Mode<M> {
     }
 }
 
-// ----------------------------------------------------------------
 // GarrisonPrincipal extractor（携带 login_id）
-// ----------------------------------------------------------------
 
 /// 登录主体 extractor：从 token 解析 `login_id` 供 handler 读取当前用户身份；
 /// 无 token 或 token 无效/会话不存在时返回 `NotLogin`。
@@ -216,9 +200,7 @@ impl<S: Send + Sync> FromRequestParts<S> for crate::context::GarrisonPrincipal {
     }
 }
 
-// ----------------------------------------------------------------
 // TenantContext extractor（cfg tenant-isolation）
-// ----------------------------------------------------------------
 
 /// 租户上下文 extractor：仅解析 `X-Tenant-Id` header，缺失或非 i64 返回 `Config` 错误，
 /// 不查会话/权限。

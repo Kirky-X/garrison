@@ -26,9 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tower::ServiceExt;
 
-// ============================================================================
 // MockInterface（权限/角色数据回调）
-// ============================================================================
 
 struct MockInterface {
     permissions: HashMap<String, Vec<String>>,
@@ -71,9 +69,7 @@ impl GarrisonInterface for MockInterface {
     }
 }
 
-// ============================================================================
 // 测试用 marker 类型
-// ============================================================================
 
 struct AdminRole;
 impl RoleName for AdminRole {
@@ -85,9 +81,7 @@ impl PermissionName for UserRead {
     const NAME: &'static str = "user:read";
 }
 
-// ============================================================================
 // 辅助函数
-// ============================================================================
 
 /// 创建测试配置（throw_on_not_login=false 以便未登录返回 NotLogin→401）。
 fn make_config() -> GarrisonConfig {
@@ -158,9 +152,7 @@ where
     TENANT.scope(ctx, f).await
 }
 
-// ============================================================================
 // 集成测试
-// ============================================================================
 
 /// 已登录（带有效 token header）访问 /protected → 200。
 #[tokio::test]

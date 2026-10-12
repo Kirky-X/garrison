@@ -24,9 +24,7 @@ use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ============================================================================
 // MockAuthBackend：AuthBackend trait 测试替身
-// ============================================================================
 //
 // 仓库内产品 `AuthBackend` 实现（`BackendEmbedded` / `BackendRemote`）需要业务方
 // 提供 `GarrisonInterface` 或远程服务，无法在验收域确定性装配；in-memory token
@@ -171,9 +169,7 @@ fn uuid_like() -> String {
     format!("{:x}", nanos)
 }
 
-// ============================================================================
 // 装配辅助：双端口测试服务器
-// ============================================================================
 
 /// 启动测试服务器，返回 (external_url, internal_url, server_handle)。
 ///
@@ -266,9 +262,7 @@ async fn http_check_login(
     resp.json::<serde_json::Value>().await.unwrap()["data"].clone()
 }
 
-// ------------------------------------------------------------------------
 // 外网 login/logout/refresh + 内网校验（正常）
-// ------------------------------------------------------------------------
 
 /// （正常）：外网 login 签发 `token-<login_id>-` 前缀 token，
 /// 内网 check-login 经 `X-API-Key` 校验返回 `data=true`。
@@ -402,9 +396,7 @@ async fn acc_srv_006_internal_get_session() {
     assert_eq!(body["data"]["login_id"], "user1");
 }
 
-// ------------------------------------------------------------------------
 // 内网 X-API-Key 互斥 / 踢出 / 切换（正常 + 异常）
-// ------------------------------------------------------------------------
 
 /// （异常）：内网端点缺少 / 错误的 `X-API-Key` 一律 401。
 /// 与 tests/auth_server_integration.rs::test_internal_rejects_wrong_api_key
@@ -496,9 +488,7 @@ async fn acc_srv_009_internal_switch_to_changes_session_subject() {
     assert_eq!(body["data"]["login_id"], "user2", "切换后主体应为 user2");
 }
 
-// ------------------------------------------------------------------------
 // 限速 / 中间件错误码映射 / 内外网路径互斥（异常）
-// ------------------------------------------------------------------------
 
 /// （异常）：外网限速——`rate_limit=2` 时第 3 个并发登录请求返回 429。
 #[tokio::test]
@@ -602,9 +592,7 @@ async fn acc_srv_012_external_internal_paths_mutually_exclusive() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 安全审计回归（GAR-13/14/23/25/27/28/29）
-// ------------------------------------------------------------------------
 
 /// GAR-23（异常→修复后）：内网 get-session / get-token-info 缺失
 /// `caller_login_id` 一律 400（fail-closed），不再 warn+放行返回会话。
@@ -916,9 +904,7 @@ async fn acc_srv_029_health_probes_minimized() {
     }
 }
 
-// ------------------------------------------------------------------------
 // oauth2_server 端点级验收（#[cfg(feature = "oauth2-server")]）
-// ------------------------------------------------------------------------
 //
 // 装配参考 `src/oauth2_server/*` 单元测试 + `tests/e2e/oauth2_flow.rs`：
 // `DaoOAuth2ClientStore`（InMemoryDao）+ `OAuth2State` 经
@@ -1546,9 +1532,7 @@ async fn acc_srv_018_revoke_then_introspect_inactive() {
     assert_eq!(resp.status(), 400, "revoke 客户端认证失败应返回 400");
 }
 
-// ------------------------------------------------------------------------
 // auth_server 二进制 smoke（#[cfg(feature = "auth-server")]）
-// ------------------------------------------------------------------------
 //
 // `src/bin/auth_server.rs` 是自含二进制：从环境变量装配
 // `GarrisonAuthServer::new(backend).with_*_port().with_rate_limit()

@@ -1162,9 +1162,7 @@ mod coverage_tests {
     use crate::error::GarrisonError;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    // ----------------------------------------------------------------
     // mod.rs：InvitationRecord::consumable
-    // ----------------------------------------------------------------
 
     #[test]
     fn consumable_reflects_status_expiry_and_budget() {
@@ -1193,9 +1191,7 @@ mod coverage_tests {
         assert!(!record.consumable(now));
     }
 
-    // ----------------------------------------------------------------
     // 脏数据防御分支（KV 中非合法 JSON 的记录按 NotFound / 跳过处理）
-    // ----------------------------------------------------------------
 
     /// 向 KV 直接写入脏数据条目。
     async fn seed_dirty(handler: &InvitationHandler, code: &str) {
@@ -1262,9 +1258,7 @@ mod coverage_tests {
         assert_eq!(listed[0].code, record.code);
     }
 
-    // ----------------------------------------------------------------
     // create_batch：listener 广播
-    // ----------------------------------------------------------------
 
     #[cfg(feature = "listener")]
     #[tokio::test]
@@ -1283,9 +1277,7 @@ mod coverage_tests {
         }
     }
 
-    // ----------------------------------------------------------------
     // create：set_if_absent 碰撞重试与耗尽
-    // ----------------------------------------------------------------
 
     /// set_if_absent 注入失败的 DAO：前 `failures` 次返回 false（模拟键碰撞）。
     struct CollisionDao {

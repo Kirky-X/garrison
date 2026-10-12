@@ -28,9 +28,7 @@ use serial_test::serial;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-// ============================================================================
 // MockInterface：GarrisonPermissionStrategyDefault::new() 必需
-// ============================================================================
 
 struct MockInterface;
 
@@ -44,9 +42,7 @@ impl GarrisonInterface for MockInterface {
     }
 }
 
-// ============================================================================
 // 辅助函数：构造测试用 Arc<GarrisonLogicDefault>
-// ============================================================================
 
 async fn make_logic() -> Arc<GarrisonLogicDefault> {
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await.unwrap());
@@ -65,9 +61,7 @@ async fn make_logic() -> Arc<GarrisonLogicDefault> {
     ))
 }
 
-// ============================================================================
 // R-strategy-registry-001: 6 个策略 trait 可被业务方自定义实现
-// ============================================================================
 
 /// 验证 `LoginHandler` trait 可被外部实现并调用。
 #[tokio::test(flavor = "multi_thread")]
@@ -186,9 +180,7 @@ async fn firewall_strategy_can_be_implemented_externally() {
     assert!(fw.check_login_hooks("1001", &ctx).await.is_ok());
 }
 
-// ============================================================================
 // R-strategy-registry-002: Strategy::new + 6 个 getter
-// ============================================================================
 
 /// 验证 `Strategy::new(logic)` 构造成功，6 个 getter 均返回非空 Arc。
 #[tokio::test(flavor = "multi_thread")]
@@ -242,9 +234,7 @@ async fn default_firewall_strategy_is_noop() {
     assert!(result.is_ok(), "默认防火墙策略应为 no-op 返回 Ok");
 }
 
-// ============================================================================
 // R-strategy-registry-003: register / get / remove 三组方法
-// ============================================================================
 
 /// 验证 `register_login_handler` 替换登录策略，`remove_login_handler` 恢复默认。
 #[tokio::test(flavor = "multi_thread")]
@@ -382,9 +372,7 @@ async fn all_six_strategies_support_register_get_remove() {
     strategy.remove_firewall_strategy();
 }
 
-// ============================================================================
 // R-strategy-registry-004: 替换一个策略不影响其他策略
-// ============================================================================
 
 /// 验证替换 `LoginHandler` 不影响 `LogoutHandler`（Arc::ptr_eq 不变）。
 #[tokio::test(flavor = "multi_thread")]
@@ -470,9 +458,7 @@ async fn replace_drops_old_handler_no_leak() {
     );
 }
 
-// ============================================================================
 // R-strategy-registry-003 集成: GarrisonManager 全局访问
-// ============================================================================
 
 /// 验证 `GarrisonManager::builder()` 后 `strategy()` 返回 `Arc<RwLock<Strategy>>`。
 #[tokio::test(flavor = "multi_thread")]
@@ -628,9 +614,7 @@ async fn runtime_register_then_remove_restores_default() {
     assert!(!restored_token.is_empty());
 }
 
-// ============================================================================
 // 集成场景: 多策略同时替换 + 并发安全
-// ============================================================================
 
 /// 验证同时替换多个策略，每个策略独立工作。
 #[tokio::test(flavor = "multi_thread")]

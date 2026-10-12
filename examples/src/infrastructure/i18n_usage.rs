@@ -47,9 +47,7 @@ pub fn sample_errors() -> Vec<(&'static str, GarrisonError)> {
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== Garrison i18n 国际化示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 系统语言检测（默认跟随系统，检测失败回退 En）
-    // ----------------------------------------------------------------
     let detected = detect_locale();
     println!(
         "[系统语言检测] detect_locale() = {:?}（无显式 set_locale 时 current_locale() 与之\
@@ -59,9 +57,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(current_locale(), detected);
     println!();
 
-    // ----------------------------------------------------------------
     // 2. set_locale + RAII guard
-    // ----------------------------------------------------------------
     println!("[set_locale] 切换到英文 + RAII guard:");
     {
         let _guard = set_locale(GarrisonLocale::En);
@@ -85,9 +81,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(current_locale(), detected);
     println!();
 
-    // ----------------------------------------------------------------
     // 3. 嵌套 set_locale
-    // ----------------------------------------------------------------
     println!("[嵌套] set_locale 支持栈式 scope:");
     {
         let _g1 = set_locale(GarrisonLocale::En);
@@ -110,9 +104,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     assert_eq!(current_locale(), detected);
     println!();
 
-    // ----------------------------------------------------------------
     // 4. 所有错误变体中英文对照
-    // ----------------------------------------------------------------
     println!("[翻译对照] 所有错误变体的中英文翻译:");
     let errors = sample_errors();
 
@@ -131,9 +123,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     drop(_en_guard);
     println!();
 
-    // ----------------------------------------------------------------
     // 5. Display trait 集成（i18n feature 下 Display 委托 translate_error）
-    // ----------------------------------------------------------------
     println!("[Display 集成] GarrisonError::Display 依据 locale 切换:");
     let err = GarrisonError::NotLogin("test".to_string());
 

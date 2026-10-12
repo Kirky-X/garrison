@@ -19,9 +19,7 @@ use std::sync::Arc;
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 支付宝社交登录示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构造 AlipayProvider
-    // ----------------------------------------------------------------
     println!("[1] 构造 AlipayProvider:");
     // 占位值非合法 PEM，AlipayProvider::new 会返回 Err（预期行为）；生产环境必须从环境变量/KMS 加载真实 RSA 私钥
     let alipay_result = AlipayProvider::new("alipay_app_id", "<PLACEHOLDER_RSA_PRIVATE_KEY_PEM>");
@@ -39,9 +37,7 @@ pub async fn run() -> GarrisonResult<()> {
     }
     println!();
 
-    // ----------------------------------------------------------------
     // 2. 注册到 SocialLoginService 注册中心
-    // ----------------------------------------------------------------
     println!("[2] SocialLoginService 注册中心:");
     let registry = SocialLoginService::new();
 
@@ -56,9 +52,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    已注册 providers: {:?}", providers);
     println!();
 
-    // ----------------------------------------------------------------
     // 3. 社交登录 Provider 对比
-    // ----------------------------------------------------------------
     println!("[3] 内置社交登录 Provider:");
     println!("    • WechatProvider: 微信扫码/小程序登录（social-wechat feature）");
     println!("    • AlipayProvider: 支付宝授权登录（social-alipay feature）");

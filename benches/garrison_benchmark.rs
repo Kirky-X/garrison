@@ -23,9 +23,7 @@ use garrison::context::tenant::{TenantContext, TenantSource, TENANT};
 use garrison::prelude::*;
 use garrison::stp::{with_current_token, LoginParams};
 
-// ============================================================================
 // MockDao: HashMap + Instant 模拟 TTL（复用 stp/tests.rs 的 mock 模式）
-// ============================================================================
 
 struct MockDao {
     store: Mutex<HashMap<String, (String, Option<Instant>)>>,
@@ -102,9 +100,7 @@ impl GarrisonDao for MockDao {
     garrison::atomic_test_fallback!();
 }
 
-// ============================================================================
 // MockFirewall: 模拟 GarrisonPermissionStrategy（权限检查返回 true）
-// ============================================================================
 
 struct MockFirewall {
     has_permission: bool,
@@ -175,9 +171,7 @@ impl GarrisonPermissionStrategy for MockFirewall {
     }
 }
 
-// ============================================================================
 // 辅助函数：创建 GarrisonLogicDefault 实例
-// ============================================================================
 
 /// 创建 GarrisonLogicDefault 实例（使用 MockDao + MockFirewall，不依赖真实 dbnexus / redis）。
 fn make_logic() -> GarrisonLogicDefault {
@@ -194,9 +188,7 @@ fn make_logic() -> GarrisonLogicDefault {
     GarrisonLogicDefault::new(session, config, firewall, disable_repo)
 }
 
-// ============================================================================
 // Bench 1: login_flow（目标 P99 ≤ 500ms）
-// ============================================================================
 
 /// 登录流程基准：5000 TPS 并发登录，P99 ≤ 500ms；完整调用 `GarrisonLogicDefault::login`（生成 token + 创建 Token-Session + Account-Session）。
 fn bench_login_flow(c: &mut Criterion) {
@@ -215,9 +207,7 @@ fn bench_login_flow(c: &mut Criterion) {
     });
 }
 
-// ============================================================================
 // Bench 2: token_verify_stateless（目标 P99 ≤ 5ms）
-// ============================================================================
 
 /// JWT stateless 验证基准：P99 ≤ 5ms（20000 TPS）。启用 `protocol-jwt` 时为真实签发 + 验签（本地 JWKS 缓存命中场景），未启用时为结构解析模拟（不验签）。
 #[cfg(feature = "protocol-jwt")]
@@ -267,9 +257,7 @@ fn bench_token_verify_stateless(c: &mut Criterion) {
     });
 }
 
-// ============================================================================
 // Bench 3: permission_check（目标 P99 ≤ 5ms）
-// ============================================================================
 
 /// 权限检查基准：20000 TPS，P99 ≤ 5ms；登录获取 token 后在 task_local 上下文调用 `has_permission`，mock firewall 返回 true 模拟缓存命中。
 fn bench_permission_check(c: &mut Criterion) {
@@ -306,9 +294,7 @@ fn bench_permission_check(c: &mut Criterion) {
     });
 }
 
-// ============================================================================
 // Bench 4: oxcache_backend_switch（目标切换开销 = 0）
-// ============================================================================
 
 /// 缓存后端切换基准：不同 `MockDao` 实例（memory / redis_mock）运行同一 `GarrisonLogicDefault` 代码无修改，证明 DAO 抽象层后端切换开销 = 0。`GARRISON_SKIP_REDIS_BENCH=1` 跳过 redis 子 bench（无 Redis 环境快速运行）。
 fn bench_oxcache_backend_switch(c: &mut Criterion) {
@@ -360,9 +346,7 @@ fn bench_oxcache_backend_switch(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
 // Bench 5: convert_placeholders（SQL 方言转换，每次 Statement 构造必经路径）
-// ============================================================================
 
 /// SQL 占位符方言转换基准（自研依赖升级适配面热路径锁定）：PostgreSQL 口径为含字符串字面量/行注释/块注释与多个 `?` 的真实查询，SQLite 直通。
 // 无 cfg 门控：本 target 的 required-features = ["full"] 恒含 db-* 与 backend-remote，条件编译只会制造不可达分支（criterion_group 无条件引用）。
@@ -384,9 +368,7 @@ fn bench_convert_placeholders(c: &mut Criterion) {
     group.finish();
 }
 
-// ============================================================================
 // Bench 6: circuit_execute（熔断包装器直通开销，backend-remote 远程调用必经路径）
-// ============================================================================
 
 /// `CircuitBreakerWrapper::execute` 关闭态直通开销基准（自研依赖升级适配面锁定：limiteron rc.6 CircuitCallError 迁移后的包装成本）；迭代循环包在一次 block_on 内（iter_custom），避免每迭代 ~130ns 的 executor 常量项稀释被测开销。
 fn bench_circuit_execute(c: &mut Criterion) {
@@ -414,9 +396,7 @@ fn bench_circuit_execute(c: &mut Criterion) {
     });
 }
 
-// ============================================================================
 // criterion_group + criterion_main
-// ============================================================================
 
 criterion_group!(
     benches,

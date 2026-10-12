@@ -38,9 +38,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// 并发 task 数（与 storage 域一致）。
 const CONCURRENCY: usize = 100;
 
-// ============================================================================
 // 辅助
-// ============================================================================
 
 /// 构造产品内存 DAO（`Arc<dyn GarrisonDao>`）。
 fn make_dao() -> Arc<dyn GarrisonDao> {
@@ -55,9 +53,7 @@ fn now_ts() -> i64 {
         .as_secs() as i64
 }
 
-// ------------------------------------------------------------------------
 // sso（ticket 签发 / 一次性消费 / 并发竞争 / 过期）
-// ------------------------------------------------------------------------
 
 /// （正常）：`SsoClient` ticket 签发 → 校验 roundtrip——ticket 为
 /// `{64_hex_random}.{hmac_b64}` 签名格式（M5），校验返回签入时的 login_id。
@@ -191,9 +187,7 @@ async fn acc_mixed_004_sso_ticket_expired_rejected() {
     );
 }
 
-// ------------------------------------------------------------------------
 // sign（签名验证 / 时间窗口 / nonce 重放）
-// ------------------------------------------------------------------------
 
 /// （正常+异常）：`SignHandler` 签名验证通过——sign/validate
 /// roundtrip 返回 Ok；异常侧：请求体被篡改（同一 nonce 不同 body）签名不匹配
@@ -322,9 +316,7 @@ async fn acc_mixed_007_sign_nonce_replay_rejected() {
     );
 }
 
-// ------------------------------------------------------------------------
 // apikey（生成 / 吊销 / 轮换 / 无效格式 / 过期）
-// ------------------------------------------------------------------------
 
 /// （正常）：`ApiKeyHandler` 生成 → 校验 roundtrip——key 为
 /// `{32_hex}.{32_hex}` 双段格式，`verify` 返回完整 `ApiKeyInfo`
@@ -451,9 +443,7 @@ async fn acc_mixed_012_apikey_expired_rejected() {
     );
 }
 
-// ------------------------------------------------------------------------
 // temp（issue/consume 一次性 / 过期 / 吊销 / 并发竞争）
-// ------------------------------------------------------------------------
 
 /// （正常+异常）：`TempCredentialHandler` issue → get → consume——
 /// 首次 `consume` 原子返回凭证值（一次性），二次 `consume` / `get` 均返回 None。
@@ -583,9 +573,7 @@ async fn acc_mixed_016_temp_concurrent_consume_exactly_once() {
     );
 }
 
-// ------------------------------------------------------------------------
 // sso 销毁/多 client、sign 参数、apikey 隔离、temp scope
-// ------------------------------------------------------------------------
 
 /// （正常+异常）：`destroy_ticket` 销毁后跨子系统不可校验（另一共享 DAO 的 client
 /// 校验失败）；销毁不存在的 ticket 幂等返回 Ok。
@@ -769,9 +757,7 @@ async fn acc_mixed_022_temp_credential_scope_privilege_rejected() {
     assert!(read_allowed, "scope=\"read\" 的凭证应允许 \"read\" 操作");
 }
 
-// ------------------------------------------------------------------------
 // check_api_key 端点语义
-// ------------------------------------------------------------------------
 
 /// 空授权 `GarrisonInterface` 替身（与 session.rs 的 `NoopInterface` 同构，
 /// 仅满足 `GarrisonPermissionStrategyDefault` 构造要求，不参与断言）。

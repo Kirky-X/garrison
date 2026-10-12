@@ -19,9 +19,7 @@ use garrison::protocol::invitation::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-// ============================================================================
 // 注册编排钩子：应用侧在 redeem 回调中完成账号创建与角色授予
-// ============================================================================
 
 struct AccountProvisioningHook {
     accounts: Mutex<Vec<String>>,
@@ -48,9 +46,7 @@ impl InvitationRedeemHook for AccountProvisioningHook {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison 邀请码定向注册示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 构建 InvitationHandler（注入注册编排钩子）
-    // ----------------------------------------------------------------
     // DAO 使用 garrison 内置的生产级内存实现（含原子 get_and_delete / set_if_absent / incr）
     let dao: Arc<dyn GarrisonDao> = Arc::new(InMemoryDao::new());
     let hook = Arc::new(AccountProvisioningHook {
@@ -59,9 +55,7 @@ pub async fn run() -> GarrisonResult<()> {
     let handler = InvitationHandler::new(dao).with_hook(hook.clone());
     println!("[1] InvitationHandler 构建完成（默认防爆破：10 次 / 600 秒窗口）\n");
 
-    // ----------------------------------------------------------------
     // 2. create 签发单次邀请码（TTL 600 秒，绑定角色与租户）
-    // ----------------------------------------------------------------
     let spec = InvitationSpec {
         issuer_id: "admin-1".to_string(),
         tenant_id: Some("tenant-acme".to_string()),
@@ -81,9 +75,7 @@ pub async fn run() -> GarrisonResult<()> {
     println!("    expires_at   = {}（600 秒后）", invitation.expires_at);
     println!("    ✓ 广播 InvitationCreated 事件（需 listener feature）\n");
 
-    // ----------------------------------------------------------------
     // 3. validate 只读预检（注册页提交前校验，不消费）
-    // ----------------------------------------------------------------
     let report = handler.validate(&invitation.code).await?;
     println!("[3] validate（只读预检）:");
     println!("    有效 = {}", report.is_valid());
@@ -98,9 +90,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(handler.validate(&display).await?.is_valid());
     println!("    输入规范化（小写/连字符）→ 同样命中 ✓\n");
 
-    // ----------------------------------------------------------------
     // 4. redeem 原子消费（hook 编排账号创建），二次消费被拒
-    // ----------------------------------------------------------------
     let redeemed = handler
         .redeem(&invitation.code, "user-1001", "10.0.0.8")
         .await?;
@@ -119,9 +109,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(again.is_err());
     println!("    二次消费 → Err（单次码已删除，防 double-spend）✓\n");
 
-    // ----------------------------------------------------------------
     // 5. create_batch 批量签发 N 次有效邀请码
-    // ----------------------------------------------------------------
     let batch_spec = InvitationSpec {
         issuer_id: "admin-1".to_string(),
         tenant_id: None,
@@ -143,9 +131,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(exhausted.is_err());
     println!("    第 5 次消费成功后第 6 次 → Err（次数用尽）✓\n");
 
-    // ----------------------------------------------------------------
     // 6. list 管理面（按邀请人列出）与 revoke 吊销
-    // ----------------------------------------------------------------
     let listed = handler.list("admin-1").await?;
     println!("[6] list / revoke:");
     println!(

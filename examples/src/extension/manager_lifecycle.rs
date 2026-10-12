@@ -28,9 +28,7 @@ use garrison::{TenantContext, TenantSource, TENANT};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-// ============================================================================
 // 业务方实现 GarrisonInterface
-// ============================================================================
 
 /// 示例 GarrisonInterface，预置 1001（user:read/user:write，admin）与 1002（user:read，user）的权限/角色。
 pub struct MyInterface {
@@ -76,17 +74,13 @@ impl GarrisonInterface for MyInterface {
 pub async fn run() -> GarrisonResult<()> {
     println!("=== Garrison Manager 生命周期示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. 准备依赖
-    // ----------------------------------------------------------------
     let dao: Arc<dyn GarrisonDao> = Arc::new(GarrisonDaoOxcache::new().await?);
     let config = Arc::new(GarrisonConfig::default_config());
     let interface: Arc<dyn GarrisonInterface> = Arc::new(MyInterface::new());
     println!("[1] 依赖准备完成: DAO + Config + Interface");
 
-    // ----------------------------------------------------------------
     // 2. GarrisonManager::builder()
-    // ----------------------------------------------------------------
     GarrisonManager::builder()
         .dao(dao)
         .config(config)
@@ -95,9 +89,7 @@ pub async fn run() -> GarrisonResult<()> {
         .await?;
     println!("[2] GarrisonManager::builder() 完成（全局单例已注入）\n");
 
-    // ----------------------------------------------------------------
     // 3. GarrisonUtil 静态方法：login
-    // ----------------------------------------------------------------
     // TENANT(42) scope 内执行登录与校验：tenant-isolation 启用时 check_permission/check_role 强制要求租户上下文（fail-closed）。
     let tenant_ctx = TenantContext {
         tenant_id: 42,
@@ -112,9 +104,7 @@ pub async fn run() -> GarrisonResult<()> {
     assert!(!token.is_empty(), "login 应返回非空 token");
     println!();
 
-    // ----------------------------------------------------------------
     // 4. task_local 上下文
-    // ----------------------------------------------------------------
     // check_login / get_login_id / check_permission 依赖 task_local token，实际由 Web 中间件设置，此处显式调用 with_current_token。
     println!("[4] task_local 上下文:");
     let token_clone = token.clone();
@@ -143,9 +133,7 @@ pub async fn run() -> GarrisonResult<()> {
     ctx_result?;
     println!();
 
-    // ----------------------------------------------------------------
     // 7. 多账号登录与 kickout
-    // ----------------------------------------------------------------
     println!("[5] 多账号登录与 kickout:");
     let token2 = TENANT
         .scope(tenant_ctx.clone(), async {
@@ -195,9 +183,7 @@ pub async fn run() -> GarrisonResult<()> {
     );
     println!();
 
-    // ----------------------------------------------------------------
     // 8. GarrisonManager::logic 获取底层实例
-    // ----------------------------------------------------------------
     println!("[6] GarrisonManager 底层访问:");
     let logic = GarrisonManager::logic()?;
     println!(
@@ -206,18 +192,14 @@ pub async fn run() -> GarrisonResult<()> {
     );
     println!("    logic.config().timeout = {} 秒", logic.config().timeout);
 
-    // ----------------------------------------------------------------
     // 9. 配置访问（GarrisonUtil::config）
-    // ----------------------------------------------------------------
     let config = GarrisonUtil::config()?;
     println!("[7] GarrisonUtil::config():");
     println!("    token_name = {}", config.token_name);
     println!("    is_read_header = {}", config.is_read_header);
     println!("    cookie_secure = {}", config.cookie_secure);
 
-    // ----------------------------------------------------------------
     // 10. 登出当前 token
-    // ----------------------------------------------------------------
     let token_clone = token.clone();
     TENANT
         .scope(tenant_ctx.clone(), async {

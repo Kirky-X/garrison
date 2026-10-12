@@ -23,9 +23,7 @@ use std::sync::{Arc, RwLock};
 use crate::common::harness::GarrisonTestHarness;
 use crate::common::{setup_db, sha256_hex};
 
-// ------------------------------------------------------------------------
 // 辅助函数
-// ------------------------------------------------------------------------
 
 /// 「校验必须失败」的统一断言：verify 返回 Err。
 fn assert_verify_rejected(
@@ -44,9 +42,7 @@ fn handlers_with_shared_secret() -> (JwtHandler, JwtHandler) {
     )
 }
 
-// ------------------------------------------------------------------------
 // HS256 / HS512 roundtrip（正常）
-// ------------------------------------------------------------------------
 
 /// （正常）：HS256 签发 → 校验 roundtrip，claims 字段一致
 /// （login_id / sub / jti 唯一），伪造 token 在正常路径的对比锚点（verify 只
@@ -93,9 +89,7 @@ async fn acc_jwt_002_hs512_sign_verify_roundtrip() {
     assert_eq!(claims.login_id, "2002".to_string());
 }
 
-// ------------------------------------------------------------------------
 // mixin 模式（正常 + 异常）
-// ------------------------------------------------------------------------
 
 /// （正常+异常）：token_style=jwt + JwtMode::Mixin（默认）——
 /// 经全局管理器 login 签发 JWT，verify_token 反查主体、check_login 通过；
@@ -151,9 +145,7 @@ async fn acc_jwt_003_mixin_mode_jwt_with_session_required() {
     );
 }
 
-// ------------------------------------------------------------------------
 // refresh 轮换链（正常）
-// ------------------------------------------------------------------------
 
 /// （正常）：RefreshTokenRotation 轮换链——issue 首 token →
 /// 两次 rotate 生成新 token，每代 record 保留 parent_token_hash 指向旧 hash，
@@ -236,9 +228,7 @@ async fn acc_jwt_004_refresh_rotation_chain_keeps_parent_hash() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 异常路径
-// ------------------------------------------------------------------------
 
 /// （异常）：过期 token 被拒绝——timeout=0 签发（exp=iat），
 /// 跨越至少一个秒边界后 verify 必须返回 ExpiredToken。
@@ -456,9 +446,7 @@ async fn acc_jwt_009_wrong_key_with_or_without_kid_rejected() {
         .expect("正确密钥 + kid 声明的 token 应通过");
 }
 
-// ------------------------------------------------------------------------
 // JWT 生命周期与边界场景
-// ------------------------------------------------------------------------
 
 /// token_style=jwt 的全局配置（生命周期场景共用）；`throw_on_not_login=false` 保持
 /// logout 后 `check_login` 返回 `Ok(false)`。
@@ -653,9 +641,7 @@ async fn acc_jwt_014_refresh_expired_token_returns_expired() {
     }
 }
 
-// ============================================================================
 // JWT 三模式矩阵
-// ============================================================================
 
 /// （正常）：`with_device` 设置设备标识后 claims.device 为 Some。
 #[tokio::test(flavor = "multi_thread")]

@@ -32,9 +32,7 @@ fn test_config() -> Arc<GarrisonConfig> {
     Arc::new(c)
 }
 
-// ------------------------------------------------------------------------
 // 权限 / 角色（正常 + 异常）
-// ------------------------------------------------------------------------
 
 /// （正常）：权限通过——`MockInterface.allow` 注入 → `login_simple`
 /// → `with_current_token` + `GarrisonUtil::check_permission` 返回 Ok、`has_permission`
@@ -195,9 +193,7 @@ async fn acc_rbac_004_role_denied_returns_not_role() {
     .await;
 }
 
-// ------------------------------------------------------------------------
 // 角色层级继承 / Or-And-Not 组合语义（直构策略）
-// ------------------------------------------------------------------------
 
 /// （正常+异常）：角色层级继承——`with_role_hierarchy` 注入
 /// `{"admin": ["user"], "superadmin": ["admin"]}` 后，持有 `superadmin` 的主体
@@ -317,9 +313,7 @@ async fn acc_rbac_006_combination_short_circuit_semantics() {
     );
 }
 
-// ------------------------------------------------------------------------
 // web 注解路由（正常 + 异常）
-// ------------------------------------------------------------------------
 
 /// （正常+异常）：`GarrisonRouter::route_protected` + tower
 /// `ServiceExt::oneshot`——`CheckPermission` / `CheckRole` 注解路由：持有方返回
@@ -424,9 +418,7 @@ async fn acc_rbac_007_web_route_annotations_grant_and_deny() {
     .await;
 }
 
-// ------------------------------------------------------------------------
 // 策略注册表热替换（异常侧：默认拒绝被替换为放行）
-// ------------------------------------------------------------------------
 
 /// 放行一切权限 / 角色的自定义 `PermissionHandler`（热替换注入物）。
 struct AllowAllPermissionHandler;
@@ -505,9 +497,7 @@ async fn acc_rbac_008_strategy_hot_swap_takes_effect_immediately() {
     );
 }
 
-// ------------------------------------------------------------------------
 // interface 故障显性化（异常）
-// ------------------------------------------------------------------------
 
 /// （异常+正常）：`MockInterface::fail_with` 注入数据源故障后，
 /// `check_permission` / `has_permission` 均把 `Err` 显性上抛（`GarrisonError::Dao`），
@@ -567,10 +557,8 @@ async fn acc_rbac_009_interface_error_fails_loud_and_recovers() {
     );
 }
 
-// ------------------------------------------------------------------------
 // 策略注册表域
 // （ 已覆盖的 register/remove 生命周期与 runtime 热替换去重）
-// ------------------------------------------------------------------------
 
 /// 构造测试用 `Arc<GarrisonLogicDefault>`（直构，不经全局单例；与
 /// integration/strategy_registry.rs 的 make_logic 惯例一致）。

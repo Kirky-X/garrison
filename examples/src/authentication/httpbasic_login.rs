@@ -19,17 +19,13 @@ use garrison::secure::httpbasic::HttpBasicAuth;
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison HTTP Basic 认证示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. encode：编码用户名密码为 Base64 凭证
-    // ----------------------------------------------------------------
     let encoded = HttpBasicAuth::encode("alice", "s3cret-pass");
     println!("[1] encode:");
     println!("    user:pass = alice:s3cret-pass");
     println!("    Base64    = {}\n", encoded);
 
-    // ----------------------------------------------------------------
     // 2. decode：解码 Base64 凭证为 Credential
-    // ----------------------------------------------------------------
     let cred = HttpBasicAuth::decode(&encoded)?;
     println!("[2] decode:");
     println!("    user = {}", cred.user);
@@ -37,9 +33,7 @@ pub fn run() -> GarrisonResult<()> {
     assert_eq!(cred.user, "alice");
     assert_eq!(cred.pass, "s3cret-pass");
 
-    // ----------------------------------------------------------------
     // 3. parse_authorization_header：解析完整 Authorization header
-    // ----------------------------------------------------------------
     let header = format!("Basic {}", encoded);
     let cred_from_header = HttpBasicAuth::parse_authorization_header(&header)?;
     println!("[3] parse_authorization_header:");
@@ -47,9 +41,7 @@ pub fn run() -> GarrisonResult<()> {
     println!("    user   = {}", cred_from_header.user);
     println!("    pass   = {}\n", cred_from_header.pass);
 
-    // ----------------------------------------------------------------
     // 4. 支持中文与特殊字符
-    // ----------------------------------------------------------------
     let encoded_cn = HttpBasicAuth::encode("张三", "密码!@#$%");
     let cred_cn = HttpBasicAuth::decode(&encoded_cn)?;
     println!("[4] 中文与特殊字符:");
@@ -58,9 +50,7 @@ pub fn run() -> GarrisonResult<()> {
     assert_eq!(cred_cn.user, "张三");
     assert_eq!(cred_cn.pass, "密码!@#$%");
 
-    // ----------------------------------------------------------------
     // 5. 错误场景：非 Basic 方案
-    // ----------------------------------------------------------------
     let result = HttpBasicAuth::parse_authorization_header("Bearer some.token.value");
     println!("[5] 非 Basic 方案拒绝:");
     println!("    输入 = \"Bearer some.token.value\"");

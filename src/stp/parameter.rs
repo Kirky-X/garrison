@@ -152,9 +152,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    // ------------------------------------------------------------------------
     // MockDao：HashMap + Instant 模拟 TTL（复用 stp/mod.rs 测试模式）
-    // ------------------------------------------------------------------------
 
     struct MockDao {
         store: Mutex<HashMap<String, (String, Option<Instant>)>>,
@@ -231,9 +229,7 @@ mod tests {
         crate::atomic_test_fallback!();
     }
 
-    // ------------------------------------------------------------------------
     // MockInterfaceWithPerms：可配置权限/角色数据的 mock
-    // ------------------------------------------------------------------------
 
     struct MockInterfaceWithPerms {
         permissions: HashMap<String, Vec<String>>,
@@ -274,9 +270,7 @@ mod tests {
             .unwrap();
     }
 
-    // ------------------------------------------------------------------------
     // 链式调用设置上下文
-    // ------------------------------------------------------------------------
 
     /// 验证 new() 返回的 builder 所有上下文字段为 None。
     #[test]
@@ -329,9 +323,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
     // check_permission 未设置上下文 / login_id / token
-    // ------------------------------------------------------------------------
 
     /// spec Scenario: 未设置 login_id 时 check_permission 返回 Internal。
     #[tokio::test]
@@ -441,9 +433,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    // ------------------------------------------------------------------------
     // check_role 未设置上下文 / login_id / token
-    // ------------------------------------------------------------------------
 
     /// spec Scenario: 未设置 login_id 时 check_role 校验失败。
     #[tokio::test]
@@ -553,9 +543,7 @@ mod tests {
         GarrisonManager::reset_for_test();
     }
 
-    // ------------------------------------------------------------------------
     // async 支持 + Default trait
-    // ------------------------------------------------------------------------
 
     /// 验证 check_permission 为 async 方法，可在 tokio runtime 中 await。
     #[tokio::test]

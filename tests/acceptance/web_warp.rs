@@ -30,9 +30,7 @@ use garrison::context::tenant::TenantSource;
 #[cfg(feature = "tenant-isolation")]
 use garrison::web_warp::tenant_context;
 
-// ============================================================================
 // 通用辅助
-// ============================================================================
 
 /// 设置默认 TENANT scope（tenant_id=0）：`tenant-isolation` 启用时权限/角色查询
 /// fail-closed（`ctx-tenant-context-missing`），需进入租户上下文。
@@ -77,9 +75,7 @@ fn assert_garrison_rejection(err: warp::Rejection, ctx: &str) {
     );
 }
 
-// ============================================================================
 // guard Filter 矩阵
-// ============================================================================
 
 /// （正常+异常）：`check_login` guard Filter——有效 token 通过
 /// （Extract=()`）；无 token 拒绝为 `GarrisonRejection`。
@@ -205,9 +201,7 @@ async fn acc_warp_003_guard_check_permission_pass_and_reject() {
     );
 }
 
-// ============================================================================
 // value Filter（garrison_principal / tenant_context）
-// ============================================================================
 
 /// （正常+异常）：`garrison_principal` value Filter——
 /// 从 `Authorization: Bearer` token 解析 `login_id`（Extract=`GarrisonPrincipal`）；
@@ -292,9 +286,7 @@ async fn acc_warp_005_value_tenant_context_resolves_tenant_id() {
     );
 }
 
-// ============================================================================
 // GarrisonRejection 一致性（recover 后三框架统一 JSON）
-// ============================================================================
 
 /// （正常+异常）：`.recover(garrison_recover)` 后——
 /// （a）无 token 访问 CheckLogin 路由 → 401，body 与 `NotLogin` 基准全等；

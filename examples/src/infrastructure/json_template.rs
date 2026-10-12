@@ -33,9 +33,7 @@ pub struct UserInfo {
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison JSON 模板与序列化示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. GarrisonJsonTemplate：解析含占位符的 JSON 模板
-    // ----------------------------------------------------------------
     let template_str = r#"{"code":0,"msg":"${msg}","data":{"token":"${token}","user":"${user}"}}"#;
     let template = GarrisonJsonTemplate::new(template_str)?;
     println!("[1] 模板解析成功");
@@ -55,9 +53,7 @@ pub fn run() -> GarrisonResult<()> {
     assert_eq!(reparsed["data"]["user"], "alice");
     println!("    ✓ 渲染结果通过 serde_json 二次解析校验\n");
 
-    // ----------------------------------------------------------------
     // 2. 未提供的占位符保留原样
-    // ----------------------------------------------------------------
     let template2 = GarrisonJsonTemplate::new(r#"{"msg":"${missing}"}"#)?;
     let empty_params = HashMap::new();
     let rendered2 = template2.render(&empty_params)?;
@@ -65,9 +61,7 @@ pub fn run() -> GarrisonResult<()> {
     println!("    渲染结果 = {}\n", rendered2);
     assert!(rendered2.contains("${missing}"));
 
-    // ----------------------------------------------------------------
     // 3. GarrisonSerializerDefault：类型化序列化/反序列化往返
-    // ----------------------------------------------------------------
     let serializer = GarrisonSerializerDefault;
     let data = LoginResponse {
         code: 0,

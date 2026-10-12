@@ -21,9 +21,7 @@ use syn::{
     FnArg, Ident, ItemFn, LitStr, Token,
 };
 
-// ============================================================================
 // 公开 proc_macro_attribute
-// ============================================================================
 
 /// 登录校验属性宏：编译期生成 wrapper，在 fn body 前插入 `GarrisonUtil::check_login()`（async）或 `check_login_sync()`（sync）调用，未登录返回 401。支持 async/sync fn（sync 需 tokio multi_thread runtime），仅 axum handler，无参数。
 #[proc_macro_attribute]
@@ -154,9 +152,7 @@ pub fn check_abac(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_abac(&attr_parsed.action, resource, &attr_parsed.abac, item_fn)
 }
 
-// ============================================================================
 // forge 兼容变体
-// ============================================================================
 //
 // 与 sdforge `#[forge]` 宏共存的变体：不生成 wrapper 函数，直接在原函数体开头插入校验代码，保留原返回类型（`Result<T, E: From<GarrisonError>>`，校验失败返回 `Err(garrison_err.into())`）。
 // `#[check_*_forge]` 必须置于 `#[forge]` 上方先展开（修改函数体），`#[forge]` 后展开时保留修改后的函数体并生成路由注册代码。
@@ -202,9 +198,7 @@ pub fn check_role_forge(attr: TokenStream, item: TokenStream) -> TokenStream {
     expand_check_with_args_forge("check_role", &roles, item_fn).into()
 }
 
-// ============================================================================
 // 内部展开逻辑
-// ============================================================================
 
 /// 默认 Cedar resource EntityUid 字符串（向后兼容）：宏属性 `resource = "..."` 未提供时使用。
 const DEFAULT_RESOURCE: &str = r#"Resource::"default""#;
@@ -628,9 +622,7 @@ fn expand_wrapper(
     expanded.into()
 }
 
-// ============================================================================
 // forge 兼容变体展开逻辑
-// ============================================================================
 
 /// 展开 `#[check_login_forge]`：在原函数体开头插入 `GarrisonUtil::check_login()` 校验，失败返回 `Err(garrison_err.into())`（调用方错误类型须实现 `From<GarrisonError>`）。仅 async fn（sync fn 标注因 `.await` 非法产生编译错误，符合设计预期）。
 fn expand_check_login_forge(item_fn: ItemFn) -> proc_macro2::TokenStream {
@@ -714,7 +706,7 @@ mod tests {
         assert_eq!(detect_asyncness(&item_fn), Asyncness::Sync);
     }
 
-    // ---- forge 兼容变体测试 ----
+    // forge 兼容变体测试
 
     /// `expand_check_permission_forge` 展开后函数名不变（不生成 wrapper）
     #[test]

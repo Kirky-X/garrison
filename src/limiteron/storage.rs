@@ -236,7 +236,7 @@ mod tests {
         Arc::new(MockDao::new())
     }
 
-    // --- GarrisonDaoStorage 测试 ---
+    // GarrisonDaoStorage 测试
 
     #[tokio::test]
     async fn storage_get_set_delete() {
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(storage.get("perm").await.unwrap(), Some("val".to_string()));
     }
 
-    // --- GarrisonDaoQuotaStorage 测试 ---
+    // GarrisonDaoQuotaStorage 测试
 
     /// consume 到限后拒绝（remaining=0）；refund 1 后可再次消费，再消费一次又被拒。
     #[tokio::test]

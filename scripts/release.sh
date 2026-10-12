@@ -28,10 +28,8 @@ validate_semver() {
     return 0
 }
 
-# ==============================================================================
 # 子命令：check-version <version>
 # 检查 Cargo.toml / CHANGELOG.md / git tag 三者版本一致
-# ==============================================================================
 cmd_check_version() {
     local version="${1:-}"
     if [[ -z "$version" ]]; then
@@ -67,11 +65,9 @@ cmd_check_version() {
     ok "版本一致性检查通过"
 }
 
-# ==============================================================================
 # 子命令：gen-changelog <git-range> [version]
 # 从 git log 生成 changelog 段落（仅 oneline，需人工分类）
 # version 缺省时为 "Unreleased"，发布时应显式传入版本号
-# ==============================================================================
 cmd_gen_changelog() {
     local range="${1:-}"
     local version="${2:-unreleased}"
@@ -100,10 +96,8 @@ cmd_gen_changelog() {
     info "注意：以上为 git log oneline 自动生成，需人工分类到 Added/Changed/Fixed/Security 章节"
 }
 
-# ==============================================================================
 # 子命令：bump-version <new-version>
 # 修改 Cargo.toml version 字段
-# ==============================================================================
 cmd_bump_version() {
     local new_version="${1:-}"
     if [[ -z "$new_version" ]]; then
@@ -128,11 +122,9 @@ cmd_bump_version() {
     ok "Cargo.toml version 已更新为 $new_version"
 }
 
-# ==============================================================================
 # 子命令：precheck
 # 完整预检查（所有检查项）
 # 顺序与 RELEASING.md 流程图一致：fmt → SAST → test → doc → clippy → version
-# ==============================================================================
 cmd_precheck() {
     info "=== Garrison Release 预检查 ==="
     echo
@@ -232,9 +224,7 @@ cmd_precheck() {
     fi
 }
 
-# ==============================================================================
 # 主入口
-# ==============================================================================
 main() {
     local cmd="${1:-}"
     shift || true

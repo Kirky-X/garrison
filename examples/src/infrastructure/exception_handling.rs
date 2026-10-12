@@ -19,18 +19,14 @@ use garrison::exception::{GarrisonException, NotLoginException};
 pub fn run() -> GarrisonResult<()> {
     println!("=== Garrison 异常处理示例 ===\n");
 
-    // ----------------------------------------------------------------
     // 1. NotLoginException：未登录异常（对应 NotLoginException）
-    // ----------------------------------------------------------------
     let ex = NotLoginException::new("please log in first").with_login_type("account");
     println!("[1] NotLoginException:");
     println!("    message   = {}", ex.message);
     println!("    login_type= {}", ex.login_type);
     println!("    Display   = {}\n", ex);
 
-    // ----------------------------------------------------------------
     // 2. GarrisonException：携带上下文的业务可恢复异常（Builder 模式）
-    // ----------------------------------------------------------------
     let biz_ex = GarrisonException::new(-1, "session expired")
         .with_token("T1-uuid-token")
         .with_login_id("1001")
@@ -48,17 +44,13 @@ pub fn run() -> GarrisonResult<()> {
     println!("    extras      = {:?}", biz_ex.extras);
     println!("    Display     = {}\n", biz_ex);
 
-    // ----------------------------------------------------------------
     // 3. GarrisonException → GarrisonError（通过 From trait 自动转换）
-    // ----------------------------------------------------------------
     let err: GarrisonError = biz_ex.into();
     println!("[3] GarrisonException → GarrisonError:");
     println!("    变体 = {:?}", err);
     println!("    Display = {}\n", err);
 
-    // ----------------------------------------------------------------
     // 4. GarrisonError → GarrisonException（反向转换，按语义映射 code）
-    // ----------------------------------------------------------------
     let not_login_err = GarrisonError::NotLogin("token missing".to_string());
     let converted: GarrisonException = not_login_err.into();
     println!("[4] GarrisonError::NotLogin → GarrisonException:");

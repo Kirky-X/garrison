@@ -20,9 +20,7 @@ pub fn run() -> GarrisonResult<()> {
     let secret = b"my-hmac-secret";
     let data = b"POST /api/v1/users\n{\"name\":\"alice\"}";
 
-    // ----------------------------------------------------------------
     // 1. HMAC-SHA256 签名（微服务网关签名认证常用算法）
-    // ----------------------------------------------------------------
     let sig_256 = Signer::hmac_sha256(secret, data);
     println!("[1] HMAC-SHA256:");
     println!("    secret = {}", String::from_utf8_lossy(secret));
@@ -34,9 +32,7 @@ pub fn run() -> GarrisonResult<()> {
     );
     assert_eq!(sig_256.len(), 64);
 
-    // ----------------------------------------------------------------
     // 2. HMAC-SHA512 签名（更高安全级别）
-    // ----------------------------------------------------------------
     let sig_512 = Signer::hmac_sha512(secret, data);
     println!("[2] HMAC-SHA512:");
     println!("    签名   = {}", sig_512);
@@ -50,9 +46,7 @@ pub fn run() -> GarrisonResult<()> {
     assert_eq!(sig_256, Signer::hmac_sha256(secret, data));
     println!("    ✓ 相同输入确定性一致\n");
 
-    // ----------------------------------------------------------------
     // 3. Base64 编码与解码互逆
-    // ----------------------------------------------------------------
     let original = "Hello, Garrison! 签名工具测试";
     let original_bytes = original.as_bytes();
     let encoded = Signer::base64_encode(original_bytes);
@@ -64,9 +58,7 @@ pub fn run() -> GarrisonResult<()> {
     assert_eq!(decoded, original_bytes);
     println!("    ✓ 编解码互逆一致\n");
 
-    // ----------------------------------------------------------------
     // 4. 不同 secret 产生不同签名（密钥隔离）
-    // ----------------------------------------------------------------
     let sig_a = Signer::hmac_sha256(b"secret-A", data);
     let sig_b = Signer::hmac_sha256(b"secret-B", data);
     assert_ne!(sig_a, sig_b);

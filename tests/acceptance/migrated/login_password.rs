@@ -32,9 +32,7 @@ use std::sync::Arc;
 
 const TENANT: i64 = 0;
 
-// ============================================================================
 // MockInterface：GarrisonPermissionStrategyDefault::new() 必需
-// ============================================================================
 
 struct MockInterface;
 
@@ -48,9 +46,7 @@ impl GarrisonInterface for MockInterface {
     }
 }
 
-// ============================================================================
 // 全局计数器：记录 listener 事件
-// ============================================================================
 
 static LOGIN_FAILURE_NOT_FOUND: AtomicUsize = AtomicUsize::new(0);
 static LOGIN_FAILURE_WRONG_PASSWORD: AtomicUsize = AtomicUsize::new(0);
@@ -92,9 +88,7 @@ inventory::submit! {
     garrison::listener::GarrisonListenerEntry { factory: password_login_listener_factory }
 }
 
-// ============================================================================
 // 辅助：定位迁移目录 + 初始化 SQLite in-memory + 迁移
-// ============================================================================
 
 fn project_migrations_dir() -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
@@ -113,9 +107,7 @@ async fn setup_db() -> dbnexus::DbPool {
     pool
 }
 
-// ============================================================================
 // PasswordHasher roundtrip（Argon2 + Bcrypt）
-// ============================================================================
 
 /// Argon2 hash → verify roundtrip：相同密码匹配，不同密码不匹配。
 #[tokio::test]
@@ -212,9 +204,7 @@ async fn password_verifier_auto_detects_algorithm() {
     );
 }
 
-// ============================================================================
 // login_with_password 端到端集成（真实 SQLite + Argon2 + UserRepository）
-// ============================================================================
 
 /// 构造 GarrisonLogicDefault 实例，注入 Argon2Hasher + DbnexusUserRepository + ListenerManager。
 async fn make_logic_with_password() -> Arc<GarrisonLogicDefault> {
@@ -406,7 +396,5 @@ async fn login_with_password_fails_without_user_repository() {
     }
 }
 
-// ============================================================================
 // 备注：GarrisonManager 注入路径下无法便捷预置自定义 factory（`with_factory` 依赖
 // `&'static GarrisonLogicFactoryEntry`），该场景由 src/stp/mod.rs 单元测试覆盖。
-// ============================================================================

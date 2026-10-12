@@ -20,9 +20,7 @@ use garrison::plugin::{GarrisonPlugin, GarrisonPluginManager};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-// ============================================================================
 // 测试用 Plugin（计数器记录钩子调用）
-// ============================================================================
 
 static PLUGIN_LOGIN_CALLS: AtomicUsize = AtomicUsize::new(0);
 static PLUGIN_LOGOUT_CALLS: AtomicUsize = AtomicUsize::new(0);
@@ -56,9 +54,7 @@ inventory::submit! {
     garrison::plugin::GarrisonPluginEntry { factory: counting_plugin_factory }
 }
 
-// ============================================================================
 // 测试用 Listener（计数器记录事件广播）
-// ============================================================================
 
 static LISTENER_LOGIN_EVENTS: AtomicUsize = AtomicUsize::new(0);
 static LISTENER_LOGOUT_EVENTS: AtomicUsize = AtomicUsize::new(0);
@@ -93,9 +89,7 @@ inventory::submit! {
     garrison::listener::GarrisonListenerEntry { factory: counting_listener_factory }
 }
 
-// ============================================================================
 // 辅助函数
-// ============================================================================
 
 fn reset_counters() {
     PLUGIN_LOGIN_CALLS.store(0, Ordering::SeqCst);
@@ -106,9 +100,7 @@ fn reset_counters() {
     LISTENER_PERM_CHECK_EVENTS.store(0, Ordering::SeqCst);
 }
 
-// ============================================================================
 // Plugin 集成测试
-// ============================================================================
 
 /// GarrisonPluginManager 收集 inventory 注册的插件。
 #[test]
@@ -174,9 +166,7 @@ fn plugin_multiple_calls_accumulate() {
     );
 }
 
-// ============================================================================
 // Listener 集成测试
-// ============================================================================
 
 /// GarrisonListenerManager 收集 inventory 注册的 listener。
 #[test]
@@ -268,9 +258,7 @@ async fn listener_multiple_broadcasts_accumulate() {
     );
 }
 
-// ============================================================================
 // 端到端集成：plugin + listener 协同
-// ============================================================================
 
 /// 完整生命周期：login → permission_check → logout
 /// （扩展点本身行为：直接调用 plugin/listener 方法）。
@@ -351,11 +339,9 @@ async fn permission_check_event_only_goes_to_listener() {
     assert!(LISTENER_PERM_CHECK_EVENTS.load(Ordering::SeqCst) >= 1);
 }
 
-// ============================================================================
 // auto-wire 集成测试
 // 验证 GarrisonManager::builder() 自动注入 plugin/listener 后，
 // GarrisonUtil::login 会自动触发 on_login 钩子与 Login 事件。
-// ============================================================================
 
 /// auto-wire: `GarrisonManager::builder()` + `GarrisonUtil::login` 自动触发 plugin on_login
 /// 钩子与 Login 事件（init 阶段注入 PluginManager）。

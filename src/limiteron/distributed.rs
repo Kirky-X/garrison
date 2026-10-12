@@ -246,7 +246,7 @@ mod tests {
         Arc::new(InMemoryDao::new())
     }
 
-    // --- GarrisonDaoDistributedLimiter 测试 ---
+    // GarrisonDaoDistributedLimiter 测试
 
     #[tokio::test]
     async fn limiter_incr_and_get_count() {
@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(limiter.get_count("noexist").await.unwrap(), 0);
     }
 
-    // --- 脏数据显性化测试 ---
+    // 脏数据显性化测试
 
     /// DistributedLimiter::get_count 遇到脏数据时返回错误（非静默用 0）。
     #[tokio::test]
@@ -309,9 +309,7 @@ mod tests {
         );
     }
 
-    // ------------------------------------------------------------------------
     // Redis Lua 脚本原子化限速（check-and-increment）测试
-    // ------------------------------------------------------------------------
 
     /// 并发 100 次 atomic_check_and_incr（阈值 10）结果精确为 10 通过 + 90 拒绝：
     /// 验证经 eval_lua 的原子 check-and-increment，仅前 10 个任务通过（count <= 10），后 90 个被拒。
@@ -421,7 +419,7 @@ mod tests {
         );
     }
 
-    // --- allow_sliding_window：滑窗判定（防火墙限流直连入口，随 feature 门控） ---
+    // allow_sliding_window：滑窗判定（防火墙限流直连入口，随 feature 门控）
 
     /// 同窗内前 max_requests 个请求放行、第 max_requests+1 个被拒
     /// （MockDao 模拟器识别 ZREMRANGEBYSCORE 模式；count 为判定时窗口计数，
@@ -501,7 +499,7 @@ mod tests {
         );
     }
 
-    // --- 补充覆盖：limiter 边界路径 ---
+    // 补充覆盖：limiter 边界路径
 
     /// Limiter::allow 默认构造（阈值 u64::MAX）恒返回 Ok(true)，仅计数不拒绝。
     #[tokio::test]

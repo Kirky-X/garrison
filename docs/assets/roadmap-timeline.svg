@@ -22,7 +22,7 @@
         <!-- Baseline -->
         <line x1="60" y1="220" x2="1060" y2="220" stroke="#1a2332" stroke-width="1"/>
 
-        <!-- ======== 2026 milestones (labels above) ======== -->
+        <!-- 2026 milestones (labels above) -->
 
         <!-- 0.1.0 — 2026-06-30 -->
         <circle cx="100" cy="220" r="6" fill="#c0392b"/>

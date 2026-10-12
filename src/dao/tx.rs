@@ -570,12 +570,10 @@ mod tests {
         assert_send_sync::<GarrisonEventTx>();
     }
 
-    // --------------------------------------------------------------------
     // 缓冲事件丢弃显性化：tracing 捕获层断言丢弃 warn
     // （CollectLayer 仿 web_warp request_id 先例；tracing 的 callsite interest
     // 缓存是进程级全局态，并行非订阅者测试可能抢先缓存 Interest::never，
     // 故捕获缺失时重建 interest 后重试）
-    // --------------------------------------------------------------------
 
     /// 进程内 tracing 捕获层：记录 (级别, 事件字段渲染)。
     struct CollectLayer(Arc<Mutex<Vec<(String, String)>>>);
