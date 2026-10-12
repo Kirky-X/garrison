@@ -50,6 +50,8 @@ let ip_report = eraser.erase_ip_artifacts("203.0.113.7").await?;
 
 ### 2.2 业务方残留责任（报告 `residual_guidance` 同步提示）
 
+`residual_guidance` 的条目文案在报告生成时按当前 locale 取值（`compliance-erasure-residual-*`，见 `locales/{en,zh}.ftl`）——同一份擦除流程在中文/英文部署下产出对应语言的提示；字段类型为 `Vec<String>`。
+
 | 残留数据 | 处置方式 |
 |---------|---------|
 | API Key | 经 `ApiKeyHandler` 查询后吊销（含业务授权语义，框架不代删）。框架侧查询入口为 `list_by_namespace` / `get_keys_older_than`，无按 `owner_id` 查询的 API——owner 维度筛选需业务方自行在 `ApiKeyInfo` 上完成 |

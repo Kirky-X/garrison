@@ -13,7 +13,11 @@ use async_trait::async_trait;
 #[async_trait]
 impl SmsSender for NoopSmsSender {
     async fn send(&self, phone: &str, _code: &str) -> GarrisonResult<()> {
-        tracing::debug!(phone = phone, "NoopSmsSender 发送验证码（code 已省略）");
+        tracing::debug!(
+            phone = phone,
+            "{}",
+            crate::i18n::translate_detail("logs-noop-sms-sender-send-code", &[])
+        );
         Ok(())
     }
 }

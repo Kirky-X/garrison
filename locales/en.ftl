@@ -975,7 +975,8 @@ dao-not-implemented = {$arg0} not implemented for this backend
 # ============================================================================
 config-jwt-secret-empty = jwt_secret must not be empty (when token_style=jwt)
 config-jwt-algorithm-unsupported = Unsupported jwt_algorithm: {$arg0} (only HS256/HS384/HS512)
-config-jwt-secret-too-short = jwt_secret length insufficient for {$arg0}, actual {$arg1} bytes
+config-jwt-secret-too-short = jwt_secret length insufficient for {$arg0}, actual {$arg1} bytes — generate a high-entropy key with `openssl rand -base64 48`
+config-jwt-secret-weak = predictable jwt_secret rejected: {$arg0}; weak keys can be brute-forced offline — generate a high-entropy key with `openssl rand -base64 48`
 config-anon-timeout-invalid = anon_session_timeout must be > 0
 config-l1-ttl-invalid = l1_cache_ttl_secs must be > 0
 config-l2-ttl-invalid = l2_cache_ttl_secs must be > 0
@@ -1340,3 +1341,96 @@ pwdreset-mail-body = You requested a password reset. Use the one-time token belo
 
 # OAuth2 authorize/resume endpoint (0.9.0 i18n sweep)
 oauth2-resume-ticket-missing = missing ticket
+
+# ============================================================================
+# Observability log messages (tracing) internationalization
+# ============================================================================
+
+logs-noop-sms-sender-send-code = NoopSmsSender sending verification code (code omitted)
+logs-csrf-set-cookie-build-failed = CSRF Set-Cookie build failed; skipped
+logs-cors-allowlist-not-configured = frontend_separation CORS: cors_config.allowed_origins is not configured, so any Origin is echoed back; configure an allowlist to tighten the trust boundary
+logs-cors-feature-disabled = frontend_separation CORS echoes any Origin (the web-cors feature is not enabled, so origin filtering by cors_config.allowed_origins is not possible); enable web-cors and configure an allowlist
+logs-cors-origin-not-allowed = Origin did not match the CORS allowlist; skipping Allow-Origin echo
+logs-sso-oidc-jwks-fetch-retry = sso-oidc-jwks-fetch: transport-layer error, retrying in 100ms: {$error}
+
+# ============================================================================
+# Log messages (tracing) i18n — r2 completion
+# ============================================================================
+# Completed keys: call sites were migrated to translate_detail but the keys were
+# missing from both bundles, so logs printed the raw key (interrupted r2 sweep).
+
+# --- OAuth2 back-channel logout deliverer (backchannel-logout) ---
+logs-backchannel-logout-drain-complete = backchannel-logout drain completed
+logs-backchannel-logout-drain-failed = backchannel-logout drain failed (retrying next round): {$error}
+logs-backchannel-logout-max-ttl-retired = backchannel-logout delivery exceeded MaxTtl; marked failed and retired (no further delivery)
+logs-backchannel-logout-delivery-retried = backchannel-logout delivery failed; counted as a retry
+
+# --- Renewed-token response writing (router) ---
+logs-renewed-token-header-name-invalid = failed to write the renewed token into the response header: token_name is invalid, skipped
+logs-renewed-token-header-value-invalid = failed to write the renewed token into the response header: the token contains invalid characters, skipped
+logs-renewed-token-cookie-value-invalid = failed to write the renewed token into Set-Cookie: the cookie string contains invalid characters, skipped
+logs-renewed-token-cookie-build-rejected = failed to write the renewed token into Set-Cookie: rejected by build-site validation, skipped
+
+# --- sdforge internal routes (server) ---
+logs-sdforge-token-info-cross-user = get_token_info ownership check failed: cross-user access
+logs-sdforge-session-cross-user = get_session ownership check failed: cross-user access
+
+# --- Security alerts (strategy::alert) ---
+logs-alert-anomaly-login = anomalous login alert
+logs-alert-new-device-login = new device login alert
+logs-alert-disable-triggered = ban triggered alert
+logs-alert-privilege-escalation = privilege escalation alert
+logs-alert-sensitive-operation = sensitive operation alert
+
+# --- limiteron ban adapter ---
+logs-limiteron-ban-record-parts-mismatch = limiteron-ban: ban record segment count mismatch; treated as not banned (fail-open)
+logs-limiteron-ban-duration-parse-failed = limiteron-ban: failed to parse the ban record duration field; treated as not banned (fail-open)
+logs-limiteron-ban-expires-at-parse-failed = limiteron-ban: failed to parse the ban record expires_at_ts field; treated as not banned (fail-open)
+logs-limiteron-ban-times-parse-failed = limiteron-ban: failed to parse the ban record ban_times field; treated as not banned (fail-open)
+logs-limiteron-ban-timestamp-invalid = limiteron-ban: invalid ban record timestamp; treated as not banned (fail-open)
+logs-limiteron-ban-times-key-write-failed = limiteron-ban: failed to write the ban-times key; rolling back the main record
+logs-limiteron-ban-history-key-write-failed = limiteron-ban: failed to write the ban-history key; rolling back the main record and the ban times
+logs-limiteron-ban-cleanup-unimplemented = limiteron-ban: cleanup_expired_bans is not implemented (GarrisonDao has no iter API) and returns 0 — do not rely on this method to purge expired bans (TTL expiry plus the is_banned check cover it)
+logs-limiteron-ban-list-unimplemented = limiteron-ban: list_bans is not implemented (GarrisonDao has no iter API) and returns an empty list — do not rely on this method for ban audit/enumeration (false negatives)
+
+# --- Credit metering (multi-tenant-credit-metering) ---
+logs-credit-concurrent-over-limit-rollback = credit: concurrent interleaving pushed the count over the limit; rolling back this consumption
+logs-credit-rolling-window-start-delete-failed = credit: failed to delete window_start after a Rolling cycle reset (best-effort; the residual key is covered by TTL expiry or the next reset)
+logs-credit-decr-rollback-failed = credit: failed to roll back decr (best-effort; denial semantics are unaffected)
+logs-credit-reset-consumed-delete-failed = credit: reset failed to delete the consumed key (partial reset semantics; the remaining keys are no longer deleted)
+logs-credit-reset-meta-delete-failed = credit: reset failed to delete the meta key (partial reset semantics; window_start is no longer deleted)
+logs-credit-throttle-capacity-full = credit: activity throttle is at capacity; dropping this flush (rewritten outside the window)
+logs-credit-throttle-write-failed = credit: activity flush write failed (the entry has been cleared; the activity is re-enqueued outside the window)
+logs-credit-throttle-write-timeout = credit: activity flush write timed out (the entry has been cleared; the activity is re-enqueued outside the window)
+logs-credit-throttle-window-dropped = credit: dropping the in-window activity flush summary (dropped = this flush is skipped; rewritten outside the window)
+
+# --- Metrics registration (account / credit / observability) ---
+logs-metrics-already-registered = {$arg0} is already registered in the prometheus default registry (duplicate new() or mixed use with register_to); returning an unregistered local instance — the registered instance is unaffected
+
+# --- Web-framework integration guards ---
+logs-actix-config-not-registered = GarrisonConfig is not registered as actix app_data (web::Data<Arc<GarrisonConfig>>); the auth extractor falls back to default_config and security parameters may be inconsistent — register it explicitly via App::app_data(web::Data::new(Arc::new(config)))
+logs-actix-tenant-header-unverified = TenantContext extracts the tenant from the client-controlled X-Tenant-Id header without comparing it against the authenticated principal: any caller can declare any tenant ID. This extractor only performs format validation (numeric parsing) and does not authorize principal-to-tenant ownership. Do not rely on this header value for tenant isolation — use a server-trusted source such as ClaimTenantResolver (token claim), or validate the principal-to-tenant relation in the business layer
+logs-backend-remote-plaintext-http = BackendRemote base_url uses plaintext http://; the X-API-Key may be eavesdropped on the network path — use https:// in production
+logs-router-invalid-path-protected = GarrisonRouter::route_protected rejected an invalid path (must be non-empty and start with '/'); this route will not be protected by authentication
+logs-router-duplicate-path-override = GarrisonRouter::route_protected registered the same path twice; the previous annotation is overridden (last-wins)
+
+# --- Auth server bootstrap config (server::config) ---
+logs-server-internal-api-key-too-short = server-internal-api-key-too-short: the internal API key is shorter than the minimum; 1.0 will turn this into a rejection — rotate to a key of at least 32 bytes
+logs-server-external-login-unacknowledged = server-external-login-unacknowledged: the external login endpoint is exposed without acknowledgement; 1.0 will turn this into a rejection — pass the acknowledgement string external_login_ack
+logs-server-wildcard-bind-default = server-wildcard-bind-default: unspecified wildcard binds become loopback in 1.0; for container deployments set with_external_bind(0.0.0.0) / with_internal_bind(0.0.0.0) explicitly
+logs-config-cors-wildcard-without-credentials = config security rules: cors allowed_origins=["*"] without allow_credentials — any origin can read the responses; deployments exposing sensitive data should switch to an explicit origin allowlist
+
+# ============================================================================
+# CLI help (garrison-cli, cli-ops feature)
+# ============================================================================
+cli-about = Garrison operations tool
+
+# ============================================================================
+# Data erasure residual guidance (data-erasure)
+# ============================================================================
+compliance-erasure-residual-ip-artifacts = Other protection records linked to the IP (GeoIP cache, rate-limit window keys) expire naturally via TTL; extend this method if immediate erasure is required
+compliance-erasure-residual-api-key = API keys: owned by the subject and carrying business-authorization semantics — revoke them after querying by owner through ApiKeyRepository (see the protocol-apikey document)
+compliance-erasure-residual-audit-log = Audit logs: compliance retention outranks the right to erasure (PIPL Art. 47 / GDPR Art. 17(3)(b) legal-obligation exception); destroyed per the retention policy on expiry
+compliance-erasure-residual-business-data = Business user profiles and business-side replicas: stored in the business party's own tables, unreachable by the framework
+compliance-erasure-residual-verification-code = Verification code / email verification records: keyed by phone number/email (business mapping), expiring naturally via TTL (<= 1 hour)
+compliance-erasure-residual-issued-jwt = Already issued JWTs: stateless signatures cannot be withdrawn before expiry (unless revocation is enabled, see config enable_jwt_revocation)

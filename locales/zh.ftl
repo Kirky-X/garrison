@@ -974,7 +974,8 @@ dao-not-implemented = {$arg0} 未实现：当前后端不支持
 # ============================================================================
 config-jwt-secret-empty = jwt_secret 不能为空（当 token_style=jwt 时）
 config-jwt-algorithm-unsupported = 不支持的 jwt_algorithm: {$arg0}（仅支持 HS256/HS384/HS512）
-config-jwt-secret-too-short = jwt_secret 长度不足：{$arg0}，实际 {$arg1} 字节
+config-jwt-secret-too-short = jwt_secret 长度不足：{$arg0}，实际 {$arg1} 字节——请用 `openssl rand -base64 48` 生成高熵密钥
+config-jwt-secret-weak = jwt_secret 为弱密钥：{$arg0}；可预测密钥可被字典爆破，请用 `openssl rand -base64 48` 生成高熵密钥
 config-anon-timeout-invalid = anon_session_timeout 必须 > 0
 config-l1-ttl-invalid = l1_cache_ttl_secs 必须 > 0
 config-l2-ttl-invalid = l2_cache_ttl_secs 必须 > 0
@@ -1339,3 +1340,96 @@ pwdreset-mail-body = 您请求了密码重置。请在 {$minutes} 分钟内使�
 
 # OAuth2 authorize/resume 端点（0.9.0 i18n 收口）
 oauth2-resume-ticket-missing = ticket 参数缺失
+
+# ============================================================================
+# 可观测性日志消息（tracing）国际化
+# ============================================================================
+
+logs-noop-sms-sender-send-code = NoopSmsSender 发送验证码（code 已省略）
+logs-csrf-set-cookie-build-failed = CSRF Set-Cookie 构建失败，已跳过
+logs-cors-allowlist-not-configured = frontend_separation CORS 未配置 cors_config.allowed_origins，任意 Origin 均被回显；建议配置允许列表以收紧信任边界
+logs-cors-feature-disabled = frontend_separation CORS 回显任意 Origin（web-cors feature 未启用，无法按 cors_config.allowed_origins 过滤）；建议启用 web-cors 并配置允许列表
+logs-cors-origin-not-allowed = Origin 未命中 CORS 允许列表，跳过 Allow-Origin 回显
+logs-sso-oidc-jwks-fetch-retry = sso-oidc-jwks-fetch: 传输层错误，100ms 后重试: {$error}
+
+# ============================================================================
+# 可观测性日志消息（tracing）i18n —— r2 收口
+# ============================================================================
+# 补键：调用点已迁移到 translate_detail，但 en/zh 双包均缺键，日志直接打印原始 key
+# （r2 迁移轮被中断所致）。
+
+# --- OAuth2 back-channel logout 投递（backchannel-logout）---
+logs-backchannel-logout-drain-complete = backchannel-logout drain 完成
+logs-backchannel-logout-drain-failed = backchannel-logout drain 失败（下轮重试）: {$error}
+logs-backchannel-logout-max-ttl-retired = backchannel-logout 投递超过 MaxTtl，置 failed 退役（不再投递）
+logs-backchannel-logout-delivery-retried = backchannel-logout 投递失败，计入重试
+
+# --- 续签 token 写入响应（router）---
+logs-renewed-token-header-name-invalid = 续签 token 写入响应 header 失败：token_name 非法，已跳过
+logs-renewed-token-header-value-invalid = 续签 token 写入响应 header 失败：token 含非法字符，已跳过
+logs-renewed-token-cookie-value-invalid = 续签 token 写入 Set-Cookie 失败：cookie 串含非法字符，已跳过
+logs-renewed-token-cookie-build-rejected = 续签 token 写入 Set-Cookie 失败：构建点校验拒绝，已跳过
+
+# --- sdforge 内部路由（server）---
+logs-sdforge-token-info-cross-user = get_token_info 所有权校验失败：跨用户访问
+logs-sdforge-session-cross-user = get_session 所有权校验失败：跨用户访问
+
+# --- 安全告警（strategy::alert）---
+logs-alert-anomaly-login = 异常登录告警
+logs-alert-new-device-login = 新设备登录告警
+logs-alert-disable-triggered = 封禁触发告警
+logs-alert-privilege-escalation = 权限提升告警
+logs-alert-sensitive-operation = 敏感操作告警
+
+# --- limiteron 封禁适配器 ---
+logs-limiteron-ban-record-parts-mismatch = limiteron-ban: 封禁记录段数不对，视为未封禁（fail-open）
+logs-limiteron-ban-duration-parse-failed = limiteron-ban: 封禁记录 duration 字段解析失败，视为未封禁（fail-open）
+logs-limiteron-ban-expires-at-parse-failed = limiteron-ban: 封禁记录 expires_at_ts 解析失败，视为未封禁（fail-open）
+logs-limiteron-ban-times-parse-failed = limiteron-ban: 封禁记录 ban_times 解析失败，视为未封禁（fail-open）
+logs-limiteron-ban-timestamp-invalid = limiteron-ban: 封禁记录时间戳非法，视为未封禁（fail-open）
+logs-limiteron-ban-times-key-write-failed = limiteron-ban: 封禁次数 key 写入失败，回滚主记录
+logs-limiteron-ban-history-key-write-failed = limiteron-ban: 封禁历史 key 写入失败，回滚主记录与次数
+logs-limiteron-ban-cleanup-unimplemented = limiteron-ban: cleanup_expired_bans 未实现（GarrisonDao 无 iter API），返回 0——请勿依赖本方法清理过期封禁（TTL 自动过期 + is_banned 查询时检查兜底）
+logs-limiteron-ban-list-unimplemented = limiteron-ban: list_bans 未实现（GarrisonDao 无 iter API），返回空列表——请勿依赖本方法做封禁审计/枚举（假阴性）
+
+# --- Credit 计量（multi-tenant-credit-metering）---
+logs-credit-concurrent-over-limit-rollback = credit: 并发交错导致超限扣减，回滚本次消费
+logs-credit-rolling-window-start-delete-failed = credit: Rolling 周期重置后删除 window_start 失败（best-effort，残留 key 由 TTL 过期或下次重置兜底）
+logs-credit-decr-rollback-failed = credit: 回滚 decr 失败（best-effort，拒绝语义不受影响）
+logs-credit-reset-consumed-delete-failed = credit: reset 删除 consumed key 失败（部分重置语义，剩余 key 不再删除）
+logs-credit-reset-meta-delete-failed = credit: reset 删除 meta key 失败（部分重置语义，window_start 不再删除）
+logs-credit-throttle-capacity-full = credit: 活跃度节流容量满，丢弃本次落库（窗口外重写）
+logs-credit-throttle-write-failed = credit: 活跃度落库写失败（条目已清理，窗口外活跃度重新入队）
+logs-credit-throttle-write-timeout = credit: 活跃度落库写超时（条目已清理，窗口外活跃度重新入队）
+logs-credit-throttle-window-dropped = credit: 活跃度节流窗口内丢弃汇总（丢弃=跳过本次落库，窗口外重写）
+
+# --- 指标注册（account / credit / observability）---
+logs-metrics-already-registered = {$arg0} 已注册到 prometheus 默认 registry（重复 new 或与 register_to 混用），返回未注册的本地实例；已注册实例不受影响
+
+# --- Web 框架集成护栏 ---
+logs-actix-config-not-registered = GarrisonConfig 未注册为 actix app_data（web::Data<Arc<GarrisonConfig>>），auth extractor 回退 default_config；安全参数可能不一致，请通过 App::app_data(web::Data::new(Arc::new(config))) 显式注册
+logs-actix-tenant-header-unverified = TenantContext 从客户端可控的 X-Tenant-Id header 提取租户且未与认证主体比对：任何调用方可声明任意租户 ID。本 extractor 仅做格式校验（数字解析），不做「主体→租户」归属授权。租户隔离请勿依赖该 header 值——应使用 ClaimTenantResolver（token claim）等服务端可信来源，或在业务层校验 principal 与租户的归属关系
+logs-backend-remote-plaintext-http = BackendRemote base_url 使用明文 http://，X-API-Key 可能被网络路径窃听；生产环境应使用 https://
+logs-router-invalid-path-protected = GarrisonRouter::route_protected 拒绝非法路径（必须非空且以 '/' 开头），该路由不会受鉴权保护
+logs-router-duplicate-path-override = GarrisonRouter::route_protected 重复注册同一路径，原注解将被覆盖（last-wins）
+
+# --- auth_server 启动配置（server::config）---
+logs-server-internal-api-key-too-short = server-internal-api-key-too-short: 内网 API Key 短于下限，1.0 将转为拒绝；请轮换为 ≥32 字节密钥
+logs-server-external-login-unacknowledged = server-external-login-unacknowledged: 外网登录端点已暴露且未确认，1.0 将转为拒绝；请传入确认串 external_login_ack
+logs-server-wildcard-bind-default = server-wildcard-bind-default: 未显式配置的通配绑定将在 1.0 变为回环，容器部署请显式 with_external_bind(0.0.0.0) / with_internal_bind(0.0.0.0)
+logs-config-cors-wildcard-without-credentials = config security rules: cors allowed_origins=["*"] without allow_credentials — 任意源可读取响应，暴露敏感数据的部署应改为显式 origin 白名单
+
+# ============================================================================
+# CLI 帮助（garrison-cli，cli-ops feature）
+# ============================================================================
+cli-about = Garrison 运维工具
+
+# ============================================================================
+# 数据擦除残留处置提示（data-erasure）
+# ============================================================================
+compliance-erasure-residual-ip-artifacts = IP 关联的其他防护记录（GeoIP 缓存、限速窗口键）随 TTL 自然过期；若需立即清除请扩展本方法
+compliance-erasure-residual-api-key = API Key：与 owner 关联且含业务授权语义，经 ApiKeyRepository 按 owner 查询后吊销（见 protocol-apikey 文档）
+compliance-erasure-residual-audit-log = 审计日志：合规保留期优先于删除权（个保法第 47 条 / GDPR Art. 17(3)(b) 法律义务例外），到期按保留策略销毁
+compliance-erasure-residual-business-data = 业务用户资料与业务副本：存储于业务方自有表，框架不可达
+compliance-erasure-residual-verification-code = 验证码 / 邮箱验证记录：以手机号/邮箱为键（业务映射），随 TTL（≤1 小时）自然过期
+compliance-erasure-residual-issued-jwt = 已发出的 JWT：无状态签名，到期前技术不可撤回（除非启用 revocation，见 config enable_jwt_revocation）
