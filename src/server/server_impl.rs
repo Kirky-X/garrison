@@ -14,6 +14,8 @@ use axum::Router;
 use super::oauth2_routes;
 #[cfg(feature = "protocol-qrlogin")]
 use super::qrlogin_routes;
+#[cfg(feature = "tls-cert-watch")]
+use super::tls_watch;
 #[cfg(feature = "tls")]
 use super::TlsConfig;
 use super::{api_key_auth_middleware, audit_log_middleware, rate_limit_middleware};
@@ -604,10 +606,34 @@ impl GarrisonAuthServer {
         let internal_addr =
             std::net::SocketAddr::new(self.config.internal_bind, self.config.internal_port);
 
+        // rustls 拒绝在「aws-lc-rs 与 ring 双开」的构建图上自动判定进程级 provider，此时
+        // ServerConfig::builder() 直接 panic（rustls crypto/mod.rs）；而 db 系 feature
+        // （sqlx tls-rustls → rustls/ring）与 tls（axum-server tls-rustls → rustls/aws-lc-rs）
+        // 恰好构成该图。显式安装 tls 面选定的 aws-lc-rs；安装幂等，重复调用返回 Err 即已装。
         #[cfg(feature = "tls")]
-        let tls_config_ext = self.tls_config.clone();
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+        // TLS 终止配置在两条 serve 任务启动前一次性构建：两端口共享同一 RustlsConfig
+        // （内部 ArcSwap，clone 共享同一快照），tls-cert-watch 换入新证书后两端口新握手同时生效；
+        // 加载失败即两端口都不启动（fail-fast），错误码沿用既有外网 TLS 加载键（其 FTL 条目已备，
+        // 失败发生在任一端口绑定前，不指向具体端口）。
         #[cfg(feature = "tls")]
-        let tls_config_int = self.tls_config.clone();
+        let rustls_config = match self.tls_config.as_ref() {
+            Some(tc) => Some(
+                axum_server::tls_rustls::RustlsConfig::from_pem_file(&tc.cert_path, &tc.key_path)
+                    .await
+                    .map_err(|e| {
+                        GarrisonError::Internal(format!("server-external-tls-load::{}", e))
+                    })?,
+            ),
+            None => None,
+        };
+        #[cfg(feature = "tls")]
+        let rustls_config_ext = rustls_config.clone();
+        #[cfg(feature = "tls")]
+        let rustls_config_int = rustls_config.clone();
+        #[cfg(feature = "tls-cert-watch")]
+        let tls_paths = self.tls_config.clone();
 
         let external_router = self.external_router();
         let internal_router = self.internal_router();
@@ -639,13 +665,7 @@ impl GarrisonAuthServer {
             #[cfg(feature = "server-graceful-shutdown")]
             let shutdown_notify = shutdown_notify_ext;
             #[cfg(feature = "tls")]
-            if let Some(tc) = tls_config_ext.as_ref() {
-                let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-                    &tc.cert_path,
-                    &tc.key_path,
-                )
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("server-external-tls-load::{}", e)))?;
+            if let Some(rustls_config) = rustls_config_ext {
                 // TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
                 #[cfg(feature = "server-graceful-shutdown")]
                 let handle = {
@@ -733,13 +753,7 @@ impl GarrisonAuthServer {
             #[cfg(feature = "server-graceful-shutdown")]
             let shutdown_notify = shutdown_notify_int;
             #[cfg(feature = "tls")]
-            if let Some(tc) = tls_config_int.as_ref() {
-                let rustls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(
-                    &tc.cert_path,
-                    &tc.key_path,
-                )
-                .await
-                .map_err(|e| GarrisonError::Internal(format!("server-internal-tls-load::{}", e)))?;
+            if let Some(rustls_config) = rustls_config_int {
                 // TLS 路径经 axum_server::Handle 等效实现优雅停机（30s drain 上限）
                 #[cfg(feature = "server-graceful-shutdown")]
                 let handle = {
@@ -826,8 +840,22 @@ impl GarrisonAuthServer {
             }
         });
 
+        // 证书热重载（feature = "tls-cert-watch"）：监视证书/私钥文件，去抖后的变更事件换入
+        // 上面的共享 RustlsConfig（两端口同时生效）；未配置 TLS 时不启动。
+        #[cfg(feature = "tls-cert-watch")]
+        let cert_watcher = rustls_config.clone().zip(tls_paths).map(|(config, tc)| {
+            #[cfg(feature = "server-graceful-shutdown")]
+            let watcher_shutdown = {
+                let notify = Arc::clone(&shutdown_notify);
+                async move { notify.notified().await }
+            };
+            #[cfg(not(feature = "server-graceful-shutdown"))]
+            let watcher_shutdown = std::future::pending::<()>();
+            tls_watch::spawn_cert_watcher(config, tc.cert_path, tc.key_path, watcher_shutdown)
+        });
+
         // 任一服务器异常即返回错误， 显式 abort 另一个 task 避免资源泄漏
-        tokio::select! {
+        let result = tokio::select! {
             res = &mut external_handle => {
                 internal_handle.abort();
                 res.map_err(|e| GarrisonError::Internal(format!("server-external-task-panic::{}", e)))?
@@ -836,7 +864,13 @@ impl GarrisonAuthServer {
                 external_handle.abort();
                 res.map_err(|e| GarrisonError::Internal(format!("server-internal-task-panic::{}", e)))?
             },
+        };
+        // 服务退出后停止证书 watcher（fs 监听线程随之释放）
+        #[cfg(feature = "tls-cert-watch")]
+        if let Some(handle) = cert_watcher {
+            handle.abort();
         }
+        result
     }
 }
 

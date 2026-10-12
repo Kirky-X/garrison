@@ -508,7 +508,6 @@ server-external-addr-parse = 外网地址解析失败: {$arg0}
 server-external-server-error = 外网服务器异常: {$arg0}
 server-external-bind = 绑定外网端口失败: {$arg0}
 server-external-task-panic = 外网 task panic: {$arg0}
-server-internal-tls-load = 加载内网 TLS 配置失败: {$arg0}
 server-internal-addr-parse = 内网地址解析失败: {$arg0}
 server-internal-server-error = 内网服务器异常: {$arg0}
 server-internal-bind = 绑定内网端口失败: {$arg0}

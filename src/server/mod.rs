@@ -54,6 +54,10 @@ pub mod oauth2_routes;
 #[cfg(feature = "protocol-qrlogin")]
 pub mod qrlogin_routes;
 
+/// TLS 证书文件热重载（feature = "tls-cert-watch"）。
+#[cfg(feature = "tls-cert-watch")]
+mod tls_watch;
+
 mod server_impl;
 
 pub use api_key_lockout::ApiKeyLockout;

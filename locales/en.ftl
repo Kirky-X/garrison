@@ -508,7 +508,6 @@ server-external-addr-parse = external address parse failed: {$arg0}
 server-external-server-error = external server error: {$arg0}
 server-external-bind = failed to bind external port: {$arg0}
 server-external-task-panic = external task panicked: {$arg0}
-server-internal-tls-load = failed to load internal TLS config: {$arg0}
 server-internal-addr-parse = internal address parse failed: {$arg0}
 server-internal-server-error = internal server error: {$arg0}
 server-internal-bind = failed to bind internal port: {$arg0}
