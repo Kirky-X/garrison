@@ -231,6 +231,16 @@ Garrison 在 CI 与发布流程中内置多层供应链与安全门禁（发布�
 - **处置**：`deny.toml` 显式忽略该通告并注明理由（无 patched 版本 + 签名/验签路径不受影响）；`rsa` 亦作为 dev-dependency 用于 `keycloak-oidc` 测试生成 RSA 密钥对（测试环境）。
 - **回归锚定**：若未来引入 RSA **解密**能力（如 JWE 解密），必须重新评估该通告并补充防护（常数时间解密或等待 rsa crate 发布修复版本后升级并移除忽略项）。
 
+### 6. RUSTSEC-2024-0449（unsafe-libyaml unmaintained）处置说明
+
+- **说明**：依赖图中的 `unsafe-libyaml` 0.2.11 命中 RUSTSEC-2024-0449。类别为 **unmaintained**：上游仓库已于 2024-03-25 归档只读，缺陷不再被修复；**不存在已公布的可利用漏洞**（与已披露 CVE 类通告不同）。链条为 `unsafe-libyaml` ← `serde_yaml_ng` ← `confers` / `dbnexus` / `limiteron`（自研依赖），当前**无已修复版本**——crates.io 最新即 0.2.11，公告明示 `No safe upgrade is available`。
+- **影响评估**：该依赖**可到达**，本项是风险接受而非「路径不可达」豁免，风险性质为「未来缺陷不再由上游修复」：
+  - 可达路径：`serde_yaml_ng` 是 `confers` 的 YAML 解析后端，仅由 `config-yaml` 面启用（`production` 与 `full` 显式包含，`default` 不含），解析对象是部署方自备的本地配置文件——本地运维输入，**非网络输入、非终端用户输入**。
+  - 因此不存在「解析不可信 YAML」的攻击面；若未来引入该能力（如解析用户上传的 YAML/模板），必须重新评估。
+  - garrison 不直接依赖 `unsafe-libyaml` / `serde_yaml_ng`，二者由上游 `confers` / `limiteron` / `dbnexus` 持有，仓库内无升级或替换面（该链自 rc.6 线即在依赖图内，非某次升级引入）。
+- **处置**：`deny.toml` [advisories] 显式忽略该通告并注明理由（unmaintained + 上游无修复版本 + 仅本地配置输入）；`.cargo/audit.toml` 同步豁免，保持两份忽略列表一致。暂不自建分支或替换上游已归档 crate（维护成本高、收益低；替换须由上游自研 crate 换用受维护 YAML 后端）。
+- **回归锚定**：上游 `confers` / `limiteron` / `dbnexus` 发布修复版或换用受维护 YAML 后端后，必须升级并移除忽略项；若 garrison 引入「解析不可信 YAML 输入」的能力，必须重新评估该通告并补充防护。
+
 ---
 
 如对本文档有任何疑问或建议，请通过 [GitHub Discussions](https://github.com/Kirky-X/garrison/discussions) 提出（非漏洞类）；安全漏洞请遵循 [报告漏洞](#-报告漏洞) 流程私密提交。

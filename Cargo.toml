@@ -41,8 +41,8 @@ axum = { version = "0.8", default-features = false, features = ["json"] }
 actix-web = { version = "4.12", default-features = false }
 warp = { version = "0.4", default-features = false }
 tonic = { version = "0.14", default-features = false, features = ["transport"] }
-oxcache = { version = "0.5.0-rc.6", default-features = false }
-dbnexus = { version = "0.6.0-rc.6", default-features = false }
+oxcache = { version = "0.5.0-rc.8", default-features = false }
+dbnexus = { version = "0.6.0-rc.9", default-features = false }
 md5 = { version = "0.8" }
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "json", "env-filter"] }
 rand = { version = "0.10" }
@@ -65,7 +65,7 @@ path = "src/lib.rs"
 # Required dependencies
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-confers = { version = "0.6.0-rc.6" }
+confers = { version = "0.6.0-rc.10" }
 tokio = { version = "1.53", features = ["sync", "macros", "rt-multi-thread", "time", "signal"] }
 inventory = "0.3"
 thiserror = "2.0"
@@ -84,6 +84,8 @@ unicode-normalization = "0.1"
 # Optional dependencies (feature-gated)
 axum = { optional = true, default-features = false, features = ["json"], workspace = true }
 axum-server = { version = "0.8", optional = true, default-features = false }
+# axum-server 不 re-export rustls，而 tls 路径必须在构造 ServerConfig 前显式安装进程级 CryptoProvider：db 系 feature（sqlx tls-rustls → rustls/ring）与 tls（axum-server tls-rustls → rustls/aws-lc-rs）在同一构建图共存时 rustls 拒绝自动判定并 panic。optional：仅 tls 门控的 src/server 使用
+rustls = { version = "0.23", optional = true, default-features = false, features = ["aws-lc-rs"] }
 actix-web = { optional = true, default-features = false, workspace = true }
 warp = { optional = true, default-features = false, workspace = true }
 jsonwebtoken = { version = "11.1", default-features = false, features = ["rust_crypto", "use_pem"], optional = true }
@@ -105,7 +107,7 @@ getrandom = { version = "0.4", optional = true }
 zeroize = { version = "1.9", optional = true, default-features = false, features = ["derive", "serde"] }
 regex = { version = "1.13", optional = true, default-features = false }
 # optional：常驻使用点 three-tier-cache 显式 dep:oxcache；dao/oxcache_impl 与 abac 经 oxcache/* 引用自动激活
-oxcache = { version = "0.5.0-rc.6", default-features = false, optional = true }
+oxcache = { version = "0.5.0-rc.8", default-features = false, optional = true }
 # dbnexus 0.4+ 在 src/lib.rs 设 compile_error! 强制至少启用一个数据库驱动 feature，故必须 optional，由 db-base 透传 dbnexus/<driver>（API 硬性约束，非手写绕过）
 dbnexus = { optional = true, default-features = false, workspace = true }
 # loom 竞态模型验证（loom-test）：一次性凭证原子消费的交错穷举测试。用 feature 门控而非 loom 官方 RUSTFLAGS="--cfg loom"：后者全图编译期 cfg 泄漏会令 tokio 剔除 net 模块，依赖图中无条件 `use tokio::net` 的 crate（hyper-util/redis）必然编译失败。触发：`cargo test --lib --features protocol-temp,loom-test protocol::temp`；futures feature 提供 block_on（驱动零 await 点的 async DAO 方法）
@@ -139,12 +141,12 @@ futures = { version = "0.3", default-features = false, features = ["std"] }
 # mimalloc 全局分配器（auth_server 二进制使用，多线程分配性能优于系统默认分配器）
 mimalloc = { version = "0.1", optional = true }
 # optional 化：唯一使用点 observability/inklog（audit-inklog 门控），其 inklog/* 引用自动激活。
-inklog = { version = "0.3.0-rc.7", default-features = false, optional = true }
+inklog = { version = "0.3.0-rc.9", default-features = false, optional = true }
 # retry 供 stp 会话 JWT 黑名单退避调度（delay_for_attempt，空 feature 零依赖）；distributed 供防火墙限流/双窗口限速的分布式滑窗桥接
-limiteron = { version = "0.3.0-rc.6", default-features = false, features = ["distributed", "retry"] }
+limiteron = { version = "0.3.0-rc.7", default-features = false, features = ["distributed", "retry"] }
 # sdforge 运行时：features=["http"] 让 sdforge::http::build()/RouteRegistration 始终可用（server_impl.rs 无条件调用）；#[forge] 宏的 inventory::submit! 被 cfg(feature="http") 保护且该 cfg 在 garrison 上下文求值，故 garrison 必须暴露同名 http feature（见 [features] 段桥接说明）。optional：仅 auth-server 门控的 src/server 使用，由 auth-server-sdforge 与 api-docs 按需激活，default 构建不白编译 axum/tower 栈
-sdforge = { version = "0.5.0-rc.6", default-features = false, features = ["http"], optional = true }
-trait-kit = { version = "0.5.0-rc.7", default-features = false, features = ["async"] }
+sdforge = { version = "0.5.0-rc.8", default-features = false, features = ["http"], optional = true }
+trait-kit = { version = "0.5.0-rc.9", default-features = false, features = ["async"] }
 cedar-policy = { version = "4.13", default-features = false, optional = true }
 icu_plurals = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
 icu_datetime = { version = "2.3", default-features = false, features = ["compiled_data"], optional = true }
@@ -201,6 +203,8 @@ testcontainers = "0.28"
 criterion = { version = "0.8", features = ["html_reports"] }
 # rcgen 用于 BackendRemote mTLS 测试中生成自签名证书
 rcgen = "0.14"
+# tls-cert-watch 测试需显式安装进程级 rustls CryptoProvider：lib 测试图同时启用 aws-lc-rs（axum-server/reqwest）与 ring（testcontainers→bollard/ssl 透传），rustls 拒绝自动判定并 panic（生产图的同一歧义由 listen() 内的 install_default 消化，测试直接构造 RustlsConfig 故仍须自行安装）；dev-deps 声明使测试能调用 install_default 选定与生产一致的 aws-lc-rs
+rustls = { version = "0.23", default-features = false, features = ["aws-lc-rs"] }
 # 集成测试直接发送 HTTP 请求故无条件引入；cookies 供 keycloak_fixture 以 cookie jar 驱动真实登录表单流
 reqwest = { default-features = false, features = ["json", "rustls", "cookies"], workspace = true }
 # macros UI 测试（tests/macros_ui.rs）：trybuild 子项目继承父 dev-deps（axum 供 IntoResponse），annotation-macros 由测试运行面透传
@@ -225,8 +229,8 @@ authorize-api = ["core-advanced"]
 manager-explicit = ["authorize-api"]
 
 # 核心扩展：多租户逻辑隔离
-# Repository SQL 过滤不门控此 feature（始终生效，安全优先）。[INTERNAL] ban-manager 为编译期伴随 feature：rc.6 governor.rs 的 `use crate::matchers::Identifier` 被 cfg(any(parallel-checker, ban-manager)) 门控而 multi-tenant 块使用该类型，单独启用时导入缺失（上游缺陷）；ban-manager 零依赖且 firewall-bruteforce 已在用，故选作载体，上游修复后可移除
-tenant-isolation = ["limiteron/multi-tenant", "limiteron/ban-manager"]
+# Repository SQL 过滤不门控此 feature（始终生效，安全优先）
+tenant-isolation = ["limiteron/multi-tenant"]
 
 # 配置增强（confers 透传）
 config-encryption = ["confers/encryption"]
@@ -371,7 +375,9 @@ web-warp = ["dep:warp", "dep:http-body-util"]
 
 # HTTPS/TLS 终止（axum-server rustls）
 # 依赖 auth-server（server 模块门控）
-tls = ["dep:axum-server", "axum-server/tls-rustls", "auth-server"]
+tls = ["dep:axum-server", "axum-server/tls-rustls", "dep:rustls", "auth-server"]
+# TLS 证书进程内热重载（tls-cert-watch）：confers/watch 的 MultiFsWatcher 监视证书文件，变更后经 axum-server RustlsConfig::reload_from_pem_file 换入（每连接握手读最新配置，无需重启进程）
+tls-cert-watch = ["tls", "confers/watch"]
 
 # Server 增强
 # server-health-check：接线 sdforge/health 的 /healthz /readyz 探针（merge 在路由最外层，天然绕过 path_filter/rate_limit/audit/api_key_auth，符合 K8s 探针语义）；业务方可经 sdforge::health::register_readiness_check_fn 注册下游就绪检查
